@@ -205,7 +205,7 @@ int RunLspBrokerStop() {
 // Paint() can occlude that plane, since it isn't part of this Screen at
 // all -- the only fix is to stop short of it. A plain Cell-based ScrollBar
 // has no such plane and needs no reservation, hence the MinimapEnabled()
-// gate. Shared by terminalPanel/acpPanel/dapConsolePanel's placement
+// gate. Shared by panelDock/acpPanel's placement
 // functions below; doesn't account for a minimap belonging to some *other*
 // pane in a multi-way split (every one of these panels spans the whole
 // width, not one pane) -- a real gap, just a narrower one than before this
@@ -1320,23 +1320,25 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                 });
         });
 
-    // The built-in terminal drawer, the ACP chat panel (when bottom-docked --
-    // the default; see ned/set-acp-panel-dock), and the DAP debug console now
-    // share one tabbed bottom dock (PanelDock.h) instead of three independent
-    // OverlayHost overlays each fighting for the same screen real estate --
-    // see that class's own header comment for the full rationale. Declared
-    // after eventLoop so TerminalPanel's PtyProcess (background read thread +
+    // multiple-terminal-tabs follow-up: any number of concurrent embedded
+    // shells, each its own PanelDock tab, all uniform -- closable including
+    // the first, with toggle-terminal/new-terminal (below) operating over
+    // this one vector rather than a single fixed TerminalPanel. Declared
+    // after eventLoop so each one's PtyProcess (background read thread +
     // shell) is torn down first on the way out of main, the same
     // owner-destroys-after-Run ordering every TaskProcess/LspClient owner
     // relies on.
-    auto terminalPanel = std::make_shared<ned::ui::TerminalPanel>(theme);
-    terminalPanel->SetEventLoop(&eventLoop);
+    struct TerminalTab {
+        std::shared_ptr<ned::ui::TerminalPanel> panel;
+        std::size_t                             tabId = 0;
+    };
+    std::vector<TerminalTab> terminalTabs;
 
     // REPL-engine follow-up: one more TerminalPanel per Janet-configured
     // REPL name (ned/set-repl-command), spawned lazily by run-repl -- same
     // shared_ptr/declared-after-eventLoop lifetime convention as
-    // terminalPanel immediately above, for the same reason (each owns a
-    // real PtyProcess). Keyed by REPL name so a repeat run-repl reuses the
+    // terminalTabs above, for the same reason (each owns a real
+    // PtyProcess). Keyed by REPL name so a repeat run-repl reuses the
     // existing session instead of spawning a second interpreter; the
     // parallel index map is this REPL's own PanelDock tab, added the first
     // time it's actually run.
@@ -1369,20 +1371,108 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     const bool acpBottomDocked = ned::editor::acp::GetAcpPanelDock() != ned::editor::acp::AcpPanelDock::Right;
 
     ned::ui::PanelDock panelDock(theme);
-    const std::size_t  terminalTabIndex = panelDock.AddPanel(
-        "Terminal", *terminalPanel, [panel = terminalPanel.get()] { return panel->TitleText(); },
-        &ned::editor::terminal::TerminalHeightPercent, &ned::editor::terminal::SetTerminalHeightPercent,
-        [panel = terminalPanel.get()] {
-            // The scrollback-search icon (this tab's own former title-row
-            // button) plus a restart icon for CloseSession() -- the "kill
-            // the shell outright" affordance the standalone close button
-            // used to provide, now that the shared [x] only ever hides the
-            // whole dock rather than a single tab's session.
-            return std::vector<ned::ui::PanelDock::TabAction>{
-                {.icon = U'/', .onClick = [panel] { panel->EnterSearch(); }},
-                {.icon = U'↻', .onClick = [panel] { panel->CloseSession(); }},
-            };
+
+    // Forward-declared: assigned below (its own body needs addTerminalTab/
+    // showTerminalTab to already exist), but every terminal tab -- present
+    // and future -- wires its own reserved-chord callback (see
+    // TerminalPanel.h's header comment on `` C-` ``) to this same variable
+    // captured by reference, so a chord pressed inside any of them
+    // (including one spawned by new-terminal long after this line runs)
+    // reaches the one real toggle-terminal implementation once it exists.
+    std::function<void()> toggleTerminal;
+
+    // multiple-terminal-tabs follow-up: removes one terminal tab by its own
+    // TerminalPanel identity rather than a captured tab id -- the id isn't
+    // known yet at the point the close action below is built (AddPanel
+    // hasn't returned it), unlike every other caller of RemovePanel here.
+    // Reassigns PanelDock's own focus to a remaining tab first (via
+    // RemovePanel itself), then tears down the closed shell.
+    auto closeTerminalTab = [&panelDock, &terminalTabs](ned::ui::TerminalPanel* target) {
+        const auto it = std::find_if(terminalTabs.begin(), terminalTabs.end(),
+                                     [target](const TerminalTab& tab) { return tab.panel.get() == target; });
+        if (it == terminalTabs.end()) {
+            return;
+        }
+        panelDock.RemovePanel(it->tabId);
+        terminalTabs.erase(it);
+    };
+
+    // Registers one more terminal tab and returns it -- BufferList-style
+    // name uniquification ("Terminal", "Terminal <2>", "Terminal <3>", ...)
+    // against every currently open terminal tab's own base label (Label(),
+    // not TitleText(), which carries transient exited/search/scrollback
+    // suffixes that would defeat the comparison).
+    auto addTerminalTab = [&panelDock, &terminalTabs, &closeTerminalTab, &toggleTerminal, &theme,
+                           &eventLoop]() -> TerminalTab& {
+        std::string label  = "Terminal";
+        int         suffix = 2;
+        while (std::any_of(terminalTabs.begin(), terminalTabs.end(),
+                           [&label](const TerminalTab& tab) { return tab.panel->Label() == label; })) {
+            label = "Terminal <" + std::to_string(suffix++) + ">";
+        }
+        auto                    panel    = std::make_shared<ned::ui::TerminalPanel>(theme, std::vector<std::string>{}, label);
+        ned::ui::TerminalPanel* rawPanel = panel.get();
+        panel->SetEventLoop(&eventLoop);
+        // toggleTerminal's own reserved-chord wiring: while this panel
+        // itself has focus, TerminalPanel handles `` C-` `` internally and
+        // calls this callback directly (bypassing the global keymap
+        // entirely) -- the run-repl precedent this whole file already
+        // established, extended to every terminal tab rather than just one.
+        panel->SetOnToggleRequest([&toggleTerminal] {
+            if (toggleTerminal) {
+                toggleTerminal();
+            }
         });
+        const std::size_t tabId = panelDock.AddPanel(
+            label, *panel, [rawPanel] { return rawPanel->TitleText(); }, &ned::editor::terminal::TerminalHeightPercent,
+            &ned::editor::terminal::SetTerminalHeightPercent, [rawPanel, &closeTerminalTab] {
+                // The scrollback-search icon plus a restart icon for
+                // CloseSession() -- terminal-panel follow-up's own
+                // affordances -- and (multiple-terminal-tabs follow-up) a
+                // close icon that removes this tab entirely rather than
+                // just killing/restarting its shell in place.
+                return std::vector<ned::ui::PanelDock::TabAction>{
+                    {.icon = U'/', .onClick = [rawPanel] { rawPanel->EnterSearch(); }},
+                    {.icon = U'↻', .onClick = [rawPanel] { rawPanel->CloseSession(); }},
+                    {.icon = U'×', .onClick = [rawPanel, &closeTerminalTab] { closeTerminalTab(rawPanel); }},
+                }; });
+        terminalTabs.push_back(TerminalTab{.panel = std::move(panel), .tabId = tabId});
+        return terminalTabs.back();
+    };
+
+    // Shows/switches/focuses a terminal tab -- the single "make this
+    // terminal visible" seam every entry point below (toggle-terminal,
+    // new-terminal, Reveal in Terminal) goes through, so none of them can
+    // drift back into calling overlays.Show/IsVisible directly on a
+    // TerminalPanel the way two pre-PanelDock call sites used to (a stale
+    // no-op ever since the tabbed-bottom-dock migration, since a
+    // TerminalPanel is no longer registered as its own OverlayHost overlay
+    // at all -- see this follow-up's own notes on those two fixed sites).
+    auto showTerminalTab = [&overlays, &panelDock](const TerminalTab& tab) {
+        tab.panel->EnsureStarted();
+        overlays.Show(panelDock);
+        panelDock.SwitchTo(tab.tabId); // SwitchTo itself takes focus for the panel
+    };
+
+    // sidebar-context-menu/vcs-panel-context-menu follow-ups' shared
+    // "Reveal in Terminal" implementation: cd's into `dir` inside the
+    // first terminal tab (creating one if every terminal tab has since
+    // been closed) -- routed through showTerminalTab above rather than
+    // touching overlays/panelDock directly, which is what fixes the two
+    // call sites below (a stale no-op ever since PanelDock started owning
+    // TerminalPanel's visibility -- calling overlays.Show/IsVisible
+    // directly on a TerminalPanel hasn't done anything since that
+    // migration, since it's no longer registered as its own overlay).
+    auto revealPathInTerminal = [&terminalTabs, &addTerminalTab, &showTerminalTab](const std::filesystem::path& dir) {
+        TerminalTab& tab = terminalTabs.empty() ? addTerminalTab() : terminalTabs.front();
+        showTerminalTab(tab);
+        tab.panel->SendText("cd " + ned::editor::ShellQuoteSingle(dir) + "\n");
+    };
+
+    // The first terminal tab, created eagerly so toggle-terminal's cold-open
+    // path has zero latency, exactly as before this follow-up.
+    addTerminalTab();
+
     std::optional<std::size_t> acpTabIndex;
     if (acpBottomDocked) {
         acpPanel.SetDockHosted(true);
@@ -1430,11 +1520,17 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // click on it (or C-c t twice). Reached from the editor via
     // toggle-terminal (C-` / C-c t) and from the focused panel via its one
     // reserved chord (C-`).
-    auto toggleTerminal = [&overlays, &panelDock, terminalTabIndex, panel = terminalPanel.get(), wm = windowManager.get()] {
-        if (!overlays.IsVisible(panelDock) || panelDock.ActiveIndex() != terminalTabIndex) {
-            overlays.Show(panelDock);
-            panelDock.SwitchTo(terminalTabIndex);
-            panel->EnsureStarted();
+    // multiple-terminal-tabs follow-up: "on a terminal tab" now means "on
+    // any terminal tab" (all uniform), not just the one original tab -- the
+    // dock hides only when the currently active tab is already some
+    // terminal; otherwise this shows/switches to the first terminal tab
+    // (creating one if every terminal tab has since been closed).
+    toggleTerminal = [&overlays, &panelDock, &terminalTabs, &addTerminalTab, &showTerminalTab, wm = windowManager.get()] {
+        const bool onATerminalTab = std::any_of(terminalTabs.begin(), terminalTabs.end(), [&panelDock](const TerminalTab& tab) {
+            return tab.tabId == panelDock.ActiveIndex();
+        });
+        if (!overlays.IsVisible(panelDock) || !onATerminalTab) {
+            showTerminalTab(terminalTabs.empty() ? addTerminalTab() : terminalTabs.front());
         }
         else {
             overlays.Hide(panelDock);
@@ -1449,7 +1545,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         }
     };
     windowManager->SetOnTerminalToggle(toggleTerminal);
-    terminalPanel->SetOnToggleRequest(toggleTerminal);
+    // multiple-terminal-tabs follow-up: new-terminal always adds one more
+    // tab alongside whatever's already open (never replaces/targets an
+    // existing one) and switches to it -- the "additive" half of this
+    // follow-up, distinct from toggleTerminal above.
+    windowManager->SetOnNewTerminalRequest(
+        [&showTerminalTab, &addTerminalTab] { showTerminalTab(addTerminalTab()); });
 
     if (acpBottomDocked) {
         const std::size_t tabIndex = *acpTabIndex;
@@ -1581,7 +1682,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // the fixed tabs above, one of these is spawned lazily per name the
     // first time it's actually run, then reused (EnsureStarted() is a
     // no-op if already running, and respawns if the process exited --
-    // TerminalPanel's own existing contract) -- terminalPanel's own
+    // TerminalPanel's own existing contract) -- terminalTabs' own
     // shared_ptr/declared-after-eventLoop lifetime convention, so a fresh
     // TerminalPanel here owns its own real PtyProcess exactly the same way.
     auto runOrShowRepl = [&overlays, &panelDock, &replPanels, &replTabIndices, &theme, &eventLoop,
@@ -2052,7 +2153,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     });
     projectSidebar->SetOnContextMenuRequest(
         [&overlays, panel = &sidebarContextMenu, &sidebarContextMenuActions, wm = windowManager.get(),
-         terminal = terminalPanel.get()](const std::filesystem::path& path, bool isDirectory, ned::ui::Point anchor) {
+         &revealPathInTerminal](const std::filesystem::path& path, bool isDirectory, ned::ui::Point anchor) {
             ned::ui::ListPopupModel model;
             model.title  = isDirectory ? "Directory" : "File";
             model.anchor = anchor;
@@ -2068,14 +2169,15 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             addRow("New Folder...", [wm, targetDir] { wm->StartCreateDirectoryAt(targetDir); });
             addRow("Rename...", [wm, path] { wm->StartRenameFileAt(path); });
             addRow("Delete", [wm, path] { wm->StartDeleteFileAt(path); });
-            addRow("Reveal in Terminal", [terminal, &overlays, path] {
-                terminal->EnsureStarted();
-                if (!overlays.IsVisible(*terminal)) {
-                    overlays.Show(*terminal);
-                }
-                terminal->TakeFocus();
-                terminal->SendText("cd " + ned::editor::ShellQuoteSingle(path) + "\n");
-            });
+            // multiple-terminal-tabs follow-up: was cd'ing into `path`
+            // itself (a real bug for a file row -- `cd` onto a file just
+            // fails in the shell); `targetDir` is what every other row
+            // here already uses for "the directory this click implies",
+            // and revealPathInTerminal also fixes a stale bug where this
+            // used to call overlays.Show/IsVisible directly on the
+            // TerminalPanel, a no-op ever since PanelDock started owning
+            // its visibility (see revealPathInTerminal's own doc comment).
+            addRow("Reveal in Terminal", [&revealPathInTerminal, targetDir] { revealPathInTerminal(targetDir); });
             addRow("Copy Path", [path] { ned::editor::CopyToSystemClipboard(path.string()); });
 
             model.selectedIndex = 0;
@@ -2141,7 +2243,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
     });
     vcsPanel->SetOnContextMenuRequest(
-        [&overlays, panel = &vcsContextMenu, &vcsContextMenuActions, terminal = terminalPanel.get(),
+        [&overlays, panel = &vcsContextMenu, &vcsContextMenuActions, &revealPathInTerminal,
          vp = vcsPanel.get()](const ned::ui::VcsPanelContextMenuTarget& target, ned::ui::Point anchor) {
             ned::ui::ListPopupModel model;
             model.anchor = anchor;
@@ -2183,14 +2285,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                         });
                     }
                 }
-                addRow("Reveal in Terminal", [terminal, &overlays, path, isDirectory] {
-                    terminal->EnsureStarted();
-                    if (!overlays.IsVisible(*terminal)) {
-                        overlays.Show(*terminal);
-                    }
-                    terminal->TakeFocus();
+                addRow("Reveal in Terminal", [&revealPathInTerminal, path, isDirectory] {
                     const std::filesystem::path dir = isDirectory ? path : path.parent_path();
-                    terminal->SendText("cd " + ned::editor::ShellQuoteSingle(dir) + "\n");
+                    revealPathInTerminal(dir);
                 });
                 addRow("Copy Path", [path] { ned::editor::CopyToSystemClipboard(path.string()); });
             }

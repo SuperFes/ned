@@ -267,6 +267,13 @@ class WindowManager {
     // above this class entirely.
     void SetOnTerminalToggle(std::function<void()> onToggle);
 
+    // multiple-terminal-tabs follow-up: same "forwarded to every pane,
+    // present and future" shape as SetOnTerminalToggle immediately above --
+    // new-terminal can fire from whichever pane has focus, and the handler
+    // (main.cpp's, spawning one more terminal tab) lives above this class
+    // entirely.
+    void SetOnNewTerminalRequest(std::function<void()> onNewTerminal);
+
     // ACP chat panel: same "forwarded to every pane, present and future"
     // shape as SetOnTerminalToggle immediately above -- acp-toggle-panel can
     // fire from whichever pane has focus, and the handler (main.cpp's toggle
@@ -848,16 +855,17 @@ class WindowManager {
     editor::tasks::TaskRunner*        taskRunner_     = nullptr;
     editor::testrun::TestRunner*      testRunner_     = nullptr; // see SetTestRunner
     editor::vcs::VcsRunner*           vcsRunner_      = nullptr;
-    editor::dap::DapManager*          dapManager_     = nullptr; // see SetDapManager
-    editor::acp::AcpManager*          acpManager_     = nullptr; // see SetAcpManager
-    std::optional<std::string>        lastAcpAgentSeed_;         // see SetLastKnownAcpAgent
-    editor::ProjectUndoManager*       projectUndo_    = nullptr; // see SetProjectUndo
-    const janet::Environment*         janetEnv_       = nullptr; // see SetJanetEnvironment
-    EventLoop*                        eventLoop_      = nullptr; // see SetEventLoop
-    std::function<void(const Theme&)> themeApplier_;             // see SetThemeApplier
-    std::function<void()>             onTerminalToggle_;         // see SetOnTerminalToggle
-    std::function<void()>             onAcpPanelToggle_;         // see SetOnAcpPanelToggle
-    std::function<void()>             onAcpRewindRequest_;       // see SetOnAcpRewindRequest
+    editor::dap::DapManager*                           dapManager_     = nullptr; // see SetDapManager
+    editor::acp::AcpManager*                           acpManager_     = nullptr; // see SetAcpManager
+    std::optional<std::string>                         lastAcpAgentSeed_;         // see SetLastKnownAcpAgent
+    editor::ProjectUndoManager*                        projectUndo_ = nullptr;    // see SetProjectUndo
+    const janet::Environment*                          janetEnv_    = nullptr;    // see SetJanetEnvironment
+    EventLoop*                                         eventLoop_   = nullptr;    // see SetEventLoop
+    std::function<void(const Theme&)>                  themeApplier_;             // see SetThemeApplier
+    std::function<void()>                              onTerminalToggle_;         // see SetOnTerminalToggle
+    std::function<void()>                              onNewTerminalRequest_;     // see SetOnNewTerminalRequest
+    std::function<void()>                              onAcpPanelToggle_;         // see SetOnAcpPanelToggle
+    std::function<void()>                              onAcpRewindRequest_;       // see SetOnAcpRewindRequest
     std::function<bool()>             acpPanelFocused_;          // see SetAcpPanelFocusChecker
     std::function<void()>             onDapConsoleToggle_;       // see SetOnDapConsoleToggle
     std::function<void()>             onJanetReplToggle_;        // see SetOnJanetReplToggle

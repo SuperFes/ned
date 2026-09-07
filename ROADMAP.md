@@ -275,15 +275,17 @@ ring, dot-repeat count override, cross-file `A`-`Z` marks, magic-regex translati
 macro registers), DAP rounds 3-5 (attach mode, hit-count/function/exception breakpoints,
 restart-frame, breakpoint-line remapping, debug-console history + scrollback,
 disassembly/memory view, cross-restart breakpoint/watch persistence), snippet
-variables/choices/transforms/macro-replay, and bundled default snippets are all
-shipped — see `git log --grep=<topic>` for each (`terminal-panel-scrollback`,
-`jumplist-ring`, `changelist-ring`, `dot-repeat-count-override`, `vim-global-marks`,
-`vim-magic-translation`, `vim-macro-register`, `dap-round-3` through `dap-round-5`,
-`session-persistence-round-2`, `snippet-expansion-gaps`, `bundled-snippets`).
+variables/choices/transforms/macro-replay, bundled default snippets, and multiple
+concurrent terminal tabs (any number of embedded shells as uniform, closable `PanelDock`
+tabs — `new-terminal` on `C-c C-t` always adds one more alongside whatever's already
+open; `toggle-terminal` on `` C-` ``/`C-c t` targets whichever is first, creating one if
+none remain; `PanelDock`'s own tab strip gained TabBar-style wheel-scroll + `‹`/`›`
+overflow indicators as part of the same work) are all shipped — see `git log
+--grep=<topic>` for each (`terminal-panel-scrollback`, `jumplist-ring`, `changelist-ring`,
+`dot-repeat-count-override`, `vim-global-marks`, `vim-magic-translation`,
+`vim-macro-register`, `dap-round-3` through `dap-round-5`, `session-persistence-round-2`,
+`snippet-expansion-gaps`, `bundled-snippets`, `multiple-terminal-tabs`).
 
-- [ ] **Multiple terminal tabs/instances in `TerminalPanel`** — one embedded shell at a
-      time today; `PanelDock`'s tab strip switches between *different panel types*
-      (Terminal/ACP/Debug Console), not between multiple concurrent shells.
 - [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
       consumed by the panel itself (focus, scrollback ring); a TUI subprocess running
       inside it (e.g. `htop`, `vim`) never receives a forwarded mouse event.

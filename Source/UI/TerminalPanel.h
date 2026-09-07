@@ -156,6 +156,14 @@ class TerminalPanel : public Widget {
     // exact text this panel's own title row used to draw locally.
     [[nodiscard]] std::string TitleText() const;
 
+    // multiple-terminal-tabs follow-up: the plain base label passed to the
+    // constructor, with none of TitleText()'s state suffixes -- what
+    // main.cpp's uniquification ("Terminal", "Terminal <2>", ...) compares
+    // against when deciding a new tab's own label.
+    [[nodiscard]] const std::string& Label() const {
+        return label_;
+    }
+
     // Starts a search session over the combined scrollback+live-screen
     // text -- called from PanelDock's own tab-strip search icon (this tab's
     // one contributed extra action), public for that reason. See header
