@@ -806,12 +806,28 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     projectSidebar->SetOnBinaryFileOpenRequest(
         [wm = windowManager.get()](const std::filesystem::path& path) { wm->RequestOpenBinaryFile(path); });
 
+    // unified-left-dock follow-up (migration step 2): the widget now owning
+    // the left dock slot's border/width/collapse/resize-drag -- see
+    // LeftDock.h's own header comment. Only ProjectSidebar is registered so
+    // far; VcsPanel joins in step 3 (ROADMAP.md's own "Persistent left-side
+    // glyph rail for toggling panels" entry).
+    auto leftDock = std::make_shared<ned::ui::LeftDock>(theme);
+    leftDock->AddPanel(U'F', "Files", *projectSidebar);
+    windowManager->SetLeftDock(leftDock.get());
+
     // sidebar-keyboard-focus follow-up: Escape/C-g (or Enter opening a
     // file) hands the keyboard back to the focused pane's BufferView --
     // WindowManager::TakeFocus already handles the "no pane currently
     // reports Focused()" state this necessarily runs in (the sidebar holds
-    // focus at that moment) via its first-leaf fallback.
-    projectSidebar->SetOnFocusReturn([wm = windowManager.get()] { wm->TakeFocus(); });
+    // focus at that moment) via its first-leaf fallback. unified-left-dock
+    // follow-up: chained with LeftDock::NoteFocusReturned so a
+    // focus-project-sidebar visit that found the dock collapsed goes back
+    // to collapsed once focus leaves -- LeftDock::PrepareForKeyboardFocus's
+    // own pairing (see BufferView.cpp's FocusProjectSidebar handling).
+    projectSidebar->SetOnFocusReturn([wm = windowManager.get(), dock = leftDock.get()] {
+        wm->TakeFocus();
+        dock->NoteFocusReturned();
+    });
 
     // named-projects follow-up: a click on the sidebar's title row opens
     // the switch-project picker, the same effect C-c P s has.
@@ -819,15 +835,16 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
     // sidebar-width-memory follow-up: a committed divider drag becomes the
     // remembered global default width (read back a few lines below on the
-    // next launch).
-    projectSidebar->SetOnWidthCommitted(
+    // next launch). unified-left-dock follow-up: now LeftDock's own commit
+    // hook, not ProjectSidebar's (which has no width of its own anymore).
+    leftDock->SetOnWidthCommitted(
         [](int width) { ned::editor::SetVariable("sidebar-width", std::to_string(width)); });
 
     // ...and a deliberate open/close toggle becomes the remembered global
     // default visibility the same way (only user toggles commit -- see
     // SetOnCollapseCommitted's own comment for why C-c p's transient
     // expand never lands here).
-    projectSidebar->SetOnCollapseCommitted([](bool collapsed) {
+    leftDock->SetOnCollapseCommitted([](bool collapsed) {
         ned::editor::SetVariable("sidebar-visible", collapsed ? "false" : "true");
         if (!collapsed) {
             ned::editor::SetVariable("left-panel-active", "sidebar");
@@ -835,20 +852,20 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     });
 
     // sidebar-width-memory follow-up: the width the user last dragged the
-    // divider to, remembered globally (ProjectSidebar::EndResize writes it
+    // divider to, remembered globally (LeftDock::EndResize writes it
     // through variables.json). Applied before the session block below on
     // purpose -- a project session's own per-project width is the more
     // specific fact and wins by overwriting this one.
     if (const auto rememberedWidth = ned::editor::Variable("sidebar-width")) {
         try {
-            projectSidebar->SetWidth(std::stoi(*rememberedWidth));
+            leftDock->SetWidth(std::stoi(*rememberedWidth));
         }
         catch (const std::exception&) {
             // Malformed state (hand-edited variables.json) -- keep the default.
         }
     }
     if (const auto rememberedVisible = ned::editor::Variable("sidebar-visible")) {
-        projectSidebar->SetCollapsed(*rememberedVisible == "false");
+        leftDock->SetCollapsed(*rememberedVisible == "false");
     }
 
     // session-persistence slice 2: the restored session's sidebar state.
@@ -860,10 +877,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             // now, not Widget::active (see ProjectSidebar.h) -- the stored
             // bool's meaning is unchanged, so old session files restore
             // correctly.
-            projectSidebar->SetCollapsed(!*restoredSession->sidebarVisible);
+            leftDock->SetCollapsed(!*restoredSession->sidebarVisible);
         }
         if (restoredSession->sidebarWidth) {
-            projectSidebar->SetWidth(*restoredSession->sidebarWidth);
+            leftDock->SetWidth(*restoredSession->sidebarWidth);
         }
     }
 
@@ -921,20 +938,20 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         vcsPanel->SetCollapsed(true);
     }
 
-    // vcs-diff-preview-and-two-left-bars fix: the two blocks above each
-    // restore their own collapsed state from their own independently
-    // persisted variable, and a toggle's mutual-exclusion side effect on
-    // the *other* panel (BufferView.cpp's ToggleProjectSidebar/
-    // ToggleVcsPanel) is deliberately silent/non-persisting so it never
-    // clobbers that panel's own remembered preference. That means both
-    // "visible" flags can be true at once on disk (e.g. after opening the
-    // VCS panel without ever explicitly closing the sidebar again) --
-    // enforce the same one-at-a-time invariant here too, tie-broken by
-    // whichever was more recently opened (also silent, for the same
-    // clobber-avoidance reason).
-    if (!projectSidebar->Collapsed() && !vcsPanel->Collapsed()) {
+    // vcs-diff-preview-and-two-left-bars fix, unified-left-dock follow-up:
+    // the two blocks above each restore their own collapsed state from
+    // their own independently persisted variable, and a toggle's mutual-
+    // exclusion side effect on the *other* panel (BufferView.cpp's
+    // ToggleProjectSidebar/ToggleVcsPanel) is deliberately silent/non-
+    // persisting so it never clobbers that panel's own remembered
+    // preference. That means both "visible" flags can be true at once on
+    // disk (e.g. after opening the VCS panel without ever explicitly
+    // closing the sidebar again) -- enforce the same one-at-a-time
+    // invariant here too, tie-broken by whichever was more recently opened
+    // (also silent, for the same clobber-avoidance reason).
+    if (!leftDock->Collapsed() && !vcsPanel->Collapsed()) {
         if (ned::editor::Variable("left-panel-active") == "vcs") {
-            projectSidebar->SetCollapsed(true);
+            leftDock->SetCollapsed(true);
         }
         else {
             vcsPanel->SetCollapsed(true);
@@ -981,7 +998,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                                          });
 
     Container bufferRow(Axis::Horizontal, {
-                                              {projectSidebar.get(), SizeSpec::DynamicFixed([raw = projectSidebar.get()] { return raw->Width(); })},
+                                              {leftDock.get(), SizeSpec::DynamicFixed([raw = leftDock.get()] { return raw->Width(); })},
                                               {vcsPanel.get(), SizeSpec::DynamicFixed([raw = vcsPanel.get()] { return raw->Width(); })},
                                               {&mainColumn, SizeSpec::Flex()},
                                           });

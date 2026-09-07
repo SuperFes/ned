@@ -8037,10 +8037,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             statusMessage_ = projectReplace_->StatusText();
             return;
         case editor::InteractiveRequest::ToggleProjectSidebar:
-            // Chrome-redesign follow-up: hiding is a *collapse* now (the
-            // sidebar stays active and paints a 1-column strip so the
-            // double-click-to-expand affordance never vanishes -- see
-            // ProjectSidebar.h), not a Widget::active flip.
+            // unified-left-dock follow-up (migration step 2): hiding/
+            // showing the sidebar is now LeftDock's own collapse, not a
+            // Widget::active flip or ProjectSidebar's own former state.
             // VCS side panel follow-up: expanding the sidebar collapses
             // vcsPanel_ first (plain SetCollapsed, not a committing
             // CommitCollapsed -- this is a side effect of the *sidebar's*
@@ -8048,18 +8047,18 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // overwrite vcsPanel_'s own persisted visibility preference) --
             // see SetVcsPanel's own doc comment for why the two stay
             // mutually exclusive on the shared left dock slot.
-            if (projectSidebar_ != nullptr) {
-                if (projectSidebar_->Collapsed() && vcsPanel_ != nullptr) {
+            if (leftDock_ != nullptr) {
+                if (leftDock_->Collapsed() && vcsPanel_ != nullptr) {
                     vcsPanel_->SetCollapsed(true);
                 }
-                projectSidebar_->ToggleCollapsed();
+                leftDock_->ToggleCollapsed();
             }
             return;
         case editor::InteractiveRequest::ToggleVcsPanel:
             // Same shape as ToggleProjectSidebar above, mirrored.
             if (vcsPanel_ != nullptr) {
-                if (vcsPanel_->Collapsed() && projectSidebar_ != nullptr) {
-                    projectSidebar_->SetCollapsed(true);
+                if (vcsPanel_->Collapsed() && leftDock_ != nullptr) {
+                    leftDock_->SetCollapsed(true);
                 }
                 vcsPanel_->ToggleCollapsed();
             }
@@ -8097,25 +8096,29 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             return;
         case editor::InteractiveRequest::FocusProjectSidebar:
-            // sidebar-keyboard-focus follow-up: expands if collapsed (focus
-            // into an invisible tree would be meaningless) and hands over
-            // the keyboard -- ProjectSidebar's own OnEvent drives the
-            // selection until it returns focus, re-collapsing then if it
-            // was collapsed on entry (see TakeKeyboardFocus's own comment).
+            // sidebar-keyboard-focus follow-up, unified-left-dock follow-up
+            // (migration step 2): LeftDock::PrepareForKeyboardFocus expands
+            // the dock if collapsed (focus into an invisible tree would be
+            // meaningless) and remembers to re-collapse on return -- see
+            // that method's own doc comment; ProjectSidebar's own OnEvent
+            // still drives the selection until it returns focus.
             // VCS side panel follow-up: same mutual-exclusion side effect
             // ToggleProjectSidebar above applies.
-            if (projectSidebar_ != nullptr) {
-                if (projectSidebar_->Collapsed() && vcsPanel_ != nullptr) {
+            if (leftDock_ != nullptr && projectSidebar_ != nullptr) {
+                if (leftDock_->Collapsed() && vcsPanel_ != nullptr) {
                     vcsPanel_->SetCollapsed(true);
                 }
-                projectSidebar_->TakeKeyboardFocus();
+                leftDock_->PrepareForKeyboardFocus();
+                projectSidebar_->TakeFocus();
             }
             return;
         case editor::InteractiveRequest::FocusVcsPanel:
-            // Same shape as FocusProjectSidebar above, mirrored.
+            // Same shape as FocusProjectSidebar above, mirrored -- VcsPanel
+            // still owns its own chrome/TakeKeyboardFocus (step 3 of the
+            // ROADMAP migration retires this side, not yet done).
             if (vcsPanel_ != nullptr) {
-                if (vcsPanel_->Collapsed() && projectSidebar_ != nullptr) {
-                    projectSidebar_->SetCollapsed(true);
+                if (vcsPanel_->Collapsed() && leftDock_ != nullptr) {
+                    leftDock_->SetCollapsed(true);
                 }
                 vcsPanel_->TakeKeyboardFocus();
             }
@@ -13415,18 +13418,20 @@ bool BufferView::OnMouseEvent(const Event& event) {
         DismissHover();
     }
 
-    // A growing sidebar-resize drag (round-2 sidebar follow-up) can deliver
-    // move/release events while the cursor is over BufferView, not
-    // ProjectSidebar itself -- checked first, regardless of position (every
-    // leaf widget receives every mouse event; see Widget.h's own header
-    // comment), taking priority over BufferView's own handling.
-    if (projectSidebar_ != nullptr && projectSidebar_->IsResizing()) {
+    // A growing sidebar-resize drag (round-2 sidebar follow-up; unified-
+    // left-dock follow-up: the resize divider is LeftDock's now, not
+    // ProjectSidebar's own) can deliver move/release events while the
+    // cursor is over BufferView, not LeftDock itself -- checked first,
+    // regardless of position (every leaf widget receives every mouse
+    // event; see Widget.h's own header comment), taking priority over
+    // BufferView's own handling.
+    if (leftDock_ != nullptr && leftDock_->IsResizing()) {
         if (rawMouse.motion == MouseEvent::Motion::Moved) {
-            projectSidebar_->UpdateResize(rawMouse.at.x);
+            leftDock_->UpdateResize(rawMouse.at.x);
             return true;
         }
         if (rawMouse.motion == MouseEvent::Motion::Released) {
-            projectSidebar_->EndResize();
+            leftDock_->EndResize();
             return true;
         }
     }
@@ -15963,6 +15968,10 @@ void BufferView::SetScrollArrows(ScrollArrowButton* up, ScrollArrowButton* down)
 
 void BufferView::SetProjectSidebar(ProjectSidebar* sidebar) {
     projectSidebar_ = sidebar;
+}
+
+void BufferView::SetLeftDock(LeftDock* dock) {
+    leftDock_ = dock;
 }
 
 void BufferView::SetVcsPanel(VcsPanel* panel) {

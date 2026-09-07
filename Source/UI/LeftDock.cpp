@@ -92,11 +92,35 @@ void LeftDock::SetCollapsed(bool collapsed) {
     if (collapsed_ && resizing_) {
         EndResize(); // a resize session can't meaningfully outlive the frame it was resizing
     }
+    if (collapsed_) {
+        // Collapsing while the active panel's own content widget holds
+        // keyboard focus would otherwise leave the keyboard captured by
+        // something nothing can see or reach anymore -- Widget::
+        // OnFocusPreempted's own doc comment. Checked on every collapse,
+        // not just a genuine expanded->collapsed transition, matching
+        // ProjectSidebar's own former SetCollapsed(true) precedent.
+        if (Widget* content = ActiveContent(); content != nullptr && content->Focused()) {
+            content->OnFocusPreempted();
+        }
+    }
     RepositionActiveContent(); // no-op while still collapsed; re-establishes the box on expand
 }
 
 void LeftDock::ToggleCollapsed() {
     CommitCollapsed(!collapsed_);
+}
+
+void LeftDock::PrepareForKeyboardFocus() {
+    collapseOnFocusReturn_ = collapsed_;
+    SetCollapsed(false);
+}
+
+void LeftDock::NoteFocusReturned() {
+    const bool recollapse  = collapseOnFocusReturn_;
+    collapseOnFocusReturn_ = false;
+    if (recollapse) {
+        SetCollapsed(true);
+    }
 }
 
 void LeftDock::CommitCollapsed(bool collapsed) {

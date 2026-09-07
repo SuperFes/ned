@@ -36,19 +36,9 @@ namespace {
     constexpr char32_t kCollapsedTriangle = U'▸';
     constexpr char32_t kExpandedTriangle  = U'▾';
 
-    // A floor on drag-resized width, not a real design limit -- just enough
-    // to keep the divider itself and a sliver of content visible so the
-    // handle never becomes unreachable. There's no matching hard ceiling:
-    // the containing composition's own layout naturally shrinks an
-    // over-large request back down to whatever the terminal actually has.
-    constexpr int kMinSidebarWidth = 4;
-
-    // sidebar-header follow-up: row 0 is always the project-name header
-    // (the title-carrying top border row since the chrome redesign), never
-    // tree content -- see ProjectSidebar::Paint's own comment. The bottom
-    // border row is the matching cut at the other end (ContentHeight()).
-    constexpr int kHeaderHeight       = 1;
-    constexpr int kBottomBorderHeight = 1;
+    // sidebar-header follow-up: row 0 is always the project-name header,
+    // never tree content -- see ProjectSidebar::Paint's own comment.
+    constexpr int kHeaderHeight = 1;
 
     // See CachedTree()'s own comment (ProjectSidebar.h) for why this exists
     // at all. 500ms is a deliberately unscientific pick -- fast enough that
@@ -286,73 +276,14 @@ std::vector<editor::ProjectTreeEntry> ProjectSidebar::VisibleEntries(const std::
     return visible;
 }
 
-int ProjectSidebar::Width() const {
-    // Collapsed reports the 1-column strip; width_ itself is preserved so
-    // expanding restores the previous width exactly (see Collapsed()).
-    return collapsed_ ? 1 : width_;
-}
-
-void ProjectSidebar::SetWidth(int width) {
-    width_ = std::max(kMinSidebarWidth, width);
-}
-
-bool ProjectSidebar::Collapsed() const {
-    return collapsed_;
-}
-
-void ProjectSidebar::SetCollapsed(bool collapsed) {
-    collapsed_ = collapsed;
-    if (collapsed_ && resizing_) {
-        EndResize(); // a resize session can't meaningfully outlive the frame it was resizing
-    }
-    if (collapsed_ && Focused() && onFocusReturn_) {
-        // Collapsing a keyboard-focused sidebar (C-c C-p while inside it)
-        // would leave the keyboard captured by a 1-column strip -- hand
-        // focus back to the editor instead. An explicit collapse already
-        // lands on the state a pending TakeKeyboardFocus restore would
-        // recreate, so the flag is spent here too.
-        collapseOnFocusReturn_ = false;
-        onFocusReturn_();
-    }
-}
-
-void ProjectSidebar::TakeKeyboardFocus() {
-    collapseOnFocusReturn_ = collapsed_;
-    SetCollapsed(false);
-    TakeFocus();
-}
-
 void ProjectSidebar::ReturnFocus() {
-    // Hand focus back *before* re-collapsing: once Focused() is false,
-    // SetCollapsed(true)'s own captured-keyboard branch (above) can't fire
-    // onFocusReturn_ a second time.
-    const bool recollapse  = collapseOnFocusReturn_;
-    collapseOnFocusReturn_ = false;
     if (onFocusReturn_) {
         onFocusReturn_();
     }
-    if (recollapse) {
-        SetCollapsed(true);
-    }
-}
-
-void ProjectSidebar::ToggleCollapsed() {
-    CommitCollapsed(!collapsed_);
-}
-
-void ProjectSidebar::CommitCollapsed(bool collapsed) {
-    SetCollapsed(collapsed);
-    if (onCollapseCommitted_) {
-        onCollapseCommitted_(collapsed_);
-    }
-}
-
-int ProjectSidebar::ExpandedWidth() const {
-    return width_;
 }
 
 int ProjectSidebar::ContentHeight() const {
-    return std::max(0, size().height - kHeaderHeight - kBottomBorderHeight);
+    return std::max(0, size().height - kHeaderHeight);
 }
 
 const std::vector<editor::ProjectTreeEntry>& ProjectSidebar::CachedTree() {
@@ -418,14 +349,6 @@ void ProjectSidebar::SetOnHeaderClicked(std::function<void()> handler) {
     onHeaderClicked_ = std::move(handler);
 }
 
-void ProjectSidebar::SetOnWidthCommitted(std::function<void(int)> handler) {
-    onWidthCommitted_ = std::move(handler);
-}
-
-void ProjectSidebar::SetOnCollapseCommitted(std::function<void(bool)> handler) {
-    onCollapseCommitted_ = std::move(handler);
-}
-
 void ProjectSidebar::Paint(Canvas c) {
     // generic-popup follow-up (Phase 3): reset the *whole* Brush here, not
     // just background_color -- an overlay (ListPopup's candidate/which-key
@@ -447,40 +370,23 @@ void ProjectSidebar::Paint(Canvas c) {
         }
     }
 
-    // Collapsed (chrome-redesign follow-up): a single border-column strip
-    // with an accent hint glyph on the header row -- the always-visible
-    // mouse affordance that replaced the separate SidebarToggle widget
-    // (double-click expands; see OnEvent).
-    if (collapsed_) {
-        const std::string line = text::EncodeCodepointUtf8(U'│');
-        for (int row = 0; row < c.size().height; ++row) {
-            Cell& cell     = c[{.x = 0, .y = row}];
-            cell.character = line;
-            theme_.border.ApplyTo(cell);
-        }
-        Cell& hint     = c[{.x = 0, .y = 0}];
-        hint.character = text::EncodeCodepointUtf8(kCollapsedTriangle);
-        theme_.borderAccent.ApplyTo(hint);
-        return;
+    // unified-left-dock follow-up: row 0 is this widget's own header --
+    // the live project name, click-to-switch-project (see this file's own
+    // header comment for why that's an ordinary content row now rather than
+    // a border title: LeftDock's own per-panel border title is a fixed
+    // label, with no way to express a value that changes at runtime). The
+    // accent tint while Focused() is the same "this has your attention"
+    // signal the old border-accent frame gave; there's no frame to tint
+    // anymore, so just this row carries it.
+    const Brush headerBrush = Focused() ? theme_.borderAccent : theme_.tabBar;
+    for (int col = 0; col < c.size().width; ++col) {
+        headerBrush.ApplyTo(c[{.x = col, .y = 0}]);
     }
+    PaintUtf8Row(c, 0, 0, ProjectNameLabel(), headerBrush, c.size().width);
 
-    // The rounded frame (chrome-redesign follow-up): row 0 carries the
-    // project name as the header title (sidebar-header follow-up --
-    // main.cpp's composition gives ProjectSidebar the rows tabBar used to
-    // span, so this top edge sits beside the tab-label row), the right
-    // border column doubles as the resize divider, and the whole frame
-    // takes the accent brush while a drag is live -- the same "show it's
-    // grabbed" feedback a real window-manager resize handle gives -- or
-    // while this widget holds the keyboard focus (sidebar-keyboard-focus
-    // follow-up), the same accent-frame signal doing double duty.
-    const Brush frameBrush = (resizing_ || Focused()) ? theme_.borderAccent : theme_.border;
-    DrawBorder(c, frameBrush);
-    DrawBorderTitle(c, ProjectNameLabel(), theme_.borderAccent);
-
-    // Content renders inside the frame: rows [kHeaderHeight,
-    // height - 1 - kBottomBorderHeight], columns [1, width - 2].
-    const int contentLeft     = 1;
-    const int contentColumns  = std::max(0, c.size().width - 2);
+    // Content fills every row below the header, full width -- no border
+    // margin to inset for anymore.
+    const int contentColumns = c.size().width;
 
     const std::vector<editor::ProjectTreeEntry> entries    = VisibleEntries(CachedTree());
     const std::optional<std::filesystem::path>& activePath = activeBufferProvider_().Get().Path();
@@ -521,14 +427,14 @@ void ProjectSidebar::Paint(Canvas c) {
                                                                                     : theme_.defaultForeground)};
         if (isSelected) {
             brush.background = theme_.selectionBackground;
-            for (int x = contentLeft; x < contentLeft + contentColumns; ++x) {
+            for (int x = 0; x < contentColumns; ++x) {
                 c[{.x = x, .y = row}].background_color = theme_.selectionBackground;
             }
         }
 
         const std::u32string label = BuildLabel(entries, *index, expandedDirs_);
         for (std::size_t i = 0; i < label.size() && static_cast<int>(i) < contentColumns; ++i) {
-            Cell& cell     = c[{.x = contentLeft + static_cast<int>(i), .y = row}];
+            Cell& cell     = c[{.x = static_cast<int>(i), .y = row}];
             cell.character = text::EncodeCodepointUtf8(label[i]);
             brush.ApplyTo(cell);
         }
@@ -546,38 +452,9 @@ bool ProjectSidebar::OnEvent(const Event& event) {
         }
         return HandleKeyEvent(event);
     }
-    const MouseEvent rawMouse = event.mouse();
-
-    if (rawMouse.motion == MouseEvent::Motion::Moved && resizing_) {
-        UpdateResize(rawMouse.at.x);
-        return true;
-    }
-    if (rawMouse.motion == MouseEvent::Motion::Released && resizing_) {
-        EndResize();
-        return true;
-    }
-
     const auto mouse = LocalMouseEvent(event);
     if (!mouse) {
         return false;
-    }
-
-    // Collapsed (chrome-redesign follow-up): the whole 1-column strip is
-    // the divider -- a double-press expands, anything else is consumed but
-    // inert (there's no content to scroll or click).
-    if (collapsed_) {
-        if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
-            const auto now = std::chrono::steady_clock::now();
-            if (dividerClickPending_ && (now - lastDividerPressTime_) < kDoubleClickWindow) {
-                dividerClickPending_ = false;
-                CommitCollapsed(false);
-            }
-            else {
-                dividerClickPending_  = true;
-                lastDividerPressTime_ = now;
-            }
-        }
-        return true;
     }
 
     if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {
@@ -600,22 +477,22 @@ bool ProjectSidebar::OnEvent(const Event& event) {
     // above already handled it) -- clear the armed drag with no drop
     // action. A release landing on a BufferView pane instead is handled
     // there (see that widget's own OnMouseEvent, checked ahead of its
-    // LocalMouseEvent gate the same way it already checks IsResizing()).
+    // LocalMouseEvent gate the same way it already checks
+    // LeftDock::IsResizing()).
     if (dragPath_ && mouse->motion == MouseEvent::Motion::Released) {
         dragPath_.reset();
         return true;
     }
 
     // sidebar-context-menu follow-up: a right-press resolves to the same
-    // row a left-press would (chrome rows -- header/bottom-border/divider --
-    // are excluded the same way, no menu opens over them), reports the
-    // entry's path/isDirectory plus the click's absolute screen position,
-    // and stops there -- unlike a left click, this never toggles a
-    // directory or opens a file; building/showing the actual popup is
-    // main.cpp's job (TabBar::SetOnContextMenuRequest's own shape).
+    // row a left-press would (the header row is excluded the same way, no
+    // menu opens over it), reports the entry's path/isDirectory plus the
+    // click's absolute screen position, and stops there -- unlike a left
+    // click, this never toggles a directory or opens a file; building/
+    // showing the actual popup is main.cpp's job (TabBar::
+    // SetOnContextMenuRequest's own shape).
     if (mouse->button == MouseEvent::Button::Right && mouse->motion == MouseEvent::Motion::Pressed) {
-        if (onContextMenuRequest_ && mouse->at.x != size().width - 1 && mouse->at.y >= kHeaderHeight &&
-            mouse->at.y < size().height - kBottomBorderHeight) {
+        if (onContextMenuRequest_ && mouse->at.y >= kHeaderHeight) {
             const std::vector<editor::ProjectTreeEntry> entries = VisibleEntries(CachedTree());
             if (!entries.empty()) {
                 const RowLayout                  layout = ComputeRowLayout(entries, scrollOffset_);
@@ -637,41 +514,19 @@ bool ProjectSidebar::OnEvent(const Event& event) {
         return false;
     }
 
-    if (mouse->at.x == size().width - 1) {
-        // The right border column is the divider: a second press within the
-        // double-click window collapses (the just-started resize session
-        // from the first press dies with it via SetCollapsed); a single
-        // press starts a resize session as always. A real drag clears the
-        // pending double-click -- see UpdateResize.
-        const auto now = std::chrono::steady_clock::now();
-        if (dividerClickPending_ && (now - lastDividerPressTime_) < kDoubleClickWindow) {
-            dividerClickPending_ = false;
-            CommitCollapsed(true);
-            return true;
-        }
-        dividerClickPending_  = true;
-        lastDividerPressTime_ = now;
-        BeginResize(rawMouse.at.x);
-        return true;
-    }
-
     if (mouse->at.y < kHeaderHeight) {
-        // Header row (the title-carrying top border) -- consuming the click
-        // here (rather than falling through to tree hit-testing below,
-        // which a naive row-0 entry would otherwise resolve to) is what
-        // keeps this the project-settings hook point. named-projects
-        // follow-up: that hook point now exists -- a click here fires
-        // switch-project the same way a keybinding would. Already gated
-        // above to a real left-button press, so this fires exactly once
-        // per click, no separate press/release bookkeeping needed.
+        // Header row -- consuming the click here (rather than falling
+        // through to tree hit-testing below, which a naive row-0 entry
+        // would otherwise resolve to) is what keeps this the
+        // project-settings hook point. named-projects follow-up: that hook
+        // point now exists -- a click here fires switch-project the same
+        // way a keybinding would. Already gated above to a real
+        // left-button press, so this fires exactly once per click, no
+        // separate press/release bookkeeping needed.
         if (onHeaderClicked_) {
             onHeaderClicked_();
         }
         return true;
-    }
-
-    if (mouse->at.y >= size().height - kBottomBorderHeight) {
-        return true; // bottom border row -- chrome, not content
     }
 
     const std::vector<editor::ProjectTreeEntry> entries = VisibleEntries(CachedTree());
@@ -877,63 +732,6 @@ bool ProjectSidebar::HandleKeyEvent(const Event& event) {
     return true; // every other key is consumed while this widget holds focus
 }
 
-bool ProjectSidebar::IsResizing() const {
-    return resizing_;
-}
-
-void ProjectSidebar::BeginResize(int globalMouseX) {
-    resizing_            = true;
-    resizeAnchorGlobalX_ = globalMouseX;
-    // Anchored to size().width (the box this widget is actually currently
-    // rendered at), not the internal width_ field directly: main.cpp's
-    // composition root reads Width() fresh every frame to size the box (see
-    // this class's own header comment), so in real, running-editor usage
-    // the two always agree by the time a drag could ever start. They can
-    // disagree for exactly one frame at startup, or whenever a caller
-    // constructs this widget and calls SetBox_ directly without going
-    // through that same per-frame feedback loop first (every unit test) --
-    // anchoring on width_ in that case silently resized from a stale value
-    // instead of wherever the divider visually was, a real, confirmed bug
-    // (not just a test-affecting one: the same staleness would apply to the
-    // very first resize drag after startup, before Width() has been read by
-    // the composition root even once).
-    resizeAnchorWidth_ = size().width;
-    resizeStartWidth_  = width_;
-}
-
-void ProjectSidebar::UpdateResize(int globalMouseX) {
-    // Anchored to the drag's total displacement from its start, not applied
-    // as a per-event delta: a move fires once per real cursor movement, and
-    // once a growing drag crosses into BufferView's territory this and
-    // BufferView's own OnEvent both feed the same session, so there's no
-    // single, consistent "previous event" to diff against across the
-    // handoff. Recomputing from the fixed start point each time sidesteps
-    // that entirely.
-    const int delta = globalMouseX - resizeAnchorGlobalX_;
-    width_          = std::max(kMinSidebarWidth, resizeAnchorWidth_ + delta);
-    if (delta < -1 || delta > 1) {
-        // A real drag, not a slightly-wobbly click -- stop it counting as
-        // the first half of a collapse double-click (see OnEvent).
-        dividerClickPending_ = false;
-    }
-}
-
-void ProjectSidebar::EndResize() {
-    if (!resizing_) {
-        return;
-    }
-    resizing_ = false;
-    // sidebar-width-memory follow-up: a committed drag that actually moved
-    // the divider reports the new width; main.cpp wires this to
-    // editor::SetVariable so it persists as the global default width for
-    // future runs (a project session's own stored width still wins at
-    // startup). A divider click that never moved reports nothing, and the
-    // hook stays a policy-free callback so unit-test drags never touch the
-    // real variables.json.
-    if (width_ != resizeStartWidth_ && onWidthCommitted_) {
-        onWidthCommitted_(width_);
-    }
-}
 
 std::optional<std::filesystem::path> ProjectSidebar::DraggingFilePath() const {
     return dragPath_;

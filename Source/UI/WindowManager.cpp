@@ -518,9 +518,11 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
     pane->SetEventLoop(eventLoop_);
-    // VCS side panel: not threaded through the Pane constructor's own
-    // parameter list like projectSidebar_ above -- wired post-construction
-    // here instead, same as every other Set*-hook forward below.
+    // unified-left-dock follow-up, VCS side panel: neither threaded through
+    // the Pane constructor's own parameter list like projectSidebar_ above
+    // -- wired post-construction here instead, same as every other
+    // Set*-hook forward below.
+    pane->Buffer().SetLeftDock(leftDock_);
     pane->Buffer().SetVcsPanel(vcsPanel_);
     pane->Buffer().SetThemeApplier(themeApplier_);
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
@@ -551,6 +553,13 @@ void WindowManager::SetProjectSidebar(ProjectSidebar* sidebar) {
     projectSidebar_ = sidebar;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetProjectSidebar(sidebar);
+    }
+}
+
+void WindowManager::SetLeftDock(LeftDock* dock) {
+    leftDock_ = dock;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetLeftDock(dock);
     }
 }
 
@@ -1278,13 +1287,14 @@ void WindowManager::SaveProjectSessionNow() {
         data.activeFile = std::filesystem::absolute(*activePath);
     }
 
-    if (projectSidebar_ != nullptr) {
-        // Chrome-redesign follow-up: the stored visibility bool now maps
-        // onto the collapse state (active stays permanently true), and the
-        // stored width is the real expanded width, not the 1-column strip
+    if (leftDock_ != nullptr) {
+        // Chrome-redesign follow-up, unified-left-dock follow-up (migration
+        // step 2): the stored visibility bool maps onto LeftDock's own
+        // collapse state now (ProjectSidebar itself has none anymore), and
+        // the stored width is the real expanded width, not the rail-only
         // Width() reports while collapsed.
-        data.sidebarVisible = !projectSidebar_->Collapsed();
-        data.sidebarWidth   = projectSidebar_->ExpandedWidth();
+        data.sidebarVisible = !leftDock_->Collapsed();
+        data.sidebarWidth   = leftDock_->ExpandedWidth();
     }
 
     if (dapManager_ != nullptr) {
