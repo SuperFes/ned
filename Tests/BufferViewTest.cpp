@@ -5792,17 +5792,18 @@ TEST_CASE("C-c C-p toggles the registered project sidebar's collapse state", "[B
     ned::ui::ProjectSidebar sidebar(
         [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
         fixture.theme);
-    REQUIRE_FALSE(sidebar.Collapsed()); // starts expanded
-    view.SetProjectSidebar(&sidebar);
+    ned::ui::LeftDock dock(fixture.theme);
+    dock.AddPanel(U'F', "Files", sidebar);
+    REQUIRE_FALSE(dock.Collapsed()); // starts expanded
+    view.SetLeftDock(&dock);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('p'));
-    REQUIRE(sidebar.Collapsed());
-    REQUIRE(sidebar.active); // chrome redesign: hiding collapses to a strip, never deactivates
+    REQUIRE(dock.Collapsed());
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('p'));
-    REQUIRE_FALSE(sidebar.Collapsed());
+    REQUIRE_FALSE(dock.Collapsed());
 }
 
 TEST_CASE("C-c p expands the sidebar if needed and hands it the keyboard focus", "[BufferView]") {
@@ -5813,14 +5814,17 @@ TEST_CASE("C-c p expands the sidebar if needed and hands it the keyboard focus",
     ned::ui::ProjectSidebar sidebar(
         [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
         fixture.theme);
-    sidebar.SetCollapsed(true);
+    ned::ui::LeftDock dock(fixture.theme);
+    dock.AddPanel(U'F', "Files", sidebar);
+    dock.SetCollapsed(true);
     view.SetProjectSidebar(&sidebar);
+    view.SetLeftDock(&dock);
     view.TakeFocus();
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Character("p"));
 
-    REQUIRE_FALSE(sidebar.Collapsed()); // focusing an invisible tree would be meaningless
+    REQUIRE_FALSE(dock.Collapsed()); // focusing an invisible tree would be meaningless
     REQUIRE(sidebar.Focused());
 }
 
@@ -5830,34 +5834,36 @@ TEST_CASE("A growing sidebar resize drag hands off to BufferView's mouse_move/mo
     ned::ui::ProjectSidebar sidebar(
         [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
         fixture.theme);
+    ned::ui::LeftDock dock(fixture.theme);
+    dock.AddPanel(U'F', "Files", sidebar);
     ned::ui::BufferView view = fixture.View();
 
     // Placed directly via SetBox_ side by side, mirroring what main.cpp's own
-    // Row{ProjectSidebar, BufferView, ...} composition achieves every frame.
-    // The sidebar's box width matches its own starting Width() so the
-    // divider column (derived from the box) and the resize anchor
-    // (BeginResize captures the internal width_ field) agree, the same
-    // invariant main.cpp's real per-frame relayout maintains.
-    const int startWidth = sidebar.Width();
-    sidebar.SetBox_(ned::ui::Box{.x_min = 0, .x_max = startWidth - 1, .y_min = 0, .y_max = 2});
+    // bufferRow{LeftDock, BufferView, ...} composition achieves every frame.
+    // The dock's box width matches its own starting Width() so the divider
+    // column (derived from the box) and the resize anchor (BeginResize
+    // captures size().width) agree, the same invariant main.cpp's real
+    // per-frame relayout maintains.
+    const int startWidth = dock.Width();
+    dock.SetBox_(ned::ui::Box{.x_min = 0, .x_max = startWidth - 1, .y_min = 0, .y_max = 2});
     view.SetBox_(ned::ui::Box{.x_min = startWidth, .x_max = startWidth + 39, .y_min = 0, .y_max = 2});
 
-    view.SetProjectSidebar(&sidebar);
+    view.SetLeftDock(&dock);
 
-    sidebar.OnEvent(MousePress(startWidth - 1, 0)); // divider column
-    REQUIRE(sidebar.IsResizing());
+    dock.OnEvent(MousePress(startWidth - 1, 0)); // divider column
+    REQUIRE(dock.IsResizing());
 
     // The cursor has moved 5 columns into BufferView's own territory -- with
     // no mouse-capture (every mouse event is delivered to every leaf widget
     // regardless of position; see Widget.h's own header comment), this event
-    // is hit-tested to BufferView, not ProjectSidebar, purely because view's
-    // own box starts where sidebar's box ends.
+    // is hit-tested to BufferView, not LeftDock, purely because view's own
+    // box starts where dock's box ends.
     view.OnEvent(MouseMove(startWidth + 5, 0));
 
-    REQUIRE(sidebar.Width() == startWidth + 6); // grew by (startWidth + 5) - (startWidth - 1) == 6
+    REQUIRE(dock.Width() == startWidth + 6); // grew by (startWidth + 5) - (startWidth - 1) == 6
 
     view.OnEvent(MouseRelease(startWidth + 5, 0));
-    REQUIRE_FALSE(sidebar.IsResizing());
+    REQUIRE_FALSE(dock.IsResizing());
 }
 
 TEST_CASE("A file dragged from ProjectSidebar and released over BufferView opens it there", "[BufferView]") {

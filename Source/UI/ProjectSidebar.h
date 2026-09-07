@@ -29,34 +29,23 @@
 // .cpp. No keyboard interaction is still a v1 scope cut, not an oversight;
 // see ROADMAP.md.
 //
-// Chrome-redesign follow-up: the whole widget is framed by a rounded
-// border (Border.h) with the project name embedded in the top edge as the
-// header -- row 0 (the title row) and the bottom row are border, tree
-// content lives in rows [1, height-2] and columns [1, width-2]. The right
-// border column doubles as the resize divider (below) and its whole frame
-// takes the accent brush while a drag is live. Hiding/showing is a
-// *collapse* now, not Widget::active (which stays permanently true): while
-// Collapsed(), Width() reports 1 and Paint() draws a single border-column
-// strip with an accent hint glyph, so a mouse affordance to reopen never
-// vanishes -- this is what replaced the separate SidebarToggle widget.
-// Double-clicking the divider/strip toggles the collapse (same
-// kDoubleClickWindow timer file rows already use); C-c C-p
-// (toggle-project-sidebar) does the same from the keyboard via
-// ToggleCollapsed().
+// unified-left-dock follow-up (migration step 2): this widget no longer
+// owns a border, width, or collapse-to-a-strip state of its own -- it's now
+// a plain content view hosted inside LeftDock (Source/UI/LeftDock.h), which
+// owns the frame/width/collapse/resize-drag divider for the left dock slot
+// this widget fills. LeftDock hands this widget a Canvas already scoped to
+// its own interior box (border excluded), calling Paint()/OnEvent() only
+// while its panel is the active one and the dock isn't collapsed -- when
+// it's not, this widget simply isn't painted or forwarded events, so it
+// needs no collapsed-state branch of its own.
 //
-// The width is drag-resizable by the divider column (round-2 follow-up):
-// pressing on it starts a resize session (IsResizing()/UpdateResize()/
-// EndResize()), which BufferView cooperates in -- there's no
-// mouse-capture concept (every mouse event is delivered to every leaf
-// widget regardless of position; see Widget.h's own header comment), so
-// once a growing drag crosses out of this widget's own bounds the move
-// events land on BufferView too. BufferView checks IsResizing() in its own
-// OnEvent and, if set, drives the resize instead of its usual selection/
-// no-op handling. See UpdateResize's own comment for why the math is
-// anchored to the drag's start rather than applied as a per-event delta.
-// Width() is read by main.cpp's own composition root every frame to decide
-// this widget's actual layout width, since layout is recomputed fresh each
-// frame rather than cached.
+// Row 0 of whatever canvas this widget IS handed stays its own header --
+// the live project name, click-to-switch-project (SetOnHeaderClicked) --
+// since LeftDock's own border title is a fixed per-panel label ("Files"),
+// not the dynamic project name; that's a real per-panel feature LeftDock's
+// generic chrome has no way to express, so it stays here as an ordinary
+// content row instead of a border title. Tree content fills every row
+// below it.
 //
 
 #ifndef NED_UI_PROJECTSIDEBAR_H
@@ -115,6 +104,14 @@ class ProjectSidebar : public Widget {
         return true;
     }
 
+    // unified-left-dock follow-up: LeftDock collapsing while this widget
+    // holds focus (keyboard toggle or a rail-glyph mouse click, see
+    // Widget::OnFocusPreempted's own doc comment) hands focus back the same
+    // way Escape/C-g does.
+    void OnFocusPreempted() override {
+        ReturnFocus();
+    }
+
     // Called when keyboard focus should go back to the editor (Escape/C-g,
     // or after Enter opens a file). Unset (the default) is a safe no-op,
     // matching every other Set* hook here; main.cpp wires this to
@@ -129,82 +126,14 @@ class ProjectSidebar : public Widget {
     // switch-project the same way a keybinding would.
     void SetOnHeaderClicked(std::function<void()> handler);
 
-    // focus-project-sidebar's (C-c p) entry point: expands a collapsed
-    // sidebar first (focus into a 1-column strip would be meaningless) and
-    // remembers that it *was* collapsed, so returning focus (Escape/C-g, or
-    // Enter opening a file) collapses it again -- a hidden sidebar summoned
-    // by keyboard goes back to hidden when the keyboard leaves, instead of
-    // staying expanded as a side effect of a quick file jump.
-    void TakeKeyboardFocus();
-
-    // Called with the new width when a divider drag ends having actually
-    // moved it (sidebar-width-memory follow-up). Unset (the default) is a
-    // safe no-op, matching every other Set* hook here; main.cpp wires this
-    // to editor::SetVariable("sidebar-width") so the last committed width
-    // becomes the global default for future runs -- the persistence policy
-    // deliberately lives at the wiring site, not in this widget, so
-    // unit-test drags never touch the real variables.json.
-    void SetOnWidthCommitted(std::function<void(int)> handler);
-
-    // Called with the new collapse state when the *user* deliberately
-    // toggles it (toggle-project-sidebar, or a divider/strip double-click)
-    // -- never for programmatic changes: session restore, and
-    // TakeKeyboardFocus's transient expand plus its focus-return restore,
-    // go through SetCollapsed directly and stay uncommitted, so a quick
-    // C-c p file jump can't overwrite the remembered preference. Unset is
-    // a safe no-op; main.cpp wires this to
-    // editor::SetVariable("sidebar-visible"), SetOnWidthCommitted's exact
-    // pattern.
-    void SetOnCollapseCommitted(std::function<void(bool)> handler);
-
-    // Current desired width in columns -- see this file's own header
-    // comment for why main.cpp's composition root reads this every frame
-    // rather than this widget mutating a stored layout policy directly.
-    // Starts at initialWidth (main.cpp passes the same 30 the pre-migration
-    // version's initial fixed(30) used); UpdateResize below and SetWidth
-    // (session-persistence slice 2: main.cpp applying a restored session's
-    // sidebar width at startup) are the only things that ever change it
-    // afterward.
-    [[nodiscard]] int Width() const;
-    void              SetWidth(int width); // clamped to kMinSidebarWidth, same as a resize drag
-
-    // Collapse state (chrome-redesign follow-up) -- see this file's own
-    // header comment. Width() reports 1 while collapsed; width_ itself is
-    // untouched, so expanding restores the previous width exactly.
-    // Session persistence maps its stored sidebar-visibility bool onto
-    // !Collapsed() (main.cpp / WindowManager), no schema change needed.
-    [[nodiscard]] bool Collapsed() const;
-    void               SetCollapsed(bool collapsed);
-    void               ToggleCollapsed();
-
-    // The width an expanded sidebar has/would have -- unlike Width(), not
-    // masked by the collapse. What session persistence stores, so a resize
-    // survives a collapsed quit/relaunch.
-    [[nodiscard]] int ExpandedWidth() const;
-
-    [[nodiscard]] bool IsResizing() const;
-
-    // Called by BufferView's own OnEvent while IsResizing() -- see this
-    // header's comment above for why BufferView needs to be involved at
-    // all. globalMouseX is the raw, absolute (screen-space) mouse x -- no
-    // translation from a caller-local coordinate is needed, since mouse
-    // coordinates are never translated to begin with (see Widget.h's own
-    // header comment), so this is just whichever widget's OnEvent received
-    // the event passing its raw event.mouse().x straight through.
-    void UpdateResize(int globalMouseX);
-
-    // Called by whichever widget's OnEvent sees the matching mouse-release
-    // during a resize (this widget's own, or BufferView's) to end the
-    // session.
-    void EndResize();
-
     // project-sidebar-drag-drop follow-up: same cross-widget cooperation
-    // shape as IsResizing()/EndResize() above -- a left-press on a file row
-    // (never a directory; there's no single sensible target to open)
-    // additionally arms this alongside the row's existing open-preview
-    // behavior. BufferView checks it in its own OnMouseEvent (rawMouse,
-    // ahead of that widget's own LocalMouseEvent gate, mirroring how it
-    // already checks IsResizing()) and, when a Released event lands inside
+    // shape LeftDock::IsResizing()/EndResize() use for its own resize-drag
+    // handoff -- a left-press on a file row (never a directory; there's no
+    // single sensible target to open) additionally arms this alongside the
+    // row's existing open-preview behavior. BufferView checks it in its own
+    // OnMouseEvent (rawMouse, ahead of that widget's own LocalMouseEvent
+    // gate, mirroring how it already checks LeftDock::IsResizing()) and,
+    // when a Released event lands inside
     // its own Box_(), opens the dragged file there and calls EndFileDrag()
     // itself. A Released landing back on this widget's own bounds is just
     // an ordinary click (already handled by the press-time open) and clears
@@ -305,28 +234,8 @@ class ProjectSidebar : public Widget {
     // listed itself, but its own children filtered out of the visible list.
     std::set<std::filesystem::path> expandedDirs_;
 
-    int width_ = 30; // see Width()
-
-    bool collapsed_ = false; // see Collapsed()
-
-    bool resizing_            = false;
-    int  resizeAnchorGlobalX_ = 0; // this Row-space mouse x when the drag started
-    int  resizeAnchorWidth_   = 0; // this widget's own width when the drag started
-    int  resizeStartWidth_    = 0; // width_ at BeginResize -- EndResize persists to
-                                   // variables.json only if the drag actually changed it
-
     // project-sidebar-drag-drop follow-up: see DraggingFilePath's own doc comment.
     std::optional<std::filesystem::path> dragPath_;
-
-    // Double-click detection for the divider/collapsed strip (chrome-
-    // redesign follow-up): a second press within kDoubleClickWindow toggles
-    // the collapse; a real drag (movement past +-1 column, see
-    // UpdateResize) clears the pending state so drag-resize never
-    // accidentally collapses.
-    bool                                  dividerClickPending_ = false;
-    std::chrono::steady_clock::time_point lastDividerPressTime_;
-
-    void BeginResize(int globalMouseX);
 
     // Double-click detection for file rows (single-click-preview follow-up):
     // a second click on the *same path* within kDoubleClickWindow counts as
@@ -343,17 +252,9 @@ class ProjectSidebar : public Widget {
     // named-projects follow-up -- see SetOnHeaderClicked above.
     std::function<void()> onHeaderClicked_;
 
-    std::function<void(int)> onWidthCommitted_; // see SetOnWidthCommitted
+    int selectedIndex_ = 0; // index into VisibleEntries, clamped at use
 
-    std::function<void(bool)> onCollapseCommitted_;            // see SetOnCollapseCommitted
-    void                      CommitCollapsed(bool collapsed); // SetCollapsed + the deliberate-toggle hook
-    int                   selectedIndex_ = 0; // index into VisibleEntries, clamped at use
-
-    // See TakeKeyboardFocus. Cleared by ReturnFocus (the restore is
-    // one-shot) and by an explicit collapse while focused, whose end state
-    // is already what the flag would restore.
-    bool collapseOnFocusReturn_ = false;
-    void ReturnFocus(); // onFocusReturn_ plus the TakeKeyboardFocus collapse restore
+    void ReturnFocus(); // fires onFocusReturn_ -- LeftDock::NoteFocusReturned is chained on at the wiring site
 
     bool HandleKeyEvent(const Event& event);
     void ToggleDirectory(const std::filesystem::path& path); // shared by mouse click and Enter
@@ -362,13 +263,15 @@ class ProjectSidebar : public Widget {
     [[nodiscard]] std::vector<editor::ProjectTreeEntry> VisibleEntries(
         const std::vector<editor::ProjectTreeEntry>& all) const;
 
-    // sidebar-header follow-up: row 0 is always the project-name header
-    // (the title-carrying top border since the chrome redesign), and the
-    // bottom row is border too -- never tree content. Every tree-row
-    // computation (ComputeRowLayout/EntryIndexAtRow's viewportHeight, the
-    // wheel-scroll clamp) works in this content-only height, not
-    // size().height directly, and every row/y value crossing that boundary
-    // gets shifted by kHeaderHeight exactly once, at the call site.
+    // sidebar-header follow-up: row 0 is always the project-name header,
+    // never tree content (unified-left-dock follow-up: no separate bottom
+    // border row to exclude anymore -- LeftDock's own interior box already
+    // excludes its border, so every row this widget is handed is either the
+    // header or real content). Every tree-row computation (ComputeRowLayout/
+    // EntryIndexAtRow's viewportHeight, the wheel-scroll clamp) works in
+    // this content-only height, not size().height directly, and every
+    // row/y value crossing that boundary gets shifted by kHeaderHeight
+    // exactly once, at the call site.
     [[nodiscard]] int ContentHeight() const;
 
     // BuildProjectTree does a full recursive directory walk -- cheap for a

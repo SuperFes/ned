@@ -101,6 +101,24 @@ class LeftDock : public Widget {
     void               SetCollapsed(bool collapsed); // programmatic; no commit callback
     void               ToggleCollapsed();             // deliberate; commits
 
+    // ProjectSidebar::TakeKeyboardFocus/ReturnFocus's own pairing, promoted
+    // here now that collapse lives on this widget instead: a caller driving
+    // a hosted content widget's own keyboard-focus entry point (e.g.
+    // BufferView's focus-project-sidebar handling) calls this first --
+    // remembers whether this dock was collapsed, then expands it
+    // (programmatically, like SetCollapsed -- a quick keyboard visit
+    // shouldn't overwrite the remembered visibility preference) -- and
+    // calls the content widget's own TakeFocus() itself. Pair with
+    // NoteFocusReturned(), called from that same content widget's own
+    // focus-return path (wired at the call site, ProjectSidebar's own
+    // policy-at-the-wiring-site precedent), which re-collapses if this dock
+    // was collapsed at the matching PrepareForKeyboardFocus call -- a
+    // dock summoned by keyboard while hidden goes back to hidden the moment
+    // focus leaves. Safe to call NoteFocusReturned() even when no
+    // PrepareForKeyboardFocus is pending (a plain no-op).
+    void PrepareForKeyboardFocus();
+    void NoteFocusReturned();
+
     [[nodiscard]] bool IsResizing() const;
     // Called by whichever widget's OnEvent sees the matching mouse-move/
     // release during a resize -- ProjectSidebar's own cross-widget
@@ -169,6 +187,9 @@ class LeftDock : public Widget {
 
     int  width_     = 30; // total width including the rail -- see Width()
     bool collapsed_ = false;
+
+    // See PrepareForKeyboardFocus/NoteFocusReturned.
+    bool collapseOnFocusReturn_ = false;
 
     bool resizing_            = false;
     int  resizeAnchorGlobalX_ = 0;

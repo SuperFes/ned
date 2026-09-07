@@ -12,6 +12,7 @@
 #include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/LeftDock.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/Theme.h"
 
@@ -125,10 +126,12 @@ TEST_CASE("ProjectSidebar renders a collapsed tree by default, with a disclosure
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
     sidebar.Paint(canvas);
 
-    // Row 0 is always the project-name header (sidebar-header follow-up) --
-    // tree content starts at row 1. dir's own filename is longer than the
-    // 27-column content width, so it renders truncated -- checking a
-    // guaranteed-to-fit prefix rather than the full name.
+    // Row 0 is always the project-name header (sidebar-header follow-up;
+    // unified-left-dock follow-up: this widget's own content row now, not a
+    // border title -- LeftDock owns the border) -- tree content starts at
+    // row 1. dir's own filename is longer than the 27-column content width,
+    // so it renders truncated -- checking a guaranteed-to-fit prefix rather
+    // than the full name.
     REQUIRE(RowText(screen, 0, 28).find("ned_project_sidebar") != std::string::npos);
 
     const std::string row1 = RowText(screen, 1, 28);
@@ -141,17 +144,10 @@ TEST_CASE("ProjectSidebar renders a collapsed tree by default, with a disclosure
     REQUIRE(row2.find("top.txt") != std::string::npos);
     REQUIRE(RowText(screen, 3, 28).find("nested.txt") == std::string::npos);
     // Tree-connector lines (box-drawing, not plain-space indentation) --
-    // content starts at column 1 now, inside the frame (chrome redesign).
-    const std::string firstChar = screen.PixelAt(1, 1).character;
+    // content starts at column 0 now, no frame to inset for (unified-
+    // left-dock follow-up: LeftDock owns the border/inset instead).
+    const std::string firstChar = screen.PixelAt(0, 1).character;
     REQUIRE((firstChar == "│" || firstChar == "└" || firstChar == "├"));
-    // The rounded frame itself: corners plus the title embedded in the top
-    // edge, and the right border doubling as the divider.
-    REQUIRE(screen.PixelAt(0, 0).character == "╭");
-    REQUIRE(screen.PixelAt(27, 0).character == "╮");
-    REQUIRE(screen.PixelAt(0, 4).character == "╰");
-    REQUIRE(screen.PixelAt(27, 4).character == "╯");
-    REQUIRE(screen.PixelAt(0, 2).character == "│");
-    REQUIRE(screen.PixelAt(27, 1).character == "│"); // plain right border (the tab-underline ├ junction left with that row)
 
     std::filesystem::remove_all(dir);
 }
@@ -227,11 +223,11 @@ TEST_CASE("ProjectSidebar highlights the entry matching the active buffer's file
     sidebar.Paint(canvas);
 
     // a.txt sorts before b.txt -- row 1 (row 0 is the header); content
-    // starts at column 1, inside the frame.
+    // starts at column 0, no frame to inset for.
     REQUIRE(RowText(screen, 1, 28).find("a.txt") != std::string::npos);
-    REQUIRE(screen.PixelAt(1, 1).foreground_color == theme.activeTab.foreground);
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == theme.activeTab.foreground);
     REQUIRE(RowText(screen, 2, 28).find("b.txt") != std::string::npos);
-    REQUIRE_FALSE(screen.PixelAt(1, 2).foreground_color == theme.activeTab.foreground);
+    REQUIRE_FALSE(screen.PixelAt(0, 2).foreground_color == theme.activeTab.foreground);
 
     std::filesystem::remove_all(dir);
 }
@@ -577,89 +573,9 @@ TEST_CASE("Scrolling past an expanded directory's own row pins it at the top (st
     // pinned as a sticky header on the first content row (row 1 -- row 0 is
     // the project-name header) instead of disappearing.
     REQUIRE(RowText(screen, 1, 28).find("sub/") != std::string::npos);
-    REQUIRE(screen.PixelAt(1, 1).foreground_color == theme.tabBar.foreground);
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == theme.tabBar.foreground);
 
     std::filesystem::remove_all(dir);
-}
-
-TEST_CASE("Pressing the divider column starts a resize instead of opening/toggling an entry", "[ProjectSidebar]") {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_resizestart";
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directory(dir);
-    {
-        std::ofstream(dir / "only.txt") << "x";
-    }
-    const CurrentPathGuard cwdGuard(dir);
-
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 28, 5);
-
-    REQUIRE_FALSE(sidebar.IsResizing());
-    sidebar.OnEvent(MousePress(27, 0)); // divider column
-    REQUIRE(sidebar.IsResizing());
-    REQUIRE(&activeBuffer.Get() == &scratch); // did not open "only.txt"
-
-    sidebar.OnEvent(MouseRelease(27, 0));
-    REQUIRE_FALSE(sidebar.IsResizing());
-
-    std::filesystem::remove_all(dir);
-}
-
-TEST_CASE("Shrinking the divider updates Width(), anchored to the drag's total displacement", "[ProjectSidebar]") {
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 20, 5);
-
-    sidebar.OnEvent(MousePress(19, 0)); // divider column
-    REQUIRE(sidebar.IsResizing());
-
-    sidebar.OnEvent(MouseMove(10, 0)); // dragged 9 columns left of the press point
-    REQUIRE(sidebar.Width() == 11);
-
-    // A second move is measured from the *original* press, not the previous
-    // move -- dragging back out to x=19 (0 net displacement) restores the
-    // starting width exactly, not some compounded value.
-    sidebar.OnEvent(MouseMove(19, 0));
-    REQUIRE(sidebar.Width() == 20);
-}
-
-TEST_CASE("Dragging the divider clamps to a minimum width", "[ProjectSidebar]") {
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 20, 5);
-
-    sidebar.OnEvent(MousePress(19, 0));
-    sidebar.OnEvent(MouseMove(-1000, 0)); // absurdly far left
-
-    REQUIRE(sidebar.Width() > 0); // clamped, not driven negative or to zero
-}
-
-TEST_CASE("A move without a resize in progress is a safe no-op", "[ProjectSidebar]") {
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 20, 5);
-    const int before = sidebar.Width();
-
-    sidebar.OnEvent(MouseMove(5, 0)); // must not crash or change anything
-
-    REQUIRE(sidebar.Width() == before);
 }
 
 TEST_CASE("RevealPath expands every ancestor directory down to the target file", "[ProjectSidebar]") {
@@ -826,118 +742,6 @@ TEST_CASE("Clicking a binary file reports a message when no open-request handler
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("The frame renders with the border brush, switching to the accent brush during a resize drag",
-          "[ProjectSidebar]") {
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 20, 5);
-
-    ned::ui::Screen screen = ned::ui::Screen(20, 5);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
-
-    sidebar.Paint(canvas);
-    REQUIRE(screen.PixelAt(19, 2).foreground_color == theme.border.foreground);
-    // The title text takes the accent brush.
-    REQUIRE(screen.PixelAt(3, 0).foreground_color == theme.borderAccent.foreground);
-
-    sidebar.OnEvent(MousePress(19, 2)); // start a resize on the divider
-    REQUIRE(sidebar.IsResizing());
-    sidebar.Paint(canvas);
-    REQUIRE(screen.PixelAt(19, 2).foreground_color == theme.borderAccent.foreground);
-
-    sidebar.OnEvent(MouseRelease(19, 2));
-    sidebar.Paint(canvas);
-    REQUIRE(screen.PixelAt(19, 2).foreground_color == theme.border.foreground);
-}
-
-TEST_CASE("Double-clicking the divider collapses to a 1-column strip; double-clicking the strip expands again",
-          "[ProjectSidebar]") {
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 20, 5);
-    REQUIRE_FALSE(sidebar.Collapsed());
-    REQUIRE(sidebar.Width() == 30); // the default expanded width
-
-    sidebar.OnEvent(MousePress(19, 2)); // first press starts a resize...
-    REQUIRE(sidebar.IsResizing());
-    sidebar.OnEvent(MousePress(19, 2)); // ...the rapid second press collapses instead
-
-    REQUIRE(sidebar.Collapsed());
-    REQUIRE_FALSE(sidebar.IsResizing()); // the half-started resize died with the frame
-    REQUIRE(sidebar.Width() == 1);
-    REQUIRE(sidebar.ExpandedWidth() == 30); // preserved for re-expansion
-
-    // The collapsed strip: border line with an accent hint glyph on top.
-    sidebar.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 4});
-    ned::ui::Screen screen = ned::ui::Screen(1, 5);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 4});
-    sidebar.Paint(canvas);
-    REQUIRE(screen.PixelAt(0, 0).character == "▸");
-    REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.borderAccent.foreground);
-    REQUIRE(screen.PixelAt(0, 2).character == "│");
-    REQUIRE(screen.PixelAt(0, 2).foreground_color == theme.border.foreground);
-
-    // A single press on the strip does nothing; a rapid second one expands.
-    sidebar.OnEvent(MousePress(0, 2));
-    REQUIRE(sidebar.Collapsed());
-    sidebar.OnEvent(MousePress(0, 2));
-    REQUIRE_FALSE(sidebar.Collapsed());
-    REQUIRE(sidebar.Width() == 30);
-}
-
-TEST_CASE("A real resize drag never counts as the first half of a collapse double-click", "[ProjectSidebar]") {
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 20, 5);
-
-    sidebar.OnEvent(MousePress(19, 2));
-    sidebar.OnEvent(MouseMove(12, 2)); // a genuine drag, well past the wobble allowance
-    sidebar.OnEvent(MouseRelease(12, 2));
-    REQUIRE(sidebar.Width() == 13);
-
-    // The composition root re-reads Width() and re-lays the box out every
-    // frame -- mirror that before pressing the (moved) divider again.
-    PlaceSidebar(sidebar, 13, 5);
-
-    // A prompt new press on the divider (well within the double-click
-    // window of the drag's own initial press) must start a fresh resize,
-    // not collapse.
-    sidebar.OnEvent(MousePress(12, 2));
-    REQUIRE_FALSE(sidebar.Collapsed());
-    REQUIRE(sidebar.IsResizing());
-    sidebar.OnEvent(MouseRelease(12, 2));
-}
-
-TEST_CASE("ToggleCollapsed drives the same collapse the divider double-click does (C-c C-p's path)",
-          "[ProjectSidebar]") {
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-
-    sidebar.SetWidth(42);
-    sidebar.ToggleCollapsed();
-    REQUIRE(sidebar.Collapsed());
-    REQUIRE(sidebar.Width() == 1);
-    REQUIRE(sidebar.ExpandedWidth() == 42);
-    sidebar.ToggleCollapsed();
-    REQUIRE_FALSE(sidebar.Collapsed());
-    REQUIRE(sidebar.Width() == 42);
-}
 
 TEST_CASE("While focused, arrow keys move the selection and Enter opens the file permanently, returning focus",
           "[ProjectSidebar]") {
@@ -967,20 +771,23 @@ TEST_CASE("While focused, arrow keys move the selection and Enter opens the file
     sidebar.TakeFocus();
     REQUIRE(sidebar.Focused());
 
-    // The accent frame while focused -- the same signal a resize drag gives.
+    // The accent-tinted header row while focused -- unified-left-dock
+    // follow-up: the same "this has your attention" signal a border-accent
+    // frame used to give, relocated to this widget's own header row now
+    // that it no longer owns a frame.
     ned::ui::Screen screen = ned::ui::Screen(28, 6);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 5});
     sidebar.Paint(canvas);
-    REQUIRE(screen.PixelAt(27, 2).foreground_color == theme.borderAccent.foreground);
+    REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.borderAccent.foreground);
     // The selection cursor starts on the first entry (a.txt, row 1) and
     // washes the whole content row with the selection background.
-    REQUIRE(screen.PixelAt(1, 1).background_color == theme.selectionBackground);
-    REQUIRE_FALSE(screen.PixelAt(1, 2).background_color == theme.selectionBackground);
+    REQUIRE(screen.PixelAt(0, 1).background_color == theme.selectionBackground);
+    REQUIRE_FALSE(screen.PixelAt(0, 2).background_color == theme.selectionBackground);
 
     sidebar.OnEvent(ned::ui::test::ArrowDown()); // a.txt -> b.txt
     sidebar.Paint(canvas);
-    REQUIRE_FALSE(screen.PixelAt(1, 1).background_color == theme.selectionBackground);
-    REQUIRE(screen.PixelAt(1, 2).background_color == theme.selectionBackground);
+    REQUIRE_FALSE(screen.PixelAt(0, 1).background_color == theme.selectionBackground);
+    REQUIRE(screen.PixelAt(0, 2).background_color == theme.selectionBackground);
 
     sidebar.OnEvent(ned::ui::test::Return());
     REQUIRE(activeBuffer.Get().Text() == "bbb");
@@ -1052,7 +859,7 @@ TEST_CASE("Key events are ignored while the sidebar is not focused", "[ProjectSi
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("Collapsing a focused sidebar hands focus back instead of capturing the keyboard in a strip",
+TEST_CASE("Collapsing the dock while the hosted sidebar is focused hands focus back via OnFocusPreempted",
           "[ProjectSidebar]") {
     ned::text::BufferList   list;
     ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
@@ -1060,12 +867,17 @@ TEST_CASE("Collapsing a focused sidebar hands focus back instead of capturing th
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::LeftDock       dock(theme);
+    dock.AddPanel(U'F', "Files", sidebar);
 
     bool focusReturned = false;
     sidebar.SetOnFocusReturn([&focusReturned] { focusReturned = true; });
     sidebar.TakeFocus();
 
-    sidebar.SetCollapsed(true);
+    // unified-left-dock follow-up: collapse now lives on LeftDock, not
+    // ProjectSidebar -- Widget::OnFocusPreempted is the bridge that still
+    // lets a focused hosted panel hand focus back when the dock hides it.
+    dock.SetCollapsed(true);
     REQUIRE(focusReturned);
 }
 
@@ -1097,191 +909,6 @@ TEST_CASE("Clicking a binary file hands off to the open-request handler when one
     REQUIRE(&activeBuffer.Get() == &scratch); // handler is responsible for actually opening it, not this widget
     REQUIRE(requestedPath.has_value());
     REQUIRE(requestedPath->filename() == "data.bin");
-
-    std::filesystem::remove_all(dir);
-}
-
-TEST_CASE("TakeKeyboardFocus expands a collapsed sidebar and returning focus re-collapses it", "[ProjectSidebar]") {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_kbd_recollapse";
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directory(dir);
-    {
-        std::ofstream(dir / "a.txt") << "aaa";
-    }
-    const CurrentPathGuard cwdGuard(dir);
-
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 28, 6);
-
-    bool focusReturned = false;
-    sidebar.SetOnFocusReturn([&focusReturned] { focusReturned = true; });
-
-    sidebar.SetCollapsed(true);
-    sidebar.TakeKeyboardFocus();
-    REQUIRE(sidebar.Focused());
-    REQUIRE_FALSE(sidebar.Collapsed()); // focus into a 1-column strip would be meaningless
-
-    sidebar.OnEvent(ned::ui::test::Escape());
-    REQUIRE(focusReturned);
-    REQUIRE(sidebar.Collapsed()); // summoned hidden -> goes back to hidden
-
-    std::filesystem::remove_all(dir);
-}
-
-TEST_CASE("TakeKeyboardFocus on an already-expanded sidebar leaves it expanded when focus returns",
-          "[ProjectSidebar]") {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_kbd_expanded";
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directory(dir);
-    {
-        std::ofstream(dir / "a.txt") << "aaa";
-    }
-    const CurrentPathGuard cwdGuard(dir);
-
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 28, 6);
-
-    bool focusReturned = false;
-    sidebar.SetOnFocusReturn([&focusReturned] { focusReturned = true; });
-
-    sidebar.TakeKeyboardFocus();
-    sidebar.OnEvent(ned::ui::test::Escape());
-    REQUIRE(focusReturned);
-    REQUIRE_FALSE(sidebar.Collapsed());
-
-    std::filesystem::remove_all(dir);
-}
-
-TEST_CASE("Enter opening a file from a keyboard-summoned collapsed sidebar re-collapses it too", "[ProjectSidebar]") {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_kbd_open_recollapse";
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directory(dir);
-    {
-        std::ofstream(dir / "a.txt") << "aaa";
-    }
-    const CurrentPathGuard cwdGuard(dir);
-
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 28, 6);
-
-    bool focusReturned = false;
-    sidebar.SetOnFocusReturn([&focusReturned] { focusReturned = true; });
-
-    sidebar.SetCollapsed(true);
-    sidebar.TakeKeyboardFocus();
-    sidebar.OnEvent(ned::ui::test::Return()); // opens a.txt (the first entry) and returns focus
-
-    REQUIRE(activeBuffer.Get().Text() == "aaa");
-    REQUIRE(focusReturned);
-    REQUIRE(sidebar.Collapsed());
-
-    std::filesystem::remove_all(dir);
-}
-
-TEST_CASE("A divider drag that moved commits its width once on release; a no-move click commits nothing",
-          "[ProjectSidebar]") {
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 20, 5);
-
-    std::optional<int> committedWidth;
-    int                commitCount = 0;
-    sidebar.SetOnWidthCommitted([&](int width) {
-        committedWidth = width;
-        ++commitCount;
-    });
-
-    // A press/release on the divider with no movement -- nothing to remember.
-    sidebar.OnEvent(MousePress(19, 0));
-    sidebar.OnEvent(MouseRelease(19, 0));
-    REQUIRE_FALSE(committedWidth.has_value());
-
-    // Wait out the double-click window so the next press starts a fresh
-    // resize instead of collapsing.
-    std::this_thread::sleep_for(std::chrono::milliseconds(450));
-
-    sidebar.OnEvent(MousePress(19, 0));
-    sidebar.OnEvent(MouseMove(12, 0));         // dragged 7 columns left
-    REQUIRE_FALSE(committedWidth.has_value()); // mid-drag: not committed yet
-    sidebar.OnEvent(MouseRelease(12, 0));
-
-    REQUIRE(committedWidth == 13);
-    REQUIRE(commitCount == 1);
-    REQUIRE(sidebar.Width() == 13);
-}
-
-TEST_CASE("Deliberate collapse toggles commit through the hook; programmatic changes don't", "[ProjectSidebar]") {
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 20, 5);
-
-    std::vector<bool> committed;
-    sidebar.SetOnCollapseCommitted([&](bool collapsed) { committed.push_back(collapsed); });
-
-    // Programmatic changes (session restore, remembered-variable startup
-    // application) must not rewrite the remembered preference.
-    sidebar.SetCollapsed(true);
-    sidebar.SetCollapsed(false);
-    REQUIRE(committed.empty());
-
-    sidebar.ToggleCollapsed(); // toggle-project-sidebar's path
-    sidebar.ToggleCollapsed();
-    REQUIRE(committed == std::vector<bool>{true, false});
-
-    // The divider double-click commits through the same helper.
-    sidebar.OnEvent(MousePress(19, 2));
-    sidebar.OnEvent(MousePress(19, 2));
-    REQUIRE(committed == std::vector<bool>{true, false, true});
-}
-
-TEST_CASE("A keyboard summon of a hidden sidebar never commits visibility", "[ProjectSidebar]") {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_kbd_no_commit";
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directory(dir);
-    {
-        std::ofstream(dir / "a.txt") << "aaa";
-    }
-    const CurrentPathGuard cwdGuard(dir);
-
-    ned::text::BufferList   list;
-    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer   activeBuffer(scratch);
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
-    std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlaceSidebar(sidebar, 28, 6);
-
-    std::vector<bool> committed;
-    sidebar.SetOnCollapseCommitted([&](bool collapsed) { committed.push_back(collapsed); });
-
-    sidebar.SetCollapsed(true);
-    sidebar.TakeKeyboardFocus();              // transient expand
-    sidebar.OnEvent(ned::ui::test::Escape()); // and its restore
-    REQUIRE(sidebar.Collapsed());
-    REQUIRE(committed.empty()); // a quick C-c p jump leaves the remembered preference alone
 
     std::filesystem::remove_all(dir);
 }
@@ -1418,8 +1045,13 @@ TEST_CASE("A right-press on a directory entry reports isDirectory true, without 
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("A right-press over chrome (header, divider, bottom border) never fires the context-menu handler",
-          "[ProjectSidebar]") {
+TEST_CASE("A right-press over the header row never fires the context-menu handler", "[ProjectSidebar]") {
+    // unified-left-dock follow-up: the divider column and bottom border row
+    // this test used to also check are LeftDock's own chrome now, not this
+    // widget's -- a right-press at either position is just ordinary tree
+    // content here (or empty space past the tree, itself excluded only by
+    // there being no entry to resolve, not by any reserved column/row).
+    // The header row remains this widget's own, and stays excluded.
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_context_menu_chrome";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
@@ -1439,9 +1071,7 @@ TEST_CASE("A right-press over chrome (header, divider, bottom border) never fire
     bool requested = false;
     sidebar.SetOnContextMenuRequest([&](const std::filesystem::path&, bool, ned::ui::Point) { requested = true; });
 
-    sidebar.OnEvent(MousePress(3, 0, ned::ui::MouseEvent::Button::Right));  // header row
-    sidebar.OnEvent(MousePress(27, 1, ned::ui::MouseEvent::Button::Right)); // divider column
-    sidebar.OnEvent(MousePress(3, 4, ned::ui::MouseEvent::Button::Right));  // bottom border row
+    sidebar.OnEvent(MousePress(3, 0, ned::ui::MouseEvent::Button::Right)); // header row
 
     REQUIRE_FALSE(requested);
 
