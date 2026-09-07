@@ -1559,6 +1559,16 @@ void BufferView::EnsureSymbolGutterCache() const {
     symbolGutterCacheWindowEnd_         = symbolMarkersCacheWindowEnd_;
 }
 
+void BufferView::EnsureConflictHunkCache() const {
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (conflictHunkCacheBuffer_ == &buffer && conflictHunkCacheContentGeneration_ == buffer.ContentGeneration()) {
+        return;
+    }
+    conflictHunkCache_                  = text::ParseConflictHunks(buffer.Text());
+    conflictHunkCacheBuffer_            = &buffer;
+    conflictHunkCacheContentGeneration_ = buffer.ContentGeneration();
+}
+
 void BufferView::EnsureTestGutterCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
@@ -3523,6 +3533,20 @@ void BufferView::Paint(Canvas paneCanvas) {
                 else if (InSelection(offset)) {
                     brush.background = theme_.selectionBackground;
                 }
+                else if (InConflictOurs(offset)) {
+                    // Merge Conflict Resolution Mode: a persistent,
+                    // must-not-miss "this is unresolved" state -- loses only
+                    // to isearch/snippet-field/selection above (explicit
+                    // user actions), but wins over documentHighlight/
+                    // execution-line/multibuffer/trailing-whitespace below.
+                    brush.background = theme_.conflictOursBackground;
+                }
+                else if (InConflictTheirs(offset)) {
+                    brush.background = theme_.conflictTheirsBackground;
+                }
+                else if (InConflictBase(offset)) {
+                    brush.background = theme_.conflictBaseBackground;
+                }
                 else if (std::any_of(currentLineDocumentHighlightSpans.begin(), currentLineDocumentHighlightSpans.end(),
                                      [offset](const auto& span) { return offset >= span.first && offset < span.second; })) {
                     // documentHighlight follow-up: a read-only cue on the
@@ -4580,6 +4604,9 @@ bool BufferView::OnKeyEvent(const Event& event) {
         return true;
     }
 
+    if (HandleConflictQuickKey(*chord)) {
+        return true;
+    }
     if (editor::vim::VimModeEnabled()) {
         return HandleVimKey(*chord);
     }
@@ -4655,6 +4682,33 @@ void BufferView::HandleBulkPastedText(std::string_view text) {
         OnKeyEvent(Event(ni));
         offset = next;
     }
+}
+
+bool BufferView::HandleConflictQuickKey(const editor::KeyChord& chord) {
+    if (!chord.Meta || chord.Control) {
+        return false;
+    }
+    const char* commandName = nullptr;
+    switch (chord.Codepoint) {
+        case U'n': commandName = "next-conflict-hunk"; break;
+        case U'p': commandName = "previous-conflict-hunk"; break;
+        case U'o': commandName = "merge-take-ours"; break;
+        case U't': commandName = "merge-take-theirs"; break;
+        case U'b': commandName = "merge-take-both"; break;
+        case U'd': commandName = "merge-take-neither"; break;
+        case U'k': commandName = "merge-keep-base"; break;
+        default: return false;
+    }
+    EnsureConflictHunkCache();
+    if (conflictHunkCache_.empty()) {
+        return false; // nothing unresolved -- M-o/t/b/d/k/n/p mean whatever they ordinarily do
+    }
+    editor::CommandContext context = MakeContext();
+    RunCommandAndHandleOutcome(context, [&] {
+        dispatcher_.Registry().Invoke(commandName, context);
+        return true;
+    });
+    return true;
 }
 
 bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
@@ -16021,6 +16075,31 @@ bool BufferView::InLineInspectHighlight(std::size_t byteOffset) const {
         }
     }
     return false;
+}
+
+namespace {
+    bool InRange(std::size_t byteOffset, const text::ConflictHunk::Range& range) {
+        return byteOffset >= range.start && byteOffset < range.end;
+    }
+} // namespace
+
+bool BufferView::InConflictOurs(std::size_t byteOffset) const {
+    EnsureConflictHunkCache();
+    return std::any_of(conflictHunkCache_.begin(), conflictHunkCache_.end(),
+                       [byteOffset](const text::ConflictHunk& hunk) { return InRange(byteOffset, hunk.oursRange); });
+}
+
+bool BufferView::InConflictTheirs(std::size_t byteOffset) const {
+    EnsureConflictHunkCache();
+    return std::any_of(conflictHunkCache_.begin(), conflictHunkCache_.end(),
+                       [byteOffset](const text::ConflictHunk& hunk) { return InRange(byteOffset, hunk.theirsRange); });
+}
+
+bool BufferView::InConflictBase(std::size_t byteOffset) const {
+    EnsureConflictHunkCache();
+    return std::any_of(conflictHunkCache_.begin(), conflictHunkCache_.end(), [byteOffset](const text::ConflictHunk& hunk) {
+        return hunk.baseRange && InRange(byteOffset, *hunk.baseRange);
+    });
 }
 
 bool BufferView::InIsearchMatch(std::size_t byteOffset) const {

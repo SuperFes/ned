@@ -68,6 +68,7 @@
 #include "ScrollBar.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/ConflictHunk.h"
 #include "Text/KillRing.h"
 #include "Theme.h"
 #include "TreeView.h"
@@ -1243,6 +1244,18 @@ class BufferView : public Widget {
     // DispatchChordNormally since it's only ever needed there, right after
     // Feed reports Pending.
     [[nodiscard]] WhichKeyHint BuildWhichKeyHint() const;
+    // Merge Conflict Resolution Mode: checked ahead of both the vim-mode
+    // branch and DispatchChordNormally, from the same Normal-mode tail
+    // activeCompletion_'s own popup-interception check sits in just above --
+    // a smerge-mode-style minor-mode fast path, scoped to whether the active
+    // buffer currently has any unresolved conflict hunk (EnsureConflictHunkCache/
+    // conflictHunkCache_) rather than a persistent mode flag, so it silently
+    // stops shadowing M-o/t/b/d/k/n/p (switch-header-source/transpose-words/
+    // kill-word/select-next-occurrence, all global bindings) the moment the
+    // last hunk in the buffer is resolved. Returns false (falls through to
+    // ordinary dispatch) for every other chord and whenever there's nothing
+    // to resolve; consumes and returns true only for a real quick-key hit.
+    bool HandleConflictQuickKey(const editor::KeyChord& chord);
     // Vim-mode follow-up: called instead of DispatchChordNormally from the tail of
     // Normal-mode key handling whenever editor::vim::VimModeEnabled() is true.
     // vimEngine_'s own Mode::Insert is the one case that still falls through to
@@ -2793,6 +2806,12 @@ class BufferView : public Widget {
     // SymbolGutterActive() itself is the data-driven "anything to show"
     // question, not this eligibility gate.
     void EnsureSymbolGutterCache() const;
+    // Merge Conflict Resolution Mode: (re)derives conflictHunkCache_ from
+    // text::ParseConflictHunks(buffer.Text()) -- EnsureSymbolGutterCache's
+    // shape (gated on buffer identity + ContentGeneration() alone), no
+    // huge-file windowing (a conflicted file is an ordinary source file in
+    // practice, and re-parsing markers is a cheap O(n) scan regardless).
+    void EnsureConflictHunkCache() const;
     // test-runner integration: (re)derives testGutterLineStatuses_ from
     // mode_.testDiscovery(buffer.Text()) matched against the TestRunner's
     // latest parsed outcome (MatchesTestName, TestRun/TestResult.h) --
@@ -2837,6 +2856,13 @@ class BufferView : public Widget {
     // out evaluate requests for -- InIsearchMatch's exact per-cell paint-loop
     // shape, backing the lineInspectBackground wash.
     [[nodiscard]] bool InLineInspectHighlight(std::size_t byteOffset) const;
+    // Merge Conflict Resolution Mode: whether byteOffset falls inside an
+    // unresolved conflict hunk's ours/theirs/(diff3) base content span --
+    // InIsearchMatch's exact per-cell paint-loop shape, backed by
+    // EnsureConflictHunkCache() below (not the marker lines themselves).
+    [[nodiscard]] bool InConflictOurs(std::size_t byteOffset) const;
+    [[nodiscard]] bool InConflictTheirs(std::size_t byteOffset) const;
+    [[nodiscard]] bool InConflictBase(std::size_t byteOffset) const;
 
     // exhaustive-highlighting follow-up: theme_.BrushFor(cls, captureId)
     // through brushCache_ (below) -- the render loop's only path to a
@@ -3582,6 +3608,13 @@ class BufferView : public Widget {
     mutable std::size_t                                             symbolGutterCacheWindowStart_       = 0;
     mutable std::size_t                                             symbolGutterCacheWindowEnd_         = 0;
     mutable std::vector<std::pair<std::size_t, editor::SymbolKind>> symbolGutterLineKinds_;
+
+    // Merge Conflict Resolution Mode: EnsureConflictHunkCache's cache,
+    // symbolGutterCacheBuffer_/symbolGutterCacheContentGeneration_'s exact
+    // shape minus the huge-file window (see that method's own comment).
+    mutable text::Buffer*                   conflictHunkCacheBuffer_            = nullptr;
+    mutable std::size_t                     conflictHunkCacheContentGeneration_ = 0;
+    mutable std::vector<text::ConflictHunk> conflictHunkCache_;
 
     // test-runner integration: per-line pass/fail/skip marks, the symbol
     // cache's shape with one extra generation stamp -- invalidated by a

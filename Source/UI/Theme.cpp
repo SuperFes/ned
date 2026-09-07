@@ -290,6 +290,9 @@ Theme DarkTheme() {
         .snippetFieldBackground      = Color::RGB(0x3d3d5c),
         .documentHighlightBackground = Color::RGB(0x2a4a4a),
         .lineInspectBackground       = Color::RGB(0x5a3f1a),
+        .conflictOursBackground      = Color::RGB(0x2a4a2a), // dim green wash, "mine"
+        .conflictTheirsBackground    = Color::RGB(0x2a2a4a), // dim indigo wash, "incoming"
+        .conflictBaseBackground      = Color::RGB(0x3a3a3a), // dim neutral gray wash (diff3 only)
         // fg was BrightBlack -- bumped alongside the tab-restyle follow-up
         // so inactive tab labels actually read against their own block now
         // that the blocks are the only chrome on the row.
@@ -392,6 +395,9 @@ Theme LightTheme() {
         .snippetFieldBackground        = Color::RGB(0xd0e8c8),
         .documentHighlightBackground   = Color::RGB(0xd8ecec),
         .lineInspectBackground         = Color::RGB(0xf5ddc0),
+        .conflictOursBackground        = Color::RGB(0xd8f0d8), // light green wash, "mine"
+        .conflictTheirsBackground      = Color::RGB(0xdcdcf5), // light lavender wash, "incoming"
+        .conflictBaseBackground        = Color::RGB(0xe8e8e8), // light neutral gray wash (diff3 only)
         .tabBar                        = Brush{.background = Color::RGB(0xe4e0d4), .foreground = Color::RGB(0x707070)},
         .activeTab                     = Brush{.background = background, .foreground = Color::RGB(0x202020), .bold = true},
         .scrollBar                     = Brush{.foreground = Color::RGB(0xa0a0a0)},
@@ -492,6 +498,9 @@ Theme AnsiDarkTheme() {
         .snippetFieldBackground        = Color::Green,
         .documentHighlightBackground   = Color::Magenta,
         .lineInspectBackground         = Color::Red,
+        .conflictOursBackground        = Color::Green,
+        .conflictTheirsBackground      = Color::Blue,
+        .conflictBaseBackground        = Color::Cyan,
         .tabBar                        = Brush{.foreground = Color::White},
         .activeTab                     = Brush{.background = Color::Blue, .foreground = Color::White, .bold = true},
         .scrollBar                     = Brush{.foreground = Color::White},
@@ -581,6 +590,9 @@ Theme AnsiLightTheme() {
         .snippetFieldBackground        = Color::Green,
         .documentHighlightBackground   = Color::Magenta,
         .lineInspectBackground         = Color::Red,
+        .conflictOursBackground        = Color::Green,
+        .conflictTheirsBackground      = Color::Blue,
+        .conflictBaseBackground        = Color::Cyan,
         .tabBar                        = Brush{.foreground = Color::Black},
         .activeTab                     = Brush{.background = Color::Cyan, .foreground = Color::Black, .bold = true},
         .scrollBar                     = Brush{.foreground = Color::Black},
