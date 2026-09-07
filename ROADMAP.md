@@ -87,25 +87,32 @@ Notcurses.
         anything that exists today — worth scoping only if plain shelled-out
         `adb`/`gradlew` tasks prove too manual in practice, not speculatively.
 
-- [ ] **Go bundled language support** (audit finding, 2026-09-06 — Go has no bundled
-      mode at all today, unlike every other mainstream language now covered. The only
-      existing Go awareness in the tree is `TestOutputParser.h`'s `"go-json"` output
-      parser, which works fine with no mode behind it). Same checklist Rust's own
-      bundled support just proved out (`git log --grep=rust-bundled-language`):
-      `tree-sitter/tree-sitter-go` (the tree-sitter org's own grammar) via
-      `ned_add_treesitter_grammar`, a one-line `GoMode()` factory, and
-      `go-tags.scm`/`go-folds.scm`/`go-imports.scm`/`go-indents.scm`/`go-tests.scm`
-      (check which of the grammar's own `queries/*.scm` are directly reusable the way
-      Rust's `highlights.scm`/`tags.scm` were, vs. needing a hand-written local query the
-      way Rust's fold/import/indent/test queries did — and re-check for the same
-      exact-range tag-duplication bug that surfaced in `tree-sitter-rust`'s own
-      `tags.scm`, since it's plausible other grammars share the same upstream pattern).
-      `gopls` via `ned/set-lsp-command` plus a `go.mod` entry in `LspRootMarkers`;
-      `dlv dap` for DAP. Test running needs zero new parser work — `TestOutputParser.h`'s
-      `"go-json"` format already exists, just wire `ned/set-test-command` to
-      `go test -json ./...`. Once a real mode exists, Go's basename-only `file:line`
-      resolution gap (Editor Ergonomics' test-runner-gaps item, below) is worth
-      revisiting too.
+Go bundled language support is shipped (`tree-sitter/tree-sitter-go`, `GoMode()`,
+highlights/tags reused unmodified from upstream, hand-written folds/indents/tests —
+deliberately no import-target query — `CMakeLists.txt`'s own comment explains why a
+package-based import path can't be resolved by a
+syntax-only query the way Rust's file-per-module `mod foo;` can; `gopls`/`dlv dap`/
+`go test -json` are config-only, no new code) — see `git log --grep=go-bundled-language`.
+Go's basename-only `file:line` resolution gap is tracked under Test-runner gaps below.
+
+C# bundled language support is shipped too (raised 2026-09-06 — no system
+`tree-sitter-csharp` install available, and a system grammar `.so` wouldn't have carried
+queries anyway, same Java/Kotlin reasoning above): `tree-sitter/tree-sitter-c-sharp`,
+`CSharpMode()`, highlights/tags reused unmodified, hand-written folds/indents/tests
+(xUnit `[Fact]`/`[Theory]`, NUnit `[Test]`/`[TestCase]`/`[TestCaseSource]`, MSTest
+`[TestMethod]`/`[DataTestMethod]`) — deliberately no import-target query, same
+namespace-vs-file reasoning as Go's own. `csproj`/`sln` have no fixed filename (unlike
+every other bundled language's root marker), which needed a real, generically reusable
+`LspRootResolver.cpp` addition: a marker of the form `"*.<ext>"` now means "any file with
+this extension in this directory," not one exact name — see
+`MarkerExistsInDirectory`'s own comment there. `OmniSharp`/`csharp-ls` and `netcoredbg`/
+`vsdbg` are config-only, no new code. See `git log --grep=csharp-bundled-language`.
+
+Every bundled language in this file comes from `FetchContent` in `CMakeLists.txt`, never
+a system package — this was already the standing policy before C# (see the Java/Kotlin
+item above, which independently arrived at the same conclusion), not a new one adopted
+here. A system-installed grammar `.so` never carries its `queries/*.scm` regardless of
+language, so leaning on one was never going to be the shortcut it looks like.
 
 - [ ] Go-to-file-at-point resolver: LSP-first resolution (`textDocument/documentLink`,
       e.g. clangd's own `#include` support) — the one item left open from the
@@ -300,10 +307,10 @@ overflow indicators as part of the same work) are all shipped — see `git log
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
-- [ ] **Test-runner gaps**: no gutter-click run-this-test; no Go test discovery (no
-      bundled Go mode yet — see the new item above; Rust itself now has full discovery
-      via `rust-tests.scm`); pytest needs `-v` or junit-xml for per-test pass marks;
-      Go's basename-only `file:line` can miss jump-to-source in multi-directory modules.
+- [ ] **Test-runner gaps**: no gutter-click run-this-test; pytest needs `-v` or
+      junit-xml for per-test pass marks; Go's basename-only `file:line` can miss
+      jump-to-source in multi-directory modules (Go itself now has full test discovery
+      via `go-tests.scm`, same as Rust's `rust-tests.scm`).
 - [ ] **Nested snippet placeholders' inner stops** (`${1:foo ${2:bar}}` keeps only the
       literal text "foo bar", the inner `$2` tabstop is dropped). Confirmed *not*
       reachable via the tree-sitter fold-depth machinery (`CodeFold.h` re-derives a
@@ -949,8 +956,9 @@ these accumulate detail in place.
         for Lua at all today) — gated on general Lua support, not engine-specific work.
         `lua-language-server` already understands both frameworks' APIs via
         community-maintained meta/addon files.
-      - **C#** (needed for Godot-via-Mono) — no bundled mode today; `OmniSharp`/
-        `csharp-ls` are the LSP options.
+      - **C#** (needed for Godot-via-Mono) — bundled language support shipped, see the
+        Language Intelligence section above; `OmniSharp`/`csharp-ls` are the LSP options,
+        config-only, not touched by that work.
       - **GDevelop** — event-based, largely no-code; not a natural fit for a text editor
         regardless of open-source status. Listed only to record it was considered and
         set aside.

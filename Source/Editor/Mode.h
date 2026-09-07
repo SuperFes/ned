@@ -622,6 +622,20 @@ struct Mode {
 // queries/tags.scm, both consumed unmodified (no c-tags.scm/cpp-tags.scm-
 // style vendoring needed -- checked directly, no ambiguity found).
 [[nodiscard]] Mode RustMode();
+// tree-sitter/tree-sitter-go -- the tree-sitter org's own official grammar,
+// same provenance bar as RustMode above. Ships a real queries/highlights.scm
+// and queries/tags.scm, both consumed unmodified. No import-target support
+// (see Queries.h's own comment beside kRustImports/kGoTags for why Go's
+// package-based imports can't be resolved by a syntax-only query the way
+// Rust's file-per-module "mod foo;" can).
+[[nodiscard]] Mode GoMode();
+// tree-sitter/tree-sitter-c-sharp -- the tree-sitter org's own official
+// grammar, same provenance bar as GoMode above. Ships a real
+// queries/highlights.scm and queries/tags.scm, both consumed unmodified. No
+// import-target support (see Queries.h's own comment beside kRustImports
+// for why a namespace-based `using` directive can't be resolved by a
+// syntax-only query the way Rust's file-per-module "mod foo;" can).
+[[nodiscard]] Mode CSharpMode();
 // yaml/toml follow-up: tree-sitter-grammars/tree-sitter-yaml and
 // tree-sitter-grammars/tree-sitter-toml, both community-maintained, both
 // ship a pre-generated src/parser.c and a real queries/highlights.scm --

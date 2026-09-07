@@ -84,6 +84,8 @@ namespace {
             {"markdown-mode", MarkdownMode},
             {"org-mode", OrgMode},
             {"rust-mode", RustMode},
+            {"go-mode", GoMode},
+            {"csharp-mode", CSharpMode},
         };
         return table;
     }
@@ -149,6 +151,8 @@ namespace {
             {".bb", "clojure-mode"},
             {".jank", "jank-mode"},
             {".rs", "rust-mode"},
+            {".go", "go-mode"},
+            {".cs", "csharp-mode"},
         };
         return table;
     }

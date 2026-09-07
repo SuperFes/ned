@@ -31,6 +31,8 @@ const TSLanguage* tree_sitter_clojure(void);
 const TSLanguage* tree_sitter_fish(void);
 const TSLanguage* tree_sitter_xml(void);
 const TSLanguage* tree_sitter_rust(void);
+const TSLanguage* tree_sitter_go(void);
+const TSLanguage* tree_sitter_c_sharp(void);
 }
 
 namespace ned::editor::treesitter {
@@ -124,6 +126,18 @@ std::optional<Language> LanguageByName(std::string_view name) {
     // grammar, same provenance as c/cpp/python/javascript above.
     if (name == "rust") {
         return Language(tree_sitter_rust());
+    }
+    // tree-sitter/tree-sitter-go -- the tree-sitter org's own official
+    // grammar, same provenance as c/cpp/python/javascript/rust above.
+    if (name == "go") {
+        return Language(tree_sitter_go());
+    }
+    // tree-sitter/tree-sitter-c-sharp -- the tree-sitter org's own official
+    // grammar, same provenance as go above. The C entry point is
+    // tree_sitter_c_sharp (confirmed against the grammar's own generated
+    // src/parser.c), not tree_sitter_csharp.
+    if (name == "csharp") {
+        return Language(tree_sitter_c_sharp());
     }
     return std::nullopt;
 }

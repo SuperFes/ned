@@ -1386,6 +1386,21 @@ Mode RustMode() {
     return mode;
 }
 
+Mode GoMode() {
+    Mode mode              = TreeSitterMode("go-mode", "go", treesitter::queries::kGo, treesitter::queries::kGoFolds, nullptr,
+                                            treesitter::queries::kGoTags, treesitter::queries::kGoTests, treesitter::queries::kGoIndents);
+    mode.lineCommentPrefix = "//";
+    return mode;
+}
+
+Mode CSharpMode() {
+    Mode mode              = TreeSitterMode("csharp-mode", "csharp", treesitter::queries::kCSharp, treesitter::queries::kCSharpFolds,
+                                            nullptr, treesitter::queries::kCSharpTags, treesitter::queries::kCSharpTests,
+                                            treesitter::queries::kCSharpIndents);
+    mode.lineCommentPrefix = "//";
+    return mode;
+}
+
 Mode YamlMode() {
     Mode mode              = TreeSitterMode("yaml-mode", "yaml", treesitter::queries::kYaml, nullptr, nullptr, nullptr, nullptr,
                                             treesitter::queries::kYamlIndents);

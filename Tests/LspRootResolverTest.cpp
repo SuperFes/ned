@@ -45,6 +45,10 @@ TEST_CASE("LspRootMarkers returns compiled-in defaults for bundled languages", "
     const auto python = LspRootMarkers("python");
     REQUIRE_FALSE(python.empty());
     REQUIRE(std::find(python.begin(), python.end(), "pyproject.toml") != python.end());
+
+    const auto csharp = LspRootMarkers("csharp");
+    REQUIRE_FALSE(csharp.empty());
+    REQUIRE(std::find(csharp.begin(), csharp.end(), "*.csproj") != csharp.end());
 }
 
 TEST_CASE("SetLspRootMarkers overrides the default, and an empty list reverts to it", "[Lsp]") {
@@ -98,6 +102,28 @@ TEST_CASE("ResolveLspRoot never walks -- and falls straight to ProjectRoot() -- 
     SetLspRootMarkers("ned-lsp-root-resolver-test-lang-2", {"package.json"});
     REQUIRE(ResolveLspRoot(packageRoot / "index.js", "ned-lsp-root-resolver-test-lang-2") == std::filesystem::temp_directory_path());
     SetLspRootMarkers("ned-lsp-root-resolver-test-lang-2", {}); // cleanup
+
+    std::filesystem::remove_all(monorepoRoot);
+}
+
+TEST_CASE("ResolveLspRoot matches a \"*.<ext>\" marker against any file with that extension, csharp bundling "
+          "follow-up",
+          "[Lsp]") {
+    RootStateGuard guard;
+    SetProjectRoot(std::filesystem::temp_directory_path()); // deliberately NOT the expected answer here
+
+    const std::filesystem::path monorepoRoot = std::filesystem::temp_directory_path() / "ned-lsp-root-resolver-csproj-glob";
+    const std::filesystem::path projectRoot  = monorepoRoot / "src" / "Widget";
+    std::filesystem::create_directories(projectRoot);
+    {
+        // .NET's own convention: the file is named after the project, never
+        // a fixed name -- MarkerExistsInDirectory's whole reason to exist.
+        std::ofstream(projectRoot / "Widget.csproj") << "<Project />";
+    }
+
+    SetLspRootMarkers("ned-lsp-root-resolver-test-lang-4", {"*.csproj"});
+    REQUIRE(ResolveLspRoot(projectRoot / "Program.cs", "ned-lsp-root-resolver-test-lang-4") == projectRoot);
+    SetLspRootMarkers("ned-lsp-root-resolver-test-lang-4", {}); // cleanup
 
     std::filesystem::remove_all(monorepoRoot);
 }

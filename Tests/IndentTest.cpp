@@ -15,10 +15,12 @@ using ned::editor::BashMode;
 using ned::editor::ClojureMode;
 using ned::editor::CMode;
 using ned::editor::CppMode;
+using ned::editor::CSharpMode;
 using ned::editor::CssMode;
 using ned::editor::EffectiveIndentStyle;
 using ned::editor::FishMode;
 using ned::editor::FundamentalMode;
+using ned::editor::GoMode;
 using ned::editor::HtmlMode;
 using ned::editor::IndentBuffer;
 using ned::editor::IndentRegion;
@@ -125,6 +127,64 @@ TEST_CASE("CMode indentColumn falls back to a plain indent level when a wrapped 
     const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 4); // nothing to align to -- one ordinary indent level
+}
+
+TEST_CASE("GoMode indentColumn indents inside a nested if-block and aligns its closing brace", "[Indent]") {
+    const auto mode = GoMode();
+    REQUIRE(mode.indentColumn);
+    Buffer buffer("test.go");
+    buffer.InsertAtPoint("func f() {\n    if true {\n        return\n    }\n}\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "        return"
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 8); // two levels deep, width 4
+
+    const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "    }" -- closes the if-block
+    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd);
+    REQUIRE(closeColumn.has_value());
+    REQUIRE(*closeColumn == 4); // matches "if true {"'s own level, not one deeper
+}
+
+TEST_CASE("GoMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
+          "[Indent]") {
+    const auto mode = GoMode();
+    Buffer     buffer("test.go");
+    buffer.InsertAtPoint("var r = foo(a,\n            b)\n");
+
+    const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b)"
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
+    REQUIRE(contColumn.has_value());
+    REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "("
+}
+
+TEST_CASE("CSharpMode indentColumn indents a nested if-block and aligns its closing brace", "[Indent]") {
+    const auto mode = CSharpMode();
+    REQUIRE(mode.indentColumn);
+    Buffer buffer("test.cs");
+    buffer.InsertAtPoint("class C {\n    void F() {\n        if (true) {\n            return;\n        }\n    }\n}\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 3); // "            return;"
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 12); // three levels deep, width 4
+
+    const auto [closeStart, closeEnd] = LineRange(buffer, 4); // "        }" -- closes the if-block
+    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd);
+    REQUIRE(closeColumn.has_value());
+    REQUIRE(*closeColumn == 8); // matches "if (true) {"'s own level, not one deeper
+}
+
+TEST_CASE("CSharpMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
+          "[Indent]") {
+    const auto mode = CSharpMode();
+    Buffer     buffer("test.cs");
+    buffer.InsertAtPoint("var r = Foo(a,\n            b);\n");
+
+    const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b);"
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
+    REQUIRE(contColumn.has_value());
+    REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "("
 }
 
 TEST_CASE("CppMode indentColumn indents a struct member and a nested method body", "[Indent]") {

@@ -535,6 +535,61 @@ ned_embed_treesitter_query("${tree-sitter-rust_SOURCE_DIR}/queries/tags.scm" Rus
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-tests.scm" RustTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-indents.scm" RustIndents)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/xml-indents.scm" XmlIndents)
+
+# Go bundled language support (2026-09-06 audit finding): tree-sitter/
+# tree-sitter-go, the tree-sitter org's own official grammar (same provenance
+# bar as c/cpp/python/javascript/rust above) -- ships real
+# queries/highlights.scm and queries/tags.scm, both consumed unmodified (no
+# c-tags.scm/cpp-tags.scm-style vendoring needed -- checked directly against
+# both files, no double-tag/ambiguity issue found the way rust-bundled-
+# language's own tags.scm had). folds/indents/tests are, as with every other
+# bundled language, hand-written locally -- no upstream grammar repo ships
+# those ned-local capture conventions. No go-imports.scm: unlike Rust's
+# bodyless "mod foo;" (a single-file declaration a syntax-only query can
+# resolve), Go's own `import "some/module/path"` always names a whole
+# PACKAGE (a directory), never a single file, and mapping that path to a
+# real directory needs go.mod's module-path/replace-directive knowledge a
+# syntax-only query has no way to reconstruct -- exactly gopls's own
+# textDocument/definition job (go.mod is this language's own LspRootMarkers
+# entry, see LspRootResolver.cpp). Go's own basename-only file:line
+# resolution gap for multi-directory modules is tracked separately under
+# ROADMAP.md's Test-runner gaps.
+ned_add_treesitter_grammar(tree-sitter-go https://github.com/tree-sitter/tree-sitter-go.git v0.25.0)
+
+ned_embed_treesitter_query("${tree-sitter-go_SOURCE_DIR}/queries/highlights.scm" Go)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/go-folds.scm" GoFolds)
+ned_embed_treesitter_query("${tree-sitter-go_SOURCE_DIR}/queries/tags.scm" GoTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/go-tests.scm" GoTests)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/go-indents.scm" GoIndents)
+
+# C# bundled language support (raised 2026-09-06 -- no system tree-sitter-
+# csharp install available; the same fix as Java/Kotlin's own ROADMAP entry
+# applies here too: a system-installed grammar .so never carries queries/*.scm
+# regardless, so a system package wouldn't have saved the real work anyway.
+# Every bundled grammar in this file already comes from FetchContent, never a
+# system package -- this is the existing, already-general policy, not a new
+# one). tree-sitter/tree-sitter-c-sharp, the tree-sitter org's own official
+# grammar (same provenance bar as c/cpp/python/javascript/rust/go above) --
+# ships real queries/highlights.scm and queries/tags.scm, both consumed
+# unmodified (checked directly: class/interface/method are distinct node
+# types with no overlapping match, so no double-tag dedup risk the way
+# rust-bundled-language's own tags.scm had). folds/indents/tests are, as with
+# every other bundled language, hand-written locally. No csharp-imports.scm:
+# a `using Some.Namespace;` directive names a whole NAMESPACE, potentially
+# spanning many files across several assemblies, never a single file -- the
+# same "package/namespace path, not a file path" reasoning go-imports.scm's
+# own absence documents for Go. `csproj`/`sln`'s own lack of a fixed
+# filename (unlike every other bundled language's root marker) needed a real
+# LspRootResolver.cpp change -- see MarkerExistsInDirectory's own comment
+# there for the "*.<ext>" glob-marker mechanism this language is the first
+# to need.
+ned_add_treesitter_grammar(tree-sitter-c-sharp https://github.com/tree-sitter/tree-sitter-c-sharp.git v0.23.5)
+
+ned_embed_treesitter_query("${tree-sitter-c-sharp_SOURCE_DIR}/queries/highlights.scm" CSharp)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/csharp-folds.scm" CSharpFolds)
+ned_embed_treesitter_query("${tree-sitter-c-sharp_SOURCE_DIR}/queries/tags.scm" CSharpTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/csharp-tests.scm" CSharpTests)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/csharp-indents.scm" CSharpIndents)
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -830,6 +885,8 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-fish
         PUBLIC tree-sitter-xml
         PUBLIC tree-sitter-rust
+        PUBLIC tree-sitter-go
+        PUBLIC tree-sitter-c-sharp
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public
