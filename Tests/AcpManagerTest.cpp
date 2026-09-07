@@ -190,6 +190,58 @@ TEST_CASE("AcpManager::SendPrompt sends session/prompt and streams the stop reas
     REQUIRE(fixture.outputBuffer->Text().find("[end_turn]") != std::string::npos);
 }
 
+// ACP context auto-attach follow-up.
+TEST_CASE("AcpManager::SendPrompt folds an attachment into the text block when the agent hasn't declared embeddedContext support",
+          "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent"); // initialize result is Json::object() -- no promptCapabilities at all
+
+    const AcpManager::PromptAttachment attachment{.uri = "file:///tmp/foo.cpp", .name = "foo.cpp", .mimeType = "", .text = "int main() {}"};
+    REQUIRE(fixture.manager.SendPrompt("what does this do?", {attachment}) == "Sent.");
+
+    const Json promptRequest = fixture.reader.Next();
+    REQUIRE(promptRequest["params"]["prompt"].size() == 1);
+    const std::string text = promptRequest["params"]["prompt"][0]["text"].get<std::string>();
+    REQUIRE(text.find("what does this do?") != std::string::npos);
+    REQUIRE(text.find("foo.cpp") != std::string::npos);
+    REQUIRE(text.find("int main() {}") != std::string::npos);
+
+    fixture.client->DispatchFrame(ResultFrame(promptRequest["id"], Json{{"stopReason", "end_turn"}}));
+    // The transcript/output buffer shows a compact marker, not the folded-in content.
+    REQUIRE(fixture.outputBuffer->Text().find("[attached: foo.cpp]") != std::string::npos);
+}
+
+TEST_CASE("AcpManager::SendPrompt sends a real resource content block when the agent declares embeddedContext support", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+
+    fixture.outputBuffer = fixture.manager.StartSession("test-agent");
+    REQUIRE(fixture.outputBuffer != nullptr);
+
+    const Json initializeRequest = fixture.reader.Next();
+    REQUIRE(initializeRequest["method"] == "initialize");
+    fixture.client->DispatchFrame(
+        ResultFrame(initializeRequest["id"], Json{{"agentCapabilities", {{"promptCapabilities", {{"embeddedContext", true}}}}}}));
+
+    const Json sessionNewRequest = fixture.reader.Next();
+    REQUIRE(sessionNewRequest["method"] == "session/new");
+    fixture.client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
+    REQUIRE(fixture.manager.State() == AcpManager::SessionState::Active);
+
+    const AcpManager::PromptAttachment attachment{
+        .uri = "file:///tmp/foo.cpp", .name = "foo.cpp", .mimeType = "text/x-c++", .text = "int main() {}"};
+    REQUIRE(fixture.manager.SendPrompt("what does this do?", {attachment}) == "Sent.");
+
+    const Json promptRequest = fixture.reader.Next();
+    REQUIRE(promptRequest["params"]["prompt"].size() == 2);
+    REQUIRE(promptRequest["params"]["prompt"][0]["text"] == "what does this do?");
+    REQUIRE(promptRequest["params"]["prompt"][1]["type"] == "resource");
+    REQUIRE(promptRequest["params"]["prompt"][1]["resource"]["uri"] == "file:///tmp/foo.cpp");
+    REQUIRE(promptRequest["params"]["prompt"][1]["resource"]["text"] == "int main() {}");
+    REQUIRE(promptRequest["params"]["prompt"][1]["resource"]["mimeType"] == "text/x-c++");
+}
+
 TEST_CASE("AcpManager's output buffer opts into word-wrap despite having no on-disk path", "[Acp]") {
     // acp-panel-wrapping follow-up: the "*acp: <agent>*" buffer is pure
     // in-memory (never backed by a real file), so ModeForBuffer always

@@ -27,6 +27,7 @@
 #include <string_view>
 #include <vector>
 
+#include "ActiveBuffer.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Theme.h"
@@ -41,6 +42,15 @@ class AcpPanel : public Widget {
     // Connect-after-construction, unset is a safe no-op -- this class's
     // usual convention. Must outlive this AcpPanel.
     void SetAcpManager(editor::acp::AcpManager* acpManager);
+
+    // ACP context auto-attach follow-up: the "@buffer"/"@selection"
+    // built-in mentions (see RefreshMentionCandidates/ResolveMentionAttachments)
+    // need to know which pane currently has keyboard focus, which changes
+    // over time -- the same provider-callback shape TabBar/ProjectSidebar/
+    // VcsPanel already take instead of a fixed ActiveBuffer&. Unset is a
+    // safe no-op: RefreshMentionCandidates simply never offers "@selection"
+    // (and "@buffer" resolves to nothing at send time) without one.
+    void SetActiveBufferProvider(std::function<ActiveBuffer&()> provider);
 
     // tabbed-bottom-dock-overlays follow-up: whether this panel is hosted as
     // one tab inside PanelDock.h's shared bottom dock (true, the default
@@ -249,11 +259,27 @@ class AcpPanel : public Widget {
     // beyond that, the current selection marked "> ".
     [[nodiscard]] std::vector<DisplayLine> FormatMentionPicker(int width) const;
 
+    // ACP context auto-attach follow-up: called once, right before sending,
+    // on the composer's own about-to-be-sent text. Finds the built-in
+    // "@buffer"/"@selection" tokens RefreshMentionCandidates/
+    // AcceptMentionCandidate already let the user splice in (word-boundary
+    // matched, the same "@ must start a word" rule RefreshMentionState
+    // uses), replaces each one found with a short "[attached: name]" marker
+    // in `text`, and returns one AcpManager::PromptAttachment per token
+    // actually resolved (a token present with no activeBufferProvider_ set,
+    // or "@selection" with no active mark, is left as literal text --
+    // silently not treated as a mention at all, rather than erroring).
+    [[nodiscard]] std::vector<editor::acp::AcpManager::PromptAttachment> ResolveMentionAttachments(std::string& text) const;
+
     const Theme&             theme_;
     editor::acp::AcpManager* acpManager_ = nullptr;
     editor::MinibufferPrompt prompt_;
     std::function<void()>    onToggleRequest_;
     bool                     dockHosted_ = false; // see SetDockHosted
+
+    // ACP context auto-attach follow-up -- see SetActiveBufferProvider's
+    // own doc comment.
+    std::function<ActiveBuffer&()> activeBufferProvider_;
 
     bool                  collapsed_ = false;
     std::function<void()> onCollapseChanged_;

@@ -1472,6 +1472,11 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
     ned::ui::AcpPanel acpPanel(theme);
     acpPanel.SetAcpManager(&acpManager);
+    // ACP context auto-attach follow-up: same provider-callback shape
+    // TabBar/ProjectSidebar/VcsPanel already take above -- lets "@buffer"/
+    // "@selection" resolve against whichever pane currently has keyboard
+    // focus, which changes over time.
+    acpPanel.SetActiveBufferProvider([wm = windowManager.get()]() -> ned::ui::ActiveBuffer& { return wm->FocusedActiveBuffer(); });
     // ACP round-1-live-validation follow-up: lets a pending permission
     // request resolve inside this panel instead of the focused pane's echo
     // area whenever the panel itself has focus -- see
