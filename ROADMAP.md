@@ -676,9 +676,7 @@ Console sharing one tab strip, close/maximize/resize-drag promoted to the dock) 
 shipped — see `git log --grep=ACP`/`--grep=panel-dock` for the history.
 
 - [ ] **AI-assisted editing (ACP) gaps** (validated live 2026-08-26 against Claude
-      Code's own ACP adapter): no scrollback in the panel; a real diff view (actual +/-
-      lines, not just a line-count delta) has no reusable line-diff utility yet
-      (`ThreeWayMerge.h`'s LCS diff is a private implementation detail); `terminal/*`
+      Code's own ACP adapter): no scrollback in the panel; `terminal/*`
       tool-call support and `elicitation/create` structured forms are undeclared as
       client capabilities; no multiple concurrent agents/sessions (still one at a time,
       `Dap/`'s own precedent); no `session/load` history replay;
@@ -727,8 +725,8 @@ callback re-confirms the buffer is still open at the same address before touchin
 (`BufferView::RequestLspFormatThenSaveBuffer`'s own stale-pointer-as-opaque-key idiom)
 since the human can close it while the LSP request is in flight.
 
-Two things were deliberately cut after checking the real APIs against this item's own
-original aspirational list, both still open:
+One thing was deliberately cut after checking the real APIs against this item's own
+original aspirational list, still open:
 - [ ] **Real rename/code-action apply + `goto(file, line)` navigation** — all three
       need a live `WindowManager`/`BufferView` (`ApplyProjectEdit`'s multi-file
       transaction machinery for the first two — `ProjectUndoManager` recording, file
@@ -736,14 +734,17 @@ original aspirational list, both still open:
       third) that `McpToolRegistry` doesn't have and doesn't currently reach. Not a
       thin wrapper the way everything shipped so far is — a real follow-up, not
       attempted here.
-- [ ] **Org `capture_note`** — `OrgCapture::InsertCapture` only inserts a template
-      whose text is fixed at Janet-registration time (`%?` just marks where point
-      lands after expansion); there's no way to inject agent-supplied free text into a
-      capture through the existing API. Needs a small `OrgCapture.h` capability
-      addition (accept caller-supplied text to substitute at `%?`) before a faithful
-      tool can exist — `clock_in`/`clock_out` were dropped from scope for the same
-      "not actually a thin wrapper" reasoning, though those don't need the API change,
-      just a decision on how an MCP tool expresses "at point" headlessly.
+
+`capture_note` is shipped: `OrgCapture::ExpandCaptureTemplate`/`InsertCapture` grew an
+optional `insertedText` parameter (substituted at the template's `%?` in place of just
+removing it, cursor landing after the substituted text rather than mid-placeholder) so
+the `capture_note` MCP tool (`key`, `text`) can inject agent-supplied free text into a
+registered capture template headlessly — creating the target file/parent directories
+first, same as `BufferView::HandleOrgCaptureKey`'s own sequence, minus the pane-focus/
+point-placement half that only makes sense for an interactive keystroke.
+`clock_in`/`clock_out` stay out of scope for the same "not actually a thin wrapper"
+reasoning the original item gave.
+
 DAP↔ACP debugging bridge is shipped (2026-09-07) — see `git log --grep=dap-acp-bridge`.
 Structured tools (`dap_list_breakpoints`/`dap_set_breakpoint`/`dap_remove_breakpoint`,
 `dap_continue`/`dap_pause`/`dap_stop_session`/`dap_step_over`/`dap_step_into`/
@@ -776,20 +777,35 @@ silently ballooning every message's token cost. `ask-agent-about-line` (M-x only
 default binding, `dap-ask-agent`'s own precedent) covers the diagnostic/test-failure
 one-click case from `*Messages*`/`*test results*`, reusing `VisitResultUnderPoint`'s
 `"path:line:"` parse (factored into `BufferView::ResultLineAtPoint`).
-- [ ] **Diff preview before an agent edit's permission grant** — `session/request_
-      permission` is a bare y/n today; showing the actual diff first needs a reusable
-      line-diff utility (`ThreeWayMerge.h`'s LCS diff is currently a private
-      implementation detail, per the gaps bullet above). Worth building alongside
-      "Merge Conflict Resolution Mode"'s per-hunk take/reject UI (above) rather than as
-      a second bespoke widget — reviewing an agent's proposed edit and resolving a
-      merge conflict are the same interaction shape (a hunk, shown, accepted or
-      rejected).
-- [ ] **Prose-check the ACP composer** (raised 2026-09-06, cheap and independent of
-      everything else here) — `ProseChecker` (harper-ls) is already wired generically
-      as a diagnostics-only LSP connection keyed by `kProseLanguageKey`; pointing it at
-      the `AcpPanel` composer's `MinibufferPrompt` text live (spelling/grammar
-      squiggles before hitting Enter) needs no new subsystem, just feeding it a second
-      piece of text.
+A reusable line-diff utility is shipped: `Text/LineDiff.h` (`SplitLines`/`DiffLines`,
+the same trimmed-prefix/suffix-then-LCS-backtrack algorithm `ThreeWayMerge.cpp` always
+had, extracted out of that file's own private implementation and reused by it rather
+than kept as a second copy) plus `UnifiedDiff` — a git-diff-style windowed renderer
+(context lines around each hunk, adjacent hunks close enough to overlap merged into one
+continuous run, everything else collapsed into a single "N unchanged lines" marker).
+Diff preview before an agent edit's permission grant is built on it:
+`AcpManager::PermissionPrompt` grew `diffOldText`/`diffNewText`, parsed from a pending
+`session/request_permission`'s own `toolCall.content` the same `{type: "diff", path,
+oldText, newText}` shape `PushOrUpdateToolCall` already parsed for the transcript (now
+a shared `ExtractDiffContent` helper) — `AcpPanel` renders a real, capped +/- preview
+(`FormatDiffPreview`, `Theme::diffAddedBackground`/`diffRemovedBackground`, the same
+background-tint-only treatment the VCS diff gutter uses) for both the pending
+permission entry and, replacing the old bare line-count delta, every `Kind::ToolCall`
+diff. Building this alongside "Merge Conflict Resolution Mode"'s per-hunk take/reject
+UI (above) didn't apply in the end — that mode resolves already-conflict-marked text
+(`Text/ConflictHunk.cpp`), it was never the one needing a fresh diff engine.
+
+Prose-check the ACP composer is shipped: `ProseChecker`'s existing diagnostics-only
+`kProseLanguageKey` connection now also checks the `AcpPanel` composer's live text —
+`LspManager::CheckComposerProseText` debounces the send itself (there's no per-frame
+sync cadence driving this call the way `BufferView`'s does) and syncs a private,
+never-`BufferList`-registered scratch `Buffer` under a fixed pseudo-path so a
+publish-diagnostics response never resolves through `bufferList_`/carries no
+switch-to-buffer or session-persistence footprint. `AcpPanel` renders the result as a
+plain underline over the composer text (`BufferView`'s own inline-diagnostic
+underline-only treatment, reused rather than a second visual language), byte offsets
+clamped defensively against whatever's been typed since the last check.
+
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this file;
       last.
 - [ ] VCS: "generalize the two-callback plugin shape past version control" (cloud CLIs,

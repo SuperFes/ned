@@ -167,6 +167,32 @@ class LspManager {
     // a huge file has a visible explanation.
     void SyncBuffer(text::Buffer& buffer, const std::string& language);
 
+    // prose-check-composer follow-up (ROADMAP "Prose-check the ACP
+    // composer"): checks `text` against the prose-checker connection
+    // (kProseLanguageKey) for a caller with no real, BufferList-registered
+    // Buffer of its own -- AcpPanel's composer holds its draft as a plain
+    // std::string (Editor/MinibufferPrompt.h), not a Buffer. Lazily builds a
+    // private, never-BufferList-registered scratch text::Buffer
+    // (composerProseBuffer_) purely to reuse SyncToServer/ContentGeneration's
+    // existing didOpen/didChange machinery unmodified, keyed under a fixed
+    // pseudo-path that never resolves through bufferList_ (see
+    // HandlePublishDiagnostics' own early special case for that exact path)
+    // -- so this carries none of a real registered Buffer's footprint
+    // (switch-to-buffer, session persistence). Debounced
+    // (LspDiagnosticsDebounceMs()) at the call site itself, unlike
+    // SyncBuffer/SyncToServer's own per-frame-call, always-immediate-didOpen
+    // shape -- there's no Paint()-per-frame cadence driving this call the way
+    // BufferView's does, so without debouncing here every keystroke would
+    // send its own didOpen/didChange. callback fires with prose-origin
+    // diagnostics as byte offsets into `text` itself; never invoked (not
+    // even with an empty vector) if prose checking is disabled/unconfigured
+    // -- no explicit check here, same as SyncBuffer: ClientForLanguage's own
+    // ProseCheckerCommand() resolution already yields no client in that case,
+    // so SyncToServer below is a silent no-op exactly the way SyncBuffer's
+    // own prose sync already is.
+    using ComposerProseCallback = std::function<void(std::vector<text::Buffer::Diagnostic> diagnostics)>;
+    void CheckComposerProseText(const std::string& text, ComposerProseCallback callback);
+
     // embedded-language-documents follow-up. One embedded language's
     // synthesized virtual document, ready to sync -- Editor/EmbeddedDocuments.h's
     // EmbeddedDocument, translated at the one BufferView.cpp call site into
@@ -1371,6 +1397,23 @@ class LspManager {
     // cancels) a buffer's entry before it can fire against a Buffer* that
     // may no longer be valid.
     std::unordered_map<text::Buffer*, ned::ui::DeadlineTimer> diagnosticsDebounceTimers_;
+
+    // prose-check-composer follow-up: CheckComposerProseText's own state --
+    // composerProseBuffer_ is lazily constructed on first use and lives for
+    // this LspManager's whole lifetime (never added to bufferList_, never
+    // closed the way NotifyBufferClosed closes a real buffer);
+    // composerProseCallback_ is always the *latest* caller's callback (single
+    // composer, single in-flight interest -- an older pending request's
+    // result is simply never applied once a newer one has been requested,
+    // since HandlePublishDiagnostics always invokes whichever callback is
+    // currently stored); composerProseDebounceTimer_ debounces the
+    // didOpen/didChange send itself (unlike diagnosticsDebounceTimers_ above,
+    // which debounces applying an already-received publish) -- see
+    // CheckComposerProseText's own doc comment for why this call site needs
+    // that where SyncBuffer's per-frame callers don't.
+    std::unique_ptr<text::Buffer> composerProseBuffer_;
+    ComposerProseCallback         composerProseCallback_;
+    ned::ui::DeadlineTimer        composerProseDebounceTimer_;
 
     // sync-debounce follow-up: one debounce timer per (buffer, serverKey)
     // with a pending textDocument/didChange -- see BufferSyncState::

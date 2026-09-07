@@ -1477,6 +1477,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // "@selection" resolve against whichever pane currently has keyboard
     // focus, which changes over time.
     acpPanel.SetActiveBufferProvider([wm = windowManager.get()]() -> ned::ui::ActiveBuffer& { return wm->FocusedActiveBuffer(); });
+    // Prose-check-the-composer follow-up: live spelling/grammar squiggles in
+    // the composer, via the same prose-checker connection ProseChecker.h
+    // already wires up generically.
+    acpPanel.SetLspManager(&lspManager);
     // ACP round-1-live-validation follow-up: lets a pending permission
     // request resolve inside this panel instead of the focused pane's echo
     // area whenever the panel itself has focus -- see

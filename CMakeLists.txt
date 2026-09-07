@@ -624,6 +624,7 @@ add_library(ned_lib STATIC
         Source/Text/Buffer.cpp
         Source/Text/BufferList.cpp
         Source/Text/BinaryDetect.cpp
+        Source/Text/LineDiff.cpp
         Source/Text/ThreeWayMerge.cpp
         Source/Text/ConflictHunk.cpp
         Source/Text/Utf8.cpp
@@ -994,6 +995,7 @@ if (NED_BUILD_TESTS)
             Tests/AutoRevertTest.cpp
             Tests/AutoMergeTest.cpp
             Tests/FileWatchTest.cpp
+            Tests/LineDiffTest.cpp
             Tests/ThreeWayMergeTest.cpp
             Tests/ConflictHunkTest.cpp
             Tests/ConflictResolutionTest.cpp
