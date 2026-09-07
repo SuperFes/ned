@@ -247,6 +247,20 @@ class VcsProvider {
         (void)patchPath;
         throw std::runtime_error("hunk unstaging not supported by this provider");
     }
+    // Hunk-level revert (mouse-ergonomics follow-up): discards one hunk's
+    // change from the *working tree*, the third operation alongside
+    // Stage/UnstagePatchArgv above -- shares Stage's own diff source
+    // (DiffArgv, the unstaged diff; a change already staged has nothing
+    // left in the worktree to revert) but, unlike either of those, applies
+    // outside the index entirely (no `--cached`). Destructive and
+    // unconfirmed at this layer -- VcsRunner's caller is responsible for a
+    // real "are you sure" gate before ever calling this.
+    [[nodiscard]] virtual VcsCommandSpec RevertPatchArgv(const std::filesystem::path& root,
+                                                         const std::filesystem::path& patchPath) const {
+        (void)root;
+        (void)patchPath;
+        throw std::runtime_error("hunk revert not supported by this provider");
+    }
 
     // Commit whatever is currently staged. message may be multi-line
     // (multi-line-commit-message follow-up: composed in a real buffer, see

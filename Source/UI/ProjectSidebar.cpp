@@ -595,6 +595,17 @@ bool ProjectSidebar::OnEvent(const Event& event) {
         return true;
     }
 
+    // project-sidebar-drag-drop follow-up: a release landing back on this
+    // widget's own bounds is just an ordinary click (the press-time open
+    // above already handled it) -- clear the armed drag with no drop
+    // action. A release landing on a BufferView pane instead is handled
+    // there (see that widget's own OnMouseEvent, checked ahead of its
+    // LocalMouseEvent gate the same way it already checks IsResizing()).
+    if (dragPath_ && mouse->motion == MouseEvent::Motion::Released) {
+        dragPath_.reset();
+        return true;
+    }
+
     // sidebar-context-menu follow-up: a right-press resolves to the same
     // row a left-press would (chrome rows -- header/bottom-border/divider --
     // are excluded the same way, no menu opens over them), reports the
@@ -692,6 +703,12 @@ bool ProjectSidebar::OnEvent(const Event& event) {
         lastFileClickPath_ && *lastFileClickPath_ == entry.path && (now - lastFileClickTime_) < kDoubleClickWindow;
     lastFileClickPath_ = entry.path;
     lastFileClickTime_ = now;
+
+    // project-sidebar-drag-drop follow-up: armed alongside the existing
+    // open-preview behavior below, not instead of it -- see DraggingFilePath's
+    // own doc comment for the cross-widget cooperation this enables and the
+    // "opens here too" side effect this deliberately accepts for a real drag.
+    dragPath_ = entry.path;
 
     OpenFileEntry(entry.path, isDoubleClick);
     return true;
@@ -916,6 +933,14 @@ void ProjectSidebar::EndResize() {
     if (width_ != resizeStartWidth_ && onWidthCommitted_) {
         onWidthCommitted_(width_);
     }
+}
+
+std::optional<std::filesystem::path> ProjectSidebar::DraggingFilePath() const {
+    return dragPath_;
+}
+
+void ProjectSidebar::EndFileDrag() {
+    dragPath_.reset();
 }
 
 void ProjectSidebar::RevealPath(const std::filesystem::path& targetPath) {

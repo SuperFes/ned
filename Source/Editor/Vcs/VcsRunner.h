@@ -159,6 +159,14 @@ class VcsRunner {
     // modified" guard that gates the point-driven caller lives in
     // BufferView::StageOrUnstageHunkAtPoint, not here).
     void RequestHunkApply(const std::filesystem::path& path, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    // mouse-ergonomics follow-up: discards one hunk's change from the
+    // working tree -- RequestHunkApply's own diff-then-patch chain, reading
+    // from the same unstaged diff `stage=true` does (VcsProvider::DiffArgv),
+    // but applying via RevertPatchArgv instead of Stage/UnstagePatchArgv.
+    // Destructive and entirely unconfirmed at this layer, same as
+    // RequestRevert above -- BufferView::RevertHunkAtPoint's own y/n gate is
+    // what makes this safe to call, not anything here.
+    void RequestHunkRevert(const text::Buffer& buffer, std::size_t targetLine, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestCommit(const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchList(std::function<void(std::vector<VcsBranchEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});

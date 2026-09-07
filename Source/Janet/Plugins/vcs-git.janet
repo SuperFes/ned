@@ -91,6 +91,14 @@
 (defn unstage-patch-argv [root patch-path]
   ["git" "-C" root "apply" "--cached" "--reverse" "--unidiff-zero" patch-path])
 
+## Hunk-level revert (mouse-ergonomics follow-up): same reverse application
+## as unstage-patch-argv, but without --cached -- discards the hunk from the
+## working tree instead of pulling it back out of the index. The patch
+## itself comes from the *unstaged* diff (staged-diff-argv's sibling,
+## diff-argv), the same source stage-patch-argv reads from.
+(defn revert-patch-argv [root patch-path]
+  ["git" "-C" root "apply" "--reverse" "--unidiff-zero" patch-path])
+
 (defn commit-argv [root message]
   ["git" "-C" root "commit" "-m" message])
 
@@ -345,6 +353,7 @@
    :staged-diff-argv staged-diff-argv
    :stage-patch-argv stage-patch-argv
    :unstage-patch-argv unstage-patch-argv
+   :revert-patch-argv revert-patch-argv
    :commit-argv commit-argv
    :branch-list-argv branch-list-argv
    :parse-branch-list parse-branch-list

@@ -450,6 +450,50 @@ void VcsRunner::RequestHunkApplyForPath(const std::filesystem::path& pathArg, st
         onError);
 }
 
+void VcsRunner::RequestHunkRevert(const text::Buffer& buffer, std::size_t targetLine, std::function<void()> onSuccess,
+                                  std::function<void(std::string)> onError) {
+    if (!buffer.Path()) {
+        onError("no file associated with this buffer");
+        return;
+    }
+    // weakly_canonical for the same relative-path-vs-"-C" reason
+    // RequestBlame/RequestHunkApplyForPath spell out.
+    const std::filesystem::path path = std::filesystem::weakly_canonical(*buffer.Path());
+
+    RunProviderOperation(
+        "revert hunk", "revert-hunk-diff:" + path.string(),
+        [&path](VcsProvider& provider) { return provider.DiffArgv(path); },
+        [this, path, targetLine, onSuccess = std::move(onSuccess), onError](VcsProvider&, std::string diffOutput) {
+            const std::optional<std::string> patch = ExtractHunkPatch(diffOutput, targetLine);
+            if (!patch) {
+                onError("no unstaged change at this line");
+                return;
+            }
+            const std::optional<std::filesystem::path> patchFile = WritePatchFile(*patch);
+            if (!patchFile) {
+                onError("couldn't write the patch to a temp file");
+                return;
+            }
+            auto removePatchFile = [patchFile] {
+                std::error_code ec;
+                std::filesystem::remove(*patchFile, ec); // best-effort -- a leftover temp file isn't worth an error
+            };
+            const std::filesystem::path root = ProjectRoot();
+            RunProviderOperation(
+                "revert hunk", "revert-hunk-apply:" + path.string(),
+                [&root, &patchFile](VcsProvider& provider) { return provider.RevertPatchArgv(root, *patchFile); },
+                [removePatchFile, onSuccess](VcsProvider&, std::string) {
+                    removePatchFile();
+                    onSuccess();
+                },
+                [removePatchFile, onError](std::string error) {
+                    removePatchFile();
+                    onError(error);
+                });
+        },
+        onError);
+}
+
 void VcsRunner::RequestCommit(const std::string& message, std::function<void(std::string)> onSuccess,
                               std::function<void(std::string)> onError) {
     const std::filesystem::path root = ProjectRoot();
