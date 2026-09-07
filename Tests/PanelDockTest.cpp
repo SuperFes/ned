@@ -3,8 +3,12 @@
 // AcpPanel (bottom-docked)/DebugConsolePanel now sit behind, exercised
 // headlessly against small fake panels rather than the three real (much
 // heavier) widgets: tab switching by click and by SwitchTo, active-tab-only
-// content delegation, extra-actions scoped to the active tab, maximize/close
-// chrome, and resize-drag routing to whichever tab is active.
+// content delegation, extra-actions scoped to the active tab, maximize/
+// restore/hide-dock chrome (tab-glyph-redesign follow-up: no bracket
+// characters anywhere in this row, and three distinct glyphs for tab-close/
+// maximize/hide-dock), a shared height (Percent()) that switching tabs never
+// changes (tab-height-unification follow-up), and resize-drag routing to
+// whichever tab is active.
 //
 
 #include <catch2/catch_test_macros.hpp>
@@ -145,12 +149,30 @@ TEST_CASE("PanelDock clicking a tab label switches to it", "[PanelDock]") {
     f.dock.AddPanel("Claude", f.claude);
     f.Paint();
 
-    // Layout: "[ Terminal ]" (active, 12 columns) at x=[1,13), then a
-    // 1-column gap, then " Claude " (inactive, 8 columns) at x=[14,22) --
-    // any column inside that second span lands on the Claude tab.
+    // tab-glyph-redesign follow-up: no brackets, active/inactive is a color
+    // distinction now, so every tab's own label is the same padded text
+    // regardless of which is active. Layout: " Terminal " (10 columns) + its
+    // own end-cap column at x=[1,12), then " Claude " (8 columns) + end-cap
+    // at x=[12,21) -- any column inside that second span lands on Claude.
     REQUIRE(f.dock.OnEvent(MousePress(16, 0)));
     REQUIRE(f.dock.ActiveIndex() == 1);
     REQUIRE(f.claude.Focused());
+}
+
+TEST_CASE("PanelDock tab strip has no bracket characters anywhere -- color marks the active tab instead",
+          "[PanelDock]") {
+    // The literal bug report this guards against: "[ ]" used to mark both
+    // the active tab's own label AND every button in the right-side
+    // cluster, "the tabs don't really feel tabby ... we use the same chars
+    // [] for two different parts of the tabbed interface."
+    Fixture f;
+    f.dock.AddPanel("Terminal", f.terminal);
+    f.dock.AddPanel("Claude", f.claude);
+    f.Paint();
+
+    const std::string row = f.RowText(0);
+    REQUIRE(row.find('[') == std::string::npos);
+    REQUIRE(row.find(']') == std::string::npos);
 }
 
 TEST_CASE("PanelDock forwards non-tab-strip mouse events to the active panel only", "[PanelDock]") {
@@ -175,14 +197,15 @@ TEST_CASE("PanelDock extra actions are only reachable while their own tab is act
     f.Paint();
 
     // Rightmost chrome, active tab (Terminal, which has an extra action):
-    // [/][▲][x], 3 buttons -- the search icon is the leftmost of the three.
+    // search icon, then maximize, then hide-dock -- 3 buttons, no brackets
+    // around any of them -- the search icon is the leftmost of the three.
     const int searchButtonX = kWidth - 3 * 4 + 1;
     REQUIRE(f.dock.OnEvent(MousePress(searchButtonX, 0)));
     REQUIRE(searchClicks == 1);
 
-    // Claude has no extra actions -- the cluster shrinks to [▲][x] (2
-    // buttons) and shifts right, so the old search column now falls before
-    // the (moved) cluster entirely, i.e. it's simply unclaimed.
+    // Claude has no extra actions -- the cluster shrinks to maximize +
+    // hide-dock (2 buttons) and shifts right, so the old search column now
+    // falls before the (moved) cluster entirely, i.e. it's simply unclaimed.
     f.dock.SwitchTo(1);
     searchClicks = 0;
     REQUIRE(f.dock.OnEvent(MousePress(searchButtonX, 0)));
@@ -203,35 +226,47 @@ TEST_CASE("PanelDock maximize toggles and fires the layout-change hook", "[Panel
     f.Paint();
 
     REQUIRE_FALSE(f.dock.Maximized());
-    const int maximizeButtonX = kWidth - 2 * 4 + 1; // [▲] then [x] -- maximize is second-to-last
+    const int maximizeButtonX = kWidth - 2 * 4 + 1;  // maximize, then hide-dock -- maximize is second-to-last
+    const int maximizeIconX   = maximizeButtonX + 1; // the icon sits one column past the button's own leading pad
+    REQUIRE(f.screen.PixelAt(maximizeIconX, 0).character == "▲");
     REQUIRE(f.dock.OnEvent(MousePress(maximizeButtonX, 0)));
     REQUIRE(f.dock.Maximized());
     REQUIRE(layoutChanges == 1);
+
+    // tab-glyph-redesign follow-up: the maximize glyph itself now flips to
+    // ▼ once actually maximized -- a real bug fixed alongside the redesign,
+    // the button used to always paint ▲ regardless of Maximized() state.
+    f.Paint();
+    REQUIRE(f.screen.PixelAt(maximizeIconX, 0).character == "▼");
 }
 
-TEST_CASE("PanelDock::SwitchTo fires the layout-change hook so the outer box is re-derived", "[PanelDock]") {
-    // Live-pty-confirmed bug this guards against: OverlayHost only
-    // recomputes a widget's own Box_ on Show()/Reflow(), never per-event --
-    // without SwitchTo notifying the layout-change hook, switching from a
-    // tall tab to a short one (or vice versa) left the dock at the
-    // previously-active tab's own height until the next real terminal
-    // resize, whether the switch came from a click or a toggle command.
+TEST_CASE("PanelDock::SwitchTo never changes the dock's own shared height", "[PanelDock]") {
+    // tab-height-unification follow-up: this is the exact inverse of what
+    // this class used to guarantee. Before, switching tabs deliberately
+    // fired the layout-change hook because each tab could resolve a
+    // different ActivePercent() -- a real, reported "since they're grouped
+    // together the heights between tabs should be the same" complaint about
+    // that behavior. Now Percent() is one value shared by every tab, so a
+    // plain SwitchTo has nothing sizing-related left to notify about, even
+    // between two tabs with very different persisted percents.
     Fixture f;
-    f.dock.AddPanel("Terminal", f.terminal);
-    f.dock.AddPanel("Claude", f.claude);
+    f.dock.AddPanel(
+        "Terminal", f.terminal, {}, [&f] { return f.terminalPercent; }, [&f](int p) { f.terminalPercent = p; });
+    f.dock.AddPanel(
+        "Claude", f.claude, {}, [&f] { return f.claudePercent; }, [&f](int p) { f.claudePercent = p; });
     int layoutChanges = 0;
     f.dock.SetOnLayoutChange([&layoutChanges] { ++layoutChanges; });
 
-    f.dock.SwitchTo(1);
-    REQUIRE(layoutChanges == 1);
+    REQUIRE(f.terminalPercent != f.claudePercent); // fixture defaults: 25 vs. 40
+    const int before = f.dock.Percent();
 
-    // Switching to the tab that's already active is a no-op -- nothing
-    // about the dock's own sizing could have changed.
     f.dock.SwitchTo(1);
-    REQUIRE(layoutChanges == 1);
+    REQUIRE(f.dock.Percent() == before);
+    REQUIRE(layoutChanges == 0);
 
     f.dock.SwitchTo(0);
-    REQUIRE(layoutChanges == 2);
+    REQUIRE(f.dock.Percent() == before);
+    REQUIRE(layoutChanges == 0);
 }
 
 TEST_CASE("PanelDock close button fires the close-request hook", "[PanelDock]") {
@@ -242,11 +277,49 @@ TEST_CASE("PanelDock close button fires the close-request hook", "[PanelDock]") 
     f.Paint();
 
     const int closeButtonX = kWidth - 1 * 4 + 1;
+    // tab-glyph-redesign follow-up: the shared hide-dock button paints ▾,
+    // not the × a per-tab close action uses -- see the test below for the
+    // full distinct-glyph regression. The icon sits one column past the
+    // button's own leading pad column.
+    REQUIRE(f.screen.PixelAt(closeButtonX + 1, 0).character == "▾");
     REQUIRE(f.dock.OnEvent(MousePress(closeButtonX, 0)));
     REQUIRE(closes == 1);
 }
 
-TEST_CASE("PanelDock drag-resize on an unclaimed tab-strip column adjusts the active tab's own percent", "[PanelDock]") {
+TEST_CASE("PanelDock hide-dock button uses a different glyph than a per-tab close action", "[PanelDock]") {
+    // The exact bug reported live: "I get that one of the x's for the
+    // terminal just closes the terminal and not the bottom tab bar, but it
+    // should not be the same glyph in both places." Terminal's own
+    // close-this-tab TabAction (main.cpp) uses × deliberately -- this test
+    // pins that the shared hide-the-whole-dock button never reuses it.
+    Fixture f;
+    int     tabCloseClicks = 0;
+    f.dock.AddPanel("Terminal", f.terminal, {}, {}, {}, [&tabCloseClicks] {
+        return std::vector<PanelDock::TabAction>{{.icon = U'×', .onClick = [&tabCloseClicks] { ++tabCloseClicks; }}};
+    });
+    int dockCloses = 0;
+    f.dock.SetOnCloseRequest([&dockCloses] { ++dockCloses; });
+    f.Paint();
+
+    // Rightmost chrome: tab-close (×), maximize (▲), hide-dock (▾) -- three
+    // distinct buttons, three distinct glyphs, none of them brackets. Each
+    // button's own icon sits one column past its leading pad column.
+    const int tabCloseButtonX = kWidth - 3 * 4 + 1;
+    const int hideDockButtonX = kWidth - 1 * 4 + 1;
+    REQUIRE(f.screen.PixelAt(tabCloseButtonX + 1, 0).character == "×");
+    REQUIRE(f.screen.PixelAt(hideDockButtonX + 1, 0).character == "▾");
+
+    REQUIRE(f.dock.OnEvent(MousePress(tabCloseButtonX, 0)));
+    REQUIRE(tabCloseClicks == 1);
+    REQUIRE(dockCloses == 0); // the per-tab close never hides the whole dock
+
+    REQUIRE(f.dock.OnEvent(MousePress(hideDockButtonX, 0)));
+    REQUIRE(dockCloses == 1);
+    REQUIRE(tabCloseClicks == 1); // and the hide-dock button never closes the tab
+}
+
+TEST_CASE("PanelDock drag-resize writes through the active tab's own percent pair, anchored on the shared height",
+          "[PanelDock]") {
     Fixture f;
     f.dock.AddPanel(
         "Terminal", f.terminal, {}, [&f] { return f.terminalPercent; }, [&f](int p) { f.terminalPercent = p; });
@@ -254,39 +327,63 @@ TEST_CASE("PanelDock drag-resize on an unclaimed tab-strip column adjusts the ac
         "Claude", f.claude, {}, [&f] { return f.claudePercent; }, [&f](int p) { f.claudePercent = p; });
     f.Paint();
 
-    // Column 25: both tab labels end by column 22 (whichever is active --
-    // 12+8 or 10+10 columns either way), and neither tab registers extra
-    // actions, so the button cluster (2 buttons) starts at column 32 --
-    // column 25 is unclaimed in both phases below, so the press starts a
-    // resize instead of switching tabs. The press must land on row 0 (the
-    // tab strip) to arm the drag at all; the resulting delta is then read
-    // off the *global* mouse position on every Moved event regardless of
-    // row, TerminalPanel/AcpPanel's own "anchor minus current" convention --
-    // moving to a smaller y (up, off the top of the dock is fine for a
-    // synthetic drag) grows a bottom-docked panel.
+    // Column 25: both tab labels end well before column 25 either way, and
+    // neither tab registers extra actions, so the button cluster (2
+    // buttons) starts at column 32 -- column 25 is unclaimed in both phases
+    // below, so the press starts a resize instead of switching tabs. The
+    // press must land on row 0 (the tab strip) to arm the drag at all; the
+    // resulting delta is then read off the *global* mouse position on every
+    // Moved event regardless of row, TerminalPanel/AcpPanel's own "anchor
+    // minus current" convention -- moving to a smaller y (up, off the top
+    // of the dock is fine for a synthetic drag) grows a bottom-docked panel.
     REQUIRE(f.dock.OnEvent(MousePress(25, 0)));
     REQUIRE(f.dock.OnEvent(MouseMove(25, -50))); // dragged 50px up -> +50%
-    REQUIRE(f.terminalPercent == 75);
+    REQUIRE(f.terminalPercent == 75);            // 25 (Terminal's own starting percent) + 50
+    REQUIRE(f.dock.Percent() == 75);
     REQUIRE(f.dock.OnEvent(MouseRelease(25, -50)));
 
+    // tab-height-unification follow-up: switching to Claude and dragging
+    // again anchors on the dock's own *shared* height (75, just set above),
+    // not Claude's own independently-persisted 40 -- Claude's percent pair
+    // still receives the write (its own setting still persists correctly),
+    // but the starting point for the drag is whatever height was actually
+    // on screen, matching what the user just saw and dragged from.
     f.dock.SwitchTo(1);
     f.Paint();
     REQUIRE(f.dock.OnEvent(MousePress(25, 0)));
-    REQUIRE(f.dock.OnEvent(MouseMove(25, -30))); // +30%
-    REQUIRE(f.claudePercent == 70);
+    REQUIRE(f.dock.OnEvent(MouseMove(25, -30))); // +30% off the shared 75, not off claudePercent's own 40
+    REQUIRE(f.claudePercent == 105);
+    REQUIRE(f.dock.Percent() == 105);
     REQUIRE(f.terminalPercent == 75); // untouched by the second drag
 }
 
-TEST_CASE("PanelDock resize is a no-op for a tab with no percent pair registered", "[PanelDock]") {
+TEST_CASE("PanelDock resize on a tab with no percent pair still moves the shared height, just doesn't persist it",
+          "[PanelDock]") {
+    // tab-height-unification follow-up: unlike the old per-tab design (where
+    // this really was a no-op, since there was nowhere to write the result),
+    // dragging while DebugConsole/Janet-REPL-shaped tab (no getPercent/
+    // setPercent at all) is active still resizes the dock live -- it's
+    // Percent() that's shared now, not just the persisted setting -- it
+    // simply has nothing to write through to disk once released.
     Fixture f;
     f.dock.AddPanel("Debug console", f.terminal); // no getPercent/setPercent
     f.Paint();
 
+    REQUIRE(f.dock.Percent() == 30); // default seed -- no entry ever registered a getPercent to seed from
     REQUIRE(f.dock.OnEvent(MousePress(20, 0)));
-    REQUIRE(f.dock.OnEvent(MouseMove(20, 50)));
+    REQUIRE(f.dock.OnEvent(MouseMove(20, 50))); // dragged 50px down -> -50%, clamped
+    REQUIRE(f.dock.Percent() == 10);            // 30 - 50 clamped to the [10, 90] floor
     REQUIRE(f.dock.OnEvent(MouseRelease(20, 50)));
-    // Nothing to assert beyond "doesn't crash" -- there's no percent pair to
-    // have changed.
+}
+
+TEST_CASE("PanelDock::Percent seeds from the first tab that registers a getPercent, not necessarily the active one",
+          "[PanelDock]") {
+    Fixture f;
+    f.dock.AddPanel("Debug console", f.terminal); // no getPercent -- added first, but never seeds anything
+    f.dock.AddPanel(
+        "Terminal", f.claude, {}, [&f] { return f.terminalPercent; }, [&f](int p) { f.terminalPercent = p; });
+
+    REQUIRE(f.dock.Percent() == f.terminalPercent); // 25, the fixture's own default
 }
 
 TEST_CASE("PanelDock::RemovePanel drops a non-active tab without disturbing the active one", "[PanelDock]") {
