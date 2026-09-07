@@ -751,18 +751,26 @@ original aspirational list, both still open:
       tool can exist — `clock_in`/`clock_out` were dropped from scope for the same
       "not actually a thin wrapper" reasoning, though those don't need the API change,
       just a decision on how an MCP tool expresses "at point" headlessly.
-- [ ] **DAP↔ACP debugging bridge** (raised 2026-09-06, the concrete flagship use of the
-      tool-bridge above). Structured tools (`dap_set_breakpoint`, `dap_continue`/
-      `step_over`/`step_into`/`step_out`, `dap_get_stack_trace`,
-      `dap_get_variables(frame)`, `dap_evaluate(expr)`) would let the agent act as a
-      real pair-debugger — "set a breakpoint at line 42 and tell me what `x` is when we
-      hit it" actually happens against the live session, with the agent reasoning over
-      real runtime state (`RequestVariables`, watch-history, the pointer-graph view's
-      cycle-safe traversal — all already structured, not scraped from a hex dump)
-      rather than guessing from source alone. Separately, **debug-session context
-      injection**: a one-click "ask agent about this state" from a stopped breakpoint
-      that ships the real stack/variables into the prompt, the same shape the
-      diagnostic/test-failure quick actions below use.
+DAP↔ACP debugging bridge is shipped (2026-09-07) — see `git log --grep=dap-acp-bridge`.
+Structured tools (`dap_list_breakpoints`/`dap_set_breakpoint`/`dap_remove_breakpoint`,
+`dap_continue`/`dap_pause`/`dap_stop_session`/`dap_step_over`/`dap_step_into`/
+`dap_step_out`, `dap_get_current_location`/`dap_get_stack_trace`/`dap_get_scopes`/
+`dap_get_variables`/`dap_evaluate`, `dap_list_watches`) let an ACP agent act as a real
+pair-debugger via `Editor/Mcp/McpToolRegistry.cpp` — thin wrappers over `DapManager`'s
+already-async-callback-shaped public methods, the same shape every prior MCP tool used;
+no new `DapManager` capability was needed. Debug-session context injection also shipped
+as `dap-ask-agent` (`BufferView::SendDebugStateToAgent`): a one-click command that
+gathers the stopped session's stack/scopes/variables/watches (`ShowDebugInfo`'s own
+fan-out extracted into a shared `BuildDebugInfoLines` helper) and sends them as one
+plain-text prompt via `AcpManager::SendPrompt` — pre-formatted text, not a structured
+resource attachment (`SendPrompt` has no attachment mechanism to hook into; see the
+"ACP context auto-attach" gap below, still open). The pointer-graph/memory/disassembly/
+thread/function-and-exception-breakpoint surface stayed out of the MCP tool set
+deliberately — not part of the ask-a-question/set-a-breakpoint/step/inspect loop this
+slice targets; a `dap_get_pointer_graph`-shaped tool would need either duplicating
+`BufferView::ExpandPointerGraphNode`'s cycle-detection loop or extracting it into a
+shared, UI-free helper first (`Editor/PointerGraphNode.h`'s data shape is already
+reusable, the traversal algorithm isn't yet) — a real follow-up, not attempted here.
 - [ ] **ACP context auto-attach** (raised 2026-09-06) — `AcpManager::SendPrompt` sends
       exactly one plain `{"type": "text", ...}` block today; there's no resource
       attachment of any kind, even for the shipped `@`-file-mention (which just inlines

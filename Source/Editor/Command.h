@@ -561,6 +561,19 @@ enum class InteractiveRequest { None,
                                 // WindowManager re-fetches its row list on every stop event, not
                                 // only when explicitly invoked.
                                 DapToggleThreadsPanel,
+                                // DAP<->ACP debugging bridge: one-shot direct action, same
+                                // "just forward" shape as DapShowPointerGraph -- gathers the
+                                // stopped session's own stack/scopes/variables/watches
+                                // (BufferView::BuildDebugInfoLines, ShowDebugInfo's own fan-out
+                                // extracted into a shared helper) and sends them as one plain-text
+                                // prompt via AcpManager::SendPrompt, bypassing prompt_/InputMode
+                                // entirely (AcpStopSession's own "call straight into the manager"
+                                // shape) -- there's no resource-attachment mechanism to hook into
+                                // (SendPrompt takes only a flat string), so this is pre-formatted
+                                // text, not a structured attachment. Requires both a Stopped DAP
+                                // session and an Active ACP session; guarded in BufferView the same
+                                // "no debugger"/"no ACP manager" way every sibling request is.
+                                DapAskAgentAboutState,
                                 // Debugging wishlist: show-massif-graph -- prompts for a raw
                                 // massif.out.<pid> file path (Editor/MassifOutputParser.h),
                                 // then renders a heap-usage-over-time sparkline (Editor/

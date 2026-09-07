@@ -3000,6 +3000,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::DapShowPointerGraph;
                       });
 
+    // DAP<->ACP debugging bridge: same "just set interactiveRequest" shape
+    // as dap-show-pointer-graph above -- BufferView gathers the stopped
+    // session's stack/scopes/variables/watches and sends them as one prompt
+    // to the active ACP agent (see Command.h's own DapAskAgentAboutState doc
+    // comment).
+    registry.Register("dap-ask-agent", "Send the stopped debug session's stack and variables to the active ACP agent as a prompt.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapAskAgentAboutState;
+                      });
+
     // ACP client slice 2: same "just set interactiveRequest" shape as
     // run-task/dap-continue above -- BufferView holds the shared AcpManager
     // and does the actual work (see Editor/Acp/AcpManager.h). Agent and
