@@ -236,6 +236,11 @@ enum class InteractiveRequest { None,
                                 // wants a y/n confirmation before writing them to disk --
                                 // same shape as ConfirmOverwriteSave, "y" saves anyway.
                                 ConfirmSaveWithConflicts,
+                                // mouse-ergonomics follow-up: vcs-revert-hunk wants a y/n
+                                // confirmation before discarding a hunk's uncommitted change
+                                // from the working tree -- same shape as ConfirmOverwriteSave,
+                                // "y" runs BufferView's own RevertHunkAtPoint.
+                                ConfirmRevertHunk,
                                 // Window-splitting follow-up: structural window-management
                                 // actions, not single-buffer interactive sessions -- BufferView
                                 // just forwards these to whatever registered

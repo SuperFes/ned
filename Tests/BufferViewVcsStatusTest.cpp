@@ -217,6 +217,51 @@ TEST_CASE("hunk staging gates: unsaved changes and pathless buffers are refused 
     }
 }
 
+// mouse-ergonomics follow-up: RevertHunkAtPoint's own gates, same three as
+// StageOrUnstageHunkAtPoint's above (it's a near-identical guard sequence,
+// see that method's own doc comment) -- confirmed here rather than assumed
+// merely "the same code shape" would imply it.
+TEST_CASE("hunk revert gates: unsaved changes and pathless buffers are refused up front", "[BufferView][Vcs]") {
+    Fixture          fixture;
+    ProjectRootGuard rootGuard("/repo");
+    BufferView       view = fixture.View();
+
+    ned::editor::vcs::ClearRegistry();
+    ned::ui::EventLoop          eventLoop;
+    ned::editor::vcs::VcsRunner runner(eventLoop);
+    view.SetVcsRunner(&runner);
+
+    SECTION("no runner wired refuses first") {
+        view.SetVcsRunner(nullptr);
+        view.RevertHunkAtPointForTesting();
+        REQUIRE(fixture.statusMessage == "no vcs runner configured");
+    }
+
+    SECTION("a pathless scratch buffer is refused") {
+        view.RevertHunkAtPointForTesting();
+        REQUIRE(fixture.statusMessage == "no file associated with this buffer");
+    }
+
+    SECTION("a modified buffer is told to save first") {
+        ned::text::Buffer fileBuffer = ned::text::Buffer::NewFile("/repo/file.txt");
+        fileBuffer.InsertAtPoint("unsaved edit");
+        REQUIRE(fileBuffer.Modified());
+        fixture.activeBuffer.Set(fileBuffer);
+
+        view.RevertHunkAtPointForTesting();
+        REQUIRE(fixture.statusMessage.find("save first") != std::string::npos);
+    }
+
+    SECTION("an unmodified file buffer gets past the gates into the runner") {
+        ned::text::Buffer fileBuffer = ned::text::Buffer::NewFile("/repo/file.txt");
+        REQUIRE_FALSE(fileBuffer.Modified());
+        fixture.activeBuffer.Set(fileBuffer);
+
+        view.RevertHunkAtPointForTesting();
+        REQUIRE(fixture.statusMessage == "vcs revert hunk: no vcs provider registered for this project");
+    }
+}
+
 TEST_CASE("branch entries build a read-only *vcs branches* buffer marking the current branch", "[BufferView][Vcs]") {
     Fixture          fixture;
     ProjectRootGuard rootGuard("/repo");

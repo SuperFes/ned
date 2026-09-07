@@ -198,6 +198,23 @@ class ProjectSidebar : public Widget {
     // session.
     void EndResize();
 
+    // project-sidebar-drag-drop follow-up: same cross-widget cooperation
+    // shape as IsResizing()/EndResize() above -- a left-press on a file row
+    // (never a directory; there's no single sensible target to open)
+    // additionally arms this alongside the row's existing open-preview
+    // behavior. BufferView checks it in its own OnMouseEvent (rawMouse,
+    // ahead of that widget's own LocalMouseEvent gate, mirroring how it
+    // already checks IsResizing()) and, when a Released event lands inside
+    // its own Box_(), opens the dragged file there and calls EndFileDrag()
+    // itself. A Released landing back on this widget's own bounds is just
+    // an ordinary click (already handled by the press-time open) and clears
+    // this with no drop action of its own. A Released claimed by neither --
+    // dropped on the tab bar, VCS panel, or echo area -- leaves this armed
+    // until the next drag start overwrites it; a documented, harmless v1
+    // edge case, since nothing else ever reads it.
+    [[nodiscard]] std::optional<std::filesystem::path> DraggingFilePath() const;
+    void                                                EndFileDrag();
+
     // Expands every ancestor directory (project-root-detection follow-up)
     // between the current ProjectRoot() and targetPath's own containing
     // directory, so the file is actually reachable in the tree instead of
@@ -297,6 +314,9 @@ class ProjectSidebar : public Widget {
     int  resizeAnchorWidth_   = 0; // this widget's own width when the drag started
     int  resizeStartWidth_    = 0; // width_ at BeginResize -- EndResize persists to
                                    // variables.json only if the drag actually changed it
+
+    // project-sidebar-drag-drop follow-up: see DraggingFilePath's own doc comment.
+    std::optional<std::filesystem::path> dragPath_;
 
     // Double-click detection for the divider/collapsed strip (chrome-
     // redesign follow-up): a second press within kDoubleClickWindow toggles

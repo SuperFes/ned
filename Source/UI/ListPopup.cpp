@@ -158,6 +158,10 @@ void ListPopup::SetOnLeftColumnClick(std::function<void(std::size_t, int)> onLef
     onLeftColumnClick_ = std::move(onLeftColumnClick);
 }
 
+void ListPopup::SetOnScrollBy(std::function<void(int)> onScrollBy) {
+    onScrollBy_ = std::move(onScrollBy);
+}
+
 void ListPopup::Paint(Canvas c) {
     const int width  = c.size().width;
     const int height = c.size().height;
@@ -350,6 +354,33 @@ bool ListPopup::HandleMouseEvent(const Event& event) {
                      // (OverlayHost only forwards a click already inside it), but
                      // consumed regardless, matching every other mouse handler here
     }
+
+    // hover-highlight-and-wheel-scroll follow-up: a wheel tick always moves
+    // by exactly one row (a short dropdown list, not a scrollable document --
+    // no reason to reuse BufferView's own multi-line-per-tick constant).
+    if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {
+        if (onScrollBy_) {
+            onScrollBy_(mouse->button == MouseEvent::Button::WheelDown ? 1 : -1);
+        }
+        return true;
+    }
+
+    // Bare hover move (see SetOnScrollBy's own doc comment for why this is
+    // button=None/motion=Released rather than Motion::Moved on this
+    // backend) highlights the row under the mouse without activating it --
+    // model_.selectedIndex is unset for a consumer with no live selection
+    // concept (which-key), so this is a safe no-op there.
+    if (mouse->button == MouseEvent::Button::None && mouse->motion == MouseEvent::Motion::Released) {
+        const int row = mouse->at.y - 1;
+        if (onScrollBy_ && model_.selectedIndex && row >= 0 && static_cast<std::size_t>(row) < model_.rows.size()) {
+            const int delta = row - static_cast<int>(*model_.selectedIndex);
+            if (delta != 0) {
+                onScrollBy_(delta);
+            }
+        }
+        return true;
+    }
+
     if (mouse->button != MouseEvent::Button::Left || mouse->motion != MouseEvent::Motion::Pressed) {
         return true; // only a left press activates a row -- everything else (release,
                      // other buttons, motion) is a no-op click-wise, still consumed

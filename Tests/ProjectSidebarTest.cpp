@@ -262,6 +262,56 @@ TEST_CASE("Clicking a file entry opens it and switches the active buffer", "[Pro
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("Pressing a file entry arms DraggingFilePath, and a release back on this widget clears it", "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_dragpath";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "target.txt") << "x";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 5);
+
+    REQUIRE_FALSE(sidebar.DraggingFilePath().has_value());
+    sidebar.OnEvent(MousePress(0, 1));
+    REQUIRE(sidebar.DraggingFilePath().has_value());
+    REQUIRE(sidebar.DraggingFilePath()->filename() == "target.txt");
+
+    // A plain click's release lands back on this widget's own bounds --
+    // BufferView never gets involved, this alone clears the armed drag.
+    sidebar.OnEvent(MouseRelease(0, 1));
+    REQUIRE_FALSE(sidebar.DraggingFilePath().has_value());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Pressing a directory entry never arms DraggingFilePath", "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_dragpath_dir";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 5);
+
+    sidebar.OnEvent(MousePress(0, 1)); // "sub/" -- toggles, never a drag source
+    REQUIRE_FALSE(sidebar.DraggingFilePath().has_value());
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("Single-clicking a file marks it as the preview buffer", "[ProjectSidebar]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_preview";
     std::filesystem::remove_all(dir);

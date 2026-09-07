@@ -1745,6 +1745,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // to whichever pane is focused, same as ActivateCompletionAt/
     // ActivateContextMenuAt above.
     candidatePopup.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivateCandidatePopupAt(index); });
+    // hover-highlight-and-wheel-scroll follow-up: wheel over the popup and a
+    // bare hover move both route here now -- see BufferView::
+    // ScrollCandidatePopup's own doc comment.
+    candidatePopup.SetOnScrollBy([wm = windowManager.get()](int steps) { wm->ScrollCandidatePopup(steps); });
 
     // completion-popup follow-up: replaces LSP/dabbrev/Janet-binding ghost
     // text entirely -- a dedicated ListPopup+overlay, not a reuse of

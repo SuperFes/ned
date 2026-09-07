@@ -441,6 +441,48 @@ TEST_CASE("VcsRunner::RequestHunkApply's path-based overload surfaces the same p
     REQUIRE(error == "staged diff not supported by this provider");
 }
 
+// mouse-ergonomics follow-up: RequestHunkRevert's own synchronous guard
+// paths, same "async tail covered by GitVcsPluginTest's real-repo test"
+// convention RequestHunkApply's own tests above document.
+
+TEST_CASE("VcsRunner::RequestHunkRevert reports an error for a pathless buffer", "[VcsRunner]") {
+    RegistryResetGuard guard;
+    ned::ui::EventLoop eventLoop;
+    VcsRunner          runner(eventLoop);
+
+    Buffer      buffer("scratch");
+    std::string error;
+    runner.RequestHunkRevert(
+        buffer, 1, [] { FAIL("onSuccess should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
+}
+
+TEST_CASE("VcsRunner::RequestHunkRevert guards against a duplicate concurrent request", "[VcsRunner]") {
+    RegistryResetGuard guard;
+    RegisterProvider("fake", std::make_unique<FakeProvider>());
+
+    ned::ui::EventLoop eventLoop;
+    VcsRunner          runner(eventLoop);
+
+    Buffer buffer = Buffer::NewFile("/tmp/ned-vcs-runner-test-file.txt");
+
+    // DiffArgv is FakeProvider's own long-running "sleep 5" -- spawns and
+    // never completes within the test, occupying the "revert-hunk-diff:"
+    // key so the second call below hits the duplicate-running guard
+    // synchronously, the same shape RequestHunkApply's own vocabulary test
+    // above relies on for its own first/duplicate pair.
+    bool firstErrored = false;
+    runner.RequestHunkRevert(buffer, 1, [] {}, [&firstErrored](std::string) { firstErrored = true; });
+    REQUIRE_FALSE(firstErrored);
+
+    std::string secondError;
+    runner.RequestHunkRevert(
+        buffer, 1, [] { FAIL("onSuccess should not be called"); },
+        [&secondError](std::string message) { secondError = message; });
+    REQUIRE_FALSE(secondError.empty());
+}
+
 TEST_CASE("VcsCommitMessagePath is the temp dir plus kVcsCommitMessageFilename", "[Vcs]") {
     REQUIRE(VcsCommitMessagePath() == std::filesystem::temp_directory_path() / std::string(kVcsCommitMessageFilename));
 }

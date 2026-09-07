@@ -144,13 +144,19 @@ Notcurses.
       progress-label (every actual request still routes to the correct per-root
       connection regardless).
 
-- [ ] **Candidate-popup hover-highlight and wheel-scroll** (click-to-activate shipped
-      for every fuzzy candidate popup and `lsp-code-action-select`, see
-      `git log --grep=listpopup-mouse`) — hover-highlight-on-mouse-move is no longer
-      blocked on feasibility (see Mouse Ergonomics' hover-tooltips item below for the
-      confirmed mechanism/gotcha), just not wired up yet; wheel-scroll is session-level,
-      not something `ListPopup` itself does, since a driving session's `rows` is already
-      a pre-truncated window.
+Candidate-popup hover-highlight and wheel-scroll are shipped too — see
+`git log --grep=listpopup-scroll`. Both go through one new `ListPopup::SetOnScrollBy`
+hook that fires a signed row delta (a wheel tick is always ±1; a hover move's delta is
+the hovered row minus `model_.selectedIndex`, both indices into the popup's own
+already-displayed rows) rather than an absolute target — `BufferView::ScrollCandidatePopup`
+replays that many synthetic Up/Down key chords through whichever `HandleXKey` the
+current `InputMode` already dispatches real arrow presses through, so none of the dozen
+different candidate-list modes (M-x, find-file, switch-to-buffer, VCS branch switch,
+`lsp-code-action-select`, workspace-symbol, ...) needed their own per-mode
+highlight/scroll logic duplicated. Confirmed live (tmux, raw SGR bytes): hovering a row
+moves the selection (and the popup's own visible-window scroll) exactly like pressing
+Down/Up would, two wheel ticks move it by exactly two, and click-to-activate still
+works unchanged.
 
 ### Mouse Ergonomics
 
@@ -171,7 +177,7 @@ toggle), middle-click paste (Wayland primary-selection), and click-drag selectio
 terminal-panel scrollback.
 
 Hover tooltips (mouse hover, not click, triggering `lsp-hover`'s content) are shipped —
-see `git log --grep=hover-tooltips`. The feasibility question (raised above) resolved to a
+see `git log --grep=mouse-hover`. The feasibility question (raised above) resolved to a
 real, confirmed mechanism: this installed Notcurses build's own SGR decoder (`in.c`'s
 `mouse_click`, `mods % 4 == 3`) hard-codes a bare no-button-held motion report's `evtype`
 to `NCTYPE_RELEASE` (the library's own comment calls this "oddly enough"), so
@@ -194,13 +200,48 @@ an intervening keypress. Confirmed live end-to-end against a real `clangd` (tmux
 test, raw SGR bytes fed into the pty): hover text renders, updates when the hovered
 symbol changes, and dismisses correctly.
 
-- [ ] **Hunk-level stage/unstage/revert via `VcsPanel`'s right-click menu** — the
-      shipped context menu covers whole-file/stash operations only; hunk-level ops stay
-      keyboard/point-based.
-- [ ] **Drag-and-drop from `ProjectSidebar` into a pane** to open a file there
-      (dragging already exists for tab reorder, sidebar resize, scrollbar/minimap
-      thumb, terminal-panel scrollback selection — this would be a new drag *source*
-      distinct from all of those, not a new mechanism).
+Hunk-level stage/unstage/revert via `BufferView`'s own right-click gutter menu are shipped
+too — see `git log --grep=hunk-context-menu`. Landed on `BufferView`'s gutter menu rather
+than `VcsPanel`'s (which has no per-hunk row to click at all, only whole-file entries) since
+hunk staging was already point-based there (`vcs-stage-hunk`/`vcs-unstage-hunk`, `C-c v
+h`/`C-c v H`) — right-click at the same point is the natural mouse accelerant, gated (same
+v1 simplification the fold/breakpoint/blame gutter rows already use) on `DiffGutterActive()`
+alone, not on whether the clicked line specifically has a change. Revert (`vcs-revert-hunk`,
+`C-c v x`) is a genuinely new capability, not just a menu wrapper: no hunk-level discard
+existed at any layer before this, keyboard included. Required a third `VcsProvider` patch
+operation alongside Stage/UnstagePatchArgv (`RevertPatchArgv`: `git apply --reverse
+--unidiff-zero`, no `--cached` — discards from the working tree, reading from the same
+unstaged diff Stage does) plus a `VcsRunner::RequestHunkRevert`, and — since this discards
+uncommitted work with no undo — a new `BufferView` y/n confirmation (`InputMode::
+ConfirmRevertHunk`/`InteractiveRequest::ConfirmRevertHunk`, `ConfirmOverwriteSave`'s own
+shape) gating it regardless of entry point. No explicit `Buffer::Revert()` call needed after
+a successful revert — `AutoRevert`/`FileWatch`'s existing sweep picks up the now-changed
+file on its own next tick, the same "unmodified buffer, changed on disk" case those already
+handle. Confirmed live end to end against a real git repo with two well-separated `-U0`
+hunks (tmux, real SGR right-click + menu-click + 'y'): reverting the hunk at point discarded
+only that hunk from the working tree, left the other hunk (and the open buffer, once
+auto-reverted) untouched.
+
+Drag-and-drop from `ProjectSidebar` into a pane is shipped too — see
+`git log --grep=sidebar-drag-drop`. Mirrors `ProjectSidebar::IsResizing()`/`EndResize()`'s
+own cross-widget cooperation shape (`DraggingFilePath()`/`EndFileDrag()`): a left-press on a
+file row (never a directory — nothing sensible to open a directory *as*) arms the drag
+alongside its existing open-preview behavior, and each `BufferView` checks it ahead of its
+own `LocalMouseEvent` gate, exactly like the resize check just above it. A real bug was
+caught live in a two-pane split test (tmux, raw SGR bytes): `EndFileDrag()` was originally
+called unconditionally by whichever pane's `OnMouseEvent` happened to run first for the
+Released event (`Container::OnEvent`'s fixed child order, unrelated to drop position), so
+the pane the file was actually dropped on found the drag already cleared and silently
+no-opped. Fix: gate the whole branch — not just the open — behind `Box_().Contain()` first,
+so only the one pane whose box genuinely contains the drop ever consumes it; a two-`BufferView`
+regression test now locks this in. Accepted v1 trade-off, documented at the source: since the
+row's own press-time open (unchanged, existing preview behavior) already fires before any
+drag is known to be one, a real drag-and-drop also leaves the file open in whichever pane was
+already focused, not just the drop target — deliberately not restructured to defer that open
+until release, which would have meant moving long-tested click-vs-double-click timing logic
+off Pressed and onto Released for its own sake. A drop that lands on neither `ProjectSidebar`
+itself nor any pane (the tab bar, VCS panel, echo area) leaves the drag armed until the next
+one overwrites it — harmless, since nothing else ever reads it.
 
 ### Navigation & Search
 

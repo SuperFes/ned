@@ -21,7 +21,8 @@ namespace ned::janet {
 // :parse-diff, :working-diff-argv -- multibuffers follow-up -- :status-argv,
 // :parse-status, :stage-argv, :unstage-argv,
 // :staged-diff-argv, :stage-patch-argv, :unstage-patch-argv -- hunk-staging
-// follow-up -- :commit-argv, :branch-list-argv, :parse-branch-list,
+// follow-up -- :revert-patch-argv -- mouse-ergonomics follow-up --
+// :commit-argv, :branch-list-argv, :parse-branch-list,
 // :branch-switch-argv, :branch-create-argv, :revert-argv, :stash-list-argv,
 // :parse-stash-list, :stash-push-argv, :stash-pop-argv, :stash-drop-argv,
 // :push-argv, :pull-argv, :fetch-argv, :ahead-behind-argv,
@@ -81,6 +82,8 @@ class JanetVcsProvider : public editor::vcs::VcsProvider {
                                                              const std::filesystem::path& patchPath) const override;
     [[nodiscard]] editor::vcs::VcsCommandSpec UnstagePatchArgv(const std::filesystem::path& root,
                                                                const std::filesystem::path& patchPath) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec RevertPatchArgv(const std::filesystem::path& root,
+                                                              const std::filesystem::path& patchPath) const override;
 
     [[nodiscard]] editor::vcs::VcsCommandSpec CommitArgv(const std::filesystem::path& root,
                                                          const std::string&           message) const override;

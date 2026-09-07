@@ -3011,6 +3011,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::VcsUnstageHunk;
                       });
+    // mouse-ergonomics follow-up: unlike vcs-stage-hunk/vcs-unstage-hunk
+    // above, this always asks first (ConfirmRevertHunk) -- it discards
+    // uncommitted work from the working tree with no undo, unlike moving a
+    // change into/out of the index.
+    registry.Register("vcs-revert-hunk", "Discard the change hunk covering the line at point from the working tree.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ConfirmRevertHunk;
+                      });
     // Hunk-navigation follow-up: gitsigns' ]c/[c convention, Emacs-style
     // naming/binding to match every other vcs-* command here. Pure point
     // motion, no staging -- doesn't share vcs-stage-hunk's Modified() gate.
@@ -3978,6 +3986,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c v d"), "vcs-full-diff-buffer");
     keymap.Bind(ParseKeySequence("C-c v h"), "vcs-stage-hunk");
     keymap.Bind(ParseKeySequence("C-c v H"), "vcs-unstage-hunk");
+    keymap.Bind(ParseKeySequence("C-c v x"), "vcs-revert-hunk"); // "x" for discard, vim's own delete-char convention
     // Hunk-navigation follow-up: "n"/"p" (next/previous) are already taken
     // by vcs-create-branch/focus-vcs-panel, so this uses the same shifted-
     // twin trick "h"/"H" above already establishes -- a distinct codepoint

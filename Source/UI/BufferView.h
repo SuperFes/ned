@@ -387,6 +387,9 @@ class BufferView : public Widget {
     // synchronous guards (no runner / modified buffer / no path) -- the
     // async tail past them needs a live EventLoop.
     void StageHunkAtPointForTesting(bool stage);
+    // mouse-ergonomics follow-up: same seam again, for RevertHunkAtPoint's
+    // own synchronous guards (no runner / modified buffer / no path).
+    void RevertHunkAtPointForTesting();
     // multi-line-commit-message follow-up: same seam shape, for
     // BeginVcsCommitMessage/FinishVcsCommitMessage/AbortVcsCommitMessage --
     // RequestCommit's own guards (no provider registered) resolve
@@ -703,6 +706,18 @@ class BufferView : public Widget {
     // ListPopup::SetOnActivate in main.cpp.
     void ActivateCandidatePopupAt(std::size_t index);
 
+    // hover-highlight-and-wheel-scroll follow-up: replays |steps| synthetic
+    // Down (steps > 0) or Up (steps < 0) key chords through whichever
+    // HandleXKey the current inputMode_ already dispatches real Up/Down
+    // presses through -- deliberately not a from-scratch re-derivation of
+    // each mode's own fuzzy-ranked-selection math (that already lives in
+    // those methods; this just re-runs it). A no-op for any inputMode_ with
+    // no candidate popup live (same guard ActivateCandidatePopupAt's own
+    // switch has). Public for the same reason ActivateCandidatePopupAt is --
+    // WindowManager::ScrollCandidatePopup forwards here from this popup's
+    // own ListPopup::SetOnScrollBy in main.cpp.
+    void ScrollCandidatePopup(int steps);
+
     // completion-popup follow-up: same OverlayHost-owned-above-this-class
     // shape as SetOnCandidatesChanged immediately above, but for a
     // structurally different session -- ActiveCompletion (renamed from
@@ -931,6 +946,10 @@ class BufferView : public Widget {
                            // the buffer -- y/n before writing them to disk, same
                            // shape as ConfirmOverwriteSave.
                            ConfirmSaveWithConflicts,
+                           // mouse-ergonomics follow-up: vcs-revert-hunk found a hunk to
+                           // revert -- y/n before discarding uncommitted work, same shape
+                           // as ConfirmOverwriteSave/ConfirmSaveWithConflicts above.
+                           ConfirmRevertHunk,
                            ExecuteCommand,
                            ProjectFindFile,
                            // named-projects follow-up: ProjectFindFile's own fuzzy-narrowed
@@ -1338,6 +1357,7 @@ class BufferView : public Widget {
     void               HandleConfirmCloseBufferKey(const editor::KeyChord& chord);       // see RequestCloseBuffer/pendingClose_
     void               HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord);     // external-modification-safety: y -> save-buffer-force
     void               HandleConfirmSaveWithConflictsKey(const editor::KeyChord& chord); // external-modification-round-2: y -> save-buffer-force
+    void               HandleConfirmRevertHunkKey(const editor::KeyChord& chord);        // mouse-ergonomics follow-up: y -> RevertHunkAtPoint
     void               HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);        // see pendingBinaryOpenPath_
     void               HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord);  // see pendingTrustInitPath_
     // Shared by HandlePromptKey's FindFile branch and the public
@@ -2344,6 +2364,15 @@ class BufferView : public Widget {
     // *earlier* unstaged edits in the same file is a recorded caveat, see
     // ROADMAP.md.)
     void StageOrUnstageHunkAtPoint(bool stage);
+    // mouse-ergonomics follow-up (vcs-revert-hunk): StageOrUnstageHunkAtPoint's
+    // destructive sibling -- discards the hunk covering point from the
+    // working tree via VcsRunner::RequestHunkRevert, same three gates
+    // (runner wired, buffer has a path, buffer NOT Modified()) and the same
+    // success refresh. Only ever called from HandleConfirmRevertHunkKey's
+    // 'y' branch -- StartInteractiveSession(ConfirmRevertHunk) is what a
+    // real invocation (keyboard or the gutter context menu) always goes
+    // through first, since this discards uncommitted work with no undo.
+    void RevertHunkAtPoint();
     // Hunk-navigation follow-up (vcs-next-hunk/vcs-previous-hunk): moves
     // point to the next/previous entry in diffHunkStartLines_ relative to
     // point's own current line, wrapping neither direction (an empty/

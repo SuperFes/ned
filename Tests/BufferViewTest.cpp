@@ -5660,6 +5660,99 @@ TEST_CASE("A growing sidebar resize drag hands off to BufferView's mouse_move/mo
     REQUIRE_FALSE(sidebar.IsResizing());
 }
 
+TEST_CASE("A file dragged from ProjectSidebar and released over BufferView opens it there", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_dragdrop";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "target.txt") << "dragged content";
+    }
+    const CurrentPathGuard cwdGuard(dir); // ProjectSidebar resolves entries against ProjectRoot()/cwd
+
+    Fixture fixture;
+    ned::ui::ProjectSidebar sidebar(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    sidebar.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    ned::ui::BufferView view = fixture.View();
+    view.SetProjectSidebar(&sidebar);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 10});
+
+    sidebar.OnEvent(MousePress(0, 1)); // "target.txt" -- also opens it as the sidebar's own preview
+    REQUIRE(sidebar.DraggingFilePath().has_value());
+
+    // A Moved event mid-drag must not disturb this pane's own selection --
+    // dragAnchor_/mark stay whatever they already were.
+    view.OnEvent(MouseMove(20, 5));
+
+    view.OnEvent(MouseRelease(20, 5));
+    REQUIRE(&fixture.activeBuffer.Get() != &fixture.buffer);
+    REQUIRE(fixture.activeBuffer.Get().Text() == "dragged content");
+    REQUIRE_FALSE(sidebar.DraggingFilePath().has_value()); // the drop ended the drag
+
+    std::filesystem::remove_all(dir);
+}
+
+// mouse-ergonomics follow-up: locks in a real bug caught live (tmux smoke
+// test, a two-pane split) -- EndFileDrag() was originally called
+// unconditionally by whichever pane's OnMouseEvent ran first for the
+// Released event, regardless of whether *that* pane's own Box_() contained
+// the drop, so the correctly-targeted pane (processed second) found the
+// drag already cleared and silently no-opped. Gating EndFileDrag() itself
+// behind Box_().Contain() is what makes only the genuinely-targeted pane
+// ever consume the drop, reproduced here with two independent BufferView
+// instances (own ActiveBuffer each, real WindowManager::Pane shape) sharing
+// one ProjectSidebar, exactly like Container::OnEvent broadcasts to every
+// pane in a real split layout.
+TEST_CASE("Only the pane whose box actually contains the drop opens the dragged file", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_dragdrop_multipane";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "target.txt") << "dragged content";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture fixture;
+    ned::ui::ProjectSidebar sidebar(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    sidebar.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+
+    // Two independent panes, own ActiveBuffer each -- paneA occupies
+    // columns 0-19, paneB columns 20-39, side by side like a real
+    // SplitRight layout.
+    ned::ui::ActiveBuffer activeBufferA(fixture.buffer);
+    ned::ui::BufferView   paneA(activeBufferA, fixture.killRing, fixture.registers, fixture.promptHistory,
+                               fixture.bufferList, fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+    paneA.SetProjectSidebar(&sidebar);
+    paneA.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 10});
+
+    ned::ui::ActiveBuffer activeBufferB(fixture.buffer);
+    ned::ui::BufferView   paneB(activeBufferB, fixture.killRing, fixture.registers, fixture.promptHistory,
+                               fixture.bufferList, fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+    paneB.SetProjectSidebar(&sidebar);
+    paneB.SetBox_(ned::ui::Box{.x_min = 20, .x_max = 39, .y_min = 0, .y_max = 10});
+
+    sidebar.OnEvent(MousePress(0, 1)); // "target.txt"
+    REQUIRE(sidebar.DraggingFilePath().has_value());
+
+    // Dropped at column 30 -- inside paneB's box, outside paneA's. Both
+    // panes receive this same event, paneA first (Container::OnEvent's
+    // fixed child order, unrelated to drop position).
+    const ned::ui::Event release = MouseRelease(30, 5);
+    paneA.OnEvent(release);
+    REQUIRE(&activeBufferA.Get() == &fixture.buffer); // paneA's own box didn't contain the drop -- untouched
+    REQUIRE(sidebar.DraggingFilePath().has_value());  // still armed -- paneA must not have cleared it
+
+    paneB.OnEvent(release);
+    REQUIRE(&activeBufferB.Get() != &fixture.buffer);
+    REQUIRE(activeBufferB.Get().Text() == "dragged content");
+    REQUIRE_FALSE(sidebar.DraggingFilePath().has_value());
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("toggle-project-sidebar is a safe no-op when no sidebar is registered", "[BufferView]") {
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();

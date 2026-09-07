@@ -150,6 +150,23 @@ class ListPopup : public Widget {
     // activating the row exactly as before this existed.
     void SetOnLeftColumnClick(std::function<void(std::size_t, int)> onLeftColumnClick);
 
+    // hover-highlight-and-wheel-scroll follow-up: fires with a signed row
+    // delta rather than an absolute index -- +N means "move the driving
+    // session's own selection N rows toward the end of its candidate list,"
+    // -N toward the start. Two sources: a wheel tick (always ±1, see
+    // HandleMouseEvent) and a bare hover move (the difference between the
+    // hovered row and model_.selectedIndex, both indices into this popup's
+    // own already-displayed, already-truncated rows -- see
+    // BufferView::MaybeScheduleHover's own doc comment for why a hover move
+    // decodes as button=None/motion=Released on this backend, the same
+    // signal this reuses). A delta, not an absolute target, is what lets
+    // BufferView::ScrollCandidatePopup replay real Up/Down key handling
+    // (mode-specific fuzzy-ranked-list math it already has) rather than
+    // this file re-deriving per-mode selection-index resolution a second
+    // time. Unset (which-key, every consumer without a live selection
+    // concept) leaves wheel/hover-move over this popup a no-op.
+    void SetOnScrollBy(std::function<void(int)> onScrollBy);
+
     void Paint(Canvas c) override;
     bool OnEvent(const Event& event) override;
 
@@ -163,6 +180,7 @@ class ListPopup : public Widget {
     std::function<void()>                           onCancel_;
     std::function<void(const editor::KeyChord&)>    onKey_;
     std::function<void(std::size_t, int)>           onLeftColumnClick_;
+    std::function<void(int)>                        onScrollBy_; // see SetOnScrollBy
 
     bool HandleKeyEvent(const Event& event);
 
