@@ -811,7 +811,14 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // header comment. VcsPanel joins as the second panel further below,
     // once it's constructed.
     auto             leftDock    = std::make_shared<ned::ui::LeftDock>(theme);
-    const std::size_t filesPanelId = leftDock->AddPanel(U'▤', "Files", *projectSidebar);
+    // nerd-font-glyph follow-up: a Nerd Font glyph (folder, U+F07B) for
+    // the rail, a deliberate exception to the plain-Unicode-only
+    // convention this codebase otherwise sticks to elsewhere (see
+    // ProjectSidebar.cpp's own header comment on why -- needs a patched
+    // font, renders as tofu/boxes without one). The rail is a small,
+    // easily reverted spot to opt into that tradeoff; nothing else in
+    // this codebase follows suit.
+    const std::size_t filesPanelId = leftDock->AddPanel(U'', "Files", *projectSidebar);
     windowManager->SetLeftDock(leftDock.get());
 
     // sidebar-keyboard-focus follow-up: Escape/C-g (or Enter opening a
@@ -908,7 +915,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
     windowManager->SetVcsPanel(vcsPanel.get());
 
-    const std::size_t vcsPanelId = leftDock->AddPanel(U'±', "VCS", *vcsPanel);
+    // nerd-font-glyph follow-up: git-branch glyph (U+F418) -- see the
+    // Files panel's own comment just above.
+    const std::size_t vcsPanelId = leftDock->AddPanel(U'', "VCS", *vcsPanel);
 
     // unified-left-dock follow-up: chained with LeftDock::NoteFocusReturned,
     // ProjectSidebar's own SetOnFocusReturn precedent just above.
