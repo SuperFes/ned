@@ -7,17 +7,24 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
+#include <thread>
 
+#include <poll.h>
 #include <unistd.h>
 
 #include "Editor/Acp/AcpClient.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Acp/AcpPanelConfig.h"
 #include "Editor/Acp/Transport.h"
+#include "Editor/Lsp/LspClient.h"
+#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Lsp/Transport.h"
 #include "Editor/ProjectRoot.h"
 #include "TestEvents.h"
 #include "Text/BufferList.h"
@@ -31,6 +38,8 @@ using ned::editor::acp::AcpClient;
 using ned::editor::acp::AcpManager;
 using ned::editor::acp::Json;
 using ned::editor::acp::Transport;
+using ned::editor::lsp::kProseLanguageKey;
+using ned::editor::lsp::LspManager;
 using ned::ui::AcpPanel;
 using ned::ui::Box;
 using ned::ui::Canvas;
@@ -76,6 +85,7 @@ struct Fixture {
     ned::ui::EventLoop    eventLoop;
     ned::text::BufferList bufferList;
     AcpManager            manager{bufferList, eventLoop};
+    LspManager            lspManager{bufferList, eventLoop};
     Theme                 theme = ned::ui::DarkTheme();
     AcpPanel              panel{theme};
     Screen                screen{kWidth, kHeight};
@@ -87,6 +97,7 @@ struct Fixture {
 
     Fixture() {
         panel.SetAcpManager(&manager);
+        panel.SetLspManager(&lspManager);
         panel.SetBox_(Box{.x_min = 0, .x_max = kWidth - 1, .y_min = 0, .y_max = kHeight - 1});
     }
 
@@ -147,6 +158,45 @@ struct ProjectRootGuard {
     }
 };
 
+// Prose-check-the-composer follow-up. LspManagerTest.cpp's own WaitUntil,
+// duplicated per this file's stated per-test-file fixture convention (see
+// MessageReader's own comment above) -- polls eventLoop's posted-work queue
+// until predicate is true, since CheckComposerProseText's debounce timer
+// fires on a background thread and Posts its work back onto eventLoop.
+template <typename Predicate>
+void WaitUntil(ned::ui::EventLoop& eventLoop, Predicate predicate) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+        eventLoop.DrainPosted_();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+// LspManagerTest.cpp's own ReadRawFrame, duplicated here (same rationale).
+std::string ReadRawFrame(int fd) {
+    std::string all;
+    char        buffer[512];
+    for (int i = 0; i < 4; ++i) {
+        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        if (n <= 0) {
+            break;
+        }
+        all.append(buffer, static_cast<std::size_t>(n));
+        const auto headerEnd = all.find("\r\n\r\n");
+        if (headerEnd != std::string::npos) {
+            const std::string_view kPrefix   = "Content-Length: ";
+            const auto             prefixPos = all.find(kPrefix);
+            if (prefixPos != std::string::npos) {
+                const std::size_t contentLength = std::stoul(all.substr(prefixPos + kPrefix.size()));
+                if (all.size() >= headerEnd + 4 + contentLength) {
+                    break;
+                }
+            }
+        }
+    }
+    return all;
+}
+
 } // namespace
 
 TEST_CASE("AcpPanel's title row shows the agent name and state", "[AcpPanel]") {
@@ -182,6 +232,78 @@ TEST_CASE("AcpPanel renders a Plan transcript entry's checkbox glyphs", "[AcpPan
         }
     }
     REQUIRE(foundCheckedStep);
+}
+
+// diff-preview-line-diff-utility follow-up (ROADMAP "AI-assisted editing
+// (ACP) gaps" -- "a real diff view").
+TEST_CASE("AcpPanel renders a real +/- diff for a tool call that carries one", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    const Json toolCall = {
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"update",
+           {{"sessionUpdate", "tool_call"},
+            {"toolCallId", "t1"},
+            {"title", "Edit foo.txt"},
+            {"status", "completed"},
+            {"content", Json::array({Json{{"type", "diff"}, {"path", "foo.txt"}, {"oldText", "a\nb\nc\n"}, {"newText", "a\nX\nc\n"}}})}}}}},
+    };
+    fixture.client->DispatchFrame(toolCall.dump());
+    fixture.Paint();
+
+    bool sawRemovedBackground = false;
+    bool sawAddedBackground   = false;
+    for (int y = 1; y < kHeight - 1; ++y) {
+        const std::string row = fixture.RowText(y);
+        if (row.find("- b") != std::string::npos) {
+            REQUIRE(fixture.screen.PixelAt(static_cast<int>(row.find('-')), y).background_color == fixture.theme.diffRemovedBackground);
+            sawRemovedBackground = true;
+        }
+        if (row.find("+ X") != std::string::npos) {
+            REQUIRE(fixture.screen.PixelAt(static_cast<int>(row.find('+')), y).background_color == fixture.theme.diffAddedBackground);
+            sawAddedBackground = true;
+        }
+    }
+    REQUIRE(sawRemovedBackground);
+    REQUIRE(sawAddedBackground);
+}
+
+TEST_CASE("AcpPanel renders a pending permission prompt's own diff", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    const Json request = {
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/request_permission"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"toolCall",
+           {{"title", "Edit foo.txt"}, {"content", Json::array({Json{{"type", "diff"}, {"oldText", "a\n"}, {"newText", "b\n"}}})}}},
+          {"options", Json::array({Json{{"optionId", "allow-once"}, {"name", "Allow once"}, {"kind", "allow_once"}}})}}},
+    };
+    fixture.client->DispatchFrame(request.dump());
+    fixture.Paint();
+
+    bool sawRemoved = false;
+    bool sawAdded   = false;
+    for (int y = 1; y < kHeight - 1; ++y) {
+        const std::string row = fixture.RowText(y);
+        if (row.find("- a") != std::string::npos) {
+            sawRemoved = true;
+        }
+        if (row.find("+ b") != std::string::npos) {
+            sawAdded = true;
+        }
+    }
+    REQUIRE(sawRemoved);
+    REQUIRE(sawAdded);
 }
 
 TEST_CASE("AcpPanel's input row shows typed text and a caret", "[AcpPanel]") {
@@ -506,6 +628,69 @@ TEST_CASE("AcpPanel's composer grows past one row once typed text wraps, and kee
         }
     }
     REQUIRE(foundCaret); // caret still rendered somewhere once the composer spans multiple rows
+}
+
+// Prose-check-the-composer follow-up (ROADMAP "Prose-check the ACP
+// composer").
+TEST_CASE("AcpPanel underlines a prose diagnostic in the composer once the checker responds", "[AcpPanel]") {
+    Fixture   fixture;
+    const int originalDebounceMs = ned::editor::lsp::LspDiagnosticsDebounceMs();
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(50);
+
+    int clientWritesHere[2];
+    int clientReadsHere[2];
+    REQUIRE(::pipe(clientWritesHere) == 0);
+    REQUIRE(::pipe(clientReadsHere) == 0);
+    auto proseClientPtr = std::make_unique<ned::editor::lsp::LspClient>(
+        ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), fixture.eventLoop);
+    ned::editor::lsp::LspClient& proseClient =
+        fixture.lspManager.SetClientForTesting(std::string(kProseLanguageKey), std::move(proseClientPtr));
+
+    // "typo hear" -- byte offsets [5, 9) cover "hear".
+    for (const char ch : std::string("typo hear")) {
+        fixture.panel.OnEvent(ned::ui::test::Character(ch));
+    }
+    fixture.Paint(); // Paint() is what calls RequestProseCheckIfNeeded
+
+    WaitUntil(fixture.eventLoop, [&] {
+        pollfd pfd{.fd = clientWritesHere[0], .events = POLLIN, .revents = 0};
+        return ::poll(&pfd, 1, 0) > 0;
+    });
+    const std::string openRaw  = ReadRawFrame(clientWritesHere[0]);
+    const Json        openJson = Json::parse(openRaw.substr(openRaw.find("\r\n\r\n") + 4));
+    REQUIRE(openJson["method"] == "textDocument/didOpen");
+    const std::string uri = openJson["params"]["textDocument"]["uri"].get<std::string>();
+
+    const Json publish = {
+        {"jsonrpc", "2.0"},
+        {"method", "textDocument/publishDiagnostics"},
+        {"params",
+         {{"uri", uri},
+          {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 5}}}, {"end", {{"line", 0}, {"character", 9}}}}},
+                                        {"severity", 4},
+                                        {"message", "possible typo: hear"}}})}}},
+    };
+    proseClient.DispatchFrame(publish.dump());
+
+    // The composer's own diagnostics member is only updated by the callback
+    // LspManager invokes -- repaint in the wait loop so a caught-up Paint()
+    // is what the predicate actually observes.
+    WaitUntil(fixture.eventLoop, [&] {
+        fixture.Paint();
+        // "Prompt: " is 8 columns; "hear" starts at byte 5 -> column 13.
+        return fixture.screen.PixelAt(13, kHeight - 1).underlined;
+    });
+
+    REQUIRE(fixture.screen.PixelAt(13, kHeight - 1).underlined);       // h
+    REQUIRE(fixture.screen.PixelAt(14, kHeight - 1).underlined);       // e
+    REQUIRE(fixture.screen.PixelAt(15, kHeight - 1).underlined);       // a
+    REQUIRE(fixture.screen.PixelAt(16, kHeight - 1).underlined);       // r
+    REQUIRE_FALSE(fixture.screen.PixelAt(12, kHeight - 1).underlined); // the space before "hear"
+    REQUIRE_FALSE(fixture.screen.PixelAt(9, kHeight - 1).underlined);  // inside "typo"
+
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(originalDebounceMs);
+    ::close(clientWritesHere[0]);
+    ::close(clientReadsHere[1]);
 }
 
 TEST_CASE("AcpPanel's Escape cancels a pending permission prompt instead of toggling the panel", "[AcpPanel]") {

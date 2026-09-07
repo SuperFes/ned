@@ -4,103 +4,18 @@
 #include <utility>
 #include <vector>
 
+#include "LineDiff.h"
+
 namespace ned::text {
 
 namespace {
 
-    // Splits on '\n', each returned piece keeping its own trailing '\n' (the
-    // last piece has none if text doesn't end with one) -- reassembly of a
-    // sequence of pieces is then plain concatenation, no separator logic
-    // needed anywhere downstream.
-    std::vector<std::string_view> SplitLines(std::string_view text) {
-        std::vector<std::string_view> lines;
-        std::size_t                   start = 0;
-        while (start < text.size()) {
-            const std::size_t newline = text.find('\n', start);
-            if (newline == std::string_view::npos) {
-                lines.push_back(text.substr(start));
-                break;
-            }
-            lines.push_back(text.substr(start, newline - start + 1));
-            start = newline + 1;
-        }
-        return lines;
-    }
-
-    // A base range [aStart, aStart+aCount) replaced by b[bStart, bStart+bCount).
-    struct Hunk {
-        std::size_t aStart;
-        std::size_t aCount;
-        std::size_t bStart;
-        std::size_t bCount;
-    };
-
-    // Trims a common prefix/suffix of matching lines, then an LCS
-    // dynamic-programming backtrack over the remaining core to extract a
-    // minimal hunk list -- a hunk is a maximal run of non-matching lines,
-    // aCount/bCount 0 for a pure insert/delete.
-    std::vector<Hunk> DiffHunks(const std::vector<std::string_view>& a, const std::vector<std::string_view>& b) {
-        const std::size_t aSize = a.size();
-        const std::size_t bSize = b.size();
-
-        std::size_t prefix = 0;
-        while (prefix < aSize && prefix < bSize && a[prefix] == b[prefix]) {
-            ++prefix;
-        }
-        std::size_t suffix = 0;
-        while (suffix < aSize - prefix && suffix < bSize - prefix && a[aSize - 1 - suffix] == b[bSize - 1 - suffix]) {
-            ++suffix;
-        }
-
-        const std::size_t m = aSize - prefix - suffix; // core length in a
-        const std::size_t n = bSize - prefix - suffix; // core length in b
-
-        std::vector<Hunk> hunks;
-        if (m == 0 && n == 0) {
-            return hunks;
-        }
-        if (m == 0 || n == 0) {
-            hunks.push_back(Hunk{prefix, m, prefix, n});
-            return hunks;
-        }
-
-        // dp[i][j] = LCS length of a[prefix+i .. prefix+m) and b[prefix+j .. prefix+n).
-        std::vector<std::vector<std::size_t>> dp(m + 1, std::vector<std::size_t>(n + 1, 0));
-        for (std::size_t i = m; i-- > 0;) {
-            for (std::size_t j = n; j-- > 0;) {
-                if (a[prefix + i] == b[prefix + j]) {
-                    dp[i][j] = dp[i + 1][j + 1] + 1;
-                }
-                else {
-                    dp[i][j] = std::max(dp[i + 1][j], dp[i][j + 1]);
-                }
-            }
-        }
-
-        std::size_t i = 0, j = 0;
-        while (i < m || j < n) {
-            if (i < m && j < n && a[prefix + i] == b[prefix + j]) {
-                ++i;
-                ++j;
-                continue;
-            }
-            const std::size_t hunkAStart = prefix + i;
-            const std::size_t hunkBStart = prefix + j;
-            // Consume the mismatch run: guided by the LCS table while both
-            // sides still have content, else forced to drain whichever side
-            // is left (one side exhausted before the other).
-            while ((i < m || j < n) && !(i < m && j < n && a[prefix + i] == b[prefix + j])) {
-                if (j >= n || (i < m && dp[i + 1][j] >= dp[i][j + 1])) {
-                    ++i;
-                }
-                else {
-                    ++j;
-                }
-            }
-            hunks.push_back(Hunk{hunkAStart, i + prefix - hunkAStart, hunkBStart, j + prefix - hunkBStart});
-        }
-        return hunks;
-    }
+    // diff-preview-line-diff-utility follow-up: SplitLines/the LCS hunk diff
+    // (LineDiffHunk/DiffLines) used to be private to this file -- both now
+    // live in LineDiff.h as a reusable public utility (AcpPanel's tool-call/
+    // permission-prompt diff rendering is the other consumer), so this file
+    // just aliases the shared name rather than keeping its own copy.
+    using Hunk = LineDiffHunk;
 
     enum class Side { Ours,
                       Theirs };
@@ -142,8 +57,8 @@ MergeResult ThreeWayMerge(std::string_view base, std::string_view ours, std::str
     const std::vector<std::string_view> oursLines   = SplitLines(ours);
     const std::vector<std::string_view> theirsLines = SplitLines(theirs);
 
-    const std::vector<Hunk> hunksOurs   = DiffHunks(baseLines, oursLines);
-    const std::vector<Hunk> hunksTheirs = DiffHunks(baseLines, theirsLines);
+    const std::vector<Hunk> hunksOurs   = DiffLines(baseLines, oursLines);
+    const std::vector<Hunk> hunksTheirs = DiffLines(baseLines, theirsLines);
 
     std::vector<TaggedHunk> all;
     all.reserve(hunksOurs.size() + hunksTheirs.size());

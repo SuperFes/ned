@@ -299,6 +299,16 @@ class AcpManager {
     struct PermissionPrompt {
         std::string                   description;
         std::vector<PermissionOption> options;
+        // diff-preview-line-diff-utility follow-up: the pending toolCall's
+        // own "diff"-typed content item (ACP's {type: "diff", path, oldText,
+        // newText} shape -- TranscriptEntry::diffOldText/diffNewText's own
+        // doc comment), when the request happens to carry one -- most
+        // permission requests don't (a shell command, a non-edit tool call).
+        // AcpPanel renders a real +/- diff from these via
+        // Text/LineDiff.h's UnifiedDiff when present, falling back to the
+        // bare description otherwise.
+        std::optional<std::string> diffOldText;
+        std::optional<std::string> diffNewText;
     };
 
     // Invoked on the main thread the moment a session/request_permission

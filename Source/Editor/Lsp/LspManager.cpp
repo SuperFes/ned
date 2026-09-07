@@ -112,6 +112,61 @@ namespace {
         }
     }
 
+    // prose-check-composer follow-up: factored out of HandlePublishDiagnostics
+    // so its composer-pseudo-buffer special case (below) can parse a
+    // "textDocument/publishDiagnostics" params object the exact same way the
+    // real-buffer path does, against content that isn't a real, open Buffer.
+    std::vector<text::Buffer::Diagnostic> ParsePublishedDiagnostics(const Json& params, const text::ITextStorage& content,
+                                                                    text::Buffer::Diagnostic::Origin origin) {
+        std::vector<text::Buffer::Diagnostic> diagnostics;
+        if (!params.contains("diagnostics")) {
+            return diagnostics;
+        }
+        for (const Json& item : params["diagnostics"]) {
+            const Json& range = item.value("range", Json::object());
+            const Json& start = range.value("start", Json::object());
+            const Json& end   = range.value("end", Json::object());
+
+            const std::size_t startByte =
+                LspPositionToByte(content, LspPosition{.line      = start.value("line", static_cast<std::size_t>(0)),
+                                                       .character = start.value("character", static_cast<std::size_t>(0))});
+            const std::size_t endByte =
+                LspPositionToByte(content, LspPosition{.line      = end.value("line", static_cast<std::size_t>(0)),
+                                                       .character = end.value("character", static_cast<std::size_t>(0))});
+
+            diagnostics.push_back(text::Buffer::Diagnostic{
+                .startByte = startByte,
+                .endByte   = endByte,
+                .severity  = SeverityFromLsp(item.value("severity", 3)),
+                .origin    = origin,
+                .message   = item.value("message", std::string()),
+            });
+        }
+        return diagnostics;
+    }
+
+    // prose-check-composer follow-up: a fixed, private path identifying the
+    // composer's pseudo-document to the prose-checker connection -- never
+    // read or written on disk (SyncTextToServer sends `text` as didOpen/
+    // didChange content directly), just a stable identity PathToUri/UriToPath
+    // can round-trip and HandlePublishDiagnostics can recognize. Deliberately
+    // not under $XDG_STATE_HOME/ned (every other path this codebase resolves
+    // there is real, persisted state) -- temp_directory_path with a "/tmp"
+    // fallback keeps this obviously scratch, and avoids the XDG resolution's
+    // own "throws if neither XDG_STATE_HOME nor HOME is set" failure mode for
+    // something that was never going to touch disk anyway.
+    const std::filesystem::path& ComposerProseScratchPath() {
+        static const std::filesystem::path path = [] {
+            std::error_code       ec;
+            std::filesystem::path dir = std::filesystem::temp_directory_path(ec);
+            if (ec || dir.empty()) {
+                dir = "/tmp";
+            }
+            return dir / "ned-acp-composer-prose-scratch.md";
+        }();
+        return path;
+    }
+
     // code-actions follow-up: the reverse of SeverityFromLsp, for building a
     // textDocument/codeAction request's own "context.diagnostics" -- the
     // server expects real LSP Diagnostic shapes back, not this codebase's
@@ -663,6 +718,23 @@ void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
 
     SyncToServer(buffer, language, language, root);                       // primary language server
     SyncToServer(buffer, std::string(kProseLanguageKey), language, root); // prose checker, independent of the above
+}
+
+void LspManager::CheckComposerProseText(const std::string& text, ComposerProseCallback callback) {
+    composerProseCallback_ = std::move(callback);
+    // Debounces the send itself, not just applying the eventual publish
+    // (diagnosticsDebounceTimers_'s own job) -- see this method's own doc
+    // comment in the header for why. `text` is captured by value into the
+    // timer's callback since prompt_'s own text may have changed again by
+    // the time this fires.
+    composerProseDebounceTimer_.Arm(eventLoop_, std::chrono::milliseconds(LspDiagnosticsDebounceMs()), [this, text] {
+        if (!composerProseBuffer_) {
+            text::Buffer created = text::Buffer::NewFile(ComposerProseScratchPath());
+            composerProseBuffer_ = std::make_unique<text::Buffer>(std::move(created));
+        }
+        composerProseBuffer_->ReplaceContentForLoad(text::Rope(text));
+        SyncToServer(*composerProseBuffer_, std::string(kProseLanguageKey), "plaintext", editor::ProjectRoot());
+    });
 }
 
 void LspManager::SyncEmbeddedDocuments(text::Buffer& buffer, const std::vector<EmbeddedDocumentSync>& documents) {
@@ -1239,6 +1311,19 @@ void LspManager::HandlePublishDiagnostics(const Json& params, const std::string&
         return;
     }
 
+    // prose-check-composer follow-up: the composer's pseudo-document never
+    // resolves through bufferList_ (it isn't a real, registered Buffer) --
+    // intercepted here, ahead of the FindByPath lookup below, and routed to
+    // whichever callback CheckComposerProseText most recently stored instead
+    // of buffer->SetDiagnostics.
+    if (language == kProseLanguageKey && composerProseBuffer_ && path == composerProseBuffer_->Path()) {
+        if (composerProseCallback_) {
+            composerProseCallback_(
+                ParsePublishedDiagnostics(params, composerProseBuffer_->Content(), text::Buffer::Diagnostic::Origin::Prose));
+        }
+        return;
+    }
+
     text::Buffer* buffer = bufferList_.FindByPath(*path);
     if (!buffer) {
         return; // not an open buffer -- nothing to update
@@ -1252,30 +1337,7 @@ void LspManager::HandlePublishDiagnostics(const Json& params, const std::string&
     const text::Buffer::Diagnostic::Origin origin =
         (language == kProseLanguageKey) ? text::Buffer::Diagnostic::Origin::Prose : text::Buffer::Diagnostic::Origin::Code;
 
-    std::vector<text::Buffer::Diagnostic> diagnostics;
-    if (params.contains("diagnostics")) {
-        const text::ITextStorage& content = buffer->Content();
-        for (const Json& item : params["diagnostics"]) {
-            const Json& range = item.value("range", Json::object());
-            const Json& start = range.value("start", Json::object());
-            const Json& end   = range.value("end", Json::object());
-
-            const std::size_t startByte =
-                LspPositionToByte(content, LspPosition{.line      = start.value("line", static_cast<std::size_t>(0)),
-                                                       .character = start.value("character", static_cast<std::size_t>(0))});
-            const std::size_t endByte =
-                LspPositionToByte(content, LspPosition{.line      = end.value("line", static_cast<std::size_t>(0)),
-                                                       .character = end.value("character", static_cast<std::size_t>(0))});
-
-            diagnostics.push_back(text::Buffer::Diagnostic{
-                .startByte = startByte,
-                .endByte   = endByte,
-                .severity  = SeverityFromLsp(item.value("severity", 3)),
-                .origin    = origin,
-                .message   = item.value("message", std::string()),
-            });
-        }
-    }
+    std::vector<text::Buffer::Diagnostic> diagnostics = ParsePublishedDiagnostics(params, buffer->Content(), origin);
     FilterToOwnedRanges(buffer, language, diagnostics);
 
     // prose-checking follow-up: this server's own full current diagnostic
