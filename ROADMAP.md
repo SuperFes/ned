@@ -377,14 +377,32 @@ overflow indicators as part of the same work) are all shipped — see `git log
       widgets, `PanelDockTest.cpp`'s own precedent (13 cases — registration, paint
       delegation, rail-click switch/collapse/expand, resize-drag commit, mouse-event
       forwarding into the active panel's own local coordinates) — see
-      `git log --grep=unified-left-dock`. Not yet wired into `WindowManager`/`main.cpp`;
-      `ProjectSidebar`/`VcsPanel` are not yet retrofitted to be hosted by it. (2) strip
-      chrome out of `ProjectSidebar` first (the simpler, longer-established one), host
-      it alone, ship, confirm no regression; (3) strip chrome out of `VcsPanel`,
-      register it as the second panel, retire the now-dead exclusivity code in
-      `BufferView.cpp` and the startup tie-break variable in favor of the dock's own
-      state; (4) update `C-c p`/`C-c v p`'s meaning (dock-switch instead of two
-      independent toggles) and this entry.
+      `git log --grep=unified-left-dock`. (2) **done 2026-09-07** — `ProjectSidebar`
+      stripped of `DrawBorder`/`Width`/`SetWidth`/`Collapsed`/`SetCollapsed`/
+      `ToggleCollapsed`/`ExpandedWidth`/`IsResizing`/`UpdateResize`/`EndResize`/
+      `TakeKeyboardFocus`/`SetOnWidthCommitted`/`SetOnCollapseCommitted` entirely and
+      hosted alone in a real `LeftDock` wired into `WindowManager`/`main.cpp`'s
+      `bufferRow` (`VcsPanel` still a separate, fully chrome-owning sibling — step 3's
+      job). Row 0 stays the widget's own content row (project name, click-to-switch)
+      rather than becoming a border title, since `LeftDock`'s per-panel border title is
+      a fixed label with no way to express a live value. Surfaced one real design gap
+      the sketch hadn't covered: collapsing while the hosted content holds keyboard
+      focus needs to hand focus back, but collapse (`LeftDock`) and the focus-return
+      hook (`ProjectSidebar::SetOnFocusReturn`) now live on two different objects —
+      closed with a small generic bridge, `Widget::OnFocusPreempted()` (default no-op,
+      `ProjectSidebar` overrides it to fire `onFocusReturn_`, `LeftDock::SetCollapsed`
+      calls it on the active content when collapsing while that content is `Focused()`).
+      `LeftDock::PrepareForKeyboardFocus`/`NoteFocusReturned` (added this step, not in
+      the original step-1 sketch) replace `ProjectSidebar::TakeKeyboardFocus`'s own
+      expand-and-remember/restore pairing now that collapse state moved. Live-verified
+      in a real running session (tmux): rail-click collapse/expand, `C-c p` expanding a
+      collapsed dock and taking focus, arrow-key tree navigation, and Escape returning
+      focus *and* re-collapsing all confirmed working end to end — see
+      `git log --grep=unified-left-dock` (full test suite green throughout,
+      3654 cases). (3) strip chrome out of `VcsPanel`, register it as the second panel,
+      retire the now-dead exclusivity code in `BufferView.cpp` and the startup tie-break
+      variable in favor of the dock's own state; (4) update `C-c p`/`C-c v p`'s meaning
+      (dock-switch instead of two independent toggles) and this entry.
 
       Design question resolved 2026-09-07: the rail stays left-side-only and does
       *not* replace `PanelDock`'s own tab strip for the bottom-docked panels, nor
