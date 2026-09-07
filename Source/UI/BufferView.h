@@ -596,6 +596,12 @@ class BufferView : public Widget {
     // fans it out to every pane). Unset is a safe no-op.
     void SetOnTerminalToggle(std::function<void()> handler);
 
+    // multiple-terminal-tabs follow-up: new-terminal's forwarding hook, same
+    // shape and reasoning as SetOnTerminalToggle immediately above --
+    // distinct from it, since new-terminal always spawns one more tab
+    // rather than toggling a single existing one. Unset is a safe no-op.
+    void SetOnNewTerminalRequest(std::function<void()> handler);
+
     // ACP chat panel: acp-toggle-panel's forwarding hook, same shape and
     // reasoning as SetOnTerminalToggle immediately above -- the panel is
     // another OverlayHost overlay owned by main.cpp's composition, wired via
@@ -3209,10 +3215,11 @@ class BufferView : public Widget {
 
     // Window-splitting follow-up: see SetOnWindowRequest/SetOnBufferClosed.
     std::function<void(editor::InteractiveRequest)> onWindowRequest_;
-    std::function<void(text::Buffer&)>              onBufferClosed_;
-    std::function<void()>                           onTerminalToggle_;      // see SetOnTerminalToggle
-    std::function<void()>                           onAcpPanelToggle_;      // see SetOnAcpPanelToggle
-    std::function<void()>                           onAcpRewindRequest_;    // see SetOnAcpRewindRequest
+    std::function<void(text::Buffer&)>                 onBufferClosed_;
+    std::function<void()>                              onTerminalToggle_;      // see SetOnTerminalToggle
+    std::function<void()>                              onNewTerminalRequest_;  // see SetOnNewTerminalRequest
+    std::function<void()>                              onAcpPanelToggle_;      // see SetOnAcpPanelToggle
+    std::function<void()>                              onAcpRewindRequest_;    // see SetOnAcpRewindRequest
     std::function<void()>                           onDapConsoleToggle_;    // see SetOnDapConsoleToggle
     std::function<void()>                           onJanetReplToggle_;     // see SetOnJanetReplToggle
     std::function<void(const std::string&)>         onRunReplRequest_;      // see SetOnRunReplRequest

@@ -12,6 +12,13 @@ namespace {
     constexpr char32_t kMaximizeIcon = U'▲';
     constexpr char32_t kCloseIcon    = U'×';
 
+    // Multiple-terminal-tabs follow-up: TabBar's own overflow-indicator
+    // glyphs, reused verbatim for the same "the wheel scrolls this row but
+    // nothing said so" problem, now that this row can overflow too (more
+    // terminal tabs than fit).
+    constexpr char32_t kMoreLeft  = U'‹';
+    constexpr char32_t kMoreRight = U'›';
+
     // Column width of one bracketed [x]/[▲]/action-icon button, including
     // the one-space gap before it -- TerminalPanel's own button layout,
     // generalized so this file lays out however many buttons a tab
@@ -37,42 +44,146 @@ namespace {
 PanelDock::PanelDock(const Theme& theme) : theme_(theme) {
 }
 
+PanelDock::Entry* PanelDock::FindEntry(std::size_t id) {
+    for (Entry& entry : entries_) {
+        if (entry.id == id) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+const PanelDock::Entry* PanelDock::FindEntry(std::size_t id) const {
+    for (const Entry& entry : entries_) {
+        if (entry.id == id) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
 std::size_t PanelDock::AddPanel(std::string label, Widget& panel, std::function<std::string()> titleText,
                                 std::function<int()> getPercent, std::function<void(int)> setPercent,
                                 std::function<std::vector<TabAction>()> extraActions) {
-    entries_.push_back(Entry{.label        = std::move(label),
+    const std::size_t id = nextId_++;
+    entries_.push_back(Entry{.id           = id,
+                             .label        = std::move(label),
                              .panel        = &panel,
                              .titleText    = std::move(titleText),
                              .getPercent   = std::move(getPercent),
                              .setPercent   = std::move(setPercent),
                              .extraActions = std::move(extraActions)});
-    return entries_.size() - 1;
-}
-
-std::optional<int> PanelDock::ActivePercent() const {
-    if (active_ >= entries_.size() || !entries_[active_].getPercent) {
-        return std::nullopt;
+    if (entries_.size() == 1) {
+        // The first tab ever registered (or the first one registered again
+        // after every other tab was removed) becomes active by default --
+        // matching this class's original always-active-tab-0 behavior
+        // without assuming a freshly issued id happens to be 0.
+        active_ = id;
     }
-    return entries_[active_].getPercent();
+    return id;
 }
 
-Widget* PanelDock::ActivePanel() const {
-    if (active_ >= entries_.size()) {
-        return nullptr;
-    }
-    return entries_[active_].panel;
-}
-
-void PanelDock::SwitchTo(std::size_t index) {
-    if (entries_.empty()) {
+void PanelDock::RemovePanel(std::size_t id) {
+    const auto it = std::find_if(entries_.begin(), entries_.end(), [id](const Entry& entry) { return entry.id == id; });
+    if (it == entries_.end()) {
         return;
     }
-    const std::size_t clamped = std::min(index, entries_.size() - 1);
-    const bool        changed = clamped != active_;
-    active_                   = clamped;
+    const std::size_t pos       = static_cast<std::size_t>(it - entries_.begin());
+    const bool        wasActive = (id == active_);
+    entries_.erase(it);
+
+    if (!wasActive) {
+        return; // active tab's own identity and position are untouched
+    }
+    if (entries_.empty()) {
+        if (onLayoutChange_) {
+            onLayoutChange_();
+        }
+        return;
+    }
+    // The neighboring tab at the same screen position takes over (closing a
+    // browser tab's own convention), falling back to the new last tab if
+    // the removed one was rightmost.
+    const std::size_t newPos = std::min(pos, entries_.size() - 1);
+    active_                  = entries_[newPos].id;
     RepositionActivePanel();
     if (Widget* panel = ActivePanel()) {
         panel->TakeFocus();
+    }
+    RevealActiveTab();
+    if (onLayoutChange_) {
+        onLayoutChange_();
+    }
+}
+
+std::optional<int> PanelDock::ActivePercent() const {
+    const Entry* entry = FindEntry(active_);
+    if (entry == nullptr || !entry->getPercent) {
+        return std::nullopt;
+    }
+    return entry->getPercent();
+}
+
+Widget* PanelDock::ActivePanel() const {
+    const Entry* entry = FindEntry(active_);
+    return entry != nullptr ? entry->panel : nullptr;
+}
+
+std::vector<PanelDock::TabLabelSpan> PanelDock::ComputeTabLabelLayout() const {
+    std::vector<TabLabelSpan> layout;
+    int                       col = 0; // content-space: column 0 is the strip's 1-column left margin
+    for (const Entry& entry : entries_) {
+        const std::string text  = entry.titleText ? entry.titleText() : entry.label;
+        const std::string label = (entry.id == active_) ? ("[ " + text + " ]") : (" " + text + " ");
+        const int         width = ColumnCount(label);
+        layout.push_back(TabLabelSpan{.id = entry.id, .startColumn = col, .endColumn = col + width});
+        col += width + 1; // +1: gap before the next tab
+    }
+    return layout;
+}
+
+int PanelDock::ButtonClusterStartColumn() const {
+    const int    width       = size().width;
+    std::size_t  buttonCount = 2; // maximize + close, always present
+    const Entry* entry       = FindEntry(active_);
+    if (entry != nullptr && entry->extraActions) {
+        buttonCount += entry->extraActions().size();
+    }
+    const int totalButtonsWidth = static_cast<int>(buttonCount) * kButtonWidth;
+    return width >= totalButtonsWidth ? width - totalButtonsWidth : width;
+}
+
+void PanelDock::RevealActiveTab() {
+    const std::vector<TabLabelSpan> layout         = ComputeTabLabelLayout();
+    const int                       labelViewWidth = std::max(0, ButtonClusterStartColumn() - 1);
+    for (const TabLabelSpan& span : layout) {
+        if (span.id != active_) {
+            continue;
+        }
+        if (span.endColumn - tabScrollOffset_ > labelViewWidth) {
+            tabScrollOffset_ = span.endColumn - labelViewWidth;
+        }
+        if (span.startColumn < tabScrollOffset_) {
+            tabScrollOffset_ = span.startColumn;
+        }
+        break;
+    }
+    const int totalLabelWidth = layout.empty() ? 0 : layout.back().endColumn;
+    tabScrollOffset_          = std::clamp(tabScrollOffset_, 0, std::max(0, totalLabelWidth - labelViewWidth));
+}
+
+void PanelDock::SwitchTo(std::size_t id) {
+    if (FindEntry(id) == nullptr) {
+        return;
+    }
+    const bool changed = id != active_;
+    active_            = id;
+    RepositionActivePanel();
+    if (Widget* panel = ActivePanel()) {
+        panel->TakeFocus();
+    }
+    if (changed) {
+        RevealActiveTab();
     }
     // A different tab can resolve a different ActivePercent() -- without
     // this, the dock's own outer Box_ (only ever recomputed by OverlayHost
@@ -132,21 +243,52 @@ void PanelDock::Paint(Canvas canvas) {
         frameBrush.ApplyTo(cell);
     }
 
-    // Tab labels, left to right -- the active one bracketed, the rest plain.
-    int x = 1;
-    for (std::size_t i = 0; i < entries_.size() && x < width; ++i) {
-        const Entry&      entry = entries_[i];
-        const std::string text  = entry.titleText ? entry.titleText() : entry.label;
-        const std::string label = (i == active_) ? ("[ " + text + " ]") : (" " + text + " ");
-        x += PaintUtf8Row(canvas, x, 0, label, frameBrush, width - x) + 1; // +1: gap before the next tab
+    // Multiple-terminal-tabs follow-up: the label region is scrollable, so
+    // its own writable band ends at ButtonClusterStartColumn() rather than
+    // the canvas's own right edge -- everything from there on is the
+    // right-aligned button cluster below.
+    const int                       buttonClusterStart = ButtonClusterStartColumn();
+    const int                       labelViewWidth     = std::max(0, buttonClusterStart - 1);
+    const std::vector<TabLabelSpan> layout             = ComputeTabLabelLayout();
+    const int                       totalLabelWidth    = layout.empty() ? 0 : layout.back().endColumn;
+    tabScrollOffset_                                   = std::clamp(tabScrollOffset_, 0, std::max(0, totalLabelWidth - labelViewWidth));
+
+    for (const TabLabelSpan& span : layout) {
+        const Entry* entry = FindEntry(span.id);
+        if (entry == nullptr) {
+            continue; // shouldn't happen -- layout is derived from entries_ itself
+        }
+        const std::string text    = entry->titleText ? entry->titleText() : entry->label;
+        const std::string label   = (span.id == active_) ? ("[ " + text + " ]") : (" " + text + " ");
+        const int         screenX = 1 + span.startColumn - tabScrollOffset_;
+        const int         maxCols = buttonClusterStart - screenX;
+        if (maxCols > 0) {
+            PaintUtf8Row(canvas, screenX, 0, label, frameBrush, maxCols);
+        }
+    }
+
+    // A `‹`/`›` overflow indicator at the corresponding edge whenever more
+    // tab content has been scrolled past in that direction, mirroring
+    // TabBar's own indicator for the buffer tab strip.
+    if (labelViewWidth > 0) {
+        if (tabScrollOffset_ > 0) {
+            Cell& cell     = canvas[{.x = 0, .y = 0}];
+            cell.character = text::EncodeCodepointUtf8(kMoreLeft);
+            frameBrush.ApplyTo(cell);
+        }
+        if (totalLabelWidth - tabScrollOffset_ > labelViewWidth) {
+            Cell& cell     = canvas[{.x = buttonClusterStart - 1, .y = 0}];
+            cell.character = text::EncodeCodepointUtf8(kMoreRight);
+            frameBrush.ApplyTo(cell);
+        }
     }
 
     // Right-aligned chrome: the active tab's own extra actions, then the
     // shared maximize/close -- TerminalPanel's own right-aligned button-row
     // convention, generalized to however many buttons apply this frame.
     std::vector<std::pair<char32_t, std::function<void()>>> rightButtons;
-    if (active_ < entries_.size() && entries_[active_].extraActions) {
-        for (const TabAction& action : entries_[active_].extraActions()) {
+    if (const Entry* entry = FindEntry(active_); entry != nullptr && entry->extraActions) {
+        for (const TabAction& action : entry->extraActions()) {
             rightButtons.emplace_back(action.icon, action.onClick);
         }
     }
@@ -179,8 +321,8 @@ bool PanelDock::HandleTabStripClick(int x) {
 
     // Right-aligned chrome first -- same set/order Paint just drew.
     std::vector<std::function<void()>> rightButtons;
-    if (active_ < entries_.size() && entries_[active_].extraActions) {
-        for (const TabAction& action : entries_[active_].extraActions()) {
+    if (const Entry* entry = FindEntry(active_); entry != nullptr && entry->extraActions) {
+        for (const TabAction& action : entry->extraActions()) {
             rightButtons.push_back(action.onClick);
         }
     }
@@ -208,19 +350,19 @@ bool PanelDock::HandleTabStripClick(int x) {
         }
     }
 
-    // Tab labels -- same left-to-right walk Paint uses, so a click always
-    // lands on whichever tab it visually looks like it did.
-    int tx = 1;
-    for (std::size_t i = 0; i < entries_.size(); ++i) {
-        const Entry&      entry      = entries_[i];
-        const std::string text       = entry.titleText ? entry.titleText() : entry.label;
-        const std::string label      = (i == active_) ? ("[ " + text + " ]") : (" " + text + " ");
-        const int         labelWidth = ColumnCount(label);
-        if (x >= tx && x < tx + labelWidth) {
-            SwitchTo(i);
-            return true;
+    // Tab labels -- convert the click's screen column into content-space
+    // (undoing the scroll offset the same way ComputeTabLabelLayout leaves
+    // it) before comparing against each span, so a click always lands on
+    // whichever tab it visually looks like it did.
+    if (x >= 1) {
+        const int                       contentColumn = x - 1 + tabScrollOffset_;
+        const std::vector<TabLabelSpan> layout        = ComputeTabLabelLayout();
+        for (const TabLabelSpan& span : layout) {
+            if (contentColumn >= span.startColumn && contentColumn < span.endColumn) {
+                SwitchTo(span.id);
+                return true;
+            }
         }
-        tx += labelWidth + 1;
     }
 
     return false; // unclaimed row-0 column -- start a resize-drag instead
@@ -229,11 +371,13 @@ bool PanelDock::HandleTabStripClick(int x) {
 void PanelDock::BeginResize(Point globalMouse) {
     resizing_           = true;
     resizeAnchorGlobal_ = globalMouse;
-    resizeStartPercent_ = (active_ < entries_.size() && entries_[active_].getPercent) ? entries_[active_].getPercent() : 0;
+    const Entry* entry  = FindEntry(active_);
+    resizeStartPercent_ = (entry != nullptr && entry->getPercent) ? entry->getPercent() : 0;
 }
 
 void PanelDock::UpdateResize(Point globalMouse) {
-    if (active_ >= entries_.size() || !entries_[active_].setPercent) {
+    const Entry* entry = FindEntry(active_);
+    if (entry == nullptr || !entry->setPercent) {
         return;
     }
     if (terminalSize_.height <= 0) {
@@ -244,7 +388,7 @@ void PanelDock::UpdateResize(Point globalMouse) {
     // "anchor minus current" so a move in the growing direction is positive.
     const int deltaPixels  = resizeAnchorGlobal_.y - globalMouse.y;
     const int deltaPercent = deltaPixels * 100 / terminalSize_.height;
-    entries_[active_].setPercent(resizeStartPercent_ + deltaPercent);
+    entry->setPercent(resizeStartPercent_ + deltaPercent);
 }
 
 void PanelDock::EndResize() {
@@ -273,6 +417,20 @@ bool PanelDock::OnEvent(const Event& event) {
     const std::optional<MouseEvent> mouse = LocalMouseEvent(event);
     if (!mouse) {
         return false;
+    }
+
+    if (mouse->at.y == 0 && (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown)) {
+        // Multiple-terminal-tabs follow-up: TabBar's own wheel-scroll
+        // convention for the buffer tab strip, applied to this dock's tab
+        // strip now that it can overflow too.
+        constexpr int kScrollStep = 4;
+        tabScrollOffset_ += (mouse->button == MouseEvent::Button::WheelDown) ? kScrollStep : -kScrollStep;
+
+        const std::vector<TabLabelSpan> layout          = ComputeTabLabelLayout();
+        const int                       totalLabelWidth = layout.empty() ? 0 : layout.back().endColumn;
+        const int                       labelViewWidth  = std::max(0, ButtonClusterStartColumn() - 1);
+        tabScrollOffset_                                = std::clamp(tabScrollOffset_, 0, std::max(0, totalLabelWidth - labelViewWidth));
+        return true;
     }
 
     if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {

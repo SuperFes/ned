@@ -524,6 +524,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetVcsPanel(vcsPanel_);
     pane->Buffer().SetThemeApplier(themeApplier_);
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
+    pane->Buffer().SetOnNewTerminalRequest(onNewTerminalRequest_);
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
     pane->Buffer().SetOnAcpRewindRequest(onAcpRewindRequest_);
     pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
@@ -588,6 +589,13 @@ void WindowManager::SetOnTerminalToggle(std::function<void()> onToggle) {
     onTerminalToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
+    }
+}
+
+void WindowManager::SetOnNewTerminalRequest(std::function<void()> onNewTerminal) {
+    onNewTerminalRequest_ = std::move(onNewTerminal);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnNewTerminalRequest(onNewTerminalRequest_);
     }
 }
 
