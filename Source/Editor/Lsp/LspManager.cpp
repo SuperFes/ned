@@ -278,6 +278,16 @@ namespace {
         };
     }
 
+    // lsp-workspace-folders follow-up. One LSP WorkspaceFolder object.
+    // `name` is purely a human-readable label per spec (servers key on the
+    // uri); the directory's own basename is what every other client sends,
+    // falling back to the full path string for a root with no filename
+    // component of its own (e.g. "/").
+    Json WorkspaceFolderEntry(const std::filesystem::path& root) {
+        const std::string name = root.filename().empty() ? root.string() : root.filename().string();
+        return Json{{"uri", PathToUri(root)}, {"name", name}};
+    }
+
 } // namespace
 
 Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json& initializationOptions) {
@@ -305,9 +315,16 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
     // "file://" URI: ProjectRoot() should never be empty anymore
     // (DetectProjectRoot absolutizes now), but this handshake runs under
     // Paint() with no catch above it, so it must stay total regardless.
+    // lsp-workspace-folders follow-up: workspaceFolders is sent alongside
+    // (not instead of) the deprecated rootUri -- the spec says a client
+    // supporting both should send both, and a server that only understands
+    // rootUri keeps working byte-for-byte as before. null, not an empty
+    // array, for an empty root: an empty array means "no folders open,"
+    // which is a different claim than "this client doesn't have one."
     Json params = Json{
         {"processId", static_cast<std::int64_t>(::getpid())},
         {"rootUri", projectRoot.empty() ? Json(nullptr) : Json(PathToUri(projectRoot))},
+        {"workspaceFolders", projectRoot.empty() ? Json(nullptr) : Json::array({WorkspaceFolderEntry(projectRoot)})},
         {"capabilities",
          {{"textDocument",
            // completionItem.snippetSupport (snippet-expansion follow-up) is
@@ -416,6 +433,15 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
             {"configuration", true},
             {"didChangeConfiguration", Json::object()},
             {"executeCommand", Json::object()},
+            // lsp-workspace-folders follow-up: a plain boolean per spec (like
+            // applyEdit/configuration above, unlike the object-shaped
+            // textDocument.* entries) -- declares this client can both be
+            // handed several folders at initialize time and send
+            // workspace/didChangeWorkspaceFolders afterwards. Without it a
+            // conforming server has no reason to advertise its own
+            // workspaceFolders support back, so LspManager would never find a
+            // connection worth joining.
+            {"workspaceFolders", true},
             {"fileOperations", {{"willRename", true}, {"didRename", true}}}}},
           {"window", {{"workDoneProgress", true}}}}},
     };
@@ -531,7 +557,52 @@ std::string LspManager::ConnectionKey(const std::filesystem::path& root, const s
 
 std::string LspManager::ConnectionKeyForBuffer(const text::Buffer& buffer, const std::string& serverKey) const {
     const auto it = bufferResolvedRoot_.find(const_cast<text::Buffer*>(&buffer));
-    return ConnectionKey(it != bufferResolvedRoot_.end() ? it->second : editor::ProjectRoot(), serverKey);
+    return ResolvedConnectionKey(it != bufferResolvedRoot_.end() ? it->second : editor::ProjectRoot(), serverKey);
+}
+
+std::string LspManager::ResolvedConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const {
+    const std::string key = ConnectionKey(root, serverKey);
+    const auto        it  = joinedConnection_.find(key);
+    return it != joinedConnection_.end() ? it->second : key;
+}
+
+std::vector<std::string> LspManager::ConnectionKeysForServer(const std::string& serverKey) const {
+    const std::string        suffix = '\x1f' + serverKey;
+    std::vector<std::string> keys;
+    for (const auto& [key, client] : clients_) {
+        if (key == serverKey || (key.size() > suffix.size() && key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0)) {
+            keys.push_back(key);
+        }
+    }
+    return keys;
+}
+
+std::optional<std::string> LspManager::TryJoinWorkspaceFolder(const std::string& serverKey, const std::filesystem::path& root) {
+    std::string joinable;
+    for (const std::string& candidate : ConnectionKeysForServer(serverKey)) {
+        if (handshakePending_.contains(candidate)) {
+            return std::nullopt; // see this method's own doc comment -- wait, don't race
+        }
+        const auto supportIt = workspaceFoldersSupport_.find(candidate);
+        if (supportIt != workspaceFoldersSupport_.end() && supportIt->second.supported && supportIt->second.changeNotifications &&
+            joinable.empty()) {
+            joinable = candidate;
+        }
+    }
+    if (joinable.empty()) {
+        return std::nullopt;
+    }
+
+    LspClient* client = ExistingClientForLanguage(joinable);
+    if (!client) {
+        return std::nullopt; // died between the scan above and here
+    }
+    client->SendNotification(
+        "workspace/didChangeWorkspaceFolders",
+        {{"event", {{"added", Json::array({WorkspaceFolderEntry(root)})}, {"removed", Json::array()}}}});
+    connectionFolders_[joinable].push_back(root);
+    joinedConnection_[ConnectionKey(root, serverKey)] = joinable;
+    return joinable;
 }
 
 std::filesystem::path LspManager::ResolveCachedRoot(const std::filesystem::path& bufferPath, const std::string& language) {
@@ -543,9 +614,46 @@ std::filesystem::path LspManager::ResolveCachedRoot(const std::filesystem::path&
 }
 
 LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std::filesystem::path& root) {
-    const std::string connectionKey = ConnectionKey(root, serverKey);
+    // lsp-workspace-folders follow-up: resolved, not raw -- a root that
+    // previously joined another process's folder set must keep landing on
+    // that same client rather than spawning its own on the next sync.
+    std::string connectionKey = ResolvedConnectionKey(root, serverKey);
     if (LspClient* existing = ExistingClientForLanguage(connectionKey)) {
         return existing;
+    }
+    if (connectionKey != ConnectionKey(root, serverKey)) {
+        // The connection this root had joined is gone. Drop the stale
+        // redirect and fall through to resolve fresh below -- it may join a
+        // different survivor, or spawn its own.
+        joinedConnection_.erase(ConnectionKey(root, serverKey));
+        connectionKey = ConnectionKey(root, serverKey);
+    }
+
+    // lsp-workspace-folders follow-up: before resolving a command or spawning
+    // anything, see whether an already-running server for this same language
+    // can simply be handed this root as an additional workspace folder -- one
+    // process serving a monorepo's subpackages instead of one per subpackage.
+    // Deliberately ahead of the LspServerCommand lookup below: joining an
+    // existing process needs no argv of its own, and a language whose command
+    // was cleared after its server came up should still be able to serve a
+    // newly-opened sibling root from it. Only ever reachable in a genuine
+    // multi-root session -- in the single-root case the exact-key lookup at
+    // the top of this function already returned.
+    if (LspWorkspaceFoldersEnabled() && !ConnectionKeysForServer(serverKey).empty()) {
+        if (const std::optional<std::string> joined = TryJoinWorkspaceFolder(serverKey, root)) {
+            return ExistingClientForLanguage(*joined);
+        }
+        // A sibling exists but couldn't take this root: either it's still
+        // handshaking, or it doesn't support workspaceFolders.
+        // TryJoinWorkspaceFolder doesn't distinguish those for us, so re-check
+        // the one case that must not fall through to a spawn -- a pending
+        // handshake, whose answer is what decides between joining and
+        // spawning. Retried on the next SyncBuffer, at most a frame away.
+        for (const std::string& candidate : ConnectionKeysForServer(serverKey)) {
+            if (handshakePending_.contains(candidate)) {
+                return nullptr;
+            }
+        }
     }
 
     // prose-checking follow-up: the one place kProseLanguageKey is treated
@@ -649,6 +757,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
             // gate and flushed everything queued behind it (including a
             // full-document textDocument/didChange) into a server that had
             // already proven unresponsive, wedging the write.
+            handshakePending_.erase(connectionKey); // lsp-workspace-folders follow-up -- decided, either way
             if (error) {
                 LogError(serverKey, "initialize failed: " + ExtractErrorMessage(*error));
                 disconnectDetail_[connectionKey] = ExtractErrorMessage(*error);
@@ -673,6 +782,12 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
                 if (const auto fileOpFilters = ExtractFileOperationFilters(*result)) {
                     fileOperationFilters_[connectionKey] = *fileOpFilters;
                 }
+                // lsp-workspace-folders follow-up: what decides whether a
+                // later buffer under a different root joins this process or
+                // gets its own -- see TryJoinWorkspaceFolder.
+                if (const auto folders = ExtractWorkspaceFoldersSupport(*result)) {
+                    workspaceFoldersSupport_[connectionKey] = *folders;
+                }
             }
             rawClient->SendNotification("initialized", Json::object());
             if (!workspaceConfiguration.empty()) {
@@ -681,6 +796,11 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
         });
 
     clients_.emplace(connectionKey, std::move(client));
+    // lsp-workspace-folders follow-up: this connection's own initialize-time
+    // folder, and the gate that keeps a second root from racing ahead of the
+    // handshake that decides whether it can join here.
+    connectionFolders_[connectionKey] = {root};
+    handshakePending_.insert(connectionKey);
     if (brokerBacked) {
         brokerBackedLanguages_.insert(connectionKey);
     }
@@ -916,7 +1036,7 @@ void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serve
         if (serverKey == kProseLanguageKey && std::filesystem::exists(*buffer.Path()) && text::LooksBinary(*buffer.Path())) {
             return;
         }
-        state.connectionKey = ConnectionKey(root, serverKey);
+        state.connectionKey = ResolvedConnectionKey(root, serverKey); // lsp-workspace-folders follow-up: canonical, not raw
         state.uri           = PathToUri(*buffer.Path());
         state.version       = 1;
         client->SendNotification("textDocument/didOpen", {
@@ -948,7 +1068,7 @@ void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serve
     }
 
     ++state.version;
-    if (TextDocumentSyncKindFor(serverKey) == TextDocumentSyncKind::Incremental) {
+    if (TextDocumentSyncKindFor(state.connectionKey) == TextDocumentSyncKind::Incremental) {
         // incremental-sync follow-up: common-prefix/common-suffix byte diff,
         // the same shape as IncrementalParseCache::Update's own diff
         // (Editor/TreeSitter/IncrementalParse.cpp) -- "correct, if not
@@ -1102,6 +1222,16 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     codeLensUnsupported_.erase(connectionKeyCopy);                // ditto
     semanticTokensRangeUnsupported_.erase(connectionKeyCopy);     // ditto
     semanticTokensFullDeltaUnsupported_.erase(connectionKeyCopy); // ditto
+    // lsp-workspace-folders follow-up: this connection's folder set dies
+    // with it, and so must every redirect pointing at it -- otherwise a
+    // joined root would keep resolving to a canonical key that no longer
+    // names a client, and never spawn a replacement. Each orphaned root
+    // re-resolves on its next sync (ClientForLanguage's own stale-redirect
+    // branch), joining a surviving sibling or spawning its own.
+    workspaceFoldersSupport_.erase(connectionKeyCopy);
+    connectionFolders_.erase(connectionKeyCopy);
+    handshakePending_.erase(connectionKeyCopy);
+    std::erase_if(joinedConnection_, [&connectionKeyCopy](const auto& entry) { return entry.second == connectionKeyCopy; });
     // mode-line-lsp-status-round-2 follow-up: latch the disconnect so
     // StatusForLanguage can report it, distinct from "never configured" --
     // cleared the moment a fresh spawn succeeds (ClientForLanguage) or the

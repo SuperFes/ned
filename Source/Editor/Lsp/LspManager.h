@@ -803,6 +803,17 @@ class LspManager {
         fileOperationFilters_[std::move(connectionKey)] = std::move(filters);
     }
 
+    // lsp-workspace-folders follow-up: same test-only injection point as
+    // SetFileOperationFiltersForTesting just above, for the piece of
+    // `initialize`-response state TryJoinWorkspaceFolder reads. Also clears
+    // the connection's handshake-pending gate, since a test seeding this
+    // directly is standing in for exactly the handshake that would have
+    // resolved it.
+    void SetWorkspaceFoldersSupportForTesting(std::string connectionKey, WorkspaceFoldersSupport support) {
+        handshakePending_.erase(connectionKey);
+        workspaceFoldersSupport_[std::move(connectionKey)] = support;
+    }
+
     // LspManagerTest-broker-hermeticity follow-up: routes ClientForLanguage's
     // real spawn path's TryConnectToBroker call at a caller-chosen path
     // instead of the real BrokerSocketPath() -- lets a test that wants a
@@ -1078,6 +1089,35 @@ class LspManager {
     // composite-key convention below, not a new one.
     [[nodiscard]] std::string ConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const;
 
+    // lsp-workspace-folders follow-up: ConnectionKey's result, then
+    // redirected through joinedConnection_ if this root joined another
+    // process's folder set rather than getting its own. Every consumer of a
+    // connection identity (ConnectionKeyForBuffer, SyncToServer's
+    // BufferSyncState stamping, ClientForLanguage's own lookup) goes
+    // through this rather than ConnectionKey directly, so a joined root is
+    // indistinguishable from a natively-owned one everywhere downstream.
+    [[nodiscard]] std::string ResolvedConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const;
+
+    // lsp-workspace-folders follow-up: every live connection key currently
+    // serving serverKey, whatever root each resolved to -- i.e. clients_
+    // keys that are either exactly serverKey (the ProjectRoot()-scoped
+    // connection) or end in '\x1f' + serverKey.
+    [[nodiscard]] std::vector<std::string> ConnectionKeysForServer(const std::string& serverKey) const;
+
+    // lsp-workspace-folders follow-up: the join half of ClientForLanguage.
+    // Returns the canonical connection root now serves -- having sent
+    // workspace/didChangeWorkspaceFolders and recorded the join -- or
+    // nullopt when no existing connection for serverKey can take it.
+    //
+    // Also returns nullopt, deliberately, while any sibling connection for
+    // serverKey is still mid-handshake: its capabilities aren't known yet,
+    // and spawning a second process in the meantime would make the outcome
+    // depend on frame timing rather than on what the server actually
+    // supports. The caller treats that as "don't sync this buffer yet" and
+    // retries on the next SyncBuffer, which is at most a frame away.
+    [[nodiscard]] std::optional<std::string> TryJoinWorkspaceFolder(const std::string&           serverKey,
+                                                                    const std::filesystem::path& root);
+
     // LSP multi-root follow-up: resolves and caches buffer's own LSP root
     // (LspRootResolver.h's ResolveLspRoot), keyed by its containing
     // directory + language rather than by Buffer* -- so buffers sharing a
@@ -1336,6 +1376,35 @@ class LspManager {
     std::optional<std::filesystem::path> brokerSocketPathOverrideForTesting_;
 
     std::unordered_map<std::string, std::unique_ptr<LspClient>> clients_; // keyed by ConnectionKey (see its own doc comment)
+
+    // lsp-workspace-folders follow-up. The three maps behind "one server
+    // process, several roots" -- all keyed by connection, all erased
+    // together in ClientDisconnected.
+    //
+    // workspaceFoldersSupport_ is what that connection's own `initialize`
+    // response advertised (see ExtractWorkspaceFoldersSupport); absent means
+    // either "never advertised" or "handshake hasn't landed yet," which
+    // handshakePending_ is what tells apart -- a connection still mid-
+    // handshake must not be judged unjoinable, or the outcome would depend
+    // on which buffer happened to be painted first.
+    //
+    // connectionFolders_ is every root a connection currently serves, its
+    // own initialize-time root first. Folders are only ever added, never
+    // removed: ned has no "close this folder" concept (a project root is
+    // set once at startup), and a server keeping an extra folder indexed
+    // after its last buffer closes costs memory in the server, not
+    // correctness here -- so workspace/didChangeWorkspaceFolders is only
+    // ever sent with a non-empty `added` and an empty `removed`.
+    //
+    // joinedConnection_ maps a *would-be* connection key -- what
+    // ConnectionKey(root, serverKey) computes for a root that joined
+    // someone else's process -- onto the canonical key that actually owns
+    // the client. ResolvedConnectionKey is the single reader; nothing else
+    // should walk this directly.
+    std::unordered_map<std::string, WorkspaceFoldersSupport>            workspaceFoldersSupport_;
+    std::unordered_map<std::string, std::vector<std::filesystem::path>> connectionFolders_;
+    std::unordered_map<std::string, std::string>                        joinedConnection_;
+    std::unordered_set<std::string>                                     handshakePending_;
 
     // LSP multi-root follow-up: see ResolveCachedRoot's own doc comment for
     // why this cache exists and why it's keyed by directory rather than by

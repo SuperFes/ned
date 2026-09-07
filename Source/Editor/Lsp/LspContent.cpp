@@ -809,6 +809,34 @@ std::optional<FileOperationFilters> ExtractFileOperationFilters(const Json& init
     return filters;
 }
 
+std::optional<WorkspaceFoldersSupport> ExtractWorkspaceFoldersSupport(const Json& initializeResult) {
+    if (!initializeResult.is_object()) {
+        return std::nullopt;
+    }
+    const auto capabilitiesIt = initializeResult.find("capabilities");
+    if (capabilitiesIt == initializeResult.end() || !capabilitiesIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto workspaceIt = capabilitiesIt->find("workspace");
+    if (workspaceIt == capabilitiesIt->end() || !workspaceIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto foldersIt = workspaceIt->find("workspaceFolders");
+    if (foldersIt == workspaceIt->end() || !foldersIt->is_object()) {
+        return std::nullopt;
+    }
+    WorkspaceFoldersSupport support;
+    const auto              supportedIt = foldersIt->find("supported");
+    support.supported                   = supportedIt != foldersIt->end() && supportedIt->is_boolean() && supportedIt->get<bool>();
+    // boolean | string per spec -- a string is a registration id, which
+    // still means "send me the notification" (see the header's own note on
+    // why this client never uses the id itself).
+    const auto changeIt = foldersIt->find("changeNotifications");
+    support.changeNotifications =
+        changeIt != foldersIt->end() && ((changeIt->is_boolean() && changeIt->get<bool>()) || changeIt->is_string());
+    return support;
+}
+
 std::optional<std::vector<PullDiagnosticItem>> ExtractPullDiagnosticReport(const Json& result) {
     if (!result.is_object()) {
         return std::nullopt;

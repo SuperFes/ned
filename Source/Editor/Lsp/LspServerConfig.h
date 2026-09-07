@@ -139,6 +139,23 @@ void              SetLspPullDiagnosticsEnabled(bool enabled); // default false
 void              SetLspSemanticHighlightingEnabled(bool enabled); // default true
 [[nodiscard]] bool LspSemanticHighlightingEnabled();
 
+// lsp-workspace-folders follow-up. Whether a buffer whose resolved LSP root
+// differs from an already-running same-language connection's may *join* that
+// connection (one server process, several folders, via
+// workspace/didChangeWorkspaceFolders) instead of spawning its own separate
+// process. Default true: for a monorepo this is the whole point -- one
+// clangd index shared across subpackages rather than N independent ones --
+// and a server that doesn't advertise the capability is never asked to,
+// so the fallback is exactly the pre-existing process-per-root behavior.
+//
+// Worth turning off when isolation matters more than footprint: joined
+// folders share one process, so one server crash takes every joined root
+// down with it (they all respawn, but together), and a server with sloppy
+// cross-folder scoping can leak completions/symbols between roots that
+// separate processes would keep apart.
+void               SetLspWorkspaceFoldersEnabled(bool enabled); // default true
+[[nodiscard]] bool LspWorkspaceFoldersEnabled();
+
 // inlayHint follow-up. Same reasoning as SetLspSemanticHighlightingEnabled
 // above -- default true, read-only decoration, no editing-flow risk.
 void              SetLspInlayHintsEnabled(bool enabled); // default true

@@ -139,12 +139,18 @@ two Janet bindings, `ned/set-protocol-read-stall-timeout-ms` and
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
 
-- [ ] **LSP multi-root, remainder** (per-buffer root resolution itself shipped, see
-      `git log --grep=lsp-multiroot`; the connection-scoped-cache half closed too, see
-      `git log --grep=lsp-multiroot-cache-scoping`) — what's left is that a server which
-      itself supports the LSP `workspaceFolders` protocol (one process, multiple folders)
-      is never used that way; this client always spawns a separate process per resolved
-      root instead.
+LSP multi-root is closed. Per-buffer root resolution shipped first
+(`git log --grep=lsp-multiroot`), the connection-scoped-cache half after it
+(`git log --grep=lsp-multiroot-cache-scoping`), and `workspaceFolders` support last
+(`git log --grep=lsp-workspace-folders`) — a buffer whose resolved root differs from an
+already-running same-language server now joins that server as an extra workspace folder
+(`workspace/didChangeWorkspaceFolders`) instead of spawning its own process, so one
+`clangd` serves a whole monorepo. A server that doesn't advertise both
+`workspaceFolders.supported` and `changeNotifications` is never asked and falls back to
+the previous process-per-root behavior; `ned/set-lsp-workspace-folders` (default on) is
+the kill switch for when isolation matters more than footprint. Deliberate cut: folders
+are only ever added, never removed — ned has no "close this folder" concept, so a server
+keeps an unused folder indexed until the connection ends.
 
 Candidate-popup hover-highlight and wheel-scroll are shipped too — see
 `git log --grep=listpopup-scroll`. Both go through one new `ListPopup::SetOnScrollBy`
