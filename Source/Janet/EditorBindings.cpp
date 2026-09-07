@@ -17,6 +17,7 @@
 #include "Editor/BlankLineCleanup.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
+#include "Editor/Coverage/CoverageConfig.h"
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
@@ -591,6 +592,13 @@ namespace {
 
     void NedSetTestResultsFile(std::string path) {
         editor::testrun::SetTestResultsFile(std::move(path));
+    }
+
+    // code-coverage-gutter follow-up: the configured lcov .info path --
+    // (ned/set-coverage-file "coverage.info"), paired with the
+    // load-coverage-report command (Commands.cpp). Empty clears.
+    void NedSetCoverageFile(std::string path) {
+        editor::coverage::SetCoverageFile(std::move(path));
     }
 
     // Converts a Janet test parser's return value into a TestRunOutcome --
@@ -1469,6 +1477,13 @@ void InstallEditorBindings(Environment& env) {
         "written to a file, e.g. JUnit XML: (ned/set-test-results-file \"/tmp/results.xml\") paired with "
         "(ned/set-test-command [\"pytest\" \"--junitxml\" \"/tmp/results.xml\"] \"junit-xml\"). An empty string "
         "clears it.");
+    env.Register<&NedSetCoverageFile>(
+        "ned", "set-coverage-file",
+        "Set the path load-coverage-report (C-c T c) reads: an lcov .info file, the common export target for lcov "
+        "itself, `llvm-cov export -format=lcov`, and `gcovr --lcov` -- (ned/set-coverage-file \"coverage.info\"). "
+        "Parses into the per-line covered/uncovered/partial-branch gutter marks, and (when a VCS diff is available) "
+        "flags an uncovered line that's also newly added/modified with its own \"untested new code\" mark. An empty "
+        "string clears the configured path.");
     env.Register<&NedRegisterTestParser>(
         "ned", "register-test-parser",
         "Register a Janet function as the parser for a test output format: (name fn). fn receives the run's raw "

@@ -774,6 +774,9 @@ add_library(ned_lib STATIC
         Source/Editor/TestRun/TestResultsBuffer.cpp
         Source/Editor/TestRun/TestRunConfig.cpp
         Source/Editor/TestRun/TestRunner.cpp
+        Source/Editor/Coverage/CoverageReport.cpp
+        Source/Editor/Coverage/CoverageOutputParser.cpp
+        Source/Editor/Coverage/CoverageConfig.cpp
         Source/Editor/Dap/DapConfig.cpp
         Source/Editor/Dap/DapClient.cpp
         Source/Editor/Dap/DapManager.cpp
@@ -1161,10 +1164,14 @@ if (NED_BUILD_TESTS)
             Tests/ReplConfigTest.cpp
             Tests/TestOutputParserTest.cpp
             Tests/BufferViewTestGutterTest.cpp
+            Tests/BufferViewCoverageGutterTest.cpp
             Tests/TestDiscoveryTest.cpp
             Tests/TestResultsBufferTest.cpp
             Tests/TestRunConfigTest.cpp
             Tests/TestRunnerTest.cpp
+            Tests/CoverageOutputParserTest.cpp
+            Tests/CoverageReportTest.cpp
+            Tests/CoverageConfigTest.cpp
             Tests/JanetTestParserTest.cpp
             Tests/TerminalEmulatorTest.cpp
             Tests/TerminalPanelTest.cpp

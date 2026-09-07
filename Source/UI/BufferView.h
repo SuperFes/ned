@@ -32,6 +32,7 @@
 #include "Editor/Backup.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
+#include "Editor/Coverage/CoverageReport.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
@@ -2574,6 +2575,15 @@ class BufferView : public Widget {
     // match them against -- "no results yet" costs zero gutter width.
     [[nodiscard]] bool TestGutterActive() const;
 
+    // code-coverage-gutter follow-up: self-ensuring, TestGutterActive's
+    // exact shape (calls EnsureCoverageGutterCache() itself). Active only
+    // when a coverage report is loaded (ned/set-coverage-file +
+    // load-coverage-report) AND it carries a FileCoverage entry matching
+    // this buffer's own path (Coverage/CoverageReport.h's FindFileCoverage)
+    // -- "no report loaded, or this file isn't in it" costs zero gutter
+    // width, same policy every other data-driven column here uses.
+    [[nodiscard]] bool CoverageGutterActive() const;
+
     // DAP client slice 2: whether the leftmost debug-marker column
     // (breakpoint dot / execution arrow) is reserved this frame -- true
     // only when the active buffer has a real path AND (it has breakpoints,
@@ -2818,6 +2828,15 @@ class BufferView : public Widget {
     // EnsureSymbolGutterCache's shape with the extra outcome-generation
     // stamp; see the member's own comment below.
     void EnsureTestGutterCache() const;
+    // code-coverage-gutter follow-up: (re)derives coverageGutterLineStatuses_
+    // from editor::coverage::CurrentCoverageReport() matched against this
+    // buffer's own path (FindFileCoverage) -- gated on buffer identity plus
+    // editor::coverage::CoverageReportGeneration() alone (no content
+    // generation at all: coverage data isn't re-derived from buffer text
+    // the way test/symbol markers are, so an edit after loading a report
+    // does not invalidate this cache -- see CoverageGutterActive's own doc
+    // comment on why line numbers can drift until the report is reloaded).
+    void EnsureCoverageGutterCache() const;
     // VCS blame gutter: unlike EnsureDiagnosticGutterCache/EnsureFoldGutterCache,
     // this does NOT recompute blameLineInfo_ from anything -- there's no
     // cheap synchronous source to recompute it from (populating it means
@@ -3507,6 +3526,14 @@ class BufferView : public Widget {
     // same data-driven no-data-no-width policy.
     static constexpr std::size_t kTestWidth = 1;
 
+    // code-coverage-gutter follow-up: the covered/uncovered/partial-branch
+    // column, reserved (to the test column's immediate left, clustering the
+    // two testing-related columns together) only while
+    // CoverageGutterActive() -- same data-driven no-data-no-width policy.
+    // Layout when every region is active: [dap][diff][status][diagnostic]
+    // [gap][digits][gap][test][coverage][symbol][fold][blame].
+    static constexpr std::size_t kCoverageWidth = 1;
+
     struct FoldGutterEntry {
         std::size_t headerLine;
         std::size_t closerLine; // inclusive
@@ -3632,6 +3659,19 @@ class BufferView : public Widget {
     mutable std::size_t                                                              testGutterCacheWindowStart_       = 0;
     mutable std::size_t                                                              testGutterCacheWindowEnd_         = 0;
     mutable std::vector<std::pair<std::size_t, editor::testrun::TestResult::Status>> testGutterLineStatuses_;
+
+    // code-coverage-gutter follow-up: per-line covered/partial/uncovered
+    // marks for whichever FileCoverage entry (if any) matches this buffer's
+    // own path -- gated on buffer identity plus
+    // editor::coverage::CoverageReportGeneration() alone, no content
+    // generation (see EnsureCoverageGutterCache's own doc comment above for
+    // why coverage data isn't content-derived the way test/symbol markers
+    // are). No huge-file windowing either, unlike testGutterLineStatuses_/
+    // symbolGutterLineKinds_ above -- there's no parse involved, just a map
+    // lookup by line number, so this is cheap regardless of buffer size.
+    mutable text::Buffer*                                                       coverageGutterCacheBuffer_            = nullptr;
+    mutable std::size_t                                                         coverageGutterCacheReportGeneration_  = 0;
+    mutable std::vector<std::pair<std::size_t, editor::coverage::LineStatus>>   coverageGutterLineStatuses_;
 
     // inline-diagnostics follow-up: see EnsureInlineDiagnosticCache's own
     // doc comment above for the two-generation gate (diagnostics AND
