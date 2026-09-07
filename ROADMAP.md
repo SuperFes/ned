@@ -756,25 +756,26 @@ as `dap-ask-agent` (`BufferView::SendDebugStateToAgent`): a one-click command th
 gathers the stopped session's stack/scopes/variables/watches (`ShowDebugInfo`'s own
 fan-out extracted into a shared `BuildDebugInfoLines` helper) and sends them as one
 plain-text prompt via `AcpManager::SendPrompt` — pre-formatted text, not a structured
-resource attachment (`SendPrompt` has no attachment mechanism to hook into; see the
-"ACP context auto-attach" gap below, still open). The pointer-graph/memory/disassembly/
+resource attachment (`SendPrompt` does have a resource-attachment mechanism now, see
+`git log --grep=acp-context-auto-attach`; not used here since debug state has no natural
+single-file attachment target). The pointer-graph/memory/disassembly/
 thread/function-and-exception-breakpoint surface stayed out of the MCP tool set
 deliberately — not part of the ask-a-question/set-a-breakpoint/step/inspect loop this
 slice targets; a `dap_get_pointer_graph`-shaped tool would need either duplicating
 `BufferView::ExpandPointerGraphNode`'s cycle-detection loop or extracting it into a
 shared, UI-free helper first (`Editor/PointerGraphNode.h`'s data shape is already
 reusable, the traversal algorithm isn't yet) — a real follow-up, not attempted here.
-- [ ] **ACP context auto-attach** (raised 2026-09-06) — `AcpManager::SendPrompt` sends
-      exactly one plain `{"type": "text", ...}` block today; there's no resource
-      attachment of any kind, even for the shipped `@`-file-mention (which just inlines
-      a path as text). Two related wins:
-      - **Auto-attach current buffer + selection** as a resource block on every prompt
-        (or a manual `@buffer`/`@selection`, the same shape `@`-file-mention already
-        proves out) — stop re-explaining what's on screen every message.
-      - **One-click "ask agent" from a diagnostic/test-failure/sanitizer-log line** —
-        pre-fills a structured prompt (location + message + surrounding source) and
-        fires `SendPrompt` directly from `DiagnosticsLog`/`TestResultsBuffer`, instead
-        of manual copy-paste into the composer.
+ACP context auto-attach is shipped (2026-09-07) — see `git log --grep=acp-context-auto-attach`.
+`AcpManager::SendPrompt` takes optional `PromptAttachment`s, negotiating the real ACP
+`agentCapabilities.promptCapabilities.embeddedContext` flag from `initialize` (a genuine
+`ContentBlock::resource` when declared, folded into the text block otherwise — an agent
+is never sent a block type it didn't advertise). Landed as manual `@buffer`/`@selection`
+composer mentions (built on the existing `@`-file-mention picker) rather than blind
+auto-attach on every prompt — the ROADMAP's own "or" alternative, chosen to avoid
+silently ballooning every message's token cost. `ask-agent-about-line` (M-x only, no
+default binding, `dap-ask-agent`'s own precedent) covers the diagnostic/test-failure
+one-click case from `*Messages*`/`*test results*`, reusing `VisitResultUnderPoint`'s
+`"path:line:"` parse (factored into `BufferView::ResultLineAtPoint`).
 - [ ] **Diff preview before an agent edit's permission grant** — `session/request_
       permission` is a bare y/n today; showing the actual diff first needs a reusable
       line-diff utility (`ThreeWayMerge.h`'s LCS diff is currently a private
