@@ -25,6 +25,30 @@ namespace {
         return "*acp: " + std::string(agentName) + "*";
     }
 
+    // diff-preview-line-diff-utility follow-up: factored out of
+    // PushOrUpdateToolCall so the session/request_permission handler below
+    // (which sees the same {type: "diff", path, oldText, newText} shape
+    // inside a pending toolCall's own "content", not a tool_call_update) can
+    // parse it identically instead of duplicating the loop. Returns nullopt
+    // when content has no "diff"-typed item at all -- callers must not
+    // conflate that with "diff cleared," matching this file's own
+    // "absence means unchanged" convention elsewhere.
+    struct DiffContent {
+        std::string oldText;
+        std::string newText;
+    };
+    std::optional<DiffContent> ExtractDiffContent(const Json& content) {
+        if (!content.is_array()) {
+            return std::nullopt;
+        }
+        for (const Json& item : content) {
+            if (item.is_object() && item.value("type", std::string()) == "diff") {
+                return DiffContent{item.value("oldText", std::string()), item.value("newText", std::string())};
+            }
+        }
+        return std::nullopt;
+    }
+
     // ACP MCP tool-server bridge, slice 1. This process's own executable
     // path, for the mcpServers "command" the agent spawns as
     // `--mcp-stdio-relay` -- the exact same "/proc/self/exe is a magic
@@ -207,19 +231,7 @@ void AcpManager::PushOrUpdateToolCall(const Json& update) {
     // on the update that actually has it (earlier updates for the same call
     // have an empty "content": []) -- so, same as title/status, absence here
     // must mean "no new diff this update," not "clear the one we already have."
-    bool        hasDiff = false;
-    std::string diffOldText;
-    std::string diffNewText;
-    if (update.contains("content") && update["content"].is_array()) {
-        for (const Json& item : update["content"]) {
-            if (item.is_object() && item.value("type", std::string()) == "diff") {
-                hasDiff     = true;
-                diffOldText = item.value("oldText", std::string());
-                diffNewText = item.value("newText", std::string());
-                break;
-            }
-        }
-    }
+    const std::optional<DiffContent> diff = update.contains("content") ? ExtractDiffContent(update["content"]) : std::nullopt;
 
     if (!toolCallId.empty()) {
         for (auto it = transcript_.rbegin(); it != transcript_.rend(); ++it) {
@@ -230,9 +242,9 @@ void AcpManager::PushOrUpdateToolCall(const Json& update) {
                 if (hasStatus) {
                     it->status = status;
                 }
-                if (hasDiff) {
-                    it->diffOldText = diffOldText;
-                    it->diffNewText = diffNewText;
+                if (diff) {
+                    it->diffOldText = diff->oldText;
+                    it->diffNewText = diff->newText;
                 }
                 ++transcriptGeneration_;
                 NotifyTranscriptChanged();
@@ -245,8 +257,8 @@ void AcpManager::PushOrUpdateToolCall(const Json& update) {
         .text        = title,
         .status      = status,
         .toolCallId  = toolCallId.empty() ? std::nullopt : std::optional<std::string>(toolCallId),
-        .diffOldText = hasDiff ? std::optional<std::string>(diffOldText) : std::nullopt,
-        .diffNewText = hasDiff ? std::optional<std::string>(diffNewText) : std::nullopt,
+        .diffOldText = diff ? std::optional<std::string>(diff->oldText) : std::nullopt,
+        .diffNewText = diff ? std::optional<std::string>(diff->newText) : std::nullopt,
     });
 }
 
@@ -732,6 +744,18 @@ void AcpManager::WireClient(AcpClient& client) {
                     .name     = optionJson.value("name", std::string("option")),
                     .kind     = optionJson.value("kind", std::string()),
                 });
+            }
+        }
+        // diff-preview-line-diff-utility follow-up: same {type: "diff", ...}
+        // content item PushOrUpdateToolCall already parses for the
+        // transcript, here read straight off the pending toolCall's own
+        // params instead of an already-pushed transcript entry -- a
+        // permission request arrives before any tool_call_update carrying
+        // this same content would.
+        if (params.contains("toolCall") && params["toolCall"].is_object() && params["toolCall"].contains("content")) {
+            if (const std::optional<DiffContent> diff = ExtractDiffContent(params["toolCall"]["content"])) {
+                prompt.diffOldText = diff->oldText;
+                prompt.diffNewText = diff->newText;
             }
         }
         if (prompt.options.empty()) {

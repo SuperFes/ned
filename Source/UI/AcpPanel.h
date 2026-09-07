@@ -29,6 +29,7 @@
 
 #include "ActiveBuffer.h"
 #include "Editor/Acp/AcpManager.h"
+#include "Editor/Lsp/LspManager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Theme.h"
 #include "Widget.h"
@@ -51,6 +52,14 @@ class AcpPanel : public Widget {
     // safe no-op: RefreshMentionCandidates simply never offers "@selection"
     // (and "@buffer" resolves to nothing at send time) without one.
     void SetActiveBufferProvider(std::function<ActiveBuffer&()> provider);
+
+    // Prose-check-the-composer follow-up: connect-after-construction, unset
+    // is a safe no-op -- this class's usual convention. Wires
+    // ProseChecker/kProseLanguageKey's existing diagnostics-only connection
+    // (Editor/Lsp/LspManager.h's CheckComposerProseText) onto the composer's
+    // own text so a spelling/grammar issue underlines live, before the
+    // prompt is ever sent -- see RequestProseCheckIfNeeded's own doc comment.
+    void SetLspManager(editor::lsp::LspManager* lspManager);
 
     // tabbed-bottom-dock-overlays follow-up: whether this panel is hosted as
     // one tab inside PanelDock.h's shared bottom dock (true, the default
@@ -133,11 +142,19 @@ class AcpPanel : public Widget {
     // entry kinds. See ROADMAP.md's "AI-assisted editing (ACP) gaps" for the
     // bigger, deliberately-not-attempted-yet ideas this doesn't cover
     // (per-agent theming, distinguishing agent_thought_chunk).
+    // diff-preview-line-diff-utility follow-up: DiffAdded/DiffRemoved paint
+    // Theme::diffAddedBackground/diffRemovedBackground -- the exact same
+    // background-tint-only (foreground untouched) treatment BufferView's own
+    // VCS diff gutter already uses for these two colors, reused here rather
+    // than inventing a second visual language for "this line was
+    // added/removed."
     enum class DisplayStyle { Plain,
                               Dim,
                               Warning,
                               Accent,
-                              Hint };
+                              Hint,
+                              DiffAdded,
+                              DiffRemoved };
 
     // ACP Markdown rendering follow-up: a byte range of a *plain, already
     // markup-stripped* DisplayLine::text carrying styling beyond
@@ -194,6 +211,15 @@ class AcpPanel : public Widget {
     // it). Ignores `width` today (no line here is ever long enough to need
     // it) -- kept as a parameter to match FormatTranscript's own signature.
     [[nodiscard]] std::vector<DisplayLine> FormatRewindPicker(int width) const;
+    // diff-preview-line-diff-utility follow-up: a compact +/- unified-diff
+    // rendering (Text/LineDiff.h's UnifiedDiff) shared by Kind::ToolCall's
+    // own diff sub-lines and the Permission entry's pending-prompt diff --
+    // both carry the exact same {oldText, newText} shape (AcpManager::
+    // TranscriptEntry / PermissionPrompt's own doc comments). Capped at
+    // kMaxDiffPreviewLines with a FormatMentionPicker-style "(N more...)"
+    // tail beyond that, so one large edit can't push the rest of the
+    // transcript off-panel.
+    [[nodiscard]] std::vector<DisplayLine> FormatDiffPreview(const std::string& oldText, const std::string& newText) const;
     [[nodiscard]] Brush                    BrushForStyle(DisplayStyle style) const;
     [[nodiscard]] bool                     CloseButtonAt(Point local) const;
     [[nodiscard]] bool                     MinimizeButtonAt(Point local) const;
@@ -271,6 +297,16 @@ class AcpPanel : public Widget {
     // silently not treated as a mention at all, rather than erroring).
     [[nodiscard]] std::vector<editor::acp::AcpManager::PromptAttachment> ResolveMentionAttachments(std::string& text) const;
 
+    // Prose-check-the-composer follow-up: called once per Paint() (there's
+    // no per-keystroke edit hook the way RefreshMentionState has -- Paint()
+    // already runs every frame regardless of what triggered the redraw, so
+    // comparing against lastProseCheckedText_ here catches every composer
+    // mutation without needing one at each of InsertChar/DeleteBackward/
+    // DeleteForward/HistoryPrevious/HistoryNext/AcceptMentionCandidate's own
+    // call sites). A no-op once the text is unchanged since the last call --
+    // LspManager::CheckComposerProseText's own debounce covers the rest.
+    void RequestProseCheckIfNeeded();
+
     const Theme&             theme_;
     editor::acp::AcpManager* acpManager_ = nullptr;
     editor::MinibufferPrompt prompt_;
@@ -280,6 +316,16 @@ class AcpPanel : public Widget {
     // ACP context auto-attach follow-up -- see SetActiveBufferProvider's
     // own doc comment.
     std::function<ActiveBuffer&()> activeBufferProvider_;
+
+    // Prose-check-the-composer follow-up -- see SetLspManager/
+    // RequestProseCheckIfNeeded's own doc comments. composerProseDiagnostics_
+    // holds byte ranges into prompt_.Text() *as of whichever check last
+    // returned* -- slightly stale relative to what's typed since (the same
+    // lag every real buffer's own diagnostics have against live typing),
+    // clamped defensively at render time rather than assumed still in range.
+    editor::lsp::LspManager*              lspManager_ = nullptr;
+    std::string                           lastProseCheckedText_;
+    std::vector<text::Buffer::Diagnostic> composerProseDiagnostics_;
 
     bool                  collapsed_ = false;
     std::function<void()> onCollapseChanged_;

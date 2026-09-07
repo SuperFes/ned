@@ -61,18 +61,31 @@ void RegisterCaptureTemplate(CaptureTemplate tmpl);
 // offset into `text` (nullopt if templateText has no "%?" at all, meaning
 // "place point at the end of the expanded text"). Pure -- no Buffer
 // involved, independently unit-tested.
+//
+// mcp-capture-note follow-up: insertedText, when set, is substituted in
+// place of "%?" instead of just removing it -- what lets a headless caller
+// (an MCP tool, in practice; interactive C-c k capture always leaves this
+// nullopt, matching the pre-existing "point lands here, user types" flow)
+// inject its own free text into a capture. cursorOffset then lands *after*
+// the substituted text, not at its start -- there's no interactive cursor
+// to place mid-word for a caller that already supplied the whole note.
+// Ignored (no substitution, same as omitted) when templateText has no "%?"
+// at all -- a template written without a placeholder has nowhere defined to
+// put injected text, the same "%?" is the only supported escape" contract
+// this file's own header comment already states.
 struct CaptureExpansion {
     std::string                text;
     std::optional<std::size_t> cursorOffset;
 };
 
-[[nodiscard]] CaptureExpansion ExpandCaptureTemplate(const std::string& templateText);
+[[nodiscard]] CaptureExpansion ExpandCaptureTemplate(const std::string& templateText, const std::optional<std::string>& insertedText = std::nullopt);
 
 // The Buffer-mutating half: resolves where tmpl.headline lands in target
 // (ParseOutline + exact-title match, inserting at SubtreeEndLine's line
 // start -- i.e. as the matched headline's own subtree's last child), or
 // falls back to end-of-buffer if tmpl.headline is empty or wasn't found;
-// expands tmpl.templateText via ExpandCaptureTemplate, inserts it (adding a
+// expands tmpl.templateText via ExpandCaptureTemplate (forwarding
+// insertedText -- see that function's own doc comment), inserts it (adding a
 // leading newline first if inserting after a line that doesn't already end
 // in one, the same "ensure a fresh line" handling SetProperty's own
 // no-existing-drawer branch uses), and reports where the caller should place
@@ -82,7 +95,7 @@ struct CaptureResult {
     bool        headlineFound; // false when tmpl.headline was non-empty but not found (fell back to EOF)
 };
 
-CaptureResult InsertCapture(text::Buffer& target, const CaptureTemplate& tmpl);
+CaptureResult InsertCapture(text::Buffer& target, const CaptureTemplate& tmpl, const std::optional<std::string>& insertedText = std::nullopt);
 
 } // namespace ned::editor::org
 

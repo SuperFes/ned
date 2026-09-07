@@ -12,6 +12,7 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectTree.h"
 #include "KeyTranslation.h"
+#include "Text/LineDiff.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -25,23 +26,6 @@ namespace {
     // too.
     bool IsPlainCharacter(const editor::KeyChord& chord) {
         return !chord.Control && !chord.Meta && chord.Special == editor::SpecialKey::None && chord.Codepoint != 0;
-    }
-
-    // ACP round-1-live-validation follow-up: a bare line count, not a real
-    // diff -- see FormatTranscript's Kind::ToolCall case for why a full
-    // diff view (unified-diff-style +/- lines) is deliberately not attempted
-    // here yet. Empty text counts as zero lines, not one.
-    int CountLines(const std::string& text) {
-        if (text.empty()) {
-            return 0;
-        }
-        int count = 1;
-        for (const char ch : text) {
-            if (ch == '\n') {
-                ++count;
-            }
-        }
-        return count;
     }
 
     constexpr int      kMinWidthForCloseButton    = 8;
@@ -67,6 +51,10 @@ namespace {
     // how many total candidates exist, so this only ever hides the weaker
     // tail of the ranking, never the top pick.
     constexpr std::size_t kMaxMentionChoices = 6;
+    // diff-preview-line-diff-utility follow-up: caps FormatDiffPreview's own
+    // rendered line count -- kMaxMentionChoices' own rationale (a large diff
+    // shouldn't crowd the rest of the transcript off a short panel).
+    constexpr std::size_t kMaxDiffPreviewLines = 12;
 
     // Matches Editor/Backup.cpp's own LocalTimeLabel format exactly (not
     // shared -- that one's private to its .cpp) so a rewind checkpoint's
@@ -197,6 +185,10 @@ void AcpPanel::SetActiveBufferProvider(std::function<ActiveBuffer&()> provider) 
     activeBufferProvider_ = std::move(provider);
 }
 
+void AcpPanel::SetLspManager(editor::lsp::LspManager* lspManager) {
+    lspManager_ = lspManager;
+}
+
 void AcpPanel::SetOnToggleRequest(std::function<void()> onToggle) {
     onToggleRequest_ = std::move(onToggle);
 }
@@ -301,10 +293,41 @@ Brush AcpPanel::BrushForStyle(DisplayStyle style) const {
             return Brush{.background = theme_.background, .foreground = theme_.borderAccent.foreground};
         case DisplayStyle::Hint:
             return Brush{.background = theme_.background, .foreground = theme_.diagnosticHint};
+        case DisplayStyle::DiffAdded:
+            return Brush{.background = theme_.diffAddedBackground, .foreground = theme_.defaultForeground};
+        case DisplayStyle::DiffRemoved:
+            return Brush{.background = theme_.diffRemovedBackground, .foreground = theme_.defaultForeground};
         case DisplayStyle::Plain:
             break;
     }
     return Brush{.background = theme_.background, .foreground = theme_.defaultForeground};
+}
+
+// diff-preview-line-diff-utility follow-up -- see this method's own doc
+// comment in AcpPanel.h.
+std::vector<AcpPanel::DisplayLine> AcpPanel::FormatDiffPreview(const std::string& oldText, const std::string& newText) const {
+    std::vector<DisplayLine>          lines;
+    const std::vector<text::DiffLine> diff  = text::UnifiedDiff(oldText, newText);
+    const std::size_t                 shown = std::min(diff.size(), kMaxDiffPreviewLines);
+    for (std::size_t i = 0; i < shown; ++i) {
+        const text::DiffLine& diffLine = diff[i];
+        switch (diffLine.kind) {
+            case text::DiffLineKind::Added:
+                lines.push_back({"  + " + diffLine.text, DisplayStyle::DiffAdded});
+                break;
+            case text::DiffLineKind::Removed:
+                lines.push_back({"  - " + diffLine.text, DisplayStyle::DiffRemoved});
+                break;
+            case text::DiffLineKind::Context:
+            case text::DiffLineKind::Omitted:
+                lines.push_back({"    " + diffLine.text, DisplayStyle::Dim});
+                break;
+        }
+    }
+    if (diff.size() > shown) {
+        lines.push_back({"  (" + std::to_string(diff.size() - shown) + " more diff line(s)...)", DisplayStyle::Dim});
+    }
+    return lines;
 }
 
 std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript(int width) const {
@@ -388,18 +411,12 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript(int width) const {
                 if (terminal && i != lastToolCallIndex) {
                     break;
                 }
-                // A real diff view (actual +/- lines) is deliberately not
-                // attempted here -- this codebase has no reusable line-diff
-                // utility yet (ThreeWayMerge.h's LCS diff is a private
-                // implementation detail, not an exposed API), and building
-                // one from scratch is a bigger, separate piece of work. A
-                // line-count delta is still a concrete improvement over a
-                // bare status word -- confirms *something* changed and
-                // roughly how much, without a bare "(completed)".
+                // diff-preview-line-diff-utility follow-up: a real +/- diff,
+                // not just a line-count delta -- see FormatDiffPreview's own
+                // doc comment.
                 if (entry.diffOldText && entry.diffNewText) {
-                    const int oldLines = CountLines(*entry.diffOldText);
-                    const int newLines = CountLines(*entry.diffNewText);
-                    lines.push_back({"  (" + std::to_string(oldLines) + " -> " + std::to_string(newLines) + " lines)", DisplayStyle::Dim});
+                    std::vector<DisplayLine> diffLines = FormatDiffPreview(*entry.diffOldText, *entry.diffNewText);
+                    lines.insert(lines.end(), std::make_move_iterator(diffLines.begin()), std::make_move_iterator(diffLines.end()));
                 }
                 break;
             }
@@ -422,6 +439,14 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript(int width) const {
                     }
                     if (!options.empty()) {
                         lines.push_back({"  " + options, DisplayStyle::Warning});
+                    }
+                    // diff-preview-line-diff-utility follow-up: shows the
+                    // actual edit a pending permission request would apply,
+                    // when the request happens to carry one -- see
+                    // PermissionPrompt::diffOldText's own doc comment.
+                    if (pending->diffOldText && pending->diffNewText) {
+                        std::vector<DisplayLine> diffLines = FormatDiffPreview(*pending->diffOldText, *pending->diffNewText);
+                        lines.insert(lines.end(), std::make_move_iterator(diffLines.begin()), std::make_move_iterator(diffLines.end()));
                     }
                 }
                 break;
@@ -582,6 +607,24 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatRewindPicker(int /*width*/) c
     }
     lines.push_back({"  [Esc] cancel", DisplayStyle::Dim});
     return lines;
+}
+
+// Prose-check-the-composer follow-up -- see this method's own doc comment in
+// AcpPanel.h.
+void AcpPanel::RequestProseCheckIfNeeded() {
+    if (!lspManager_ || prompt_.Text() == lastProseCheckedText_) {
+        return;
+    }
+    lastProseCheckedText_ = prompt_.Text();
+    // AcpPanel and the LspManager it's wired to are both constructed once in
+    // main.cpp and live for the process's whole lifetime (destroyed together
+    // during main()'s own teardown, well after EventLoop::Run has returned
+    // and stopped posting callbacks) -- capturing `this` here carries the
+    // exact same lifetime contract every other LspManager callback in this
+    // codebase already relies on (RequestHover/RequestCompletion/...).
+    lspManager_->CheckComposerProseText(lastProseCheckedText_, [this](std::vector<text::Buffer::Diagnostic> diagnostics) {
+        composerProseDiagnostics_ = std::move(diagnostics);
+    });
 }
 
 // @-file-mention autocomplete follow-up -- see this method's own doc comment
@@ -854,6 +897,8 @@ void AcpPanel::Paint(Canvas canvas) {
         return;
     }
 
+    RequestProseCheckIfNeeded();
+
     if (collapsed_) {
         PaintCollapsedStrip(canvas, width, height);
         return;
@@ -985,6 +1030,37 @@ void AcpPanel::Paint(Canvas canvas) {
     // editing gap that entry also describes is unaffected by this, only the
     // row's legibility).
     const Brush inputBrush = theme_.echoArea;
+
+    // Prose-check-the-composer follow-up: composerProseDiagnostics_'s byte
+    // ranges (into prompt_.Text()) converted once, up front, into
+    // statusText's own column space (BufferView's underline-only, no-
+    // foreground-change treatment -- diagnostics-UX follow-up -- reused
+    // verbatim rather than inventing a second visual language for the same
+    // "the problem is HERE" cue). labelByteLen is StatusText()'s own
+    // "label_ + text_" concatenation (MinibufferPrompt.cpp), so
+    // labelByteLen + a byte offset into Text() is the matching offset into
+    // statusText. Widens a zero-length span by one column, same as
+    // BufferView's own inline-diagnostic pass.
+    struct ProseSpan {
+        int startColumn;
+        int endColumn;
+    };
+    std::vector<ProseSpan> proseSpans;
+    if (!composerProseDiagnostics_.empty()) {
+        const std::string& composerText = prompt_.Text();
+        const std::size_t  labelByteLen = statusText.size() - composerText.size();
+        for (const text::Buffer::Diagnostic& diagnostic : composerProseDiagnostics_) {
+            const std::size_t clampedStart = std::min(diagnostic.startByte, composerText.size());
+            const std::size_t clampedEnd   = std::max(clampedStart, std::min(diagnostic.endByte, composerText.size()));
+            const int         startColumn  = ColumnCount(statusText.substr(0, labelByteLen + clampedStart));
+            int               endColumn    = ColumnCount(statusText.substr(0, labelByteLen + clampedEnd));
+            if (endColumn <= startColumn) {
+                endColumn = startColumn + 1;
+            }
+            proseSpans.push_back({startColumn, endColumn});
+        }
+    }
+
     for (int j = 0; j < allottedInputRows; ++j) {
         const int screenRow = height - allottedInputRows + j;
         for (int x = 0; x < width; ++x) {
@@ -994,7 +1070,18 @@ void AcpPanel::Paint(Canvas canvas) {
         }
         const std::size_t rowIndex = static_cast<std::size_t>(inputWindowStart + j);
         if (rowIndex < inputRows.size()) {
-            PaintUtf8Row(canvas, 0, screenRow, inputRows[rowIndex].text, inputBrush, width);
+            const WrappedRow& row = inputRows[rowIndex];
+            PaintUtf8Row(canvas, 0, screenRow, row.text, inputBrush, width);
+            for (const ProseSpan& span : proseSpans) {
+                const int rowStart = row.startColumn;
+                const int rowEnd   = row.startColumn + row.columnCount;
+                for (int col = std::max(span.startColumn, rowStart); col < std::min(span.endColumn, rowEnd); ++col) {
+                    const int x = col - rowStart;
+                    if (x >= 0 && x < width) {
+                        canvas[{.x = x, .y = screenRow}].underlined = true;
+                    }
+                }
+            }
         }
     }
     // minibuffer-composer-cursor-editing follow-up: the caret sits at the

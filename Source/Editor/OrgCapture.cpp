@@ -45,15 +45,19 @@ std::optional<CaptureTemplate> CaptureTemplateForKey(char key) {
     return it->second;
 }
 
-CaptureExpansion ExpandCaptureTemplate(const std::string& templateText) {
+CaptureExpansion ExpandCaptureTemplate(const std::string& templateText, const std::optional<std::string>& insertedText) {
     const std::size_t pos = templateText.find("%?");
     if (pos == std::string::npos)
         return CaptureExpansion{templateText, std::nullopt};
+    if (insertedText) {
+        std::string text = templateText.substr(0, pos) + *insertedText + templateText.substr(pos + 2);
+        return CaptureExpansion{std::move(text), pos + insertedText->size()};
+    }
     std::string text = templateText.substr(0, pos) + templateText.substr(pos + 2);
     return CaptureExpansion{std::move(text), pos};
 }
 
-CaptureResult InsertCapture(text::Buffer& target, const CaptureTemplate& tmpl) {
+CaptureResult InsertCapture(text::Buffer& target, const CaptureTemplate& tmpl, const std::optional<std::string>& insertedText) {
     const std::string bufferText    = target.Text();
     std::size_t       insertPoint   = bufferText.size();
     bool              headlineFound = true;
@@ -80,7 +84,7 @@ CaptureResult InsertCapture(text::Buffer& target, const CaptureTemplate& tmpl) {
         }
     }
 
-    const CaptureExpansion expansion = ExpandCaptureTemplate(tmpl.templateText);
+    const CaptureExpansion expansion = ExpandCaptureTemplate(tmpl.templateText, insertedText);
 
     // Land the inserted block on its own fresh line, and make sure it ends
     // with one too -- same "ensure a fresh line" precedent SetProperty's own

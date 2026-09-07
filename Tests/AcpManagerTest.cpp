@@ -407,6 +407,52 @@ TEST_CASE("AcpManager routes session/request_permission to the registered handle
     REQUIRE_FALSE(fixture.manager.PendingPermissionPrompt().has_value());
 }
 
+// diff-preview-line-diff-utility follow-up (ROADMAP "Diff preview before an
+// agent edit's permission grant").
+TEST_CASE("AcpManager parses a permission request's own diff content, when the toolCall carries one", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    const Json request = {
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/request_permission"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"toolCall",
+           {{"title", "Edit main.cpp"},
+            {"content", Json::array({Json{{"type", "diff"}, {"path", "main.cpp"}, {"oldText", "a\n"}, {"newText", "b\n"}}})}}},
+          {"options", Json::array({Json{{"optionId", "allow-once"}, {"name", "Allow once"}, {"kind", "allow_once"}}})}}},
+    };
+    fixture.client->DispatchFrame(request.dump());
+
+    REQUIRE(fixture.manager.PendingPermissionPrompt().has_value());
+    REQUIRE(fixture.manager.PendingPermissionPrompt()->diffOldText == "a\n");
+    REQUIRE(fixture.manager.PendingPermissionPrompt()->diffNewText == "b\n");
+}
+
+TEST_CASE("AcpManager leaves a permission request's diff fields unset when the toolCall carries no diff content", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    const Json request = {
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/request_permission"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"toolCall", {{"title", "Run a shell command"}}},
+          {"options", Json::array({Json{{"optionId", "allow-once"}, {"name", "Allow once"}, {"kind", "allow_once"}}})}}},
+    };
+    fixture.client->DispatchFrame(request.dump());
+
+    REQUIRE(fixture.manager.PendingPermissionPrompt().has_value());
+    REQUIRE_FALSE(fixture.manager.PendingPermissionPrompt()->diffOldText.has_value());
+    REQUIRE_FALSE(fixture.manager.PendingPermissionPrompt()->diffNewText.has_value());
+}
+
 TEST_CASE("AcpManager::StopSession tears the session down even with no active session", "[Acp]") {
     ManagerFixture fixture;
     REQUIRE(fixture.manager.StopSession() == "No active ACP session.");

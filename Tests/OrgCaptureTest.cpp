@@ -41,6 +41,27 @@ TEST_CASE("ExpandCaptureTemplate only treats the first %? specially", "[OrgCaptu
     REQUIRE(expansion.cursorOffset == 0);
 }
 
+// mcp-capture-note follow-up (ROADMAP "Org capture_note").
+TEST_CASE("ExpandCaptureTemplate substitutes insertedText at the first %? and lands the cursor after it", "[OrgCapture]") {
+    const CaptureExpansion expansion = ExpandCaptureTemplate("* TODO %?\n", std::string("buy milk"));
+    REQUIRE(expansion.text == "* TODO buy milk\n");
+    REQUIRE(expansion.cursorOffset == std::string("* TODO buy milk").size());
+}
+
+TEST_CASE("ExpandCaptureTemplate ignores insertedText when the template has no %?", "[OrgCapture]") {
+    const CaptureExpansion expansion = ExpandCaptureTemplate("* Fixed note\n", std::string("ignored"));
+    REQUIRE(expansion.text == "* Fixed note\n");
+    REQUIRE_FALSE(expansion.cursorOffset.has_value());
+}
+
+TEST_CASE("InsertCapture with insertedText substitutes it into the buffer at %?", "[OrgCapture]") {
+    Buffer                buffer("test", Rope(""));
+    const CaptureTemplate tmpl{'t', "Todo", "test", "* TODO %?\n", ""};
+    const CaptureResult   result = InsertCapture(buffer, tmpl, std::string("call the agent"));
+    REQUIRE(buffer.Text() == "* TODO call the agent\n");
+    REQUIRE(result.insertedAt == std::string("* TODO call the agent").size());
+}
+
 TEST_CASE("InsertCapture with no headline configured appends at end of buffer", "[OrgCapture]") {
     Buffer                buffer("test", Rope("* Existing\nBody text\n"));
     const CaptureTemplate tmpl{'t', "Todo", "test", "* TODO %?\n", ""};

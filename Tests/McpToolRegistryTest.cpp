@@ -9,6 +9,7 @@
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mcp/McpToolRegistry.h"
+#include "Editor/OrgCapture.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/Vcs/VcsRunner.h"
@@ -96,6 +97,7 @@ TEST_CASE("ToolRegistry::ListTools reports every built-in tool", "[Mcp]") {
         "dap_get_variables",
         "dap_evaluate",
         "dap_list_watches",
+        "capture_note",
     };
     REQUIRE(tools.size() == expectedNames.size());
     for (const std::string& name : expectedNames) {
@@ -368,6 +370,50 @@ TEST_CASE("preview_rename reports an error for a buffer never synced to an LSP s
     REQUIRE(invoked);
 
     std::filesystem::remove(path);
+}
+
+// mcp-capture-note follow-up (ROADMAP "Org capture_note").
+TEST_CASE("capture_note inserts the given text at a registered template's %? and creates the target file", "[Mcp]") {
+    Fixture                     fixture;
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-mcp-registry-test-capture.org";
+    std::filesystem::remove(path);
+    ned::editor::org::RegisterCaptureTemplate(
+        ned::editor::org::CaptureTemplate{'m', "MCP note", path.string(), "* TODO %?\n", ""});
+
+    bool invoked = false;
+    fixture.registry.CallTool("capture_note", ned::editor::mcp::Json{{"key", "m"}, {"text", "buy milk"}}, [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result).find("MCP note") != std::string::npos);
+    });
+    REQUIRE(invoked);
+
+    Buffer* target = fixture.bufferList.FindByPath(path);
+    REQUIRE(target != nullptr);
+    REQUIRE(target->Text() == "* TODO buy milk\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("capture_note reports an error for an unregistered template key", "[Mcp]") {
+    Fixture fixture;
+    bool    invoked = false;
+    fixture.registry.CallTool("capture_note", ned::editor::mcp::Json{{"key", "\x01"}, {"text", "x"}}, [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE(IsError(result));
+        REQUIRE(ResultText(result).find("No capture template registered") != std::string::npos);
+    });
+    REQUIRE(invoked);
+}
+
+TEST_CASE("capture_note reports a missing required argument", "[Mcp]") {
+    Fixture fixture;
+    bool    invoked = false;
+    fixture.registry.CallTool("capture_note", ned::editor::mcp::Json{{"key", "m"}}, [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE(IsError(result));
+    });
+    REQUIRE(invoked);
 }
 
 TEST_CASE("get_diagnostics_log reports an error for an unknown category", "[Mcp]") {

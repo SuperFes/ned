@@ -13,6 +13,7 @@
 #include "Editor/Lsp/LspEditApply.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspPosition.h"
+#include "Editor/OrgCapture.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSearch.h"
 #include "Editor/TestRun/TestResult.h"
@@ -1052,6 +1053,55 @@ void ToolRegistry::RegisterBuiltinTools() {
                 results.push_back(std::move(entry));
             }
             callback(MakeTextToolResult(results.dump()));
+        });
+
+    // mcp-capture-note follow-up (ROADMAP "Org capture_note"): a genuinely
+    // thin wrapper now that OrgCapture.h's InsertCapture/ExpandCaptureTemplate
+    // accept caller-supplied text to substitute at the template's "%?" --
+    // mirrors BufferView::HandleOrgCaptureKey's own
+    // create-parent-dirs/OpenOrCreateFile/InsertCapture sequence exactly,
+    // minus the pane-focus/point-placement half that only makes sense for an
+    // interactive keystroke.
+    RegisterTool(
+        "capture_note",
+        "Insert a note into a registered Org capture template (ned/org-capture-register-template), substituting `text` at the "
+        "template's \"%?\" placeholder. Creates the target file (and its parent directories) if it doesn't exist yet.",
+        Json{
+            {"type", "object"},
+            {"properties",
+             {{"key", {{"type", "string"}, {"description", "Single-character capture template key, as registered via ned/org-capture-register-template."}}},
+              {"text", {{"type", "string"}, {"description", "Note text to substitute at the template's \"%?\" placeholder."}}}}},
+            {"required", Json::array({"key", "text"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto key  = RequireString(args, "key");
+            const auto text = RequireString(args, "text");
+            if (!key || key->size() != 1 || !text) {
+                callback(MakeTextToolResult("Missing or invalid required argument(s): key (a single character), text", true));
+                return;
+            }
+            const auto tmpl = org::CaptureTemplateForKey((*key)[0]);
+            if (!tmpl) {
+                callback(MakeTextToolResult("No capture template registered for key '" + *key + "'.", true));
+                return;
+            }
+            try {
+                const std::filesystem::path targetPath(tmpl->targetFile);
+                if (targetPath.has_parent_path()) {
+                    std::filesystem::create_directories(targetPath.parent_path());
+                }
+                text::Buffer&            target = bufferList_.OpenOrCreateFile(targetPath);
+                const org::CaptureResult result = org::InsertCapture(target, *tmpl, *text);
+                (void)result.insertedAt; // no pane/point to place here, unlike the interactive C-c k flow
+                std::string message = "Captured into " + tmpl->targetFile + " (template \"" + tmpl->name + "\").";
+                if (!tmpl->headline.empty() && !result.headlineFound) {
+                    message += " Headline \"" + tmpl->headline + "\" not found -- filed at end of file.";
+                }
+                callback(MakeTextToolResult(message));
+            }
+            catch (const std::exception& e) {
+                callback(MakeTextToolResult(std::string("capture_note failed: ") + e.what(), true));
+            }
         });
 }
 

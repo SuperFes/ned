@@ -123,7 +123,7 @@ TEST_CASE("McpBridgeServer serves initialize, tools/list, and tools/call over a 
     const Json listResponse = Json::parse(listLine);
     REQUIRE(listResponse.at("id") == 2);
     const Json& tools = listResponse.at("result").at("tools");
-    REQUIRE(tools.size() == 36);
+    REQUIRE(tools.size() == 37);
     bool foundGetTestResults = false;
     for (const Json& tool : tools) {
         if (tool.at("name") == "get_test_results") {

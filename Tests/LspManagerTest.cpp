@@ -2970,6 +2970,64 @@ TEST_CASE("Diagnostics published by the primary language server and the prose ch
     REQUIRE(sawTypo);
 }
 
+// prose-check-composer follow-up (ROADMAP "Prose-check the ACP composer").
+TEST_CASE("CheckComposerProseText syncs text to the prose checker with no real Buffer, and diagnostics come back via the callback",
+          "[Lsp]") {
+    const int originalDebounceMs = ned::editor::lsp::LspDiagnosticsDebounceMs();
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(50);
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    LspClient* proseClient = nullptr;
+    FakeServer proseServer = FakeServer::Create(manager, std::string(kProseLanguageKey), eventLoop, proseClient);
+
+    std::optional<std::vector<Buffer::Diagnostic>> received;
+    manager.CheckComposerProseText("This have a typo.", [&](std::vector<Buffer::Diagnostic> diagnostics) { received = std::move(diagnostics); });
+
+    // The send itself is debounced (CheckComposerProseText's own doc
+    // comment), and the DeadlineTimer's fire is Post()ed onto eventLoop from
+    // a background thread (DeadlineTimer's own doc comment) -- WaitUntil is
+    // what actually drains that post, the same idiom WaitForDiagnosticCount
+    // uses for the real-Buffer publish path.
+    WaitUntil(eventLoop, [&] {
+        pollfd pfd{.fd = proseServer.serverStdinRead, .events = POLLIN, .revents = 0};
+        return ::poll(&pfd, 1, 0) > 0;
+    });
+    const std::string openRaw  = ReadRawFrame(proseServer.serverStdinRead);
+    const Json        openJson = Json::parse(openRaw.substr(openRaw.find("\r\n\r\n") + 4));
+    REQUIRE(openJson["method"] == "textDocument/didOpen");
+    REQUIRE(openJson["params"]["textDocument"]["languageId"] == "plaintext");
+    REQUIRE(openJson["params"]["textDocument"]["text"] == "This have a typo.");
+    const std::string uri = openJson["params"]["textDocument"]["uri"].get<std::string>();
+
+    // No real Buffer was ever created for this -- the whole point of this
+    // API existing (AcpPanel's composer has no Buffer of its own).
+    REQUIRE(bufferList.Count() == 0);
+
+    const Json publish = {
+        {"jsonrpc", "2.0"},
+        {"method", "textDocument/publishDiagnostics"},
+        {"params",
+         {{"uri", uri},
+          {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 5}}}, {"end", {{"line", 0}, {"character", 9}}}}},
+                                        {"severity", 4},
+                                        {"message", "possible typo: have"}}})}}},
+    };
+    proseClient->DispatchFrame(publish.dump());
+    WaitUntil(eventLoop, [&] { return received.has_value(); });
+
+    REQUIRE(received.has_value());
+    REQUIRE(received->size() == 1);
+    REQUIRE((*received)[0].message == "possible typo: have");
+    REQUIRE((*received)[0].origin == Buffer::Diagnostic::Origin::Prose);
+    REQUIRE((*received)[0].startByte == 5);
+    REQUIRE((*received)[0].endByte == 9);
+
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(originalDebounceMs);
+}
+
 TEST_CASE("A second publish from one source replaces only that source's own diagnostics slice", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
