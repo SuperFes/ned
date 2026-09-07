@@ -61,6 +61,7 @@
 #include "Editor/Vcs/VcsRunner.h"
 #include "Editor/Vim/VimEngine.h"
 #include "EventLoop.h"
+#include "LeftDock.h"
 #include "ListPopup.h"
 #include "MemoryImageView.h"
 #include "Minimap.h"
@@ -161,24 +162,41 @@ class BufferView : public Widget {
     // both may be nullptr (the default) to opt out.
     void SetScrollArrows(ScrollArrowButton* up, ScrollArrowButton* down);
 
-    // Registers the left-side project tree so toggle-project-sidebar
-    // (project-sidebar follow-up) can flip its Widget::active flag; nullptr
-    // (the default) means the toggle command is a no-op. Flipping .active
-    // alone is sufficient -- every widget recomputes its own layout/paint
-    // fresh each frame, so no separate forced-reflow step is needed.
+    // Registers the left-side project tree so ProjectSidebar-specific
+    // operations this class still drives directly (drag-drop file open,
+    // RevealPath at startup) can reach it. unified-left-dock follow-up
+    // (migration step 2): border/width/collapse/resize-drag chrome moved to
+    // LeftDock (SetLeftDock below) -- this pointer is ProjectSidebar's own
+    // remaining, non-chrome surface only. nullptr (the default) is a safe
+    // no-op, the usual convention.
     void SetProjectSidebar(ProjectSidebar* sidebar);
+
+    // unified-left-dock follow-up (migration step 2): registers the widget
+    // now owning the left dock slot's border/width/collapse/resize-drag --
+    // ToggleProjectSidebar/FocusProjectSidebar (and ToggleVcsPanel/
+    // FocusVcsPanel's own mutual-exclusion side effect on this slot) drive
+    // it instead of projectSidebar_ for anything chrome-related.
+    // ProjectSidebar's own SetOnFocusReturn (main.cpp) chains
+    // LeftDock::NoteFocusReturned onto WindowManager::TakeFocus, so a
+    // focus-project-sidebar visit that found this collapsed goes back to
+    // collapsed when focus leaves, LeftDock::PrepareForKeyboardFocus's own
+    // pairing. nullptr (the default) means every chrome-driving request
+    // above is a no-op, same "unset is a safe no-op" convention
+    // SetProjectSidebar establishes.
+    void SetLeftDock(LeftDock* dock);
 
     // VCS side panel: registers the panel so ToggleVcsPanel/FocusVcsPanel
     // (toggle-vcs-panel/focus-vcs-panel) can drive it, and so both requests
     // -- and ToggleProjectSidebar/FocusProjectSidebar above -- can keep
-    // this panel and projectSidebar_ mutually exclusive on the shared left
-    // dock slot: expanding one collapses the other first (via plain
-    // SetCollapsed, not the committing CommitCollapsed/ToggleCollapsed --
-    // an automatic side effect of the *other* widget's toggle shouldn't
-    // overwrite that other widget's own persisted visibility preference).
-    // nullptr (the default) means no-op, same "unset is a safe no-op"
-    // convention SetProjectSidebar establishes; a project with no VCS
-    // provider configured just never gets this wired in main.cpp.
+    // this panel and the LeftDock-hosted sidebar mutually exclusive on the
+    // shared left dock slot: expanding one collapses the other first (via
+    // plain SetCollapsed, not the committing CommitCollapsed/
+    // ToggleCollapsed -- an automatic side effect of the *other* widget's
+    // toggle shouldn't overwrite that other widget's own persisted
+    // visibility preference). nullptr (the default) means no-op, same
+    // "unset is a safe no-op" convention SetProjectSidebar establishes; a
+    // project with no VCS provider configured just never gets this wired
+    // in main.cpp.
     void SetVcsPanel(VcsPanel* panel);
 
     // VCS side panel: starts an existing VCS interactive flow (commit
@@ -3000,6 +3018,7 @@ class BufferView : public Widget {
     ScrollArrowButton*           scrollUpArrow_   = nullptr; // see SetScrollArrows
     ScrollArrowButton*           scrollDownArrow_ = nullptr;
     ProjectSidebar*              projectSidebar_  = nullptr;     // see SetProjectSidebar
+    LeftDock*                    leftDock_        = nullptr;     // see SetLeftDock
     VcsPanel*                    vcsPanel_        = nullptr;     // see SetVcsPanel
     std::function<bool()>        splitResizeQuery_;              // see SetSplitResizeQuery
     Minimap*                     minimap_             = nullptr; // see SetMinimap

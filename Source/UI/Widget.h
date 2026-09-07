@@ -419,6 +419,22 @@ class Widget {
         return FocusedWidget() == this;
     }
 
+    // unified-left-dock follow-up: called on a widget that currently holds
+    // keyboard focus when something *external* is about to make it
+    // unreachable (LeftDock collapsing out from under a focused hosted
+    // panel, e.g. ProjectSidebar -- either via the keyboard toggle or a
+    // rail-glyph mouse click, neither of which routes back through the
+    // focused widget's own OnEvent the way Escape/C-g does). Default no-op;
+    // ProjectSidebar overrides it to the same effect its own Escape/C-g
+    // handling already has (fire onFocusReturn_) so the keyboard doesn't
+    // stay captured by a widget nothing can see or reach anymore. Distinct
+    // from simply losing Focused() -- that's an effect of TakeFocus()
+    // moving the flat registry pointer elsewhere, not a request a widget
+    // can react to; this is the deliberate "you should let go" signal
+    // TakeFocus() alone doesn't provide.
+    virtual void OnFocusPreempted() {
+    }
+
     // Local (widget-relative) position the real terminal cursor should be
     // placed at, or std::nullopt to leave it hidden -- consulted directly
     // by the main loop (see this file's own header comment). Only

@@ -48,7 +48,12 @@ class FakePanel : public Widget {
         return false;
     }
 
-    int                     paintCount = 0;
+    void OnFocusPreempted() override {
+        ++focusPreemptedCount;
+    }
+
+    int                     paintCount           = 0;
+    int                     focusPreemptedCount  = 0;
     std::vector<MouseEvent> localEvents;
 
   private:
@@ -210,6 +215,46 @@ TEST_CASE("Clicking a different rail glyph while expanded switches without colla
     REQUIRE_FALSE(collapseFired);
 }
 
+TEST_CASE("Programmatic SetCollapsed never commits; ToggleCollapsed and a rail click do", "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+
+    std::vector<bool> committed;
+    f.dock.SetOnCollapseCommitted([&](bool collapsed) { committed.push_back(collapsed); });
+
+    // Programmatic changes (session restore, remembered-variable startup
+    // application) must not rewrite the remembered preference.
+    f.dock.SetCollapsed(true);
+    f.dock.SetCollapsed(false);
+    REQUIRE(committed.empty());
+
+    f.dock.ToggleCollapsed(); // toggle-project-sidebar's path
+    f.dock.ToggleCollapsed();
+    REQUIRE(committed == std::vector<bool>{true, false});
+
+    // A rail-glyph click on the active panel commits through the same helper.
+    REQUIRE(f.dock.OnEvent(MousePress(1, 0)));
+    REQUIRE(committed == std::vector<bool>{true, false, true});
+}
+
+TEST_CASE("Collapsing while the active content holds focus calls its OnFocusPreempted", "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+    f.files.TakeFocus();
+    REQUIRE(f.files.Focused());
+
+    f.dock.SetCollapsed(true);
+    REQUIRE(f.files.focusPreemptedCount == 1);
+}
+
+TEST_CASE("Collapsing while the active content is unfocused never calls OnFocusPreempted", "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+
+    f.dock.SetCollapsed(true);
+    REQUIRE(f.files.focusPreemptedCount == 0);
+}
+
 TEST_CASE("Width() reports just the rail while collapsed and the full width while expanded", "[LeftDock]") {
     Fixture f;
     f.dock.AddPanel(U'F', "Files", f.files);
@@ -280,6 +325,43 @@ TEST_CASE("Mouse events inside the content interior forward unmodified to the ac
     // own box math), so absolute (10, 3) lands at local (6, 2).
     REQUIRE(f.files.localEvents.front().at.x == 6);
     REQUIRE(f.files.localEvents.front().at.y == 2);
+}
+
+TEST_CASE("PrepareForKeyboardFocus expands a collapsed dock without committing", "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+    f.dock.SetCollapsed(true);
+
+    bool collapseCommitted = false;
+    f.dock.SetOnCollapseCommitted([&](bool) { collapseCommitted = true; });
+
+    f.dock.PrepareForKeyboardFocus();
+    REQUIRE_FALSE(f.dock.Collapsed());
+    REQUIRE_FALSE(collapseCommitted); // silent, ProjectSidebar::TakeKeyboardFocus's own precedent
+}
+
+TEST_CASE("NoteFocusReturned re-collapses only if PrepareForKeyboardFocus found it collapsed", "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+
+    // Already expanded when focus is taken -- stays expanded afterward.
+    f.dock.PrepareForKeyboardFocus();
+    f.dock.NoteFocusReturned();
+    REQUIRE_FALSE(f.dock.Collapsed());
+
+    // Collapsed when focus is taken -- goes back to collapsed afterward.
+    f.dock.SetCollapsed(true);
+    f.dock.PrepareForKeyboardFocus();
+    REQUIRE_FALSE(f.dock.Collapsed());
+    f.dock.NoteFocusReturned();
+    REQUIRE(f.dock.Collapsed());
+}
+
+TEST_CASE("NoteFocusReturned with no pending PrepareForKeyboardFocus is a safe no-op", "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+    f.dock.NoteFocusReturned();
+    REQUIRE_FALSE(f.dock.Collapsed());
 }
 
 TEST_CASE("Mouse events never forward to content while collapsed", "[LeftDock]") {

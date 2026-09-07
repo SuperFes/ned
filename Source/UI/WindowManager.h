@@ -49,6 +49,7 @@
 #include "Editor/Vcs/VcsRunner.h"
 #include "EventLoop.h"
 #include "Layout.h"
+#include "LeftDock.h"
 #include "Minimap.h"
 #include "ModeLine.h"
 #include "ProjectSidebar.h"
@@ -239,9 +240,16 @@ class WindowManager {
     // that happens after some panes already exist).
     void SetProjectSidebar(ProjectSidebar* sidebar);
 
+    // unified-left-dock follow-up (migration step 2): same "forwarded to
+    // every pane, present and future" shape as SetProjectSidebar above --
+    // registers the widget now owning the left dock slot's chrome. Also
+    // read directly by SaveProjectSessionNow (Collapsed()/ExpandedWidth())
+    // in place of projectSidebar_'s own former Collapsed()/ExpandedWidth().
+    void SetLeftDock(LeftDock* dock);
+
     // VCS side panel: same "forwarded to every pane, present and future"
-    // shape as SetProjectSidebar above -- also forwarded to projectSidebar_
-    // (and vice versa) so each pane's BufferView can keep the two mutually
+    // shape as SetProjectSidebar above -- also forwarded to leftDock_ (and
+    // vice versa) so each pane's BufferView can keep the two mutually
     // exclusive on the shared left dock slot; see
     // BufferView::SetVcsPanel's own doc comment.
     void SetVcsPanel(VcsPanel* panel);
@@ -850,6 +858,7 @@ class WindowManager {
     std::string&                      statusMessage_;
     const Theme&                      theme_;
     ProjectSidebar*                   projectSidebar_ = nullptr;
+    LeftDock*                         leftDock_       = nullptr;
     VcsPanel*                         vcsPanel_       = nullptr;
     editor::lsp::LspManager*          lspManager_     = nullptr;
     editor::tasks::TaskRunner*        taskRunner_     = nullptr;
