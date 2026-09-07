@@ -570,6 +570,7 @@ add_library(ned_lib STATIC
         Source/Text/BufferList.cpp
         Source/Text/BinaryDetect.cpp
         Source/Text/ThreeWayMerge.cpp
+        Source/Text/ConflictHunk.cpp
         Source/Text/Utf8.cpp
         Source/Text/LineEnding.cpp
         Source/Editor/Key.cpp
@@ -587,6 +588,7 @@ add_library(ned_lib STATIC
         Source/Editor/HugeRegexScan.cpp
         Source/Editor/Register.cpp
         Source/Editor/Rectangle.cpp
+        Source/Editor/ConflictResolution.cpp
         Source/Editor/AutoPair.cpp
         Source/Editor/DabbrevComplete.cpp
         Source/Editor/JanetSymbolComplete.cpp
@@ -926,6 +928,9 @@ if (NED_BUILD_TESTS)
             Tests/AutoMergeTest.cpp
             Tests/FileWatchTest.cpp
             Tests/ThreeWayMergeTest.cpp
+            Tests/ConflictHunkTest.cpp
+            Tests/ConflictResolutionTest.cpp
+            Tests/BufferViewConflictQuickKeyTest.cpp
             Tests/BufferTest.cpp
             Tests/BufferHugeFileTest.cpp
             Tests/DiskSpaceTest.cpp

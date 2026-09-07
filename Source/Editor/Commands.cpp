@@ -14,6 +14,7 @@
 #include "BufferSave.h"
 #include "Clipboard.h"
 #include "CodeFold.h"
+#include "ConflictResolution.h"
 #include "EmbeddedDocuments.h"
 #include "Fill.h"
 #include "FillColumn.h"
@@ -1590,6 +1591,67 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         buffer.InsertAt(insertOffset, insertion);
         buffer.SetPoint(duplicateStart + column);
     });
+
+    // Merge Conflict Resolution Mode: navigation is pure point motion over
+    // Text/ConflictHunk.h's fresh-parse-per-call (cheap; see
+    // NextConflictHunkStart's own doc comment for why no cache is kept),
+    // wrapping -- deliberately different from vcs-next-hunk/-previous-hunk's
+    // own non-wrapping JumpToNextHunk/JumpToPreviousHunk (ROADMAP calls for
+    // wrapping here specifically).
+    registry.Register("next-conflict-hunk", "Move point to the next unresolved merge-conflict hunk, wrapping.",
+                      [](CommandContext& context) {
+                          const auto next = NextConflictHunkStart(context.buffer, context.buffer.Point());
+                          if (!next) {
+                              if (context.message) {
+                                  *context.message = "no conflict hunks in this buffer";
+                              }
+                              return;
+                          }
+                          context.buffer.SetPoint(*next);
+                      });
+    registry.Register("previous-conflict-hunk", "Move point to the previous unresolved merge-conflict hunk, wrapping.",
+                      [](CommandContext& context) {
+                          const auto prev = PreviousConflictHunkStart(context.buffer, context.buffer.Point());
+                          if (!prev) {
+                              if (context.message) {
+                                  *context.message = "no conflict hunks in this buffer";
+                              }
+                              return;
+                          }
+                          context.buffer.SetPoint(*prev);
+                      });
+
+    // Per-hunk resolution: each replaces the whole marked block at point
+    // with the chosen content as one undo step (ResolveConflictHunk), so a
+    // wrong pick is a single `undo` away. Never a modal trap -- these are
+    // ordinary commands over ordinary buffer text, manual editing works
+    // identically before and after any of them.
+    auto registerMergeResolution = [&registry](const char* name, const char* doc, ConflictResolution resolution) {
+        registry.Register(name, doc, [resolution](CommandContext& context) {
+            const auto hunk = ConflictHunkAtPoint(context.buffer, context.buffer.Point());
+            if (!hunk) {
+                if (context.message) {
+                    *context.message = "point is not inside a conflict hunk";
+                }
+                return;
+            }
+            if (!ResolveConflictHunk(context.buffer, *hunk, resolution)) {
+                if (context.message) {
+                    *context.message = "hunk has no base section (not a diff3 conflict)";
+                }
+            }
+        });
+    };
+    registerMergeResolution("merge-take-ours", "Resolve the conflict hunk at point by taking \"ours\".",
+                            ConflictResolution::TakeOurs);
+    registerMergeResolution("merge-take-theirs", "Resolve the conflict hunk at point by taking \"theirs\".",
+                            ConflictResolution::TakeTheirs);
+    registerMergeResolution("merge-take-both", "Resolve the conflict hunk at point by taking both sides (ours then theirs).",
+                            ConflictResolution::TakeBoth);
+    registerMergeResolution("merge-take-neither", "Resolve the conflict hunk at point by deleting it entirely.",
+                            ConflictResolution::TakeNeither);
+    registerMergeResolution("merge-keep-base", "Resolve the conflict hunk at point by taking the diff3 base section.",
+                            ConflictResolution::KeepBase);
 
     registry.Register("quit", "Exit the editor, or prompt for confirmation if any buffer has unsaved changes.",
                       [](CommandContext& context) {
@@ -4011,6 +4073,17 @@ Keymap BuildDefaultGlobalKeymap() {
     // pair.
     keymap.Bind(ParseKeySequence("C-c V"), "toggle-vcs-panel");
     keymap.Bind(ParseKeySequence("C-c v p"), "focus-vcs-panel");
+    // Merge Conflict Resolution Mode: a new "C-c x" prefix (confirmed free --
+    // no existing bare "C-c x" or "C-c x <anything>" binding), a sibling of
+    // "C-c v" rather than nested under it -- "C-c v x" is already
+    // vcs-revert-hunk, an unrelated action on an unrelated subtree.
+    keymap.Bind(ParseKeySequence("C-c x n"), "next-conflict-hunk");
+    keymap.Bind(ParseKeySequence("C-c x p"), "previous-conflict-hunk");
+    keymap.Bind(ParseKeySequence("C-c x o"), "merge-take-ours");
+    keymap.Bind(ParseKeySequence("C-c x t"), "merge-take-theirs");
+    keymap.Bind(ParseKeySequence("C-c x b"), "merge-take-both");
+    keymap.Bind(ParseKeySequence("C-c x d"), "merge-take-neither"); // "d" for delete
+    keymap.Bind(ParseKeySequence("C-c x k"), "merge-keep-base");    // "k" for keep, diff3 only
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
     // sidebar-keyboard-focus follow-up: the non-control second key beside
