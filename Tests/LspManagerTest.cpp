@@ -37,6 +37,7 @@ using ned::editor::lsp::LspClient;
 using ned::editor::lsp::LspManager;
 using ned::editor::lsp::SemanticTokensLegend;
 using ned::editor::lsp::SetLspRootMarkers;
+using ned::editor::lsp::SetLspWorkspaceFoldersEnabled;
 using ned::editor::lsp::TextDocumentSyncKind;
 using ned::editor::lsp::Transport;
 using ned::text::Buffer;
@@ -985,6 +986,209 @@ TEST_CASE("Two same-language connections under different roots keep independent 
 
     SetLspRootMarkers(language, {}); // cleanup -- process-wide state
     std::filesystem::remove_all(base);
+}
+
+// lsp-workspace-folders follow-up: the two-root scaffold the tests below
+// share -- creates <base>/packages/{a,b} each carrying `marker`, points
+// ProjectRoot() at `base` (deliberately neither package, so neither buffer's
+// resolved root collapses to it), and registers marker as language's root
+// marker. Caller cleans up via SetLspRootMarkers(language, {}) and
+// remove_all(base); ProjectRootGuard restores the root.
+struct TwoRootFixture {
+    std::string           language;
+    std::filesystem::path base;
+    std::filesystem::path pkgA;
+    std::filesystem::path pkgB;
+
+    explicit TwoRootFixture(std::string lang) : language(std::move(lang)), base(std::filesystem::temp_directory_path() / ("ned-" + language)),
+                                                pkgA(base / "packages" / "a"), pkgB(base / "packages" / "b") {
+        const std::string marker = language + ".marker";
+        std::filesystem::create_directories(pkgA);
+        std::filesystem::create_directories(pkgB);
+        {
+            std::ofstream(pkgA / marker) << "";
+        }
+        {
+            std::ofstream(pkgB / marker) << "";
+        }
+        SetProjectRoot(base);
+        SetLspRootMarkers(language, {marker});
+    }
+
+    ~TwoRootFixture() {
+        SetLspRootMarkers(language, {}); // process-wide state
+        std::error_code ignored;
+        std::filesystem::remove_all(base, ignored);
+    }
+
+    TwoRootFixture(const TwoRootFixture&)            = delete;
+    TwoRootFixture& operator=(const TwoRootFixture&) = delete;
+
+    [[nodiscard]] std::string ConnectionKeyFor(const std::filesystem::path& pkg) const {
+        return pkg.string() + '\x1f' + language;
+    }
+};
+
+// lsp-workspace-folders follow-up: the initialize response a server that
+// can serve several roots from one process sends back.
+Json WorkspaceFoldersInitializeResult(bool supported, bool changeNotifications) {
+    return Json{{"capabilities",
+                 {{"workspace", {{"workspaceFolders", {{"supported", supported}, {"changeNotifications", changeNotifications}}}}}}}};
+}
+
+TEST_CASE("A second root joins an existing workspaceFolders-capable connection instead of spawning its own", "[Lsp]") {
+    // lsp-workspace-folders follow-up: the feature itself. Buffer A spawns
+    // (well, injects) a connection at pkgA; once that connection's handshake
+    // reports workspaceFolders support, buffer B under pkgB must be handed
+    // to the *same* client via workspace/didChangeWorkspaceFolders rather
+    // than getting a second process.
+    ProjectRootGuard rootGuard;
+    TwoRootFixture   fixture("lsp-workspace-folders-join-lang");
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            bufferA = bufferList.OpenOrCreateFile(fixture.pkgA / "file.txt");
+    Buffer&            bufferB = bufferList.OpenOrCreateFile(fixture.pkgB / "file.txt");
+
+    LspClient* clientA = nullptr;
+    FakeServer serverA = FakeServer::Create(manager, fixture.language, eventLoop, clientA, Json::object(), false,
+                                            fixture.ConnectionKeyFor(fixture.pkgA));
+    manager.SetWorkspaceFoldersSupportForTesting(fixture.ConnectionKeyFor(fixture.pkgA),
+                                                 {.supported = true, .changeNotifications = true});
+
+    manager.SyncBuffer(bufferA, fixture.language);
+    (void)ReadRawFrame(serverA.serverStdinRead); // bufferA's own didOpen
+
+    manager.SyncBuffer(bufferB, fixture.language);
+
+    // bufferB's traffic lands on serverA's pipe: first the folder
+    // notification, then its own didOpen. Both are tiny and sent
+    // back-to-back, so they routinely arrive in a single read() -- read by
+    // frame count rather than with ReadRawFrame's one-frame-per-call parse.
+    const std::vector<Json> frames = ParseAllFrames(ReadRawFramesUntil(serverA.serverStdinRead, 2));
+    REQUIRE(frames.size() >= 2);
+    REQUIRE(frames[0]["method"] == "workspace/didChangeWorkspaceFolders");
+    REQUIRE(frames[0]["params"]["event"]["added"].size() == 1);
+    REQUIRE(frames[0]["params"]["event"]["added"][0]["name"] == "b");
+    REQUIRE(frames[0]["params"]["event"]["removed"].empty());
+    REQUIRE(frames[1]["method"] == "textDocument/didOpen");
+
+    // Both buffers now report the same connection -- pkgA's, not pkgB's own.
+    REQUIRE(manager.ConnectionKeyForBuffer(bufferB, fixture.language) == fixture.ConnectionKeyFor(fixture.pkgA));
+    REQUIRE(manager.ConnectionKeyForBuffer(bufferA, fixture.language) == fixture.ConnectionKeyFor(fixture.pkgA));
+    REQUIRE(manager.StatusForLanguage(fixture.ConnectionKeyFor(fixture.pkgB)) == LspManager::LspStatus::NotConfigured);
+}
+
+TEST_CASE("A root does not join a connection whose server can't be told about new folders", "[Lsp]") {
+    // supported:true but changeNotifications absent means the server can only
+    // serve the folders it got at initialize time -- useless here, since a
+    // second root is only ever discovered afterwards. Must fall back to the
+    // pre-existing separate-connection behavior rather than silently
+    // sending a notification the server never agreed to receive.
+    ProjectRootGuard rootGuard;
+    TwoRootFixture   fixture("lsp-workspace-folders-nonotify-lang");
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            bufferA = bufferList.OpenOrCreateFile(fixture.pkgA / "file.txt");
+    Buffer&            bufferB = bufferList.OpenOrCreateFile(fixture.pkgB / "file.txt");
+
+    LspClient* clientA = nullptr;
+    LspClient* clientB = nullptr;
+    FakeServer serverA = FakeServer::Create(manager, fixture.language, eventLoop, clientA, Json::object(), false,
+                                            fixture.ConnectionKeyFor(fixture.pkgA));
+    FakeServer serverB = FakeServer::Create(manager, fixture.language, eventLoop, clientB, Json::object(), false,
+                                            fixture.ConnectionKeyFor(fixture.pkgB));
+    manager.SetWorkspaceFoldersSupportForTesting(fixture.ConnectionKeyFor(fixture.pkgA),
+                                                 {.supported = true, .changeNotifications = false});
+    manager.SetWorkspaceFoldersSupportForTesting(fixture.ConnectionKeyFor(fixture.pkgB),
+                                                 {.supported = true, .changeNotifications = false});
+
+    manager.SyncBuffer(bufferA, fixture.language);
+    manager.SyncBuffer(bufferB, fixture.language);
+
+    // Each buffer opened against its own server, and neither pipe carries a
+    // folder notification.
+    const std::string rawA = ReadRawFrame(serverA.serverStdinRead);
+    const std::string rawB = ReadRawFrame(serverB.serverStdinRead);
+    REQUIRE(Json::parse(rawA.substr(rawA.find("\r\n\r\n") + 4))["method"] == "textDocument/didOpen");
+    REQUIRE(Json::parse(rawB.substr(rawB.find("\r\n\r\n") + 4))["method"] == "textDocument/didOpen");
+    REQUIRE(manager.ConnectionKeyForBuffer(bufferB, fixture.language) == fixture.ConnectionKeyFor(fixture.pkgB));
+}
+
+TEST_CASE("Disabling ned/set-lsp-workspace-folders keeps a process per root", "[Lsp]") {
+    ProjectRootGuard rootGuard;
+    TwoRootFixture   fixture("lsp-workspace-folders-off-lang");
+    SetLspWorkspaceFoldersEnabled(false);
+    struct Restore {
+        ~Restore() {
+            SetLspWorkspaceFoldersEnabled(true);
+        }
+    } restore;
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            bufferA = bufferList.OpenOrCreateFile(fixture.pkgA / "file.txt");
+    Buffer&            bufferB = bufferList.OpenOrCreateFile(fixture.pkgB / "file.txt");
+
+    LspClient* clientA = nullptr;
+    LspClient* clientB = nullptr;
+    FakeServer serverA = FakeServer::Create(manager, fixture.language, eventLoop, clientA, Json::object(), false,
+                                            fixture.ConnectionKeyFor(fixture.pkgA));
+    FakeServer serverB = FakeServer::Create(manager, fixture.language, eventLoop, clientB, Json::object(), false,
+                                            fixture.ConnectionKeyFor(fixture.pkgB));
+    // Both fully capable of joining -- the toggle is the only thing stopping it.
+    manager.SetWorkspaceFoldersSupportForTesting(fixture.ConnectionKeyFor(fixture.pkgA),
+                                                 {.supported = true, .changeNotifications = true});
+    manager.SetWorkspaceFoldersSupportForTesting(fixture.ConnectionKeyFor(fixture.pkgB),
+                                                 {.supported = true, .changeNotifications = true});
+
+    manager.SyncBuffer(bufferA, fixture.language);
+    manager.SyncBuffer(bufferB, fixture.language);
+
+    const std::string rawA = ReadRawFrame(serverA.serverStdinRead);
+    const std::string rawB = ReadRawFrame(serverB.serverStdinRead);
+    REQUIRE(Json::parse(rawA.substr(rawA.find("\r\n\r\n") + 4))["method"] == "textDocument/didOpen");
+    REQUIRE(Json::parse(rawB.substr(rawB.find("\r\n\r\n") + 4))["method"] == "textDocument/didOpen");
+    REQUIRE(manager.ConnectionKeyForBuffer(bufferB, fixture.language) == fixture.ConnectionKeyFor(fixture.pkgB));
+}
+
+TEST_CASE("A joined root re-resolves after the connection it joined disconnects", "[Lsp]") {
+    // The canonical connection dying must not strand every root that joined
+    // it pointing at a key that no longer names a client -- each one
+    // re-resolves on its next sync.
+    ProjectRootGuard rootGuard;
+    TwoRootFixture   fixture("lsp-workspace-folders-rejoin-lang");
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            bufferA = bufferList.OpenOrCreateFile(fixture.pkgA / "file.txt");
+    Buffer&            bufferB = bufferList.OpenOrCreateFile(fixture.pkgB / "file.txt");
+
+    LspClient* clientA = nullptr;
+    auto       serverA = std::make_optional<FakeServer>(FakeServer::Create(
+        manager, fixture.language, eventLoop, clientA, Json::object(), false, fixture.ConnectionKeyFor(fixture.pkgA)));
+    manager.SetWorkspaceFoldersSupportForTesting(fixture.ConnectionKeyFor(fixture.pkgA),
+                                                 {.supported = true, .changeNotifications = true});
+
+    manager.SyncBuffer(bufferA, fixture.language);
+    (void)ReadRawFrame(serverA->serverStdinRead);
+    manager.SyncBuffer(bufferB, fixture.language);
+    (void)ReadRawFramesUntil(serverA->serverStdinRead, 2); // folder notification + bufferB's didOpen
+    REQUIRE(manager.ConnectionKeyForBuffer(bufferB, fixture.language) == fixture.ConnectionKeyFor(fixture.pkgA));
+
+    serverA.reset();
+    WaitUntil(eventLoop, [&] {
+        return manager.StatusForLanguage(fixture.ConnectionKeyFor(fixture.pkgA)) != LspManager::LspStatus::Running;
+    });
+
+    // The redirect is gone -- bufferB resolves to its own root again, free to
+    // spawn or join afresh on its next sync.
+    REQUIRE(manager.ConnectionKeyForBuffer(bufferB, fixture.language) == fixture.ConnectionKeyFor(fixture.pkgB));
 }
 
 TEST_CASE("LspManager collapses a buffer's resolved root to the plain server key when it equals ProjectRoot()", "[Lsp]") {
@@ -2632,6 +2836,23 @@ TEST_CASE("LspManager::RequestRename resolves to nullopt when the buffer was nev
 
     REQUIRE(invoked);
     REQUIRE_FALSE(got.has_value());
+}
+
+TEST_CASE("BuildInitializeParams advertises workspaceFolders and sends the root as the first folder", "[Lsp]") {
+    const Json params = ned::editor::lsp::BuildInitializeParams("/tmp/ned-workspace-folders-test");
+    REQUIRE(params["capabilities"]["workspace"]["workspaceFolders"] == true);
+    REQUIRE(params["workspaceFolders"].is_array());
+    REQUIRE(params["workspaceFolders"].size() == 1);
+    REQUIRE(params["workspaceFolders"][0]["name"] == "ned-workspace-folders-test");
+    REQUIRE(params["workspaceFolders"][0]["uri"] == params["rootUri"]); // same root, both spellings
+}
+
+TEST_CASE("BuildInitializeParams sends a null workspaceFolders for an empty root", "[Lsp]") {
+    // "no folders open" (an empty array) is a different claim than "this
+    // client has no root," which is what an empty path means here.
+    const Json params = ned::editor::lsp::BuildInitializeParams("");
+    REQUIRE(params["workspaceFolders"].is_null());
+    REQUIRE(params["rootUri"].is_null());
 }
 
 TEST_CASE("BuildInitializeParams advertises codeActionLiteralSupport alongside the resolve capabilities", "[Lsp]") {
