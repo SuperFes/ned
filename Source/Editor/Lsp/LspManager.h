@@ -10,17 +10,17 @@
 // exactly editor::ProjectRoot() for every buffer, so clients_ stays keyed by
 // a bare language string exactly as before (see ConnectionKey's own doc
 // comment for why); only a genuinely more-specific resolved root earns its
-// own distinct connection. A handful of connection-scoped caches
-// (semanticTokensLegend_, onTypeFormattingTriggers_,
-// pullDiagnosticsUnsupported_, inlayHintsUnsupported_, codeLensUnsupported_,
-// activeProgress_, and the failedCommands_/disconnected* status-latch group)
-// stay keyed by the plain language string regardless of root -- a documented
-// v1 cut: two *simultaneously running* servers for the same language against
-// two different roots share these caches (one's legend/status can shadow the
-// other's), which is cosmetic at worst -- every actual request still routes
-// through the correct per-root connection via BufferSyncState::connectionKey,
-// see ExistingClientForLanguage's own callers. See ROADMAP.md for the
-// follow-up that would close this remaining gap.
+// own distinct connection. Every connection-scoped cache
+// (semanticTokensLegend_, onTypeFormattingTriggers_, textDocumentSyncKind_,
+// fileOperationFilters_, the *Unsupported_ latches, activeProgress_, and the
+// failedCommands_/disconnected* status-latch group) is keyed by that same
+// connection key, not the plain language string -- so two simultaneously
+// running servers for the same language against two different roots each keep
+// their own legend/sync-kind/status/progress rather than shadowing each
+// other's. In the common single-root case the key *is* the bare language
+// string, so nothing about those caches changes shape there. Anything outside
+// this class holding a plain server key resolves it against a buffer via
+// ConnectionKeyForBuffer before reading a per-connection accessor.
 //
 // Constructed once, alongside bufferList/killRing/registers, and passed by
 // reference the same way -- LSP state is shared editor-wide state, not
@@ -771,15 +771,18 @@ class LspManager {
     // "test-only, production code never calls this" injection point for
     // that one piece of state, mirroring SetClientForTesting's own
     // rationale exactly.
-    void SetOnTypeFormattingTriggersForTesting(std::string language, OnTypeFormattingTriggers triggers) {
-        onTypeFormattingTriggers_[std::move(language)] = std::move(triggers);
+    // The key is a connection key (ConnectionKeyForBuffer's result); a bare
+    // language name is the editor::ProjectRoot()-scoped connection, which is
+    // what every single-root test resolves to.
+    void SetOnTypeFormattingTriggersForTesting(std::string connectionKey, OnTypeFormattingTriggers triggers) {
+        onTypeFormattingTriggers_[std::move(connectionKey)] = std::move(triggers);
     }
 
     // semanticTokens follow-up: same test-only injection point as
     // SetOnTypeFormattingTriggersForTesting just above, for the sibling
     // piece of `initialize`-response state.
-    void SetSemanticTokensLegendForTesting(std::string language, SemanticTokensLegend legend) {
-        semanticTokensLegend_[std::move(language)] = std::move(legend);
+    void SetSemanticTokensLegendForTesting(std::string connectionKey, SemanticTokensLegend legend) {
+        semanticTokensLegend_[std::move(connectionKey)] = std::move(legend);
     }
 
     // incremental-sync follow-up: same test-only injection point as
@@ -788,16 +791,16 @@ class LspManager {
     // Incremental sync path must seed this directly, since
     // SetClientForTesting bypasses the real handshake that would otherwise
     // populate it.
-    void SetTextDocumentSyncKindForTesting(std::string language, TextDocumentSyncKind kind) {
-        textDocumentSyncKind_[std::move(language)] = kind;
+    void SetTextDocumentSyncKindForTesting(std::string connectionKey, TextDocumentSyncKind kind) {
+        textDocumentSyncKind_[std::move(connectionKey)] = kind;
     }
 
     // rename-file-notifications follow-up: same test-only injection point as
     // SetTextDocumentSyncKindForTesting just above, for
     // RequestWillRenameFiles/NotifyFilesRenamed's own piece of
     // `initialize`-response state.
-    void SetFileOperationFiltersForTesting(std::string language, FileOperationFilters filters) {
-        fileOperationFilters_[std::move(language)] = std::move(filters);
+    void SetFileOperationFiltersForTesting(std::string connectionKey, FileOperationFilters filters) {
+        fileOperationFilters_[std::move(connectionKey)] = std::move(filters);
     }
 
     // LspManagerTest-broker-hermeticity follow-up: routes ClientForLanguage's
@@ -853,9 +856,24 @@ class LspManager {
         Disconnected,  // was running, then the server exited/crashed -- not yet respawned
     };
 
+    // LSP multi-root follow-up. The connection identity governing serverKey
+    // for this particular buffer -- what every per-connection accessor below
+    // (StatusForLanguage, SpawnFailureDetail, DisconnectReason,
+    // SemanticTokensLegendFor, OnTypeFormattingTriggersFor,
+    // TextDocumentSyncKindFor) must be keyed on when the caller only holds a
+    // plain language/server key. Reads the root SyncBuffer already stamped for
+    // this buffer, falling back to editor::ProjectRoot() for a buffer never
+    // synced -- which collapses to the bare serverKey, exactly what those
+    // accessors were keyed by before per-root connections existed.
+    [[nodiscard]] std::string ConnectionKeyForBuffer(const text::Buffer& buffer, const std::string& serverKey) const;
+
     // Never spawns a client -- mirrors ExistingClientForLanguage's own "just
     // look, don't act" shape, but public (ModeLine is the intended caller).
-    [[nodiscard]] LspStatus StatusForLanguage(const std::string& language) const;
+    // Keyed by connection, not language: pass ConnectionKeyForBuffer's result
+    // when a specific buffer is in view. A bare server key still names the
+    // editor::ProjectRoot()-scoped connection, which is the only one that
+    // exists unless a buffer resolved a more specific root.
+    [[nodiscard]] LspStatus StatusForLanguage(const std::string& connectionKey) const;
 
     // mode-line-lsp-status-round-3 follow-up: the detail text behind a
     // SpawnFailed/Disconnected glyph -- the spawn exception's e.what() for
@@ -863,9 +881,10 @@ class LspManager {
     // reported for the latter. "" when StatusForLanguage doesn't report the
     // matching state (nothing latched yet, or a later event already cleared
     // it) -- ModeLine is expected to call whichever one matches
-    // StatusForLanguage's current result.
-    [[nodiscard]] std::string SpawnFailureDetail(const std::string& language) const;
-    [[nodiscard]] std::string DisconnectReason(const std::string& language) const;
+    // StatusForLanguage's current result. Same connection keying as
+    // StatusForLanguage itself.
+    [[nodiscard]] std::string SpawnFailureDetail(const std::string& connectionKey) const;
+    [[nodiscard]] std::string DisconnectReason(const std::string& connectionKey) const;
 
     // semantic-tokens/on-type-formatting follow-up. Captured from
     // serverKey's own `initialize` response the moment it arrives (the one
@@ -876,8 +895,10 @@ class LspManager {
     // these two are stored as data a request needs to function, not as a
     // general capability-gating check (this class deliberately has none --
     // see ExecuteCommand's own doc comment above).
-    [[nodiscard]] std::optional<SemanticTokensLegend>     SemanticTokensLegendFor(const std::string& serverKey) const;
-    [[nodiscard]] std::optional<OnTypeFormattingTriggers> OnTypeFormattingTriggersFor(const std::string& serverKey) const;
+    // Keyed by connection, same as StatusForLanguage -- see
+    // ConnectionKeyForBuffer.
+    [[nodiscard]] std::optional<SemanticTokensLegend>     SemanticTokensLegendFor(const std::string& connectionKey) const;
+    [[nodiscard]] std::optional<OnTypeFormattingTriggers> OnTypeFormattingTriggersFor(const std::string& connectionKey) const;
 
     // incremental-sync follow-up: unlike the two accessors above, this
     // returns a plain TextDocumentSyncKind rather than an optional -- every
@@ -886,7 +907,7 @@ class LspManager {
     // ExtractTextDocumentSyncKind's own doc comment for why Full and not the
     // spec's technical None default), and there's no legitimate case for a
     // caller to distinguish "unset" from "explicitly Full."
-    [[nodiscard]] TextDocumentSyncKind TextDocumentSyncKindFor(const std::string& serverKey) const;
+    [[nodiscard]] TextDocumentSyncKind TextDocumentSyncKindFor(const std::string& connectionKey) const;
 
     // semanticTokens follow-up, extended by the range/delta follow-up.
     // Called once per Paint() for the active buffer (BufferView.cpp,
@@ -1255,7 +1276,7 @@ class LspManager {
     // count, begin/report refresh its detail text ("indexing (45%)") -- how
     // server-side busy state (clangd's background indexing, mainly) reaches
     // the mode-line spinner with something more informative than a pulse.
-    void HandleProgress(const std::string& language, const nlohmann::json& params);
+    void HandleProgress(const std::string& connectionKey, const nlohmann::json& params);
 
     // Shared by ClientForLanguage's real spawn path and
     // SetClientForTesting's injection path, so an injected test client
@@ -1427,7 +1448,9 @@ class LspManager {
     std::unordered_map<text::Buffer*, std::unordered_map<std::string, ned::ui::DeadlineTimer>> syncDebounceTimers_;
 
     // error-visibility follow-up. A process-lifetime latch, keyed by
-    // language, on the exact argv that last failed to spawn -- lets
+    // connection (ConnectionKey's result, not the plain language -- see this
+    // class's own header comment), on the exact argv that last failed to
+    // spawn -- lets
     // ClientForLanguage stop retrying (and re-logging) a known-bad command
     // every single frame, while still trying again once the user
     // reconfigures LspServerCommand(language) to something different. No
@@ -1546,13 +1569,13 @@ class LspManager {
     std::unordered_set<std::string>                                  codeLensUnsupported_;
 
     // mode-line-lsp-status-round-3 follow-up: the exception message from the
-    // spawn attempt that populated failedCommands_[language] -- cleared
+    // spawn attempt that populated failedCommands_[connectionKey] -- cleared
     // wherever failedCommands_ itself is cleared, so the two never drift
     // apart.
     std::unordered_map<std::string, std::string> spawnFailureDetail_;
 
-    // respawn-debounce follow-up: the steady-clock time of a language's most
-    // recent disconnect, keyed by language. ClientForLanguage refuses to
+    // respawn-debounce follow-up: the steady-clock time of a connection's
+    // most recent disconnect, keyed by connection. ClientForLanguage refuses to
     // even attempt a respawn until kRespawnCooldown has passed since this --
     // breathing room for a single stumble (a slow-starting server racing its
     // own config file, a transient resource hiccup) to actually recover,
@@ -1570,9 +1593,10 @@ class LspManager {
     // ClientDisconnected's own "a crash/disconnect is transient, worth
     // respawning on the next SyncBuffer" policy has no rate limit at all)
     // used to have nothing standing between one disconnect and the very
-    // next frame's respawn attempt. Keyed by language: the steady-clock time
+    // next frame's respawn attempt: the steady-clock time
     // of the first disconnect in the current rapid-disconnect burst, and how
-    // many disconnects have landed in it so far. ClientDisconnected resets
+    // many disconnects have landed in it so far, keyed by connection.
+    // ClientDisconnected resets
     // the burst once kCrashLoopWindow has passed since it started; once
     // kCrashLoopThreshold disconnects land inside one window, ClientDisconnected
     // latches failedCommands_ itself (ClientForLanguage's own pre-existing
@@ -1582,7 +1606,7 @@ class LspManager {
     // discovered one handshake later.
     std::unordered_map<std::string, std::pair<std::chrono::steady_clock::time_point, int>> disconnectBurst_;
 
-    // mode-line-lsp-status-round-2 follow-up: languages whose client most
+    // mode-line-lsp-status-round-2 follow-up: connections whose client most
     // recently ended via ClientDisconnected rather than a spawn failure --
     // what StatusForLanguage's Disconnected case reads. Cleared the moment
     // ClientForLanguage successfully spawns a fresh client for the language
@@ -1596,7 +1620,7 @@ class LspManager {
     std::unordered_map<std::string, std::string> disconnectDetail_;
 
     // workDoneProgress-support follow-up. Every progress session currently
-    // between its "begin" and "end", keyed by language + '\x1f' + the
+    // between its "begin" and "end", keyed by connection + '\x1f' + the
     // token's own JSON dump (tokens are string-or-integer per spec; dump()
     // normalizes both); the value is the begin's title, reused when a
     // "report" refreshes the detail text without repeating it. Guards the

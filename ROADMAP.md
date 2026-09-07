@@ -140,17 +140,11 @@ two Janet bindings, `ned/set-protocol-read-stall-timeout-ms` and
       ordinary notes file could be noisy for illustrative/incomplete snippets.
 
 - [ ] **LSP multi-root, remainder** (per-buffer root resolution itself shipped, see
-      `git log --grep=lsp-multiroot`) — a server that itself supports the LSP
-      `workspaceFolders` protocol (one process, multiple folders) is never used that
-      way; this client always spawns a separate process per resolved root instead. Also,
-      several connection-scoped caches (`semanticTokensLegend_`,
-      `onTypeFormattingTriggers_`, `pullDiagnosticsUnsupported_`, `inlayHintsUnsupported_`,
-      `codeLensUnsupported_`, `activeProgress_`, the `failedCommands_`/`disconnected*`
-      status-latch group) stay keyed by the plain language string rather than the
-      per-root connection identity — two *simultaneously running* servers for the same
-      language against two different roots can shadow each other's legend/status/
-      progress-label (every actual request still routes to the correct per-root
-      connection regardless).
+      `git log --grep=lsp-multiroot`; the connection-scoped-cache half closed too, see
+      `git log --grep=lsp-multiroot-cache-scoping`) — what's left is that a server which
+      itself supports the LSP `workspaceFolders` protocol (one process, multiple folders)
+      is never used that way; this client always spawns a separate process per resolved
+      root instead.
 
 Candidate-popup hover-highlight and wheel-scroll are shipped too — see
 `git log --grep=listpopup-scroll`. Both go through one new `ListPopup::SetOnScrollBy`

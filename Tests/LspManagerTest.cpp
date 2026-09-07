@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <poll.h>
@@ -56,13 +57,28 @@ struct FakeServer {
     }
 
     ~FakeServer() {
-        ::close(serverStdoutWrite);
-        ::close(serverStdinRead);
+        if (serverStdoutWrite >= 0) {
+            ::close(serverStdoutWrite);
+        }
+        if (serverStdinRead >= 0) {
+            ::close(serverStdinRead);
+        }
     }
 
     FakeServer(const FakeServer&)            = delete;
     FakeServer& operator=(const FakeServer&) = delete;
-    FakeServer(FakeServer&&)                 = default;
+
+    // Deliberately not `= default`: a defaulted move copies the raw fd ints
+    // and leaves the source owning them too, so the moved-from temporary's
+    // destructor closes fds the destination still believes it holds. Benign
+    // for a single FakeServer (nothing reclaims the numbers), silently
+    // catastrophic the moment a second one is created afterwards -- its
+    // pipe() call reuses exactly those freed fd numbers, and the first
+    // server's reads then block on, or steal from, the second's pipe.
+    FakeServer(FakeServer&& other) noexcept
+        : serverStdinRead(std::exchange(other.serverStdinRead, -1)),
+          serverStdoutWrite(std::exchange(other.serverStdoutWrite, -1)) {
+    }
 
     static FakeServer Create(LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop, LspClient*& outClient,
                              const Json& workspaceConfiguration = Json::object(), bool brokerBacked = false,
@@ -888,6 +904,84 @@ TEST_CASE("LspManager routes two buffers under different resolved LSP roots to t
         Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(rawB)}, {"result", {{"contents", "b"}}}}.dump());
     REQUIRE(invokedA);
     REQUIRE(invokedB);
+
+    SetLspRootMarkers(language, {}); // cleanup -- process-wide state
+    std::filesystem::remove_all(base);
+}
+
+TEST_CASE("Two same-language connections under different roots keep independent capability and status state", "[Lsp]") {
+    // LSP multi-root remainder: every connection-scoped cache used to be
+    // keyed by the plain language string, so two simultaneously running
+    // servers for one language against two roots shadowed each other --
+    // whichever handshaked last owned the legend/sync-kind for both, and
+    // either one disconnecting wiped the other's status, capabilities and
+    // per-buffer sync state. Same two-root scaffold as the routing test
+    // above; this one asserts the *state* stays separate, not just the
+    // request routing.
+    ProjectRootGuard            rootGuard;
+    const std::string           language = "lsp-manager-multiroot-state-lang";
+    const std::string           marker   = "lsp-manager-multiroot-state.marker";
+    const std::filesystem::path base     = std::filesystem::temp_directory_path() / "ned-lsp-manager-multiroot-state";
+    const std::filesystem::path pkgA     = base / "packages" / "a";
+    const std::filesystem::path pkgB     = base / "packages" / "b";
+    std::filesystem::create_directories(pkgA);
+    std::filesystem::create_directories(pkgB);
+    {
+        std::ofstream(pkgA / marker) << "";
+    }
+    {
+        std::ofstream(pkgB / marker) << "";
+    }
+    SetProjectRoot(base);
+    SetLspRootMarkers(language, {marker});
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            bufferA = bufferList.OpenOrCreateFile(pkgA / "file.txt");
+    Buffer&            bufferB = bufferList.OpenOrCreateFile(pkgB / "file.txt");
+
+    const std::string connectionA = pkgA.string() + '\x1f' + language;
+    const std::string connectionB = pkgB.string() + '\x1f' + language;
+
+    LspClient* clientA = nullptr;
+    LspClient* clientB = nullptr;
+    auto       serverA = std::make_optional<FakeServer>(
+        FakeServer::Create(manager, language, eventLoop, clientA, Json::object(), false, connectionA));
+    FakeServer serverB = FakeServer::Create(manager, language, eventLoop, clientB, Json::object(), false, connectionB);
+
+    manager.SyncBuffer(bufferA, language);
+    manager.SyncBuffer(bufferB, language);
+    (void)ReadRawFrame(serverA->serverStdinRead);
+    (void)ReadRawFrame(serverB.serverStdinRead);
+
+    REQUIRE(manager.ConnectionKeyForBuffer(bufferA, language) == connectionA);
+    REQUIRE(manager.ConnectionKeyForBuffer(bufferB, language) == connectionB);
+
+    // Distinct handshake results per connection -- the shadowing the old
+    // plain-language keying made impossible to express at all.
+    manager.SetTextDocumentSyncKindForTesting(connectionA, TextDocumentSyncKind::Full);
+    manager.SetTextDocumentSyncKindForTesting(connectionB, TextDocumentSyncKind::Incremental);
+    manager.SetSemanticTokensLegendForTesting(connectionB,
+                                              SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}});
+    REQUIRE(manager.TextDocumentSyncKindFor(connectionA) == TextDocumentSyncKind::Full);
+    REQUIRE(manager.TextDocumentSyncKindFor(connectionB) == TextDocumentSyncKind::Incremental);
+    REQUIRE_FALSE(manager.SemanticTokensLegendFor(connectionA).has_value());
+
+    serverA.reset(); // EOF on A's pipe only -- the real disconnect path
+    WaitUntil(eventLoop, [&] { return manager.StatusForLanguage(connectionA) != LspManager::LspStatus::Running; });
+
+    REQUIRE(manager.StatusForLanguage(connectionA) == LspManager::LspStatus::Disconnected);
+    REQUIRE(manager.StatusForLanguage(connectionB) == LspManager::LspStatus::Running); // untouched by A's death
+    REQUIRE(manager.TextDocumentSyncKindFor(connectionB) == TextDocumentSyncKind::Incremental);
+    REQUIRE(manager.SemanticTokensLegendFor(connectionB).has_value());
+
+    // Per-buffer sync state is keyed by server key but matched on the dying
+    // connection -- only bufferA's entry goes.
+    const std::vector<std::string> keysA = manager.ActiveServerKeysForBuffer(bufferA);
+    const std::vector<std::string> keysB = manager.ActiveServerKeysForBuffer(bufferB);
+    REQUIRE(std::find(keysA.begin(), keysA.end(), language) == keysA.end());
+    REQUIRE(std::find(keysB.begin(), keysB.end(), language) != keysB.end());
 
     SetLspRootMarkers(language, {}); // cleanup -- process-wide state
     std::filesystem::remove_all(base);
