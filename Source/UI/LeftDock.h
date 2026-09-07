@@ -89,6 +89,17 @@ class LeftDock : public Widget {
     // onActivePanelCommitted_. A no-op if `id` isn't registered.
     void CommitSwitchTo(std::size_t id);
 
+    // unified-left-dock follow-up (migration step 3): the rail-click gesture
+    // itself (clicking the active panel's glyph collapses; clicking another
+    // expands+switches -- see this file's own header comment), exposed for
+    // a programmatic driver: BufferView's toggle-project-sidebar/
+    // toggle-vcs-panel commands resolve to this instead of each owning
+    // separate collapse/mutual-exclusion logic now that structural
+    // exclusivity (only the active panel ever paints or receives events)
+    // makes that unnecessary. Resolves `content` to its registered panel; a
+    // no-op if it isn't one.
+    void ActivateOrToggle(Widget* content);
+
     // Current desired total width in columns (rail + content region),
     // ProjectSidebar::Width()'s own contract: reports kRailWidth while
     // Collapsed() (width_ itself untouched, so expanding restores the
@@ -104,19 +115,24 @@ class LeftDock : public Widget {
     // ProjectSidebar::TakeKeyboardFocus/ReturnFocus's own pairing, promoted
     // here now that collapse lives on this widget instead: a caller driving
     // a hosted content widget's own keyboard-focus entry point (e.g.
-    // BufferView's focus-project-sidebar handling) calls this first --
-    // remembers whether this dock was collapsed, then expands it
-    // (programmatically, like SetCollapsed -- a quick keyboard visit
-    // shouldn't overwrite the remembered visibility preference) -- and
-    // calls the content widget's own TakeFocus() itself. Pair with
-    // NoteFocusReturned(), called from that same content widget's own
-    // focus-return path (wired at the call site, ProjectSidebar's own
-    // policy-at-the-wiring-site precedent), which re-collapses if this dock
-    // was collapsed at the matching PrepareForKeyboardFocus call -- a
-    // dock summoned by keyboard while hidden goes back to hidden the moment
-    // focus leaves. Safe to call NoteFocusReturned() even when no
-    // PrepareForKeyboardFocus is pending (a plain no-op).
-    void PrepareForKeyboardFocus();
+    // BufferView's focus-project-sidebar/focus-vcs-panel handling) calls
+    // this first with the target content widget -- silently switches to its
+    // panel if it isn't already active (SwitchTo's own contract: a quick
+    // keyboard visit shouldn't overwrite the remembered active-panel
+    // preference either) and remembers whether this dock was collapsed,
+    // then expands it (also silent, SetCollapsed's own contract) -- and the
+    // caller calls the content widget's own TakeFocus() itself. A no-op
+    // (nothing switched, nothing remembered) if `content` isn't a
+    // registered panel. Pair with NoteFocusReturned(), called from that
+    // same content widget's own focus-return path (wired at the call site,
+    // ProjectSidebar's own policy-at-the-wiring-site precedent), which
+    // re-collapses if this dock was collapsed at the matching
+    // PrepareForKeyboardFocus call -- a dock summoned by keyboard while
+    // hidden goes back to hidden the moment focus leaves. Safe to call
+    // NoteFocusReturned() even when no PrepareForKeyboardFocus is pending
+    // (a plain no-op) -- deliberately does NOT re-switch away from whatever
+    // panel is active when focus returns, only collapse/not.
+    void PrepareForKeyboardFocus(Widget* content);
     void NoteFocusReturned();
 
     [[nodiscard]] bool IsResizing() const;
@@ -161,6 +177,7 @@ class LeftDock : public Widget {
 
     [[nodiscard]] Entry*       FindEntry(std::size_t id);
     [[nodiscard]] const Entry* FindEntry(std::size_t id) const;
+    [[nodiscard]] Entry*       FindEntryByContent(Widget* content);
 
     // The absolute box of the bordered content region (rail excluded), and
     // the interior box one row/column inside that border -- what the active

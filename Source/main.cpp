@@ -806,13 +806,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     projectSidebar->SetOnBinaryFileOpenRequest(
         [wm = windowManager.get()](const std::filesystem::path& path) { wm->RequestOpenBinaryFile(path); });
 
-    // unified-left-dock follow-up (migration step 2): the widget now owning
-    // the left dock slot's border/width/collapse/resize-drag -- see
-    // LeftDock.h's own header comment. Only ProjectSidebar is registered so
-    // far; VcsPanel joins in step 3 (ROADMAP.md's own "Persistent left-side
-    // glyph rail for toggling panels" entry).
-    auto leftDock = std::make_shared<ned::ui::LeftDock>(theme);
-    leftDock->AddPanel(U'F', "Files", *projectSidebar);
+    // unified-left-dock follow-up: the widget now owning the left dock
+    // slot's border/width/collapse/resize-drag -- see LeftDock.h's own
+    // header comment. VcsPanel joins as the second panel further below,
+    // once it's constructed.
+    auto             leftDock    = std::make_shared<ned::ui::LeftDock>(theme);
+    const std::size_t filesPanelId = leftDock->AddPanel(U'F', "Files", *projectSidebar);
     windowManager->SetLeftDock(leftDock.get());
 
     // sidebar-keyboard-focus follow-up: Escape/C-g (or Enter opening a
@@ -843,13 +842,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // ...and a deliberate open/close toggle becomes the remembered global
     // default visibility the same way (only user toggles commit -- see
     // SetOnCollapseCommitted's own comment for why C-c p's transient
-    // expand never lands here).
-    leftDock->SetOnCollapseCommitted([](bool collapsed) {
-        ned::editor::SetVariable("sidebar-visible", collapsed ? "false" : "true");
-        if (!collapsed) {
-            ned::editor::SetVariable("left-panel-active", "sidebar");
-        }
-    });
+    // expand never lands here). Which *panel* is active is a separate fact,
+    // persisted by SetOnActivePanelCommitted further below once VcsPanel is
+    // registered as the dock's second panel -- this callback only ever
+    // owns visibility.
+    leftDock->SetOnCollapseCommitted(
+        [](bool collapsed) { ned::editor::SetVariable("sidebar-visible", collapsed ? "false" : "true"); });
 
     // sidebar-width-memory follow-up: the width the user last dragged the
     // divider to, remembered globally (LeftDock::EndResize writes it
@@ -893,69 +891,51 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         projectSidebar->RevealPath(*buffer->Path());
     }
 
-    // VCS side panel: same physical shape as ProjectSidebar just above,
-    // docked in the same left slot, swappable via toggle-vcs-panel/
-    // toggle-project-sidebar (see BufferView::SetVcsPanel's own doc
-    // comment for how the two are kept mutually exclusive).
+    // VCS side panel: hosted as LeftDock's second panel (unified-left-dock
+    // follow-up, migration step 3) -- LeftDock's own structural exclusivity
+    // (only the dock's active panel ever paints or receives events) is what
+    // keeps this and ProjectSidebar mutually exclusive on the shared slot
+    // now, replacing the cross-widget SetCollapsed coordination the two
+    // used to need (see LeftDock::ActivateOrToggle's own doc comment). A
+    // new install lands on Files (the first-registered panel, LeftDock's
+    // own default) rather than VCS -- the prior "VCS starts hidden, it's a
+    // new opt-in feature" default's real effect, now expressed as which
+    // panel is initially active rather than a second independently-hidden
+    // widget.
     auto vcsPanel = std::make_shared<ned::ui::VcsPanel>(
         [wm = windowManager.get()]() -> ned::ui::ActiveBuffer& { return wm->FocusedActiveBuffer(); }, bufferList,
         statusMessage, theme);
 
     windowManager->SetVcsPanel(vcsPanel.get());
 
-    vcsPanel->SetOnFocusReturn([wm = windowManager.get()] { wm->TakeFocus(); });
+    const std::size_t vcsPanelId = leftDock->AddPanel(U'V', "VCS", *vcsPanel);
+
+    // unified-left-dock follow-up: chained with LeftDock::NoteFocusReturned,
+    // ProjectSidebar's own SetOnFocusReturn precedent just above.
+    vcsPanel->SetOnFocusReturn([wm = windowManager.get(), dock = leftDock.get()] {
+        wm->TakeFocus();
+        dock->NoteFocusReturned();
+    });
 
     vcsPanel->SetOnAction(
         [wm = windowManager.get()](ned::ui::VcsPanelAction action) { wm->RequestVcsPanelAction(action); });
 
-    vcsPanel->SetOnWidthCommitted(
-        [](int width) { ned::editor::SetVariable("vcs-panel-width", std::to_string(width)); });
-    vcsPanel->SetOnCollapseCommitted([](bool collapsed) {
-        ned::editor::SetVariable("vcs-panel-visible", collapsed ? "false" : "true");
-        if (!collapsed) {
+    // Remembers which of the dock's two panels was last deliberately made
+    // active (a rail-glyph click, or the toggle-project-sidebar/
+    // toggle-vcs-panel commands going through it) -- restored below,
+    // ProjectSidebar/VcsPanel's own former "vcs-panel-visible" tie-break
+    // variable's real replacement now that there's one dock, not two
+    // independently-hidden widgets.
+    leftDock->SetOnActivePanelCommitted([filesPanelId, vcsPanelId](std::size_t id) {
+        if (id == vcsPanelId) {
             ned::editor::SetVariable("left-panel-active", "vcs");
         }
+        else if (id == filesPanelId) {
+            ned::editor::SetVariable("left-panel-active", "sidebar");
+        }
     });
-
-    if (const auto rememberedWidth = ned::editor::Variable("vcs-panel-width")) {
-        try {
-            vcsPanel->SetWidth(std::stoi(*rememberedWidth));
-        }
-        catch (const std::exception&) {
-            // Malformed state (hand-edited variables.json) -- keep the default.
-        }
-    }
-    if (const auto rememberedVisible = ned::editor::Variable("vcs-panel-visible")) {
-        vcsPanel->SetCollapsed(*rememberedVisible == "false");
-    }
-    else {
-        // Unlike ProjectSidebar, a brand-new install starts with this
-        // panel hidden -- it's a new opt-in feature, and showing two
-        // sidebar-like columns on first launch (both default-expanded,
-        // side by side) would be a surprising default. C-c V/C-c v p
-        // reveals it; a deliberate toggle persists via
-        // SetOnCollapseCommitted above, same as ProjectSidebar's own.
-        vcsPanel->SetCollapsed(true);
-    }
-
-    // vcs-diff-preview-and-two-left-bars fix, unified-left-dock follow-up:
-    // the two blocks above each restore their own collapsed state from
-    // their own independently persisted variable, and a toggle's mutual-
-    // exclusion side effect on the *other* panel (BufferView.cpp's
-    // ToggleProjectSidebar/ToggleVcsPanel) is deliberately silent/non-
-    // persisting so it never clobbers that panel's own remembered
-    // preference. That means both "visible" flags can be true at once on
-    // disk (e.g. after opening the VCS panel without ever explicitly
-    // closing the sidebar again) -- enforce the same one-at-a-time
-    // invariant here too, tie-broken by whichever was more recently opened
-    // (also silent, for the same clobber-avoidance reason).
-    if (!leftDock->Collapsed() && !vcsPanel->Collapsed()) {
-        if (ned::editor::Variable("left-panel-active") == "vcs") {
-            leftDock->SetCollapsed(true);
-        }
-        else {
-            vcsPanel->SetCollapsed(true);
-        }
+    if (ned::editor::Variable("left-panel-active") == "vcs") {
+        leftDock->SwitchTo(vcsPanelId); // silent -- Files (the default) already committed nothing to overwrite
     }
 
     tabBar->SetOnCloseRequest(
@@ -999,7 +979,6 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
     Container bufferRow(Axis::Horizontal, {
                                               {leftDock.get(), SizeSpec::DynamicFixed([raw = leftDock.get()] { return raw->Width(); })},
-                                              {vcsPanel.get(), SizeSpec::DynamicFixed([raw = vcsPanel.get()] { return raw->Width(); })},
                                               {&mainColumn, SizeSpec::Flex()},
                                           });
 
@@ -2413,11 +2392,15 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                         // Discard/revert: reuses the same y/n confirm state
                         // 'x' drives -- this widget (not a BufferView pane)
                         // needs keyboard focus for that keystroke to land,
-                        // so TakeKeyboardFocus() first, mirroring how a
+                        // so TakeFocus() first (the panel is already visible
+                        // -- its context menu is only reachable on a row
+                        // that's on screen -- so no LeftDock expand
+                        // orchestration is needed here, unlike focus-vcs-
+                        // panel's own entry point), mirroring how a
                         // context-menu delete hands focus to a pane before
                         // BufferView::StartDeleteFileAt shows its own prompt.
                         addRow("Discard Changes...", [vp, path] {
-                            vp->TakeKeyboardFocus();
+                            vp->TakeFocus();
                             vp->RequestDiscardConfirm(path);
                         });
                     }

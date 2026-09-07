@@ -8037,30 +8037,22 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             statusMessage_ = projectReplace_->StatusText();
             return;
         case editor::InteractiveRequest::ToggleProjectSidebar:
-            // unified-left-dock follow-up (migration step 2): hiding/
-            // showing the sidebar is now LeftDock's own collapse, not a
-            // Widget::active flip or ProjectSidebar's own former state.
-            // VCS side panel follow-up: expanding the sidebar collapses
-            // vcsPanel_ first (plain SetCollapsed, not a committing
-            // CommitCollapsed -- this is a side effect of the *sidebar's*
-            // own toggle, not a deliberate vcsPanel_ toggle, so it must not
-            // overwrite vcsPanel_'s own persisted visibility preference) --
-            // see SetVcsPanel's own doc comment for why the two stay
-            // mutually exclusive on the shared left dock slot.
-            if (leftDock_ != nullptr) {
-                if (leftDock_->Collapsed() && vcsPanel_ != nullptr) {
-                    vcsPanel_->SetCollapsed(true);
-                }
-                leftDock_->ToggleCollapsed();
+            // unified-left-dock follow-up (migration step 3): ProjectSidebar
+            // and VcsPanel are both hosted panels of the same LeftDock now,
+            // which enforces their mutual exclusivity structurally (only
+            // the dock's own active panel ever paints or receives events at
+            // all) -- so this is just the rail-click gesture driven
+            // programmatically: re-toggling the already-active, already-
+            // expanded panel collapses; anything else expands+switches to
+            // it. See LeftDock::ActivateOrToggle's own doc comment.
+            if (leftDock_ != nullptr && projectSidebar_ != nullptr) {
+                leftDock_->ActivateOrToggle(projectSidebar_);
             }
             return;
         case editor::InteractiveRequest::ToggleVcsPanel:
             // Same shape as ToggleProjectSidebar above, mirrored.
-            if (vcsPanel_ != nullptr) {
-                if (vcsPanel_->Collapsed() && leftDock_ != nullptr) {
-                    leftDock_->SetCollapsed(true);
-                }
-                vcsPanel_->ToggleCollapsed();
+            if (leftDock_ != nullptr && vcsPanel_ != nullptr) {
+                leftDock_->ActivateOrToggle(vcsPanel_);
             }
             return;
         case editor::InteractiveRequest::ToggleTerminal:
@@ -8097,30 +8089,22 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::FocusProjectSidebar:
             // sidebar-keyboard-focus follow-up, unified-left-dock follow-up
-            // (migration step 2): LeftDock::PrepareForKeyboardFocus expands
-            // the dock if collapsed (focus into an invisible tree would be
-            // meaningless) and remembers to re-collapse on return -- see
-            // that method's own doc comment; ProjectSidebar's own OnEvent
-            // still drives the selection until it returns focus.
-            // VCS side panel follow-up: same mutual-exclusion side effect
-            // ToggleProjectSidebar above applies.
+            // (migration step 3): LeftDock::PrepareForKeyboardFocus switches
+            // to this panel if it isn't already active and expands the dock
+            // if collapsed (focus into an invisible/inactive tree would be
+            // meaningless), remembering to re-collapse on return -- see that
+            // method's own doc comment; ProjectSidebar's own OnEvent still
+            // drives the selection until it returns focus.
             if (leftDock_ != nullptr && projectSidebar_ != nullptr) {
-                if (leftDock_->Collapsed() && vcsPanel_ != nullptr) {
-                    vcsPanel_->SetCollapsed(true);
-                }
-                leftDock_->PrepareForKeyboardFocus();
+                leftDock_->PrepareForKeyboardFocus(projectSidebar_);
                 projectSidebar_->TakeFocus();
             }
             return;
         case editor::InteractiveRequest::FocusVcsPanel:
-            // Same shape as FocusProjectSidebar above, mirrored -- VcsPanel
-            // still owns its own chrome/TakeKeyboardFocus (step 3 of the
-            // ROADMAP migration retires this side, not yet done).
-            if (vcsPanel_ != nullptr) {
-                if (vcsPanel_->Collapsed() && leftDock_ != nullptr) {
-                    leftDock_->SetCollapsed(true);
-                }
-                vcsPanel_->TakeKeyboardFocus();
+            // Same shape as FocusProjectSidebar above, mirrored.
+            if (leftDock_ != nullptr && vcsPanel_ != nullptr) {
+                leftDock_->PrepareForKeyboardFocus(vcsPanel_);
+                vcsPanel_->TakeFocus();
             }
             return;
         case editor::InteractiveRequest::ToggleMinimap:
