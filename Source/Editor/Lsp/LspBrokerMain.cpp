@@ -145,15 +145,17 @@ namespace {
     // "shutdown"/"exit" writes go through the same ApplySendToServer path
     // as ordinary traffic, so a server that stopped draining its stdin (see
     // ApplySendToServer's own comment) makes shutdown itself slow -- each
-    // such write stalls for the full ProtocolStallTimeoutMs before failing.
-    // That's a real, bounded wait, not a hang, but with nothing said up
-    // front it reads as one. One line stating the worst case up front.
+    // such write stalls for the full ProtocolWriteStallTimeoutMs before
+    // failing. That's a real, bounded wait, not a hang, but with nothing
+    // said up front it reads as one. One line stating the worst case up
+    // front.
     void LogShutdownEta(const std::vector<BrokerAction>& actions) {
         const std::size_t pending = CountKind(actions, BrokerAction::Kind::SendToServer);
         if (pending == 0) {
             return;
         }
-        const auto stallSeconds = std::chrono::duration_cast<std::chrono::seconds>(editor::ProtocolStallTimeoutMs()).count();
+        const auto stallSeconds =
+            std::chrono::duration_cast<std::chrono::seconds>(editor::ProtocolWriteStallTimeoutMs()).count();
         Log("shutting down " + std::to_string(pending) + " server message(s) -- up to " + std::to_string(stallSeconds) +
             "s each if a server has stopped draining its stdin");
     }

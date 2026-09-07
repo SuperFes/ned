@@ -58,7 +58,7 @@
 // async-write-queue follow-up: every SendRequest/SendNotification/server-
 // request-response send used to call transport_.WriteFrame directly on the
 // main thread -- synchronous, and unboundedly blocking (up to
-// ProtocolStallTimeoutMs()) whenever a server's stdin pipe backs up. Two
+// ProtocolWriteStallTimeoutMs()) whenever a server's stdin pipe backs up. Two
 // real, gdb-confirmed live freezes traced to exactly this (a rapid-typing
 // didChange flood, and a periodic background-sync didOpen stall against a
 // slow server) -- see LspManager's own sync-debounce/background-sync
