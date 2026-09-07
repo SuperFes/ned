@@ -323,23 +323,70 @@ overflow indicators as part of the same work) are all shipped — see `git log
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
-- [ ] **Persistent left-side glyph rail for toggling panels** (raised 2026-09-06).
-      Divider-double-click-to-collapse was inconsistent across panels — only
-      `ProjectSidebar` had it; `VcsPanel` modeled its own collapse on `ProjectSidebar`'s
-      convention but never wired the double-click check, and standalone `AcpPanel` had
-      no mouse divider-collapse at all — all three now share the same
-      `dividerClickPending_`/`kDoubleClickWindow` pattern (see
+- [ ] **Persistent left-side glyph rail for toggling panels** (raised 2026-09-06,
+      design-sketched 2026-09-07). Divider-double-click-to-collapse was inconsistent
+      across panels — only `ProjectSidebar` had it; `VcsPanel` modeled its own collapse
+      on `ProjectSidebar`'s convention but never wired the double-click check, and
+      standalone `AcpPanel` had no mouse divider-collapse at all — all three now share
+      the same `dividerClickPending_`/`kDoubleClickWindow` pattern (see
       `git log --grep=divider-double-click-collapse-gap`). The bigger idea that
       prompted this: `ProjectSidebar` already collapses to a 1-column border strip with
       a glyph hint — generalize that strip into an always-visible, VS Code-style
       "activity bar" holding one glyph per togglable panel (files, VCS, terminal, ACP
       chat, debug console), rather than collapse-to-a-strip being
-      `ProjectSidebar`/`VcsPanel`-only chrome. Open design question before starting:
-      whether the rail *replaces* `PanelDock`'s own tab strip for the bottom-docked
-      panels too, or stays left-side-only for the `ProjectSidebar`/`VcsPanel` pair —
+      `ProjectSidebar`/`VcsPanel`-only chrome.
+
+      Concretely surfaced 2026-09-07 by a real bug: `ProjectSidebar` and `VcsPanel` are
+      two fully independent `Widget`s docked in the same left slot, each owning its own
+      border, width, collapse-to-strip state, resize-drag divider, and keyboard focus —
+      kept "mutually exclusive" only by ad hoc coordination
+      (`BufferView.cpp`'s `ToggleProjectSidebar`/`ToggleVcsPanel` collapse the other
+      panel on toggle; a startup-time check, added in the same fix, collapses whichever
+      is the tie-break loser if both panels' independently persisted
+      `sidebar-visible`/`vcs-panel-visible` variables came back `true` — see
+      `git log --grep=vcs-diff-preview-and-two-left-bars`). That's a patch over the
+      structural problem this bullet already named: any future left-docked panel would
+      have to duplicate the same chrome and exclusivity dance again.
+
+      Design sketch for the rail, one level more concrete than "generalize the strip"
+      above: a `LeftDock` widget (`Source/UI/LeftDock.h/.cpp`) owning the single
+      border/width/collapse state for the left slot, plus an ordered list of registered
+      `{glyph, name, Widget* content}` panels and an `activePanel_` index — a fixed
+      ~3-column glyph strip (highlighted background for the active panel) beside a
+      single `Canvas::ForBox` sub-region for whichever content widget is active;
+      collapse-to-strip keeps only the glyph column painted, mirroring
+      `ProjectSidebar`'s existing "`Collapsed()` reports 1-column width" precedent so
+      the icons stay a click target to re-expand. `ProjectSidebar`/`VcsPanel` lose
+      `DrawBorder`/`Width()`/`Collapsed()`/`SetWidth`/`SetCollapsed`/the resize-drag
+      divider entirely and become plain content views — the real size of the change is
+      every existing call site reading those today (`BufferView`'s narrowing-clamp
+      check on drag, `WindowManager`'s `Container` `SizeSpec`, `TabBar`'s
+      reveal-in-sidebar, `ProjectSidebar`'s own sticky-scroll) repointing at
+      `LeftDock`'s width/collapsed instead of the individual panel's; `bufferRow`'s
+      `Container` in `main.cpp` drops the `projectSidebar`/`vcsPanel` two-sibling
+      entries for one `leftDock` sibling. Today's two independent
+      `sidebar-visible`/`vcs-panel-visible` variables collapse into
+      `leftDock-collapsed` + `leftDock-active-panel` — the `left-panel-active`
+      tie-break variable from the 2026-09-07 fix becomes exactly this second variable,
+      so that work carries forward rather than being thrown away.
+      Migration order to keep this reviewable rather than one big-bang commit: (1)
+      build `LeftDock` standalone with unit tests against two dummy content widgets;
+      (2) strip chrome out of `ProjectSidebar` first (the simpler, longer-established
+      one), host it alone, ship, confirm no regression; (3) strip chrome out of
+      `VcsPanel`, register it as the second panel, retire the now-dead exclusivity code
+      in `BufferView.cpp` and the startup tie-break variable in favor of the dock's own
+      state; (4) update `C-c p`/`C-c v p`'s meaning (dock-switch instead of two
+      independent toggles) and this entry.
+
+      Open design question, still unresolved: whether the rail *replaces* `PanelDock`'s
+      own tab strip for the bottom-docked panels too, or stays left-side-only for the
+      `ProjectSidebar`/`VcsPanel` pair (the sketch above assumes left-side-only) —
       deciding this up front matters so the rail doesn't become a third parallel "which
       panel is where" bookkeeping system alongside `PanelDock` and `AcpPanel`'s own
-      right-dock mode. Not designed in detail yet, just scoped.
+      right-dock mode. A genuinely medium-sized refactor either way (new widget +
+      retrofitting two established panels' call sites) — worth its own dedicated
+      session with real build/test checkpoints per step, not a single sitting. Not
+      started.
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up
