@@ -717,25 +717,40 @@ stdio server is necessarily a separate OS process the agent spawns — so the li
 dumb stdin/stdout↔socket byte pump, no JSON parsing) is the `mcpServers` "command" the
 agent actually spawns — real protocol handling (`initialize`/`tools/list`/`tools/call`)
 happens inside the live process where `LspManager`/`VcsRunner`/`TestRunner`/open
-`Buffer`s actually live. 8 read-only tools shipped: `get_diagnostics`, `hover`,
-`goto_definition`, `find_references`, `git_status`, `git_diff`, `search_project`,
-`run_tests`+`get_test_results`. Deliberately no mutating tools yet (git stage/commit,
-LSP rename, DAP control) — see the DAP↔ACP item below for the concrete next slice.
+`Buffer`s actually live.
 
-- [ ] **ACP MCP tool-server bridge, remainder** — mutating/deeper tools on the same
-      `McpToolRegistry` pattern, not attempted in the v1 read-only slice: LSP
-      `rename_symbol`/`code_actions`/`format_buffer`/`workspace_symbols`; VCS
-      `stage`/`unstage`/`commit`/`branch_list`/`branch_switch`/`blame(file, line)`;
-      `rerun_failed` alongside the shipped `run_tests`/`get_test_results`;
-      `get_diagnostics_log(category?)` surfacing `SanitizerOutputParser`/
-      `ValgrindOutputParser`/`MassifOutputParser`'s already-parsed structured findings
-      (currently produced only for a human reading `DiagnosticsLog`); Org
-      `capture_note(template, text)`/`clock_in`/`clock_out`; a `goto(file, line)`
-      navigation tool (needs a `WindowManager`/`BufferView` reference threaded into the
-      registry — `CommandContext` has no headless nav primitive, confirmed when v1 was
-      scoped). Each mutating tool also reopens the permission-gating question v1
-      sidestepped by staying read-only: whether ned needs its own confirmation on top
-      of the agent's own MCP-tool-use prompt.
+Remainder slice shipped too (`git log --grep=acp-mcp-tool-bridge-remainder`): 12 more
+tools — `git_stage`/`git_unstage`/`git_commit`/`git_branch_list`/`git_branch_switch`/
+`git_blame`, `rerun_failed_tests`, `workspace_symbols`, `format_buffer` (mutating —
+applies the server's edits as one undo step, `Editor/Lsp/LspEditApply.h` extracted out
+of `BufferView.cpp` so both share the exact same apply logic instead of forking a
+copy), `code_actions`/`preview_rename` (deliberately listing/preview-only, not
+applying), and `get_diagnostics_log(category?)`. No ned-side permission gate was added
+for the mutating tools (git stage/unstage/commit/branch-switch, format_buffer) —
+MCP's own spec places "a human in the loop with the ability to deny tool invocations"
+as the *client's* (the agent's) responsibility, the same place `fs/write_text_file`'s
+own approval already lives; ned doesn't duplicate it. `format_buffer`'s async
+callback re-confirms the buffer is still open at the same address before touching it
+(`BufferView::RequestLspFormatThenSaveBuffer`'s own stale-pointer-as-opaque-key idiom)
+since the human can close it while the LSP request is in flight.
+
+Two things were deliberately cut after checking the real APIs against this item's own
+original aspirational list, both still open:
+- [ ] **Real rename/code-action apply + `goto(file, line)` navigation** — all three
+      need a live `WindowManager`/`BufferView` (`ApplyProjectEdit`'s multi-file
+      transaction machinery for the first two — `ProjectUndoManager` recording, file
+      create/rename/delete via `DocumentChangeOp`; `BufferView::JumpToPathLine` for the
+      third) that `McpToolRegistry` doesn't have and doesn't currently reach. Not a
+      thin wrapper the way everything shipped so far is — a real follow-up, not
+      attempted here.
+- [ ] **Org `capture_note`** — `OrgCapture::InsertCapture` only inserts a template
+      whose text is fixed at Janet-registration time (`%?` just marks where point
+      lands after expansion); there's no way to inject agent-supplied free text into a
+      capture through the existing API. Needs a small `OrgCapture.h` capability
+      addition (accept caller-supplied text to substitute at `%?`) before a faithful
+      tool can exist — `clock_in`/`clock_out` were dropped from scope for the same
+      "not actually a thin wrapper" reasoning, though those don't need the API change,
+      just a decision on how an MCP tool expresses "at point" headlessly.
 - [ ] **DAP↔ACP debugging bridge** (raised 2026-09-06, the concrete flagship use of the
       tool-bridge above). Structured tools (`dap_set_breakpoint`, `dap_continue`/
       `step_over`/`step_into`/`step_out`, `dap_get_stack_trace`,
