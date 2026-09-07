@@ -833,7 +833,16 @@ enum class InteractiveRequest { None,
                                 // own PanelDock tab -- a plain subprocess REPL (e.g. python3 -i)
                                 // run on a real pty, unlike the in-process Janet REPL above.
                                 ToggleJanetRepl,
-                                RunRepl };
+                                RunRepl,
+                                // multiple-terminal-tabs follow-up: new-terminal is a one-shot
+                                // direct action, same "just forward, the target lives above this
+                                // class" shape as ToggleTerminal/ToggleJanetRepl above --
+                                // BufferView forwards to the callback main.cpp registered
+                                // (SetOnNewTerminalRequest) to spawn one more terminal tab
+                                // alongside whatever's already open (never replacing them) and
+                                // switch to it. Distinct from ToggleTerminal, which always
+                                // targets a single existing/most-recently-used terminal tab.
+                                NewTerminal };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

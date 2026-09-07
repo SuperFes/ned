@@ -939,6 +939,10 @@ void BufferView::SetOnTerminalToggle(std::function<void()> handler) {
     onTerminalToggle_ = std::move(handler);
 }
 
+void BufferView::SetOnNewTerminalRequest(std::function<void()> handler) {
+    onNewTerminalRequest_ = std::move(handler);
+}
+
 void BufferView::SetOnAcpPanelToggle(std::function<void()> handler) {
     onAcpPanelToggle_ = std::move(handler);
 }
@@ -7972,6 +7976,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // forward.
             if (onJanetReplToggle_) {
                 onJanetReplToggle_();
+            }
+            return;
+        case editor::InteractiveRequest::NewTerminal:
+            // multiple-terminal-tabs follow-up: ToggleTerminal's own
+            // one-shot-forward shape -- the terminal tabs live above this
+            // class, only forward.
+            if (onNewTerminalRequest_) {
+                onNewTerminalRequest_();
             }
             return;
         case editor::InteractiveRequest::ListBuffers:

@@ -73,19 +73,35 @@ class PanelDock : public Widget {
     //     this tab is active.
     //   - extraActions: panel-specific buttons rendered only while this
     //     tab is active.
-    // Returns the new tab's index, for main.cpp's toggle lambdas to close
-    // over -- registration order can shift (ACP's own tab is only added at
-    // all when it's bottom-docked; see AcpPanel::SetDockHosted), so a caller
-    // shouldn't assume a fixed index.
+    // Returns the new tab's id (multiple-terminal-tabs follow-up: a stable
+    // identity, NOT a position in the tab strip -- registration order can
+    // shift at startup (ACP's own tab is only added at all when it's
+    // bottom-docked; see AcpPanel::SetDockHosted), and a tab's position can
+    // also shift at runtime now that RemovePanel exists. A caller should
+    // hold onto this id and pass it back to SwitchTo/RemovePanel/compare
+    // against ActiveIndex() -- never assume it equals a screen position.
     std::size_t AddPanel(std::string label, Widget& panel, std::function<std::string()> titleText = {},
                          std::function<int()> getPercent = {}, std::function<void(int)> setPercent = {},
                          std::function<std::vector<TabAction>()> extraActions = {});
 
-    // Clamped to [0, PanelCount()). Repositions the panel's own Box_ to this
-    // dock's content region and takes keyboard focus for it -- the same
-    // "show and focus" pairing every one of the three toggle lambdas already
-    // did by hand before this class existed.
-    void SwitchTo(std::size_t index);
+    // multiple-terminal-tabs follow-up: removes a previously registered tab
+    // by id (a no-op if `id` isn't currently registered -- e.g. already
+    // removed). If the removed tab was active, the neighboring tab at the
+    // same screen position takes over (falling back to the last remaining
+    // tab), the tab strip scrolls to reveal it, and the layout-change hook
+    // fires (the dock's own outer box can change size across the switch,
+    // SwitchTo's own reasoning). Does not touch `panel` itself -- the caller
+    // owns its lifetime and tears it down (or not) as it sees fit, same
+    // non-owning convention as AddPanel.
+    void RemovePanel(std::size_t id);
+
+    // Switches to the tab with this id; a no-op if `id` isn't currently
+    // registered (already removed, or never valid). Repositions the panel's
+    // own Box_ to this dock's content region, takes keyboard focus for it --
+    // the same "show and focus" pairing every one of the three toggle
+    // lambdas already did by hand before this class existed -- and scrolls
+    // the tab strip to reveal it if it's currently scrolled out of view.
+    void SwitchTo(std::size_t id);
 
     [[nodiscard]] std::size_t ActiveIndex() const {
         return active_;
@@ -130,6 +146,7 @@ class PanelDock : public Widget {
 
   private:
     struct Entry {
+        std::size_t                             id = 0; // stable identity -- see AddPanel's own doc comment
         std::string                             label;
         Widget*                                 panel = nullptr;
         std::function<std::string()>            titleText;
@@ -137,6 +154,39 @@ class PanelDock : public Widget {
         std::function<void(int)>                setPercent;
         std::function<std::vector<TabAction>()> extraActions;
     };
+
+    [[nodiscard]] Entry*       FindEntry(std::size_t id);
+    [[nodiscard]] const Entry* FindEntry(std::size_t id) const;
+
+    // One tab label's extent in content-space columns (column 0 is the
+    // first label column, i.e. one less than its screen column -- the
+    // fixed 1-column left margin Paint's own tab-strip loop starts at).
+    // Multiple-terminal-tabs follow-up, TabBar::TabLayout's own shape
+    // (kept much smaller since there's no close-icon/end-cap geometry
+    // here, just where each label starts/ends for scroll math).
+    struct TabLabelSpan {
+        std::size_t id;
+        int         startColumn;
+        int         endColumn; // exclusive
+    };
+    [[nodiscard]] std::vector<TabLabelSpan> ComputeTabLabelLayout() const;
+
+    // The screen column the right-aligned button cluster (the active tab's
+    // own extraActions, then the shared maximize/close) starts at -- i.e.
+    // one past the last column available to the scrollable label region.
+    // Depends on the *active* tab (a different tab can register a
+    // different number of extraActions), so this is recomputed fresh
+    // rather than cached, same as everything else in this class.
+    [[nodiscard]] int ButtonClusterStartColumn() const;
+
+    // Scrolls the tab strip (adjusting tabScrollOffset_) just far enough
+    // that the active tab's own label is fully visible -- TabBar's own
+    // tab-reveal-follow-up logic, called imperatively from SwitchTo/
+    // RemovePanel instead of diffed per-Paint, since every path that can
+    // change which tab is active in this class already funnels through
+    // one of those two methods (unlike TabBar, where the active *buffer*
+    // can change via a code path TabBar itself never sees).
+    void RevealActiveTab();
 
     // Sets ActivePanel()'s Box_ to this dock's own Box_ minus the tab-strip
     // row -- called from both OnResize and SwitchTo, since either can leave
@@ -161,11 +211,18 @@ class PanelDock : public Widget {
 
     const Theme&          theme_;
     std::vector<Entry>    entries_;
-    std::size_t           active_    = 0;
+    std::size_t           nextId_    = 0; // next id AddPanel hands out -- see Entry::id
+    std::size_t           active_    = 0; // an Entry::id, not a position -- see ActiveIndex's doc comment
     bool                  maximized_ = false;
     std::function<void()> onLayoutChange_;
     std::function<void()> onCloseRequest_;
     Size                  terminalSize_{.width = 0, .height = 0};
+
+    // multiple-terminal-tabs follow-up: columns of tab-label content
+    // scrolled past on the left -- TabBar::scrollOffset_'s own shape,
+    // scoped to just the label region between the 1-column left margin and
+    // ButtonClusterStartColumn().
+    int tabScrollOffset_ = 0;
 
     bool  resizing_ = false;
     Point resizeAnchorGlobal_{.x = 0, .y = 0};

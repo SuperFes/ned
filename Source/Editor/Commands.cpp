@@ -1975,6 +1975,15 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::ToggleTerminal;
                       });
 
+    // multiple-terminal-tabs follow-up: additive, not a replacement for
+    // toggle-terminal above -- spawns one more concurrent shell as its own
+    // PanelDock tab and switches to it, leaving every already-open terminal
+    // tab (including the one toggle-terminal itself targets) untouched.
+    registry.Register("new-terminal", "Open one more terminal tab alongside any already open, and switch to it.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::NewTerminal;
+                      });
+
     registry.Register("focus-project-sidebar",
                       "Move keyboard focus into the project sidebar tree (Up/Down or C-p/C-n to move, Enter to "
                       "open/toggle, Left/Right to collapse/expand, Escape or C-g to return to the editor).",
@@ -4027,6 +4036,14 @@ Keymap BuildDefaultGlobalKeymap() {
     // TerminalPanel.h's header comment).
     keymap.Bind(ParseKeySequence("C-`"), "toggle-terminal");
     keymap.Bind(ParseKeySequence("C-c t"), "toggle-terminal");
+    // multiple-terminal-tabs follow-up: "C-c C-t" alongside "C-c t" -- the
+    // same same-letter-different-Control-depth convention already used
+    // for a related-but-distinct action (e.g. "C-c r" run-repl vs
+    // "C-c C-r" project-replace). "C-c t" is a leaf binding (Keymap::Resolve
+    // returns the instant a node's own command is set, before consulting
+    // children -- see AcpPanel.h's own header comment on this trap), so a
+    // "C-c t <x>" prefix can't exist; this chord is a sibling, not a child.
+    keymap.Bind(ParseKeySequence("C-c C-t"), "new-terminal");
     // REPL-engine follow-up: "j" for the built-in Janet REPL -- a distinct
     // chord from "C-c C-j" (lsp-hover).
     keymap.Bind(ParseKeySequence("C-c j"), "toggle-janet-repl");

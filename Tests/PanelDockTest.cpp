@@ -100,6 +100,9 @@ Event MouseMove(int x, int y) {
 Event MouseRelease(int x, int y) {
     return ned::ui::test::Mouse(x, y, MouseEvent::Button::Left, MouseEvent::Motion::Released);
 }
+Event MouseWheel(int x, int y, MouseEvent::Button button) {
+    return ned::ui::test::Mouse(x, y, button, MouseEvent::Motion::Pressed);
+}
 
 } // namespace
 
@@ -284,4 +287,107 @@ TEST_CASE("PanelDock resize is a no-op for a tab with no percent pair registered
     REQUIRE(f.dock.OnEvent(MouseRelease(20, 50)));
     // Nothing to assert beyond "doesn't crash" -- there's no percent pair to
     // have changed.
+}
+
+TEST_CASE("PanelDock::RemovePanel drops a non-active tab without disturbing the active one", "[PanelDock]") {
+    Fixture    f;
+    FakePanel  repl{"R"};
+    const auto terminalId = f.dock.AddPanel("Terminal", f.terminal);
+    const auto claudeId   = f.dock.AddPanel("Claude", f.claude);
+    f.dock.AddPanel("Repl", repl);
+    int layoutChanges = 0;
+    f.dock.SetOnLayoutChange([&layoutChanges] { ++layoutChanges; });
+
+    f.dock.RemovePanel(claudeId);
+    REQUIRE(f.dock.PanelCount() == 2);
+    REQUIRE(f.dock.ActiveIndex() == terminalId);
+    REQUIRE(layoutChanges == 0); // the active tab's own identity never changed
+
+    f.Paint();
+    REQUIRE(f.RowText(0).find("Claude") == std::string::npos);
+    REQUIRE(f.RowText(0).find("Repl") != std::string::npos);
+}
+
+TEST_CASE("PanelDock::RemovePanel on the active tab promotes its neighbor and reveals it", "[PanelDock]") {
+    Fixture    f;
+    FakePanel  repl{"R"};
+    const auto terminalId    = f.dock.AddPanel("Terminal", f.terminal);
+    const auto claudeId      = f.dock.AddPanel("Claude", f.claude);
+    const auto replId        = f.dock.AddPanel("Repl", repl);
+    int        layoutChanges = 0;
+    f.dock.SetOnLayoutChange([&layoutChanges] { ++layoutChanges; });
+
+    f.dock.SwitchTo(claudeId);
+    layoutChanges = 0;
+    f.dock.RemovePanel(claudeId);
+
+    // Claude sat between Terminal and Repl -- removing the active middle
+    // tab promotes whatever now occupies that same screen position, i.e.
+    // Repl (Claude's old position now holds Repl after the erase).
+    REQUIRE(f.dock.ActiveIndex() == replId);
+    REQUIRE(f.claude.Focused() == false);
+    REQUIRE(f.dock.ActivePanel() == &repl);
+    REQUIRE(layoutChanges == 1);
+
+    // Removing the id a second time is a safe no-op.
+    f.dock.RemovePanel(claudeId);
+    REQUIRE(f.dock.PanelCount() == 2);
+    REQUIRE(f.dock.ActiveIndex() == replId);
+
+    // A stale id (already removed) can no longer be switched to.
+    f.dock.SwitchTo(terminalId);
+    REQUIRE(f.dock.ActiveIndex() == terminalId);
+    f.dock.SwitchTo(claudeId);
+    REQUIRE(f.dock.ActiveIndex() == terminalId); // unchanged -- claudeId is gone
+}
+
+TEST_CASE("PanelDock::RemovePanel down to the last tab leaves it active", "[PanelDock]") {
+    Fixture    f;
+    const auto terminalId = f.dock.AddPanel("Terminal", f.terminal);
+    const auto claudeId   = f.dock.AddPanel("Claude", f.claude);
+
+    f.dock.RemovePanel(terminalId);
+    REQUIRE(f.dock.PanelCount() == 1);
+    REQUIRE(f.dock.ActiveIndex() == claudeId);
+    REQUIRE(f.dock.ActivePanel() == &f.claude);
+}
+
+TEST_CASE("PanelDock tab strip scrolls with the mouse wheel and shows overflow indicators", "[PanelDock]") {
+    // A narrow dock (kWidth==40) with several long-labeled tabs overflows
+    // the label region -- multiple-terminal-tabs follow-up's whole reason
+    // for existing: many terminal tabs plus the fixed Claude/Repl tabs can
+    // easily exceed a real terminal's width.
+    Fixture   f;
+    FakePanel t2{"2"};
+    FakePanel t3{"3"};
+    FakePanel t4{"4"};
+    f.dock.AddPanel("Terminal", f.terminal);
+    f.dock.AddPanel("Terminal <2>", t2);
+    f.dock.AddPanel("Terminal <3>", t3);
+    const auto lastId = f.dock.AddPanel("Terminal <4>", t4);
+    f.Paint();
+
+    // No left indicator yet (nothing scrolled past), but the row overflows
+    // to the right.
+    REQUIRE(f.screen.PixelAt(0, 0).character != "‹");
+    const bool anyRightIndicator = [&] {
+        for (int x = 0; x < kWidth; ++x) {
+            if (f.screen.PixelAt(x, 0).character == "›") {
+                return true;
+            }
+        }
+        return false;
+    }();
+    REQUIRE(anyRightIndicator);
+
+    // Wheel down over the tab strip scrolls it right.
+    REQUIRE(f.dock.OnEvent(MouseWheel(5, 0, MouseEvent::Button::WheelDown)));
+    f.Paint();
+    REQUIRE(f.screen.PixelAt(0, 0).character == "‹");
+
+    // Switching to the last (currently scrolled-past) tab reveals it --
+    // its own label must appear somewhere on the row afterward.
+    f.dock.SwitchTo(lastId);
+    f.Paint();
+    REQUIRE(f.RowText(0).find("Terminal <4>") != std::string::npos);
 }
