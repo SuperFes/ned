@@ -827,8 +827,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // default visibility the same way (only user toggles commit -- see
     // SetOnCollapseCommitted's own comment for why C-c p's transient
     // expand never lands here).
-    projectSidebar->SetOnCollapseCommitted(
-        [](bool collapsed) { ned::editor::SetVariable("sidebar-visible", collapsed ? "false" : "true"); });
+    projectSidebar->SetOnCollapseCommitted([](bool collapsed) {
+        ned::editor::SetVariable("sidebar-visible", collapsed ? "false" : "true");
+        if (!collapsed) {
+            ned::editor::SetVariable("left-panel-active", "sidebar");
+        }
+    });
 
     // sidebar-width-memory follow-up: the width the user last dragged the
     // divider to, remembered globally (ProjectSidebar::EndResize writes it
@@ -889,8 +893,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
     vcsPanel->SetOnWidthCommitted(
         [](int width) { ned::editor::SetVariable("vcs-panel-width", std::to_string(width)); });
-    vcsPanel->SetOnCollapseCommitted(
-        [](bool collapsed) { ned::editor::SetVariable("vcs-panel-visible", collapsed ? "false" : "true"); });
+    vcsPanel->SetOnCollapseCommitted([](bool collapsed) {
+        ned::editor::SetVariable("vcs-panel-visible", collapsed ? "false" : "true");
+        if (!collapsed) {
+            ned::editor::SetVariable("left-panel-active", "vcs");
+        }
+    });
 
     if (const auto rememberedWidth = ned::editor::Variable("vcs-panel-width")) {
         try {
@@ -911,6 +919,26 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         // reveals it; a deliberate toggle persists via
         // SetOnCollapseCommitted above, same as ProjectSidebar's own.
         vcsPanel->SetCollapsed(true);
+    }
+
+    // vcs-diff-preview-and-two-left-bars fix: the two blocks above each
+    // restore their own collapsed state from their own independently
+    // persisted variable, and a toggle's mutual-exclusion side effect on
+    // the *other* panel (BufferView.cpp's ToggleProjectSidebar/
+    // ToggleVcsPanel) is deliberately silent/non-persisting so it never
+    // clobbers that panel's own remembered preference. That means both
+    // "visible" flags can be true at once on disk (e.g. after opening the
+    // VCS panel without ever explicitly closing the sidebar again) --
+    // enforce the same one-at-a-time invariant here too, tie-broken by
+    // whichever was more recently opened (also silent, for the same
+    // clobber-avoidance reason).
+    if (!projectSidebar->Collapsed() && !vcsPanel->Collapsed()) {
+        if (ned::editor::Variable("left-panel-active") == "vcs") {
+            projectSidebar->SetCollapsed(true);
+        }
+        else {
+            vcsPanel->SetCollapsed(true);
+        }
     }
 
     tabBar->SetOnCloseRequest(
@@ -1366,7 +1394,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     overlays.Add(vcsDiffPreview, [](Size size) {
         const int yMax   = std::max(1, size.height - 2); // above the echo area row
         const int height = std::max(6, size.height * 30 / 100);
-        return Box{.x_min = 0, .x_max = std::max(0, size.width - 1), .y_min = std::max(1, yMax - height + 1), .y_max = yMax};
+        return Box{.x_min = 0,
+                   .x_max = std::max(0, size.width - 1 - MinimapOverlayReserve()),
+                   .y_min = std::max(1, yMax - height + 1),
+                   .y_max = yMax};
     });
     // Both directions of a hunk-apply (staging out of the worktree diff,
     // unstaging out of the staged diff) re-fetch the same (path, staged)
