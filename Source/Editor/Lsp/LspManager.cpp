@@ -513,10 +513,11 @@ void LspManager::WireNotificationHandlers(LspClient& client, const std::string& 
         const std::string label = params.value("label", std::string("workspace edit"));
         return Json{{"applied", applyEditHandler_(resolved, label)}};
     });
-    client.SetNotificationHandler("$/progress", [this, serverKey](const Json& params) { HandleProgress(serverKey, params); });
+    client.SetNotificationHandler("$/progress",
+                                  [this, connectionKey](const Json& params) { HandleProgress(connectionKey, params); });
     client.SetOnDisconnected([this, serverKey, connectionKey](std::string reason) {
         LogError(serverKey, "server disconnected: " + reason);
-        disconnectDetail_[serverKey] = reason;
+        disconnectDetail_[connectionKey] = reason;
         ClientDisconnected(serverKey, connectionKey);
     });
 }
@@ -526,6 +527,11 @@ std::string LspManager::ConnectionKey(const std::filesystem::path& root, const s
         return serverKey;
     }
     return root.string() + '\x1f' + serverKey;
+}
+
+std::string LspManager::ConnectionKeyForBuffer(const text::Buffer& buffer, const std::string& serverKey) const {
+    const auto it = bufferResolvedRoot_.find(const_cast<text::Buffer*>(&buffer));
+    return ConnectionKey(it != bufferResolvedRoot_.end() ? it->second : editor::ProjectRoot(), serverKey);
 }
 
 std::filesystem::path LspManager::ResolveCachedRoot(const std::filesystem::path& bufferPath, const std::string& language) {
@@ -557,15 +563,15 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
     // every Paint() for the active buffer, and a real subprocess-spawn
     // failure is not transient. Erasing on a *different* command lets a
     // user's own SetLspServerCommand reconfiguration get one fresh attempt.
-    // LSP multi-root follow-up: keyed by serverKey, not connectionKey -- see
-    // this class's own header comment on the deliberately-still-plain-keyed
-    // status-latch group.
-    if (const auto failed = failedCommands_.find(serverKey); failed != failedCommands_.end()) {
+    // Keyed by connectionKey: the same command failing for one root says
+    // nothing about a sibling root's own connection, which may well have a
+    // different resolved environment.
+    if (const auto failed = failedCommands_.find(connectionKey); failed != failedCommands_.end()) {
         if (failed->second == *command) {
             return nullptr;
         }
         failedCommands_.erase(failed);
-        spawnFailureDetail_.erase(serverKey);
+        spawnFailureDetail_.erase(connectionKey);
     }
 
     // respawn-debounce follow-up (requested alongside the crash-loop guard
@@ -577,7 +583,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
     // hammered immediately rather than given a moment to actually recover.
     // Silent no-op while cooling down -- not worth a log line every frame
     // for what's an ordinary, expected wait.
-    if (const auto lastDisconnect = lastDisconnectAt_.find(serverKey); lastDisconnect != lastDisconnectAt_.end()) {
+    if (const auto lastDisconnect = lastDisconnectAt_.find(connectionKey); lastDisconnect != lastDisconnectAt_.end()) {
         if (std::chrono::steady_clock::now() - lastDisconnect->second < kRespawnCooldown) {
             return nullptr;
         }
@@ -611,8 +617,8 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
             // BufferView::Paint()) had no catch anywhere above it, crashing the
             // whole running editor the instant a buffer of a misconfigured-LSP
             // language was displayed. Report instead of crashing.
-            failedCommands_[serverKey]     = *command;
-            spawnFailureDetail_[serverKey] = e.what();
+            failedCommands_[connectionKey]     = *command;
+            spawnFailureDetail_[connectionKey] = e.what();
             LogError(serverKey, e.what());
             return nullptr;
         }
@@ -645,7 +651,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
             // already proven unresponsive, wedging the write.
             if (error) {
                 LogError(serverKey, "initialize failed: " + ExtractErrorMessage(*error));
-                disconnectDetail_[serverKey] = ExtractErrorMessage(*error);
+                disconnectDetail_[connectionKey] = ExtractErrorMessage(*error);
                 ClientDisconnected(serverKey, connectionKey);
                 return;
             }
@@ -656,16 +662,16 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
             // is present, the provider just isn't advertised.
             if (result) {
                 if (const auto legend = ExtractSemanticTokensLegend(*result)) {
-                    semanticTokensLegend_[serverKey] = *legend;
+                    semanticTokensLegend_[connectionKey] = *legend;
                 }
                 if (const auto triggers = ExtractOnTypeFormattingTriggers(*result)) {
-                    onTypeFormattingTriggers_[serverKey] = *triggers;
+                    onTypeFormattingTriggers_[connectionKey] = *triggers;
                 }
                 if (const auto syncKind = ExtractTextDocumentSyncKind(*result)) {
-                    textDocumentSyncKind_[serverKey] = *syncKind;
+                    textDocumentSyncKind_[connectionKey] = *syncKind;
                 }
                 if (const auto fileOpFilters = ExtractFileOperationFilters(*result)) {
-                    fileOperationFilters_[serverKey] = *fileOpFilters;
+                    fileOperationFilters_[connectionKey] = *fileOpFilters;
                 }
             }
             rawClient->SendNotification("initialized", Json::object());
@@ -684,9 +690,9 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
     // mode-line-lsp-status-round-2 follow-up: a successful (re)spawn
     // resolves any prior disconnect -- StatusForLanguage should report
     // Running now, not a stale Disconnected from before this attempt.
-    disconnectedLanguages_.erase(serverKey);
-    disconnectDetail_.erase(serverKey);
-    lastDisconnectAt_.erase(serverKey); // respawn-debounce follow-up -- a stale cooldown must not outlive a real respawn
+    disconnectedLanguages_.erase(connectionKey);
+    disconnectDetail_.erase(connectionKey);
+    lastDisconnectAt_.erase(connectionKey); // respawn-debounce follow-up -- a stale cooldown must not outlive a real respawn
     return rawClient;
 }
 
@@ -1049,9 +1055,9 @@ LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr
     // doc comment in LspManager.h.
     const std::string connectionKey = connectionKeyOverride.value_or(language);
     WireNotificationHandlers(*client, language, connectionKey, workspaceConfiguration); // same wiring ClientForLanguage's real spawn path applies
-    disconnectedLanguages_.erase(language);                                             // an injected client is "running," same as a real successful spawn
-    disconnectDetail_.erase(language);
-    lastDisconnectAt_.erase(language); // respawn-debounce follow-up -- ditto
+    disconnectedLanguages_.erase(connectionKey);                                        // an injected client is "running," same as a real successful spawn
+    disconnectDetail_.erase(connectionKey);
+    lastDisconnectAt_.erase(connectionKey); // respawn-debounce follow-up -- ditto
     if (brokerBacked) {
         brokerBackedLanguages_.insert(connectionKey);
     }
@@ -1067,7 +1073,7 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     // Both may be references into the very LspClient (and its
     // OnDisconnected closure) this function destroys below -- copy them
     // first so the rest of this function isn't reading freed memory.
-    const std::string languageCopy      = serverKey;
+    const std::string serverKeyCopy     = serverKey;
     const std::string connectionKeyCopy = connectionKey;
     // lsp-use-after-free follow-up: this used to retire into a retired_
     // vector instead of erasing immediately, on the theory that "wait for
@@ -1087,28 +1093,28 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     // semantic-tokens/on-type-formatting follow-up: a respawned server may
     // advertise a different legend/trigger set than the one that just
     // died -- don't let a stale entry outlive this connection.
-    semanticTokensLegend_.erase(languageCopy);
-    onTypeFormattingTriggers_.erase(languageCopy);
-    textDocumentSyncKind_.erase(languageCopy);       // ditto -- a respawned server may advertise a different sync kind
-    fileOperationFilters_.erase(languageCopy);        // ditto -- a respawned server may advertise different willRename/didRename filters
-    pullDiagnosticsUnsupported_.erase(languageCopy);  // a respawned server gets one fresh attempt
-    inlayHintsUnsupported_.erase(languageCopy);       // ditto
-    codeLensUnsupported_.erase(languageCopy);         // ditto
-    semanticTokensRangeUnsupported_.erase(languageCopy);     // ditto
-    semanticTokensFullDeltaUnsupported_.erase(languageCopy); // ditto
+    semanticTokensLegend_.erase(connectionKeyCopy);
+    onTypeFormattingTriggers_.erase(connectionKeyCopy);
+    textDocumentSyncKind_.erase(connectionKeyCopy);               // ditto -- a respawned server may advertise a different sync kind
+    fileOperationFilters_.erase(connectionKeyCopy);               // ditto -- a respawned server may advertise different willRename/didRename filters
+    pullDiagnosticsUnsupported_.erase(connectionKeyCopy);         // a respawned server gets one fresh attempt
+    inlayHintsUnsupported_.erase(connectionKeyCopy);              // ditto
+    codeLensUnsupported_.erase(connectionKeyCopy);                // ditto
+    semanticTokensRangeUnsupported_.erase(connectionKeyCopy);     // ditto
+    semanticTokensFullDeltaUnsupported_.erase(connectionKeyCopy); // ditto
     // mode-line-lsp-status-round-2 follow-up: latch the disconnect so
     // StatusForLanguage can report it, distinct from "never configured" --
     // cleared the moment a fresh spawn succeeds (ClientForLanguage) or the
     // reconfigured command fails outright (StatusForLanguage's SpawnFailed
     // case takes priority over this one regardless).
-    disconnectedLanguages_.insert(languageCopy);
+    disconnectedLanguages_.insert(connectionKeyCopy);
 
     // crash-loop-respawn-guard follow-up: see disconnectBurst_'s own doc
     // comment in LspManager.h. Must run before this function returns (every
     // exit path below still respawns on the next SyncBuffer otherwise).
     const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-    lastDisconnectAt_[languageCopy]                 = now; // respawn-debounce follow-up
-    auto& burst                                     = disconnectBurst_[languageCopy];
+    lastDisconnectAt_[connectionKeyCopy]            = now; // respawn-debounce follow-up
+    auto& burst                                     = disconnectBurst_[connectionKeyCopy];
     if (now - burst.first > kCrashLoopWindow) {
         burst = {now, 1};
     }
@@ -1122,24 +1128,35 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
         // (bufferState_/diagnosticsBySource_/activeProgress_) still runs
         // exactly as it would for any other disconnect.
         const std::optional<std::vector<std::string>> command =
-            (languageCopy == kProseLanguageKey) ? ProseCheckerCommand() : LspServerCommand(languageCopy);
+            (serverKeyCopy == kProseLanguageKey) ? ProseCheckerCommand() : LspServerCommand(serverKeyCopy);
         if (command) {
-            failedCommands_[languageCopy] = *command;
+            failedCommands_[connectionKeyCopy] = *command;
         }
-        spawnFailureDetail_[languageCopy] =
+        spawnFailureDetail_[connectionKeyCopy] =
             "gave up after " + std::to_string(burst.second) + " immediate disconnects in a row -- reconfigure the command to retry";
-        disconnectBurst_.erase(languageCopy);
-        LogError(languageCopy, "server crash-looped -- giving up until the command is reconfigured");
+        disconnectBurst_.erase(connectionKeyCopy);
+        LogError(serverKeyCopy, "server crash-looped -- giving up until the command is reconfigured");
     }
     // prose-checking follow-up: erase just this server's own sub-entry, not
     // the whole buffer -- a buffer's other server (primary or prose,
-    // whichever languageCopy isn't) must keep its own sync state and
+    // whichever serverKeyCopy isn't) must keep its own sync state and
     // diagnostics intact. Drop the outer entry too once it's left empty,
     // and drop + re-flatten this server's now-stale diagnostics slice so
     // Buffer::Diagnostics() doesn't keep reporting from a server that's no
     // longer there.
+    //
+    // bufferState_/diagnosticsBySource_ are keyed by serverKey (a buffer
+    // talks to at most one connection per server key), so the match on the
+    // dying *connection* is BufferSyncState::connectionKey, not the key
+    // itself -- a buffer whose own resolved root points this same server key
+    // at a different, still-live connection must be left completely alone.
+    std::vector<text::Buffer*> affected;
     for (auto it = bufferState_.begin(); it != bufferState_.end();) {
-        it->second.erase(languageCopy);
+        const auto stateIt = it->second.find(serverKeyCopy);
+        if (stateIt != it->second.end() && stateIt->second.connectionKey == connectionKeyCopy) {
+            affected.push_back(it->first);
+            it->second.erase(stateIt);
+        }
         if (it->second.empty()) {
             it = bufferState_.erase(it);
         }
@@ -1147,22 +1164,23 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
             ++it;
         }
     }
-    for (auto it = diagnosticsBySource_.begin(); it != diagnosticsBySource_.end();) {
-        if (it->second.erase(languageCopy) > 0) {
-            PushMergedDiagnostics(*it->first);
+    for (text::Buffer* buffer : affected) {
+        const auto it = diagnosticsBySource_.find(buffer);
+        if (it == diagnosticsBySource_.end()) {
+            continue;
+        }
+        if (it->second.erase(serverKeyCopy) > 0) {
+            PushMergedDiagnostics(*buffer);
         }
         if (it->second.empty()) {
-            it = diagnosticsBySource_.erase(it);
-        }
-        else {
-            ++it;
+            diagnosticsBySource_.erase(it);
         }
     }
     // workDoneProgress-support follow-up: a dying server never sends "end"
     // for its live progress sessions -- End them here or the spinner runs
     // forever (the request-count half of the same problem is ~LspClient's
     // own responsibility; see its destructor comment).
-    const std::string keyPrefix = languageCopy + '\x1f';
+    const std::string keyPrefix = connectionKeyCopy + '\x1f';
     for (auto it = activeProgress_.begin(); it != activeProgress_.end();) {
         if (it->first.rfind(keyPrefix, 0) == 0) {
             it = activeProgress_.erase(it);
@@ -1195,41 +1213,41 @@ void LspManager::AcknowledgeLogEntry() {
     hasUnseenLogEntry_ = false;
 }
 
-LspManager::LspStatus LspManager::StatusForLanguage(const std::string& language) const {
-    if (ExistingClientForLanguage(language) != nullptr) {
+LspManager::LspStatus LspManager::StatusForLanguage(const std::string& connectionKey) const {
+    if (ExistingClientForLanguage(connectionKey) != nullptr) {
         return LspStatus::Running;
     }
-    if (failedCommands_.contains(language)) {
+    if (failedCommands_.contains(connectionKey)) {
         return LspStatus::SpawnFailed;
     }
-    if (disconnectedLanguages_.contains(language)) {
+    if (disconnectedLanguages_.contains(connectionKey)) {
         return LspStatus::Disconnected;
     }
     return LspStatus::NotConfigured;
 }
 
-std::string LspManager::SpawnFailureDetail(const std::string& language) const {
-    const auto it = spawnFailureDetail_.find(language);
+std::string LspManager::SpawnFailureDetail(const std::string& connectionKey) const {
+    const auto it = spawnFailureDetail_.find(connectionKey);
     return it != spawnFailureDetail_.end() ? it->second : std::string();
 }
 
-std::string LspManager::DisconnectReason(const std::string& language) const {
-    const auto it = disconnectDetail_.find(language);
+std::string LspManager::DisconnectReason(const std::string& connectionKey) const {
+    const auto it = disconnectDetail_.find(connectionKey);
     return it != disconnectDetail_.end() ? it->second : std::string();
 }
 
-std::optional<SemanticTokensLegend> LspManager::SemanticTokensLegendFor(const std::string& serverKey) const {
-    const auto it = semanticTokensLegend_.find(serverKey);
+std::optional<SemanticTokensLegend> LspManager::SemanticTokensLegendFor(const std::string& connectionKey) const {
+    const auto it = semanticTokensLegend_.find(connectionKey);
     return it != semanticTokensLegend_.end() ? std::optional(it->second) : std::nullopt;
 }
 
-std::optional<OnTypeFormattingTriggers> LspManager::OnTypeFormattingTriggersFor(const std::string& serverKey) const {
-    const auto it = onTypeFormattingTriggers_.find(serverKey);
+std::optional<OnTypeFormattingTriggers> LspManager::OnTypeFormattingTriggersFor(const std::string& connectionKey) const {
+    const auto it = onTypeFormattingTriggers_.find(connectionKey);
     return it != onTypeFormattingTriggers_.end() ? std::optional(it->second) : std::nullopt;
 }
 
-TextDocumentSyncKind LspManager::TextDocumentSyncKindFor(const std::string& serverKey) const {
-    const auto it = textDocumentSyncKind_.find(serverKey);
+TextDocumentSyncKind LspManager::TextDocumentSyncKindFor(const std::string& connectionKey) const {
+    const auto it = textDocumentSyncKind_.find(connectionKey);
     return it != textDocumentSyncKind_.end() ? it->second : TextDocumentSyncKind::Full;
 }
 
@@ -1387,12 +1405,15 @@ void LspManager::FilterToOwnedRanges(text::Buffer* buffer, const std::string& la
 }
 
 void LspManager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& serverKey) {
-    if (pullDiagnosticsUnsupported_.contains(serverKey)) {
-        return; // learned once that this server doesn't support textDocument/diagnostic
-    }
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         return;
+    }
+    // Latched per connection, not per server key -- resolved after the sync
+    // state above precisely because that's what carries this buffer's own
+    // connection identity. Same reordering applies to every sibling latch.
+    if (pullDiagnosticsUnsupported_.contains(state->connectionKey)) {
+        return; // learned once that this server doesn't support textDocument/diagnostic
     }
     LspClient* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
@@ -1406,27 +1427,20 @@ void LspManager::RequestPullDiagnostics(text::Buffer& buffer, const std::string&
     // same resolve-fresh-not-capture-stale discipline
     // HandlePublishDiagnostics itself already follows for a notification
     // arriving whenever the server feels like sending it.
-    const std::string uri      = state->uri;
-    const std::string  language = state->connectionKey;
-    const Json         params   = {{"textDocument", {{"uri", uri}}}};
+    const std::string uri           = state->uri;
+    const std::string connectionKey = state->connectionKey; // the "stop asking" latch's own key
+    const std::string sourceKey     = serverKey;            // diagnosticsBySource_/FilterToOwnedRanges' key -- per server, not per connection
+    const Json        params        = {{"textDocument", {{"uri", uri}}}};
     client->SendRequest(
         "textDocument/diagnostic", params,
-        [this, uri, language](std::optional<Json> result, std::optional<Json> error) {
+        [this, uri, connectionKey, sourceKey](std::optional<Json> result, std::optional<Json> error) {
             if (error) {
                 // A real error response (as opposed to a legitimate "no
                 // diagnostics right now" empty items array) is this
                 // server's own proof it doesn't implement the method --
                 // stop asking for the rest of this connection's lifetime
-                // rather than re-erroring on every sync. LSP multi-root
-                // follow-up: latched under `language` (state->connectionKey,
-                // == serverKey in the common single-root case) rather than
-                // this call's own serverKey parameter -- in a genuine
-                // multi-root scenario this just means the latch is learned
-                // per-connection instead of per-language, a strictly finer
-                // (never incorrect) grain than the top-of-function check
-                // above, at worst one avoidable repeat request for a second
-                // same-language server against a different root.
-                pullDiagnosticsUnsupported_.insert(language);
+                // rather than re-erroring on every sync.
+                pullDiagnosticsUnsupported_.insert(connectionKey);
                 return;
             }
             if (!result) {
@@ -1449,16 +1463,16 @@ void LspManager::RequestPullDiagnostics(text::Buffer& buffer, const std::string&
                     .startByte = LspPositionToByte(content, item.start),
                     .endByte   = LspPositionToByte(content, item.end),
                     .severity  = SeverityFromLsp(item.severity),
-                    .origin    = (language == kProseLanguageKey) ? text::Buffer::Diagnostic::Origin::Prose
-                                                                 : text::Buffer::Diagnostic::Origin::Code,
+                    .origin    = (sourceKey == kProseLanguageKey) ? text::Buffer::Diagnostic::Origin::Prose
+                                                                  : text::Buffer::Diagnostic::Origin::Code,
                     .message   = item.message,
                 });
             }
-            FilterToOwnedRanges(buffer, language, diagnostics);
+            FilterToOwnedRanges(buffer, sourceKey, diagnostics);
             // Same source-key slot HandlePublishDiagnostics writes into --
             // see this method's own doc comment in LspManager.h for why
             // that's the deliberate choice here.
-            diagnosticsBySource_[buffer][language] = std::move(diagnostics);
+            diagnosticsBySource_[buffer][sourceKey] = std::move(diagnostics);
             PushMergedDiagnostics(*buffer);
         });
 }
@@ -1506,10 +1520,7 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
     if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
         return;
     }
-    // LSP multi-root follow-up: serverKey (plain), not state->connectionKey
-    // -- SemanticTokensLegendFor's own store is deliberately still
-    // plain-keyed, see this class's own header comment.
-    const std::optional<SemanticTokensLegend> legend = SemanticTokensLegendFor(serverKey);
+    const std::optional<SemanticTokensLegend> legend = SemanticTokensLegendFor(state->connectionKey);
     if (!legend) {
         return; // server never advertised a legend -- any of the three responses would be undecodable anyway
     }
@@ -1520,12 +1531,16 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
 
     const SemanticTokensLegend legendCopy = *legend;
     text::Buffer* const        bufferPtr  = &buffer;
+    // Copied out of state before any SendRequest: every "learned once, stop
+    // asking" latch below is per connection, and state may not outlive the
+    // async round trip.
+    const std::string connectionKey = state->connectionKey;
 
     // range/delta follow-up: range is preferred whenever the server both
     // advertised it and hasn't since proven (a real error response) that it
     // doesn't actually honor it -- see RequestSemanticTokens' own header
     // doc comment for the full three-way decision this mirrors.
-    if (legendCopy.rangeSupported && !semanticTokensRangeUnsupported_.contains(serverKey)) {
+    if (legendCopy.rangeSupported && !semanticTokensRangeUnsupported_.contains(state->connectionKey)) {
         const auto requestedRange = std::make_tuple(buffer.ContentGeneration(), viewportStartByte, viewportEndByte);
         if (const auto it = semanticTokensRequestedRange_.find(&buffer);
             it != semanticTokensRequestedRange_.end() && it->second == requestedRange) {
@@ -1544,7 +1559,8 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
         };
         client->SendRequest(
             "textDocument/semanticTokens/range", params,
-            [this, bufferPtr, requestId, requestedGeneration, legendCopy, serverKey](std::optional<Json> result, std::optional<Json> error) {
+            [this, bufferPtr, requestId, requestedGeneration, legendCopy, connectionKey](std::optional<Json> result,
+                                                                                         std::optional<Json> error) {
                 const auto counterIt = semanticTokensRequestCounter_.find(bufferPtr);
                 if (counterIt == semanticTokensRequestCounter_.end() || counterIt->second != requestId) {
                     return; // superseded by a newer request for this buffer
@@ -1556,7 +1572,7 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
                     // lifetime rather than re-erroring on every viewport
                     // change. The next request for this buffer falls
                     // through to the full/delta path below instead.
-                    semanticTokensRangeUnsupported_.insert(serverKey);
+                    semanticTokensRangeUnsupported_.insert(connectionKey);
                     return;
                 }
                 if (!result) {
@@ -1583,7 +1599,7 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
     const std::size_t requestId                 = ++semanticTokensRequestCounter_[&buffer];
     const std::size_t requestedGeneration       = buffer.ContentGeneration();
 
-    const bool useDelta = legendCopy.fullDeltaSupported && !semanticTokensFullDeltaUnsupported_.contains(serverKey) &&
+    const bool useDelta = legendCopy.fullDeltaSupported && !semanticTokensFullDeltaUnsupported_.contains(state->connectionKey) &&
                           previousSemanticTokens_.contains(&buffer);
     if (useDelta) {
         const Json params = {
@@ -1592,7 +1608,8 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
         };
         client->SendRequest(
             "textDocument/semanticTokens/full/delta", params,
-            [this, bufferPtr, requestId, requestedGeneration, legendCopy, serverKey](std::optional<Json> result, std::optional<Json> error) {
+            [this, bufferPtr, requestId, requestedGeneration, legendCopy, connectionKey](std::optional<Json> result,
+                                                                                         std::optional<Json> error) {
                 const auto counterIt = semanticTokensRequestCounter_.find(bufferPtr);
                 if (counterIt == semanticTokensRequestCounter_.end() || counterIt->second != requestId) {
                     return; // superseded by a newer request for this buffer
@@ -1603,7 +1620,7 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
                     // full.delta:true but errors on the actual request
                     // falls back to plain full requests for the rest of
                     // this connection's lifetime.
-                    semanticTokensFullDeltaUnsupported_.insert(serverKey);
+                    semanticTokensFullDeltaUnsupported_.insert(connectionKey);
                     return;
                 }
                 if (!result) {
@@ -1698,12 +1715,12 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
     if (!LspInlayHintsEnabled()) {
         return;
     }
-    if (inlayHintsUnsupported_.contains(serverKey)) {
-        return; // learned once that this server doesn't support textDocument/inlayHint
-    }
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         return;
+    }
+    if (inlayHintsUnsupported_.contains(state->connectionKey)) {
+        return; // learned once that this server doesn't support textDocument/inlayHint
     }
     // sync-debounce follow-up: see RequestSemanticTokens' own doc
     // comment for why this guard exists now.
@@ -1726,14 +1743,15 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
     const text::ITextStorage& content   = buffer.Content();
     const LspPosition         start     = BytePositionToLsp(content, viewportStartByte);
     const LspPosition         end       = BytePositionToLsp(content, viewportEndByte);
-    text::Buffer* const       bufferPtr = &buffer;
-    const Json                params    = {
+    text::Buffer* const       bufferPtr     = &buffer;
+    const std::string         connectionKey = state->connectionKey; // per-connection latch, see RequestSemanticTokens
+    const Json                params        = {
         {"textDocument", {{"uri", state->uri}}},
         {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
     };
     client->SendRequest(
         "textDocument/inlayHint", params,
-        [this, bufferPtr, requestId, requestedGeneration, serverKey](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, requestedGeneration, connectionKey](std::optional<Json> result, std::optional<Json> error) {
             const auto counterIt = inlayHintsRequestCounter_.find(bufferPtr);
             if (counterIt == inlayHintsRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
@@ -1743,7 +1761,7 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
                 // doesn't implement the method -- stop asking for the rest
                 // of this connection's lifetime rather than re-erroring on
                 // every viewport change.
-                inlayHintsUnsupported_.insert(serverKey);
+                inlayHintsUnsupported_.insert(connectionKey);
                 return;
             }
             if (!result) {
@@ -1782,12 +1800,12 @@ void LspManager::RequestCodeLenses(text::Buffer& buffer, const std::string& serv
     if (!LspCodeLensEnabled()) {
         return;
     }
-    if (codeLensUnsupported_.contains(serverKey)) {
-        return; // learned once that this server doesn't support textDocument/codeLens
-    }
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         return;
+    }
+    if (codeLensUnsupported_.contains(state->connectionKey)) {
+        return; // learned once that this server doesn't support textDocument/codeLens
     }
     // sync-debounce follow-up: see RequestSemanticTokens' own doc
     // comment for why this guard exists now.
@@ -1806,17 +1824,18 @@ void LspManager::RequestCodeLenses(text::Buffer& buffer, const std::string& serv
     codeLensRequestedGeneration_[&buffer] = buffer.ContentGeneration();
     const std::size_t requestId           = ++codeLensRequestCounter_[&buffer];
 
-    text::Buffer* const bufferPtr = &buffer;
-    const Json          params    = {{"textDocument", {{"uri", state->uri}}}};
+    text::Buffer* const bufferPtr     = &buffer;
+    const std::string   connectionKey = state->connectionKey; // per-connection latch, see RequestSemanticTokens
+    const Json          params        = {{"textDocument", {{"uri", state->uri}}}};
     client->SendRequest(
         "textDocument/codeLens", params,
-        [this, bufferPtr, requestId, serverKey](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, connectionKey](std::optional<Json> result, std::optional<Json> error) {
             const auto counterIt = codeLensRequestCounter_.find(bufferPtr);
             if (counterIt == codeLensRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
             }
             if (error) {
-                codeLensUnsupported_.insert(serverKey);
+                codeLensUnsupported_.insert(connectionKey);
                 return;
             }
             if (!result) {
@@ -1893,11 +1912,11 @@ void LspManager::PushMergedDiagnostics(text::Buffer& buffer) {
     buffer.SetDiagnostics(std::move(merged));
 }
 
-void LspManager::HandleProgress(const std::string& language, const Json& params) {
+void LspManager::HandleProgress(const std::string& connectionKey, const Json& params) {
     if (!params.contains("token") || !params.contains("value") || !params["value"].is_object()) {
         return;
     }
-    const std::string key   = language + '\x1f' + params["token"].dump();
+    const std::string key   = connectionKey + '\x1f' + params["token"].dump();
     const Json&       value = params["value"];
     const std::string kind  = value.value("kind", std::string());
 
