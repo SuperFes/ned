@@ -5,6 +5,7 @@
 #include <fstream>
 #include <string>
 
+#include "Editor/Dap/DapManager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mcp/McpToolRegistry.h"
@@ -17,6 +18,7 @@
 
 using ned::editor::ProjectRoot;
 using ned::editor::SetProjectRoot;
+using ned::editor::dap::DapManager;
 using ned::editor::lsp::LspManager;
 using ned::editor::mcp::ToolRegistry;
 using ned::editor::testrun::TestRunner;
@@ -39,7 +41,8 @@ struct Fixture {
     LspManager   lspManager{bufferList, eventLoop};
     VcsRunner    vcsRunner{eventLoop};
     TestRunner   testRunner{bufferList, eventLoop};
-    ToolRegistry registry{bufferList, lspManager, vcsRunner, testRunner};
+    DapManager         dapManager{eventLoop};
+    ToolRegistry       registry{bufferList, lspManager, vcsRunner, testRunner, dapManager};
 };
 
 bool IsError(const ned::editor::mcp::Json& result) {
@@ -57,9 +60,42 @@ TEST_CASE("ToolRegistry::ListTools reports every built-in tool", "[Mcp]") {
     const auto tools = fixture.registry.ListTools();
 
     const std::vector<std::string> expectedNames = {
-        "get_diagnostics", "hover", "goto_definition", "find_references", "git_status", "git_diff", "search_project", "run_tests", "get_test_results",
-        "git_stage", "git_unstage", "git_commit", "git_branch_list", "git_branch_switch", "git_blame", "rerun_failed_tests", "workspace_symbols",
-        "format_buffer", "code_actions", "preview_rename", "get_diagnostics_log",
+        "get_diagnostics",
+        "hover",
+        "goto_definition",
+        "find_references",
+        "git_status",
+        "git_diff",
+        "search_project",
+        "run_tests",
+        "get_test_results",
+        "git_stage",
+        "git_unstage",
+        "git_commit",
+        "git_branch_list",
+        "git_branch_switch",
+        "git_blame",
+        "rerun_failed_tests",
+        "workspace_symbols",
+        "format_buffer",
+        "code_actions",
+        "preview_rename",
+        "get_diagnostics_log",
+        "dap_list_breakpoints",
+        "dap_set_breakpoint",
+        "dap_remove_breakpoint",
+        "dap_continue",
+        "dap_pause",
+        "dap_stop_session",
+        "dap_step_over",
+        "dap_step_into",
+        "dap_step_out",
+        "dap_get_current_location",
+        "dap_get_stack_trace",
+        "dap_get_scopes",
+        "dap_get_variables",
+        "dap_evaluate",
+        "dap_list_watches",
     };
     REQUIRE(tools.size() == expectedNames.size());
     for (const std::string& name : expectedNames) {
@@ -353,6 +389,170 @@ TEST_CASE("get_diagnostics_log returns entries filtered by a real category", "[M
         invoked = true;
         REQUIRE_FALSE(IsError(result));
         REQUIRE(ResultText(result).find("mcp-registry-test marker message") != std::string::npos);
+    });
+    REQUIRE(invoked);
+}
+
+TEST_CASE("dap_list_breakpoints reports none set, then a round trip through dap_set_breakpoint/dap_remove_breakpoint", "[Mcp][Dap]") {
+    Fixture fixture;
+
+    bool invoked = false;
+    fixture.registry.CallTool("dap_list_breakpoints", ned::editor::mcp::Json::object(), [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result) == "No breakpoints set.");
+    });
+    REQUIRE(invoked);
+
+    invoked = false;
+    fixture.registry.CallTool(
+        "dap_set_breakpoint", ned::editor::mcp::Json{{"file", "x.cpp"}, {"line", 10}, {"condition", "n > 3"}}, [&](ned::editor::mcp::Json result) {
+            invoked = true;
+            REQUIRE_FALSE(IsError(result));
+        });
+    REQUIRE(invoked);
+
+    invoked = false;
+    fixture.registry.CallTool("dap_list_breakpoints", ned::editor::mcp::Json::object(), [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        const auto parsed = ned::editor::mcp::Json::parse(ResultText(result));
+        REQUIRE(parsed.size() == 1);
+        REQUIRE(parsed[0].at("line") == 10);
+        REQUIRE(parsed[0].at("condition") == "n > 3");
+    });
+    REQUIRE(invoked);
+
+    invoked = false;
+    fixture.registry.CallTool("dap_remove_breakpoint", ned::editor::mcp::Json{{"file", "x.cpp"}, {"line", 10}}, [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result).find("Removed") != std::string::npos);
+    });
+    REQUIRE(invoked);
+
+    invoked = false;
+    fixture.registry.CallTool("dap_list_breakpoints", ned::editor::mcp::Json::object(), [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result) == "No breakpoints set.");
+    });
+    REQUIRE(invoked);
+}
+
+TEST_CASE("dap_remove_breakpoint reports an error when there's nothing to remove", "[Mcp][Dap]") {
+    Fixture fixture;
+    bool    invoked = false;
+    fixture.registry.CallTool("dap_remove_breakpoint", ned::editor::mcp::Json{{"file", "x.cpp"}, {"line", 10}}, [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result).find("No breakpoint at") != std::string::npos);
+    });
+    REQUIRE(invoked);
+}
+
+TEST_CASE("dap_continue reports no launch configuration when nothing's configured for the language", "[Mcp][Dap]") {
+    Fixture fixture;
+    bool    invoked = false;
+    fixture.registry.CallTool("dap_continue", ned::editor::mcp::Json{{"language", "not-a-real-language"}}, [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result).find("No launch configuration") != std::string::npos);
+    });
+    REQUIRE(invoked);
+}
+
+TEST_CASE("dap_pause/dap_stop_session report no session, dap_step_over/into/out report not stopped, when none is running", "[Mcp][Dap]") {
+    Fixture fixture;
+    for (const char* tool : {"dap_pause", "dap_stop_session"}) {
+        bool invoked = false;
+        fixture.registry.CallTool(tool, ned::editor::mcp::Json::object(), [&](ned::editor::mcp::Json result) {
+            invoked = true;
+            REQUIRE_FALSE(IsError(result));
+            REQUIRE(ResultText(result).find("No debug session") != std::string::npos);
+        });
+        REQUIRE(invoked);
+    }
+    for (const char* tool : {"dap_step_over", "dap_step_into", "dap_step_out"}) {
+        bool invoked = false;
+        fixture.registry.CallTool(tool, ned::editor::mcp::Json::object(), [&](ned::editor::mcp::Json result) {
+            invoked = true;
+            REQUIRE_FALSE(IsError(result));
+            REQUIRE(ResultText(result).find("Not stopped") != std::string::npos);
+        });
+        REQUIRE(invoked);
+    }
+}
+
+TEST_CASE("dap_get_current_location reports not stopped when no session is running", "[Mcp][Dap]") {
+    Fixture fixture;
+    bool    invoked = false;
+    fixture.registry.CallTool("dap_get_current_location", ned::editor::mcp::Json::object(), [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result) == "Debug session is not currently stopped.");
+    });
+    REQUIRE(invoked);
+}
+
+TEST_CASE("dap_get_stack_trace/dap_get_scopes/dap_get_variables resolve synchronously to no data with no session", "[Mcp][Dap]") {
+    Fixture fixture;
+    bool    invoked = false;
+    fixture.registry.CallTool("dap_get_stack_trace", ned::editor::mcp::Json::object(), [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result).find("No stack available") != std::string::npos);
+    });
+    REQUIRE(invoked);
+
+    invoked = false;
+    fixture.registry.CallTool("dap_get_scopes", ned::editor::mcp::Json{{"frameId", 1}}, [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result).find("No scopes available") != std::string::npos);
+    });
+    REQUIRE(invoked);
+
+    invoked = false;
+    fixture.registry.CallTool("dap_get_variables", ned::editor::mcp::Json{{"variablesReference", 100}}, [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result).find("No variables") != std::string::npos);
+    });
+    REQUIRE(invoked);
+}
+
+TEST_CASE("dap_evaluate reports an error with no session", "[Mcp][Dap]") {
+    Fixture fixture;
+    bool    invoked = false;
+    fixture.registry.CallTool("dap_evaluate", ned::editor::mcp::Json{{"expression", "1 + 1"}}, [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE(IsError(result));
+        REQUIRE(ResultText(result) == "No debug session.");
+    });
+    REQUIRE(invoked);
+}
+
+TEST_CASE("dap_list_watches reports set watches with their history", "[Mcp][Dap]") {
+    Fixture fixture;
+    bool    invoked = false;
+    fixture.registry.CallTool("dap_list_watches", ned::editor::mcp::Json::object(), [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        REQUIRE(ResultText(result) == "No watches set.");
+    });
+    REQUIRE(invoked);
+
+    fixture.dapManager.AddWatch("x");
+
+    invoked = false;
+    fixture.registry.CallTool("dap_list_watches", ned::editor::mcp::Json::object(), [&](ned::editor::mcp::Json result) {
+        invoked = true;
+        REQUIRE_FALSE(IsError(result));
+        const auto parsed = ned::editor::mcp::Json::parse(ResultText(result));
+        REQUIRE(parsed.size() == 1);
+        REQUIRE(parsed[0].at("expression") == "x");
+        REQUIRE_FALSE(parsed[0].contains("history")); // never stopped yet -- no history recorded
     });
     REQUIRE(invoked);
 }

@@ -2627,6 +2627,21 @@ class BufferView : public Widget {
     // collision -- same convention BuildResultsBuffer set) and switches to
     // it.
     void BuildDebugBuffer(const std::vector<std::string>& lines);
+    // DAP<->ACP debugging bridge follow-up: ShowDebugInfo's own stackTrace
+    // -> scopes/watches -> variables fan-out, extracted so a second consumer
+    // (SendDebugStateToAgent below) can reuse the exact same lines without
+    // duplicating the chained-async logic -- LspEditApply.h's own precedent
+    // for pulling a BufferView-internal chain out once a second caller needs
+    // it. onComplete gets an empty vector when there's no stack to show (no
+    // stopped session), the same "graceful empty" signal ShowDebugInfo's own
+    // frames.empty() check already used inline.
+    void BuildDebugInfoLines(std::function<void(std::vector<std::string>)> onComplete);
+    // DAP<->ACP debugging bridge: dap-ask-agent's body -- formats
+    // BuildDebugInfoLines' own output as one plain-text prompt and sends it
+    // via AcpManager::SendPrompt. Guarded by the caller (StartInteractiveSession)
+    // on dapManager_/acpManager_ both being present and the DAP session being
+    // Stopped -- this method assumes both are already true.
+    void SendDebugStateToAgent();
 
     // DAP round 2: dap-remove-watch's body -- parses a "[watch:N]" trailing
     // marker off point's own "*debug*" buffer line (ExpandVariableAtPoint's

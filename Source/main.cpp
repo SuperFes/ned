@@ -1185,7 +1185,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // the bridge socket itself is only ever actually opened lazily, from
     // AcpManager::StartSession, and only when ned/set-acp-mcp-bridge (see
     // Editor/Mcp/McpBridgeSetting.h, default on) allows it.
-    ned::editor::mcp::ToolRegistry     mcpToolRegistry(bufferList, lspManager, vcsRunner, testRunner);
+    ned::editor::mcp::ToolRegistry     mcpToolRegistry(bufferList, lspManager, vcsRunner, testRunner, dapManager);
     ned::editor::mcp::McpBridgeServer  mcpBridgeServer(mcpToolRegistry, eventLoop);
     acpManager.SetMcpBridgeServer(&mcpBridgeServer);
 

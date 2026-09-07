@@ -15,6 +15,9 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include "Editor/Acp/AcpClient.h"
+#include "Editor/Acp/AcpManager.h"
+#include "Editor/Acp/Transport.h"
 #include "Editor/Backup.h"
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
@@ -651,6 +654,81 @@ std::string DapResponseFrame(int requestSeq, const std::string& command, ned::ed
 
 std::string DapEventFrame(const std::string& event, ned::editor::dap::Json body) {
     return ned::editor::dap::Json{{"seq", 999}, {"type", "event"}, {"event", event}, {"body", std::move(body)}}.dump();
+}
+
+// DAP<->ACP debugging bridge: FakeDapAdapter's newline-delimited-JSON
+// counterpart for ACP (AcpManagerTest.cpp's own MessageReader/ManagerFixture
+// shape, adapted for use alongside a BufferView here rather than a bare
+// AcpManager), injected via AcpManager::SetClientForTesting.
+struct FakeAcpAgent {
+    int         agentStdinRead;
+    int         agentStdoutWrite;
+    std::string pendingBuffer_;
+
+    FakeAcpAgent(int readFd, int writeFd) : agentStdinRead(readFd), agentStdoutWrite(writeFd) {
+    }
+    ~FakeAcpAgent() {
+        ::close(agentStdoutWrite);
+        ::close(agentStdinRead);
+    }
+    FakeAcpAgent(const FakeAcpAgent&)            = delete;
+    FakeAcpAgent& operator=(const FakeAcpAgent&) = delete;
+    FakeAcpAgent(FakeAcpAgent&&)                 = default;
+
+    static FakeAcpAgent Create(ned::editor::acp::AcpManager& manager, ned::ui::EventLoop& eventLoop, ned::editor::acp::AcpClient*& outClient) {
+        int clientWritesHere[2];
+        int clientReadsHere[2];
+        REQUIRE(::pipe(clientWritesHere) == 0);
+        REQUIRE(::pipe(clientReadsHere) == 0);
+        auto client = std::make_unique<ned::editor::acp::AcpClient>(
+            ned::editor::acp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+        outClient = &manager.SetClientForTesting(std::move(client));
+        return FakeAcpAgent(clientWritesHere[0], clientReadsHere[1]);
+    }
+
+    // Reads the next newline-delimited request. Buffers leftover bytes
+    // across calls, same reasoning as FakeDapAdapter::NextRequest.
+    ned::editor::acp::Json NextRequest() {
+        for (int i = 0; i < 16; ++i) {
+            const auto newlinePos = pendingBuffer_.find('\n');
+            if (newlinePos != std::string::npos) {
+                const std::string line = pendingBuffer_.substr(0, newlinePos);
+                pendingBuffer_.erase(0, newlinePos + 1);
+                return ned::editor::acp::Json::parse(line);
+            }
+            char          chunk[512];
+            const ssize_t n = ::read(agentStdinRead, chunk, sizeof(chunk));
+            if (n <= 0) {
+                break;
+            }
+            pendingBuffer_.append(chunk, static_cast<std::size_t>(n));
+        }
+        FAIL("no complete ACP message available on fd");
+        return ned::editor::acp::Json::object();
+    }
+};
+
+std::string AcpResultFrame(const ned::editor::acp::Json& id, ned::editor::acp::Json result) {
+    return ned::editor::acp::Json{{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(result)}}.dump();
+}
+
+// Drives StartSession through the initialize/session-new handshake against
+// a FakeAcpAgent, leaving the session Active -- AcpManagerTest.cpp's own
+// ManagerFixture::StartActiveSession, free-standing here since this file's
+// tests don't otherwise wrap AcpManager in its own fixture type.
+void StartActiveAcpSession(ned::editor::acp::AcpManager& manager, ned::editor::acp::AcpClient& client, FakeAcpAgent& agent, const std::string& agentName) {
+    ned::text::Buffer* outputBuffer = manager.StartSession(agentName);
+    REQUIRE(outputBuffer != nullptr);
+
+    const auto initializeRequest = agent.NextRequest();
+    REQUIRE(initializeRequest["method"] == "initialize");
+    client.DispatchFrame(AcpResultFrame(initializeRequest["id"], ned::editor::acp::Json::object()));
+
+    const auto sessionNewRequest = agent.NextRequest();
+    REQUIRE(sessionNewRequest["method"] == "session/new");
+    client.DispatchFrame(AcpResultFrame(sessionNewRequest["id"], ned::editor::acp::Json{{"sessionId", "s1"}}));
+
+    REQUIRE(manager.State() == ned::editor::acp::AcpManager::SessionState::Active);
 }
 
 } // namespace
@@ -3024,6 +3102,128 @@ TEST_CASE("dap-show-pointer-graph refuses when point isn't on an expandable *deb
     TypeText(view, "dap-show-pointer-graph");
     view.OnEvent(ned::ui::test::Return());
     REQUIRE(fixture.statusMessage == "No expandable variable on this line.");
+}
+
+TEST_CASE("dap-ask-agent reports no debugger available with no DapManager wired", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-ask-agent");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "No debugger available.");
+}
+
+TEST_CASE("dap-ask-agent reports not stopped when the debug session isn't paused", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-ask-agent");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Debug session is not stopped.");
+}
+
+TEST_CASE("dap-ask-agent reports no active ACP session when the debugger is stopped but no agent is running", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ask-agent-no-acp", "{}");
+    manager.StartOrContinue("bufferview-dap-ask-agent-no-acp");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ask-agent-no-acp", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-ask-agent");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "No active ACP session (see acp-start-session).");
+}
+
+TEST_CASE("dap-ask-agent sends the stopped session's stack and variables to the active ACP agent", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager dapManager(eventLoop);
+    ned::editor::dap::DapClient* dapClient  = nullptr;
+    FakeDapAdapter               dapAdapter = FakeDapAdapter::Create(dapManager, eventLoop, dapClient);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ask-agent", "{}");
+    dapManager.StartOrContinue("bufferview-dap-ask-agent");
+    const auto initialize = dapAdapter.NextRequest();
+    dapClient->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = dapAdapter.NextRequest();
+    dapClient->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+    dapClient->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = dapAdapter.NextRequest();
+    dapClient->DispatchFrame(DapResponseFrame(
+        autoStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ask-agent", "");
+
+    ned::editor::acp::AcpManager acpManager(fixture.bufferList, eventLoop);
+    ned::editor::acp::AcpClient* acpClient = nullptr;
+    FakeAcpAgent                 acpAgent  = FakeAcpAgent::Create(acpManager, eventLoop, acpClient);
+    StartActiveAcpSession(acpManager, *acpClient, acpAgent, "test-agent");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&dapManager);
+    view.SetAcpManager(&acpManager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-ask-agent");
+    view.OnEvent(ned::ui::test::Return());
+
+    // BuildDebugInfoLines' own fan-out: dap-ask-agent re-fetches the stack
+    // and (since there's a stopped top frame) its scopes, same as
+    // dap-show-debug does.
+    const auto stackTrace = dapAdapter.NextRequest();
+    REQUIRE(stackTrace["command"] == "stackTrace");
+    dapClient->DispatchFrame(DapResponseFrame(
+        stackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopesRequest = dapAdapter.NextRequest();
+    REQUIRE(scopesRequest["command"] == "scopes");
+    dapClient->DispatchFrame(DapResponseFrame(
+        scopesRequest["seq"].get<int>(), "scopes",
+        {{"scopes", ned::editor::dap::Json::array({{{"name", "Locals"}, {"variablesReference", 100}}})}}));
+    const auto variablesRequest = dapAdapter.NextRequest();
+    REQUIRE(variablesRequest["command"] == "variables");
+    dapClient->DispatchFrame(DapResponseFrame(
+        variablesRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array({{{"name", "x"}, {"value", "42"}, {"type", "int"}, {"variablesReference", 0}}})}}));
+
+    const auto promptRequest = acpAgent.NextRequest();
+    REQUIRE(promptRequest["method"] == "session/prompt");
+    const std::string promptText = promptRequest["params"]["prompt"][0]["text"].get<std::string>();
+    REQUIRE(promptText.find("The debugger is currently stopped.") != std::string::npos);
+    REQUIRE(promptText.find("== Stack ==") != std::string::npos);
+    REQUIRE(promptText.find("#0 main") != std::string::npos);
+    REQUIRE(promptText.find("x: int = 42") != std::string::npos);
+    REQUIRE(fixture.statusMessage == "Sent.");
+
+    // No *debug* buffer switch happened -- dap-ask-agent gathers the same
+    // data dap-show-debug does but never calls BuildDebugBuffer.
+    REQUIRE(fixture.bufferList.Find("*debug*") == nullptr);
 }
 
 TEST_CASE("dap-toggle-hex-format toggles a variable line's display format and back", "[BufferView]") {

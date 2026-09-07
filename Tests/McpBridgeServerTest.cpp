@@ -10,6 +10,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "Editor/Dap/DapManager.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mcp/McpBridgeServer.h"
 #include "Editor/Mcp/McpToolRegistry.h"
@@ -20,6 +21,7 @@
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
 
+using ned::editor::dap::DapManager;
 using ned::editor::lsp::LspManager;
 using ned::editor::mcp::Json;
 using ned::editor::mcp::McpBridgeServer;
@@ -39,7 +41,8 @@ struct Fixture {
     LspManager         lspManager{bufferList, eventLoop};
     VcsRunner          vcsRunner{eventLoop};
     TestRunner         testRunner{bufferList, eventLoop};
-    ToolRegistry       registry{bufferList, lspManager, vcsRunner, testRunner};
+    DapManager         dapManager{eventLoop};
+    ToolRegistry       registry{bufferList, lspManager, vcsRunner, testRunner, dapManager};
     McpBridgeServer    server{registry, eventLoop};
 };
 
@@ -120,7 +123,7 @@ TEST_CASE("McpBridgeServer serves initialize, tools/list, and tools/call over a 
     const Json listResponse = Json::parse(listLine);
     REQUIRE(listResponse.at("id") == 2);
     const Json& tools = listResponse.at("result").at("tools");
-    REQUIRE(tools.size() == 21);
+    REQUIRE(tools.size() == 36);
     bool foundGetTestResults = false;
     for (const Json& tool : tools) {
         if (tool.at("name") == "get_test_results") {
