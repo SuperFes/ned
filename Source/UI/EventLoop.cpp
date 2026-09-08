@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <stdexcept>
 
 #include <csignal>
@@ -75,14 +76,35 @@ namespace {
     // terminal won't send bracketed-paste markers, degrading back to
     // today's per-character paste behavior, not a reason to crash.
     void EnableBracketedPaste() {
+        if (HeadlessOutputForTesting()) {
+            return; // see SetHeadlessOutputForTesting's own doc comment
+        }
         [[maybe_unused]] const ssize_t written = write(STDOUT_FILENO, "\x1b[?2004h", 8);
     }
 
     void DisableBracketedPaste() {
+        if (HeadlessOutputForTesting()) {
+            return; // ditto
+        }
         [[maybe_unused]] const ssize_t written = write(STDOUT_FILENO, "\x1b[?2004l", 8);
     }
 
 } // namespace
+
+namespace {
+    std::mutex g_headlessMutex;
+    bool       g_headless = false;
+} // namespace
+
+void SetHeadlessOutputForTesting(bool headless) {
+    const std::lock_guard<std::mutex> lock(g_headlessMutex);
+    g_headless = headless;
+}
+
+bool HeadlessOutputForTesting() {
+    const std::lock_guard<std::mutex> lock(g_headlessMutex);
+    return g_headless;
+}
 
 // suspend-frame follow-up: everything the constructor originally did to
 // stand up nc_, extracted so Run()'s post-resume path (Suspend()'s own doc
@@ -110,7 +132,17 @@ void EventLoop::InitializeNotcurses_() {
     notcurses_options opts{};
     opts.flags = NCOPTION_NO_QUIT_SIGHANDLERS | NCOPTION_SUPPRESS_BANNERS;
 
-    nc_ = notcurses_core_init(&opts, nullptr);
+    // headless-test-output follow-up: notcurses_core_init's second argument
+    // is the FILE* it renders to (nullptr == stdout). Opened once and never
+    // closed -- it has to outlive every EventLoop in the process, and there
+    // is no teardown hook that could safely own it.
+    FILE* renderTo = nullptr;
+    if (HeadlessOutputForTesting()) {
+        static FILE* const devNull = std::fopen("/dev/null", "we");
+        renderTo                   = devNull; // still nullptr (i.e. stdout) if the open failed -- best-effort, never a hard failure
+    }
+
+    nc_ = notcurses_core_init(&opts, renderTo);
     if (nc_ == nullptr) {
         throw std::runtime_error("EventLoop: notcurses_core_init failed");
     }
@@ -131,7 +163,7 @@ void EventLoop::InitializeNotcurses_() {
     // handling (both are silently no-ops on a non-terminal stdin, which
     // never happens in real usage but shouldn't crash a test harness either).
     termios rawTermios{};
-    if (tcgetattr(STDIN_FILENO, &rawTermios) == 0) {
+    if (!HeadlessOutputForTesting() && tcgetattr(STDIN_FILENO, &rawTermios) == 0) {
         rawTermios.c_iflag &= ~static_cast<tcflag_t>(IXON | IXOFF);
         tcsetattr(STDIN_FILENO, TCSANOW, &rawTermios);
     }

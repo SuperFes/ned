@@ -90,6 +90,28 @@ struct EventLoopCallbacks {
 // (Janet/Environment.h), though for an entirely different reason: this one
 // is just RAII over a single global terminal resource, not a library with
 // known init/deinit-cycle corruption bugs.
+// headless-test-output follow-up. Process-wide switch, default false:
+// when set, EventLoop's Notcurses context renders into /dev/null instead of
+// stdout, and the two things this class writes to the real terminal outside
+// Notcurses' own output stream (the IXON/IXOFF termios tweak on stdin, and
+// the bracketed-paste DECSET/DECRST pair on stdout) are skipped.
+//
+// Exists because ned_tests constructs a real EventLoop per test case -- 3783
+// of them -- and every one wrote its alt-screen enter/leave, cursor, and
+// bracketed-paste sequences straight to whatever terminal the suite happened
+// to run under: a full-suite log that is almost entirely escape bytes, a
+// terminal that visibly flickers for the length of the run, and stdin's
+// termios flags mutated on the developer's own shell. Mirrors
+// Editor/Clipboard.h's own SetOsc52Enabled in shape and purpose;
+// Tests/TerminalOutputTestGuard.cpp forces it on once for the whole binary.
+//
+// It also makes the suite deterministic across environments: Notcurses'
+// capability probes (CanTrueColor/PaletteSize/CanPixelBlit below) otherwise
+// answer differently depending on whether stdout happened to be a real tty
+// or a ctest pipe.
+void               SetHeadlessOutputForTesting(bool headless);
+[[nodiscard]] bool HeadlessOutputForTesting();
+
 class EventLoop {
   public:
     EventLoop();
