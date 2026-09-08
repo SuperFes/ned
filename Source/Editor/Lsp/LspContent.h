@@ -25,9 +25,31 @@ namespace ned::editor::lsp {
 
 using Json = nlohmann::json;
 
+// code-actions follow-up. One text edit within a WorkspaceEdit's "changes"
+// array for a single URI -- start/end stay as LSP Positions (not byte
+// offsets) since a code action's edits are only resolved against a buffer's
+// *current* content at the moment the user actually accepts it, which can
+// be well after the response arrived. (Declared ahead of CompletionItem
+// rather than beside its own ExtractWorkspaceEditChanges below because
+// completion-fidelity's CompletionItem::textEdit holds one by value.)
+struct WorkspaceTextEdit {
+    LspPosition start;
+    LspPosition end;
+    std::string newText;
+
+    bool operator==(const WorkspaceTextEdit&) const = default;
+};
+
 struct CompletionItem {
     std::string label;
-    std::string insertText; // falls back to label if the server omitted it
+    // The literal text to insert. Falls back to label if the server omitted
+    // it, and -- completion-fidelity follow-up -- mirrors textEdit->newText
+    // whenever a textEdit is present (the spec makes textEdit win outright
+    // over insertText when both are sent), so a consumer that only wants
+    // "what text goes in" never has to check both fields. textEdit below
+    // adds the *range* that text replaces, which is the part insertText
+    // alone can't express.
+    std::string insertText;
     // snippet-expansion follow-up: insertTextFormat == 2 -- insertText is
     // TextMate snippet syntax (${1:...}), not literal text; the accept path
     // must expand it (Editor/Snippet.h), never insert it raw. Trailing with
@@ -55,6 +77,29 @@ struct CompletionItem {
     // always leave this empty -- no doc source to draw from).
     std::string documentation;
 
+    // completion-fidelity follow-up: the server's own textEdit, if it sent
+    // one -- start/end stay as LSP Positions (not byte offsets) for exactly
+    // the reason WorkspaceTextEdit's own doc comment gives, and because the
+    // conversion needs a buffer this pure parsing layer doesn't have.
+    // Editor/CompletionSession.h resolves it to a byte offset once, on
+    // receipt. Both spec shapes land here: a plain TextEdit {range, newText}
+    // and an InsertReplaceEdit {insert, replace, newText} -- for the latter
+    // the *insert* range is taken (see kUseInsertRangeForInsertReplace in
+    // LspContent.cpp for why). Absent for dabbrev/Janet-synthesized items,
+    // and for a server that only ever sends insertText.
+    std::optional<WorkspaceTextEdit> textEdit;
+
+    // completion-fidelity follow-up: the two client-side-filtering fields.
+    // Both fall back to label when the server omitted them, per the spec's
+    // own stated defaults, so a consumer never has to re-implement that
+    // fallback (and never sees an empty string it would have to treat as
+    // "match nothing"). sortText orders equally-scoring candidates;
+    // filterText is what a typed prefix is matched *against*, which is not
+    // always the label (e.g. a label of "foo (from bar)" filtering on plain
+    // "foo").
+    std::string sortText;
+    std::string filterText;
+
     bool operator==(const CompletionItem&) const = default;
 };
 
@@ -65,24 +110,32 @@ struct CompletionItem {
 // a null/missing/empty result.
 [[nodiscard]] std::optional<std::string> ExtractHoverText(const Json& result);
 
+// completion-fidelity follow-up: isIncomplete is the flag that decides
+// whether a client may narrow the list locally as the user keeps typing
+// (false: this is every match, filter it yourself) or has to ask again
+// (true: the server truncated or approximated). It is the single input
+// behind CompletionSession's Keep-vs-Rerequest decision, which is why it's
+// carried out of parsing rather than dropped on the floor as it used to be.
+// Always false for a bare CompletionItem[] response, per the spec.
+struct CompletionList {
+    std::vector<CompletionItem> items;
+    bool                        isIncomplete = false;
+};
+
 // A completion response is either a bare CompletionItem[] or a
 // CompletionList {isIncomplete, items} -- both handled uniformly. Items
-// without a "label" are skipped; insertText falls back to label. Returned
-// in server order -- no client-side re-filtering/re-sorting.
+// without a "label" are skipped; insertText falls back to label, and a
+// CompletionList's itemDefaults (editRange/insertTextFormat) are folded
+// into each item that didn't carry its own.
+//
+// Returned in server order: ranking/filtering is Editor/CompletionSession.h's
+// job, not this pure parsing layer's -- it needs the buffer's current typed
+// prefix, which no response payload carries.
+[[nodiscard]] CompletionList ExtractCompletionList(const Json& result);
+
+// The items-only half of ExtractCompletionList, for callers with no use for
+// isIncomplete.
 [[nodiscard]] std::vector<CompletionItem> ExtractCompletionItems(const Json& result);
-
-// code-actions follow-up. One text edit within a WorkspaceEdit's "changes"
-// array for a single URI -- start/end stay as LSP Positions (not byte
-// offsets) since a code action's edits are only resolved against a buffer's
-// *current* content at the moment the user actually accepts it, which can
-// be well after the response arrived.
-struct WorkspaceTextEdit {
-    LspPosition start;
-    LspPosition end;
-    std::string newText;
-
-    bool operator==(const WorkspaceTextEdit&) const = default;
-};
 
 // project-undo follow-up: one URI's worth of edits out of a WorkspaceEdit's
 // "changes" map -- shared by CodeAction::edits and RenameResult::edits
