@@ -623,6 +623,11 @@ class WindowManager {
     // ScrollCandidatePopup's own doc comment.
     void ScrollCandidatePopup(int steps);
 
+    // completion-popup-scroll follow-up: same forwarding shape as
+    // ScrollCandidatePopup above, for the (structurally separate) completion
+    // popup -- see BufferView::ScrollCompletionPopup.
+    void ScrollCompletionPopup(int steps);
+
     // session-persistence slice 3: routes the .ned/init.janet trust prompt
     // to whichever pane has focus -- RequestOpenBinaryFile's exact shape;
     // see BufferView::RequestTrustProjectInit for the prompt's own

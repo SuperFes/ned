@@ -744,6 +744,17 @@ for closed-issue history.
       and is where to start looking. Suspected aggravator, unverified: state
       surviving between runs (a stale broker daemon, or a leftover `ned_tests`
       process — one is consistently left behind after a run).
+- [ ] **`Tests/NodeModulesTest.cpp`'s `TempTree` uses a fixed path**
+      (`std::filesystem::temp_directory_path() / "ned-node-modules-test"`, with a
+      `remove_all` in both its constructor and destructor). Under `ctest -j8` the
+      `[NodeModules]` cases run as concurrent processes against that one shared
+      directory, so one test's setup deletes another's tree mid-run — seen as
+      `ResolvePackageEntryPoint resolves a directory "main" via its own index
+      file` and `...returns nullopt when the declared entry file doesn't exist`
+      failing together, both passing in isolation (2026-09-08). Distinct from the
+      protocol-client timeout above and fully root-caused: the fix is a unique
+      per-instance directory (pid/counter suffix), not a retry or a serialized
+      test. Left as-is only because it's noise rather than a product bug.
 - [ ] **`PerformanceTest.cpp`'s huge-buffer point-navigation test under
       `build-sanitize`** (found 2026-09-03, unrelated to whatever change was in flight
       at the time — reproduces on a clean stash of the tree too): "Point navigation

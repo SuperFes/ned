@@ -1074,6 +1074,12 @@ void WindowManager::ScrollCandidatePopup(int steps) {
     }
 }
 
+void WindowManager::ScrollCompletionPopup(int steps) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().ScrollCompletionPopup(steps);
+    }
+}
+
 void WindowManager::RequestTrustProjectInit(
     const std::filesystem::path&                                                   initPath,
     std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onDecision) {
