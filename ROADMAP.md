@@ -706,8 +706,9 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
-Currently empty: `ctest -j8` is clean under both the `default` and `sanitize` presets as
-of 2026-09-08.
+Currently empty as of 2026-09-08: `ctest -j8` is clean under both the `default` and
+`sanitize` presets, and so is the single-process `./build/ned_tests` (see the build/test
+note at the end of this file for why that is a separate check worth making).
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 
@@ -889,6 +890,26 @@ build on), `code-coverage-gutter`.
 - Build/test: `cmake --preset default && cmake --build build`, then
   `ctest --test-dir build`. Sanitizer opt-in: `-DNED_ENABLE_SANITIZERS=ON` with
   `-DCMAKE_BUILD_TYPE=Debug` — the suite is expected clean; a finding is a real bug.
+- `ctest` and `./build/ned_tests` are two genuinely different checks, not a convenience
+  pair — run both before calling a change clean. `ctest` gives each case its own process
+  (isolation, plus `--timeout N` names a hang instead of wedging the run, and `-j8`
+  surfaces cross-process races over shared paths); the single-process binary is the only
+  thing that catches global-state bleed between cases, and it runs them back-to-back with
+  no per-case process startup in between, which has surfaced timing races `ctest` shows as
+  reliably green. Both flavors have been found here, and each mode missed the other's
+  (2026-09-08: `ctest -j8` alone caught the protocol-client poll deadlock and never saw
+  the LSP frame-count race; the single-process run was the exact inverse). Never run two
+  `./build/ned_tests` binaries concurrently — they contend and wedge each other; use
+  `ctest` for parallelism.
+- `ned_tests` is deliberately hermetic against the terminal and the desktop it runs on,
+  via static-initialized guard translation units that flip a process-wide switch before
+  any case runs (`Tests/ClipboardTestGuard.cpp` → `SetClipboardEnabled`/`SetOsc52Enabled`,
+  `Tests/TerminalOutputTestGuard.cpp` → `ned::ui::SetHeadlessOutputForTesting`,
+  `Tests/ProseCheckerTestGuard.cpp`, `Tests/SigpipeTestGuard.cpp`). Anything new that
+  writes to the real terminal, the system clipboard, or shells out to a desktop tool
+  needs the same treatment — add a switch and a guard rather than fixing it at each call
+  site, since a test that legitimately re-enables the feature locally would otherwise
+  reintroduce the escape.
 - When you finish an item above, delete it (or replace it with a one-line pointer) in
   the same commit — don't leave a `[x]` writeup behind. Keeping this file short is the
   point.
