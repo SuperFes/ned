@@ -46,77 +46,6 @@ std::pair<std::size_t, std::size_t> BufferView::HugeStructuralWindow(const text:
     return {windowStart, windowEnd};
 }
 
-void BufferView::EnsureFoldableBlocksCache() const {
-    text::Buffer& buffer = activeBuffer_.Get();
-
-    if (!FoldGutterActive()) {
-        foldableBlocksCache_.clear();
-        // Deliberately a narrower key than the eligible path's below: the two
-        // never compare equal, so re-enabling the fold gutter always rebuilds
-        // rather than matching a stamp left behind while the cache was empty.
-        foldableBlocksCacheStamp_ = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
-        return;
-    }
-
-    const text::ITextStorage&            content                = buffer.Content();
-    const bool                           huge                   = content.IsHuge();
-    const auto [windowStart, windowEnd]                         = HugeStructuralWindow(content);
-
-    const bufferview::CacheStamp stamp =
-        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), windowStart, windowEnd});
-    if (foldableBlocksCacheStamp_.Matches(stamp)) {
-        return;
-    }
-
-    // per-buffer-highlight-cache follow-up: persists across a buffer
-    // switch -- see foldableBlocksCacheByBuffer_'s own doc comment in
-    // BufferView.h, and highlightCacheByBuffer_'s for the full reasoning
-    // this mirrors.
-    const auto it = foldableBlocksCacheByBuffer_.find(&buffer);
-    if (it == foldableBlocksCacheByBuffer_.end() || it->second.contentGeneration != buffer.ContentGeneration() ||
-        it->second.modeName != mode_.name || it->second.windowStart != windowStart || it->second.windowEnd != windowEnd) {
-        FoldableBlocksCacheEntry entry;
-        // huge-file-structural-gutters follow-up: a huge buffer feeds
-        // mode_.fold a bounded window (content.Substring) instead of the
-        // whole document.
-        entry.ranges = huge ? editor::codefold::FoldableBlocks(mode_, content.Substring(windowStart, windowEnd - windowStart))
-                             : editor::codefold::FoldableBlocks(mode_, buffer.Text());
-        if (huge) {
-            // A block whose real closing brace lies beyond the window isn't
-            // simply "not found" -- tree-sitter still emits a
-            // compound_statement node via error recovery for the unclosed
-            // "{", extending all the way to wherever the fed substring runs
-            // out, and c-folds.scm's plain "(compound_statement) @fold"
-            // captures it regardless (confirmed empirically, not assumed:
-            // this is exactly what a first version of this fix's own test
-            // caught). Reporting that truncated range as the block's real
-            // extent would fold to an arbitrary window-edge line, not the
-            // block's actual close -- worse than not finding it at all. Drop
-            // any range whose end reaches the substring's own edge, the same
-            // "don't trust a result abutting the window's own tail unless
-            // the window reached the real document end" rule
-            // Editor/HugeRegexScan.h already established for search.
-            const std::size_t windowLength = windowEnd - windowStart;
-            const bool        reachedDocumentEnd = windowEnd >= content.ByteLength();
-            std::erase_if(entry.ranges, [&](const auto& range) { return !reachedDocumentEnd && range.second >= windowLength; });
-            for (auto& [start, end] : entry.ranges) {
-                start += windowStart;
-                end += windowStart;
-            }
-        }
-        entry.contentGeneration = buffer.ContentGeneration();
-        entry.modeName          = mode_.name;
-        entry.windowStart       = windowStart;
-        entry.windowEnd         = windowEnd;
-        foldableBlocksCache_    = entry.ranges;
-        foldableBlocksCacheByBuffer_.insert_or_assign(&buffer, std::move(entry));
-    }
-    else {
-        foldableBlocksCache_ = it->second.ranges;
-    }
-    foldableBlocksCacheStamp_  = stamp;
-    foldableBlocksCacheWindow_ = {windowStart, windowEnd};
-}
 
 void BufferView::EnsureEmbeddedDocumentCache() {
     text::Buffer& buffer = activeBuffer_.Get();
@@ -139,380 +68,11 @@ void BufferView::EnsureEmbeddedDocumentCache() {
     embeddedDocumentCacheByBuffer_.insert_or_assign(&buffer, std::move(entry));
 }
 
-void BufferView::EnsureFoldGutterCache() const {
-    EnsureFoldableBlocksCache();
-    text::Buffer& buffer = activeBuffer_.Get();
 
-    const bufferview::CacheStamp stamp =
-        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), buffer.FoldGeneration(),
-                                             foldableBlocksCacheWindow_.first, foldableBlocksCacheWindow_.second});
-    if (foldGutterCacheStamp_.Matches(stamp)) {
-        return;
-    }
 
-    foldGutterEntries_.clear();
-    for (auto& column : foldGutterLineRangesByColumn_) {
-        column.clear();
-    }
 
-    if (!foldableBlocksCache_.empty()) {
-        const text::ITextStorage& content = buffer.Content();
-        const auto        regions = editor::codefold::FoldRegionsWithDepth(foldableBlocksCache_);
 
-        foldGutterEntries_.reserve(regions.size());
-        for (const auto& region : regions) {
-            if (region.depth >= kMaxFoldDepthColumns) {
-                // Deeper than the gutter has columns for: draw nothing at
-                // all, rather than the previous clamp-into-the-last-column
-                // behavior, which piled every deeper block's ⊞/⊟ and guide
-                // line on top of the real depth-3 block's own -- visual
-                // noise, and an ambiguous click target (a column-3 click
-                // could land on whichever block happened to stack there).
-                // The block itself stays fully foldable via
-                // code-fold-toggle (M-x/keyboard path reads
-                // FoldableBlocks, not these entries), and a deep block
-                // collapsed that way still hides its lines and shows the
-                // content-side ellipsis -- only the gutter affordance is
-                // depth-capped.
-                continue;
-            }
-            const int         column     = region.depth;
-            const std::size_t headerLine = content.ByteOffsetToLine(region.startByte);
-            const std::size_t closerLine = content.ByteOffsetToLine(region.endByte);
-            if (headerLine == closerLine) {
-                // A block written entirely on one line (e.g. a one-line
-                // function body) has nothing to fold -- collapsing it would
-                // hide zero lines (FoldedLineRanges' own [headerLine + 1,
-                // closerLine + 1) is empty whenever they're equal), so the
-                // gutter shows no ⊞/⊟ for it at all rather than a
-                // clickable affordance that visibly does nothing. Purely a
-                // rendering/click-target filter -- FoldRegionsWithDepth
-                // above still computed this region's real depth, so a
-                // *nested* multi-line block still gets its own correct
-                // column regardless of a one-line sibling/ancestor skipped
-                // here.
-                continue;
-            }
-            if (!foldGutterEntries_.empty() && foldGutterEntries_.back().headerLine == headerLine) {
-                // Only the outermost block opening on a line gets a gutter
-                // affordance (lisp-nesting fix, clojure-and-jank follow-up:
-                // `:profiles {:dev {:dependencies [...` used to stack three
-                // ⊞/⊟ columns on one row). Two multi-line blocks sharing a
-                // header line are necessarily nested -- a sibling can't
-                // start before the previous multi-line block's closing line
-                // -- and regions arrive sorted by startByte, so the first
-                // entry added for a line is always the outermost; everything
-                // after it here is an inner block whose fold the outer one's
-                // covers. ToggleFoldAtLine's outermost-wins rule (CodeFold.h)
-                // is the keyboard half of this same decision.
-                continue;
-            }
-            foldGutterEntries_.push_back(FoldGutterEntry{
-                .headerLine = headerLine,
-                .closerLine = closerLine,
-                .blockStart = region.startByte,
-                .column     = column,
-            });
-            if (!buffer.FoldMarkerAt(region.startByte).has_value()) {
-                // Expanded -- gets a guide line down to (and including) its
-                // closer. A collapsed block gets no line at all, only its own
-                // ⊞ on its header row -- there's nothing to trace while its
-                // body is hidden (an explicit user choice, not an oversight).
-                foldGutterLineRangesByColumn_[column].emplace_back(headerLine + 1, closerLine + 1);
-            }
-        }
-    }
 
-    foldGutterCacheStamp_ = stamp;
-}
-
-void BufferView::EnsureSymbolMarkersCache() const {
-    text::Buffer& buffer = activeBuffer_.Get();
-
-    // Eligibility gate -- mirrors FoldGutterActive's own mode_.fold/
-    // ReadOnly() reasoning (a real query run against a synthesized
-    // "path:line: text" results buffer produces meaningless markers, not an
-    // empty result). Stamped as up to date even when ineligible so a repeat
-    // call this same frame/buffer stays a cheap no-op.
-    if (!mode_.symbolKind || buffer.ReadOnly()) {
-        symbolMarkersCache_.clear();
-        // Narrower key than the eligible path below, for the same reason
-        // EnsureFoldableBlocksCache's own ineligible path is.
-        symbolMarkersCacheStamp_ = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
-        return;
-    }
-
-    const text::ITextStorage& content  = buffer.Content();
-    const bool                huge     = content.IsHuge();
-    const auto [windowStart, windowEnd] = HugeStructuralWindow(content);
-
-    const bufferview::CacheStamp stamp =
-        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), windowStart, windowEnd});
-    if (symbolMarkersCacheStamp_.Matches(stamp)) {
-        return;
-    }
-
-    // huge-file-structural-gutters follow-up: a huge buffer feeds
-    // mode_.symbolKind a bounded window instead of the whole document --
-    // both startByte and endByte are then window-relative, remapped back to
-    // absolute buffer coordinates (+= windowStart) here so every consumer
-    // (the gutter below, sticky scroll) can treat this cache's coordinates
-    // uniformly regardless of buffer size.
-    symbolMarkersCache_ =
-        huge ? mode_.symbolKind(content.Substring(windowStart, windowEnd - windowStart)) : mode_.symbolKind(buffer.Text());
-    if (huge) {
-        for (editor::SymbolMarker& marker : symbolMarkersCache_) {
-            marker.startByte += windowStart;
-            marker.endByte += windowStart;
-        }
-    }
-    symbolMarkersCacheStamp_  = stamp;
-    symbolMarkersCacheWindow_ = {windowStart, windowEnd};
-}
-
-void BufferView::EnsureSymbolGutterCache() const {
-    EnsureSymbolMarkersCache();
-    text::Buffer& buffer = activeBuffer_.Get();
-
-    const bufferview::CacheStamp stamp =
-        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), symbolMarkersCacheWindow_.first,
-                                             symbolMarkersCacheWindow_.second});
-    if (symbolGutterCacheStamp_.Matches(stamp)) {
-        return;
-    }
-
-    // symbolMarkersCache_ arrives sorted by startByte (Mode.cpp's own
-    // closure) -- collapsing to one entry per line via a plain overwrite in
-    // that order keeps the LAST (highest-byte-offset) marker on a line that
-    // somehow has more than one, the same "later wins" convention
-    // HighlightSpan's own doc comment establishes elsewhere in this file.
-    const text::ITextStorage&                           content = buffer.Content();
-    std::unordered_map<std::size_t, editor::SymbolKind> kindByLine;
-    for (const editor::SymbolMarker& marker : symbolMarkersCache_) {
-        kindByLine[content.ByteOffsetToLine(marker.startByte)] = marker.kind;
-    }
-    symbolGutterLineKinds_.assign(kindByLine.begin(), kindByLine.end());
-    std::sort(symbolGutterLineKinds_.begin(), symbolGutterLineKinds_.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
-    symbolGutterCacheStamp_ = stamp;
-}
-
-void BufferView::EnsureTestGutterCache() const {
-    text::Buffer& buffer = activeBuffer_.Get();
-
-    // Eligibility gate, EnsureSymbolGutterCache's exact shape -- plus the
-    // runner itself: no runner wired (tests) means nothing to mark, at zero
-    // width.
-    //
-    // test-runner-gaps follow-up: a parsed outcome is no longer required.
-    // With none yet, a discovered test still gets a row -- the clickable
-    // "run this test" affordance -- but only when a filter command is
-    // actually configured, since that is exactly what makes the click able
-    // to do anything (run-test-at-point refuses without one). A user who
-    // never configured ned/set-test-filter-command therefore sees this
-    // gutter behave exactly as it did before: nothing until a run happens.
-    //
-    // Split in two so the free checks short-circuit before the config
-    // lookup: this runs once per pane per frame, and HasTestFilterCommand
-    // still takes a mutex (TestFilterCommand() would additionally copy the
-    // argv vector out, which is why it isn't used here).
-    if (!mode_.testDiscovery || buffer.ReadOnly() || testRunner_ == nullptr) {
-        testGutterEntries_.clear();
-        // Narrower key than the eligible path below, for the same reason
-        // EnsureFoldableBlocksCache's own ineligible path is.
-        testGutterCacheStamp_ = bufferview::CacheStamp::For(
-            &buffer, {buffer.ContentGeneration(), testRunner_ != nullptr ? testRunner_->OutcomeGeneration() : 0});
-        testGutterCacheRunnable_ = false; // no runner -- no affordance is possible either
-        return;
-    }
-    const bool runnableAffordance = editor::testrun::HasTestFilterCommand();
-    if (!testRunner_->LatestOutcome() && !runnableAffordance) {
-        testGutterEntries_.clear();
-        testGutterCacheStamp_ =
-            bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), testRunner_->OutcomeGeneration()});
-        testGutterCacheRunnable_ = runnableAffordance;
-        return;
-    }
-
-    const text::ITextStorage& content              = buffer.Content();
-    const bool                huge                 = content.IsHuge();
-    const auto [windowStart, windowEnd]             = HugeStructuralWindow(content);
-
-    // testGutterCacheRunnable_ is part of the key, not just an input: a
-    // filter command configured after a run has already landed changes what
-    // rows exist without touching content, outcome, or window generation.
-    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(
-        &buffer, {buffer.ContentGeneration(), testRunner_->OutcomeGeneration(), windowStart, windowEnd,
-                  static_cast<std::size_t>(runnableAffordance)});
-    if (testGutterCacheStamp_.Matches(stamp)) {
-        return;
-    }
-
-    // May hold nothing at all now (the runnable-affordance case above): the
-    // marker loop then finds no matching result for any test and every row
-    // comes out status-less, which is exactly the pre-run state.
-    static const editor::testrun::TestRunOutcome kNoOutcome{};
-    const editor::testrun::TestRunOutcome&       outcome =
-        testRunner_->LatestOutcome() ? *testRunner_->LatestOutcome() : kNoOutcome;
-    const std::string bufferBasename = buffer.Path() ? buffer.Path()->filename().string() : std::string();
-
-    testGutterEntries_.clear();
-    // huge-file-structural-gutters follow-up: a huge buffer feeds
-    // mode_.testDiscovery a bounded window instead of the whole document --
-    // marker.startByte is then window-relative, remapped back to absolute
-    // buffer coordinates (+= windowStart) before the ByteOffsetToLine call
-    // below.
-    for (const editor::TestMarker& marker :
-         huge ? mode_.testDiscovery(content.Substring(windowStart, windowEnd - windowStart)) : mode_.testDiscovery(buffer.Text())) {
-        const std::size_t startByte = huge ? marker.startByte + windowStart : marker.startByte;
-        // Aggregate every matching result (parameterized instances, go
-        // subtests): Failed beats Passed beats Skipped. The result's file,
-        // when it names one at all, is only a basename-level *filter*
-        // against cross-file name collisions -- the name is the real key
-        // (results carry cwd-relative or basename-only paths, see
-        // TestOutputParser.h; anything path-shaped stricter than a
-        // basename comparison would reject its own legitimate matches).
-        std::optional<editor::testrun::TestResult::Status> aggregate;
-        for (const editor::testrun::TestResult& result : outcome.results) {
-            if (!editor::testrun::MatchesTestName(marker.name, result.name)) {
-                continue;
-            }
-            if (!result.file.empty() && !bufferBasename.empty() &&
-                std::filesystem::path(result.file).filename().string() != bufferBasename) {
-                continue;
-            }
-            if (result.status == editor::testrun::TestResult::Status::Failed) {
-                aggregate = result.status;
-                break;
-            }
-            if (!aggregate || (aggregate == editor::testrun::TestResult::Status::Skipped &&
-                               result.status == editor::testrun::TestResult::Status::Passed)) {
-                aggregate = result.status;
-            }
-        }
-        // A discovered test with no result at all reads as "passed" only
-        // when the format never names passing tests, the run was a full
-        // (unfiltered) one, and the output genuinely parsed -- otherwise
-        // absence means "not run", which gets no mark rather than a guess.
-        if (!aggregate && outcome.failuresOnly && outcome.parsedOk && !testRunner_->LastRunWasFiltered()) {
-            aggregate = editor::testrun::TestResult::Status::Passed;
-        }
-        // test-runner-gaps follow-up: a status-less row is kept (rather than
-        // skipped as it used to be) only when the runnable affordance is on
-        // -- that row paints '▸' and is what a gutter click runs. Without a
-        // filter command configured, absence still means no row at all.
-        if (aggregate || runnableAffordance) {
-            testGutterEntries_.push_back(TestGutterEntry{
-                .line   = content.ByteOffsetToLine(startByte),
-                .status = aggregate,
-                .name   = marker.name,
-            });
-        }
-    }
-    // One entry per line, Failed winning a same-line tie (a class marker and
-    // a same-line method can't collide in practice, but two markers on one
-    // line must not produce two sort keys). A status-less (not-run) row
-    // ranks last, so a line carrying both a real result and a bare runnable
-    // marker keeps the result.
-    const auto tieRank = [](const std::optional<editor::testrun::TestResult::Status>& status) {
-        if (!status) {
-            return 3;
-        }
-        switch (*status) {
-            case editor::testrun::TestResult::Status::Failed:
-                return 0;
-            case editor::testrun::TestResult::Status::Passed:
-                return 1;
-            case editor::testrun::TestResult::Status::Skipped:
-                return 2;
-        }
-        return 4;
-    };
-    std::sort(testGutterEntries_.begin(), testGutterEntries_.end(), [&](const TestGutterEntry& a, const TestGutterEntry& b) {
-        return a.line != b.line ? a.line < b.line : tieRank(a.status) < tieRank(b.status);
-    });
-    testGutterEntries_.erase(
-        std::unique(testGutterEntries_.begin(), testGutterEntries_.end(),
-                    [](const TestGutterEntry& a, const TestGutterEntry& b) { return a.line == b.line; }),
-        testGutterEntries_.end());
-
-    testGutterCacheStamp_    = stamp;
-    testGutterCacheRunnable_ = runnableAffordance;
-}
-
-void BufferView::EnsureCoverageGutterCache() const {
-    text::Buffer&     buffer           = activeBuffer_.Get();
-    const std::size_t reportGeneration = editor::coverage::CoverageReportGeneration();
-    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(&buffer, {reportGeneration});
-    if (coverageGutterCacheStamp_.Matches(stamp)) {
-        return;
-    }
-
-    coverageGutterLineStatuses_.clear();
-    coverageGutterCacheStamp_ = stamp;
-
-    if (!buffer.Path()) {
-        return; // unsaved/scratch buffer -- nothing to match a coverage report's SF: path against
-    }
-
-    const editor::coverage::CoverageReport report = editor::coverage::CurrentCoverageReport();
-    const editor::coverage::FileCoverage*  file =
-        editor::coverage::FindFileCoverage(report, *buffer.Path(), editor::ProjectRoot());
-    if (file == nullptr) {
-        return;
-    }
-
-    coverageGutterLineStatuses_.reserve(file->lines.size());
-    for (const editor::coverage::LineCoverage& line : file->lines) {
-        coverageGutterLineStatuses_.emplace_back(line.line, line.Status());
-    }
-    // file->lines is already sorted-by-line/unique-per-line by construction
-    // (CoverageOutputParser.h's own merge step keeps it that way), so no
-    // sort/dedupe pass is needed here the way testGutterEntries_ above
-    // needs one (multiple test markers can share a line; coverage lines
-    // can't).
-}
-
-void BufferView::EnsureInlineDiagnosticCache() const {
-    text::Buffer& buffer = activeBuffer_.Get();
-    const bufferview::CacheStamp stamp =
-        bufferview::CacheStamp::For(&buffer, {buffer.DiagnosticsGeneration(), buffer.ContentGeneration()});
-    if (inlineDiagnosticCacheStamp_.Matches(stamp)) {
-        return;
-    }
-
-    inlineDiagnosticsByLine_.clear();
-    const text::ITextStorage& content = buffer.Content();
-    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
-        // prose-diagnostic-callout follow-up: the prose/grammar checker's
-        // diagnostics never get this code-style caret+message annotation
-        // row -- see PaintProseDiagnosticCallouts instead.
-        if (diagnostic.origin != text::Buffer::Diagnostic::Origin::Code) {
-            continue;
-        }
-        const std::size_t line = content.ByteOffsetToLine(std::min(diagnostic.startByte, content.ByteLength()));
-        const auto        it   = inlineDiagnosticsByLine_.find(line);
-        const bool        replaces =
-            it == inlineDiagnosticsByLine_.end() ||
-            DiagnosticSeverityRank(diagnostic.severity) > DiagnosticSeverityRank(it->second.severity) ||
-            (DiagnosticSeverityRank(diagnostic.severity) == DiagnosticSeverityRank(it->second.severity) &&
-             diagnostic.startByte < it->second.startByte);
-        if (!replaces) {
-            continue;
-        }
-        // First line of the message only -- one annotation row per line,
-        // "within reason" (clangd's notes/fix-its can make these multiline).
-        std::string message            = diagnostic.message.substr(0, diagnostic.message.find('\n'));
-        inlineDiagnosticsByLine_[line] = InlineDiagnostic{
-            .severity  = diagnostic.severity,
-            .startByte = diagnostic.startByte,
-            .endByte   = std::max(diagnostic.endByte, diagnostic.startByte + 1), // widen zero-length spans, same as the underline pass
-            .message   = std::move(message),
-        };
-    }
-
-    inlineDiagnosticCacheStamp_ = stamp;
-}
 
 void BufferView::EnsureBlameGutterCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
@@ -574,8 +134,7 @@ void BufferView::EnsureHiddenLineRangesCache() const {
     // (e.g. a plain FundamentalMode buffer with a marker set by hand)
     // working exactly as it always has.
     else if (mode_.fold) {
-        EnsureFoldableBlocksCache();
-        hiddenLineRanges_ = editor::codefold::FoldedLineRanges(buffer, buffer.Content(), foldableBlocksCache_);
+        hiddenLineRanges_ = editor::codefold::FoldedLineRanges(buffer, buffer.Content(), gutters_.FoldableBlocks());
     }
     else {
         hiddenLineRanges_ = editor::org::FoldedLineRanges(buffer);
@@ -836,9 +395,6 @@ std::size_t BufferView::ByteOffsetForPoint(Point at) const {
     return ByteOffsetForColumnInLine(content, segStart, segEnd, column, editor::TabWidth(), lineLinks);
 }
 
-bool BufferView::FoldGutterActive() const {
-    return mode_.fold && editor::CodeFoldingEnabled() && !activeBuffer_.Get().ReadOnly();
-}
 
 std::size_t BufferView::GutterWidth() const {
     const std::size_t totalLines = activeBuffer_.Get().Content().LineCount();
@@ -854,13 +410,13 @@ std::size_t BufferView::GutterWidth() const {
     // scrolling past a deeply nested region). symbol (gutter-symbol-kind
     // follow-up), unlike fold, IS data-driven -- see SymbolGutterActive's
     // own doc comment for why.
-    const std::size_t foldColumn     = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+    const std::size_t foldColumn     = gutters_.FoldGutterActive() ? kMaxFoldDepthColumns : 0;
     const std::size_t blameColumn    = BlameGutterActive() ? kBlameWidth : 0;
     const std::size_t diffColumn     = DiffGutterActive() ? kDiffWidth : 0;
     const std::size_t dapColumn      = DapGutterActive() ? kDapWidth : 0;
-    const std::size_t symbolColumn   = SymbolGutterActive() ? kSymbolWidth : 0;
-    const std::size_t testColumn     = TestGutterActive() ? kTestWidth : 0;
-    const std::size_t coverageColumn = CoverageGutterActive() ? kCoverageWidth : 0;
+    const std::size_t symbolColumn   = gutters_.SymbolGutterActive() ? kSymbolWidth : 0;
+    const std::size_t testColumn     = gutters_.TestGutterActive() ? kTestWidth : 0;
+    const std::size_t coverageColumn = gutters_.CoverageGutterActive() ? kCoverageWidth : 0;
     // Multibuffers follow-up: the line-number digits + both surrounding
     // gaps collapse to zero width together when LineNumberGutterActive()
     // is false -- see its own doc comment.
@@ -870,15 +426,7 @@ std::size_t BufferView::GutterWidth() const {
            symbolColumn + foldColumn + blameColumn;
 }
 
-bool BufferView::SymbolGutterActive() const {
-    EnsureSymbolGutterCache();
-    return !symbolGutterLineKinds_.empty();
-}
 
-bool BufferView::TestGutterActive() const {
-    EnsureTestGutterCache();
-    return !testGutterEntries_.empty();
-}
 
 std::size_t BufferView::TestGutterColumnStart() const {
     // Mirrors Paint()'s own left-to-right column sum
@@ -895,10 +443,6 @@ std::size_t BufferView::TestGutterColumnStart() const {
            lineNumberGapWidth;
 }
 
-bool BufferView::CoverageGutterActive() const {
-    EnsureCoverageGutterCache();
-    return !coverageGutterLineStatuses_.empty();
-}
 
 bool BufferView::DiffGutterActive() const {
     return !diffLineKinds_.empty();

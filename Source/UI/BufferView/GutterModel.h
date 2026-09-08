@@ -26,12 +26,21 @@
 #ifndef NED_UI_BUFFERVIEW_GUTTERMODEL_H
 #define NED_UI_BUFFERVIEW_GUTTERMODEL_H
 
+#include <array>
 #include <cstddef>
+#include <functional>
+#include <optional>
+#include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "Editor/Coverage/CoverageReport.h"
+#include "Editor/Mode.h"
+#include "Editor/TestRun/TestResult.h"
 #include "Text/Buffer.h"
 #include "Text/ConflictHunk.h"
+#include "Text/ITextStorage.h"
 #include "UI/BufferView/CacheStamp.h"
 #include "UI/BufferView/EditorContext.h"
 
@@ -39,8 +48,43 @@ namespace ned::ui::bufferview {
 
 class GutterModel {
   public:
-    explicit GutterModel(EditorContext& context) : context_(context) {
+    // How much of a huge buffer the structural queries (folds, symbols, tests)
+    // are allowed to look at, given the content they are about to parse.
+    // Supplied rather than computed here because it depends on where the
+    // viewport is, which is the view's business, not the gutter's -- and it
+    // must be asked fresh each time, since scrolling moves it without any
+    // generation counter changing. On an ordinary buffer it is the whole thing.
+    using StructuralWindowFn = std::function<std::pair<std::size_t, std::size_t>(const text::ITextStorage&)>;
+
+    GutterModel(EditorContext& context, StructuralWindowFn structuralWindow) : context_(context), structuralWindow_(std::move(structuralWindow)) {
     }
+
+    // A fixed number of gutter columns are reserved for fold depth, rather than
+    // a count that grows with how deeply the visible content happens to nest --
+    // a deliberate choice, so the gutter's width never shifts while scrolling
+    // past a deeply nested region. Blocks deeper than this get no affordance at
+    // all; they stay foldable through code-fold-toggle.
+    static constexpr int kMaxFoldDepthColumns = 4;
+
+    struct FoldGutterEntry {
+        std::size_t headerLine;
+        std::size_t closerLine; // inclusive
+        std::size_t blockStart; // FoldMarker key
+        int         column;     // == depth; blocks at depth >= kMaxFoldDepthColumns get no entry at all
+    };
+
+    struct TestGutterEntry {
+        std::size_t                                        line = 0;
+        std::optional<editor::testrun::TestResult::Status> status; // nullopt = discovered but not run
+        std::string                                        name;
+    };
+
+    struct InlineDiagnostic {
+        text::Buffer::Diagnostic::Severity severity;
+        std::size_t                        startByte;
+        std::size_t                        endByte;
+        std::string                        message;
+    };
 
     GutterModel(const GutterModel&)            = delete;
     GutterModel& operator=(const GutterModel&) = delete;
@@ -74,12 +118,63 @@ class GutterModel {
     // re-scanning for markers is a cheap linear pass regardless.
     [[nodiscard]] const std::vector<text::ConflictHunk>& ConflictHunks() const;
 
+    // --- folds ---------------------------------------------------------------
+    // Whether the fold column is drawn at all: the mode has a real fold query,
+    // the feature is enabled process-wide, and the buffer is writable.
+    [[nodiscard]] bool FoldGutterActive() const;
+    // The foldable byte ranges themselves, windowed on a huge buffer.
+    [[nodiscard]] const std::vector<std::pair<std::size_t, std::size_t>>& FoldableBlocks() const;
+    // One entry per drawable fold, sorted by header line.
+    [[nodiscard]] const std::vector<FoldGutterEntry>& FoldEntries() const;
+    // Per column, the [headerLine + 1, closerLine + 1) spans of *expanded*
+    // blocks, for drawing each column's guide line.
+    [[nodiscard]] const std::array<std::vector<std::pair<std::size_t, std::size_t>>, kMaxFoldDepthColumns>&
+    FoldLineRangesByColumn() const;
+
+    // --- symbols -------------------------------------------------------------
+    // Data-driven, unlike the fold column: this appears only when the mode's
+    // query actually produced markers.
+    [[nodiscard]] bool                                                           SymbolGutterActive() const;
+    [[nodiscard]] const std::vector<editor::SymbolMarker>&                       SymbolMarkers() const;
+    [[nodiscard]] const std::vector<std::pair<std::size_t, editor::SymbolKind>>& SymbolLineKinds() const;
+
+    // --- tests ---------------------------------------------------------------
+    [[nodiscard]] bool                                TestGutterActive() const;
+    [[nodiscard]] const std::vector<TestGutterEntry>& TestEntries() const;
+    // Whether a discovered-but-unrun test should show a clickable run
+    // affordance, which is only meaningful once a filter command is configured.
+    [[nodiscard]] bool TestRunnable() const;
+
+    // --- coverage ------------------------------------------------------------
+    [[nodiscard]] bool                                                                     CoverageGutterActive() const;
+    [[nodiscard]] const std::vector<std::pair<std::size_t, editor::coverage::LineStatus>>& CoverageLineStatuses() const;
+
+    // --- inline diagnostics --------------------------------------------------
+    [[nodiscard]] const std::unordered_map<std::size_t, InlineDiagnostic>& InlineDiagnosticsByLine() const;
+
+    // Drop everything remembered about a buffer that is going away, including
+    // what is kept for it across buffer switches.
+    void ForgetBuffer(text::Buffer& buffer);
+
+    // Discard the caches whose contents depend on the active Mode. The view
+    // calls this when it notices the mode changed under a buffer switch, before
+    // anything can stamp them current under the old mode.
+    void InvalidateModeDependentCaches();
+
   private:
     void EnsureUnsavedChanges() const;
     void EnsureDiagnosticSeverities() const;
     void EnsureConflictHunks() const;
+    void EnsureFoldableBlocks() const;
+    void EnsureFoldEntries() const;
+    void EnsureSymbolMarkers() const;
+    void EnsureSymbolLineKinds() const;
+    void EnsureTestEntries() const;
+    void EnsureCoverageStatuses() const;
+    void EnsureInlineDiagnostics() const;
 
-    EditorContext& context_;
+    EditorContext&     context_;
+    StructuralWindowFn structuralWindow_;
 
     mutable CacheStamp                                       unsavedChangeStamp_;
     mutable std::vector<std::pair<std::size_t, std::size_t>> unsavedChangeLineRanges_;
@@ -89,6 +184,46 @@ class GutterModel {
 
     mutable CacheStamp                      conflictHunkStamp_;
     mutable std::vector<text::ConflictHunk> conflictHunks_;
+
+    mutable CacheStamp foldableBlocksStamp_;
+    // The window the blocks were last derived for. The fold-entry cache keys off
+    // it, since a window-only change moves the blocks with no content or fold
+    // edit for a generation counter to catch.
+    mutable std::pair<std::size_t, std::size_t>              foldableBlocksWindow_{0, 0};
+    mutable std::vector<std::pair<std::size_t, std::size_t>> foldableBlocks_;
+
+    // Kept per buffer as well as for the active one, so switching away and back
+    // does not re-run the fold query. Keyed on everything that would change the
+    // answer, the window included.
+    struct FoldableBlocksEntry {
+        std::size_t                                      contentGeneration = 0;
+        std::string                                      modeName;
+        std::size_t                                      windowStart = 0;
+        std::size_t                                      windowEnd   = 0;
+        std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    };
+    mutable std::unordered_map<text::Buffer*, FoldableBlocksEntry> foldableBlocksByBuffer_;
+
+    mutable CacheStamp                                                                         foldEntriesStamp_;
+    mutable std::vector<FoldGutterEntry>                                                       foldEntries_;
+    mutable std::array<std::vector<std::pair<std::size_t, std::size_t>>, kMaxFoldDepthColumns> foldLineRangesByColumn_;
+
+    mutable CacheStamp                          symbolMarkersStamp_;
+    mutable std::pair<std::size_t, std::size_t> symbolMarkersWindow_{0, 0};
+    mutable std::vector<editor::SymbolMarker>   symbolMarkers_;
+
+    mutable CacheStamp                                              symbolLineKindsStamp_;
+    mutable std::vector<std::pair<std::size_t, editor::SymbolKind>> symbolLineKinds_;
+
+    mutable CacheStamp                   testEntriesStamp_;
+    mutable bool                         testRunnable_ = false;
+    mutable std::vector<TestGutterEntry> testEntries_;
+
+    mutable CacheStamp                                                        coverageStamp_;
+    mutable std::vector<std::pair<std::size_t, editor::coverage::LineStatus>> coverageLineStatuses_;
+
+    mutable CacheStamp                                        inlineDiagnosticStamp_;
+    mutable std::unordered_map<std::size_t, InlineDiagnostic> inlineDiagnosticsByLine_;
 };
 
 } // namespace ned::ui::bufferview

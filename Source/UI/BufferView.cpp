@@ -23,7 +23,10 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
                                                                                                             dispatcher_, statusMessage_, mode_, theme_, lspManager_, dapManager_,
                                                                                                             acpManager_, vcsRunner_, taskRunner_, testRunner_, projectUndo_,
                                                                                                             eventLoop_, janetEnv_},
-                                                                                                   gutters_(context_) {
+                                                                                                   gutters_(context_,
+                                                                                                            [this](const text::ITextStorage& content) {
+                                                                                                                return HugeStructuralWindow(content);
+                                                                                                            }) {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
     }
@@ -117,15 +120,11 @@ void BufferView::SetOnPrefixHintChanged(std::function<void(std::optional<WhichKe
 void BufferView::ClearBufferCaches(text::Buffer& buffer) {
     highlightCacheByBuffer_.erase(&buffer);
     embeddedDocumentCacheByBuffer_.erase(&buffer);
-    foldableBlocksCacheByBuffer_.erase(&buffer);
     if (highlightCacheStamp_.IsFor(&buffer)) {
         highlightCacheStamp_.Invalidate();
         highlightCacheSpans_.clear();
     }
-    if (foldableBlocksCacheStamp_.IsFor(&buffer)) {
-        foldableBlocksCacheStamp_.Invalidate();
-        foldableBlocksCache_.clear();
-    }
+    gutters_.ForgetBuffer(buffer);
 }
 
 std::optional<std::string> BufferView::EmbeddedLanguageAtPoint() {

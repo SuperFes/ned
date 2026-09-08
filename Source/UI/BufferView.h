@@ -2595,20 +2595,6 @@ class BufferView : public Widget {
     // present -- there's no toggle to hide it yet.
     [[nodiscard]] std::size_t GutterWidth() const;
 
-    // read-only-buffers follow-up: the one shared condition for "does the
-    // active buffer get a fold-depth gutter at all" -- mode_.fold and
-    // editor::CodeFoldingEnabled() were already checked (independently, in
-    // four separate places: EnsureFoldableBlocksCache, Paint()'s own
-    // gutter-width math, GutterWidth(), and OnMouseEvent's fold-click hit
-    // test) before a synthesized, read-only buffer (project-search
-    // results, project-replace's preview, project-agenda) could ever
-    // exist; a real Mode's own fold query run against that buffer's own
-    // "path:line: text" content produces meaningless fold regions, not an
-    // empty result, so ReadOnly() has to be part of this condition too,
-    // not just mode_.fold/CodeFoldingEnabled() -- centralized here so all
-    // four call sites can't drift out of agreement with each other the way
-    // duplicating a fourth inline copy of this check risked.
-    [[nodiscard]] bool FoldGutterActive() const;
 
     // Diff gutter markers follow-up: same "only reserve the column when
     // there's something to show" gate BlameGutterActive() established --
@@ -2616,42 +2602,8 @@ class BufferView : public Widget {
     // against HEAD reserves no column).
     [[nodiscard]] bool DiffGutterActive() const;
 
-    // gutter-symbol-kind follow-up: self-ensuring, same shape as
-    // DapGutterActive() below -- calls EnsureSymbolGutterCache() itself
-    // (cheap after the first call per Paint(), generation-gated) rather than
-    // relying on a separate unconditional Ensure* call elsewhere in Paint()
-    // the way EnsureDiagnosticGutterCache/EnsureUnsavedChangeCache/
-    // EnsureBlameGutterCache are -- unlike those three (async- or
-    // externally-driven data an XGutterActive() check can safely read
-    // slightly stale), symbolGutterLineKinds_ is synchronous, recomputed
-    // straight from mode_.symbolKind on every genuine content change, so it
-    // must be current *within this same Paint() call* the moment the
-    // column-width math runs, not just by the time the render loop gets to
-    // it a few hundred lines later. Same "only reserve the column when
-    // there's something to show" gate DiffGutterActive/BlameGutterActive
-    // use, not FoldGutterActive's fixed-width-regardless-of-content
-    // reservation -- a symbol landmark on every definition line in a large
-    // file is common enough that "no functions in this file" should cost
-    // zero gutter width, not reserve a column nobody needs (the packed-
-    // gutter concern this whole follow-up was built around).
-    [[nodiscard]] bool SymbolGutterActive() const;
 
-    // test-runner integration: self-ensuring, SymbolGutterActive's exact
-    // shape (calls EnsureTestGutterCache() itself -- the width math needs
-    // it current within this same Paint() call). Active only when the mode
-    // has test discovery, the buffer is an ordinary editable one, markers
-    // were actually discovered, and a parsed TestRunner outcome exists to
-    // match them against -- "no results yet" costs zero gutter width.
-    [[nodiscard]] bool TestGutterActive() const;
 
-    // code-coverage-gutter follow-up: self-ensuring, TestGutterActive's
-    // exact shape (calls EnsureCoverageGutterCache() itself). Active only
-    // when a coverage report is loaded (ned/set-coverage-file +
-    // load-coverage-report) AND it carries a FileCoverage entry matching
-    // this buffer's own path (Coverage/CoverageReport.h's FindFileCoverage)
-    // -- "no report loaded, or this file isn't in it" costs zero gutter
-    // width, same policy every other data-driven column here uses.
-    [[nodiscard]] bool CoverageGutterActive() const;
 
     // DAP client slice 2: whether the leftmost debug-marker column
     // (breakpoint dot / execution arrow) is reserved this frame -- true
@@ -2848,15 +2800,6 @@ class BufferView : public Widget {
     // (both const) need a fresh cache just as much as Paint() (non-const)
     // does, and all three can run in either order within a frame.
     void EnsureHiddenLineRangesCache() const;
-    // generic-code-folding follow-up: recomputes foldableBlocksCache_ via
-    // codefold::FoldableBlocks(mode_, buffer.Text()) only when the active
-    // buffer's identity or its ContentGeneration() changed since the last
-    // call -- mirrors highlightCacheBuffer_'s own caching shape. Leaves
-    // foldableBlocksCache_ empty (and skips calling mode_.fold entirely)
-    // whenever mode_.fold itself is empty or editor::CodeFoldingEnabled()
-    // is false, which is also exactly the "no gutter affordance" condition
-    // Paint()/GutterWidth()/OnMouseEvent all check.
-    void EnsureFoldableBlocksCache() const;
     // huge-file-structural-gutters follow-up: [start, end) byte window
     // EnsureFoldableBlocksCache/EnsureSymbolGutterCache/EnsureTestGutterCache
     // should actually run mode_.fold/mode_.symbolKind/mode_.testDiscovery
@@ -2872,34 +2815,6 @@ class BufferView : public Widget {
     // accepted trade-off huge-file-regex-replace/huge-file-vim-search
     // already documented for search.
     [[nodiscard]] std::pair<std::size_t, std::size_t> HugeStructuralWindow(const text::ITextStorage& content) const;
-    // depth-aware-fold-gutter follow-up: calls EnsureFoldableBlocksCache()
-    // first, then (re)derives foldGutterEntries_/foldGutterLineRangesByColumn_
-    // from its result -- gated on the buffer plus BOTH ContentGeneration()
-    // and FoldGeneration(), since which entries are "expanded" (and so get a
-    // line drawn) depends on live FoldMarker state, not just content. See
-    // the member declarations' own doc comment for the full history behind
-    // exactly what's cached here and why.
-    void EnsureFoldGutterCache() const;
-    // gutter-symbol-kind follow-up: (re)derives symbolGutterLineKinds_ from
-    // mode_.symbolKind(buffer.Text()) -- gated on the buffer plus
-    // ContentGeneration() alone (no second generation counter needed, unlike
-    // EnsureUnsavedChangeCache/EnsureInlineDiagnosticCache -- there's no
-    // "cleared independent of content" event for this the way a save clears
-    // unsaved ranges or a fresh diagnostics publish replaces diagnostics).
-    // Clears (and stamps the cache as up to date, so a repeat call is still
-    // a cheap no-op) rather than recomputing at all when mode_.symbolKind is
-    // unset or the buffer is read-only -- same eligibility mode_.fold/
-    // CodeFoldingEnabled()/ReadOnly() form for FoldGutterActive, just
-    // checked inline here instead of a separate public predicate, since
-    // SymbolGutterActive() itself is the data-driven "anything to show"
-    // question, not this eligibility gate.
-    void EnsureSymbolGutterCache() const;
-    // test-runner integration: (re)derives testGutterEntries_ from
-    // mode_.testDiscovery(buffer.Text()) matched against the TestRunner's
-    // latest parsed outcome (MatchesTestName, TestRun/TestResult.h) --
-    // EnsureSymbolGutterCache's shape with the extra outcome-generation
-    // stamp; see the member's own comment below.
-    void EnsureTestGutterCache() const;
     // test-runner-gaps follow-up: the three pieces run-test-at-point's
     // keyboard path and the test-gutter click both go through, so a click
     // can never drift from the command's own behaviour.
@@ -2914,15 +2829,6 @@ class BufferView : public Widget {
     // True when the click landed inside the test column (and was therefore
     // consumed), whether or not that row actually carried a test.
     bool HandleTestGutterClick(Point at);
-    // code-coverage-gutter follow-up: (re)derives coverageGutterLineStatuses_
-    // from editor::coverage::CurrentCoverageReport() matched against this
-    // buffer's own path (FindFileCoverage) -- gated on buffer identity plus
-    // editor::coverage::CoverageReportGeneration() alone (no content
-    // generation at all: coverage data isn't re-derived from buffer text
-    // the way test/symbol markers are, so an edit after loading a report
-    // does not invalidate this cache -- see CoverageGutterActive's own doc
-    // comment on why line numbers can drift until the report is reloaded).
-    void EnsureCoverageGutterCache() const;
     // VCS blame gutter: unlike EnsureDiagnosticGutterCache/EnsureFoldGutterCache,
     // this does NOT recompute blameLineInfo_ from anything -- there's no
     // cheap synchronous source to recompute it from (populating it means
@@ -3506,52 +3412,6 @@ class BufferView : public Widget {
     std::size_t                                      expansionHistoryGeneration_ = 0;
     std::vector<std::pair<std::size_t, std::size_t>> expansionHistory_;
 
-    // generic-code-folding follow-up: caches mode_.fold's result across
-    // Paint() calls, same shape/reasoning as highlightCacheBuffer_ above --
-    // consumed both for the gutter's ▸/▾ rendering and (passed into
-    // codefold::FoldedLineRanges) for EnsureHiddenLineRangesCache, so
-    // mode_.fold is never called more than once per actually-changed
-    // Paint() call. Empty whenever mode_.fold itself is empty or
-    // editor::CodeFoldingEnabled() is false -- see EnsureFoldableBlocksCache.
-    // Mutable for the same const-query-methods reason
-    // hiddenLineRangesCacheBuffer_ already is (EnsureHiddenLineRangesCache,
-    // a const method, needs a fresh cache too).
-    mutable bufferview::CacheStamp                           foldableBlocksCacheStamp_;
-    // huge-file-structural-gutters follow-up: the [start, end) window the
-    // cached foldableBlocksCache_ was actually computed against -- see
-    // HugeStructuralWindow's own doc comment. Always {0, ByteLength()} for
-    // an ordinary buffer (and so never invalidates anything beyond what
-    // foldableBlocksCacheGeneration_ already would), only meaningfully
-    // narrower for a huge one.
-    // Kept alongside the stamp because EnsureFoldGutterCache keys off the
-    // window this cache was last built for, not one it computes itself.
-    mutable std::pair<std::size_t, std::size_t>              foldableBlocksCacheWindow_{0, 0};
-    mutable std::vector<std::pair<std::size_t, std::size_t>> foldableBlocksCache_;
-    // per-buffer-highlight-cache follow-up: same persistence-across-a-switch
-    // fix as highlightCacheByBuffer_ above, for mode_.fold instead of
-    // mode_.highlight -- see that member's own doc comment for the full
-    // reasoning (single-slot eviction on switch, modeName's role, and the
-    // ClearBufferCaches/close-funnel cleanup).
-    struct FoldableBlocksCacheEntry {
-        std::size_t                                      contentGeneration = 0;
-        std::string                                      modeName;
-        // huge-file-structural-gutters follow-up: see
-        // foldableBlocksCacheWindowStart_/End_ above -- persisted per buffer
-        // too, so switching back to a huge buffer whose viewport (and so
-        // window) has since moved correctly recomputes instead of reusing a
-        // stale-window entry.
-        std::size_t                                       windowStart = 0;
-        std::size_t                                       windowEnd   = 0;
-        std::vector<std::pair<std::size_t, std::size_t>> ranges;
-    };
-    mutable std::unordered_map<text::Buffer*, FoldableBlocksCacheEntry> foldableBlocksCacheByBuffer_;
-    // depth-aware-fold-gutter follow-up: a small, fixed number of gutter
-    // columns (not a viewport-dependent width -- an explicit user choice,
-    // so the gutter's own size never jumps around while scrolling past a
-    // deeply nested region) reserved for tracing a fold region's extent,
-    // one column per nesting level, deeper levels sharing the innermost
-    // column.
-    static constexpr int kMaxFoldDepthColumns = 4;
 
     // status/line-number-spacing follow-up: the gutter's own left-to-right
     // layout, left to right -- [status][gap][digits][gap][fold]. kStatusWidth
@@ -3618,106 +3478,12 @@ class BufferView : public Widget {
     // [gap][digits][gap][test][coverage][symbol][fold][blame].
     static constexpr std::size_t kCoverageWidth = 1;
 
-    struct FoldGutterEntry {
-        std::size_t headerLine;
-        std::size_t closerLine; // inclusive
-        std::size_t blockStart; // FoldMarker key
-        int         column;     // == depth; blocks at depth >= kMaxFoldDepthColumns get no entry
-                                // at all (fold-gutter-depth-cap follow-up -- see
-                                // EnsureFoldGutterCache's own comment; they stay foldable via
-                                // code-fold-toggle, just undrawn/unclickable in the gutter)
-    };
 
-    // Derived from foldableBlocksCache_ whenever it's recomputed, but gated
-    // on BOTH ContentGeneration and FoldGeneration (mirroring
-    // hiddenLineRangesCacheContentGeneration_/hiddenLineRangesCacheFoldGeneration_'s
-    // own dual-generation pattern below) rather than foldableBlocksCache_'s
-    // own content-only gate: foldGutterLineRangesByColumn_ depends on which
-    // blocks are currently collapsed/expanded (FoldMarker state), which
-    // changes independently of buffer content. Built once per actually-
-    // stale Paint() call, O(blocks) with one allocation each -- the same
-    // "cache the derived structure, don't rebuild it every Paint() call, and
-    // don't reach for a per-element-allocating container under ASan"
-    // discipline foldableBlocksCache_'s own doc comment already documents
-    // finding the hard way for this exact code path.
-    mutable bufferview::CacheStamp       foldGutterCacheStamp_;
-    // huge-file-structural-gutters follow-up: foldableBlocksCache_ can now
-    // change out from under this cache without either ContentGeneration()
-    // or FoldGeneration() moving at all -- purely from
-    // editor::HugeStructuralWindowBytes()/the viewport moving on a huge
-    // buffer, which EnsureFoldableBlocksCache() (called just above, first
-    // thing) already tracks via its own foldableBlocksCacheWindowStart_/
-    // End_. Mirrored here too, or a window-only change (no content/fold
-    // edit at all) would leave this cache silently stale.
-    mutable std::vector<FoldGutterEntry> foldGutterEntries_; // sorted by headerLine (free -- blocks arrive startByte-sorted)
-    mutable std::array<std::vector<std::pair<std::size_t, std::size_t>>, kMaxFoldDepthColumns>
-        foldGutterLineRangesByColumn_; // EXPANDED entries only, [headerLine+1, closerLine+1) per column
-
-    mutable bufferview::CacheStamp             symbolMarkersCacheStamp_;
-    // Kept alongside the stamp for the same reason foldableBlocksCacheWindow_
-    // is: EnsureSymbolGutterCache keys off this cache's window.
-    mutable std::pair<std::size_t, std::size_t> symbolMarkersCacheWindow_{0, 0};
-    mutable std::vector<editor::SymbolMarker> symbolMarkersCache_;
     void                                       EnsureSymbolMarkersCache() const;
 
-    mutable bufferview::CacheStamp                                  symbolGutterCacheStamp_;
-    // huge-file-structural-gutters follow-up: see
-    // foldableBlocksCacheWindowStart_/End_'s own doc comment above -- same
-    // shape, for symbolGutterLineKinds_ instead of foldableBlocksCache_.
-    mutable std::vector<std::pair<std::size_t, editor::SymbolKind>> symbolGutterLineKinds_;
 
-    // test-runner integration: per-line pass/fail/skip marks, the symbol
-    // cache's shape with one extra generation stamp -- invalidated by a
-    // content change (discovery re-runs) OR a fresh parsed outcome
-    // (TestRunner::OutcomeGeneration()). Unlike symbolGutterLineKinds_ the
-    // data is half external (the outcome) and half derived (discovery) --
-    // both stamps together are what keep it honest. See
-    // EnsureTestGutterCache in BufferView.cpp.
-    mutable bufferview::CacheStamp                                                   testGutterCacheStamp_;
-    // huge-file-structural-gutters follow-up: see
-    // foldableBlocksCacheWindowStart_/End_'s own doc comment above -- same
-    // shape, for testGutterEntries_ instead of foldableBlocksCache_.
-    // Part of the cache key, not just an input: configuring a filter command
-    // after a run has landed changes which rows exist without touching
-    // content, outcome, or window generation.
-    mutable bool                                                                     testGutterCacheRunnable_          = false;
-    // test-runner-gaps follow-up: was a bare (line, status) pair. A
-    // gutter-click needs the discovered test's own name to run it, and
-    // `status` became optional so a test with no result *yet* still gets a
-    // row -- the clickable "run this" affordance, which only appears when
-    // a filter command is configured (see EnsureTestGutterCache).
-    struct TestGutterEntry {
-        std::size_t                                        line = 0;
-        std::optional<editor::testrun::TestResult::Status> status; // nullopt = not run
-        std::string                                        name;
-    };
-    mutable std::vector<TestGutterEntry> testGutterEntries_;
 
-    // code-coverage-gutter follow-up: per-line covered/partial/uncovered
-    // marks for whichever FileCoverage entry (if any) matches this buffer's
-    // own path -- gated on buffer identity plus
-    // editor::coverage::CoverageReportGeneration() alone, no content
-    // generation (see EnsureCoverageGutterCache's own doc comment above for
-    // why coverage data isn't content-derived the way test/symbol markers
-    // are). No huge-file windowing either, unlike testGutterEntries_/
-    // symbolGutterLineKinds_ above -- there's no parse involved, just a map
-    // lookup by line number, so this is cheap regardless of buffer size.
-    mutable bufferview::CacheStamp                                              coverageGutterCacheStamp_;
-    mutable std::vector<std::pair<std::size_t, editor::coverage::LineStatus>>   coverageGutterLineStatuses_;
 
-    // inline-diagnostics follow-up: see EnsureInlineDiagnosticCache's own
-    // doc comment above for the two-generation gate (diagnostics AND
-    // content, unlike the gutter cache just above -- annotation rows shift
-    // whole-viewport row math, so a stale line mapping is worse than a
-    // stale icon).
-    struct InlineDiagnostic {
-        text::Buffer::Diagnostic::Severity severity;
-        std::size_t                        startByte;
-        std::size_t                        endByte;
-        std::string                        message;
-    };
-    mutable bufferview::CacheStamp                            inlineDiagnosticCacheStamp_;
-    mutable std::unordered_map<std::size_t, InlineDiagnostic> inlineDiagnosticsByLine_;
 
     // VCS blame gutter: populated only by RequestBlameForCurrentBuffer's
     // async completion (never recomputed from Paint() -- see
@@ -4382,6 +4148,14 @@ class BufferView : public Widget {
     // per-line data lives here rather than as loose members -- see
     // BufferView/GutterModel.h.
     bufferview::GutterModel gutters_;
+
+    // Aliases for the types and the depth cap that moved into GutterModel with
+    // the caches. The painting and mouse code still names them unqualified;
+    // they follow it out of this class when the renderer is extracted.
+    using FoldGutterEntry  = bufferview::GutterModel::FoldGutterEntry;
+    using TestGutterEntry  = bufferview::GutterModel::TestGutterEntry;
+    using InlineDiagnostic = bufferview::GutterModel::InlineDiagnostic;
+    static constexpr int kMaxFoldDepthColumns = bufferview::GutterModel::kMaxFoldDepthColumns;
 };
 
 // context_ holds references to BufferView's own members, so moving one would
