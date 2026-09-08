@@ -193,7 +193,7 @@ void BufferView::OpenLinkAtPoint() {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = ++documentLinkRequestGeneration_;
+    const std::size_t   generation = documentLinkRequest_.Begin();
     // embedded-language-documents follow-up: an #include inside an embedded
     // region belongs to that region's own server, same routing every other
     // point-scoped LSP request here uses.
@@ -202,7 +202,7 @@ void BufferView::OpenLinkAtPoint() {
     lspManager_->RequestDocumentLinks(
         buffer,
         [this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::LspManager::ResolvedDocumentLink> links) {
-            if (generation != documentLinkRequestGeneration_) {
+            if (documentLinkRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
@@ -225,7 +225,7 @@ void BufferView::OpenLinkAtPoint() {
             lspManager_->ResolveDocumentLink(
                 activeBuffer_.Get(), *covering,
                 [this, bufferPtr, point, generation](std::optional<editor::lsp::LspManager::ResolvedDocumentLink> resolved) {
-                    if (generation != documentLinkRequestGeneration_) {
+                    if (documentLinkRequest_.IsStale(generation)) {
                         return;
                     }
                     if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
