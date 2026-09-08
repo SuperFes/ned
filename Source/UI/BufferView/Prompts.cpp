@@ -42,8 +42,8 @@ bool BufferView::HandleConflictQuickKey(const editor::KeyChord& chord) {
         case U'k': commandName = "merge-keep-base"; break;
         default: return false;
     }
-    EnsureConflictHunkCache();
-    if (conflictHunkCache_.empty()) {
+    const std::vector<text::ConflictHunk>& conflictHunks = gutters_.ConflictHunks();
+    if (conflictHunks.empty()) {
         return false; // nothing unresolved -- M-o/t/b/d/k/n/p mean whatever they ordinarily do
     }
     editor::CommandContext context = MakeContext();
