@@ -31,6 +31,7 @@
 #include "ActiveBuffer.h"
 #include "UI/BufferView/CacheStamp.h"
 #include "UI/BufferView/EditorContext.h"
+#include "UI/BufferView/GutterModel.h"
 #include "UI/BufferView/RequestSlot.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Backup.h"
@@ -2879,22 +2880,6 @@ class BufferView : public Widget {
     // the member declarations' own doc comment for the full history behind
     // exactly what's cached here and why.
     void EnsureFoldGutterCache() const;
-    // status-gutter unsaved-change-indicator follow-up: (re)derives
-    // unsavedChangeLineRanges_ from buffer.UnsavedChangeRanges() -- gated
-    // on the buffer plus BOTH ContentGeneration() and
-    // UnsavedChangeGeneration(), since a save clears the ranges (bumping
-    // the latter) without necessarily changing content. Called
-    // unconditionally every Paint(), unlike EnsureFoldGutterCache -- the
-    // status column isn't gated on mode_.fold, every buffer gets one
-    // regardless of language.
-    void EnsureUnsavedChangeCache() const;
-    // LSP client follow-up: (re)derives diagnosticLineSeverities_ from
-    // buffer.Diagnostics() -- see that member's own doc comment. Called
-    // unconditionally every Paint(), same reasoning as
-    // EnsureUnsavedChangeCache: every buffer gets the diagnostic gutter
-    // column regardless of language, it's just empty when nothing's been
-    // reported.
-    void EnsureDiagnosticGutterCache() const;
     // gutter-symbol-kind follow-up: (re)derives symbolGutterLineKinds_ from
     // mode_.symbolKind(buffer.Text()) -- gated on the buffer plus
     // ContentGeneration() alone (no second generation counter needed, unlike
@@ -2909,12 +2894,6 @@ class BufferView : public Widget {
     // SymbolGutterActive() itself is the data-driven "anything to show"
     // question, not this eligibility gate.
     void EnsureSymbolGutterCache() const;
-    // Merge Conflict Resolution Mode: (re)derives conflictHunkCache_ from
-    // text::ParseConflictHunks(buffer.Text()) -- EnsureSymbolGutterCache's
-    // shape (gated on buffer identity + ContentGeneration() alone), no
-    // huge-file windowing (a conflicted file is an ordinary source file in
-    // practice, and re-parsing markers is a cheap O(n) scan regardless).
-    void EnsureConflictHunkCache() const;
     // test-runner integration: (re)derives testGutterEntries_ from
     // mode_.testDiscovery(buffer.Text()) matched against the TestRunner's
     // latest parsed outcome (MatchesTestName, TestRun/TestResult.h) --
@@ -3674,50 +3653,6 @@ class BufferView : public Widget {
     mutable std::array<std::vector<std::pair<std::size_t, std::size_t>>, kMaxFoldDepthColumns>
         foldGutterLineRangesByColumn_; // EXPANDED entries only, [headerLine+1, closerLine+1) per column
 
-    // status-gutter unsaved-change-indicator follow-up: converts
-    // buffer.UnsavedChangeRanges()' byte ranges to merged, sorted
-    // [startLine, endLineExclusive) line ranges for the status column's
-    // rendering -- gated on BOTH ContentGeneration() and
-    // UnsavedChangeGeneration() (mirrors foldGutterCacheBuffer_'s own
-    // dual-generation shape just above), since an edit bumps both but a
-    // save only bumps the latter (clearing the ranges without otherwise
-    // touching content). Unlike the fold-depth columns, these ranges are
-    // flat and disjoint by construction (no nesting concept here at all),
-    // so rendering only ever needs a binary search against this cache, no
-    // streaming stack state.
-    mutable bufferview::CacheStamp                           unsavedChangeCacheStamp_;
-    mutable std::vector<std::pair<std::size_t, std::size_t>> unsavedChangeLineRanges_;
-
-    // LSP client follow-up: converts buffer.Diagnostics()' byte ranges to
-    // (at most) one {line, severity} entry per line -- a diagnostic's own
-    // range can span multiple lines/columns, but the gutter only ever shows
-    // a marker on the line it *starts* on, the same "one glyph per line, not
-    // a highlighted span" convention most editors' diagnostic gutters use.
-    // When more than one diagnostic starts on the same line, the most
-    // severe one wins (Error > Warning > Information > Hint). Gated on
-    // Buffer::DiagnosticsGeneration() alone -- unlike
-    // unsavedChangeCacheContentGeneration_, no separate content-generation
-    // check is needed, since SetDiagnostics always replaces the set
-    // wholesale (see Buffer::Diagnostic's own doc comment) rather than
-    // being incrementally relocated across edits the way fold markers are.
-    mutable bufferview::CacheStamp                                                  diagnosticGutterCacheStamp_;
-    mutable std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>> diagnosticLineSeverities_; // sorted by line
-
-    // gutter-symbol-kind follow-up: at most one {line, SymbolKind} entry per
-    // definition line (the LAST marker wins when a line has more than one --
-    // markers arrive startByte-sorted from mode_.symbolKind, so a plain
-    // overwrite during the by-line collapse already produces that), sorted
-    // by line for the per-row lower_bound lookup Paint() does, same shape as
-    // diagnosticLineSeverities_ just above.
-    // main-editor-sticky-scroll follow-up: the raw sorted-by-startByte
-    // marker list EnsureSymbolGutterCache below collapses down to one
-    // {line, kind} entry per line -- kept here too, in full (absolute byte
-    // coordinates, huge-window-remapped the same way), since sticky scroll's
-    // StickyChainForViewportTop needs each marker's real endByte/name, which
-    // the gutter's own collapsed shape throws away. EnsureSymbolGutterCache
-    // calls EnsureSymbolMarkersCache first and derives its own cache from
-    // this one, rather than the two independently calling mode_.symbolKind
-    // and reparsing/re-querying twice per Paint().
     mutable bufferview::CacheStamp             symbolMarkersCacheStamp_;
     // Kept alongside the stamp for the same reason foldableBlocksCacheWindow_
     // is: EnsureSymbolGutterCache keys off this cache's window.
@@ -3730,12 +3665,6 @@ class BufferView : public Widget {
     // foldableBlocksCacheWindowStart_/End_'s own doc comment above -- same
     // shape, for symbolGutterLineKinds_ instead of foldableBlocksCache_.
     mutable std::vector<std::pair<std::size_t, editor::SymbolKind>> symbolGutterLineKinds_;
-
-    // Merge Conflict Resolution Mode: EnsureConflictHunkCache's cache,
-    // symbolGutterCacheBuffer_/symbolGutterCacheContentGeneration_'s exact
-    // shape minus the huge-file window (see that method's own comment).
-    mutable bufferview::CacheStamp          conflictHunkCacheStamp_;
-    mutable std::vector<text::ConflictHunk> conflictHunkCache_;
 
     // test-runner integration: per-line pass/fail/skip marks, the symbol
     // cache's shape with one extra generation stamp -- invalidated by a
@@ -4448,6 +4377,11 @@ class BufferView : public Widget {
     // The parts BufferView is being split into take this by reference rather
     // than a dozen separate arguments -- see BufferView/EditorContext.h.
     bufferview::EditorContext context_;
+
+    // After context_, which it holds by reference. The gutter columns' derived
+    // per-line data lives here rather than as loose members -- see
+    // BufferView/GutterModel.h.
+    bufferview::GutterModel gutters_;
 };
 
 // context_ holds references to BufferView's own members, so moving one would

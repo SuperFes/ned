@@ -397,10 +397,11 @@ void BufferView::Paint(Canvas paneCanvas) {
     // per Paint() call (not per row) -- see EnsureUnsavedChangeCache's own
     // doc comment. Unconditional, unlike EnsureFoldGutterCache -- every
     // buffer gets a status column regardless of mode/language.
-    EnsureUnsavedChangeCache();
+    const std::vector<std::pair<std::size_t, std::size_t>>& unsavedChangeLineRanges = gutters_.UnsavedChangeLineRanges();
     // LSP client follow-up: same "unconditional, every buffer gets one"
     // reasoning as EnsureUnsavedChangeCache above.
-    EnsureDiagnosticGutterCache();
+    const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& diagnosticLineSeverities =
+        gutters_.DiagnosticLineSeverities();
     // VCS blame gutter: unconditional every Paint() like the two above, but
     // this only ever clears (never repopulates) blameLineInfo_ -- see its
     // own doc comment.
@@ -1027,9 +1028,9 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // no streaming stack state is needed here.
                 {
                     const auto it = std::lower_bound(
-                        unsavedChangeLineRanges_.begin(), unsavedChangeLineRanges_.end(), line,
+                        unsavedChangeLineRanges.begin(), unsavedChangeLineRanges.end(), line,
                         [](const auto& range, std::size_t targetLine) { return range.second <= targetLine; });
-                    const bool  changed        = it != unsavedChangeLineRanges_.end() && it->first <= line;
+                    const bool  changed        = it != unsavedChangeLineRanges.end() && it->first <= line;
                     const Color indicatorColor = changed ? theme_.unsavedChangeIndicator : theme_.background;
                     const Brush statusBrush{.background = indicatorColor, .foreground = indicatorColor};
                     Cell&       cell = c[{.x = static_cast<int>(statusStart), .y = row}];
@@ -1053,9 +1054,9 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // (at most one entry per line -- the most severe -- already
                 // sorted).
                 if (static_cast<int>(diagnosticStart) < c.size().width) {
-                    const auto it            = std::lower_bound(diagnosticLineSeverities_.begin(), diagnosticLineSeverities_.end(), line,
+                    const auto it            = std::lower_bound(diagnosticLineSeverities.begin(), diagnosticLineSeverities.end(), line,
                                                                 [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
-                    const bool hasDiagnostic = it != diagnosticLineSeverities_.end() && it->first == line;
+                    const bool hasDiagnostic = it != diagnosticLineSeverities.end() && it->first == line;
                     Cell&      cell          = c[{.x = static_cast<int>(diagnosticStart), .y = row}];
                     if (!hasDiagnostic) {
                         cell.character = " ";
@@ -2289,20 +2290,20 @@ bool BufferView::InLineInspectHighlight(std::size_t byteOffset) const {
 }
 
 bool BufferView::InConflictOurs(std::size_t byteOffset) const {
-    EnsureConflictHunkCache();
-    return std::any_of(conflictHunkCache_.begin(), conflictHunkCache_.end(),
+    const std::vector<text::ConflictHunk>& hunks = gutters_.ConflictHunks();
+    return std::any_of(hunks.begin(), hunks.end(),
                        [byteOffset](const text::ConflictHunk& hunk) { return InRange(byteOffset, hunk.oursRange); });
 }
 
 bool BufferView::InConflictTheirs(std::size_t byteOffset) const {
-    EnsureConflictHunkCache();
-    return std::any_of(conflictHunkCache_.begin(), conflictHunkCache_.end(),
+    const std::vector<text::ConflictHunk>& hunks = gutters_.ConflictHunks();
+    return std::any_of(hunks.begin(), hunks.end(),
                        [byteOffset](const text::ConflictHunk& hunk) { return InRange(byteOffset, hunk.theirsRange); });
 }
 
 bool BufferView::InConflictBase(std::size_t byteOffset) const {
-    EnsureConflictHunkCache();
-    return std::any_of(conflictHunkCache_.begin(), conflictHunkCache_.end(), [byteOffset](const text::ConflictHunk& hunk) {
+    const std::vector<text::ConflictHunk>& hunks = gutters_.ConflictHunks();
+    return std::any_of(hunks.begin(), hunks.end(), [byteOffset](const text::ConflictHunk& hunk) {
         return hunk.baseRange && InRange(byteOffset, *hunk.baseRange);
     });
 }

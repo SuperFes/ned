@@ -22,7 +22,8 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
                                                                                                    context_{activeBuffer_, killRing_, registers_, promptHistory_, bufferList_,
                                                                                                             dispatcher_, statusMessage_, mode_, theme_, lspManager_, dapManager_,
                                                                                                             acpManager_, vcsRunner_, taskRunner_, testRunner_, projectUndo_,
-                                                                                                            eventLoop_, janetEnv_} {
+                                                                                                            eventLoop_, janetEnv_},
+                                                                                                   gutters_(context_) {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
     }

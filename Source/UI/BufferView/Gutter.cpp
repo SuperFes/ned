@@ -226,70 +226,6 @@ void BufferView::EnsureFoldGutterCache() const {
     foldGutterCacheStamp_ = stamp;
 }
 
-void BufferView::EnsureUnsavedChangeCache() const {
-    text::Buffer& buffer = activeBuffer_.Get();
-
-    const bufferview::CacheStamp stamp =
-        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), buffer.UnsavedChangeGeneration()});
-    if (unsavedChangeCacheStamp_.Matches(stamp)) {
-        return;
-    }
-
-    unsavedChangeLineRanges_.clear();
-    const text::ITextStorage& content = buffer.Content();
-    for (const auto& [byteStart, byteEnd] : buffer.UnsavedChangeRanges()) {
-        const std::size_t startLine = content.ByteOffsetToLine(byteStart);
-        // byteEnd is exclusive and may sit exactly on a line boundary (the
-        // byte after the range's own last one) -- back it up by one before
-        // converting so a range that ends right at "line N+1, column 0"
-        // doesn't get counted as touching line N+1 too.
-        const std::size_t endLine = content.ByteOffsetToLine(byteEnd > byteStart ? byteEnd - 1 : byteStart);
-        // UnsavedChangeRanges() arrives sorted by byte offset, so startLine
-        // here is never less than the previous entry's -- merge with the
-        // last pushed range if they touch or overlap, same "already
-        // sorted, just coalesce adjacent" approach used elsewhere in this
-        // codebase (e.g. Buffer's own MergeUnsavedRange).
-        if (!unsavedChangeLineRanges_.empty() && startLine <= unsavedChangeLineRanges_.back().second) {
-            unsavedChangeLineRanges_.back().second = std::max(unsavedChangeLineRanges_.back().second, endLine + 1);
-        }
-        else {
-            unsavedChangeLineRanges_.emplace_back(startLine, endLine + 1);
-        }
-    }
-
-    unsavedChangeCacheStamp_ = stamp;
-}
-
-void BufferView::EnsureDiagnosticGutterCache() const {
-    text::Buffer& buffer = activeBuffer_.Get();
-
-    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(&buffer, {buffer.DiagnosticsGeneration()});
-    if (diagnosticGutterCacheStamp_.Matches(stamp)) {
-        return;
-    }
-
-    diagnosticLineSeverities_.clear();
-    const text::ITextStorage& content = buffer.Content();
-    // Diagnostics() arrives in whatever order the server reported them, not
-    // necessarily sorted by position -- collapse to at most one {line,
-    // severity} entry per line (keeping the most severe) via a small local
-    // map, then sort by line once at the end for the per-row lower_bound
-    // lookup Paint() does.
-    std::unordered_map<std::size_t, text::Buffer::Diagnostic::Severity> mostSevereByLine;
-    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
-        const std::size_t line = content.ByteOffsetToLine(diagnostic.startByte);
-        const auto        it   = mostSevereByLine.find(line);
-        if (it == mostSevereByLine.end() || DiagnosticSeverityRank(diagnostic.severity) > DiagnosticSeverityRank(it->second)) {
-            mostSevereByLine[line] = diagnostic.severity;
-        }
-    }
-    diagnosticLineSeverities_.assign(mostSevereByLine.begin(), mostSevereByLine.end());
-    std::sort(diagnosticLineSeverities_.begin(), diagnosticLineSeverities_.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
-
-    diagnosticGutterCacheStamp_ = stamp;
-}
-
 void BufferView::EnsureSymbolMarkersCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
@@ -359,16 +295,6 @@ void BufferView::EnsureSymbolGutterCache() const {
     std::sort(symbolGutterLineKinds_.begin(), symbolGutterLineKinds_.end(),
               [](const auto& a, const auto& b) { return a.first < b.first; });
     symbolGutterCacheStamp_ = stamp;
-}
-
-void BufferView::EnsureConflictHunkCache() const {
-    text::Buffer& buffer = activeBuffer_.Get();
-    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
-    if (conflictHunkCacheStamp_.Matches(stamp)) {
-        return;
-    }
-    conflictHunkCache_                  = text::ParseConflictHunks(buffer.Text());
-    conflictHunkCacheStamp_ = stamp;
 }
 
 void BufferView::EnsureTestGutterCache() const {
