@@ -16,7 +16,9 @@ using ned::editor::ResolvedClipboardCopyCommand;
 using ned::editor::ResolvedClipboardPasteCommand;
 using ned::editor::ResolvedPrimarySelectionPasteCommand;
 using ned::editor::SetClipboardCopyCommand;
+using ned::editor::Osc52Enabled;
 using ned::editor::SetClipboardEnabled;
+using ned::editor::SetOsc52Enabled;
 using ned::editor::SetClipboardPasteCommand;
 using ned::editor::SetClipboardPrimaryPasteCommand;
 
@@ -205,4 +207,22 @@ TEST_CASE("PasteFromPrimarySelection kills and returns nullopt when the tool han
     SetClipboardPrimaryPasteCommand({"sh", "-c", "sleep 100"});
 
     REQUIRE_FALSE(PasteFromPrimarySelection(std::chrono::milliseconds(100)).has_value());
+}
+
+// osc52-test-hermeticity follow-up. Deliberately does not copy anything:
+// Tests/ClipboardTestGuard.cpp forces this off for the whole binary
+// precisely so no test writes a real OSC 52 sequence to the terminal
+// ned_tests is running under, and a test that flipped it back on to observe
+// a write would be reintroducing exactly that. The switch's actual effect is
+// covered by CopyToSystemClipboard's own round-trip case above staying
+// silent.
+TEST_CASE("SetOsc52Enabled/Osc52Enabled round-trip, independent of ClipboardEnabled", "[Clipboard]") {
+    REQUIRE_FALSE(Osc52Enabled()); // the guard's steady state for this binary
+
+    SetOsc52Enabled(true);
+    REQUIRE(Osc52Enabled());
+    REQUIRE_FALSE(ClipboardEnabled()); // untouched by the narrower switch
+
+    SetOsc52Enabled(false);
+    REQUIRE_FALSE(Osc52Enabled());
 }
