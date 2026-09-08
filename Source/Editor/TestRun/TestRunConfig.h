@@ -42,6 +42,11 @@ void                                           SetTestCommand(std::vector<std::s
 // spaces/brackets/quotes is safe by construction). Empty clears.
 void                                                  SetTestFilterCommand(std::vector<std::string> argvTemplate);
 [[nodiscard]] std::optional<std::vector<std::string>> TestFilterCommand();
+// Presence alone, without copying the template out. TestFilterCommand()
+// returns by value, so asking it a yes/no question costs a heap allocation
+// and a vector copy -- fine once per command invocation, not fine on the
+// per-frame path that gates the test gutter's runnable affordance.
+[[nodiscard]] bool HasTestFilterCommand();
 
 // The pure substitution TestFilterCommand's template goes through --
 // separate and exported so it's unit-testable without a runner.

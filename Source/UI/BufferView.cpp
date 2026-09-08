@@ -1385,8 +1385,14 @@ namespace {
     // test-runner integration: the per-test gutter mark. Colors are the
     // diff gutter's own bare Palette16 constants (not Theme fields) --
     // see the diff-column paint block's comment for that precedent.
-    const char* TestGlyphFor(editor::testrun::TestResult::Status status) {
-        switch (status) {
+    // test-runner-gaps follow-up: nullopt = discovered but not run yet, the
+    // clickable "run this test" affordance (only ever produced when a
+    // filter command is configured -- see EnsureTestGutterCache).
+    const char* TestGlyphFor(const std::optional<editor::testrun::TestResult::Status>& status) {
+        if (!status) {
+            return "▸"; // BLACK RIGHT-POINTING SMALL TRIANGLE -- the run affordance
+        }
+        switch (*status) {
             case editor::testrun::TestResult::Status::Passed:
                 return "✓"; // CHECK MARK
             case editor::testrun::TestResult::Status::Failed:
@@ -1397,8 +1403,11 @@ namespace {
         return " "; // unreachable, same convention as DiagnosticGlyphFor above
     }
 
-    Color TestStatusColor(editor::testrun::TestResult::Status status) {
-        switch (status) {
+    Color TestStatusColor(const std::optional<editor::testrun::TestResult::Status>& status) {
+        if (!status) {
+            return Color::BrightBlack; // an affordance, not a result -- deliberately quiet
+        }
+        switch (*status) {
             case editor::testrun::TestResult::Status::Passed:
                 return Color::BrightGreen;
             case editor::testrun::TestResult::Status::Failed:
@@ -1575,13 +1584,36 @@ void BufferView::EnsureTestGutterCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
     // Eligibility gate, EnsureSymbolGutterCache's exact shape -- plus the
-    // runner itself: no runner wired (tests) or no parsed outcome yet means
-    // nothing to mark, at zero width.
-    if (!mode_.testDiscovery || buffer.ReadOnly() || testRunner_ == nullptr || !testRunner_->LatestOutcome()) {
-        testGutterLineStatuses_.clear();
+    // runner itself: no runner wired (tests) means nothing to mark, at zero
+    // width.
+    //
+    // test-runner-gaps follow-up: a parsed outcome is no longer required.
+    // With none yet, a discovered test still gets a row -- the clickable
+    // "run this test" affordance -- but only when a filter command is
+    // actually configured, since that is exactly what makes the click able
+    // to do anything (run-test-at-point refuses without one). A user who
+    // never configured ned/set-test-filter-command therefore sees this
+    // gutter behave exactly as it did before: nothing until a run happens.
+    //
+    // Split in two so the free checks short-circuit before the config
+    // lookup: this runs once per pane per frame, and HasTestFilterCommand
+    // still takes a mutex (TestFilterCommand() would additionally copy the
+    // argv vector out, which is why it isn't used here).
+    if (!mode_.testDiscovery || buffer.ReadOnly() || testRunner_ == nullptr) {
+        testGutterEntries_.clear();
         testGutterCacheBuffer_            = &buffer;
         testGutterCacheContentGeneration_ = buffer.ContentGeneration();
         testGutterCacheOutcomeGeneration_ = testRunner_ != nullptr ? testRunner_->OutcomeGeneration() : 0;
+        testGutterCacheRunnable_          = false; // no runner -- no affordance is possible either
+        return;
+    }
+    const bool runnableAffordance = editor::testrun::HasTestFilterCommand();
+    if (!testRunner_->LatestOutcome() && !runnableAffordance) {
+        testGutterEntries_.clear();
+        testGutterCacheBuffer_            = &buffer;
+        testGutterCacheContentGeneration_ = buffer.ContentGeneration();
+        testGutterCacheOutcomeGeneration_ = testRunner_->OutcomeGeneration();
+        testGutterCacheRunnable_          = runnableAffordance;
         return;
     }
 
@@ -1589,17 +1621,24 @@ void BufferView::EnsureTestGutterCache() const {
     const bool                huge                 = content.IsHuge();
     const auto [windowStart, windowEnd]             = HugeStructuralWindow(content);
 
+    // testGutterCacheRunnable_ is part of the key, not just an input: a
+    // filter command configured after a run has already landed changes what
+    // rows exist without touching content, outcome, or window generation.
     if (testGutterCacheBuffer_ == &buffer && testGutterCacheContentGeneration_ == buffer.ContentGeneration() &&
         testGutterCacheOutcomeGeneration_ == testRunner_->OutcomeGeneration() && testGutterCacheWindowStart_ == windowStart &&
-        testGutterCacheWindowEnd_ == windowEnd) {
+        testGutterCacheWindowEnd_ == windowEnd && testGutterCacheRunnable_ == runnableAffordance) {
         return;
     }
 
-    const editor::testrun::TestRunOutcome& outcome = *testRunner_->LatestOutcome();
-    const std::string                      bufferBasename =
-        buffer.Path() ? buffer.Path()->filename().string() : std::string();
+    // May hold nothing at all now (the runnable-affordance case above): the
+    // marker loop then finds no matching result for any test and every row
+    // comes out status-less, which is exactly the pre-run state.
+    static const editor::testrun::TestRunOutcome kNoOutcome{};
+    const editor::testrun::TestRunOutcome&       outcome =
+        testRunner_->LatestOutcome() ? *testRunner_->LatestOutcome() : kNoOutcome;
+    const std::string bufferBasename = buffer.Path() ? buffer.Path()->filename().string() : std::string();
 
-    testGutterLineStatuses_.clear();
+    testGutterEntries_.clear();
     // huge-file-structural-gutters follow-up: a huge buffer feeds
     // mode_.testDiscovery a bounded window instead of the whole document --
     // marker.startByte is then window-relative, remapped back to absolute
@@ -1640,15 +1679,28 @@ void BufferView::EnsureTestGutterCache() const {
         if (!aggregate && outcome.failuresOnly && outcome.parsedOk && !testRunner_->LastRunWasFiltered()) {
             aggregate = editor::testrun::TestResult::Status::Passed;
         }
-        if (aggregate) {
-            testGutterLineStatuses_.emplace_back(content.ByteOffsetToLine(startByte), *aggregate);
+        // test-runner-gaps follow-up: a status-less row is kept (rather than
+        // skipped as it used to be) only when the runnable affordance is on
+        // -- that row paints '▸' and is what a gutter click runs. Without a
+        // filter command configured, absence still means no row at all.
+        if (aggregate || runnableAffordance) {
+            testGutterEntries_.push_back(TestGutterEntry{
+                .line   = content.ByteOffsetToLine(startByte),
+                .status = aggregate,
+                .name   = marker.name,
+            });
         }
     }
     // One entry per line, Failed winning a same-line tie (a class marker and
     // a same-line method can't collide in practice, but two markers on one
-    // line must not produce two sort keys).
-    const auto tieRank = [](editor::testrun::TestResult::Status status) {
-        switch (status) {
+    // line must not produce two sort keys). A status-less (not-run) row
+    // ranks last, so a line carrying both a real result and a bare runnable
+    // marker keeps the result.
+    const auto tieRank = [](const std::optional<editor::testrun::TestResult::Status>& status) {
+        if (!status) {
+            return 3;
+        }
+        switch (*status) {
             case editor::testrun::TestResult::Status::Failed:
                 return 0;
             case editor::testrun::TestResult::Status::Passed:
@@ -1656,21 +1708,22 @@ void BufferView::EnsureTestGutterCache() const {
             case editor::testrun::TestResult::Status::Skipped:
                 return 2;
         }
-        return 3;
+        return 4;
     };
-    std::sort(testGutterLineStatuses_.begin(), testGutterLineStatuses_.end(),
-              [&](const auto& a, const auto& b) {
-                  return a.first != b.first ? a.first < b.first : tieRank(a.second) < tieRank(b.second);
-              });
-    testGutterLineStatuses_.erase(std::unique(testGutterLineStatuses_.begin(), testGutterLineStatuses_.end(),
-                                              [](const auto& a, const auto& b) { return a.first == b.first; }),
-                                  testGutterLineStatuses_.end());
+    std::sort(testGutterEntries_.begin(), testGutterEntries_.end(), [&](const TestGutterEntry& a, const TestGutterEntry& b) {
+        return a.line != b.line ? a.line < b.line : tieRank(a.status) < tieRank(b.status);
+    });
+    testGutterEntries_.erase(
+        std::unique(testGutterEntries_.begin(), testGutterEntries_.end(),
+                    [](const TestGutterEntry& a, const TestGutterEntry& b) { return a.line == b.line; }),
+        testGutterEntries_.end());
 
     testGutterCacheBuffer_            = &buffer;
     testGutterCacheContentGeneration_ = buffer.ContentGeneration();
     testGutterCacheOutcomeGeneration_ = testRunner_->OutcomeGeneration();
     testGutterCacheWindowStart_       = windowStart;
     testGutterCacheWindowEnd_         = windowEnd;
+    testGutterCacheRunnable_          = runnableAffordance;
 }
 
 void BufferView::EnsureCoverageGutterCache() const {
@@ -1701,7 +1754,7 @@ void BufferView::EnsureCoverageGutterCache() const {
     }
     // file->lines is already sorted-by-line/unique-per-line by construction
     // (CoverageOutputParser.h's own merge step keeps it that way), so no
-    // sort/dedupe pass is needed here the way testGutterLineStatuses_ above
+    // sort/dedupe pass is needed here the way testGutterEntries_ above
     // needs one (multiple test markers can share a line; coverage lines
     // can't).
 }
@@ -3346,12 +3399,12 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // test-runner integration: the pass/fail mark on a discovered
                 // test's own first line -- symbol block's exact lookup shape.
                 if (testColumnWidth > 0 && static_cast<int>(testStart) < c.size().width) {
-                    const auto it = std::lower_bound(testGutterLineStatuses_.begin(), testGutterLineStatuses_.end(), line,
-                                                     [](const auto& entry, std::size_t l) { return entry.first < l; });
-                    if (it != testGutterLineStatuses_.end() && it->first == line) {
+                    const auto it = std::lower_bound(testGutterEntries_.begin(), testGutterEntries_.end(), line,
+                                                     [](const TestGutterEntry& entry, std::size_t l) { return entry.line < l; });
+                    if (it != testGutterEntries_.end() && it->line == line) {
                         Cell& cell            = c[{.x = static_cast<int>(testStart), .y = row}];
-                        cell.character        = TestGlyphFor(it->second);
-                        cell.foreground_color = TestStatusColor(it->second);
+                        cell.character        = TestGlyphFor(it->status);
+                        cell.foreground_color = TestStatusColor(it->status);
                         cell.bold             = true;
                     }
                 }
@@ -6909,6 +6962,15 @@ void BufferView::ShowContextMenuAt(Point localClick) {
             contextMenuEntries_.push_back(ContextMenuCommandEntry("vcs-unstage-hunk"));
             contextMenuEntries_.push_back(ContextMenuCommandEntry("vcs-revert-hunk"));
         }
+        // test-runner-gaps follow-up: the keyboard-equivalent escape hatch
+        // for the left-click above, and the same v1 simplification as every
+        // gate here -- shown whenever the test gutter is active at all, with
+        // run-test-at-point reporting its own "no test definition at point"
+        // when this line isn't one. The SetPoint above already moved point
+        // to the clicked line, which is what that command resolves against.
+        if (TestGutterActive()) {
+            contextMenuEntries_.push_back(ContextMenuCommandEntry("run-test-at-point"));
+        }
     }
     else {
         const std::size_t offset = ByteOffsetForPoint(localClick);
@@ -8369,16 +8431,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         }
         case editor::InteractiveRequest::RunTestAtPoint: {
-            if (!testRunner_) {
-                statusMessage_ = "No test runner available.";
-                return;
-            }
-            if (!mode_.testDiscovery) {
-                statusMessage_ = "No test discovery configured for " + mode_.name + ".";
-                return;
-            }
-            if (!editor::testrun::TestFilterCommand()) {
-                statusMessage_ = "No test filter command configured (see ned/set-test-filter-command).";
+            if (!TestRunPreconditionsMet()) {
                 return;
             }
             text::Buffer& buffer = activeBuffer_.Get();
@@ -8397,11 +8450,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "No test definition at point.";
                 return;
             }
-            const std::string file = buffer.Path() ? buffer.Path()->string() : std::string();
-            if (text::Buffer* output = testRunner_->RunFiltered(target->name, file)) {
-                activeBuffer_.Set(*output);
-            }
-            statusMessage_ = "Running \"" + target->name + "\"...";
+            RunSingleTest(target->name);
             return;
         }
         case editor::InteractiveRequest::RerunFailedTests: {
@@ -13538,7 +13587,79 @@ bool BufferView::SymbolGutterActive() const {
 
 bool BufferView::TestGutterActive() const {
     EnsureTestGutterCache();
-    return !testGutterLineStatuses_.empty();
+    return !testGutterEntries_.empty();
+}
+
+bool BufferView::TestRunPreconditionsMet() {
+    if (!testRunner_) {
+        statusMessage_ = "No test runner available.";
+        return false;
+    }
+    if (!mode_.testDiscovery) {
+        statusMessage_ = "No test discovery configured for " + mode_.name + ".";
+        return false;
+    }
+    if (!editor::testrun::TestFilterCommand()) {
+        statusMessage_ = "No test filter command configured (see ned/set-test-filter-command).";
+        return false;
+    }
+    return true;
+}
+
+void BufferView::RunSingleTest(const std::string& testName) {
+    if (!testRunner_) {
+        return; // callers check TestRunPreconditionsMet first; belt and braces
+    }
+    const text::Buffer& buffer = activeBuffer_.Get();
+    const std::string   file   = buffer.Path() ? buffer.Path()->string() : std::string();
+    if (text::Buffer* output = testRunner_->RunFiltered(testName, file)) {
+        activeBuffer_.Set(*output);
+    }
+    statusMessage_ = "Running \"" + testName + "\"...";
+}
+
+std::size_t BufferView::TestGutterColumnStart() const {
+    // Mirrors Paint()'s own left-to-right column sum
+    // ([dap][diff][status][diagnostic][gap][digits][gap][test]) rather than
+    // the fold-click's subtract-from-the-right trick -- that one works only
+    // because fold and blame are the two rightmost regions, which the test
+    // column is not.
+    const std::size_t dapColumnWidth     = DapGutterActive() ? kDapWidth : 0;
+    const std::size_t diffColumnWidth    = DiffGutterActive() ? kDiffWidth : 0;
+    const std::size_t lineNumberGapWidth = LineNumberGutterActive() ? kLineNumberGap : 0;
+    const std::size_t gutterDigits =
+        LineNumberGutterActive() ? std::to_string(activeBuffer_.Get().Content().LineCount()).size() : 0;
+    return dapColumnWidth + diffColumnWidth + kStatusWidth + kDiagnosticWidth + lineNumberGapWidth + gutterDigits +
+           lineNumberGapWidth;
+}
+
+bool BufferView::HandleTestGutterClick(Point at) {
+    if (!TestGutterActive()) {
+        return false;
+    }
+    const std::size_t testStart = TestGutterColumnStart();
+    if (at.x < static_cast<int>(testStart) || static_cast<std::size_t>(at.x) >= testStart + kTestWidth) {
+        return false;
+    }
+
+    // Line resolution matches the fold-gutter click's own
+    // AdvanceVisibleLines walk exactly, rather than introducing a second
+    // slightly-different gutter line-resolution path.
+    const text::ITextStorage& content    = activeBuffer_.Get().Content();
+    const std::size_t         totalLines = content.LineCount();
+    const std::size_t         line =
+        std::min(AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(at.y, 0)), totalLines), totalLines - 1);
+
+    EnsureTestGutterCache();
+    const auto it = std::lower_bound(testGutterEntries_.begin(), testGutterEntries_.end(), line,
+                                     [](const TestGutterEntry& entry, std::size_t target) { return entry.line < target; });
+    if (it == testGutterEntries_.end() || it->line != line) {
+        return true; // inside the column, just not on a marked row -- swallow, don't place point
+    }
+    if (TestRunPreconditionsMet()) {
+        RunSingleTest(it->name);
+    }
+    return true;
 }
 
 bool BufferView::CoverageGutterActive() const {
@@ -13825,6 +13946,16 @@ bool BufferView::OnMouseEvent(const Event& event) {
                 buffer.SetPoint(chain[index].startByte);
                 ScrollToShowPoint();
             }
+            return true;
+        }
+
+        // test-runner-gaps follow-up: a click on a test's own gutter mark
+        // runs that one test, the mouse counterpart to run-test-at-point's
+        // C-c T . -- same "one specific gutter region wins over the generic
+        // point-placement fallthrough" shape the fold-gutter click below
+        // has. Checked first only because the two regions can't overlap;
+        // order between them carries no meaning.
+        if (HandleTestGutterClick(mouse->at)) {
             return true;
         }
 

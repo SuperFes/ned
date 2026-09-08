@@ -216,8 +216,15 @@ void TestRunner::DispatchProcessExit(std::optional<int> exitCode) {
         buffer->AppendWhileReadOnly("[test output did not match format \"" + format + "\"]\n");
     }
     else {
+        // test-runner-gaps follow-up: a failures-only format is where the
+        // per-test gutter marks quietly degrade -- and for a *filtered* run
+        // the gutter's absence-means-pass inference deliberately doesn't
+        // apply at all, so run-test-at-point would otherwise leave no mark
+        // and no explanation. Say so here, where the run's own summary
+        // already lands, rather than rewriting the user's argv for them.
         buffer->AppendWhileReadOnly("[tests: " + std::to_string(fresh.passed) + " passed, " + std::to_string(fresh.failed) +
-                                    " failed, " + std::to_string(fresh.skipped) + " skipped]\n");
+                                    " failed, " + std::to_string(fresh.skipped) + " skipped" +
+                                    (fresh.failuresOnly ? FailuresOnlyHint(fresh.format) : std::string()) + "]\n");
     }
 
     MergeOutcome(std::move(fresh));

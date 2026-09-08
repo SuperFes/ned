@@ -2903,12 +2903,26 @@ class BufferView : public Widget {
     // huge-file windowing (a conflicted file is an ordinary source file in
     // practice, and re-parsing markers is a cheap O(n) scan regardless).
     void EnsureConflictHunkCache() const;
-    // test-runner integration: (re)derives testGutterLineStatuses_ from
+    // test-runner integration: (re)derives testGutterEntries_ from
     // mode_.testDiscovery(buffer.Text()) matched against the TestRunner's
     // latest parsed outcome (MatchesTestName, TestRun/TestResult.h) --
     // EnsureSymbolGutterCache's shape with the extra outcome-generation
     // stamp; see the member's own comment below.
     void EnsureTestGutterCache() const;
+    // test-runner-gaps follow-up: the three pieces run-test-at-point's
+    // keyboard path and the test-gutter click both go through, so a click
+    // can never drift from the command's own behaviour.
+    // TestRunPreconditionsMet writes its own statusMessage_ and returns
+    // false when a runner/discovery/filter-command is missing.
+    bool TestRunPreconditionsMet();
+    void RunSingleTest(const std::string& testName);
+    // Screen x where the test column begins, summed left-to-right the way
+    // Paint() does -- see its definition for why the fold-click's
+    // subtract-from-the-right shortcut doesn't apply here.
+    [[nodiscard]] std::size_t TestGutterColumnStart() const;
+    // True when the click landed inside the test column (and was therefore
+    // consumed), whether or not that row actually carried a test.
+    bool HandleTestGutterClick(Point at);
     // code-coverage-gutter follow-up: (re)derives coverageGutterLineStatuses_
     // from editor::coverage::CurrentCoverageReport() matched against this
     // buffer's own path (FindFileCoverage) -- gated on buffer identity plus
@@ -3737,10 +3751,24 @@ class BufferView : public Widget {
     mutable std::size_t                                                              testGutterCacheOutcomeGeneration_ = 0;
     // huge-file-structural-gutters follow-up: see
     // foldableBlocksCacheWindowStart_/End_'s own doc comment above -- same
-    // shape, for testGutterLineStatuses_ instead of foldableBlocksCache_.
+    // shape, for testGutterEntries_ instead of foldableBlocksCache_.
     mutable std::size_t                                                              testGutterCacheWindowStart_       = 0;
     mutable std::size_t                                                              testGutterCacheWindowEnd_         = 0;
-    mutable std::vector<std::pair<std::size_t, editor::testrun::TestResult::Status>> testGutterLineStatuses_;
+    // Part of the cache key, not just an input: configuring a filter command
+    // after a run has landed changes which rows exist without touching
+    // content, outcome, or window generation.
+    mutable bool                                                                     testGutterCacheRunnable_          = false;
+    // test-runner-gaps follow-up: was a bare (line, status) pair. A
+    // gutter-click needs the discovered test's own name to run it, and
+    // `status` became optional so a test with no result *yet* still gets a
+    // row -- the clickable "run this" affordance, which only appears when
+    // a filter command is configured (see EnsureTestGutterCache).
+    struct TestGutterEntry {
+        std::size_t                                        line = 0;
+        std::optional<editor::testrun::TestResult::Status> status; // nullopt = not run
+        std::string                                        name;
+    };
+    mutable std::vector<TestGutterEntry> testGutterEntries_;
 
     // code-coverage-gutter follow-up: per-line covered/partial/uncovered
     // marks for whichever FileCoverage entry (if any) matches this buffer's
@@ -3748,7 +3776,7 @@ class BufferView : public Widget {
     // editor::coverage::CoverageReportGeneration() alone, no content
     // generation (see EnsureCoverageGutterCache's own doc comment above for
     // why coverage data isn't content-derived the way test/symbol markers
-    // are). No huge-file windowing either, unlike testGutterLineStatuses_/
+    // are). No huge-file windowing either, unlike testGutterEntries_/
     // symbolGutterLineKinds_ above -- there's no parse involved, just a map
     // lookup by line number, so this is cheap regardless of buffer size.
     mutable text::Buffer*                                                       coverageGutterCacheBuffer_            = nullptr;

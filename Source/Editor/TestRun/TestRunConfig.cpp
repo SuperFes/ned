@@ -54,6 +54,11 @@ std::optional<std::vector<std::string>> TestFilterCommand() {
     return g_filterTemplate;
 }
 
+bool HasTestFilterCommand() {
+    const std::lock_guard<std::mutex> lock(g_mutex);
+    return g_filterTemplate.has_value();
+}
+
 std::vector<std::string> SubstituteFilterTemplate(const std::vector<std::string>& argvTemplate,
                                                   const std::string& testName, const std::string& file) {
     std::vector<std::string> argv;

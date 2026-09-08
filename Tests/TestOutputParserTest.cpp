@@ -312,6 +312,28 @@ TEST_CASE("ParseGoTestJson reads pass/fail/skip events with scraped locations", 
     REQUIRE(outcome.results[3].line == 21);
 }
 
+TEST_CASE("ParseGoTestJson keeps the import path as a source-location hint", "[TestRun]") {
+    // test-runner-gaps follow-up: go prints filepath.Base(file), so
+    // "calc_test.go" alone can't be opened in a multi-directory module --
+    // the Package is the only directory information in the output, and
+    // TestSourceResolver is what turns it back into a real path.
+    const auto outcome = ParseGoTestJson(
+        R"({"Action":"output","Package":"github.com/org/mod/internal/sub","Test":"TestFails","Output":"    calc_test.go:12: boom\n"}
+{"Action":"fail","Package":"github.com/org/mod/internal/sub","Test":"TestFails","Elapsed":0}
+)");
+    REQUIRE(outcome.results.size() == 1);
+    REQUIRE(outcome.results[0].file == "calc_test.go"); // still exactly what go printed
+    REQUIRE(outcome.results[0].packagePath == "github.com/org/mod/internal/sub");
+}
+
+TEST_CASE("Parsers other than go-json leave packagePath empty", "[TestRun]") {
+    const auto pytest = ParsePytest(kPytestVerboseOutput);
+    REQUIRE_FALSE(pytest.results.empty());
+    for (const auto& result : pytest.results) {
+        REQUIRE(result.packagePath.empty());
+    }
+}
+
 TEST_CASE("ParseGoTestJson disambiguates the same test name across packages", "[TestRun]") {
     const auto outcome = ParseGoTestJson(
         R"({"Action":"pass","Package":"mod/alpha","Test":"TestThing","Elapsed":0}
