@@ -293,6 +293,9 @@ void ChildProcess::WriteAll(std::string_view data, std::chrono::milliseconds tim
 }
 
 std::string ChildProcess::ReadSome() const {
+    if (readFd_ < 0) {
+        return {}; // closed/moved-from -- EOF, not an EBADF error; see WaitReadable's own header doc comment
+    }
     char buffer[4096];
     while (true) {
         const ssize_t result = ::read(readFd_, buffer, sizeof(buffer));
@@ -309,7 +312,9 @@ std::string ChildProcess::ReadSome() const {
                 // immediate empty-handed return. WaitReadable's negative-
                 // timeout sentinel restores the real blocking-until-ready
                 // wait.
-                [[maybe_unused]] const bool ready = WaitReadable(std::chrono::milliseconds(-1)); // always true -- a negative timeout never times out
+                if (!WaitReadable(std::chrono::milliseconds(-1))) {
+                    return {}; // a negative timeout never times out, so this is the closed-connection case -- report it as EOF
+                }
                 continue;
             }
             throw std::runtime_error(std::string("ned: ChildProcess read failed: ") + std::strerror(errno));
@@ -322,6 +327,9 @@ std::string ChildProcess::ReadSome() const {
 }
 
 bool ChildProcess::WaitReadable(std::chrono::milliseconds timeout) const {
+    if (readFd_ < 0) {
+        return false; // closed/moved-from -- see this method's own header doc comment on why polling a -1 fd parks instead of failing
+    }
     pollfd pfd{readFd_, POLLIN, 0};
     while (true) {
         const int result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
@@ -336,6 +344,9 @@ bool ChildProcess::WaitReadable(std::chrono::milliseconds timeout) const {
 }
 
 bool ChildProcess::WaitWritable(std::chrono::milliseconds timeout) const {
+    if (writeFd_ < 0) {
+        return false; // ditto -- see WaitReadable's own guard above
+    }
     pollfd pfd{writeFd_, POLLOUT, 0};
     while (true) {
         const int result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));

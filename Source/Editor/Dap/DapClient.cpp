@@ -71,8 +71,16 @@ void DapClient::StartReadLoop() {
     // Identical loop to LspClient::StartReadLoop — see that function (and
     // LspClient.h's header comment) for the reasoning behind every branch;
     // only the dispatch target differs.
-    readThread_ = std::jthread([this](std::stop_token) {
-        while (true) {
+    // closed-connection-never-parks follow-up: the stop token is genuinely
+    // consulted rather than ignored. std::jthread's destructor requests a
+    // stop before it joins, so a read thread the scheduler has not yet run
+    // by the time its owner is destroyed exits here instead of entering a
+    // read against an already-torn-down transport_ -- the deadlock's common
+    // window. ChildProcess::WaitReadable's own closed-fd guard is what
+    // covers the remainder (stop requested after this check, before the
+    // poll); the two together are what make the join below always return.
+    readThread_ = std::jthread([this](const std::stop_token& stopToken) {
+        while (!stopToken.stop_requested()) {
             std::optional<std::string> frame;
             try {
                 frame = transport_.ReadFrame(); // blocks

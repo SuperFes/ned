@@ -34,6 +34,14 @@ namespace {
         while (true) {
             const std::chrono::milliseconds waitTimeout = first ? std::chrono::milliseconds(-1) : stallTimeout;
             if (!child.WaitReadable(waitTimeout)) {
+                if (first) {
+                    // closed-connection-never-parks follow-up: an unbounded
+                    // (negative-timeout) wait never times out, so a false
+                    // here can only mean the connection is already closed --
+                    // a clean disconnect, exactly like the EOF case below,
+                    // not the mid-message stall the bounded wait reports.
+                    return false;
+                }
                 throw std::runtime_error("ned: ACP transport stalled mid-message");
             }
             first                = false;

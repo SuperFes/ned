@@ -91,14 +91,33 @@ class ChildProcess {
     // subprocess-hang-protection follow-up. True if the read end has data
     // (or EOF) ready within timeout; false if it timed out with nothing
     // ready. poll()-based -- the shared primitive every byte-level framing
-    // reader (Lsp/Acp Transport) and ReadSome(timeout) below build on. Throws
-    // std::runtime_error on a genuine poll() error.
+    // reader (Lsp/Acp/Mcp Transport) and ReadSome(timeout) below build on.
+    // Throws std::runtime_error on a genuine poll() error.
+    //
+    // closed-connection-never-parks follow-up: false is also returned
+    // immediately, without polling at all, once the connection is closed
+    // (CloseConnection()/~ChildProcess having set readFd_ to -1, or a
+    // moved-from instance). poll(2) *ignores* a negative fd rather than
+    // failing on it -- it just reports revents == 0 for that entry -- so a
+    // one-entry pollfd set whose only fd is -1 parks for the full timeout,
+    // and the unbounded (negative-timeout) first-byte wait every framing
+    // reader uses for an idle connection parks forever. That was a real
+    // deadlock, not a theoretical one: a protocol client's read thread that
+    // had not yet been scheduled into its first ReadMessage() by the time
+    // its owner was destroyed entered this method against the
+    // already-closed transport and never came back, so the destructor's
+    // own join() on that thread never returned either (found 2026-09-08 via
+    // a core dump of a wedged AcpClient test -- the flaky protocol-client
+    // timeouts under `ctest -j8`). A closed connection can never become
+    // readable, so reporting that immediately is both correct and what
+    // makes every caller's teardown path terminate.
     [[nodiscard]] bool WaitReadable(std::chrono::milliseconds timeout) const;
 
     // write-side-hang-protection follow-up. WaitReadable's write-side twin:
     // true if the write end can accept data (or has an error condition
     // ready to report) within timeout; false if it timed out with nothing
-    // ready. WriteAll's own building block.
+    // ready -- including, per WaitReadable's own note above, the
+    // immediate-false closed-connection case.
     [[nodiscard]] bool WaitWritable(std::chrono::milliseconds timeout) const;
 
     // Same contract as ReadSome() above, except returns std::nullopt instead

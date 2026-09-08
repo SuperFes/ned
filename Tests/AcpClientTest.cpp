@@ -329,3 +329,40 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
 
     ::close(agentStdinRead);
 }
+
+// closed-connection-never-parks follow-up. The client-level half of
+// Tests/ChildProcessTest.cpp's own "WaitReadable returns immediately on a
+// closed connection" pair, and the direct regression test for the flaky
+// protocol-client timeouts under `ctest -j8` (root-caused 2026-09-08 from a
+// core dump of a wedged run of the MethodNotFound case above): ~AcpClient
+// destroys transport_ before joining readThread_ by design -- that fd close
+// is what unblocks an in-flight ReadMessage() -- but a read thread the
+// scheduler hasn't run *at all* yet reaches its first read only after that
+// teardown, and used to park forever in poll() on the resulting -1 fd, so
+// the join never returned. Hammering construct-then-immediately-destroy is
+// what makes the scheduler land in that window; the loop simply has to
+// finish. LspClient/DapClient share this exact shape (see AcpClient.h's own
+// header comment) and are fixed by the same shared ChildProcess guard.
+TEST_CASE("Destroying an AcpClient before its read thread has started doesn't deadlock", "[Acp]") {
+    ned::ui::EventLoop eventLoop;
+
+    for (int iteration = 0; iteration < 200; ++iteration) {
+        int clientWritesHere[2];
+        int clientReadsHere[2];
+        REQUIRE(::pipe(clientWritesHere) == 0);
+        REQUIRE(::pipe(clientReadsHere) == 0);
+
+        {
+            AcpClient client(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+            // No sleep, no I/O in between -- ClientFixture's own teardown
+            // order (peer write end closed first, so a read thread already
+            // parked in poll() wakes on EOF), but with nothing at all
+            // happening first, which is what leaves the read thread
+            // unscheduled often enough to land in the window.
+            ::close(clientReadsHere[1]);
+        }
+
+        ::close(clientWritesHere[0]);
+    }
+    SUCCEED();
+}
