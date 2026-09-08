@@ -2,7 +2,7 @@
 
 What's still open. Completed work is deliberately not tracked here — the detailed
 per-feature design/decision records this file used to carry were pruned 2026-08-20,
-2026-08-25, and again in this pass (2026-09-06); full history lives in git
+2026-08-25, 2026-09-06, and again 2026-09-07; full history lives in git
 (`git log --follow ROADMAP.md`, `git show <rev>:ROADMAP.md`, or `git log --grep=<slug>`
 for a specific feature — most shipped items below name the slug to search for). Current
 architecture is documented in `CLAUDE.md`. When an item here ships, replace its entry
@@ -87,99 +87,24 @@ Notcurses.
         anything that exists today — worth scoping only if plain shelled-out
         `adb`/`gradlew` tasks prove too manual in practice, not speculatively.
 
-Go bundled language support is shipped (`tree-sitter/tree-sitter-go`, `GoMode()`,
-highlights/tags reused unmodified from upstream, hand-written folds/indents/tests —
-deliberately no import-target query — `CMakeLists.txt`'s own comment explains why a
-package-based import path can't be resolved by a
-syntax-only query the way Rust's file-per-module `mod foo;` can; `gopls`/`dlv dap`/
-`go test -json` are config-only, no new code) — see `git log --grep=go-bundled-language`.
-Go's basename-only `file:line` resolution gap is tracked under Test-runner gaps below.
-
-C# bundled language support is shipped too (raised 2026-09-06 — no system
-`tree-sitter-csharp` install available, and a system grammar `.so` wouldn't have carried
-queries anyway, same Java/Kotlin reasoning above): `tree-sitter/tree-sitter-c-sharp`,
-`CSharpMode()`, highlights/tags reused unmodified, hand-written folds/indents/tests
-(xUnit `[Fact]`/`[Theory]`, NUnit `[Test]`/`[TestCase]`/`[TestCaseSource]`, MSTest
-`[TestMethod]`/`[DataTestMethod]`) — deliberately no import-target query, same
-namespace-vs-file reasoning as Go's own. `csproj`/`sln` have no fixed filename (unlike
-every other bundled language's root marker), which needed a real, generically reusable
-`LspRootResolver.cpp` addition: a marker of the form `"*.<ext>"` now means "any file with
-this extension in this directory," not one exact name — see
-`MarkerExistsInDirectory`'s own comment there. `OmniSharp`/`csharp-ls` and `netcoredbg`/
-`vsdbg` are config-only, no new code. See `git log --grep=csharp-bundled-language`.
-
-Every bundled language in this file comes from `FetchContent` in `CMakeLists.txt`, never
-a system package — this was already the standing policy before C# (see the Java/Kotlin
-item above, which independently arrived at the same conclusion), not a new one adopted
-here. A system-installed grammar `.so` never carries its `queries/*.scm` regardless of
-language, so leaning on one was never going to be the shortcut it looks like.
-
-The go-to-file-at-point resolver's LSP-first tier is shipped, closing the last item from
-the resolver-gaps sweep (Python relative imports, PHP PSR-4, JS/TS dynamic `import()`,
-node_modules `package.json` resolution, and Rust's `mod` declarations were the earlier
-ones — `git log --grep=resolver-gaps`) — see `git log --grep=lsp-document-link`.
-`textDocument/documentLink` (clangd's own `#include` support, resolved through
-compile_commands.json rather than the filesystem search `ResolveFileLink` falls back to)
-now gets first refusal in `BufferView::OpenLinkAtPoint`, with the whole pre-existing
-chain moved intact into `OpenLinkAtPointWithoutLsp` and re-entered from the response
-callback. `LspManager::RequestDocumentLinks`/`ResolveDocumentLink` follow
-`RequestCodeLenses`/`ResolveCodeLens`'s shape exactly (whole-document scope, byte-offset
-resolution at the manager boundary, a `documentLinkUnsupported_` learned-once latch, and
-the `documentLink/resolve` second hop for a link a server deliberately sends target-less).
-Three deliberate rules: no LSP manager, no running client, or a latched-unsupported server
-all answer synchronously, so a non-LSP buffer's behavior is byte-for-byte what it was; a
-server-named path that isn't actually on disk falls back to the heuristic rather than
-opening an empty buffer at a phantom path; and the LSP tier deliberately pushes no jump
-mark, since `OpenDetectedLink`'s own file tier doesn't either and which tier answered
-shouldn't be observable. Live testing this against real clangd also turned up a
-pre-existing bug in `LspManager.cpp`'s own `UriToPath`, fixed alongside it: a `file:` URI's
-path is percent-encoded per RFC 3986 and clangd really does encode it (every system
-include's target here arrives under `.../g%2B%2B-v16/`, a literal path that exists
-nowhere), so *every* URI-carrying response — definition, references, rename, documentLink —
-silently missed any path containing a character outside the unreserved set. The outgoing
-direction (`PathToUri`) still doesn't encode; nothing has needed it yet, and changing it
-would change the URI every `didOpen` sends, so it's deliberately left alone.
-
-LSP write/read protocol-stall timeout split is shipped — see
-`git log --grep=protocol-stall-timeout-split`. `ProcessTimeouts.h`'s single
-`ProtocolStallTimeoutMs()` became `ProtocolReadStallTimeoutMs()`/
-`ProtocolWriteStallTimeoutMs()` (both default 30000ms, unchanged), threaded through
-`Lsp::Transport`/`Acp::Transport`/`Mcp::Transport`'s `Read*`/`Write*` default parameters
-and `LspBrokerMain.cpp`'s shutdown-ETA log; `ned/set-protocol-stall-timeout-ms` became
-two Janet bindings, `ned/set-protocol-read-stall-timeout-ms` and
-`ned/set-protocol-write-stall-timeout-ms`.
+Shipped here, one slug each for `git log --grep=`: `go-bundled-language`,
+`csharp-bundled-language` (both via `FetchContent` like every bundled grammar — a
+system-installed `.so` never carries its own `queries/*.scm`, which is why leaning on one
+is never the shortcut it looks like), `resolver-gaps` and `lsp-document-link`
+(go-to-file-at-point, LSP-first via `textDocument/documentLink`),
+`protocol-stall-timeout-split`, `lsp-multiroot` + `lsp-multiroot-cache-scoping` +
+`lsp-workspace-folders`, `listpopup-scroll`.
 
 - [ ] Whether Markdown fenced code blocks / Org `#+BEGIN_SRC` blocks should get the same
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
-
-LSP multi-root is closed. Per-buffer root resolution shipped first
-(`git log --grep=lsp-multiroot`), the connection-scoped-cache half after it
-(`git log --grep=lsp-multiroot-cache-scoping`), and `workspaceFolders` support last
-(`git log --grep=lsp-workspace-folders`) — a buffer whose resolved root differs from an
-already-running same-language server now joins that server as an extra workspace folder
-(`workspace/didChangeWorkspaceFolders`) instead of spawning its own process, so one
-`clangd` serves a whole monorepo. A server that doesn't advertise both
-`workspaceFolders.supported` and `changeNotifications` is never asked and falls back to
-the previous process-per-root behavior; `ned/set-lsp-workspace-folders` (default on) is
-the kill switch for when isolation matters more than footprint. Deliberate cut: folders
-are only ever added, never removed — ned has no "close this folder" concept, so a server
-keeps an unused folder indexed until the connection ends.
-
-Candidate-popup hover-highlight and wheel-scroll are shipped too — see
-`git log --grep=listpopup-scroll`. Both go through one new `ListPopup::SetOnScrollBy`
-hook that fires a signed row delta (a wheel tick is always ±1; a hover move's delta is
-the hovered row minus `model_.selectedIndex`, both indices into the popup's own
-already-displayed rows) rather than an absolute target — `BufferView::ScrollCandidatePopup`
-replays that many synthetic Up/Down key chords through whichever `HandleXKey` the
-current `InputMode` already dispatches real arrow presses through, so none of the dozen
-different candidate-list modes (M-x, find-file, switch-to-buffer, VCS branch switch,
-`lsp-code-action-select`, workspace-symbol, ...) needed their own per-mode
-highlight/scroll logic duplicated. Confirmed live (tmux, raw SGR bytes): hovering a row
-moves the selection (and the popup's own visible-window scroll) exactly like pressing
-Down/Up would, two wheel ticks move it by exactly two, and click-to-activate still
-works unchanged.
+- [ ] `LspManager.cpp`'s `PathToUri` doesn't percent-encode, while its `UriToPath` now
+      decodes (`lsp-document-link`, after clangd's own encoded targets proved every
+      URI-carrying response was missing paths outside the unreserved set). Nothing has
+      needed the outgoing direction yet — it would change the URI every `didOpen` sends,
+      so it was left alone deliberately rather than overlooked. Revisit if a project path
+      with a space/`#`/`?` in it ever misbehaves.
 
 ### Mouse Ergonomics
 
@@ -193,85 +118,22 @@ cursor is often faster than keyboarding to a location and running a named comman
 for a keyboard-first user. Treat mouse work as an accelerant layered on existing
 commands, never a replacement for them.
 
-Right-click context menus for `BufferView` (content + gutter), `TabBar`, `ProjectSidebar`,
-and `VcsPanel` (whole-file/stash scope) are all shipped — see `git log --grep=context-menu`
-for the sweep. So are double/triple-click word/line select, gutter click (fold/breakpoint
-toggle), middle-click paste (Wayland primary-selection), and click-drag selection in the
-terminal-panel scrollback.
+Shipped here, one slug each for `git log --grep=`: `context-menu` (the right-click sweep
+across `BufferView` content+gutter, `TabBar`, `ProjectSidebar`, `VcsPanel`, plus
+double/triple-click select, gutter click, middle-click paste, scrollback click-drag),
+`mouse-hover` (hover tooltips), `hunk-context-menu` (hunk stage/unstage/revert, and
+`vcs-revert-hunk` as a genuinely new capability), `sidebar-drag-drop`.
 
-Hover tooltips (mouse hover, not click, triggering `lsp-hover`'s content) are shipped —
-see `git log --grep=mouse-hover`. The feasibility question (raised above) resolved to a
-real, confirmed mechanism: this installed Notcurses build's own SGR decoder (`in.c`'s
-`mouse_click`, `mods % 4 == 3`) hard-codes a bare no-button-held motion report's `evtype`
-to `NCTYPE_RELEASE` (the library's own comment calls this "oddly enough"), so
-`Event::mouse()` (`Widget.cpp`) decodes a hover move as `MouseEvent{button = None, motion
-= Released}`, never `Motion::Moved` — unambiguous versus a real button release (always a
-real button id), so `BufferView::MaybeScheduleHover`'s gate on exactly that combination is
-the reliable "hovering, nothing held" signal on this backend, colliding with nothing
-shipped (every existing `Motion::Released` consumer already gates on its own
-drag/resize/repeat flag first). Debounced via `EventLoop::DeadlineTimer` (reusing
-`editor::lsp::LspCompletionDebounceMs()`, the signature-help/document-highlight
-precedent), dismissed on move-away/keypress/click/buffer-switch (`BufferView::DismissHover`),
-rendered into a `ListPopup` in preview-only mode (empty `rows`, `Anchor()`-placed the same
-way the completion popup anchors under point, just under the hovered mouse position
-instead). One gotcha worth remembering for the next mouse-driven-by-position feature: a
-hover-move landing outside `BufferView`'s own `Box_()` (moved into the sidebar/tab bar/
-mode line/another pane) needed its own explicit dismiss check — there's no "mouse left me"
-event in this codebase, a widget just stops being handed positions outside its box, so
-without that check a tooltip could go stale forever once the mouse left the pane without
-an intervening keypress. Confirmed live end-to-end against a real `clangd` (tmux smoke
-test, raw SGR bytes fed into the pty): hover text renders, updates when the hovered
-symbol changes, and dismisses correctly.
-
-Hunk-level stage/unstage/revert via `BufferView`'s own right-click gutter menu are shipped
-too — see `git log --grep=hunk-context-menu`. Landed on `BufferView`'s gutter menu rather
-than `VcsPanel`'s (which has no per-hunk row to click at all, only whole-file entries) since
-hunk staging was already point-based there (`vcs-stage-hunk`/`vcs-unstage-hunk`, `C-c v
-h`/`C-c v H`) — right-click at the same point is the natural mouse accelerant, gated (same
-v1 simplification the fold/breakpoint/blame gutter rows already use) on `DiffGutterActive()`
-alone, not on whether the clicked line specifically has a change. Revert (`vcs-revert-hunk`,
-`C-c v x`) is a genuinely new capability, not just a menu wrapper: no hunk-level discard
-existed at any layer before this, keyboard included. Required a third `VcsProvider` patch
-operation alongside Stage/UnstagePatchArgv (`RevertPatchArgv`: `git apply --reverse
---unidiff-zero`, no `--cached` — discards from the working tree, reading from the same
-unstaged diff Stage does) plus a `VcsRunner::RequestHunkRevert`, and — since this discards
-uncommitted work with no undo — a new `BufferView` y/n confirmation (`InputMode::
-ConfirmRevertHunk`/`InteractiveRequest::ConfirmRevertHunk`, `ConfirmOverwriteSave`'s own
-shape) gating it regardless of entry point. No explicit `Buffer::Revert()` call needed after
-a successful revert — `AutoRevert`/`FileWatch`'s existing sweep picks up the now-changed
-file on its own next tick, the same "unmodified buffer, changed on disk" case those already
-handle. Confirmed live end to end against a real git repo with two well-separated `-U0`
-hunks (tmux, real SGR right-click + menu-click + 'y'): reverting the hunk at point discarded
-only that hunk from the working tree, left the other hunk (and the open buffer, once
-auto-reverted) untouched.
-
-Drag-and-drop from `ProjectSidebar` into a pane is shipped too — see
-`git log --grep=sidebar-drag-drop`. Mirrors `ProjectSidebar::IsResizing()`/`EndResize()`'s
-own cross-widget cooperation shape (`DraggingFilePath()`/`EndFileDrag()`): a left-press on a
-file row (never a directory — nothing sensible to open a directory *as*) arms the drag
-alongside its existing open-preview behavior, and each `BufferView` checks it ahead of its
-own `LocalMouseEvent` gate, exactly like the resize check just above it. A real bug was
-caught live in a two-pane split test (tmux, raw SGR bytes): `EndFileDrag()` was originally
-called unconditionally by whichever pane's `OnMouseEvent` happened to run first for the
-Released event (`Container::OnEvent`'s fixed child order, unrelated to drop position), so
-the pane the file was actually dropped on found the drag already cleared and silently
-no-opped. Fix: gate the whole branch — not just the open — behind `Box_().Contain()` first,
-so only the one pane whose box genuinely contains the drop ever consumes it; a two-`BufferView`
-regression test now locks this in. Accepted v1 trade-off, documented at the source: since the
-row's own press-time open (unchanged, existing preview behavior) already fires before any
-drag is known to be one, a real drag-and-drop also leaves the file open in whichever pane was
-already focused, not just the drop target — deliberately not restructured to defer that open
-until release, which would have meant moving long-tested click-vs-double-click timing logic
-off Pressed and onto Released for its own sake. A drop that lands on neither `ProjectSidebar`
-itself nor any pane (the tab bar, VCS panel, echo area) leaves the drag armed until the next
-one overwrites it — harmless, since nothing else ever reads it.
+- [ ] Sidebar drag-and-drop leaves the dragged file open in whichever pane was already
+      focused, in addition to the drop target — the row's own press-time preview-open
+      fires before any drag is known to be one. Fixing it means moving long-tested
+      click-vs-double-click timing off Pressed and onto Released, which is why it was
+      accepted as a v1 trade-off rather than restructured (`sidebar-drag-drop`).
 
 ### Navigation & Search
 
-Full-commit diff view (`*vcs log*` → a commit's whole diff) and multibuffer
-auto-collapse-on-build (large excerpt/result sets fold by default, configurable via
-`ned/set-multibuffer-auto-collapse-*`) are shipped — see
-`git log --grep=full-commit-diff-view`/`--grep=auto-collapse-on-build`.
+Shipped here, one slug each for `git log --grep=`: `full-commit-diff-view`,
+`auto-collapse-on-build`.
 
 - [ ] **Multibuffer gaps, remainder**: `project-find-references`' RE2 text-scan
       fallback path (no LSP server running for the buffer) and the real
@@ -293,31 +155,11 @@ auto-collapse-on-build (large excerpt/result sets fold by default, configurable 
 
 ### Editor Ergonomics
 
-Scrollback search/selection/copy, the Vim-mode gaps sweep (jumplist ring, changelist
-ring, dot-repeat count override, cross-file `A`-`Z` marks, magic-regex translation,
-macro registers), DAP rounds 3-5 (attach mode, hit-count/function/exception breakpoints,
-restart-frame, breakpoint-line remapping, debug-console history + scrollback,
-disassembly/memory view, cross-restart breakpoint/watch persistence), snippet
-variables/choices/transforms/macro-replay, bundled default snippets, and multiple
-concurrent terminal tabs (any number of embedded shells as uniform, closable `PanelDock`
-tabs — `new-terminal` on `C-c C-t` always adds one more alongside whatever's already
-open; `toggle-terminal` on `` C-` ``/`C-c t` targets whichever is first, creating one if
-none remain; `PanelDock`'s own tab strip gained TabBar-style wheel-scroll + `‹`/`›`
-overflow indicators as part of the same work) are all shipped — see `git log
---grep=<topic>` for each (`terminal-panel-scrollback`, `jumplist-ring`, `changelist-ring`,
-`dot-repeat-count-override`, `vim-global-marks`, `vim-magic-translation`,
-`vim-macro-register`, `dap-round-3` through `dap-round-5`, `session-persistence-round-2`,
-`snippet-expansion-gaps`, `bundled-snippets`, `multiple-terminal-tabs`), and the
-unified left dock (`ProjectSidebar`/`VcsPanel` hosted as switchable panels of one
-`LeftDock` widget — a VS Code-style activity-bar rail — replacing each panel's own
-independent border/width/collapse chrome and the cross-widget exclusivity coordination
-that used to need; `Widget::OnFocusPreempted()` is the small generic addition that let
-collapse and a hosted panel's own focus-return hook live on separate objects,
-`git log --grep=unified-left-dock`) are all shipped — see `git log --grep=<topic>` for
-each (`terminal-panel-scrollback`, `jumplist-ring`, `changelist-ring`,
-`dot-repeat-count-override`, `vim-global-marks`, `vim-magic-translation`,
-`vim-macro-register`, `dap-round-3` through `dap-round-5`, `session-persistence-round-2`,
-`snippet-expansion-gaps`, `bundled-snippets`, `multiple-terminal-tabs`).
+Shipped here, one slug each for `git log --grep=`: `terminal-panel-scrollback`,
+`jumplist-ring`, `changelist-ring`, `dot-repeat-count-override`, `vim-global-marks`,
+`vim-magic-translation`, `vim-macro-register`, `dap-round-3` through `dap-round-5`,
+`session-persistence-round-2`, `snippet-expansion-gaps`, `bundled-snippets`,
+`multiple-terminal-tabs`, `unified-left-dock`.
 
 - [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
       consumed by the panel itself (focus, scrollback ring); a TUI subprocess running
@@ -383,19 +225,12 @@ each (`terminal-panel-scrollback`, `jumplist-ring`, `changelist-ring`,
 
 ### Merge Conflict Resolution Mode (New Feature)
 
-The conflict hunk model (`Text/ConflictHunk.h`'s `ParseConflictHunks`, the read-back
-counterpart to `Text/ThreeWayMerge.h`'s own marker-writing convention), per-hunk
-resolution commands (`merge-take-ours`/`-theirs`/`-both`/`-neither`/`-keep-base`,
-`Editor/ConflictResolution.h`, one undo step each), wrapping navigation
-(`next-conflict-hunk`/`previous-conflict-hunk`), a themed ours/theirs/base background
-tint (`Theme::conflictOursBackground` et al.), and a `VcsPanel`-open status-line hint are
-all shipped under a `C-c x <letter>` prefix — see `git log --grep=merge-conflict-resolution`.
-No modal state was introduced at all (a deliberate simplification over the original
-scoping): resolution is just ordinary commands over ordinary buffer text, so "never a
-modal trap" falls out for free rather than needing its own design. A conflict-scoped
-`M-o/t/b/d/k/n/p` fast-key layer (`BufferView::HandleConflictQuickKey`, smerge-mode's own
-precedent) rides on top, shadowing those otherwise-global bindings only while the active
-buffer has an unresolved hunk — see `git log --grep=conflict-quick-keys`.
+Shipped here, one slug each for `git log --grep=`: `merge-conflict-resolution` (the
+`Text/ConflictHunk.h` model, the `merge-take-*` commands on a `C-c x <letter>` prefix,
+hunk navigation, the themed ours/theirs/base tint) and `conflict-quick-keys` (the
+conflict-scoped `M-o/t/b/d/k/n/p` layer). No modal state was introduced at all, a
+deliberate simplification over the original scoping — resolution is ordinary commands
+over ordinary buffer text, so "never a modal trap" fell out for free.
 
 - [ ] **A per-hunk inline mouse action row** (take-ours/take-theirs/take-both/take-neither
       as clickable text, `BufferView`'s existing gutter-click precedent) — the mouse-driven
@@ -684,22 +519,19 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 
 ### Collaboration & AI
 
-Interrupt/spinner, thought/text split, streaming debounce, collapsed tool-call lines,
-composer word-motion/history, minimize/resize, auto-reconnect, transcript/composer
-word-wrap, checkpoint/rewind, lightweight Markdown rendering, @-mention file
-autocomplete, and the tabbed `PanelDock` bottom-dock overlay (Terminal/ACP/Debug
-Console sharing one tab strip, close/maximize/resize-drag promoted to the dock) are all
-shipped — see `git log --grep=ACP`/`--grep=panel-dock` for the history.
+Shipped here — see `git log --grep=ACP` for the panel's own long tail (interrupt/
+spinner, thought/text split, streaming debounce, collapsed tool calls, composer
+word-motion/history, auto-reconnect, word-wrap, checkpoint/rewind, Markdown rendering,
+@-mention autocomplete) and `--grep=panel-dock` for the tabbed bottom dock that now hosts
+Terminal/ACP/Debug Console on one tab strip.
 
 - [ ] **AI-assisted editing (ACP) gaps** (validated live 2026-08-26 against Claude
       Code's own ACP adapter): no scrollback in the panel; `terminal/*`
       tool-call support and `elicitation/create` structured forms are undeclared as
       client capabilities; no multiple concurrent agents/sessions (still one at a time,
       `Dap/`'s own precedent); no `session/load` history replay;
-      `session/set_config_option`/`session/set_mode` aren't surfaced to the user; no MCP
-      server passthrough (`session/new`'s `mcpServers` is always `[]` — see the
-      tool-bridge item below for what that would actually unlock); no per-agent
-      environment-variable override (`ChildProcess`'s `posix_spawn` always forwards the
+      `session/set_config_option`/`session/set_mode` aren't surfaced to the user; no
+      per-agent environment-variable override (`ChildProcess`'s `posix_spawn` always forwards the
       parent's global `environ`); no per-agent "character" (display-name/accent color).
       Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
       `CommandsTest.cpp` regression test), not enforcement — `Keymap::Bind` still lets a
@@ -712,37 +544,18 @@ shipped — see `git log --grep=ACP`/`--grep=panel-dock` for the history.
       stays a fully separate, byte-for-byte-unchanged standalone overlay from the
       `PanelDock`-hosted bottom-dock mode).
 
-ACP MCP tool-server bridge, v1 slice is shipped (`Editor/Mcp/`: `McpBridgeServer` +
-`McpToolRegistry` + `McpTransport`/`McpSocketPath`, `ned/set-acp-mcp-bridge`, default
-on) — see `git log --grep=acp-mcp-tool-bridge`. The transport question the original
-item posed (in-process call surface vs. a real local MCP server) resolved to the
-latter, forced by the spec itself: stdio is the only MCP transport every agent MUST
-support (http/sse both require an agent capability that can't be assumed), and a
-stdio server is necessarily a separate OS process the agent spawns — so the live
-`ned` process listens on its own per-process Unix domain socket
-(`$XDG_RUNTIME_DIR/ned/mcp-<pid>.sock`) and `ned --mcp-stdio-relay <socket-path>` (a
-dumb stdin/stdout↔socket byte pump, no JSON parsing) is the `mcpServers` "command" the
-agent actually spawns — real protocol handling (`initialize`/`tools/list`/`tools/call`)
-happens inside the live process where `LspManager`/`VcsRunner`/`TestRunner`/open
-`Buffer`s actually live.
+Shipped here, one slug each for `git log --grep=`: `acp-mcp-tool-bridge` and
+`acp-mcp-tool-bridge-remainder` (`Editor/Mcp/`, `ned/set-acp-mcp-bridge`, ~20 tools plus
+`capture_note`; the original transport question resolved to a real local MCP server,
+forced by the spec — stdio is the only transport every agent must support, so
+`ned --mcp-stdio-relay` is a dumb byte pump into the live process's own Unix socket where
+`LspManager`/`VcsRunner`/`TestRunner`/open `Buffer`s actually live), `dap-acp-bridge`
+(structured DAP tools + `dap-ask-agent`), `acp-context-auto-attach` (`@buffer`/
+`@selection` composer mentions, `ask-agent-about-line`), `acp-composer-prose-check`, and
+`Text/LineDiff.h`'s `SplitLines`/`DiffLines`/`UnifiedDiff` with the agent-edit diff
+preview built on it.
 
-Remainder slice shipped too (`git log --grep=acp-mcp-tool-bridge-remainder`): 12 more
-tools — `git_stage`/`git_unstage`/`git_commit`/`git_branch_list`/`git_branch_switch`/
-`git_blame`, `rerun_failed_tests`, `workspace_symbols`, `format_buffer` (mutating —
-applies the server's edits as one undo step, `Editor/Lsp/LspEditApply.h` extracted out
-of `BufferView.cpp` so both share the exact same apply logic instead of forking a
-copy), `code_actions`/`preview_rename` (deliberately listing/preview-only, not
-applying), and `get_diagnostics_log(category?)`. No ned-side permission gate was added
-for the mutating tools (git stage/unstage/commit/branch-switch, format_buffer) —
-MCP's own spec places "a human in the loop with the ability to deny tool invocations"
-as the *client's* (the agent's) responsibility, the same place `fs/write_text_file`'s
-own approval already lives; ned doesn't duplicate it. `format_buffer`'s async
-callback re-confirms the buffer is still open at the same address before touching it
-(`BufferView::RequestLspFormatThenSaveBuffer`'s own stale-pointer-as-opaque-key idiom)
-since the human can close it while the LSP request is in flight.
-
-One thing was deliberately cut after checking the real APIs against this item's own
-original aspirational list, still open:
+Deliberately cut from those slices, still open:
 - [ ] **Real rename/code-action apply + `goto(file, line)` navigation** — all three
       need a live `WindowManager`/`BufferView` (`ApplyProjectEdit`'s multi-file
       transaction machinery for the first two — `ProjectUndoManager` recording, file
@@ -751,76 +564,13 @@ original aspirational list, still open:
       thin wrapper the way everything shipped so far is — a real follow-up, not
       attempted here.
 
-`capture_note` is shipped: `OrgCapture::ExpandCaptureTemplate`/`InsertCapture` grew an
-optional `insertedText` parameter (substituted at the template's `%?` in place of just
-removing it, cursor landing after the substituted text rather than mid-placeholder) so
-the `capture_note` MCP tool (`key`, `text`) can inject agent-supplied free text into a
-registered capture template headlessly — creating the target file/parent directories
-first, same as `BufferView::HandleOrgCaptureKey`'s own sequence, minus the pane-focus/
-point-placement half that only makes sense for an interactive keystroke.
-`clock_in`/`clock_out` stay out of scope for the same "not actually a thin wrapper"
-reasoning the original item gave.
-
-DAP↔ACP debugging bridge is shipped (2026-09-07) — see `git log --grep=dap-acp-bridge`.
-Structured tools (`dap_list_breakpoints`/`dap_set_breakpoint`/`dap_remove_breakpoint`,
-`dap_continue`/`dap_pause`/`dap_stop_session`/`dap_step_over`/`dap_step_into`/
-`dap_step_out`, `dap_get_current_location`/`dap_get_stack_trace`/`dap_get_scopes`/
-`dap_get_variables`/`dap_evaluate`, `dap_list_watches`) let an ACP agent act as a real
-pair-debugger via `Editor/Mcp/McpToolRegistry.cpp` — thin wrappers over `DapManager`'s
-already-async-callback-shaped public methods, the same shape every prior MCP tool used;
-no new `DapManager` capability was needed. Debug-session context injection also shipped
-as `dap-ask-agent` (`BufferView::SendDebugStateToAgent`): a one-click command that
-gathers the stopped session's stack/scopes/variables/watches (`ShowDebugInfo`'s own
-fan-out extracted into a shared `BuildDebugInfoLines` helper) and sends them as one
-plain-text prompt via `AcpManager::SendPrompt` — pre-formatted text, not a structured
-resource attachment (`SendPrompt` does have a resource-attachment mechanism now, see
-`git log --grep=acp-context-auto-attach`; not used here since debug state has no natural
-single-file attachment target). The pointer-graph/memory/disassembly/
-thread/function-and-exception-breakpoint surface stayed out of the MCP tool set
-deliberately — not part of the ask-a-question/set-a-breakpoint/step/inspect loop this
-slice targets; a `dap_get_pointer_graph`-shaped tool would need either duplicating
-`BufferView::ExpandPointerGraphNode`'s cycle-detection loop or extracting it into a
-shared, UI-free helper first (`Editor/PointerGraphNode.h`'s data shape is already
-reusable, the traversal algorithm isn't yet) — a real follow-up, not attempted here.
-ACP context auto-attach is shipped (2026-09-07) — see `git log --grep=acp-context-auto-attach`.
-`AcpManager::SendPrompt` takes optional `PromptAttachment`s, negotiating the real ACP
-`agentCapabilities.promptCapabilities.embeddedContext` flag from `initialize` (a genuine
-`ContentBlock::resource` when declared, folded into the text block otherwise — an agent
-is never sent a block type it didn't advertise). Landed as manual `@buffer`/`@selection`
-composer mentions (built on the existing `@`-file-mention picker) rather than blind
-auto-attach on every prompt — the ROADMAP's own "or" alternative, chosen to avoid
-silently ballooning every message's token cost. `ask-agent-about-line` (M-x only, no
-default binding, `dap-ask-agent`'s own precedent) covers the diagnostic/test-failure
-one-click case from `*Messages*`/`*test results*`, reusing `VisitResultUnderPoint`'s
-`"path:line:"` parse (factored into `BufferView::ResultLineAtPoint`).
-A reusable line-diff utility is shipped: `Text/LineDiff.h` (`SplitLines`/`DiffLines`,
-the same trimmed-prefix/suffix-then-LCS-backtrack algorithm `ThreeWayMerge.cpp` always
-had, extracted out of that file's own private implementation and reused by it rather
-than kept as a second copy) plus `UnifiedDiff` — a git-diff-style windowed renderer
-(context lines around each hunk, adjacent hunks close enough to overlap merged into one
-continuous run, everything else collapsed into a single "N unchanged lines" marker).
-Diff preview before an agent edit's permission grant is built on it:
-`AcpManager::PermissionPrompt` grew `diffOldText`/`diffNewText`, parsed from a pending
-`session/request_permission`'s own `toolCall.content` the same `{type: "diff", path,
-oldText, newText}` shape `PushOrUpdateToolCall` already parsed for the transcript (now
-a shared `ExtractDiffContent` helper) — `AcpPanel` renders a real, capped +/- preview
-(`FormatDiffPreview`, `Theme::diffAddedBackground`/`diffRemovedBackground`, the same
-background-tint-only treatment the VCS diff gutter uses) for both the pending
-permission entry and, replacing the old bare line-count delta, every `Kind::ToolCall`
-diff. Building this alongside "Merge Conflict Resolution Mode"'s per-hunk take/reject
-UI (above) didn't apply in the end — that mode resolves already-conflict-marked text
-(`Text/ConflictHunk.cpp`), it was never the one needing a fresh diff engine.
-
-Prose-check the ACP composer is shipped: `ProseChecker`'s existing diagnostics-only
-`kProseLanguageKey` connection now also checks the `AcpPanel` composer's live text —
-`LspManager::CheckComposerProseText` debounces the send itself (there's no per-frame
-sync cadence driving this call the way `BufferView`'s does) and syncs a private,
-never-`BufferList`-registered scratch `Buffer` under a fixed pseudo-path so a
-publish-diagnostics response never resolves through `bufferList_`/carries no
-switch-to-buffer or session-persistence footprint. `AcpPanel` renders the result as a
-plain underline over the composer text (`BufferView`'s own inline-diagnostic
-underline-only treatment, reused rather than a second visual language), byte offsets
-clamped defensively against whatever's been typed since the last check.
+- [ ] **A `dap_get_pointer_graph`-shaped MCP tool** — the pointer-graph/memory/
+      disassembly/thread/function-and-exception-breakpoint surface stayed out of the DAP
+      tool set on purpose (not part of the ask/step/inspect loop that slice targeted),
+      but the graph one specifically needs real work rather than another thin wrapper:
+      `BufferView::ExpandPointerGraphNode`'s cycle-detection traversal would have to be
+      extracted into a UI-free helper first (`Editor/PointerGraphNode.h`'s data shape is
+      already reusable, the traversal isn't).
 
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this file;
       last.
@@ -1037,34 +787,17 @@ these accumulate detail in place.
       device/inode/mtime, re-checked on the idle sweep; watched firing live 2026-09-07),
       so server mode no longer needs it designed, only kept working. Not scoped further
       than that; no server-mode design exists yet.
-The LSP broker's reader-thread deadlock is fixed — see
-`git log --grep=broker-reader-deadlock`. Root-caused 2026-09-07 from a daemon that had
-been wedged for 4h38m: the idle sweep's `ReapFinishedThreads` joined a reader thread
-*while holding* the mutex that reader needed to finish its own teardown, so the whole
-daemon stopped — no accepts (a client's `initialize` just timed out with no `attach` ever
-logged), no idle timeout, no executable-change check — until it was killed by hand. A
-race, so it only bit some of the time: the real broker log showed it wedging on 3 of 7
-idle-sweep teardowns. Three changes, all in what is now `Editor/Lsp/LspBrokerDaemon.h/.cpp`:
-a reader announces itself finished as its last act and only announced threads are ever
-joined; the joins happen after the lock is released; and transports moved from
-`unique_ptr` + a raw pointer held across a blocking read to `shared_ptr` + a new
-`Transport::Close()`/`ChildProcess::CloseConnection()`, so closing a connection still
-wakes a parked reader without destroying the object underneath it (that shape was a real
-use-after-free that survived because the fd close usually won the race). The daemon also
-moved out of an anonymous namespace in `LspBrokerMain.cpp` into its own declared type with
-injectable timings/socket path, purely so `Tests/LspBrokerDaemonTest.cpp` can drive the
-real accept/spawn/sweep/reap paths — which is what finally puts them in the ASan/UBSan
-build's coverage. Those tests were checked against the pre-fix code and fail (3/3) there.
 
-Code coverage gutter is shipped (2026-09-06) — see `git log --grep=code-coverage-gutter`.
-`Editor/Coverage/CoverageOutputParser.h` parses lcov's `.info` format (covers `lcov`
-itself, `llvm-cov export -format=lcov`, and `gcovr --lcov` with one parser); the gutter
-column (`C-c T c`/`load-coverage-report`, `ned/set-coverage-file`) marks covered/partial/
-uncovered per line, cross-referenced against the VCS diff gutter's own data to flag an
-uncovered line that's also newly added/modified. Raw per-file `.gcov` output was
-deliberately left out (a directory-scan problem, not a single-document parser like every
-other format this codebase's `Editor/*OutputParser.h` files handle); revisit only if
-lcov's `.info` format proves insufficient in practice.
+Also shipped, one slug each for `git log --grep=`: `broker-reader-deadlock` (that same
+daemon deadlocking in its own idle sweep — the bug is why `Tests/LspBrokerDaemonTest.cpp`
+and the daemon's ASan coverage exist at all, both of which any server-mode work should
+build on), `code-coverage-gutter`.
+
+- [ ] Raw per-file `.gcov` output has no parser — `Editor/Coverage/CoverageOutputParser.h`
+      handles lcov's `.info` format only (which covers `lcov`, `llvm-cov export
+      -format=lcov`, and `gcovr --lcov`). `.gcov` is a directory-scan problem rather than
+      the single-document parse every other `Editor/*OutputParser.h` does, so it was left
+      out deliberately; revisit only if `.info` proves insufficient in practice.
 
 ## Won't Do (at Least Not Soon)
 
