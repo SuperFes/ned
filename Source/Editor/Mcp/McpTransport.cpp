@@ -26,6 +26,9 @@ namespace {
         while (true) {
             const std::chrono::milliseconds waitTimeout = first ? std::chrono::milliseconds(-1) : stallTimeout;
             if (!child.WaitReadable(waitTimeout)) {
+                if (first) {
+                    return false; // closed connection, not a stall -- see Acp/Transport.cpp's identical guard
+                }
                 throw std::runtime_error("ned: MCP transport stalled mid-message");
             }
             first                = false;

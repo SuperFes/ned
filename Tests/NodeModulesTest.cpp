@@ -1,8 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <string>
+
+#include <unistd.h>
 
 #include "Editor/NodeModules.h"
 
@@ -14,16 +17,29 @@ namespace {
 // One disposable temp tree per test, mirroring GitIgnoreTest.cpp's/
 // ProjectSettingsTest.cpp's own "real filesystem, cleaned up in the
 // destructor" convention rather than a fake filesystem abstraction.
+// ctest-parallel-flakes follow-up: the directory name carries a pid +
+// per-process counter suffix rather than being a fixed string. Every case in
+// this file used to share one path, with a remove_all in both the
+// constructor and the destructor -- under `ctest -j8` (a separate process per
+// case) one case's setup deleted another's tree mid-run, which showed up as
+// two unrelated ResolvePackageEntryPoint cases failing together and both
+// passing in isolation.
 struct TempTree {
     std::filesystem::path root;
 
     explicit TempTree(const std::string& name = "ned-node-modules-test")
-        : root(std::filesystem::temp_directory_path() / name) {
+        : root(std::filesystem::temp_directory_path() / UniqueName(name)) {
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root);
     }
     ~TempTree() {
         std::filesystem::remove_all(root);
+    }
+
+  private:
+    static std::string UniqueName(const std::string& name) {
+        static std::atomic<unsigned> counter{0};
+        return name + "-" + std::to_string(::getpid()) + "-" + std::to_string(counter++);
     }
 };
 

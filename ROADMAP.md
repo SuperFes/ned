@@ -706,36 +706,6 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
-- [ ] **Protocol-client tests time out intermittently under `ctest -j8`** (found
-      2026-09-08). A different test each run, always from the same family — the
-      LSP/DAP/ACP client/manager tests that stand up a real `EventLoop` + fake
-      server over pipes: observed on `AcpClient::SendRequest`,
-      `AcpManager::SetOnTranscriptChanged`, `LspManager::RequestHover`,
-      `LspManager::RequestDocumentSymbols`, `RequestMemory`, `ReverseContinue and
-      StepBack`, and a `BufferView` quick-fix test. Roughly 1-2 failures per run,
-      hitting maybe 1 run in 2 once the machine has been running suites
-      back-to-back for a while; a cold first run of the day was repeatedly clean.
-      **Confirmed pre-existing and unrelated to whatever change is in flight**:
-      reproduced 5 times out of 6 consecutive runs on a `git stash`-clean tree
-      (2026-09-08), which is the only reason it's recorded here rather than
-      chased — verify the same way before blaming a feature branch for it. A
-      wedged process shows the main thread in `futex_do_wait` (a join or mutex)
-      with two worker threads in `poll_schedule_timeout`, which is the shape of
-      the already-fixed `broker-reader-deadlock`/`lsp-broker-connect-hang` bugs
-      and is where to start looking. Suspected aggravator, unverified: state
-      surviving between runs (a stale broker daemon, or a leftover `ned_tests`
-      process — one is consistently left behind after a run).
-- [ ] **`Tests/NodeModulesTest.cpp`'s `TempTree` uses a fixed path**
-      (`std::filesystem::temp_directory_path() / "ned-node-modules-test"`, with a
-      `remove_all` in both its constructor and destructor). Under `ctest -j8` the
-      `[NodeModules]` cases run as concurrent processes against that one shared
-      directory, so one test's setup deletes another's tree mid-run — seen as
-      `ResolvePackageEntryPoint resolves a directory "main" via its own index
-      file` and `...returns nullopt when the declared entry file doesn't exist`
-      failing together, both passing in isolation (2026-09-08). Distinct from the
-      protocol-client timeout above and fully root-caused: the fix is a unique
-      per-instance directory (pid/counter suffix), not a retry or a serialized
-      test. Left as-is only because it's noise rather than a product bug.
 - [ ] **`PerformanceTest.cpp`'s huge-buffer point-navigation test under
       `build-sanitize`** (found 2026-09-03, unrelated to whatever change was in flight
       at the time — reproduces on a clean stash of the tree too): "Point navigation
