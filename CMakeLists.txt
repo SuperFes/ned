@@ -1088,6 +1088,7 @@ if (NED_BUILD_TESTS)
             Tests/DesktopThemeProbeTest.cpp
             Tests/ActiveBufferTest.cpp
             Tests/CacheStampTest.cpp
+            Tests/RequestSlotTest.cpp
             Tests/MinibufferPromptTest.cpp
             Tests/PromptHistoryTest.cpp
             Tests/TabBarTest.cpp

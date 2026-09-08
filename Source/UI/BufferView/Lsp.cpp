@@ -78,13 +78,13 @@ void BufferView::RequestCompletionAtPoint(const std::string& triggerCharacter) {
     }
 
     text::Buffer* const bufferPtr   = &buffer;
-    const std::size_t   generation  = ++completionRequestGeneration_;
+    const std::size_t   generation  = completionRequest_.Begin();
     const std::size_t   prefixStart = WordPrefixStart(buffer.Content(), point);
 
     lspManager_->RequestCompletion(
         buffer, point,
         [this, bufferPtr, point, prefixStart, generation](editor::lsp::CompletionList list) {
-            if (generation != completionRequestGeneration_) {
+            if (completionRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             // bufferPtr is only ever compared, never dereferenced, unless
@@ -157,7 +157,7 @@ void BufferView::MaybeScheduleCompletionResolve() {
     if (!provider || !provider->resolveProvider) {
         return; // this server never advertised completionItem/resolve -- see ResolveCompletionItem's own doc comment
     }
-    ++completionResolveGeneration_;
+    completionResolveRequest_.Cancel();
     completionResolveDebounceTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::LspCompletionDebounceMs()),
                                         [this] { RequestCompletionResolve(); });
 }
@@ -177,11 +177,11 @@ void BufferView::RequestCompletionResolve() {
     text::Buffer&                     buffer     = activeBuffer_.Get();
     text::Buffer* const               bufferPtr  = &buffer;
     const std::string                 serverKey  = ResolvedLspServerKey(buffer.Point());
-    const std::size_t                 generation = completionResolveGeneration_;
+    const std::size_t                 generation = completionResolveRequest_.Current();
     lspManager_->ResolveCompletionItem(
         buffer, item,
         [this, bufferPtr, generation, selected, label = item.label](std::optional<editor::lsp::CompletionItem> resolved) {
-            if (generation != completionResolveGeneration_ || !activeCompletion_ || bufferPtr != &activeBuffer_.Get()) {
+            if (completionResolveRequest_.IsStale(generation) || !activeCompletion_ || bufferPtr != &activeBuffer_.Get()) {
                 return; // superseded, dismissed, or the buffer changed under us
             }
             if (!resolved) {
@@ -452,12 +452,12 @@ void BufferView::RequestDocumentHighlightAtPoint() {
     }
 
     text::Buffer* const bufferPtr                = &buffer;
-    const std::size_t   generation               = ++documentHighlightRequestGeneration_;
+    const std::size_t   generation               = documentHighlightRequest_.Begin();
     const std::size_t   contentGenerationAtRequest = buffer.ContentGeneration();
     lspManager_->RequestDocumentHighlight(
         buffer, point,
         [this, bufferPtr, point, generation, contentGenerationAtRequest](std::vector<editor::lsp::DocumentHighlight> highlights) {
-            if (generation != documentHighlightRequestGeneration_) {
+            if (documentHighlightRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point ||
@@ -515,7 +515,7 @@ void BufferView::MaybeScheduleHover(Point localMousePoint) {
         onHoverChanged_(std::nullopt);
     }
     hoverOffset_ = offset;
-    const std::size_t generation = ++hoverRequestGeneration_;
+    const std::size_t generation = hoverRequest_.Begin();
     const Box&        box        = Box_();
     const Point        anchor{.x = box.x_min + localMousePoint.x, .y = box.y_min + localMousePoint.y + 1};
     const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
@@ -525,7 +525,7 @@ void BufferView::MaybeScheduleHover(Point localMousePoint) {
 }
 
 void BufferView::RequestHoverAtOffset(std::size_t byteOffset, Point screenAnchor, std::size_t generation) {
-    if (generation != hoverRequestGeneration_ || !lspManager_) {
+    if (hoverRequest_.IsStale(generation) || !lspManager_) {
         return; // superseded by a newer hover, or the manager disappeared while this was pending
     }
     text::Buffer&       buffer    = activeBuffer_.Get();
@@ -534,7 +534,7 @@ void BufferView::RequestHoverAtOffset(std::size_t byteOffset, Point screenAnchor
     lspManager_->RequestHover(
         buffer, byteOffset,
         [this, bufferPtr, generation, screenAnchor](std::optional<std::string> text) {
-            if (generation != hoverRequestGeneration_ || bufferPtr != &activeBuffer_.Get()) {
+            if (hoverRequest_.IsStale(generation) || bufferPtr != &activeBuffer_.Get()) {
                 return; // superseded by a newer hover, or the buffer switched under us
             }
             if (!onHoverChanged_) {
@@ -558,7 +558,7 @@ void BufferView::DismissHover() {
         return;
     }
     hoverOffset_.reset();
-    ++hoverRequestGeneration_;
+    hoverRequest_.Cancel();
     if (onHoverChanged_) {
         onHoverChanged_(std::nullopt);
     }
@@ -579,14 +579,14 @@ void BufferView::RequestLinkedEditingRangeAtPoint() {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = ++linkedEditingRequestGeneration_;
+    const std::size_t   generation = linkedEditingRequest_.Begin();
     const std::string   serverKey  = ResolvedLspServerKey(point);
     const std::size_t   contentGenerationAtRequest = buffer.ContentGeneration();
 
     lspManager_->RequestLinkedEditingRange(
         buffer, point,
         [this, bufferPtr, point, generation, contentGenerationAtRequest](std::vector<editor::lsp::LinkedEditingRange> ranges) {
-            if (generation != linkedEditingRequestGeneration_) {
+            if (linkedEditingRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point ||
@@ -678,11 +678,11 @@ void BufferView::RequestSignatureHelpAtPoint() {
     }
 
     text::Buffer* const bufferPtr  = &buffer;
-    const std::size_t   generation = ++signatureHelpRequestGeneration_;
+    const std::size_t   generation = signatureHelpRequest_.Begin();
     lspManager_->RequestSignatureHelp(
         buffer, point,
         [this, bufferPtr, point, generation](std::optional<std::string> text) {
-            if (generation != signatureHelpRequestGeneration_) {
+            if (signatureHelpRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
@@ -929,7 +929,7 @@ void BufferView::RequestCodeActionsAtPoint() {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = ++codeActionRequestGeneration_;
+    const std::size_t   generation = codeActionRequest_.Begin();
 
     // Prefer the diagnostic covering point (same lookup lsp-show-diagnostic
     // already does), else a zero-length range at point. executeCommand/
@@ -962,7 +962,7 @@ void BufferView::RequestCodeActionsAtPoint() {
     lspManager_->RequestCodeActions(
         buffer, rangeStart, rangeEnd,
         [this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
-            if (generation != codeActionRequestGeneration_) {
+            if (codeActionRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
@@ -1210,11 +1210,11 @@ void BufferView::MaybeScheduleOnTypeFormatting(const editor::KeyChord& chord, st
     // trigger keystroke, not repeatedly while typing, so the request goes
     // out right away.
     text::Buffer* const bufferPtr  = &buffer;
-    const std::size_t   generation = ++onTypeFormattingRequestGeneration_;
+    const std::size_t   generation = onTypeFormattingRequest_.Begin();
     lspManager_->RequestOnTypeFormatting(
         buffer, point, ch,
         [this, bufferPtr, generation](std::optional<std::vector<editor::lsp::WorkspaceTextEdit>> edits) {
-            if (generation != onTypeFormattingRequestGeneration_ || bufferPtr != &activeBuffer_.Get()) {
+            if (onTypeFormattingRequest_.IsStale(generation) || bufferPtr != &activeBuffer_.Get()) {
                 return; // superseded, or the active buffer changed under us
             }
             if (edits && !edits->empty()) {
@@ -1232,12 +1232,12 @@ void BufferView::MaybeScheduleOnTypeFormatting(const editor::KeyChord& chord, st
 void BufferView::RequestLspFormatThenSaveBuffer() {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
-    const std::size_t   generation = ++lspFormatOnSaveRequestGeneration_;
+    const std::size_t   generation = lspFormatOnSaveRequest_.Begin();
     statusMessage_                 = "Formatting...";
     lspManager_->RequestFormatting(
         buffer,
         [this, bufferPtr, generation](std::optional<std::vector<editor::lsp::WorkspaceTextEdit>> edits) {
-            if (generation != lspFormatOnSaveRequestGeneration_ || bufferPtr != &activeBuffer_.Get()) {
+            if (lspFormatOnSaveRequest_.IsStale(generation) || bufferPtr != &activeBuffer_.Get()) {
                 return; // superseded, or the active buffer changed under us
             }
             text::Buffer& buffer       = *bufferPtr;
@@ -1335,7 +1335,7 @@ void BufferView::RequestDefinitionAtPoint(LspLocationKind kind) {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = ++definitionRequestGeneration_;
+    const std::size_t   generation = definitionRequest_.Begin();
     // embedded-language-documents follow-up: routes to point's own embedded
     // server when it's inside one (e.g. an HTML <script> block), else "" ->
     // the host language, unchanged from before this feature existed.
@@ -1360,7 +1360,7 @@ void BufferView::RequestDefinitionAtPoint(LspLocationKind kind) {
 
     statusMessage_ = "Requesting " + label + "...";
     auto callback  = [this, bufferPtr, point, generation, label](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
-        if (generation != definitionRequestGeneration_) {
+        if (definitionRequest_.IsStale(generation)) {
             return; // superseded by a newer request
         }
         if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
@@ -1471,12 +1471,12 @@ void BufferView::RequestPeekDefinitionAtPoint() {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = ++peekDefinitionRequestGeneration_;
+    const std::size_t   generation = peekDefinitionRequest_.Begin();
     const std::string   serverKey  = ResolvedLspServerKey(point);
 
     statusMessage_ = "Requesting definition...";
     auto callback  = [this, bufferPtr, point, generation](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
-        if (generation != peekDefinitionRequestGeneration_) {
+        if (peekDefinitionRequest_.IsStale(generation)) {
             return; // superseded by a newer request
         }
         if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
@@ -1593,7 +1593,7 @@ void BufferView::RequestHierarchyAtPoint(HierarchyDirection direction) {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = ++hierarchyRequestGeneration_;
+    const std::size_t   generation = hierarchyRequest_.Begin();
     const std::string   serverKey  = ResolvedLspServerKey(point);
 
     std::string subjectLabel; // for "No <subjectLabel> at point." on an empty prepare result
@@ -1611,7 +1611,7 @@ void BufferView::RequestHierarchyAtPoint(HierarchyDirection direction) {
     statusMessage_ = "Requesting hierarchy...";
     auto onPrepared = [this, bufferPtr, point, generation, direction, serverKey,
                        subjectLabel](std::vector<editor::lsp::LspManager::ResolvedHierarchyItem> items) {
-        if (generation != hierarchyRequestGeneration_) {
+        if (hierarchyRequest_.IsStale(generation)) {
             return; // superseded by a newer request
         }
         if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
@@ -1667,13 +1667,13 @@ void BufferView::ExpandHierarchyNode(std::size_t index) {
     text::Buffer&                    buffer     = *session.buffer;
     const std::string                serverKey  = session.serverKey;
     const HierarchyDirection         direction  = session.direction;
-    const std::size_t                generation = ++hierarchyRequestGeneration_;
+    const std::size_t                generation = hierarchyRequest_.Begin();
 
     // find-references follow-up's own reasoning applies here too: a
     // superseded/stale response is simply dropped, not applied to
     // whatever the tree has become by the time it arrives.
     auto onItems = [this, index, generation](std::vector<editor::lsp::LspManager::ResolvedHierarchyItem> children) {
-        if (!hierarchySession_ || generation != hierarchyRequestGeneration_) {
+        if (!hierarchySession_ || hierarchyRequest_.IsStale(generation)) {
             return;
         }
         hierarchySession_->tree.Expand(index, std::move(children));
@@ -1685,7 +1685,7 @@ void BufferView::ExpandHierarchyNode(std::size_t index) {
     // ResolvedHierarchyCall doc comment on that v1 cut), so this just
     // unwraps each entry's item and reuses onItems above.
     auto onCalls = [this, index, generation](std::vector<editor::lsp::LspManager::ResolvedHierarchyCall> calls) {
-        if (!hierarchySession_ || generation != hierarchyRequestGeneration_) {
+        if (!hierarchySession_ || hierarchyRequest_.IsStale(generation)) {
             return;
         }
         std::vector<editor::lsp::LspManager::ResolvedHierarchyItem> children;
@@ -1869,14 +1869,14 @@ void BufferView::RequestDocumentSymbolsAtPoint() {
     }
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
-    const std::size_t   generation = ++documentSymbolRequestGeneration_;
+    const std::size_t   generation = documentSymbolRequest_.Begin();
     const std::string   serverKey  = ResolvedLspServerKey(buffer.Point());
 
     statusMessage_ = "Requesting symbols...";
     lspManager_->RequestDocumentSymbols(
         buffer,
         [this, bufferPtr, generation](std::vector<editor::lsp::LspManager::SymbolResult> symbols) {
-            if (generation != documentSymbolRequestGeneration_) {
+            if (documentSymbolRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get()) {
@@ -1966,14 +1966,14 @@ void BufferView::RequestWorkspaceSymbolsForCurrentQuery() {
     }
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
-    const std::size_t   generation = ++workspaceSymbolRequestGeneration_;
+    const std::size_t   generation = workspaceSymbolRequest_.Begin();
     const std::string   serverKey  = ResolvedLspServerKey(buffer.Point());
     const std::string   query      = prompt_->Text();
 
     lspManager_->RequestWorkspaceSymbols(
         buffer, query,
         [this, bufferPtr, generation](std::vector<editor::lsp::LspManager::SymbolResult> symbols) {
-            if (generation != workspaceSymbolRequestGeneration_) {
+            if (workspaceSymbolRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             if (inputMode_ != InputMode::LspWorkspaceSymbol || bufferPtr != &activeBuffer_.Get()) {
@@ -2066,11 +2066,11 @@ void BufferView::SwitchHeaderSource() {
     }
 
     text::Buffer* const bufferPtr  = &buffer;
-    const std::size_t   generation = ++switchHeaderSourceRequestGeneration_;
+    const std::size_t   generation = switchHeaderSourceRequest_.Begin();
     statusMessage_                 = "Switching header/source...";
     lspManager_->RequestSwitchSourceHeader(
         buffer, [this, bufferPtr, generation, path](std::optional<std::filesystem::path> counterpart) {
-            if (generation != switchHeaderSourceRequestGeneration_ || bufferPtr != &activeBuffer_.Get()) {
+            if (switchHeaderSourceRequest_.IsStale(generation) || bufferPtr != &activeBuffer_.Get()) {
                 return; // superseded/buffer switched since the request was sent
             }
             if (counterpart) {
@@ -2117,7 +2117,7 @@ void BufferView::RequestPrepareRenameAtPoint() {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = ++prepareRenameRequestGeneration_;
+    const std::size_t   generation = prepareRenameRequest_.Begin();
     const std::string   serverKey  = ResolvedLspServerKey(point);
     const std::size_t   contentGenerationAtRequest = buffer.ContentGeneration();
 
@@ -2125,7 +2125,7 @@ void BufferView::RequestPrepareRenameAtPoint() {
         buffer, point,
         [this, bufferPtr, point, generation, contentGenerationAtRequest, openPrompt](
             std::optional<editor::lsp::PrepareRenameResult> result) {
-            if (generation != prepareRenameRequestGeneration_) {
+            if (prepareRenameRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point ||
@@ -2163,7 +2163,7 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = ++renameRequestGeneration_;
+    const std::size_t   generation = renameRequest_.Begin();
     // embedded-language-documents follow-up: see RequestDefinitionAtPoint's
     // identical comment above.
     const std::string serverKey = ResolvedLspServerKey(point);
@@ -2172,7 +2172,7 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
     lspManager_->RequestRename(
         buffer, point, newName,
         [this, bufferPtr, point, generation](std::optional<editor::lsp::LspManager::ResolvedRename> result) {
-            if (generation != renameRequestGeneration_) {
+            if (renameRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
@@ -2405,12 +2405,12 @@ void BufferView::RequestProjectFindReferences() {
 
     if (hasRunningLsp) {
         text::Buffer* const bufferPtr  = &buffer;
-        const std::size_t   generation = ++referencesRequestGeneration_;
+        const std::size_t   generation = referencesRequest_.Begin();
         statusMessage_                 = "Requesting references...";
         lspManager_->RequestReferences(
             buffer, point,
             [this, bufferPtr, point, generation, word](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
-                if (generation != referencesRequestGeneration_) {
+                if (referencesRequest_.IsStale(generation)) {
                     return; // superseded by a newer request
                 }
                 if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {

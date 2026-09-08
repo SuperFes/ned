@@ -29,6 +29,7 @@
 
 #include "ActiveBuffer.h"
 #include "UI/BufferView/CacheStamp.h"
+#include "UI/BufferView/RequestSlot.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Backup.h"
 #include "Editor/CodeFold.h"
@@ -1467,7 +1468,7 @@ class BufferView : public Widget {
     // RequestCompletionAtPoint's shape: finds the diagnostic covering point
     // (same lookup lsp-show-diagnostic already does against
     // Buffer::Diagnostics()) or falls back to a zero-length range at point,
-    // bumps codeActionRequestGeneration_, and calls
+    // bumps codeActionRequest_, and calls
     // LspManager::RequestCodeActions. The callback (capturing a raw
     // Buffer* for pointer-value-only comparison, point, and generation --
     // same idiom RequestCompletionAtPoint already uses) discards a stale
@@ -1536,7 +1537,7 @@ class BufferView : public Widget {
     void ShowContextMenuAt(Point localClick);
     // context-aware-menu-round-2 follow-up: RequestCodeActionsAtPoint's own
     // diagnostic-at-point range/server-routing logic, but targeting
-    // contextMenuCodeActionGeneration_ and splicing the response into
+    // contextMenuCodeActionRequest_ and splicing the response into
     // contextMenuEntries_ (one entry per returned CodeAction, plus one
     // divider, prepended ahead of the existing static rows) instead of
     // entering LspCodeActionSelect. Discards a stale response the same way
@@ -1653,7 +1654,7 @@ class BufferView : public Widget {
                                  Implementation };
 
     // go-to-definition follow-up. Mirrors RequestCodeActionsAtPoint's own
-    // shape exactly: bumps definitionRequestGeneration_, calls
+    // shape exactly: bumps definitionRequest_, calls
     // LspManager::RequestDefinition, and discards a stale response (buffer/
     // point changed, or a newer request already superseded it) the same
     // way. Zero locations reports "No definition found." via
@@ -1803,7 +1804,7 @@ class BufferView : public Widget {
     // onPointerGraphChanged_(nullopt), reclaims keyboard focus.
     void EndPointerGraphSession();
 
-    // symbol-search follow-up. Bumps documentSymbolRequestGeneration_ and
+    // symbol-search follow-up. Bumps documentSymbolRequest_ and
     // calls LspManager::RequestDocumentSymbols; discards a stale response
     // the same way RequestDefinitionAtPoint does. Zero symbols reports "No
     // symbols found."; any other count (including one) opens the
@@ -1826,7 +1827,7 @@ class BufferView : public Widget {
     // own fired callback re-checks inputMode_ == LspWorkspaceSymbol first
     // (MaybeScheduleAutoCompletion/RequestCompletionAtPoint's own guard
     // shape), since ending the session doesn't cancel an already-armed
-    // DeadlineTimer. workspaceSymbolRequestGeneration_ discards a response
+    // DeadlineTimer. workspaceSymbolRequest_ discards a response
     // superseded by a newer request the same way every other async Lsp*
     // session here does.
     void RequestWorkspaceSymbolsForCurrentQuery();
@@ -1834,7 +1835,7 @@ class BufferView : public Widget {
     void HandleWorkspaceSymbolKey(const editor::KeyChord& chord);
 
     // header-source-switching follow-up. Bumps
-    // switchHeaderSourceRequestGeneration_ and calls LspManager::
+    // switchHeaderSourceRequest_ and calls LspManager::
     // RequestSwitchSourceHeader (clangd's own custom LSP extension) when an
     // LspManager is set; nullopt from that -- no client running, server has
     // no counterpart to offer, or LSP unavailable at all -- falls through to
@@ -3394,14 +3395,14 @@ class BufferView : public Widget {
     // TreeView::SetOnSelectionChanged's own doc comment for why this needs
     // tracking at all) -- carried into every PushHierarchyModel rebuild so
     // an expand/collapse elsewhere in the tree never resets the user's own
-    // place in it. hierarchyRequestGeneration_ is definitionRequestGeneration_'s
+    // place in it. hierarchyRequest_ is definitionRequest_'s
     // own staleness-guard shape, shared by every request a session sends
     // (prepare and every subsequent expand alike -- only one can be
     // meaningfully in flight at a time regardless of which node it's for).
     std::function<void(std::optional<ui::TreeViewModel>)> onHierarchyChanged_;
     std::optional<HierarchySession>                       hierarchySession_;
     std::size_t                                           hierarchySelectedIndex_    = 0;
-    std::size_t                                           hierarchyRequestGeneration_ = 0;
+    bufferview::RequestSlot                                           hierarchyRequest_;
 
     // Debugging wishlist follow-up (pointer/linked-list graph view): the
     // above five fields' own mirror for PointerGraphSession -- see that
@@ -3409,7 +3410,7 @@ class BufferView : public Widget {
     std::function<void(std::optional<ui::TreeViewModel>)> onPointerGraphChanged_;
     std::optional<PointerGraphSession>                    pointerGraphSession_;
     std::size_t                                           pointerGraphSelectedIndex_     = 0;
-    std::size_t                                           pointerGraphRequestGeneration_ = 0;
+    bufferview::RequestSlot                                           pointerGraphRequest_;
 
     // Memory-as-image viewer follow-up: onPointerGraphChanged_'s own mirror
     // for the read-only MemoryImageView overlay -- no session struct needed
@@ -4070,7 +4071,7 @@ class BufferView : public Widget {
     // request superseded it, or the user kept typing) and is discarded
     // rather than applied -- the async equivalent of the buffer/point
     // re-check RequestCompletionAtPoint's own callback also does.
-    std::size_t completionRequestGeneration_ = 0;
+    bufferview::RequestSlot completionRequest_;
 
     // completion-resolve follow-up. completionItem/resolve is a per-*item*
     // request, so unlike every other debounce here it's driven by the
@@ -4079,12 +4080,12 @@ class BufferView : public Widget {
     // ever costs a round trip. Reuses LspCompletionDebounceMs() rather than
     // introducing a fourth timing knob, on the same "typing/motion just
     // settled" reasoning signature-help and document-highlight already use.
-    // The generation counter is completionRequestGeneration_'s exact
+    // The generation counter is completionRequest_'s exact
     // staleness-guard shape, kept separate because a resolve response
     // arriving after a *narrowing* keystroke would otherwise be indexed
     // against a list it no longer describes.
     DeadlineTimer completionResolveDebounceTimer_;
-    std::size_t   completionResolveGeneration_ = 0;
+    bufferview::RequestSlot   completionResolveRequest_;
 
     // documentHighlight follow-up. BufferView-owned, ephemeral point-
     // triggered UI state -- same lifecycle class as ActiveCompletion above,
@@ -4107,8 +4108,8 @@ class BufferView : public Widget {
     // must also refresh the highlight set).
     DeadlineTimer documentHighlightDebounceTimer_;
     // Bumped by RequestDocumentHighlightAtPoint before every request -- same
-    // staleness-guard shape as completionRequestGeneration_.
-    std::size_t documentHighlightRequestGeneration_ = 0;
+    // staleness-guard shape as completionRequest_.
+    bufferview::RequestSlot documentHighlightRequest_;
 
     void RequestDocumentHighlightAtPoint();
     void MaybeScheduleDocumentHighlight(std::size_t pointBefore, std::size_t generationBefore);
@@ -4128,9 +4129,9 @@ class BufferView : public Widget {
     // reuses it for.
     DeadlineTimer hoverDebounceTimer_;
     // Bumped by MaybeScheduleHover/DismissHover before every request or
-    // reset -- same staleness-guard shape as completionRequestGeneration_/
-    // documentHighlightRequestGeneration_.
-    std::size_t hoverRequestGeneration_ = 0;
+    // reset -- same staleness-guard shape as completionRequest_/
+    // documentHighlightRequest_.
+    bufferview::RequestSlot hoverRequest_;
 
     void MaybeScheduleHover(Point localMousePoint);
     void RequestHoverAtOffset(std::size_t byteOffset, Point screenAnchor, std::size_t generation);
@@ -4160,8 +4161,8 @@ class BufferView : public Widget {
     // reason for one to suppress the other).
     DeadlineTimer signatureHelpDebounceTimer_;
     // Bumped by RequestSignatureHelpAtPoint before every request -- same
-    // staleness-guard shape as completionRequestGeneration_.
-    std::size_t signatureHelpRequestGeneration_ = 0;
+    // staleness-guard shape as completionRequest_.
+    bufferview::RequestSlot signatureHelpRequest_;
 
     void MaybeScheduleSignatureHelp(const editor::KeyChord& chord, std::size_t generationBefore);
     void RequestSignatureHelpAtPoint();
@@ -4173,7 +4174,7 @@ class BufferView : public Widget {
     // trip can't complete synchronously within the keystroke's own
     // dispatch, so by the time the response arrives the buffer/point may
     // have moved on.
-    std::size_t onTypeFormattingRequestGeneration_ = 0;
+    bufferview::RequestSlot onTypeFormattingRequest_;
 
     void MaybeScheduleOnTypeFormatting(const editor::KeyChord& chord, std::size_t generationBefore);
 
@@ -4188,7 +4189,7 @@ class BufferView : public Widget {
     // them) already ran in Commands.cpp -- there is nothing left here for
     // that distinction to gate.
     void        RequestLspFormatThenSaveBuffer();
-    std::size_t lspFormatOnSaveRequestGeneration_ = 0;
+    bufferview::RequestSlot lspFormatOnSaveRequest_;
 
     // completion-trigger-characters follow-up: triggerCharacter is the
     // server-declared character whose keystroke armed the debounce that
@@ -4267,11 +4268,11 @@ class BufferView : public Widget {
     // valid only while inputMode_ is LspCodeActionSelect (see
     // RequestCodeActionsAtPoint's own doc comment above for why inputMode_
     // only ever changes from inside that async callback).
-    // codeActionRequestGeneration_ mirrors completionRequestGeneration_'s
+    // codeActionRequest_ mirrors completionRequest_'s
     // exact staleness-guard shape.
     std::vector<editor::lsp::CodeAction> pendingCodeActions_;
     std::size_t                          codeActionSelection_         = 0;
-    std::size_t                          codeActionRequestGeneration_ = 0;
+    bufferview::RequestSlot                          codeActionRequest_;
 
     // right-click-context-menu follow-up: contextMenuEntries_/
     // contextMenuSelection_ are valid only while inputMode_ is ContextMenu
@@ -4302,13 +4303,13 @@ class BufferView : public Widget {
     std::size_t                   contextMenuSelection_ = 0;
     std::optional<Point>          contextMenuAnchor_;
     // context-aware-menu-round-2 follow-up: staleness guard for
-    // RequestContextMenuCodeActions' async response -- codeActionRequestGeneration_
+    // RequestContextMenuCodeActions' async response -- codeActionRequest_
     // above is LspCodeActionSelect's own counter, not reusable here since the
     // two sessions (right-click menu vs. lsp-code-action's numbered list) can't
     // overlap in time but do need independently-scoped generations to keep
     // each session's own staleness check simple (no shared-counter cross-talk
     // to reason about between them).
-    std::size_t contextMenuCodeActionGeneration_ = 0;
+    bufferview::RequestSlot contextMenuCodeActionRequest_;
 
     // executeCommand/prose-code-actions follow-up: which LspManager
     // serverKey pendingCodeActions_ was requested from -- empty for the
@@ -4320,11 +4321,11 @@ class BufferView : public Widget {
     std::string codeActionServerKey_;
 
     // go-to-definition follow-up: same staleness-guard/selection-list shape
-    // as pendingCodeActions_/codeActionSelection_/codeActionRequestGeneration_
+    // as pendingCodeActions_/codeActionSelection_/codeActionRequest_
     // just above, valid only while inputMode_ == LspGotoDefinitionSelect.
     std::vector<editor::lsp::LspManager::ResolvedLocation> pendingDefinitions_;
     std::size_t                                            definitionSelection_         = 0;
-    std::size_t                                            definitionRequestGeneration_ = 0;
+    bufferview::RequestSlot                                            definitionRequest_;
 
     // declaration/typeDefinition/implementation follow-up: the lowercase
     // human-facing word for whichever LspLocationKind pendingDefinitions_
@@ -4336,20 +4337,20 @@ class BufferView : public Widget {
     std::string pendingLocationLabel_ = "definition";
 
     // peek-definition follow-up: same staleness-guard/selection shape as
-    // pendingDefinitions_/definitionSelection_/definitionRequestGeneration_ just
+    // pendingDefinitions_/definitionSelection_/definitionRequest_ just
     // above, valid only while inputMode_ == LspPeekDefinition. Kept as its own
     // separate set (not reusing pendingDefinitions_) since a peek session and a
     // goto-definition select session are never simultaneously live but do use
     // independently-generationed async requests.
     std::vector<editor::lsp::LspManager::ResolvedLocation> pendingPeekDefinitions_;
     std::size_t                                            peekDefinitionSelection_         = 0;
-    std::size_t                                            peekDefinitionRequestGeneration_ = 0;
+    bufferview::RequestSlot                                            peekDefinitionRequest_;
 
     // find-references follow-up: same staleness-guard shape as
-    // definitionRequestGeneration_, kept separate (rather than sharing that
+    // definitionRequest_, kept separate (rather than sharing that
     // counter) since RequestProjectFindReferences's LSP path builds its own
     // multibuffer result directly, never entering LspGotoDefinitionSelect.
-    std::size_t referencesRequestGeneration_ = 0;
+    bufferview::RequestSlot referencesRequest_;
 
     // symbol-search follow-up: documentSymbolCandidates_/documentSymbolLabels_
     // are parallel vectors (candidates_[i] is what labels_[i] describes) --
@@ -4359,12 +4360,12 @@ class BufferView : public Widget {
     // number, which makes a label collision between two real, distinct
     // symbols vanishingly unlikely; the rare collision just means Enter
     // picks whichever of them comes first -- a harmless degrade, not a
-    // crash). documentSymbolSelection_/documentSymbolRequestGeneration_
-    // mirror definitionSelection_/definitionRequestGeneration_'s own shape.
+    // crash). documentSymbolSelection_/documentSymbolRequest_
+    // mirror definitionSelection_/definitionRequest_'s own shape.
     std::vector<editor::lsp::LspManager::SymbolResult> documentSymbolCandidates_;
     std::vector<std::string>                           documentSymbolLabels_;
     std::size_t                                        documentSymbolSelection_         = 0;
-    std::size_t                                        documentSymbolRequestGeneration_ = 0;
+    bufferview::RequestSlot                                        documentSymbolRequest_;
 
     // symbol-search follow-up: workspace/symbol's own live-requery
     // counterpart -- pendingWorkspaceSymbols_/workspaceSymbolLabels_ hold
@@ -4375,36 +4376,36 @@ class BufferView : public Widget {
     std::vector<editor::lsp::LspManager::SymbolResult> pendingWorkspaceSymbols_;
     std::vector<std::string>                           workspaceSymbolLabels_;
     std::size_t                                        workspaceSymbolSelection_         = 0;
-    std::size_t                                        workspaceSymbolRequestGeneration_ = 0;
+    bufferview::RequestSlot                                        workspaceSymbolRequest_;
     // See completionDebounceTimer_'s own comment -- same DeadlineTimer-based
     // debounce shape, reusing LspCompletionDebounceMs() rather than adding a
     // second, parallel Janet setting for what's the same underlying need.
     DeadlineTimer workspaceSymbolDebounceTimer_;
 
     // header-source-switching follow-up: same staleness-guard shape as
-    // definitionRequestGeneration_ above, no selection list needed --
+    // definitionRequest_ above, no selection list needed --
     // switchSourceHeader never returns more than one candidate.
-    std::size_t switchHeaderSourceRequestGeneration_ = 0;
+    bufferview::RequestSlot switchHeaderSourceRequest_;
 
     // documentLink follow-up: same staleness-guard shape once more, shared
     // by both hops of the request (textDocument/documentLink and, for a
     // link the server sent without a target, documentLink/resolve) -- a
     // newer open-link-at-point invalidates an in-flight resolve just as it
     // does an in-flight listing.
-    std::size_t documentLinkRequestGeneration_ = 0;
+    bufferview::RequestSlot documentLinkRequest_;
 
     // rename follow-up: same staleness-guard shape once more. renameTitle_
     // is the human-readable "N edits across M files" summary shown in the
     // final "Renamed (...)" status message -- set right before ApplyRename
     // runs, applied with no separate confirmation step.
     std::string   renameTitle_;
-    std::size_t   renameRequestGeneration_ = 0;
+    bufferview::RequestSlot   renameRequest_;
     // prepareRename follow-up: same staleness-guard shape once more, for the
     // request RequestPrepareRenameAtPoint sends before lsp-rename opens its
     // prompt.
-    std::size_t prepareRenameRequestGeneration_ = 0;
+    bufferview::RequestSlot prepareRenameRequest_;
     // linked-editing-range follow-up: same staleness-guard shape once more.
-    std::size_t linkedEditingRequestGeneration_ = 0;
+    bufferview::RequestSlot linkedEditingRequest_;
 
     // status-message-lifecycle follow-up. A uniform rule for statusMessage_,
     // regardless of who wrote it (any command via CommandContext::message,
