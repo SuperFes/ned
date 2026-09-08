@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <stdexcept>
 #include <string>
@@ -239,4 +240,38 @@ TEST_CASE("ChildProcess merges stderr onto stdout when requested", "[Process]") 
     // assert both lines arrived, not their relative order.
     REQUIRE(collected.find("out") != std::string::npos);
     REQUIRE(collected.find("err") != std::string::npos);
+}
+
+// broker-reader-deadlock follow-up.
+TEST_CASE("ChildProcess::CloseConnection unblocks a concurrent reader without destroying the object", "[Process]") {
+    // The whole point of this method: the LSP broker has to wake a thread
+    // parked in a blocking read from *another* thread. It used to do that by
+    // destroying the ChildProcess out from under the reader, which woke it
+    // and then returned it into freed memory.
+    ChildProcess child({"cat"}); // reads stdin forever, writes nothing -- the reader below genuinely blocks
+
+    std::atomic<bool> readerReturned{false};
+    std::thread       reader([&child, &readerReturned] {
+        (void)child.ReadSome(); // blocks until the connection is closed
+        readerReturned = true;
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100)); // let the reader reach its blocking read
+    REQUIRE_FALSE(readerReturned.load());
+
+    child.CloseConnection();
+    reader.join(); // returns only because CloseConnection woke it
+    REQUIRE(readerReturned.load());
+
+    // Still a live object with valid state -- not a husk the caller has to
+    // avoid touching -- and its destructor still reaps the child.
+    REQUIRE(child.ReadFd() == -1);
+    REQUIRE(child.WriteFd() == -1);
+}
+
+TEST_CASE("ChildProcess::CloseConnection is idempotent and safe before the destructor", "[Process]") {
+    ChildProcess child({"cat"});
+    child.CloseConnection();
+    child.CloseConnection(); // must not double-close a recycled fd number
+    REQUIRE(child.ReadFd() == -1);
 }

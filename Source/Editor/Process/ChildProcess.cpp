@@ -188,7 +188,7 @@ ChildProcess::ChildProcess(int readFd, int writeFd, pid_t pid) noexcept : writeF
     SetNonBlocking(writeFd_);
 }
 
-ChildProcess::~ChildProcess() {
+void ChildProcess::CloseConnection() noexcept {
     // shutdown() before close() on all three -- for a real spawned child's
     // pipe fds this is a harmless ENOTSOCK no-op (pipes aren't sockets), but
     // for the raw-fd constructor's socket case (LSP broker connect/accept:
@@ -215,6 +215,13 @@ ChildProcess::~ChildProcess() {
         ::shutdown(stderrFd_, SHUT_RDWR);
         ::close(stderrFd_); // lsp-stderr-capture follow-up -- unblocks a stderr reader thread's blocking read via EOF, same as readFd_ above
     }
+    writeFd_  = -1;
+    readFd_   = -1;
+    stderrFd_ = -1;
+}
+
+ChildProcess::~ChildProcess() {
+    CloseConnection(); // the fd half, factored out -- see its own doc comment
     if (pid_ > 0) {
         int status = 0;
         // Bounded grace period for the child to exit on its own after the

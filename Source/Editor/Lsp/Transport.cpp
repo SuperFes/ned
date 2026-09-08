@@ -152,6 +152,10 @@ std::optional<std::string> Transport::ReadFrame(std::chrono::milliseconds stallT
     return body;
 }
 
+void Transport::Close() noexcept {
+    child_.CloseConnection();
+}
+
 pid_t Transport::Pid() const noexcept {
     return child_.Pid();
 }

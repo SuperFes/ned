@@ -1032,12 +1032,30 @@ these accumulate detail in place.
       client presence — e.g. a systemd user service, so a fresh `ned` launch never pays
       even the broker's own startup cost) would disable or greatly lengthen that idle
       timeout, which reopens exactly this staleness risk on a much longer timescale.
-      Needed alongside it: the daemon noticing its own on-disk executable has changed
-      (mtime/inode of `/proc/self/exe`, checked on the same periodic sweep this idle
-      timeout already uses) and restarting itself — without that, a "keep warm forever"
-      daemon would never pick up a rebuilt binary's fix on its own, the identical bug in
-      a longer-lived package. Not scoped further than that; no server-mode design exists
-      yet.
+      The prerequisite this entry used to list — the daemon noticing its own on-disk
+      executable changed and restarting itself — is **already built** (`/proc/self/exe`
+      device/inode/mtime, re-checked on the idle sweep; watched firing live 2026-09-07),
+      so server mode no longer needs it designed, only kept working. Not scoped further
+      than that; no server-mode design exists yet.
+The LSP broker's reader-thread deadlock is fixed — see
+`git log --grep=broker-reader-deadlock`. Root-caused 2026-09-07 from a daemon that had
+been wedged for 4h38m: the idle sweep's `ReapFinishedThreads` joined a reader thread
+*while holding* the mutex that reader needed to finish its own teardown, so the whole
+daemon stopped — no accepts (a client's `initialize` just timed out with no `attach` ever
+logged), no idle timeout, no executable-change check — until it was killed by hand. A
+race, so it only bit some of the time: the real broker log showed it wedging on 3 of 7
+idle-sweep teardowns. Three changes, all in what is now `Editor/Lsp/LspBrokerDaemon.h/.cpp`:
+a reader announces itself finished as its last act and only announced threads are ever
+joined; the joins happen after the lock is released; and transports moved from
+`unique_ptr` + a raw pointer held across a blocking read to `shared_ptr` + a new
+`Transport::Close()`/`ChildProcess::CloseConnection()`, so closing a connection still
+wakes a parked reader without destroying the object underneath it (that shape was a real
+use-after-free that survived because the fd close usually won the race). The daemon also
+moved out of an anonymous namespace in `LspBrokerMain.cpp` into its own declared type with
+injectable timings/socket path, purely so `Tests/LspBrokerDaemonTest.cpp` can drive the
+real accept/spawn/sweep/reap paths — which is what finally puts them in the ASan/UBSan
+build's coverage. Those tests were checked against the pre-fix code and fail (3/3) there.
+
 Code coverage gutter is shipped (2026-09-06) — see `git log --grep=code-coverage-gutter`.
 `Editor/Coverage/CoverageOutputParser.h` parses lcov's `.info` format (covers `lcov`
 itself, `llvm-cov export -format=lcov`, and `gcovr --lcov` with one parser); the gutter
