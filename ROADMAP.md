@@ -312,10 +312,16 @@ Notcurses.
       stderr loop, the write queue and its thread, `EventLoop::Post` marshalling, shutdown
       ordering — is byte-for-byte the same idea three times.
 
-      **Shape, respecting this project's no-pure-virtuals rule:** composition and
-      `std::function`, not an abstract base with virtual `DispatchFrame`. That is also
-      already the house idiom — the whole `Set*`/register-then-connect convention across
-      `UI/` and the managers works exactly this way.
+      **Shape — composition, not an interface, and for a design reason rather than a cost
+      one.** Nothing here ever holds a heterogeneous collection of clients: each one knows
+      its framing at compile time and is named concretely at every call site, so there is
+      no runtime type choice for a vtable to express (unlike `ITextStorage`, where `Buffer`
+      genuinely cannot know whether it holds a `Rope` or a `PieceTable`, or `Widget::Paint`,
+      or `VcsProvider`, whose implementation set is opened at runtime by Janet plugins).
+      An abstract `ProtocolClient` base with a virtual `DispatchFrame` would be paying for
+      a decision that is never made. So: `std::function` callables, which is also already
+      the house idiom — the whole `Set*`/register-then-connect convention across `UI/` and
+      the managers works exactly this way.
       - `Transport` becomes a concept with concrete implementations rather than one class:
         child-process pipes (today's `Process/ChildProcess`), `AF_UNIX`
         (`LspBrokerConnect.cpp`'s non-blocking-connect + `poll` dance, currently 326 lines
