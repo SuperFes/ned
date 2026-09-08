@@ -106,6 +106,65 @@ is never the shortcut it looks like), `resolver-gaps` and `lsp-document-link`
       so it was left alone deliberately rather than overlooked. Revisit if a project path
       with a space/`#`/`?` in it ever misbehaves.
 
+**LSP completion fidelity** (scoped 2026-09-07 from a full survey of the path). Today's
+`textDocument/completion` support is a v1: `LspContent.h:28`'s `CompletionItem` parses
+`label`/`insertText`/`insertTextFormat`/`kind`/`detail`/`documentation` and nothing else,
+and the header contract at `LspContent.h:68-72` states it outright — *returned in server
+order, no client-side re-filtering or re-sorting*. `sortText`, `filterText`, `textEdit`,
+`additionalTextEdits`, `commitCharacters`, `preselect`, `data`/`completionItem/resolve`,
+`CompletionList.isIncomplete` and `itemDefaults` are all ignored. Each step below is
+independently shippable; there is currently no test covering `ExtractCompletionItems` or
+the accept path by name, so every step should bring its own. Steps 1-2 restructure the
+request lifecycle and `BufferView.cpp` is past 16k lines, so this belongs in a new
+`Source/UI/CompletionController.*` rather than growing that file further.
+
+- [ ] **Incremental narrowing** — the single biggest reason completion doesn't feel
+      alive. `MaybeScheduleAutoCompletion` drops `activeCompletion_` on *every* keystroke
+      (`BufferView.cpp:5580`) and re-issues a whole new request after the debounce
+      (default 500ms), so each typed character costs a full round trip and the popup
+      blinks out in between. Parse `sortText`/`filterText`/`isIncomplete`, keep the item
+      set across keystrokes, refilter locally (`Editor/FuzzyMatch.h` with `sortText` as
+      the tiebreak — `FuzzyFilterAndRank` already backs every non-LSP picker in the
+      codebase but is never applied to LSP items), and re-request only when the server
+      said `isIncomplete` or the replace range moves.
+- [ ] **Honor `textEdit`** — `CompletionInsertSuffix` (`BufferView.cpp:5960`) does prefix
+      subtraction and falls back to inserting the *whole* string when `insertText` doesn't
+      start with the typed prefix (`:5988`), corrupting the line against any server doing
+      its own fuzzy matching. Needs a replace range per item, so
+      `ActiveCompletion::prefixStart` (`BufferView.h:4013` — one value shared by the whole
+      list, because the non-LSP fallback sources use different word-boundary rules) has to
+      move per-item. Also a prerequisite for the step above being correct.
+- [ ] **`completionItem/resolve`** — lazily fetch `documentation`/`detail` for the
+      selected item only, debounced on selection change, into `ListPopup`'s existing
+      `previewText` pane.
+- [ ] **`additionalTextEdits`** — accepting `std::vector` should add the `#include`.
+      Applied through the existing multi-file `ApplyProjectEdit` machinery. Depends on the
+      resolve step above: most servers (rust-analyzer, jdtls) only ever send these on
+      `completionItem/resolve`, never in the initial list, so this is inert without it.
+- [ ] **Real trigger characters** — the auto-trigger set is hardcoded to a word codepoint
+      plus `.`, `:`, `>` (`BufferView.cpp:5618`, whose own comment notes the server's
+      `completionProvider.triggerCharacters` was never plumbed), and `triggerKind` is
+      always `1` (Invoked) even when a character triggered the request
+      (`LspManager.cpp:2284-2288`). `preselect` and `commitCharacters` belong here too.
+- [ ] **The completion popup can't scroll** — independent of every step above.
+      `ListPopup::Paint` truncates at the box height and always starts at row 0
+      (`ListPopup.cpp:196-199`); the prompt pickers work around this with a sliding window
+      computed *outside* the widget (`ComputeCandidatePopupWindow`/
+      `BuildFuzzyCandidatePopupModel`, `BufferView.cpp:254-300`), but
+      `NotifyCompletionChanged` pushes items unwindowed (`:6023`), so cycling past ~15
+      candidates scrolls the selection off the bottom invisibly. `SetOnScrollBy` is wired
+      for `candidatePopup` only (`main.cpp:1986`), never for the completion popup, so
+      wheel scroll and hover-highlight don't work there either.
+- [ ] Considered and deliberately *not* prioritized (recorded so it stays a conscious
+      call): merging non-LSP candidates into the same popup. `RequestCompletionAtPoint`
+      (`BufferView.cpp:5427-5438`) is a mutually-exclusive cascade — LSP if running, else
+      Janet-binding completion in janet-mode, else dabbrev — so buffer words and snippet
+      triggers are strict fallbacks that vanish the moment a server attaches, never ranked
+      alongside server items. A real fix means a completion-source abstraction and a
+      source-neutral candidate type (`ActiveCompletion::items` is literally the LSP wire
+      struct today, and the fallback sources fake LSP items to fit it). Bigger than the
+      fidelity work above and independent of it.
+
 ### Mouse Ergonomics
 
 Design stance: over SSH/tmux/a bare terminal, mouse support is genuinely unreliable (no
@@ -732,7 +791,24 @@ these accumulate detail in place.
       cursor/edit history, distinct from LSP-driven completion or ACP's chat) has no
       equivalent here. A different feature from everything `Acp/` already provides, and
       probably needs some model-serving backend of its own — worth naming as a conscious
-      gap rather than assuming ACP already covers "AI in the editor."
+      gap rather than assuming ACP already covers "AI in the editor." Sketched further
+      2026-09-07, still unscoped:
+      - **The backend is the real fork.** Reusing `Editor/Acp/` costs no new
+        infrastructure and already talks to a live agent, but ACP is conversational
+        request/response — latency is seconds, which is fine for an explicit
+        "predict my next edit" command and wrong for anything that fires as you type. The
+        alternative is a dedicated fast path (a small HTTP client, or a local model), which
+        gets the latency but adds a subsystem plus a credentials/config story ned doesn't
+        have today. Likely order: prove the predictions are worth anything via the cheap
+        explicit-command-over-ACP version *before* building latency infrastructure for
+        them.
+      - **Two pieces already exist.** `Text/LineDiff.h`'s `UnifiedDiff` (built for the ACP
+        edit preview) is exactly the recent-edits-as-a-diff prompt input this needs, and
+        `UndoTree` supplies the history behind it.
+      - **The genuinely new work is rendering.** Nothing draws a multi-line inline
+        suggestion — ghost text was removed from completion in favor of `ListPopup`
+        (`completion-popup`), so a multi-line ghost overlay is a new `BufferView` paint
+        path, not a revival of the old one.
 - [ ] **Open-source game-dev platform support** (raised 2026-09-03, explicitly a list to
       pick from, not a commitment to any of it). The real fork in each candidate is
       whether it needs a *new base language* ned doesn't speak yet, or whether it rides
