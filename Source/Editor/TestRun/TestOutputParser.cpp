@@ -645,6 +645,12 @@ TestRunOutcome ParseGoTestJson(std::string_view output) {
                             : action == "fail" ? TestResult::Status::Failed
                                                : TestResult::Status::Skipped;
         result.durationMs = event.value("Elapsed", 0.0) * 1000.0;
+        // Kept as a source-location resolution hint, not for display: the
+        // import path's trailing segments are the test file's own directory
+        // relative to the module root, which is the only thing that can tell
+        // two same-named foo_test.go files in one module apart (see
+        // TestSourceResolver.h -- go itself prints basenames only).
+        result.packagePath = package;
 
         // First "foo_test.go:12: message" frame in the test's own output --
         // basename-only, all go gives us.

@@ -52,4 +52,21 @@ bool MatchesTestName(std::string_view markerName, std::string_view resultName) {
     return TrailingSegment(stripped) == markerName;
 }
 
+std::string FailuresOnlyHint(std::string_view format) {
+    // Each suggestion is that tool's own documented way to emit per-test
+    // results; the junit-xml ones pair with ned/set-test-results-file, which
+    // is what makes the existing "junit-xml" parser read the report instead
+    // of stdout.
+    if (format == "pytest") {
+        return " -- failures only; add -v for per-test pass marks";
+    }
+    if (format == "catch2") {
+        return " -- failures only; use --reporter junit -o <file> with ned/set-test-results-file for per-test pass marks";
+    }
+    if (format == "phpunit") {
+        return " -- failures only; use --log-junit <file> with ned/set-test-results-file for per-test pass marks";
+    }
+    return " -- failures only (this format never names passing tests)";
+}
+
 } // namespace ned::editor::testrun

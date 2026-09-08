@@ -10,6 +10,7 @@
 #include "Editor/Register.h"
 #include "Editor/TestRun/TestRunConfig.h"
 #include "Editor/TestRun/TestRunner.h"
+#include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -20,6 +21,7 @@
 
 using ned::editor::testrun::MatchesTestName;
 using ned::editor::testrun::SetTestCommand;
+using ned::editor::testrun::SetTestFilterCommand;
 using ned::editor::testrun::TestRunner;
 using ned::ui::BufferView;
 using ned::ui::Color;
@@ -67,6 +69,10 @@ struct Fixture {
 struct ConfigResetGuard {
     ~ConfigResetGuard() {
         SetTestCommand({}, "");
+        // test-runner-gaps follow-up: the filter command now also gates the
+        // gutter's runnable affordance, so leaking one across cases would
+        // silently change another case's expected gutter width.
+        SetTestFilterCommand({});
     }
 };
 
@@ -229,4 +235,135 @@ TEST_CASE("A basename mismatch filters out a cross-file name collision", "[Buffe
 
     const int testX = TestColumnX(fixture.buffer.Content().LineCount());
     CHECK(screen.PixelAt(testX, 0).character != "✗"); // not marked failed from another file's result
+}
+
+// --- test-runner-gaps follow-up: the pre-run affordance and gutter click ---
+
+TEST_CASE("A configured filter command marks not-yet-run tests as runnable", "[BufferView][TestRun]") {
+    ConfigResetGuard   guard;
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    TestRunner         runner(fixture.bufferList, eventLoop);
+    fixture.buffer.InsertAtPoint("def test_alpha(): pass\n"
+                                 "def helper(): pass\n");
+
+    BufferView view = fixture.View();
+    view.SetTestRunner(&runner);
+
+    // Without a filter command the gutter stays exactly as it was before
+    // this feature: nothing at all until a run has produced an outcome.
+    {
+        ned::ui::Screen screen(60, 5);
+        PaintInto(view, screen);
+        CHECK(screen.PixelAt(TestColumnX(fixture.buffer.Content().LineCount()), 0).character != "▸");
+    }
+
+    SetTestFilterCommand({"pytest", "-v", "-k", "{test}"});
+    ned::ui::Screen screen(60, 5);
+    PaintInto(view, screen);
+
+    const int testX = TestColumnX(fixture.buffer.Content().LineCount());
+    CHECK(screen.PixelAt(testX, 0).character == "▸");
+    CHECK(screen.PixelAt(testX, 0).foreground_color == Color::BrightBlack);
+    CHECK(screen.PixelAt(testX, 1).character == " "); // helper() is not a test
+}
+
+TEST_CASE("A real result wins over the runnable affordance on the same line", "[BufferView][TestRun]") {
+    ConfigResetGuard   guard;
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    TestRunner         runner(fixture.bufferList, eventLoop);
+    fixture.buffer.InsertAtPoint("def test_alpha(): pass\n"
+                                 "def test_beta(): pass\n");
+
+    SetTestCommand({"true"}, "pytest");
+    SetTestFilterCommand({"pytest", "-v", "-k", "{test}"});
+    runner.DispatchProcessOutput("sample.py::test_alpha FAILED\n"
+                                 "==================== 1 failed in 0.01s ====================\n");
+    runner.DispatchProcessExit(0);
+
+    BufferView view = fixture.View();
+    view.SetTestRunner(&runner);
+    ned::ui::Screen screen(60, 5);
+    PaintInto(view, screen);
+
+    const int testX = TestColumnX(fixture.buffer.Content().LineCount());
+    CHECK(screen.PixelAt(testX, 0).character == "✗"); // the parsed result, not the affordance
+    CHECK(screen.PixelAt(testX, 1).character == "▸"); // never named by this run
+}
+
+TEST_CASE("Clicking a test's gutter mark runs that one test", "[BufferView][TestRun]") {
+    ConfigResetGuard   guard;
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    TestRunner         runner(fixture.bufferList, eventLoop);
+    fixture.buffer.InsertAtPoint("def test_alpha(): pass\n"
+                                 "def test_beta(): pass\n");
+    // "true" exits immediately; the run's own posted callbacks never fire
+    // here (no event loop), which is exactly what the sibling cases above
+    // rely on too -- all this asserts is which test was dispatched.
+    SetTestFilterCommand({"true", "{test}"});
+
+    BufferView view = fixture.View();
+    view.SetTestRunner(&runner);
+    ned::ui::Screen screen(60, 5);
+    PaintInto(view, screen);
+
+    const int testX = TestColumnX(fixture.buffer.Content().LineCount());
+    REQUIRE(screen.PixelAt(testX, 1).character == "▸");
+
+    const std::size_t pointBefore = fixture.buffer.Point();
+    REQUIRE(view.OnEvent(ned::ui::test::Mouse(testX, 1, ned::ui::MouseEvent::Button::Left,
+                                              ned::ui::MouseEvent::Motion::Pressed)));
+    CHECK(fixture.statusMessage == "Running \"test_beta\"...");
+    // The click is consumed by the gutter, never falling through to the
+    // generic point-placement path.
+    CHECK(fixture.buffer.Point() == pointBefore);
+}
+
+TEST_CASE("A gutter click outside the test column still places point", "[BufferView][TestRun]") {
+    ConfigResetGuard   guard;
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    TestRunner         runner(fixture.bufferList, eventLoop);
+    fixture.buffer.InsertAtPoint("def test_alpha(): pass\n"
+                                 "def test_beta(): pass\n");
+    SetTestFilterCommand({"true", "{test}"});
+
+    BufferView view = fixture.View();
+    view.SetTestRunner(&runner);
+    ned::ui::Screen screen(60, 5);
+    PaintInto(view, screen);
+
+    const int testX = TestColumnX(fixture.buffer.Content().LineCount());
+    // One column left of the test mark is the line-number gap, not a run
+    // affordance -- it must not dispatch a run.
+    REQUIRE(view.OnEvent(ned::ui::test::Mouse(testX - 1, 1, ned::ui::MouseEvent::Button::Left,
+                                              ned::ui::MouseEvent::Motion::Pressed)));
+    CHECK(fixture.statusMessage.empty());
+}
+
+TEST_CASE("A test-gutter click without a filter command never dispatches a run", "[BufferView][TestRun]") {
+    ConfigResetGuard   guard;
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    TestRunner         runner(fixture.bufferList, eventLoop);
+    fixture.buffer.InsertAtPoint("def test_alpha(): pass\n");
+    SetTestCommand({"true"}, "pytest");
+    runner.DispatchProcessOutput("sample.py::test_alpha FAILED\n"
+                                 "==================== 1 failed in 0.01s ====================\n");
+    runner.DispatchProcessExit(0);
+
+    BufferView view = fixture.View();
+    view.SetTestRunner(&runner);
+    ned::ui::Screen screen(60, 5);
+    PaintInto(view, screen);
+
+    // The ✗ is real (there was a run), but with no filter command there is
+    // nothing to dispatch -- the click reports why instead of doing nothing.
+    const int testX = TestColumnX(fixture.buffer.Content().LineCount());
+    REQUIRE(screen.PixelAt(testX, 0).character == "✗");
+    REQUIRE(view.OnEvent(ned::ui::test::Mouse(testX, 0, ned::ui::MouseEvent::Button::Left,
+                                              ned::ui::MouseEvent::Motion::Pressed)));
+    CHECK(fixture.statusMessage.find("test filter command") != std::string::npos);
 }

@@ -29,6 +29,14 @@ struct TestResult {
     // empty/0 when the framework simply doesn't know (ctest never does).
     std::string file;
     std::size_t line = 0; // 1-based; 0 = unknown
+    // The framework's own grouping identifier for this test, when it reports
+    // one that carries directory information `file` doesn't (today: go
+    // test -json's "Package", an import path like
+    // "github.com/org/mod/internal/sub"). Purely a source-location
+    // resolution hint -- TestSourceResolver.h uses it to disambiguate a
+    // basename-only `file` between same-named files in several directories.
+    // Empty for every other parser, and never displayed.
+    std::string packagePath;
     // First meaningful failure line, single-line -- what the results buffer
     // shows after the test's name.
     std::string message;
@@ -67,6 +75,19 @@ struct TestRunOutcome {
 // segment (after the last "::", ".", or "#") equaling the
 // bare marker name.
 [[nodiscard]] bool MatchesTestName(std::string_view markerName, std::string_view resultName);
+
+// test-runner-gaps follow-up. A short, actionable tail for a failuresOnly
+// outcome's summary line, naming what the user can change to get real
+// per-test pass marks rather than the gutter's absence-means-pass inference
+// (which a *filtered* run deliberately never applies, so a plain `pytest`
+// leaves run-test-at-point with no mark at all and no explanation).
+//
+// The argv is never rewritten for them -- these are the user's own
+// configured commands, substituted verbatim throughout this subsystem
+// (SubstituteFilterTemplate, never a shell), so the fix is surfaced where
+// it's visible instead. Always starts with " -- " so it appends straight
+// onto a summary line; a format with no useful note returns "".
+[[nodiscard]] std::string FailuresOnlyHint(std::string_view format);
 
 } // namespace ned::editor::testrun
 

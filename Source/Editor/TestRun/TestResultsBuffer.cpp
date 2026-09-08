@@ -1,7 +1,10 @@
 #include "TestResultsBuffer.h"
 
+#include <filesystem>
 #include <vector>
 
+#include "Editor/ProjectRoot.h"
+#include "TestSourceResolver.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 
@@ -18,16 +21,31 @@ namespace {
         if (!outcome.parsedOk) {
             summary += " -- output did not match this format";
         }
+        else if (outcome.failuresOnly) {
+            summary += FailuresOnlyHint(outcome.format);
+        }
         return summary;
     }
 
-    std::string FormatResultLine(const TestResult& result) {
+    // test-runner-gaps follow-up: the path written here is the one
+    // BufferView::VisitResultUnderPoint's regex will hand to
+    // OpenOrCreateFile, so resolve it once at rebuild time -- where the
+    // whole TestResult (including go's packagePath hint) is still in hand --
+    // rather than leaving a bare "foo_test.go" to silently open an empty
+    // scratch buffer on Enter. An unresolvable path is left exactly as the
+    // framework reported it: still informative to read, and no worse than
+    // before.
+    std::string FormatResultLine(const TestResult& result, TestSourceResolver& resolver) {
         std::string line;
-        if (!result.file.empty() && result.line != 0) {
-            line += result.file + ":" + std::to_string(result.line) + ": ";
+        const std::string file =
+            result.file.empty()
+                ? std::string()
+                : resolver.Resolve(result.file, result.packagePath).value_or(std::filesystem::path(result.file)).string();
+        if (!file.empty() && result.line != 0) {
+            line += file + ":" + std::to_string(result.line) + ": ";
         }
-        else if (!result.file.empty()) {
-            line += result.file + ": ";
+        else if (!file.empty()) {
+            line += file + ": ";
         }
         line += result.status == TestResult::Status::Failed ? "[FAILED] " : "[SKIPPED] ";
         line += result.name;
@@ -57,13 +75,16 @@ text::Buffer& RebuildTestResultsBuffer(text::BufferList& bufferList, const TestR
     }
 
     std::vector<text::Buffer::Diagnostic> diagnostics;
+    // One resolver per rebuild: its project-tree index is built lazily and
+    // at most once, so N failures in one module cost one walk, not N.
+    TestSourceResolver                    resolver(ProjectRoot());
     std::size_t                           offset     = 0;
     const auto                            appendLine = [&](const std::string& text) {
         buffer->InsertAtPoint(text + "\n");
         offset += text.size() + 1;
     };
     const auto appendResultLine = [&](const TestResult& result) {
-        const std::string line      = FormatResultLine(result);
+        const std::string line      = FormatResultLine(result, resolver);
         const std::size_t startByte = offset;
         appendLine(line);
         // -1 excludes the trailing newline from the diagnostic's own range,
