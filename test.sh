@@ -8,4 +8,5 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 cmake -S . -B build
 cmake --build build -j8 --target ned_tests
+ctest --test-dir build -j16
 exec ./build/ned_tests "$@"
