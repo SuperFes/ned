@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "RegexPattern.h"
+#include "Text/FilePreservation.h"
 #include "Text/Utf8.h"
 
 namespace ned::editor {
@@ -125,10 +126,16 @@ ReplaceSummary ReplaceMatches(const std::vector<SearchMatch>& matches, const std
         }
         const std::string& replaced = replaceResult.text;
 
-        std::filesystem::path tempPath = file;
-        tempPath += ".ned-tmp";
-        {
-            std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
+        // file-attribute-preservation follow-up: same resolve/capture/apply
+        // sequence Buffer::SaveToFile uses -- see Text/FilePreservation.h
+        // for what a bare rename would silently discard. Every failure here
+        // stays a `continue` rather than an abort, matching this loop's
+        // existing best-effort-per-file contract.
+        const std::filesystem::path         target     = text::ResolveSaveTarget(file);
+        const text::PreservedFileAttributes attributes = text::CaptureFileAttributes(target);
+
+        if (text::ShouldWriteInPlace(attributes)) {
+            std::ofstream output(target, std::ios::binary | std::ios::trunc);
             if (!output) {
                 continue;
             }
@@ -137,11 +144,27 @@ ReplaceSummary ReplaceMatches(const std::vector<SearchMatch>& matches, const std
                 continue;
             }
         }
+        else {
+            std::filesystem::path tempPath = target;
+            tempPath += ".ned-tmp";
+            {
+                std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
+                if (!output) {
+                    continue;
+                }
+                output.write(replaced.data(), static_cast<std::streamsize>(replaced.size()));
+                if (!output) {
+                    continue;
+                }
+            }
 
-        std::error_code ec;
-        std::filesystem::rename(tempPath, file, ec);
-        if (ec) {
-            continue; // leaves the .ned-tmp file behind -- rare, and better than losing the original
+            text::ApplyFileAttributes(tempPath, attributes);
+
+            std::error_code ec;
+            std::filesystem::rename(tempPath, target, ec);
+            if (ec) {
+                continue; // leaves the .ned-tmp file behind -- rare, and better than losing the original
+            }
         }
 
         summary.filesChanged += 1;

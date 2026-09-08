@@ -369,6 +369,38 @@ TEST_CASE("AcpManager's fs/write_text_file writes to disk and merges into an ope
     std::filesystem::remove(tempPath);
 }
 
+TEST_CASE("AcpManager's fs/write_text_file preserves the written file's permissions", "[Acp]") {
+    // file-attribute-preservation follow-up: an agent writing on the user's
+    // behalf is the last place a save should quietly drop a mode bit --
+    // same temp-then-rename defect Buffer::SaveToFile had, see
+    // Text/FilePreservation.h.
+    ManagerFixture fixture;
+    fixture.InjectClient();
+
+    const std::filesystem::path tempPath = std::filesystem::temp_directory_path() / "ned-acp-manager-test-write-perms.sh";
+    {
+        std::ofstream out(tempPath);
+        out << "echo original";
+    }
+    std::filesystem::permissions(tempPath, std::filesystem::perms::owner_all);
+
+    fixture.StartActiveSession("test-agent");
+
+    const Json request = {{"jsonrpc", "2.0"},
+                          {"id", 9},
+                          {"method", "fs/write_text_file"},
+                          {"params", {{"path", tempPath.string()}, {"content", "echo agent"}}}};
+    fixture.client->DispatchFrame(request.dump());
+    const Json response = fixture.reader.Next();
+    REQUIRE(response["id"] == 9);
+    REQUIRE(response.contains("result"));
+
+    REQUIRE((std::filesystem::status(tempPath).permissions() & std::filesystem::perms::owner_exec) !=
+            std::filesystem::perms::none);
+
+    std::filesystem::remove(tempPath);
+}
+
 TEST_CASE("AcpManager routes session/request_permission to the registered handler and answers a selected option", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();

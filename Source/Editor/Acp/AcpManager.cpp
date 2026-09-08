@@ -16,6 +16,7 @@
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/FilePreservation.h"
 
 namespace ned::editor::acp {
 
@@ -72,9 +73,28 @@ namespace {
     const std::string kAcpActivity{"ACP"};
 
     // Sibling-temp-file + rename, the same atomic-write shape
-    // ProjectReplace.cpp's own ReplaceMatches uses.
+    // ProjectReplace.cpp's own ReplaceMatches uses -- including its
+    // file-attribute-preservation follow-up, since this writes the user's
+    // own files (on an agent's behalf, which is all the more reason not to
+    // quietly strip a mode bit or break a link). See
+    // Text/FilePreservation.h.
     void WriteFileAtomically(const std::filesystem::path& path, const std::string& content) {
-        std::filesystem::path tempPath = path;
+        const std::filesystem::path         target     = text::ResolveSaveTarget(path);
+        const text::PreservedFileAttributes attributes = text::CaptureFileAttributes(target);
+
+        if (text::ShouldWriteInPlace(attributes)) {
+            std::ofstream output(target, std::ios::binary | std::ios::trunc);
+            if (!output) {
+                throw std::runtime_error("cannot open " + target.string() + " for writing");
+            }
+            output.write(content.data(), static_cast<std::streamsize>(content.size()));
+            if (!output) {
+                throw std::runtime_error("write failed for " + target.string());
+            }
+            return;
+        }
+
+        std::filesystem::path tempPath = target;
         tempPath += ".ned-tmp";
         {
             std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
@@ -86,10 +106,13 @@ namespace {
                 throw std::runtime_error("write failed for " + tempPath.string());
             }
         }
+
+        text::ApplyFileAttributes(tempPath, attributes);
+
         std::error_code ec;
-        std::filesystem::rename(tempPath, path, ec);
+        std::filesystem::rename(tempPath, target, ec);
         if (ec) {
-            throw std::runtime_error("rename failed for " + path.string() + ": " + ec.message());
+            throw std::runtime_error("rename failed for " + target.string() + ": " + ec.message());
         }
     }
 

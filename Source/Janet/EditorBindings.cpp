@@ -27,6 +27,7 @@
 #include "Editor/FormatOnSave.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/HugeStructuralWindow.h"
+#include "Editor/IndentStyle.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/Link.h"
@@ -55,7 +56,6 @@
 #include "Editor/SnippetRegistry.h"
 #include "Editor/StickyScrollSettings.h"
 #include "Editor/SyntaxTheme.h"
-#include "Editor/IndentStyle.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Terminal/Config.h"
@@ -71,6 +71,7 @@
 #include "Editor/WrapOverrides.h"
 #include "JanetVcsProvider.h"
 #include "Text/BufferList.h"
+#include "Text/FilePreservation.h"
 #include "Value.h"
 
 namespace ned::janet {
@@ -427,6 +428,15 @@ namespace {
 
     void NedSetHugeFileDiskSpaceCheckEnabled(bool enabled) {
         text::SetHugeFileDiskSpaceCheckEnabled(enabled);
+    }
+
+    // file-attribute-preservation follow-up (Text/FilePreservation.h).
+    void NedSetFollowSymlinksOnSave(bool enabled) {
+        text::SetFollowSymlinksOnSave(enabled);
+    }
+
+    void NedSetPreserveHardLinksOnSave(bool enabled) {
+        text::SetPreserveHardLinksOnSave(enabled);
     }
 
     void NedSetMaxHighlightBytes(std::int64_t bytes) {
@@ -1318,6 +1328,18 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-huge-file-disk-space-check-enabled",
         "Enable/disable the free-disk-space safety check for huge (piece-table-backed) buffers entirely (default "
         "true). Off skips both the open-time read-only downgrade and the save-time refusal.");
+    env.Register<&NedSetFollowSymlinksOnSave>(
+        "ned", "set-follow-symlinks-on-save",
+        "Whether saving a file reached through a symlink writes the file the link points at (default true) or "
+        "replaces the link itself with a regular file (false). Following also means the temporary file a save "
+        "writes is created beside the real target, so a link pointing to another filesystem still saves.");
+    env.Register<&NedSetPreserveHardLinksOnSave>(
+        "ned", "set-preserve-hard-links-on-save",
+        "Whether saving a file that has more than one hard link keeps every link pointing at the same content "
+        "(default true). Doing so requires rewriting the file in place instead of the usual write-a-temp-file-"
+        "then-rename, which means a crash mid-save can leave that file truncated -- recoverable from a backup "
+        "version. False keeps the atomic save and lets the save break the link, leaving the other names on the "
+        "old content.");
     env.Register<&NedSetMaxHighlightBytes>(
         "ned", "set-max-highlight-bytes",
         "Buffer size in bytes above which syntax highlighting is skipped entirely (default 8 MiB). 0 disables "
