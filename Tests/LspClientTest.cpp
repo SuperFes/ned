@@ -657,3 +657,36 @@ TEST_CASE("Ordinary destruction (no PrepareForGracefulShutdown) does not hang", 
     const auto elapsed = std::chrono::steady_clock::now() - start;
     REQUIRE(elapsed < std::chrono::seconds(2));
 }
+
+// closed-connection-never-parks follow-up. The LspClient twin of
+// Tests/AcpClientTest.cpp's own "Destroying an AcpClient before its read
+// thread has started doesn't deadlock" -- all three clients share this exact
+// threading/lifetime shape (see LspClient.h's own header comment), and all three
+// shared the deadlock: ~LspClient destroys transport_ before joining
+// readThread_ by design, since that fd close is what unblocks an in-flight
+// read, but a read thread the scheduler hasn't run *at all* yet reaches its
+// first read only after that teardown and used to park forever in poll() on
+// the resulting -1 fd, so the join never returned. Hammering
+// construct-then-immediately-destroy is what makes the scheduler land in
+// that window; the loop simply has to finish.
+TEST_CASE("Destroying a LspClient before its read thread has started doesn't deadlock", "[Lsp]") {
+    ned::ui::EventLoop eventLoop;
+
+    for (int iteration = 0; iteration < 200; ++iteration) {
+        int clientWritesHere[2];
+        int clientReadsHere[2];
+        REQUIRE(::pipe(clientWritesHere) == 0);
+        REQUIRE(::pipe(clientReadsHere) == 0);
+
+        {
+            LspClient client(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+            // No I/O in between -- ClientFixture's own teardown order (peer
+            // write end closed first, so a read thread already parked in
+            // poll() wakes on EOF), but with nothing at all happening first.
+            ::close(clientReadsHere[1]);
+        }
+
+        ::close(clientWritesHere[0]);
+    }
+    SUCCEED();
+}
