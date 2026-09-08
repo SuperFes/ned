@@ -5,6 +5,7 @@
 
 #include "Editor/TestRun/TestRunConfig.h"
 
+using ned::editor::testrun::HasTestFilterCommand;
 using ned::editor::testrun::RegisteredTestParser;
 using ned::editor::testrun::RegisterTestParser;
 using ned::editor::testrun::SetTestCommand;
@@ -40,6 +41,20 @@ TEST_CASE("TestFilterCommand round-trips and clears on empty", "[TestRun]") {
 
     SetTestFilterCommand({});
     REQUIRE_FALSE(TestFilterCommand().has_value());
+}
+
+TEST_CASE("HasTestFilterCommand agrees with TestFilterCommand without copying it", "[TestRun]") {
+    // The per-frame test-gutter path asks only this question, so the two
+    // must never disagree (see TestRunConfig.h).
+    REQUIRE(HasTestFilterCommand() == TestFilterCommand().has_value());
+
+    SetTestFilterCommand({"pytest", "-v", "-k", "{test}"});
+    REQUIRE(HasTestFilterCommand());
+    REQUIRE(HasTestFilterCommand() == TestFilterCommand().has_value());
+
+    SetTestFilterCommand({});
+    REQUIRE_FALSE(HasTestFilterCommand());
+    REQUIRE(HasTestFilterCommand() == TestFilterCommand().has_value());
 }
 
 TEST_CASE("SubstituteFilterTemplate replaces placeholders per argv element", "[TestRun]") {

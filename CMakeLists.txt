@@ -782,6 +782,7 @@ add_library(ned_lib STATIC
         Source/Editor/TestRun/TestResultsBuffer.cpp
         Source/Editor/TestRun/TestRunConfig.cpp
         Source/Editor/TestRun/TestRunner.cpp
+        Source/Editor/TestRun/TestSourceResolver.cpp
         Source/Editor/Coverage/CoverageReport.cpp
         Source/Editor/Coverage/CoverageOutputParser.cpp
         Source/Editor/Coverage/CoverageConfig.cpp
@@ -1183,6 +1184,7 @@ if (NED_BUILD_TESTS)
             Tests/TestResultsBufferTest.cpp
             Tests/TestRunConfigTest.cpp
             Tests/TestRunnerTest.cpp
+            Tests/TestSourceResolverTest.cpp
             Tests/CoverageOutputParserTest.cpp
             Tests/CoverageReportTest.cpp
             Tests/CoverageConfigTest.cpp

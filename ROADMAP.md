@@ -218,7 +218,10 @@ Shipped here, one slug each for `git log --grep=`: `terminal-panel-scrollback`,
 `jumplist-ring`, `changelist-ring`, `dot-repeat-count-override`, `vim-global-marks`,
 `vim-magic-translation`, `vim-macro-register`, `dap-round-3` through `dap-round-5`,
 `session-persistence-round-2`, `snippet-expansion-gaps`, `bundled-snippets`,
-`multiple-terminal-tabs`, `unified-left-dock`.
+`multiple-terminal-tabs`, `unified-left-dock`, `test-runner-gaps` (gutter-click
+run-this-test plus a pre-run `▸` affordance, the failures-only degradation surfaced
+instead of silently degrading, and go's basename-only `file:line` resolved through the
+import path it already reports).
 
 - [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
       consumed by the panel itself (focus, scrollback ring); a TUI subprocess running
@@ -234,10 +237,21 @@ Shipped here, one slug each for `git log --grep=`: `terminal-panel-scrollback`,
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
-- [ ] **Test-runner gaps**: no gutter-click run-this-test; pytest needs `-v` or
-      junit-xml for per-test pass marks; Go's basename-only `file:line` can miss
-      jump-to-source in multi-directory modules (Go itself now has full test discovery
-      via `go-tests.scm`, same as Rust's `rust-tests.scm`).
+- [ ] A results-buffer line whose path doesn't resolve still silently opens an empty
+      scratch buffer of that name (`BufferView::JumpToPathLine` →
+      `BufferList::OpenOrCreateFile`, which creates on miss by design — that's what
+      `find-file` on a new path needs). `test-runner-gaps` fixed this at the
+      *producer* for `*test results*` (`Editor/TestRun/TestSourceResolver.h` resolves
+      each path at rebuild time, so the line carries a real one), but every other
+      `path:line:` producer — project search/replace, the agenda, `DiagnosticsLog`,
+      blame — still hands its path straight through. The general fix is at
+      `VisitResultUnderPoint`: report a miss rather than creating. Left alone because
+      those producers all write paths that do exist today.
+- [ ] `TestSourceResolver`'s basename search picks the shallowest candidate when
+      nothing disambiguates (no go package hint, no directory components in the
+      reported path, several same-named files) — deterministic, but it can be the
+      wrong file. A prompt-to-choose would be the honest answer; not worth it until
+      the silent wrong pick is actually seen.
 - [ ] **Nested snippet placeholders' inner stops** (`${1:foo ${2:bar}}` keeps only the
       literal text "foo bar", the inner `$2` tabstop is dropped). Confirmed *not*
       reachable via the tree-sitter fold-depth machinery (`CodeFold.h` re-derives a
