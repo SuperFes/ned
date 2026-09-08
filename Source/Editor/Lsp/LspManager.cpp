@@ -379,7 +379,23 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
            // own doc comment), and linkedEditingRange is declared bare, the
            // same "plain support, no optional refinement" shape as
            // documentHighlight just below it.
-           {{"completion", {{"completionItem", {{"snippetSupport", true}}}}},
+           // completion-resolve/completion-trigger-characters follow-up:
+           // resolveSupport names exactly the three fields
+           // CompletionSession::ApplyResolution will merge back in, and is
+           // what makes rust-analyzer/jdtls defer their additionalTextEdits
+           // (the "#include"/"import" an accepted symbol needs) to
+           // completionItem/resolve rather than dropping them.
+           // commitCharactersSupport/preselectSupport are the sibling
+           // "this client actually reads that field" declarations for the
+           // other two the parser now keeps -- a server is entitled to omit
+           // both from a client that never claims them.
+           {{"completion",
+             {{"completionItem",
+               {{"snippetSupport", true},
+                {"preselectSupport", true},
+                {"commitCharactersSupport", true},
+                {"resolveSupport", {{"properties", Json::array({"documentation", "detail", "additionalTextEdits"})}}}}},
+              {"contextSupport", true}}},
             {"hover", Json::object()},
             {"signatureHelp", Json::object()},
             {"declaration", Json::object()},
@@ -800,6 +816,9 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
                 }
                 if (const auto triggers = ExtractOnTypeFormattingTriggers(*result)) {
                     onTypeFormattingTriggers_[connectionKey] = *triggers;
+                }
+                if (const auto completionProvider = ExtractCompletionProvider(*result)) {
+                    completionProvider_[connectionKey] = *completionProvider;
                 }
                 if (const auto syncKind = ExtractTextDocumentSyncKind(*result)) {
                     textDocumentSyncKind_[connectionKey] = *syncKind;
@@ -1240,6 +1259,7 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     // died -- don't let a stale entry outlive this connection.
     semanticTokensLegend_.erase(connectionKeyCopy);
     onTypeFormattingTriggers_.erase(connectionKeyCopy);
+    completionProvider_.erase(connectionKeyCopy);                 // ditto -- a respawn may declare different triggers, or lose resolveProvider
     textDocumentSyncKind_.erase(connectionKeyCopy);               // ditto -- a respawned server may advertise a different sync kind
     fileOperationFilters_.erase(connectionKeyCopy);               // ditto -- a respawned server may advertise different willRename/didRename filters
     pullDiagnosticsUnsupported_.erase(connectionKeyCopy);         // a respawned server gets one fresh attempt
@@ -1395,6 +1415,11 @@ std::string LspManager::DisconnectReason(const std::string& connectionKey) const
 std::optional<SemanticTokensLegend> LspManager::SemanticTokensLegendFor(const std::string& connectionKey) const {
     const auto it = semanticTokensLegend_.find(connectionKey);
     return it != semanticTokensLegend_.end() ? std::optional(it->second) : std::nullopt;
+}
+
+std::optional<CompletionProviderInfo> LspManager::CompletionProviderFor(const std::string& connectionKey) const {
+    const auto it = completionProvider_.find(connectionKey);
+    return it != completionProvider_.end() ? std::optional(it->second) : std::nullopt;
 }
 
 std::optional<OnTypeFormattingTriggers> LspManager::OnTypeFormattingTriggersFor(const std::string& connectionKey) const {
@@ -2260,7 +2285,8 @@ void LspManager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, Hove
                         });
 }
 
-void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback, const std::string& serverKey) {
+void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback, const std::string& serverKey,
+                                   const std::string& triggerCharacter) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
@@ -2274,19 +2300,35 @@ void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset,
 
     const std::string language = state->connectionKey;
     const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
-    // completion-context follow-up: every caller here is a manual/explicit
-    // trigger (M-x lsp-complete, or the debounced auto-trigger timer -- see
-    // BufferView::RequestCompletionAtPoint), never a specific trigger
-    // character this client tracked, so triggerKind is always Invoked (1);
-    // omitting "context" entirely left a strict server with no signal at
-    // all for whether to apply its own trigger-character-narrower behavior.
+    // completion-context follow-up, corrected by completion-trigger-characters:
+    // triggerKind was hardcoded to 1 (Invoked) for every request, including
+    // the ones a real server-declared trigger character caused -- a server
+    // is entitled to answer those two cases differently (a "." request
+    // should return members, not every in-scope symbol), and it has no
+    // other way to tell them apart. Omitting "context" entirely, as this
+    // did before that follow-up, left a strict server with no signal at all.
+    Json context = {{"triggerKind", triggerCharacter.empty() ? 1 : 2}};
+    if (!triggerCharacter.empty()) {
+        context["triggerCharacter"] = triggerCharacter;
+    }
     const Json params = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
-        {"context", {{"triggerKind", 1}}},
+        {"context", std::move(context)},
     };
+    // completion-resolve follow-up: an item that declared no
+    // commitCharacters of its own inherits the server's list-wide
+    // allCommitCharacters. Applied here rather than in LspContent because
+    // that layer only ever sees one response, never the initialize
+    // capabilities this tier comes from -- and applied at receipt so every
+    // consumer downstream reads one already-resolved field.
+    std::vector<std::string> allCommitCharacters;
+    if (const auto provider = CompletionProviderFor(state->connectionKey)) {
+        allCommitCharacters = provider->allCommitCharacters;
+    }
     client->SendRequest("textDocument/completion", params,
-                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                        [this, language, allCommitCharacters = std::move(allCommitCharacters), callback = std::move(callback)](
+                            std::optional<Json> result, std::optional<Json> error) {
                             if (error) {
                                 LogError(language, ExtractErrorMessage(*error));
                                 callback({});
@@ -2296,7 +2338,53 @@ void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset,
                                 callback({});
                                 return;
                             }
-                            callback(ExtractCompletionList(*result));
+                            CompletionList list = ExtractCompletionList(*result);
+                            if (!allCommitCharacters.empty()) {
+                                for (CompletionItem& item : list.items) {
+                                    if (item.commitCharacters.empty()) {
+                                        item.commitCharacters = allCommitCharacters;
+                                    }
+                                }
+                            }
+                            callback(std::move(list));
+                        });
+}
+
+void LspManager::ResolveCompletionItem(text::Buffer& buffer, const CompletionItem& item, ResolveCompletionCallback callback,
+                                       const std::string& serverKey) {
+    if (item.raw.is_null()) {
+        callback(std::nullopt); // synthesized (dabbrev/Janet) item -- there is nothing to hand back
+        return;
+    }
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::string language = state->connectionKey;
+    client->SendRequest("completionItem/resolve", item.raw,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            CompletionItem resolved = ExtractSingleCompletionItem(*result);
+                            if (resolved.label.empty()) {
+                                callback(std::nullopt); // unparseable/empty response -- nothing to merge
+                                return;
+                            }
+                            callback(std::move(resolved));
                         });
 }
 

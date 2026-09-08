@@ -100,6 +100,48 @@ struct CompletionItem {
     std::string sortText;
     std::string filterText;
 
+    // completion-resolve follow-up: the item exactly as the server sent it,
+    // kept so LspManager::ResolveCompletionItem can hand it back verbatim on
+    // completionItem/resolve -- the spec requires the *whole* item round-trip
+    // (a server's own "data" field is the usual carrier, but nothing says it
+    // is the only one). CodeAction::raw's precedent, for the same reason.
+    // Null for a dabbrev/Janet-synthesized item, and for any item this
+    // client built rather than parsed -- ResolveCompletionItem treats that
+    // as "nothing to resolve" rather than sending a null payload.
+    Json raw;
+
+    // completion-resolve follow-up: the edits a server wants applied
+    // *alongside* the inserted text -- the "#include <vector>" an accepted
+    // std::vector needs, the "import foo" for a Python symbol. Per spec
+    // these never overlap the item's own textEdit and always target the
+    // same document, which is what lets BufferView::AcceptActiveCompletion
+    // apply them against this buffer alone (no multi-file machinery) and
+    // ahead of the main edit, relocating that edit's own range by however
+    // far these moved it.
+    //
+    // Usually empty in the initial completion response and only filled in
+    // by completionItem/resolve -- rust-analyzer and jdtls never send them
+    // up front -- which is exactly why the resolve step had to land first.
+    std::vector<WorkspaceTextEdit> additionalTextEdits;
+
+    // completion-trigger-characters follow-up. preselect is the server
+    // saying "this is the one the user most likely wants" (spec: at most
+    // one item per list should carry it) -- CompletionSession honors it as
+    // the initial selection, and only while nothing has been typed to rank
+    // against, since a real typed prefix is better evidence than the
+    // server's context-free guess.
+    bool preselect = false;
+
+    // commitCharacters: typing one of these accepts this item and then
+    // inserts the character itself. Empty means "this item declared none" --
+    // and, deliberately, that nothing is committed on: this client never
+    // substitutes a default set of its own, so a server that declares
+    // nothing behaves exactly as it did before this field existed. A
+    // CompletionList's own "itemDefaults.commitCharacters" and the server's
+    // "completionProvider.allCommitCharacters" both fold in here at parse
+    // time, so a consumer reads one field rather than three.
+    std::vector<std::string> commitCharacters;
+
     bool operator==(const CompletionItem&) const = default;
 };
 
@@ -136,6 +178,41 @@ struct CompletionList {
 // The items-only half of ExtractCompletionList, for callers with no use for
 // isIncomplete.
 [[nodiscard]] std::vector<CompletionItem> ExtractCompletionItems(const Json& result);
+
+// completion-resolve follow-up. One item out of the list above, for a
+// completionItem/resolve response (which is a bare CompletionItem, not a
+// list). Same parsing as ExtractCompletionList's own per-item step, shared
+// rather than duplicated -- with no CompletionList around it there are no
+// itemDefaults to fold in, so this is the defaults-free case of it.
+// A non-object, or an object with no "label", yields a default-constructed
+// item; the caller sees an empty label and can treat that as "nothing
+// usable came back," matching every other ExtractX function's own
+// skip-the-malformed convention.
+[[nodiscard]] CompletionItem ExtractSingleCompletionItem(const Json& item);
+
+// completion-resolve/completion-trigger-characters follow-up. The three
+// pieces of `capabilities.completionProvider` this client acts on. A fourth
+// legitimate exception to "no general capability store" (see the block
+// comment above ExtractSemanticTokensLegend): each of these changes what
+// this client *sends*, not merely whether it bothers -- resolveProvider
+// gates a whole extra request, triggerCharacters decides which keystrokes
+// issue one at all, and allCommitCharacters becomes an item's own
+// commitCharacters when it declared none.
+struct CompletionProviderInfo {
+    std::vector<std::string> triggerCharacters;       // completionProvider.triggerCharacters -- [] if the server declared none
+    std::vector<std::string> allCommitCharacters;     // ...allCommitCharacters (LSP 3.2+) -- the per-list default, [] if absent
+    bool                     resolveProvider = false; // ...resolveProvider -- whether completionItem/resolve may be sent at all
+
+    bool operator==(const CompletionProviderInfo&) const = default;
+};
+
+// Parses `capabilities.completionProvider` out of a full `initialize`
+// response. nullopt when the provider is absent or not an object (a server
+// with no completion support at all) -- distinct from a present provider
+// that simply declares none of the three fields, which yields a
+// default-constructed value, i.e. "completion works, but no triggers, no
+// commit characters, and no resolve."
+[[nodiscard]] std::optional<CompletionProviderInfo> ExtractCompletionProvider(const Json& initializeResult);
 
 // project-undo follow-up: one URI's worth of edits out of a WorkspaceEdit's
 // "changes" map -- shared by CodeAction::edits and RenameResult::edits

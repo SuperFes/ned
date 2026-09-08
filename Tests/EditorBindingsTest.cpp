@@ -645,3 +645,28 @@ TEST_CASE("ned/register-snippet and ned/snippet-triggers round-trip the registry
     // An empty trigger panics with a real error.
     REQUIRE_THROWS(env.DoString(R"((ned/register-snippet "cpp" "" "body"))"));
 }
+
+// completion-trigger-characters follow-up.
+TEST_CASE("ned/set-lsp-commit-characters toggles the process-wide commit-character setting", "[EditorBindings]") {
+    // Process-wide state (LspServerConfig.h); restored via RAII so it can't
+    // leak into another test's typing behavior.
+    struct CommitCharactersGuard {
+        CommitCharactersGuard() : previous_(ned::editor::lsp::LspCommitCharactersEnabled()) {
+        }
+        ~CommitCharactersGuard() {
+            ned::editor::lsp::SetLspCommitCharactersEnabled(previous_);
+        }
+        bool previous_;
+    } guard;
+
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    REQUIRE(ned::editor::lsp::LspCommitCharactersEnabled()); // default on, matching VS Code
+
+    env.DoString(R"((ned/set-lsp-commit-characters false))");
+    REQUIRE_FALSE(ned::editor::lsp::LspCommitCharactersEnabled());
+
+    env.DoString(R"((ned/set-lsp-commit-characters true))");
+    REQUIRE(ned::editor::lsp::LspCommitCharactersEnabled());
+}

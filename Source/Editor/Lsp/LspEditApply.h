@@ -33,6 +33,27 @@ namespace ned::editor::lsp {
 // press per edit instead of one for the whole operation.
 void ApplyWorkspaceTextEdits(text::Buffer& buffer, const std::vector<WorkspaceTextEdit>& edits);
 
+// completion-additional-edits follow-up. ApplyWorkspaceTextEdits above, plus
+// the one thing an accepted completion needs from it: where `anchorByte`
+// ended up once every edit had been applied. The accept path applies an
+// item's additionalTextEdits (the "#include <vector>" a std::vector needs)
+// *before* its own insertion -- they were computed against the pre-insert
+// document, so applying them first is what keeps their positions honest --
+// and an edit landing earlier in the buffer shifts the range that insertion
+// is about to replace.
+//
+// Relocation rule: an edit ending at or before the anchor moves it by its
+// own length delta; an edit starting after it leaves it alone. LSP
+// guarantees additionalTextEdits never overlap the item's own edit, so the
+// straddling case shouldn't arise -- if a server sends one anyway the anchor
+// collapses to that edit's start rather than landing inside replacement text
+// it knows nothing about.
+//
+// ApplyWorkspaceTextEdits is this with the result discarded, so both share
+// one copy of the resolve/sort/apply/undo-group logic.
+[[nodiscard]] std::size_t ApplyWorkspaceTextEditsAndRelocate(text::Buffer& buffer, const std::vector<WorkspaceTextEdit>& edits,
+                                                             std::size_t anchorByte);
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_LSPEDITAPPLY_H

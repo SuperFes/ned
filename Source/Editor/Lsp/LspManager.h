@@ -277,7 +277,37 @@ class LspManager {
     // not just its items -- isIncomplete decides whether the caller may
     // narrow locally as the user keeps typing or has to re-ask.
     using CompletionCallback = std::function<void(CompletionList list)>;
-    void RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback, const std::string& serverKey = {});
+    // completion-trigger-characters follow-up: triggerCharacter is the
+    // character that caused this request, when one did -- it becomes the
+    // LSP CompletionContext's triggerKind 2 (TriggerCharacter) plus the
+    // character itself, instead of the flat 1 (Invoked) every request used
+    // to claim. Empty (the default) still means Invoked, which is the right
+    // answer for M-x lsp-complete and for a word-continuation keystroke:
+    // neither is a server-declared trigger character, and claiming one was
+    // would make a server apply its trigger-specific narrowing to a context
+    // that never asked for it.
+    void RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback, const std::string& serverKey = {},
+                           const std::string& triggerCharacter = {});
+
+    // completion-resolve follow-up. Sends completionItem/resolve with the
+    // item's own raw JSON verbatim -- ResolveCodeAction's exact shape and
+    // rationale, for the sibling protocol step. nullopt on any failure
+    // (buffer never synced, no running client, an error response, or an
+    // item carrying no raw JSON to send back -- a dabbrev/Janet-synthesized
+    // one), otherwise the re-parsed item.
+    //
+    // Callers must gate on CompletionProviderFor(...)->resolveProvider
+    // themselves: a server that never advertised it is entitled to error on
+    // the request, and this class deliberately keeps capability checks at
+    // the call site (ExecuteCommand's own doc comment states the same
+    // stance). The merge rule -- which of the resolved item's fields may
+    // replace the original's -- is CompletionSession::ApplyResolution's, not
+    // this method's; per spec a server must not change an item's
+    // insert-behavior fields on resolve, and honoring that is what keeps a
+    // resolve landing mid-typing from rewriting what Tab would insert.
+    using ResolveCompletionCallback = std::function<void(std::optional<CompletionItem> resolved)>;
+    void ResolveCompletionItem(text::Buffer& buffer, const CompletionItem& item, ResolveCompletionCallback callback,
+                               const std::string& serverKey = {});
 
     // code-actions follow-up. Same "resolve purely from bufferState_" shape
     // as RequestHover/RequestCompletion. rangeStartByte/rangeEndByte become
@@ -788,6 +818,14 @@ class LspManager {
         semanticTokensLegend_[std::move(connectionKey)] = std::move(legend);
     }
 
+    // completion-resolve follow-up: same test-only injection point as
+    // SetSemanticTokensLegendForTesting just above, for the piece of
+    // `initialize`-response state ResolveCompletionItem and BufferView's own
+    // auto-trigger gate read.
+    void SetCompletionProviderForTesting(std::string connectionKey, CompletionProviderInfo info) {
+        completionProvider_[std::move(connectionKey)] = std::move(info);
+    }
+
     // incremental-sync follow-up: same test-only injection point as
     // SetSemanticTokensLegendForTesting just above, for the sibling piece of
     // `initialize`-response state -- a test wanting to exercise the
@@ -913,6 +951,19 @@ class LspManager {
     // ConnectionKeyForBuffer.
     [[nodiscard]] std::optional<SemanticTokensLegend>     SemanticTokensLegendFor(const std::string& connectionKey) const;
     [[nodiscard]] std::optional<OnTypeFormattingTriggers> OnTypeFormattingTriggersFor(const std::string& connectionKey) const;
+
+    // completion-resolve/completion-trigger-characters follow-up: the same
+    // shape and rationale as the two accessors just above, for
+    // capabilities.completionProvider. Drives three separate decisions, all
+    // in BufferView: which typed characters auto-trigger a completion
+    // request at all (triggerCharacters -- previously a hardcoded ". : >"),
+    // whether an item may be sent back on completionItem/resolve
+    // (resolveProvider -- see ResolveCompletionItem), and the per-server
+    // default an item that declared no commitCharacters of its own inherits
+    // (allCommitCharacters). nullopt when the server never advertised a
+    // completionProvider, which BufferView treats as "keep the pre-existing
+    // hardcoded trigger set" rather than "never complete."
+    [[nodiscard]] std::optional<CompletionProviderInfo> CompletionProviderFor(const std::string& connectionKey) const;
 
     // incremental-sync follow-up: unlike the two accessors above, this
     // returns a plain TextDocumentSyncKind rather than an optional -- every
@@ -1583,6 +1634,12 @@ class LspManager {
     // above for why these exist instead of a general capability store.
     std::unordered_map<std::string, SemanticTokensLegend>     semanticTokensLegend_;
     std::unordered_map<std::string, OnTypeFormattingTriggers> onTypeFormattingTriggers_;
+
+    // completion-resolve/completion-trigger-characters follow-up: same
+    // role/lifetime/erasure convention as the two caches just above -- see
+    // CompletionProviderFor's own doc comment in the public section for the
+    // three things it decides.
+    std::unordered_map<std::string, CompletionProviderInfo> completionProvider_;
 
     // rename-file-notifications follow-up: same lifetime/erasure convention
     // as the two caches just above -- see RequestWillRenameFiles/

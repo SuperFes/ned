@@ -221,3 +221,119 @@ TEST_CASE("Refilter dismisses when point moves before the session's prefix start
 
     CHECK(session.Refilter(buffer.Content(), /*point=*/2, /*currentPrefixStart=*/0) == CompletionSession::Outcome::Dismiss);
 }
+
+// ---------------------------------------------------------------------------
+// completion-resolve / completion-additional-edits / completion-trigger-characters
+// ---------------------------------------------------------------------------
+
+TEST_CASE("preselect picks the initial selection while nothing has been typed", "[CompletionSession]") {
+    Buffer buffer = MakeBuffer("");
+
+    CompletionItem plain       = Item("alpha");
+    CompletionItem preselected = Item("beta");
+    preselected.preselect      = true;
+
+    CompletionSession session({plain, preselected}, false, buffer.Content(), /*point=*/0, /*fallbackPrefixStart=*/0);
+    REQUIRE(session.Candidates().size() == 2);
+    CHECK(session.Candidates()[session.SelectedIndex()].item.label == "beta");
+}
+
+TEST_CASE("preselect is ignored once a real prefix exists", "[CompletionSession]") {
+    // "a" is typed: the fuzzy ranking is better evidence than the server's
+    // context-free guess, so "alpha" must win over the preselected "beta".
+    Buffer buffer = MakeBuffer("a");
+
+    CompletionItem alpha       = Item("alpha");
+    CompletionItem preselected = Item("beta");
+    preselected.preselect      = true;
+
+    CompletionSession session({preselected, alpha}, false, buffer.Content(), /*point=*/1, /*fallbackPrefixStart=*/0);
+    REQUIRE_FALSE(session.Candidates().empty());
+    CHECK(session.Candidates()[session.SelectedIndex()].item.label == "alpha");
+}
+
+TEST_CASE("ApplyResolution merges documentation/detail/additionalTextEdits and survives a refilter", "[CompletionSession]") {
+    Buffer buffer = MakeBuffer("fo");
+
+    CompletionSession session({Item("foobar"), Item("foobaz")}, false, buffer.Content(), /*point=*/2, /*fallbackPrefixStart=*/0);
+    REQUIRE(session.Candidates().size() == 2);
+    REQUIRE_FALSE(session.Candidates()[0].resolved);
+
+    CompletionItem resolved      = Item(session.Candidates()[0].item.label);
+    resolved.documentation       = "Docs fetched on resolve.";
+    resolved.detail              = "int(int)";
+    resolved.additionalTextEdits = {WorkspaceTextEdit{.start   = LspPosition{.line = 0, .character = 0},
+                                                      .end     = LspPosition{.line = 0, .character = 0},
+                                                      .newText = "#include <foo>\n"}};
+    session.ApplyResolution(0, resolved);
+
+    CHECK(session.Candidates()[0].resolved);
+    CHECK(session.Candidates()[0].item.documentation == "Docs fetched on resolve.");
+    CHECK(session.Candidates()[0].item.detail == "int(int)");
+    REQUIRE(session.Candidates()[0].item.additionalTextEdits.size() == 1);
+
+    // The write-through to the master list is the whole point: candidates_ is
+    // rebuilt from scratch on the very next keystroke.
+    buffer.InsertAtPoint("o");
+    REQUIRE(session.Refilter(buffer.Content(), buffer.Point(), 0) != CompletionSession::Outcome::Dismiss);
+    REQUIRE_FALSE(session.Candidates().empty());
+    CHECK(session.Candidates()[0].resolved);
+    CHECK(session.Candidates()[0].item.documentation == "Docs fetched on resolve.");
+}
+
+TEST_CASE("ApplyResolution never rewrites the fields that decide what gets inserted", "[CompletionSession]") {
+    // The LSP spec forbids a server changing an item's insert behavior on
+    // resolve; a response landing mid-typing must not change what Tab does.
+    Buffer            buffer = MakeBuffer("fo");
+    CompletionSession session({Item("foobar", "foobar()")}, false, buffer.Content(), 2, 0);
+
+    CompletionItem hostile = Item("SOMETHING ELSE", "rm -rf /");
+    hostile.sortText       = "aaa";
+    hostile.filterText     = "zzz";
+    session.ApplyResolution(0, hostile);
+
+    CHECK(session.Candidates()[0].item.label == "foobar");
+    CHECK(session.Candidates()[0].item.insertText == "foobar()");
+    CHECK(session.Candidates()[0].item.sortText == "foobar");
+    CHECK(session.Candidates()[0].item.filterText == "foobar");
+}
+
+TEST_CASE("ApplyResolution ignores an out-of-range index", "[CompletionSession]") {
+    Buffer            buffer = MakeBuffer("fo");
+    CompletionSession session({Item("foobar")}, false, buffer.Content(), 2, 0);
+    session.ApplyResolution(99, Item("foobar"));
+    CHECK_FALSE(session.Candidates()[0].resolved);
+}
+
+TEST_CASE("PlanAccept carries the selected item's additionalTextEdits", "[CompletionSession]") {
+    Buffer         buffer    = MakeBuffer("vec");
+    CompletionItem item      = Item("vector", "std::vector");
+    item.additionalTextEdits = {WorkspaceTextEdit{.start   = LspPosition{.line = 0, .character = 0},
+                                                  .end     = LspPosition{.line = 0, .character = 0},
+                                                  .newText = "#include <vector>\n"}};
+
+    CompletionSession session({item}, false, buffer.Content(), 3, 0);
+    const auto        plan = session.PlanAccept(3);
+    REQUIRE(plan.has_value());
+    REQUIRE(plan->additionalEdits.size() == 1);
+    CHECK(plan->additionalEdits[0].newText == "#include <vector>\n");
+}
+
+TEST_CASE("IsCommitCharacter only reports characters the selected item actually declared", "[CompletionSession]") {
+    Buffer         buffer       = MakeBuffer("fo");
+    CompletionItem withCommit   = Item("foobar");
+    withCommit.commitCharacters = {"(", "."};
+
+    CompletionSession session({withCommit, Item("foobaz")}, false, buffer.Content(), 2, 0);
+    REQUIRE(session.Candidates().size() == 2);
+    REQUIRE(session.Candidates()[session.SelectedIndex()].item.label == "foobar");
+    CHECK(session.IsCommitCharacter("("));
+    CHECK(session.IsCommitCharacter("."));
+    CHECK_FALSE(session.IsCommitCharacter(";"));
+    CHECK_FALSE(session.IsCommitCharacter(""));
+
+    // The sibling item declared none, so nothing commits while it's selected.
+    session.Cycle(1);
+    REQUIRE(session.Candidates()[session.SelectedIndex()].item.label == "foobaz");
+    CHECK_FALSE(session.IsCommitCharacter("("));
+}

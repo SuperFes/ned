@@ -9230,6 +9230,223 @@ TEST_CASE("Typing a statement-ending character like ';' does not schedule an aut
     REQUIRE_FALSE(fixture.completion.has_value());
 }
 
+// completion-trigger-characters follow-up.
+TEST_CASE("A server's own declared trigger characters replace the hardcoded fallback set", "[BufferView]") {
+    // "@" is nowhere in the hardcoded ". : >" fallback, so a request going
+    // out for it can only come from the server's own advertised
+    // completionProvider.triggerCharacters -- and the request must report
+    // triggerKind 2 with that character, not the flat "Invoked" every
+    // request used to claim.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_server_trigger_chars_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("foo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+    manager.SetCompletionProviderForTesting("fundamental", ned::editor::lsp::CompletionProviderInfo{.triggerCharacters = {"@"}});
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    TypeText(view, "@");
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    REQUIRE(eventLoop.DrainPosted_());
+
+    const std::vector<ned::editor::lsp::Json> requests          = ReadLspFrames(server.serverStdinRead, 2);
+    const auto                                completionRequest = std::find_if(requests.begin(), requests.end(), [](const ned::editor::lsp::Json& r) {
+        return r["method"] == "textDocument/completion";
+    });
+    REQUIRE(completionRequest != requests.end());
+    CHECK((*completionRequest)["params"]["context"]["triggerKind"] == 2);
+    CHECK((*completionRequest)["params"]["context"]["triggerCharacter"] == "@");
+}
+
+// completion-trigger-characters follow-up.
+TEST_CASE("Typing a character the server did not declare as a trigger schedules nothing", "[BufferView]") {
+    // The flip side: once a server declares its own set, the hardcoded
+    // fallback stops applying -- "." is not a trigger for a server that
+    // only declared "@".
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_server_trigger_chars_neg_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("foo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+    manager.SetCompletionProviderForTesting("fundamental", ned::editor::lsp::CompletionProviderInfo{.triggerCharacters = {"@"}});
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    TypeText(view, ".");
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    REQUIRE(eventLoop.DrainPosted_()); // documentHighlight still fires -- it has no trigger gate
+
+    const std::vector<ned::editor::lsp::Json> requests = ReadLspFrames(server.serverStdinRead, 1);
+    REQUIRE_FALSE(std::any_of(requests.begin(), requests.end(),
+                              [](const ned::editor::lsp::Json& r) { return r["method"] == "textDocument/completion"; }));
+}
+
+// completion-trigger-characters follow-up.
+TEST_CASE("Typing a commit character accepts the selected completion and then inserts itself", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_commit_characters_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("fo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
+    const auto        response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array({{{"label", "foobar"},
+                                                   {"insertText", "foobar"},
+                                                   {"commitCharacters", ned::editor::lsp::Json::array({"("})}}})},
+    };
+    client->DispatchFrame(response.dump());
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobar");
+
+    TypeText(view, "(");
+    // Unlike Tab, the character itself is kept -- that is what makes it a
+    // commit character rather than an accept key. The trailing ")" is
+    // auto-pair's, which runs on the re-dispatched keystroke exactly as it
+    // would with no popup involved at all.
+    CHECK(buffer.Text() == "foobar()");
+    CHECK_FALSE(fixture.completion.has_value());
+}
+
+// completion-trigger-characters follow-up.
+TEST_CASE("A character no completion item declared as a commit character just self-inserts", "[BufferView]") {
+    // The no-behavior-change guarantee: a server that declares no commit
+    // characters must leave typing exactly as it was before this existed --
+    // the popup dismisses and the character inserts, nothing is accepted.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_no_commit_characters_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("fo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
+    const auto        response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array({{{"label", "foobar"}, {"insertText", "foobar"}}})},
+    };
+    client->DispatchFrame(response.dump());
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobar");
+
+    TypeText(view, "(");
+    CHECK(buffer.Text() == "fo()"); // the typed "(" plus auto-pair's ")", and nothing accepted
+}
+
+namespace {
+struct CommitCharactersDisabledGuard {
+    CommitCharactersDisabledGuard() : previous_(ned::editor::lsp::LspCommitCharactersEnabled()) {
+        ned::editor::lsp::SetLspCommitCharactersEnabled(false);
+    }
+    ~CommitCharactersDisabledGuard() {
+        ned::editor::lsp::SetLspCommitCharactersEnabled(previous_);
+    }
+    bool previous_;
+};
+} // namespace
+
+// completion-trigger-characters follow-up.
+TEST_CASE("ned/set-lsp-commit-characters false stops a declared commit character from accepting", "[BufferView]") {
+    // typescript-language-server declares {".", ",", ";", "("} on every
+    // item, so this toggle is the escape hatch for someone who does not want
+    // ";" to accept whatever suggestion happened to be showing.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_commit_characters_off_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("fo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
+    const auto        response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array({{{"label", "foobar"},
+                                                   {"insertText", "foobar"},
+                                                   {"commitCharacters", ned::editor::lsp::Json::array({"("})}}})},
+    };
+    client->DispatchFrame(response.dump());
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobar");
+
+    const CommitCharactersDisabledGuard commitCharactersOff;
+    TypeText(view, "(");
+    CHECK(buffer.Text() == "fo()"); // dismissed and self-inserted, exactly as with no commit characters at all
+}
+
 TEST_CASE("Completion popup hides when point's row scrolls off screen, but the suggestion is retained", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_complete_scroll_test.txt";
@@ -9279,6 +9496,105 @@ TEST_CASE("Completion popup hides when point's row scrolls off screen, but the s
     // off-screen ghost text had.
     view.OnEvent(ned::ui::test::Tab());
     REQUIRE(buffer.Text().starts_with("foobar"));
+}
+
+// completion-resolve follow-up.
+TEST_CASE("The selected completion item is resolved after the debounce and its documentation lands in the preview", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_completion_resolve_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("fo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+    manager.SetCompletionProviderForTesting("fundamental", ned::editor::lsp::CompletionProviderInfo{.resolveProvider = true});
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string completionRaw = ReadRawLspFrame(server.serverStdinRead);
+    // No "documentation" in the list itself -- exactly the rust-analyzer/
+    // jdtls shape that made the resolve step necessary in the first place.
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(completionRaw)},
+        {"result", ned::editor::lsp::Json::array({{{"label", "foobar"}, {"insertText", "foobar"}, {"data", {{"id", 7}}}}})},
+    }
+                              .dump());
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobar");
+    REQUIRE_FALSE(fixture.completion->previewText.has_value());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past LspCompletionDebounceMs()'s default 500ms
+    REQUIRE(eventLoop.DrainPosted_());
+
+    const std::string resolveRaw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        resolveRequest = ned::editor::lsp::Json::parse(resolveRaw.substr(resolveRaw.find("\r\n\r\n") + 4));
+    REQUIRE(resolveRequest["method"] == "completionItem/resolve");
+    REQUIRE(resolveRequest["params"]["data"]["id"] == 7); // the item went back verbatim
+
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(resolveRaw)},
+        {"result", {{"label", "foobar"}, {"documentation", "Fetched lazily."}}},
+    }
+                              .dump());
+
+    REQUIRE(fixture.completion.has_value());
+    CHECK(fixture.completion->previewText == "Fetched lazily.");
+}
+
+// completion-resolve follow-up.
+TEST_CASE("No completionItem/resolve is sent to a server that never advertised resolveProvider", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_completion_no_resolve_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("fo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+    // Deliberately no SetCompletionProviderForTesting call at all.
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string completionRaw = ReadRawLspFrame(server.serverStdinRead);
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(completionRaw)},
+        {"result", ned::editor::lsp::Json::array({{{"label", "foobar"}, {"insertText", "foobar"}}})},
+    }
+                              .dump());
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobar");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    eventLoop.DrainPosted_();
+    const std::vector<ned::editor::lsp::Json> requests = ReadLspFrames(server.serverStdinRead, 1);
+    REQUIRE_FALSE(std::any_of(requests.begin(), requests.end(),
+                              [](const ned::editor::lsp::Json& r) { return r["method"] == "completionItem/resolve"; }));
 }
 
 TEST_CASE("A completion item's documentation populates the popup's previewText", "[BufferView]") {
@@ -9363,6 +9679,57 @@ TEST_CASE("AcceptActiveCompletionAt accepts the given index regardless of the cu
     // Out-of-range/stale click is a no-op, not a crash.
     view.AcceptActiveCompletionAt(5);
     REQUIRE(buffer.Text() == "foobaz");
+}
+
+// completion-additional-edits follow-up.
+TEST_CASE("Accepting a completion applies its additionalTextEdits, relocating its own replace range", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_completion_additional_edits_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("#include <a>\nint main() { vec");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 4});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(80, 5);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw = ReadRawLspFrame(server.serverStdinRead);
+    // The "#include <vector>" lands on line 1 -- ahead of the "vec" being
+    // replaced on line 2, so accepting has to relocate that replace range.
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result",
+         ned::editor::lsp::Json::array(
+             {{{"label", "vector"},
+               {"insertText", "std::vector"},
+               {"additionalTextEdits",
+                ned::editor::lsp::Json::array(
+                    {{{"range", {{"start", {{"line", 1}, {"character", 0}}}, {"end", {{"line", 1}, {"character", 0}}}}},
+                      {"newText", "#include <vector>\n"}}})}}})},
+    };
+    client->DispatchFrame(response.dump());
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "vector");
+
+    view.AcceptActiveCompletionAt(0);
+    REQUIRE(buffer.Text() == "#include <a>\n#include <vector>\nint main() { std::vector");
+
+    // One undo step for the whole accept: an undo leaving the "#include"
+    // behind without the symbol it was added for would be a broken state.
+    buffer.Undo();
+    CHECK(buffer.Text() == "#include <a>\nint main() { vec");
 }
 
 // documentHighlight follow-up.

@@ -4096,6 +4096,20 @@ class BufferView : public Widget {
     // re-check RequestCompletionAtPoint's own callback also does.
     std::size_t completionRequestGeneration_ = 0;
 
+    // completion-resolve follow-up. completionItem/resolve is a per-*item*
+    // request, so unlike every other debounce here it's driven by the
+    // selection moving, not by typing -- Up/Down/wheel/click all re-arm it,
+    // and only the row that stops being cycled past long enough to settle
+    // ever costs a round trip. Reuses LspCompletionDebounceMs() rather than
+    // introducing a fourth timing knob, on the same "typing/motion just
+    // settled" reasoning signature-help and document-highlight already use.
+    // The generation counter is completionRequestGeneration_'s exact
+    // staleness-guard shape, kept separate because a resolve response
+    // arriving after a *narrowing* keystroke would otherwise be indexed
+    // against a list it no longer describes.
+    DeadlineTimer completionResolveDebounceTimer_;
+    std::size_t   completionResolveGeneration_ = 0;
+
     // documentHighlight follow-up. BufferView-owned, ephemeral point-
     // triggered UI state -- same lifecycle class as ActiveCompletion above,
     // not Buffer-owned server-pushed state like Diagnostics(). buffer/
@@ -4200,7 +4214,14 @@ class BufferView : public Widget {
     void        RequestLspFormatThenSaveBuffer();
     std::size_t lspFormatOnSaveRequestGeneration_ = 0;
 
-    void RequestCompletionAtPoint();
+    // completion-trigger-characters follow-up: triggerCharacter is the
+    // server-declared character whose keystroke armed the debounce that
+    // fired this, threaded through to LspManager::RequestCompletion as the
+    // LSP CompletionContext's triggerKind 2. Empty (the default) for the
+    // M-x lsp-complete entry point and for a plain word-continuation
+    // keystroke -- both are genuinely "Invoked", not trigger-character
+    // requests.
+    void RequestCompletionAtPoint(const std::string& triggerCharacter = {});
     // dabbrev-fallback follow-up: the "no running LSP client for this
     // buffer's language" half of RequestCompletionAtPoint -- scans the
     // buffer itself (Editor/DabbrevComplete.h) for candidates instead of
@@ -4223,6 +4244,28 @@ class BufferView : public Widget {
     void                      MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
     void                      AcceptActiveCompletion();
     void                      CycleActiveCompletion(int direction);
+
+    // completion-resolve follow-up. Arms completionResolveDebounceTimer_ for
+    // the currently selected candidate, unless it's already resolved, the
+    // server never advertised completionProvider.resolveProvider, or the
+    // item carries no raw JSON to send back (a dabbrev/Janet-synthesized
+    // one). Called from NotifyCompletionChanged, which every selection
+    // change already funnels through -- so cycling, clicking and scrolling
+    // all schedule a resolve without each having to remember to.
+    void MaybeScheduleCompletionResolve();
+    // The fired half of the above: re-checks that the selection still points
+    // at the same unresolved candidate, sends the request, and merges the
+    // response back via CompletionSession::ApplyResolution before
+    // re-notifying so the popup's preview pane picks it up.
+    void RequestCompletionResolve();
+
+    // completion-trigger-characters follow-up. The characters that, typed at
+    // point, should fire an automatic completion request -- the running
+    // server's own completionProvider.triggerCharacters when it advertised
+    // any, else the small hardcoded ". : >" set this predates (which is also
+    // what a buffer with no server at all keeps using, for dabbrev). Word
+    // codepoints trigger regardless and are not part of either set.
+    [[nodiscard]] std::vector<std::string> CompletionTriggerCharacters();
 
     // completion-popup follow-up: builds a ListPopupModel from
     // activeCompletion_ (kind glyph + label + detail per row, anchored at

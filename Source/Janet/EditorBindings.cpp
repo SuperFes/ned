@@ -803,6 +803,10 @@ namespace {
 
     // hover-tooltips follow-up: same "just forward to the process-wide
     // setter" shape as NedSetLspSignatureHelpAutoTrigger above.
+    void NedSetLspCommitCharacters(bool enabled) {
+        editor::lsp::SetLspCommitCharactersEnabled(enabled);
+    }
+
     void NedSetLspHoverOnMouseMove(bool enabled) {
         editor::lsp::SetLspHoverOnMouseMoveEnabled(enabled);
     }
@@ -1563,6 +1567,12 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-lsp-signature-help-auto-trigger",
         "Enable or disable automatically requesting signature help after typing ( or , inside a call (default "
         "true). Manual invocation (lsp-signature-help) works regardless of this setting.");
+    env.Register<&NedSetLspCommitCharacters>(
+        "ned", "set-lsp-commit-characters",
+        "Enable or disable accepting the selected completion when a character the server declared as one of that "
+        "item's commitCharacters is typed (default true; the character itself is still inserted afterwards). Inert "
+        "against a server that declares none -- no default set is ever assumed. Turn it off if typing ';' or ',' to "
+        "end a statement keeps accepting the suggestion that happened to be showing.");
     env.Register<&NedSetLspHoverOnMouseMove>(
         "ned", "set-lsp-hover-on-mouse-move",
         "Enable or disable showing an lsp-hover tooltip when the mouse rests over a symbol (default true). "

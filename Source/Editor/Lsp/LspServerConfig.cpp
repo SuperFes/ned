@@ -29,6 +29,9 @@ namespace {
     std::mutex g_hoverOnMouseMoveMutex;
     bool       g_hoverOnMouseMoveEnabled = true;
 
+    std::mutex g_commitCharactersMutex;
+    bool       g_commitCharactersEnabled = true;
+
     std::mutex g_formatOnSaveMutex;
     bool       g_formatOnSaveEnabled = false;
 
@@ -119,6 +122,16 @@ void SetLspSignatureHelpAutoTriggerEnabled(bool enabled) {
 bool LspSignatureHelpAutoTriggerEnabled() {
     const std::lock_guard<std::mutex> lock(g_signatureHelpAutoTriggerMutex);
     return g_signatureHelpAutoTriggerEnabled;
+}
+
+void SetLspCommitCharactersEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_commitCharactersMutex);
+    g_commitCharactersEnabled = enabled;
+}
+
+bool LspCommitCharactersEnabled() {
+    const std::lock_guard<std::mutex> lock(g_commitCharactersMutex);
+    return g_commitCharactersEnabled;
 }
 
 void SetLspHoverOnMouseMoveEnabled(bool enabled) {

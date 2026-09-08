@@ -32,7 +32,8 @@ CompletionSession::CompletionSession(std::vector<lsp::CompletionItem> items, boo
     allCandidates_.reserve(items.size());
     for (lsp::CompletionItem& item : items) {
         const std::size_t replaceStart = ResolveReplaceStart(item, content, point, prefixStart_);
-        allCandidates_.push_back(CompletionCandidate{.item = std::move(item), .replaceStart = replaceStart});
+        allCandidates_.push_back(
+            CompletionCandidate{.item = std::move(item), .replaceStart = replaceStart, .sourceIndex = allCandidates_.size()});
     }
     Rank(content.Substring(prefixStart_, point - prefixStart_));
 }
@@ -85,6 +86,54 @@ void CompletionSession::Rank(std::string_view prefix) {
         candidates_.push_back(*candidate);
     }
     selectedIndex_ = 0;
+    // completion-trigger-characters follow-up: preselect only applies while
+    // nothing has been typed -- see this method's own doc comment in the
+    // header. The spec says at most one item per list carries it; the first
+    // one wins if a server sends several anyway.
+    if (prefix.empty()) {
+        for (std::size_t i = 0; i < candidates_.size(); ++i) {
+            if (candidates_[i].item.preselect) {
+                selectedIndex_ = i;
+                break;
+            }
+        }
+    }
+}
+
+void CompletionSession::ApplyResolution(std::size_t index, const lsp::CompletionItem& resolved) {
+    if (index >= candidates_.size()) {
+        return;
+    }
+    const std::size_t sourceIndex = candidates_[index].sourceIndex;
+
+    // One merge rule, applied to the ranked copy and its master-list twin
+    // both -- see this method's own doc comment in the header for why only
+    // these three fields, and why the master matters (Refilter rebuilds
+    // candidates_ from it on the very next keystroke).
+    const auto merge = [&resolved](CompletionCandidate& candidate) {
+        if (!resolved.documentation.empty()) {
+            candidate.item.documentation = resolved.documentation;
+        }
+        if (!resolved.detail.empty()) {
+            candidate.item.detail = resolved.detail;
+        }
+        if (!resolved.additionalTextEdits.empty()) {
+            candidate.item.additionalTextEdits = resolved.additionalTextEdits;
+        }
+        candidate.resolved = true;
+    };
+    merge(candidates_[index]);
+    if (sourceIndex < allCandidates_.size()) {
+        merge(allCandidates_[sourceIndex]);
+    }
+}
+
+bool CompletionSession::IsCommitCharacter(std::string_view ch) const {
+    if (selectedIndex_ >= candidates_.size() || ch.empty()) {
+        return false;
+    }
+    const std::vector<std::string>& commitCharacters = candidates_[selectedIndex_].item.commitCharacters;
+    return std::find(commitCharacters.begin(), commitCharacters.end(), ch) != commitCharacters.end();
 }
 
 void CompletionSession::Select(std::size_t index) {
@@ -132,10 +181,11 @@ std::optional<CompletionSession::AcceptPlan> CompletionSession::PlanAccept(std::
     }
     const CompletionCandidate& candidate = candidates_[selectedIndex_];
     return AcceptPlan{
-        .replaceStart = std::min(candidate.replaceStart, point),
-        .replaceEnd   = point,
-        .newText      = candidate.item.insertText,
-        .isSnippet    = candidate.item.isSnippet,
+        .replaceStart    = std::min(candidate.replaceStart, point),
+        .replaceEnd      = point,
+        .newText         = candidate.item.insertText,
+        .isSnippet       = candidate.item.isSnippet,
+        .additionalEdits = candidate.item.additionalTextEdits,
     };
 }
 

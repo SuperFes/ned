@@ -990,6 +990,7 @@ if (NED_BUILD_TESTS)
             Tests/RectangleTest.cpp
             Tests/AutoPairTest.cpp
             Tests/CompletionSessionTest.cpp
+            Tests/LspEditApplyTest.cpp
             Tests/DabbrevCompleteTest.cpp
             Tests/SnippetTest.cpp
             Tests/SnippetRegistryTest.cpp

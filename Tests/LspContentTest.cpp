@@ -1496,3 +1496,100 @@ TEST_CASE("ExtractSingleDocumentLink keeps a default range for an item with no \
     REQUIRE(link.start.line == 0);
     REQUIRE(link.end.line == 0);
 }
+
+// ---------------------------------------------------------------------------
+// completion-resolve / completion-additional-edits / completion-trigger-characters
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ExtractCompletionItems parses additionalTextEdits, preselect and commitCharacters", "[Lsp]") {
+    const Json result = Json::array({{
+        {"label", "vector"},
+        {"preselect", true},
+        {"commitCharacters", Json::array({"(", "."})},
+        {"additionalTextEdits",
+         Json::array({{{"range",
+                        {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 0}}}}},
+                       {"newText", "#include <vector>\n"}}})},
+    }});
+
+    const std::vector<CompletionItem> items = ned::editor::lsp::ExtractCompletionItems(result);
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].preselect);
+    CHECK(items[0].commitCharacters == std::vector<std::string>{"(", "."});
+    REQUIRE(items[0].additionalTextEdits.size() == 1);
+    CHECK(items[0].additionalTextEdits[0].newText == "#include <vector>\n");
+    CHECK(items[0].additionalTextEdits[0].start.line == 0);
+    // The raw item is kept verbatim so completionItem/resolve can hand it back.
+    CHECK(items[0].raw["label"] == "vector");
+}
+
+TEST_CASE("An item with no commitCharacters inherits the list's itemDefaults, its own winning", "[Lsp]") {
+    const Json result = {
+        {"itemDefaults", {{"commitCharacters", Json::array({";"})}}},
+        {"items", Json::array({{{"label", "inherits"}}, {{"label", "overrides"}, {"commitCharacters", Json::array({"("})}}})},
+    };
+
+    const std::vector<CompletionItem> items = ned::editor::lsp::ExtractCompletionItems(result);
+    REQUIRE(items.size() == 2);
+    CHECK(items[0].commitCharacters == std::vector<std::string>{";"});
+    CHECK(items[1].commitCharacters == std::vector<std::string>{"("});
+}
+
+TEST_CASE("An item that declares no commit characters anywhere gets none", "[Lsp]") {
+    // The whole no-behavior-change guarantee rests on this: a server that
+    // says nothing about commit characters must not acquire a default set.
+    const std::vector<CompletionItem> items = ned::editor::lsp::ExtractCompletionItems(Json::array({{{"label", "plain"}}}));
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].commitCharacters.empty());
+    CHECK_FALSE(items[0].preselect);
+    CHECK(items[0].additionalTextEdits.empty());
+}
+
+TEST_CASE("ExtractSingleCompletionItem parses a bare completionItem/resolve response", "[Lsp]") {
+    const Json response = {
+        {"label", "vector"},
+        {"detail", "std::vector<T>"},
+        {"documentation", {{"kind", "markdown"}, {"value", "A dynamic array."}}},
+        {"additionalTextEdits",
+         Json::array({{{"range", {{"start", {{"line", 2}, {"character", 0}}}, {"end", {{"line", 2}, {"character", 0}}}}},
+                       {"newText", "#include <vector>\n"}}})},
+    };
+
+    const CompletionItem item = ned::editor::lsp::ExtractSingleCompletionItem(response);
+    CHECK(item.label == "vector");
+    CHECK(item.detail == "std::vector<T>");
+    CHECK(item.documentation == "A dynamic array.");
+    REQUIRE(item.additionalTextEdits.size() == 1);
+    CHECK(item.additionalTextEdits[0].start.line == 2);
+}
+
+TEST_CASE("ExtractSingleCompletionItem yields an empty-label item for a malformed response", "[Lsp]") {
+    CHECK(ned::editor::lsp::ExtractSingleCompletionItem(Json(nullptr)).label.empty());
+    CHECK(ned::editor::lsp::ExtractSingleCompletionItem(Json::object()).label.empty());
+    CHECK(ned::editor::lsp::ExtractSingleCompletionItem(Json("not an object")).label.empty());
+}
+
+TEST_CASE("ExtractCompletionProvider reads triggerCharacters, allCommitCharacters and resolveProvider", "[Lsp]") {
+    const Json initializeResult = {
+        {"capabilities",
+         {{"completionProvider",
+           {{"triggerCharacters", Json::array({".", "->", "::"})}, {"allCommitCharacters", Json::array({";"})}, {"resolveProvider", true}}}}}};
+
+    const auto provider = ned::editor::lsp::ExtractCompletionProvider(initializeResult);
+    REQUIRE(provider.has_value());
+    CHECK(provider->triggerCharacters == std::vector<std::string>{".", "->", "::"});
+    CHECK(provider->allCommitCharacters == std::vector<std::string>{";"});
+    CHECK(provider->resolveProvider);
+}
+
+TEST_CASE("ExtractCompletionProvider distinguishes an absent provider from a bare one", "[Lsp]") {
+    // Absent: nullopt, which BufferView reads as "keep the hardcoded fallback trigger set".
+    CHECK_FALSE(ned::editor::lsp::ExtractCompletionProvider(Json{{"capabilities", Json::object()}}).has_value());
+    CHECK_FALSE(ned::editor::lsp::ExtractCompletionProvider(Json::object()).has_value());
+    // Present but declaring nothing: a real value, all fields at their defaults.
+    const auto bare = ned::editor::lsp::ExtractCompletionProvider(Json{{"capabilities", {{"completionProvider", Json::object()}}}});
+    REQUIRE(bare.has_value());
+    CHECK(bare->triggerCharacters.empty());
+    CHECK(bare->allCommitCharacters.empty());
+    CHECK_FALSE(bare->resolveProvider);
+}
