@@ -69,7 +69,32 @@ namespace {
         if (uri.rfind(kPrefix, 0) != 0) {
             return std::nullopt;
         }
-        return std::filesystem::path(uri.substr(kPrefix.size()));
+        // documentLink follow-up: percent-decode. A file: URI's path is
+        // percent-encoded per RFC 3986, and real servers do encode it --
+        // found live, not assumed: clangd reports every system include's
+        // target under this machine's own libstdc++ directory as
+        // ".../g%2B%2B-v16/algorithm", which as a literal path exists
+        // nowhere. Undecoded, every URI-carrying response (definition,
+        // references, rename, documentLink) silently missed any path
+        // containing a character outside the unreserved set. A stray '%'
+        // that isn't followed by two hex digits is kept verbatim rather
+        // than treated as a parse failure -- a filename may legitimately
+        // contain one.
+        const std::string encoded = uri.substr(kPrefix.size());
+        std::string       decoded;
+        decoded.reserve(encoded.size());
+        for (std::size_t i = 0; i < encoded.size(); ++i) {
+            const auto isHex = [](char c) {
+                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            };
+            if (encoded[i] == '%' && i + 2 < encoded.size() && isHex(encoded[i + 1]) && isHex(encoded[i + 2])) {
+                decoded.push_back(static_cast<char>(std::stoi(encoded.substr(i + 1, 2), nullptr, 16)));
+                i += 2;
+                continue;
+            }
+            decoded.push_back(encoded[i]);
+        }
+        return std::filesystem::path(decoded);
     }
 
     // project-settings-lsp-init-options follow-up. Resolves a dotted "section"
@@ -1220,6 +1245,7 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     pullDiagnosticsUnsupported_.erase(connectionKeyCopy);         // a respawned server gets one fresh attempt
     inlayHintsUnsupported_.erase(connectionKeyCopy);              // ditto
     codeLensUnsupported_.erase(connectionKeyCopy);                // ditto
+    documentLinkUnsupported_.erase(connectionKeyCopy);            // ditto
     semanticTokensRangeUnsupported_.erase(connectionKeyCopy);     // ditto
     semanticTokensFullDeltaUnsupported_.erase(connectionKeyCopy); // ditto
     // lsp-workspace-folders follow-up: this connection's folder set dies
@@ -2029,6 +2055,119 @@ void LspManager::ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& l
                                 .hasCommand       = resolved.hasCommand,
                                 .raw              = resolved.raw,
                             });
+                        });
+}
+
+namespace {
+    // documentLink follow-up: the one place a raw DocumentLink target turns
+    // into the path/url split ResolvedDocumentLink documents -- shared by
+    // RequestDocumentLinks and ResolveDocumentLink so a resolved link is
+    // classified exactly like an inline one. A target that claims to be a
+    // file:// URI but doesn't parse (UriToPath returning nullopt) is left
+    // with neither field set rather than passed to OpenUrl as a URL, which
+    // it isn't.
+    void ApplyDocumentLinkTarget(LspManager::ResolvedDocumentLink& out, const DocumentLink& link) {
+        out.needsResolve = !link.hasTarget;
+        if (!link.hasTarget) {
+            return;
+        }
+        if (link.target.starts_with("file://")) {
+            if (const std::optional<std::filesystem::path> path = UriToPath(link.target)) {
+                out.path = *path;
+            }
+            return;
+        }
+        out.url = link.target;
+    }
+} // namespace
+
+void LspManager::RequestDocumentLinks(text::Buffer& buffer, DocumentLinkCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback({});
+        return;
+    }
+    if (documentLinkUnsupported_.contains(state->connectionKey)) {
+        callback({}); // learned once that this server doesn't support textDocument/documentLink
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    text::Buffer* const bufferPtr     = &buffer;
+    const std::string   connectionKey = state->connectionKey;
+    const Json          params        = {{"textDocument", {{"uri", state->uri}}}};
+    client->SendRequest("textDocument/documentLink", params,
+                        [this, bufferPtr, connectionKey, callback = std::move(callback)](std::optional<Json> result,
+                                                                                         std::optional<Json> error) {
+                            if (error) {
+                                documentLinkUnsupported_.insert(connectionKey);
+                                LogError(connectionKey, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            // The buffer may have been edited (or closed and a
+                            // new one allocated at the same address) while the
+                            // request was in flight -- the caller's own
+                            // staleness guard is what decides whether to act on
+                            // these at all; converting positions against
+                            // whatever content is here now is still the only
+                            // meaningful thing to do with the response.
+                            const text::ITextStorage&         content = bufferPtr->Content();
+                            std::vector<ResolvedDocumentLink> resolved;
+                            for (const DocumentLink& link : ExtractDocumentLinks(*result)) {
+                                ResolvedDocumentLink entry{
+                                    .startByte = LspPositionToByte(content, link.start),
+                                    .endByte   = LspPositionToByte(content, link.end),
+                                    .raw       = link.raw,
+                                };
+                                ApplyDocumentLinkTarget(entry, link);
+                                resolved.push_back(std::move(entry));
+                            }
+                            std::sort(resolved.begin(), resolved.end(),
+                                      [](const ResolvedDocumentLink& a, const ResolvedDocumentLink& b) {
+                                          return a.startByte < b.startByte;
+                                      });
+                            callback(std::move(resolved));
+                        });
+}
+
+void LspManager::ResolveDocumentLink(text::Buffer& buffer, const ResolvedDocumentLink& link, ResolveDocumentLinkCallback callback,
+                                     const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::size_t startByte = link.startByte;
+    const std::size_t endByte   = link.endByte;
+    client->SendRequest("documentLink/resolve", link.raw,
+                        [callback = std::move(callback), startByte, endByte](std::optional<Json> result, std::optional<Json> error) {
+                            if (error || !result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            const DocumentLink   parsed = ExtractSingleDocumentLink(*result);
+                            ResolvedDocumentLink entry{
+                                .startByte = startByte, // the original range stands -- resolve only fills in a target
+                                .endByte   = endByte,
+                                .raw       = parsed.raw,
+                            };
+                            ApplyDocumentLinkTarget(entry, parsed);
+                            callback(std::move(entry));
                         });
 }
 

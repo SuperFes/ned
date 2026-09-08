@@ -751,6 +751,38 @@ struct LinkedEditingRange {
 // null result or fewer than 2 ranges (nothing to mirror).
 [[nodiscard]] std::vector<LinkedEditingRange> ExtractLinkedEditingRanges(const Json& result);
 
+// documentLink follow-up. One clickable span the *server* found in the
+// document -- clangd reports every #include line this way, resolved through
+// the real compile_commands.json search paths rather than the filesystem
+// guesswork Editor/Link.h's own ResolveFileLink has to fall back on. target
+// stays a raw URI string (never resolved to a path here), the same layering
+// DefinitionLocation already keeps. Per spec a link may legitimately arrive
+// with no target at all -- the server expects a documentLink/resolve round
+// trip for it -- which is what hasTarget distinguishes from an empty/
+// malformed one; raw is the original item verbatim, replayed as that
+// request's whole body (CodeLens::raw's own contract).
+struct DocumentLink {
+    LspPosition start;
+    LspPosition end;
+    std::string target; // a URI ("file://...", "https://...") -- empty when hasTarget is false
+    bool        hasTarget = false;
+    Json        raw;
+
+    bool operator==(const DocumentLink&) const = default;
+};
+
+// Parses a single textDocument/documentLink response item (also what a
+// documentLink/resolve response is -- always exactly one DocumentLink, not
+// an array, mirroring ExtractSingleCodeLens's own reuse for resolve). An
+// item missing "range" keeps a default-constructed start/end rather than
+// being refused, matching ExtractSingleCodeLens.
+[[nodiscard]] DocumentLink ExtractSingleDocumentLink(const Json& item);
+
+// Parses a textDocument/documentLink response: DocumentLink[] | null. An
+// entry missing "range" is skipped, not treated as a parse error (unlike the
+// single-item form above, which has no other entry to fall back to).
+[[nodiscard]] std::vector<DocumentLink> ExtractDocumentLinks(const Json& result);
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_LSPCONTENT_H

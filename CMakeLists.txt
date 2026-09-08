@@ -1196,6 +1196,7 @@ if (NED_BUILD_TESTS)
             Tests/BufferViewNextErrorTest.cpp
             Tests/BufferViewDiagnosticsBufferTest.cpp
             Tests/BufferViewEmbeddedLspTest.cpp
+            Tests/BufferViewDocumentLinkTest.cpp
             Tests/BufferViewProjectFindReferencesTest.cpp
             Tests/BufferViewHierarchyTest.cpp
             Tests/WrapOverridesTest.cpp

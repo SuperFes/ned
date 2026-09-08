@@ -114,16 +114,31 @@ item above, which independently arrived at the same conclusion), not a new one a
 here. A system-installed grammar `.so` never carries its `queries/*.scm` regardless of
 language, so leaning on one was never going to be the shortcut it looks like.
 
-- [ ] Go-to-file-at-point resolver: LSP-first resolution (`textDocument/documentLink`,
-      e.g. clangd's own `#include` support) — the one item left open from the
-      resolver-gaps sweep (Python relative imports, PHP PSR-4, JS/TS dynamic
-      `import()`, node_modules `package.json` resolution, and Rust's `mod` declarations
-      all closed, see `git log --grep=resolver-gaps`). Needs new request/response
-      plumbing and an async-aware call site — `OpenLinkAtPoint` is synchronous today,
-      and every other async LSP feature (`RequestDefinition`, `RequestCodeActions`,
-      `RequestCodeLenses`) already establishes the fire-request/generation-guarded-
-      callback idiom this would need to adopt, so this is a restructuring, not a new
-      architecture.
+The go-to-file-at-point resolver's LSP-first tier is shipped, closing the last item from
+the resolver-gaps sweep (Python relative imports, PHP PSR-4, JS/TS dynamic `import()`,
+node_modules `package.json` resolution, and Rust's `mod` declarations were the earlier
+ones — `git log --grep=resolver-gaps`) — see `git log --grep=lsp-document-link`.
+`textDocument/documentLink` (clangd's own `#include` support, resolved through
+compile_commands.json rather than the filesystem search `ResolveFileLink` falls back to)
+now gets first refusal in `BufferView::OpenLinkAtPoint`, with the whole pre-existing
+chain moved intact into `OpenLinkAtPointWithoutLsp` and re-entered from the response
+callback. `LspManager::RequestDocumentLinks`/`ResolveDocumentLink` follow
+`RequestCodeLenses`/`ResolveCodeLens`'s shape exactly (whole-document scope, byte-offset
+resolution at the manager boundary, a `documentLinkUnsupported_` learned-once latch, and
+the `documentLink/resolve` second hop for a link a server deliberately sends target-less).
+Three deliberate rules: no LSP manager, no running client, or a latched-unsupported server
+all answer synchronously, so a non-LSP buffer's behavior is byte-for-byte what it was; a
+server-named path that isn't actually on disk falls back to the heuristic rather than
+opening an empty buffer at a phantom path; and the LSP tier deliberately pushes no jump
+mark, since `OpenDetectedLink`'s own file tier doesn't either and which tier answered
+shouldn't be observable. Live testing this against real clangd also turned up a
+pre-existing bug in `LspManager.cpp`'s own `UriToPath`, fixed alongside it: a `file:` URI's
+path is percent-encoded per RFC 3986 and clangd really does encode it (every system
+include's target here arrives under `.../g%2B%2B-v16/`, a literal path that exists
+nowhere), so *every* URI-carrying response — definition, references, rename, documentLink —
+silently missed any path containing a character outside the unreserved set. The outgoing
+direction (`PathToUri`) still doesn't encode; nothing has needed it yet, and changing it
+would change the URI every `didOpen` sends, so it's deliberately left alone.
 
 LSP write/read protocol-stall timeout split is shipped — see
 `git log --grep=protocol-stall-timeout-split`. `ProcessTimeouts.h`'s single
