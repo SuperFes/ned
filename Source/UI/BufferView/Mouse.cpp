@@ -49,7 +49,7 @@ void BufferView::ShowContextMenuAt(Point localClick) {
         // active/inactive precondition, not by precisely which gutter
         // sub-column was clicked -- see ShowContextMenuAt's own doc
         // comment in BufferView.h.
-        if (FoldGutterActive()) {
+        if (gutters_.FoldGutterActive()) {
             contextMenuEntries_.push_back(ContextMenuCommandEntry("code-fold-toggle"));
         }
         if (DapGutterActive()) {
@@ -76,7 +76,7 @@ void BufferView::ShowContextMenuAt(Point localClick) {
         // run-test-at-point reporting its own "no test definition at point"
         // when this line isn't one. The SetPoint above already moved point
         // to the clicked line, which is what that command resolves against.
-        if (TestGutterActive()) {
+        if (gutters_.TestGutterActive()) {
             contextMenuEntries_.push_back(ContextMenuCommandEntry("run-test-at-point"));
         }
     }
@@ -311,7 +311,7 @@ void BufferView::ActivateContextMenuAt(std::size_t index) {
 // own doc comments in BufferView.h for the overall session shape.
 
 bool BufferView::HandleTestGutterClick(Point at) {
-    if (!TestGutterActive()) {
+    if (!gutters_.TestGutterActive()) {
         return false;
     }
     const std::size_t testStart = TestGutterColumnStart();
@@ -327,10 +327,9 @@ bool BufferView::HandleTestGutterClick(Point at) {
     const std::size_t         line =
         std::min(AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(at.y, 0)), totalLines), totalLines - 1);
 
-    EnsureTestGutterCache();
-    const auto it = std::lower_bound(testGutterEntries_.begin(), testGutterEntries_.end(), line,
+    const auto it = std::lower_bound(gutters_.TestEntries().begin(), gutters_.TestEntries().end(), line,
                                      [](const TestGutterEntry& entry, std::size_t target) { return entry.line < target; });
-    if (it == testGutterEntries_.end() || it->line != line) {
+    if (it == gutters_.TestEntries().end() || it->line != line) {
         return true; // inside the column, just not on a marked row -- swallow, don't place point
     }
     if (TestRunPreconditionsMet()) {
@@ -609,7 +608,7 @@ bool BufferView::OnMouseEvent(const Event& event) {
         // block, not whatever's innermost at that line) -- clicking a plain
         // guide line ('│'/'└', not a header cell) is a no-op, matching how
         // indent guides are inert-to-click in every mainstream editor.
-        const std::size_t foldColumnWidth  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+        const std::size_t foldColumnWidth  = gutters_.FoldGutterActive() ? kMaxFoldDepthColumns : 0;
         const std::size_t blameColumnWidth = BlameGutterActive() ? kBlameWidth : 0;
         // Mirrors GutterWidth()/Paint()'s own
         // [status][gap][digits][gap][symbol][fold][blame] layout -- foldStart
@@ -630,10 +629,9 @@ bool BufferView::OnMouseEvent(const Event& event) {
             const std::size_t line          = std::min(AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(mouse->at.y, 0)), totalLines),
                                                        totalLines - 1);
             const int         clickedColumn = mouse->at.x - static_cast<int>(foldStart);
-            EnsureFoldGutterCache();
-            auto it = std::lower_bound(foldGutterEntries_.begin(), foldGutterEntries_.end(), line,
+            auto it = std::lower_bound(gutters_.FoldEntries().begin(), gutters_.FoldEntries().end(), line,
                                        [](const FoldGutterEntry& entry, std::size_t targetLine) { return entry.headerLine < targetLine; });
-            for (; it != foldGutterEntries_.end() && it->headerLine == line; ++it) {
+            for (; it != gutters_.FoldEntries().end() && it->headerLine == line; ++it) {
                 if (it->column == clickedColumn) {
                     const bool collapsed = buffer.FoldMarkerAt(it->blockStart).has_value();
                     buffer.SetFoldMarker(it->blockStart,
