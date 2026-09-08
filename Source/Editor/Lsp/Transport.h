@@ -100,6 +100,14 @@ class Transport {
     // ProtocolReadStallTimeoutMs() default (see this file's own header comment).
     [[nodiscard]] std::optional<std::string> ReadFrame(std::chrono::milliseconds stallTimeout = ProtocolReadStallTimeoutMs()) const;
 
+    // broker-reader-deadlock follow-up. Closes the underlying connection in
+    // place, waking any thread parked in ReadFrame() (which then returns
+    // nullopt/throws, as at any other EOF) without destroying this object --
+    // see ChildProcess::CloseConnection()'s own doc comment for why the
+    // "just destroy it to interrupt the read" shortcut is unsound when
+    // another thread is still inside the call. Idempotent.
+    void Close() noexcept;
+
     [[nodiscard]] pid_t Pid() const noexcept;
 
     // lsp-stderr-capture follow-up. The read end of the child's stderr pipe

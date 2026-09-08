@@ -147,6 +147,21 @@ class ChildProcess {
     // table, same as any other process exit.
     void Kill() noexcept;
 
+    // broker-reader-deadlock follow-up. Closes this object's own fds in
+    // place -- exactly what the destructor does to them (shutdown() then
+    // close(), see ~ChildProcess()'s own comment on why both) -- without
+    // reaping/killing the child and without destroying the object. Exists
+    // for the "wake a reader thread blocked in a read on another thread"
+    // idiom: destroying the whole ChildProcess out from under that reader
+    // does wake it, but the reader then returns into a freed object, so the
+    // owner must be able to close the connection while the reader still
+    // holds a reference and let the last reference do the real teardown.
+    // Idempotent; safe to call with a reader parked in a blocking read (the
+    // shutdown() is what unblocks it) and safe to call before the
+    // destructor, which simply finds the fds already closed and goes
+    // straight to reaping the child.
+    void CloseConnection() noexcept;
+
   private:
     int   writeFd_  = -1;
     int   readFd_   = -1;
