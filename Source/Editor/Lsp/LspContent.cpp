@@ -1176,4 +1176,40 @@ std::vector<LinkedEditingRange> ExtractLinkedEditingRanges(const Json& result) {
     return ranges;
 }
 
+DocumentLink ExtractSingleDocumentLink(const Json& item) {
+    DocumentLink link;
+    if (!item.is_object()) {
+        return link;
+    }
+    link.raw          = item;
+    const Json& range = item.value("range", Json::object());
+    if (range.is_object() && range.contains("start") && range.contains("end")) {
+        link.start = PositionFromJson(range["start"]);
+        link.end   = PositionFromJson(range["end"]);
+    }
+    if (const auto targetIt = item.find("target"); targetIt != item.end() && targetIt->is_string()) {
+        link.target    = targetIt->get<std::string>();
+        link.hasTarget = !link.target.empty();
+    }
+    return link;
+}
+
+std::vector<DocumentLink> ExtractDocumentLinks(const Json& result) {
+    std::vector<DocumentLink> links;
+    if (!result.is_array()) {
+        return links;
+    }
+    for (const Json& item : result) {
+        if (!item.is_object() || !item.contains("range")) {
+            continue;
+        }
+        const Json& range = item["range"];
+        if (!range.is_object() || !range.contains("start") || !range.contains("end")) {
+            continue;
+        }
+        links.push_back(ExtractSingleDocumentLink(item));
+    }
+    return links;
+}
+
 } // namespace ned::editor::lsp

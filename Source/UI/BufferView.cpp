@@ -11780,6 +11780,104 @@ void BufferView::BeginVcsCreateBranchPrompt() {
 }
 
 void BufferView::OpenLinkAtPoint() {
+    // documentLink follow-up: LSP-first, falling back to the pre-existing
+    // chain -- see this method's own doc comment in BufferView.h. No manager
+    // wired up at all short-circuits synchronously (SwitchHeaderSource's own
+    // precedent), which is what keeps every no-LSP caller, including every
+    // BufferView test, on exactly the old path.
+    if (!lspManager_) {
+        OpenLinkAtPointWithoutLsp();
+        return;
+    }
+
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   point      = buffer.Point();
+    const std::size_t   generation = ++documentLinkRequestGeneration_;
+    // embedded-language-documents follow-up: an #include inside an embedded
+    // region belongs to that region's own server, same routing every other
+    // point-scoped LSP request here uses.
+    const std::string serverKey = ResolvedLspServerKey(point);
+
+    lspManager_->RequestDocumentLinks(
+        buffer,
+        [this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::LspManager::ResolvedDocumentLink> links) {
+            if (generation != documentLinkRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                return; // buffer/point changed since the request was sent -- RequestDefinitionAtPoint's own guard
+            }
+            const auto covering = std::find_if(links.begin(), links.end(),
+                                               [point](const editor::lsp::LspManager::ResolvedDocumentLink& link) {
+                                                   return link.startByte <= point && point <= link.endByte;
+                                               });
+            if (covering == links.end()) {
+                OpenLinkAtPointWithoutLsp(); // the server has nothing here (a URL in a comment, a bare path, an Org link)
+                return;
+            }
+            if (!covering->needsResolve) {
+                OpenResolvedDocumentLink(*covering);
+                return;
+            }
+            // A link the server deliberately sent target-less, expecting a
+            // second round trip before it can be followed.
+            lspManager_->ResolveDocumentLink(
+                activeBuffer_.Get(), *covering,
+                [this, bufferPtr, point, generation](std::optional<editor::lsp::LspManager::ResolvedDocumentLink> resolved) {
+                    if (generation != documentLinkRequestGeneration_) {
+                        return;
+                    }
+                    if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                        return;
+                    }
+                    if (!resolved || resolved->needsResolve) {
+                        OpenLinkAtPointWithoutLsp(); // resolve failed or still named no target
+                        return;
+                    }
+                    OpenResolvedDocumentLink(*resolved);
+                },
+                serverKey);
+        },
+        serverKey);
+}
+
+void BufferView::OpenResolvedDocumentLink(const editor::lsp::LspManager::ResolvedDocumentLink& link) {
+    if (!link.path.empty()) {
+        std::error_code ec;
+        if (!std::filesystem::exists(link.path, ec)) {
+            OpenLinkAtPointWithoutLsp(); // see this method's own doc comment
+            return;
+        }
+        try {
+            // Deliberately no PushJumpMark here: OpenDetectedLink's own
+            // file tier doesn't push one either, and which tier answered a
+            // given open-link-at-point shouldn't be observable.
+            text::Buffer& opened = bufferList_.OpenOrCreateFile(link.path);
+            activeBuffer_.Set(opened);
+            statusMessage_.clear();
+        }
+        catch (const std::exception& e) {
+            ReportError(e.what());
+        }
+        return;
+    }
+    if (!link.url.empty()) {
+        // Reuses the generic tail so a server-reported URL opens exactly the
+        // way a detected one does, including its "no URL-open command
+        // configured" reporting.
+        OpenDetectedLink(editor::link::DetectedLink{
+            .kind      = editor::link::LinkKind::Url,
+            .target    = link.url,
+            .startByte = link.startByte,
+            .endByte   = link.endByte,
+        });
+        return;
+    }
+    OpenLinkAtPointWithoutLsp(); // a target this editor can't act on at all
+}
+
+void BufferView::OpenLinkAtPointWithoutLsp() {
     text::Buffer& buffer = activeBuffer_.Get();
 
     if (mode_.name == "org-mode") {

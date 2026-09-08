@@ -1058,6 +1058,48 @@ class LspManager {
     void ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& lens, ResolveCodeLensCallback callback,
                         const std::string& serverKey = {});
 
+    // documentLink follow-up. One server-reported link, already resolved to
+    // byte offsets (ResolvedCodeLens' own layering) and, for a file:// URI,
+    // to a real filesystem path (ResolvedLocation's own uri<->path boundary).
+    // Exactly one of path/url is ever set for a link the caller can act on:
+    // a file:// target resolves into path, anything else (http(s):, and any
+    // scheme this editor has no opener for) is left verbatim in url for
+    // Editor/Link.h's OpenUrl to judge. needsResolve is a link the server
+    // sent with no target at all, expecting a documentLink/resolve round
+    // trip -- raw is that request's whole body, kept for exactly that.
+    struct ResolvedDocumentLink {
+        std::size_t           startByte = 0;
+        std::size_t           endByte   = 0;
+        std::filesystem::path path;
+        std::string           url;
+        bool                  needsResolve = false;
+        Json                  raw;
+    };
+
+    // Sent on demand for open-link-at-point, not per-frame like
+    // RequestCodeLenses -- whole-document scope (documentLink has no
+    // position/range param at all), so the caller picks whichever link's
+    // range actually contains point. Empty vector on any failure (buffer
+    // never synced, no running client, an error response), which callers
+    // treat as "the server has nothing here" and fall back to their own
+    // resolution. A real error response latches documentLinkUnsupported_ so
+    // a non-implementing server is never asked again for this connection's
+    // lifetime -- the same learned-once gate RequestCodeLenses uses, and
+    // what keeps a per-keystroke-triggered command from paying a round trip
+    // (and its fallback's own delay) every time against such a server.
+    // serverKey: see RequestHover's own doc comment above.
+    using DocumentLinkCallback = std::function<void(std::vector<ResolvedDocumentLink> links)>;
+    void RequestDocumentLinks(text::Buffer& buffer, DocumentLinkCallback callback, const std::string& serverKey = {});
+
+    // Sends documentLink/resolve with link.raw verbatim -- called only when
+    // link.needsResolve is true, the same shape ResolveCodeLens has for a
+    // command-less code lens. callback receives the resolved link (its own
+    // needsResolve false if the server actually filled a target in) or
+    // nullopt on any failure.
+    using ResolveDocumentLinkCallback = std::function<void(std::optional<ResolvedDocumentLink> resolved)>;
+    void ResolveDocumentLink(text::Buffer& buffer, const ResolvedDocumentLink& link, ResolveDocumentLinkCallback callback,
+                             const std::string& serverKey = {});
+
   private:
     // Returns the already-running client for language, or nullptr if none
     // is running and none is configured -- never spawns one. Used by
@@ -1636,6 +1678,12 @@ class LspManager {
     std::unordered_map<text::Buffer*, std::size_t>                   codeLensRequestCounter_;
     std::unordered_map<text::Buffer*, std::vector<ResolvedCodeLens>> codeLensSpans_;
     std::unordered_set<std::string>                                  codeLensUnsupported_;
+
+    // documentLink follow-up: only the "learned once, stop asking" half of
+    // the group above -- an on-demand request keeps no per-buffer spans/
+    // generation gate of its own (nothing recurring to dedup against).
+    // Cleared in ClientDisconnected alongside every other latch of its kind.
+    std::unordered_set<std::string> documentLinkUnsupported_;
 
     // mode-line-lsp-status-round-3 follow-up: the exception message from the
     // spawn attempt that populated failedCommands_[connectionKey] -- cleared
