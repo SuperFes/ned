@@ -222,131 +222,6 @@ Notcurses.
       C-API module-loading gap, PCH distribution — are exactly the kind of thing that
       might disappear on their own. Worth re-checking before investing in workarounds.
 
-### Remote Execution & Server Protocol
-
-- [ ] **Design ned's own client/server protocol** (raised 2026-09-08 — unstarted, no design
-      committed yet; this entry records the shape of the problem and what's already known,
-      not a spec). The motivating idea: rather than a remote ned shipping buffers back and
-      forth, send *the operation* to where the files are and return only the result — a
-      project-wide search, a refactor, a script evaluation. Round-trip count, not bandwidth,
-      is what makes remote editing feel bad, so this is likely faster as well as simpler.
-
-      **The load-bearing design decision — local is the degenerate case.** The protocol
-      should be the *only* interface, with in-process execution as one transport behind it
-      rather than a bypass around it. Two things follow. It can't rot: every local keystroke
-      exercises the same path a remote session uses, so remote stops being a bolt-on that's
-      broken every time it's picked back up. And it makes "where does this script run"
-      a transport question rather than an architectural one — the same request answered
-      in-process, by a local subprocess, or by a host across a socket.
-
-      That last point interacts directly with the jank analysis above: if scripts execute
-      where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
-      lives on whichever side actually runs them. A remote session's client could then be
-      genuinely thin — and, per the same analysis, a headless binary already links
-      `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` +
-      `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316
-      objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter
-      *grammar* rather than the runtime, and the whole UI-side coupling is one call
-      (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is
-      already there to be taken.
-
-      **Compression must be negotiated, and "none" must be first-class.** Nothing
-      compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib,
-      lzma or brotli — so any codec is a new dependency, and assuming one is present on
-      both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream,
-      or the encoding can't change after the handshake; advertise available codecs at
-      handshake and fall back to identity. LSP's own `capabilities` exchange is the model,
-      and this codebase already understands it well.
-
-      **This must inherit four protocol bugs already paid for, not rediscover them.** Ned
-      has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type`
-      envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an
-      `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
-      - an unbounded blocking `connect()` froze a live editor when the daemon's backlog
-        filled (`LspBrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
-      - joining a reader thread under a held mutex wedged the daemon for hours;
-      - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the
-        `ctest -j8` timeouts;
-      - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in
-        `LspClient`/`DapClient`/`AcpClient`.
-      A new protocol gets timeouts on every blocking call, a non-blocking connect, an
-      asynchronous write queue, and no lock held across a join — by construction, on day
-      one. `EventLoop::Post` is the existing, proven way results come back to the main
-      thread; the protocol layer should not invent a second one.
-
-      **Open questions worth settling before any code:** framing (length-prefixed binary vs.
-      reusing the `Content-Length` shape already implemented three times); whether requests
-      are JSON (nlohmann is already vendored) or something denser; how a long-running remote
-      operation streams partial results and gets cancelled (LSP's `$/progress` and
-      `$/cancelRequest` are the obvious prior art, already handled in `LspManager`);
-      versioning and forward compatibility; and authentication/transport (bare `AF_UNIX`
-      locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and trust conventions
-      in `BrokerSocketPath.cpp` are the local precedent).
-
-      **Security is not a later concern here.** "Execute this script over a socket" is a
-      remote code execution surface by definition. Ned already gates project-local
-      `.ned/init.janet` behind `ProjectTrust`'s content-hash registry precisely because
-      opening a directory shouldn't run arbitrary code; the same discipline has to extend
-      across a transport, where the threat model is strictly worse. Decide the trust model
-      alongside the framing, not after it.
-
-- [ ] **One connection class instead of three copies of it** (raised 2026-09-08 —
-      prerequisite for the protocol work above, and worth doing on its own merits).
-      `LspClient`, `DapClient` and `AcpClient` each hand-roll the same machine, and the
-      headers say so outright: *"Threading, lifetime, and member-declaration order all
-      mirror LspClient"* (`DapClient.h`), *"mirrors LspClient's own stderrThread_ exactly"*
-      (both), *"see LspClient.h's own comment on writeCv_"* (both). All three carry the
-      identical member set — `readThread_`/`stderrThread_` declared *before* `transport_`
-      so its destructor's fd close unblocks them, then `writeThread_` with
-      `writeMutex_`/`writeCv_`/`writeQueue_`/`drainQueueOnStop_` declared *after* it for
-      the mirror-image reason. That ordering is a load-bearing correctness invariant
-      currently defended by a comment repeated in three files: reorder two members in one
-      of them and you get a hang, not a compile error.
-
-      **The seam is clean, because only the top of the stack actually differs.** Framing
-      differs (LSP and DAP share `Content-Length` via `Lsp/Transport.h`; ACP is
-      newline-delimited with its own). Envelope and dispatch differ (JSON-RPC id matching;
-      DAP's `seq`/`type` request-response-event; ACP's genuinely bidirectional,
-      async-capable handlers). Handshake gating differs (LSP queues until `initialized`).
-      Everything *below* "turn bytes into one frame" — process spawn, the read loop, the
-      stderr loop, the write queue and its thread, `EventLoop::Post` marshalling, shutdown
-      ordering — is byte-for-byte the same idea three times.
-
-      **Shape — composition, not an interface, and for a design reason rather than a cost
-      one.** Nothing here ever holds a heterogeneous collection of clients: each one knows
-      its framing at compile time and is named concretely at every call site, so there is
-      no runtime type choice for a vtable to express (unlike `ITextStorage`, where `Buffer`
-      genuinely cannot know whether it holds a `Rope` or a `PieceTable`, or `Widget::Paint`,
-      or `VcsProvider`, whose implementation set is opened at runtime by Janet plugins).
-      An abstract `ProtocolClient` base with a virtual `DispatchFrame` would be paying for
-      a decision that is never made. So: `std::function` callables, which is also already
-      the house idiom — the whole `Set*`/register-then-connect convention across `UI/` and
-      the managers works exactly this way.
-      - `Transport` becomes a concept with concrete implementations rather than one class:
-        child-process pipes (today's `Process/ChildProcess`), `AF_UNIX`
-        (`LspBrokerConnect.cpp`'s non-blocking-connect + `poll` dance, currently 326 lines
-        living alone), and later TCP/stdio-over-ssh for the remote protocol.
-      - `FramedConnection` owns the threads, the queue, the member order and the shutdown
-        sequence exactly once, parameterized by a read-a-frame callable and an on-frame
-        callable. `LspClient`/`DapClient`/`AcpClient` each *own one* instead of
-        reimplementing it, keeping only their envelope, dispatch and handshake logic.
-
-      **The payoff compounds with the protocol item above.** The four bugs already paid for
-      — unbounded blocking `connect()`, join-under-mutex, `poll(-1, -1)` parking forever,
-      unbounded `WriteAll` — get fixed in one place, and any new client (the server
-      protocol, a future MCP or nREPL endpoint) inherits all four by construction instead
-      of re-earning them. It also deletes the "reorder these members and it hangs" hazard
-      from two of the three files.
-
-      **Honest risk:** this is a pure refactor of the most concurrency-sensitive and most
-      historically bug-prone code in the tree, all of which currently works. It is only
-      worth doing behaviour-preserving, one client at a time, leaning on the existing
-      safety net — `LspClientTest`/`DapClientTest`/`AcpClientTest`/`LspTransportTest`/
-      `AcpTransportTest`/`ChildProcessTest`/`TaskProcessTest`/the three broker tests, ~4000
-      assertions across the three clients — kept green at every step, and re-run under the
-      `sanitize` preset rather than just `default`. Do it *before* the server protocol, so
-      the new protocol is the first consumer rather than a fourth copy.
-
 ### Language Intelligence
 
 - [ ] **Java & Kotlin bundled language support** (raised 2026-09-03 — user wants broad,
@@ -564,6 +439,9 @@ import path it already reports).
       already does that job. Worth revisiting only if a second real consumer shows up
       (an embedding use case, a separate CLI tool) — would need symbol-visibility
       curation and SONAME/ABI-versioning discipline that don't pay for themselves yet.
+      Note the likeliest second consumer, a headless remote agent, does *not* force this:
+      it links the existing static `ned_lib` fine, scripting runtime and all left behind
+      (measured — see "Remote Development"'s toolchain-choice item).
 - [ ] A friendlier, possibly visual surface for browsing/editing ned's own settings
       beyond hand-writing `init.janet` — real live-editing already exists for themes
       specifically (`save-theme`/`ned/theme-set`); a general settings surface would
@@ -772,6 +650,131 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
       Terminal's own handler shipped but was never live-verified (not installed in the
       environment this shipped in) — worth a real check the first time it's reachable.
 
+### Remote Execution & Server Protocol
+
+- [ ] **Design ned's own client/server protocol** (raised 2026-09-08 — unstarted, no design
+      committed yet; this entry records the shape of the problem and what's already known,
+      not a spec). The motivating idea: rather than a remote ned shipping buffers back and
+      forth, send *the operation* to where the files are and return only the result — a
+      project-wide search, a refactor, a script evaluation. Round-trip count, not bandwidth,
+      is what makes remote editing feel bad, so this is likely faster as well as simpler.
+
+      **The load-bearing design decision — local is the degenerate case.** The protocol
+      should be the *only* interface, with in-process execution as one transport behind it
+      rather than a bypass around it. Two things follow. It can't rot: every local keystroke
+      exercises the same path a remote session uses, so remote stops being a bolt-on that's
+      broken every time it's picked back up. And it makes "where does this script run"
+      a transport question rather than an architectural one — the same request answered
+      in-process, by a local subprocess, or by a host across a socket.
+
+      That last point interacts directly with the jank analysis above: if scripts execute
+      where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
+      lives on whichever side actually runs them. A remote session's client could then be
+      genuinely thin — and, per the same analysis, a headless binary already links
+      `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` +
+      `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316
+      objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter
+      *grammar* rather than the runtime, and the whole UI-side coupling is one call
+      (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is
+      already there to be taken.
+
+      **Compression must be negotiated, and "none" must be first-class.** Nothing
+      compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib,
+      lzma or brotli — so any codec is a new dependency, and assuming one is present on
+      both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream,
+      or the encoding can't change after the handshake; advertise available codecs at
+      handshake and fall back to identity. LSP's own `capabilities` exchange is the model,
+      and this codebase already understands it well.
+
+      **This must inherit four protocol bugs already paid for, not rediscover them.** Ned
+      has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type`
+      envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an
+      `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
+      - an unbounded blocking `connect()` froze a live editor when the daemon's backlog
+        filled (`LspBrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
+      - joining a reader thread under a held mutex wedged the daemon for hours;
+      - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the
+        `ctest -j8` timeouts;
+      - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in
+        `LspClient`/`DapClient`/`AcpClient`.
+      A new protocol gets timeouts on every blocking call, a non-blocking connect, an
+      asynchronous write queue, and no lock held across a join — by construction, on day
+      one. `EventLoop::Post` is the existing, proven way results come back to the main
+      thread; the protocol layer should not invent a second one.
+
+      **Open questions worth settling before any code:** framing (length-prefixed binary vs.
+      reusing the `Content-Length` shape already implemented three times); whether requests
+      are JSON (nlohmann is already vendored) or something denser; how a long-running remote
+      operation streams partial results and gets cancelled (LSP's `$/progress` and
+      `$/cancelRequest` are the obvious prior art, already handled in `LspManager`);
+      versioning and forward compatibility; and authentication/transport (bare `AF_UNIX`
+      locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and trust conventions
+      in `BrokerSocketPath.cpp` are the local precedent).
+
+      **Security is not a later concern here.** "Execute this script over a socket" is a
+      remote code execution surface by definition. Ned already gates project-local
+      `.ned/init.janet` behind `ProjectTrust`'s content-hash registry precisely because
+      opening a directory shouldn't run arbitrary code; the same discipline has to extend
+      across a transport, where the threat model is strictly worse. Decide the trust model
+      alongside the framing, not after it.
+
+- [ ] **One connection class instead of three copies of it** (raised 2026-09-08 —
+      prerequisite for the protocol work above, and worth doing on its own merits).
+      `LspClient`, `DapClient` and `AcpClient` each hand-roll the same machine, and the
+      headers say so outright: *"Threading, lifetime, and member-declaration order all
+      mirror LspClient"* (`DapClient.h`), *"mirrors LspClient's own stderrThread_ exactly"*
+      (both), *"see LspClient.h's own comment on writeCv_"* (both). All three carry the
+      identical member set — `readThread_`/`stderrThread_` declared *before* `transport_`
+      so its destructor's fd close unblocks them, then `writeThread_` with
+      `writeMutex_`/`writeCv_`/`writeQueue_`/`drainQueueOnStop_` declared *after* it for
+      the mirror-image reason. That ordering is a load-bearing correctness invariant
+      currently defended by a comment repeated in three files: reorder two members in one
+      of them and you get a hang, not a compile error.
+
+      **The seam is clean, because only the top of the stack actually differs.** Framing
+      differs (LSP and DAP share `Content-Length` via `Lsp/Transport.h`; ACP is
+      newline-delimited with its own). Envelope and dispatch differ (JSON-RPC id matching;
+      DAP's `seq`/`type` request-response-event; ACP's genuinely bidirectional,
+      async-capable handlers). Handshake gating differs (LSP queues until `initialized`).
+      Everything *below* "turn bytes into one frame" — process spawn, the read loop, the
+      stderr loop, the write queue and its thread, `EventLoop::Post` marshalling, shutdown
+      ordering — is byte-for-byte the same idea three times.
+
+      **Shape — composition, not an interface, and for a design reason rather than a cost
+      one.** Nothing here ever holds a heterogeneous collection of clients: each one knows
+      its framing at compile time and is named concretely at every call site, so there is
+      no runtime type choice for a vtable to express (unlike `ITextStorage`, where `Buffer`
+      genuinely cannot know whether it holds a `Rope` or a `PieceTable`, or `Widget::Paint`,
+      or `VcsProvider`, whose implementation set is opened at runtime by Janet plugins).
+      An abstract `ProtocolClient` base with a virtual `DispatchFrame` would be paying for
+      a decision that is never made. So: `std::function` callables, which is also already
+      the house idiom — the whole `Set*`/register-then-connect convention across `UI/` and
+      the managers works exactly this way.
+      - `Transport` becomes a concept with concrete implementations rather than one class:
+        child-process pipes (today's `Process/ChildProcess`), `AF_UNIX`
+        (`LspBrokerConnect.cpp`'s non-blocking-connect + `poll` dance, currently 326 lines
+        living alone), and later TCP/stdio-over-ssh for the remote protocol.
+      - `FramedConnection` owns the threads, the queue, the member order and the shutdown
+        sequence exactly once, parameterized by a read-a-frame callable and an on-frame
+        callable. `LspClient`/`DapClient`/`AcpClient` each *own one* instead of
+        reimplementing it, keeping only their envelope, dispatch and handshake logic.
+
+      **The payoff compounds with the protocol item above.** The four bugs already paid for
+      — unbounded blocking `connect()`, join-under-mutex, `poll(-1, -1)` parking forever,
+      unbounded `WriteAll` — get fixed in one place, and any new client (the server
+      protocol, a future MCP or nREPL endpoint) inherits all four by construction instead
+      of re-earning them. It also deletes the "reorder these members and it hangs" hazard
+      from two of the three files.
+
+      **Honest risk:** this is a pure refactor of the most concurrency-sensitive and most
+      historically bug-prone code in the tree, all of which currently works. It is only
+      worth doing behaviour-preserving, one client at a time, leaning on the existing
+      safety net — `LspClientTest`/`DapClientTest`/`AcpClientTest`/`LspTransportTest`/
+      `AcpTransportTest`/`ChildProcessTest`/`TaskProcessTest`/the three broker tests, ~4000
+      assertions across the three clients — kept green at every step, and re-run under the
+      `sanitize` preset rather than just `default`. Do it *before* the server protocol, so
+      the new protocol is the first consumer rather than a fourth copy.
+
 ### Remote Development (SSH Remote Editing)
 
 The goal: edit files on a remote host over SSH without ned itself running remotely —
@@ -833,11 +836,13 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       this whole feature, bigger than local file editing itself, since it means
       `LspManager`/`DapManager`/`TaskRunner`/`VcsRunner` would all need a "spawn this
       subprocess remotely instead of via `ChildProcess::posix_spawn`" seam.
-- [ ] Transport/protocol for talking to the agent: an SSH-forwarded Unix socket or a
-      `ssh -L`-forwarded local TCP port, framed the same way `Lsp/Transport.h`/
-      `Acp/Transport.h` already are — the codebase has built this exact client/manager/
-      transport shape three times now (LSP, DAP, ACP); a fourth following the same
-      precedent is low-risk relative to inventing something new.
+- [ ] Transport/protocol for talking to the agent — now covered in full by "Remote
+      Execution & Server Protocol" directly above, including the local-is-the-degenerate-
+      case framing, compression negotiation, and the four protocol bugs a new client must
+      inherit rather than re-earn. Note the earlier framing here ("a fourth following the
+      same precedent is low-risk") is exactly what that section argues against: fold
+      `LspClient`/`DapClient`/`AcpClient`'s triplicated machinery into one connection class
+      *first*, so the agent transport is its first consumer rather than a fourth copy.
 - [ ] Auto-deployment: detect the agent is missing or stale on the remote host and
       self-install it (`scp`/`sftp` push + `chmod +x`), the VS Code Remote-SSH/JetBrains
       Gateway precedent, with a version handshake so a stale cached copy gets replaced
@@ -845,15 +850,23 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 - [ ] **Language/toolchain choice for the agent is genuinely open.** Reusing `ned_lib`'s
       own C++ `ProjectSearch`/`GitIgnoreMatcher`/RE2/`ChildProcess` code as a headless,
       UI-free build gives identical search/gitignore semantics locally and remotely for
-      free and avoids a second implementation to keep in sync — but `ned_lib` doesn't
-      currently separate cleanly from Notcurses/Janet, so this needs `ned_lib` split
-      into a real UI/scripting-free "core" library first (a legitimate, if mechanical,
-      restructuring — also exactly what a future `libned`-as-shared-library consumer
-      would need, see that item above). Rust or Go remain reasonable fallbacks if that
-      split turns out costlier than a from-scratch rewrite — genuinely easier static
-      linking/cross-compilation for "any x64 host" at the cost of reimplementing and
-      hand-syncing gitignore/search-matching semantics a second time. Decide once the
-      C++ split's real cost is known, not before.
+      free and avoids a second implementation to keep in sync. **The "but `ned_lib` doesn't
+      separate cleanly from Notcurses/Janet" objection recorded here earlier turns out to
+      be false — measured 2026-09-08.** A headless program linking `libned_lib.a` with
+      `-ljanet` removed from the link line entirely compiles, links and runs: 8.7 MB,
+      opening a real `Buffer` and returning real `ProjectSearch` hits. Static-archive
+      member granularity does the work — objects are only pulled in when referenced.
+      Only 12 of 316 objects in `ned_lib` reference anything named "janet", three of those
+      want the tree-sitter *grammar* rather than the runtime (`Languages`/`Mode`/
+      `ModeOverrides`), `WindowManager` only forwards a `const*` through setters, and the
+      entire remaining UI-side coupling is one call: `Environment::BindingNamesWithPrefix`,
+      for binding-aware completion. No "split `ned_lib` first" prerequisite exists; a
+      separate `add_executable` target is enough (note the existing headless modes —
+      `--lsp-broker`, `--mcp-stdio-relay` — are *modes of `ned`*, so they do link
+      `-ljanet` today despite never using it; a separate target is what lets the linker
+      drop it). Rust or Go therefore look much weaker than they did: they would buy easier
+      cross-compilation at the cost of reimplementing and hand-syncing gitignore/search
+      semantics a second time, against a C++ path whose cost is now known to be near zero.
 - [ ] Repo/build story: a standalone repo (this is a genuinely separable concern from
       the core editor), pulled back into ned's own build via CMake `FetchContent` like
       every other bundled dependency. The agent binary itself needs to target the
@@ -1003,8 +1016,9 @@ so the research doesn't have to be redone before actually opening anything.
       look like genuinely novel, unreported bugs. Both patches are already small,
       root-caused, and general (not ned-specific workarounds), so they're close to
       PR-ready as-is whenever we decide to open them.
-- [x] ~~Bracketed paste mode~~ — shipped 2026-09-06 (`CMake/PatchNotcursesBracketedPaste.cmake`),
-      see `git log --grep=paste-perf-and-drag-drop`. Upstream issue
+- [ ] **`CMake/PatchNotcursesBracketedPaste.cmake`** — shipped in ned 2026-09-06
+      (`git log --grep=paste-perf-and-drag-drop`); it is the *upstreaming* that is still
+      open, same as the two above. Upstream issue
       [#2704](https://github.com/dankamongmen/notcurses/issues/2704) has been open since
       2023 with a maintainer-endorsed design sketch from `tstack` (`lnav`'s maintainer)
       that was never turned into a PR — our own patch deliberately took a simpler shape
