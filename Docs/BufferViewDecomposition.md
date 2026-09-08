@@ -172,14 +172,14 @@ Same class, same members, same signatures — pure motion, verified by the linke
 | File | Lines | Defs | Holds |
 |---|---:|---:|---|
 | `BufferView.cpp` | 1,609 | 57 | **J** — construction, event entry, key dispatch, macro replay, `Set*` wiring |
-| `BufferViewPaint.cpp` | 2,337 | 18 | **C** — `Paint` and its row/overlay/sticky-scroll helpers |
-| `BufferViewGutter.cpp` | 1,297 | 47 | **A** + **B** — the `Ensure*Cache` family, gutter layout, viewport geometry |
-| `BufferViewPrompts.cpp` | 4,423 | 65 | **D** — the interactive-session state machine |
-| `BufferViewLsp.cpp` | 2,767 | 83 | **E** — the LSP feature broker |
-| `BufferViewVcsDap.cpp` | 1,823 | 84 | **F** + **G** — VCS and DAP |
-| `BufferViewBuffers.cpp` | 384 | 11 | **H** + **K** — derived-buffer builders, links |
-| `BufferViewMouse.cpp` | 746 | 13 | **I** — mouse, drag, gutter clicks, context menu |
-| `BufferViewInternal.h` | 1,590 | — | the file-local helpers, now shared |
+| `BufferView/Paint.cpp` | 2,337 | 18 | **C** — `Paint` and its row/overlay/sticky-scroll helpers |
+| `BufferView/Gutter.cpp` | 1,297 | 47 | **A** + **B** — the `Ensure*Cache` family, gutter layout, viewport geometry |
+| `BufferView/Prompts.cpp` | 4,423 | 65 | **D** — the interactive-session state machine |
+| `BufferView/Lsp.cpp` | 2,767 | 83 | **E** — the LSP feature broker |
+| `BufferView/VcsDap.cpp` | 1,823 | 84 | **F** + **G** — VCS and DAP |
+| `BufferView/Buffers.cpp` | 384 | 11 | **H** + **K** — derived-buffer builders, links |
+| `BufferView/Mouse.cpp` | 746 | 13 | **I** — mouse, drag, gutter clicks, context menu |
+| `BufferView/Internal.h` | 1,590 | — | the file-local helpers, now shared |
 
 All 377 member definitions moved, none lost or duplicated: the set of
 `BufferView::<name>` definitions across the eight files is identical to the original's,
@@ -192,7 +192,7 @@ function definitions. Splitting by cluster stranded most of them: helpers define
 one cluster's span but called from another (`SymbolGlyphFor` from both Paint and Lsp,
 `DiagnosticSeverityColor` from Paint, `FormatDebugVariableLine` from Prompts and VcsDap,
 `kVcsStatusBufferName` from VcsDap, and more). Rather than adjudicate each one, all
-fourteen blocks were hoisted wholesale into `BufferViewInternal.h` under a `detail`
+fourteen blocks were hoisted wholesale into `BufferView/Internal.h` under a `detail`
 namespace, in source order, with each function marked `inline`. Every part then does
 `using namespace detail;`, so **no call site changed**.
 
@@ -210,7 +210,7 @@ Three things made that safe, each checked rather than assumed:
   them out-of-line in a `.cpp` would have cost inlining and put the `[Performance]` tests
   at risk. None of them regressed.
 
-`BufferViewInternal.h` also carries the original's whole 84-line include block, kept
+`BufferView/Internal.h` also carries the original's whole 84-line include block, kept
 intact so the split moved no includes around and so the eight parts don't duplicate it.
 That is scaffolding: as each cluster becomes a real class it takes the includes it needs
 with it, and this list shrinks to what the remaining helpers use.

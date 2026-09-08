@@ -1,15 +1,15 @@
 //
-// Part of BufferView -- see BufferView.h for the class itself and
+// Part of BufferView -- see UI/BufferView.h for the class itself and
 // Docs/BufferViewDecomposition.md for why this file exists.
 //
 // Construction, event entry points, key dispatch, macro replay, and the Set* wiring hooks.
 //
 
-#include "BufferViewInternal.h"
+#include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
 
-// The file-local helpers these definitions call live in BufferViewInternal.h
+// The file-local helpers these definitions call live in BufferView/Internal.h
 // now that several parts share them -- see that header. This using-directive is
 // what let the split leave every call site untouched.
 using namespace detail;
