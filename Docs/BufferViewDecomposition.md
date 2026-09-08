@@ -122,11 +122,17 @@ of `BufferView`, called through direct or `std::function` dispatch.
 
 ### Reusable primitives (kill the three patterns)
 
-| Type | Replaces | Notes |
+| Type | Replaces | Effect |
 |---|---|---|
-| `CacheSlot<T>` | 18 buffer stamps + 29 generation stamps | `Valid(buffer, stamps…, window)` / `Store(...)`. One place to get huge-file windowing and mode-resync invalidation right. |
-| `RequestSlot` | 19 generation counters + 8 debounce timers | `Begin()` returns a token; `Accept(token)` is the staleness check; optional debounce built in. |
-| `CandidateList` | 22 selection indices | Ranked strings + selection, wrap-around Up/Down, `PopupModel()`. |
+| `CacheStamp` | 18 buffer stamps + 29 generation stamps + the window/width/wrap fields | **−33 members.** One key per cache, built once and used for both the check and the store. |
+| `RequestSlot` | 21 generation counters | **No size change** — this is type safety. `Begin()`/`IsStale()`/`Cancel()`/`Current()` instead of a bare `!=` against whichever counter was typed. |
+| `CandidateList` | 22 selection indices | **No size change either.** Deferred to Phase 4 — see below. |
+
+The original estimate here was that these three would take ~90 members off the
+class. That was wrong, and measurement corrected it: only `CacheStamp` collapses
+several members into one. `RequestSlot` and `CandidateList` replace one member
+with one member — they buy correctness and de-duplicated arithmetic, not size.
+Real reduction from Phase 2 is **265 → 232**.
 
 ### Classes
 
@@ -226,26 +232,68 @@ these files from "BufferView methods that happen to live here" into "a real clas
 which is what gives the traceable regression path: a bug after phase *N* is bounded to
 one file's conversion.
 
-### Phase 1 — `EditorContext` + `ViewServices`
+### Phase 1 — `EditorContext` — **done**
 
-Introduce both structs. `BufferView` builds them in its constructor and keeps its
-existing members as-is (the structs hold references to them). Nothing else changes yet.
-Mechanical, no behaviour change.
+`BufferView/EditorContext.h` is the aggregate every extracted class will take instead of
+a dozen separate arguments: the nine collaborators the view is constructed with as plain
+references, and the nine managers wired later through `Set*` as references *to the
+pointers*, so a `SetLspManager` long after the struct was built is visible through it
+with no second update path. `BufferView` owns one as its last member and `MakeContext()`
+builds from it.
 
-### Phase 2 — The three primitives, migrated in place
+Because those manager members bind to `BufferView`'s own siblings, the view must not be
+moved; it was already non-copyable with no move declared, and a `static_assert` in
+`BufferView.h` now keeps it that way.
 
-Add `CacheSlot<T>`, `RequestSlot`, `CandidateList`. Migrate the 90-ish members onto them
-*without moving any code out of `BufferView`*. Large member-count reduction, no logic
-relocated — so if a cache invalidation or staleness check regresses, the diff that caused
-it is small and topical.
+Two deliberate departures from the plan as written:
 
-This phase also consolidates the two known traps into one place each: the huge-file
-structural window (`CacheSlot`'s window field) and the mode-resync stamp discard
-(`CacheSlot::Invalidate`).
+- **The constructor was left alone.** Taking an `EditorContext&` instead of nine
+  arguments was explicitly on the table, tests included. It was measured and rejected:
+  construction is already centralised behind a per-file `Fixture::View()` factory in the
+  test suite, so the nine arguments cost little, and a caller-built context would still
+  have to name the same nine collaborators — the churn moves rather than disappears, and
+  callers pick up a lifetime obligation they do not have today.
+- **`ViewServices` was not written.** The set of callbacks the parts need back into the
+  view (`endSession`, `scrollToShowPoint`, `reportError`, ...) is guesswork until a real
+  consumer exists. It lands in Phase 3 alongside `GutterModel`, whose needs define its
+  shape; writing it now would be a dozen speculative `std::function`s with no caller.
+
+### Phase 2 — The primitives, migrated in place — **done**
+
+`CacheStamp` and `RequestSlot`, each with its own unit tests, migrated onto every call
+site without moving any code out of `BufferView`. 265 members → 232; suite 3837 → 3852
+(the 15 new primitive tests), clean under ASan/UBSan.
+
+Consolidating the fifteen hand-written cache checks turned up two things worth naming:
+
+- **A latent staleness bug, now fixed.** The ineligible paths in
+  `EnsureFoldableBlocksCache`/`EnsureSymbolMarkersCache`/`EnsureTestGutterCache` marked
+  the emptied cache current for buffer+generation only, leaving the window fields stale.
+  Turning the fold gutter (or symbol/test discovery) off and back on with no edit and an
+  unmoved viewport could then satisfy the *eligible* guard and leave the gutter reading an
+  empty cache. Those paths now stamp a strictly narrower key than the eligible guard
+  compares, so the two can never match and it rebuilds. The fix falls out of the primitive
+  rather than being bolted on.
+- **A duplicated store.** `EnsureSymbolGutterCache` wrote its four cache fields twice in a
+  row, verbatim. Idempotent, so nothing rode on it; collapsed to one.
+
+`RequestSlot`'s counter starts at 1 rather than 0, so no token it hands out can collide
+with a default-initialised `Token{}` — found by a unit test asserting the opposite, and
+worth keeping because one site (completion resolve) legitimately reads `Current()` before
+anything has been issued.
+
+**`CandidateList` deliberately deferred to Phase 4.** The 22 selection indices are not a
+single pattern: ~15 belong to fuzzy candidate prompts that Phase 4 collapses wholesale
+into `FuzzyPromptSession`, and migrating them to an interim type first means doing that
+work twice. The remainder (code actions, definitions, DAP threads, context menu, ...)
+pair with differently-typed vectors and keep their own index either way. The repeated
+wrap-around and clamp arithmetic is real and worth removing — in Phase 4, once, where the
+sessions that own it are being written anyway.
 
 ### Phase 3 — `GutterModel` and `Viewport`
 
-The first real extractions. Both are pure computation over `ITextStorage` + fold state +
+The first real extractions, and where `ViewServices` lands: `GutterModel` is the first
+class that needs to call back into the view, so its needs decide that struct's shape. Both are pure computation over `ITextStorage` + fold state +
 mode + width; both are trivially unit-testable headlessly. `Renderer` will consume them,
 so they come first.
 
@@ -253,11 +301,13 @@ so they come first.
 
 The biggest maintenance win. Order within the phase:
 
-1. `FuzzyPromptSession` + descriptors — converts ~15 prompts, ~1,200 lines to ~400.
-2. `ConfirmSession` — 7 confirmations.
-3. `TextEntrySession` — the 27 `HandlePromptKey` cases.
-4. `SingleKeySession` — register/zap/capture.
-5. `PromptController` takes ownership of `inputMode_` + `prompt_`; the 175-case
+1. `CandidateList` (candidates + selection + wrap-around navigation + popup model),
+   deferred here from Phase 2 so the ~15 fuzzy prompts get it once rather than twice.
+2. `FuzzyPromptSession` + descriptors — converts ~15 prompts, ~1,200 lines to ~400.
+3. `ConfirmSession` — 7 confirmations.
+4. `TextEntrySession` — the 27 `HandlePromptKey` cases.
+5. `SingleKeySession` — register/zap/capture.
+6. `PromptController` takes ownership of `inputMode_` + `prompt_`; the 175-case
    `StartInteractiveSession` switch splits into three tables: session starts,
    one-shot forwards to a `std::function`, and one-shot direct actions.
 
@@ -306,7 +356,7 @@ shape and update this document with what the split actually cost.
 |---|---:|---:|
 | `BufferView.h` | 4,470 | ~400 |
 | `BufferView.cpp` | 16,823 | ~1,200 |
-| Member variables | 265 | ~40 |
+| Member variables | 265 (232 after Phase 2) | ~40 |
 | Largest function | 1,598 (`Paint`) | ~250 |
 | Files | 2 | ~24 |
 
