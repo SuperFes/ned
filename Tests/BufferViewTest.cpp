@@ -8786,6 +8786,151 @@ TEST_CASE("C-M-i (lsp-complete) shows a completion popup from a real completion 
     REQUIRE_FALSE(fixture.completion.has_value()); // accepting hides the popup
 }
 
+TEST_CASE("Accepting a completion whose insertText doesn't extend the typed prefix replaces it", "[BufferView]") {
+    // completion-fidelity follow-up regression test. clangd and
+    // rust-analyzer both do their own fuzzy matching and happily answer
+    // "sco" with "some_count". The old prefix-subtraction accept path
+    // appended the whole string after the typed text ("scosome_count");
+    // the replace-range path deletes [replaceStart, point) first.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_completion_replace_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("sco");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw = ReadRawLspFrame(server.serverStdinRead);
+
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", {{"isIncomplete", false},
+                    {"items", ned::editor::lsp::Json::array({{{"label", "some_count"}, {"insertText", "some_count"}}})}}},
+    }.dump());
+
+    REQUIRE(fixture.completion.has_value());
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(buffer.Text() == "some_count"); // not "scosome_count"
+
+    // The whole accept is one undo step -- an undo that left the typed
+    // prefix deleted but the completion not inserted would be a broken
+    // intermediate state.
+    buffer.Undo();
+    REQUIRE(buffer.Text() == "sco");
+}
+
+TEST_CASE("A server-supplied textEdit range replaces more than the typed word", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_completion_textedit_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("std::vec");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw = ReadRawLspFrame(server.serverStdinRead);
+
+    // The editor's own word rule would start the prefix at "vec" (offset
+    // 5); the server's textEdit covers "std::vec" from offset 0. Honoring
+    // it is what keeps the "std::" from being duplicated.
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result",
+         {{"isIncomplete", false},
+          {"items", ned::editor::lsp::Json::array(
+                        {{{"label", "vector"},
+                          {"textEdit", {{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}},
+                                        {"newText", "std::vector"}}}}})}}},
+    }.dump());
+
+    REQUIRE(fixture.completion.has_value());
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(buffer.Text() == "std::vector"); // not "std::vecstd::vector"
+}
+
+TEST_CASE("Typing narrows a complete completion list locally, with no second request", "[BufferView]") {
+    // completion-fidelity follow-up: the incremental-narrowing path. Before
+    // it, every keystroke dropped the popup and paid a fresh round trip.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_completion_narrow_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("f");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw = ReadRawLspFrame(server.serverStdinRead);
+
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", {{"isIncomplete", false},
+                    {"items", ned::editor::lsp::Json::array({{{"label", "foobar"}}, {{"label", "fizz"}}, {{"label", "food"}}})}}},
+    }.dump());
+
+    REQUIRE(fixture.completion.has_value());
+    REQUIRE(fixture.completion->rows.size() == 3);
+
+    // Type "o": "fizz" drops out, the popup stays up, and -- the point of
+    // the whole exercise -- no new textDocument/completion goes out.
+    view.OnEvent(ned::ui::test::Character("o"));
+    REQUIRE(buffer.Text() == "fo");
+    REQUIRE(fixture.completion.has_value());
+    REQUIRE(fixture.completion->rows.size() == 2);
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    // Backspace widens again, recovering "fizz" without a round trip.
+    view.OnEvent(ned::ui::test::Backspace());
+    REQUIRE(buffer.Text() == "f");
+    REQUIRE(fixture.completion.has_value());
+    REQUIRE(fixture.completion->rows.size() == 3);
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
 TEST_CASE("Up/Down and M-n/M-p both cycle the completion popup's selection", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_complete_cycle_test.txt";

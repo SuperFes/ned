@@ -4729,8 +4729,23 @@ bool BufferView::OnKeyEvent(const Event& event) {
             CycleActiveCompletion(-1);
             return true;
         }
-        activeCompletion_.reset();
-        NotifyCompletionChanged();
+        // completion-fidelity follow-up: a keystroke that edits the word
+        // being completed no longer dismisses the popup here -- it falls
+        // through to the ordinary dispatch below and then to
+        // MaybeScheduleAutoCompletion, which narrows the existing candidate
+        // set locally rather than dropping it and paying a whole new round
+        // trip per character (the "popup blinks out between keystrokes"
+        // behavior this replaced). Backspace is included deliberately:
+        // CompletionSession keeps every item the server sent, so widening
+        // back toward the original prefix is free and needs no request.
+        // Everything else (motion, C-/M- chords, Enter, ...) still dismisses.
+        const bool editsCompletionWord = (!chord->Control && !chord->Meta) &&
+                                         (chord->Special == editor::SpecialKey::None ||
+                                          chord->Special == editor::SpecialKey::Backspace);
+        if (!editsCompletionWord) {
+            activeCompletion_.reset();
+            NotifyCompletionChanged();
+        }
     }
 
     // project-search-visit-result follow-up: Enter on a read-only
@@ -5496,7 +5511,7 @@ void BufferView::RequestCompletionAtPoint() {
 
     lspManager_->RequestCompletion(
         buffer, point,
-        [this, bufferPtr, point, prefixStart, generation](std::vector<editor::lsp::CompletionItem> items) {
+        [this, bufferPtr, point, prefixStart, generation](editor::lsp::CompletionList list) {
             if (generation != completionRequestGeneration_) {
                 return; // superseded by a newer request
             }
@@ -5508,13 +5523,20 @@ void BufferView::RequestCompletionAtPoint() {
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
                 return; // buffer/point changed since the request was sent
             }
-            if (items.empty()) {
+            if (list.items.empty()) {
                 activeCompletion_.reset();
                 NotifyCompletionChanged();
                 return;
             }
-            activeCompletion_ = ActiveCompletion{
-                .requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
+            completionPrefixRule_ = CompletionPrefixRule::Word;
+            activeCompletion_.emplace(std::move(list.items), list.isIncomplete, activeBuffer_.Get().Content(), point, prefixStart);
+            if (activeCompletion_->Empty()) {
+                // Every item the server sent was filtered out against the
+                // prefix already typed (CompletionSession ranks on
+                // construction, not just on narrowing) -- an empty popup is
+                // no popup.
+                activeCompletion_.reset();
+            }
             NotifyCompletionChanged();
         },
         serverKey);
@@ -5540,8 +5562,8 @@ void BufferView::ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point)
         // fallback for every dabbrev row.
         items.push_back(editor::lsp::CompletionItem{.label = word, .insertText = word, .kind = 1});
     }
-    activeCompletion_ =
-        ActiveCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
+    completionPrefixRule_ = CompletionPrefixRule::Word;
+    activeCompletion_.emplace(std::move(items), /*isIncomplete=*/false, content, point, prefixStart);
     NotifyCompletionChanged();
 }
 
@@ -5581,8 +5603,8 @@ bool BufferView::ApplyJanetBindingCompletion(text::Buffer& buffer, std::size_t p
     if (items.empty()) {
         return false;
     }
-    activeCompletion_ =
-        ActiveCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
+    completionPrefixRule_ = CompletionPrefixRule::JanetSymbol;
+    activeCompletion_.emplace(std::move(items), /*isIncomplete=*/false, buffer.Content(), point, prefixStart);
     NotifyCompletionChanged();
     return true;
 }
@@ -5629,9 +5651,48 @@ bool BufferView::ShouldSuppressAutoCompletion() const {
     return false;
 }
 
+std::size_t BufferView::CurrentCompletionPrefixStart(const text::Buffer& buffer, std::size_t point) const {
+    if (completionPrefixRule_ == CompletionPrefixRule::JanetSymbol) {
+        return editor::JanetSymbolPrefixStart(buffer.Text(), point);
+    }
+    return WordPrefixStart(buffer.Content(), point);
+}
+
 void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore) {
-    activeCompletion_.reset(); // typing invalidates any currently-shown suggestion
-    NotifyCompletionChanged();
+    text::Buffer&     buffer         = activeBuffer_.Get();
+    const bool        contentChanged = buffer.ContentGeneration() != generationBefore;
+
+    // completion-fidelity follow-up: the incremental-narrowing path. A live
+    // session gets first refusal on the keystroke, before any of the
+    // new-request gates below -- those decide whether to *start* a request,
+    // which is a different question from whether an existing candidate set
+    // still applies. This is what removed a full round trip (and a popup
+    // blink) from every character typed while completing.
+    //
+    // Deliberately ahead of the Special/modifier gate too: Backspace never
+    // schedules a request, but it does widen a live session.
+    if (activeCompletion_ && contentChanged) {
+        const std::size_t point = buffer.Point();
+        switch (activeCompletion_->Refilter(buffer.Content(), point, CurrentCompletionPrefixStart(buffer, point))) {
+            case editor::CompletionSession::Outcome::Keep:
+                NotifyCompletionChanged(); // narrowed in place, no request at all
+                return;
+            case editor::CompletionSession::Outcome::Rerequest:
+                // Keep showing the locally-narrowed list while the fresh
+                // request is in flight -- RequestCompletionAtPoint only
+                // replaces activeCompletion_ once a response actually
+                // lands, so the popup never blinks out for the round trip.
+                NotifyCompletionChanged();
+                break;
+            case editor::CompletionSession::Outcome::Dismiss:
+                activeCompletion_.reset();
+                NotifyCompletionChanged();
+                break;
+        }
+    }
+    else if (activeCompletion_) {
+        return; // a keystroke that changed nothing leaves the popup exactly as it was
+    }
     // snippet-expansion follow-up: completion is a Normal-mode-only
     // construct (see OnKeyEvent's activeCompletion_ block), but typing
     // inside a snippet field reaches here through HandleSnippetKey's
@@ -5669,7 +5730,7 @@ void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std:
     if (!IsWordCodepoint(chord.Codepoint) && chord.Codepoint != U'.' && chord.Codepoint != U':' && chord.Codepoint != U'>') {
         return;
     }
-    if (activeBuffer_.Get().ContentGeneration() == generationBefore) {
+    if (!contentChanged) {
         return; // nothing actually changed
     }
     if (ShouldSuppressAutoCompletion()) {
@@ -5967,32 +6028,55 @@ void BufferView::AcceptActiveCompletion() {
     if (!activeCompletion_) {
         return;
     }
-    text::Buffer&                     buffer = activeBuffer_.Get();
-    const editor::lsp::CompletionItem item   = activeCompletion_->items[activeCompletion_->selectedIndex];
-    if (item.isSnippet) {
-        // snippet-expansion follow-up: a snippet-format item's insertText
-        // is TextMate syntax, never literal text -- replace the typed
-        // prefix with the parsed expansion and start a tabstop session,
-        // the exact InteractiveRequest::SnippetExpand path.
-        const std::size_t prefixStart = activeCompletion_->prefixStart;
-        activeCompletion_.reset();
-        NotifyCompletionChanged();
-        BeginSnippetExpansion(prefixStart, buffer.Point(), item.insertText);
+    text::Buffer& buffer = activeBuffer_.Get();
+    // completion-fidelity follow-up: one resolution rule for every source
+    // and every item -- replace [replaceStart, point) with newText, where
+    // replaceStart came from the server's own textEdit if it sent one and
+    // from the caller's word-boundary rule otherwise. This replaced a
+    // prefix-subtraction scheme whose fallback (insertText doesn't start
+    // with the typed prefix -- a server doing its own fuzzy matching, which
+    // clangd and rust-analyzer both do) inserted the whole string *after*
+    // the typed text, corrupting the line.
+    const std::optional<editor::CompletionSession::AcceptPlan> plan = activeCompletion_->PlanAccept(buffer.Point());
+    if (!plan) {
         return;
     }
-    const std::string suffix = CompletionInsertSuffix(item);
     activeCompletion_.reset();
     NotifyCompletionChanged();
-    if (!suffix.empty()) {
-        buffer.InsertAtPoint(suffix);
+
+    if (plan->isSnippet) {
+        // snippet-expansion follow-up: a snippet-format item's insertText
+        // is TextMate syntax, never literal text -- replace the range with
+        // the parsed expansion and start a tabstop session, the exact
+        // InteractiveRequest::SnippetExpand path. BeginSnippetExpansion
+        // already takes a range and does its own undo grouping.
+        BeginSnippetExpansion(plan->replaceStart, plan->replaceEnd, plan->newText);
+        return;
     }
+    if (plan->replaceStart == plan->replaceEnd && plan->newText.empty()) {
+        return; // nothing to do -- don't open an undo group for a no-op
+    }
+    // One undo step for the delete+insert pair: accepting a completion is a
+    // single user action, and an undo that left the typed prefix deleted
+    // but the completion not inserted would be a broken intermediate state.
+    buffer.BeginUndoGroup();
+    if (plan->replaceStart < plan->replaceEnd) {
+        // DeleteRange takes a *length*, not an end offset. Point sits at
+        // replaceEnd, and DeleteRange relocates it to replaceStart, which is
+        // exactly where InsertAtPoint below then writes.
+        buffer.DeleteRange(plan->replaceStart, plan->replaceEnd - plan->replaceStart);
+    }
+    if (!plan->newText.empty()) {
+        buffer.InsertAtPoint(plan->newText);
+    }
+    buffer.EndUndoGroup();
 }
 
 void BufferView::AcceptActiveCompletionAt(std::size_t index) {
-    if (!activeCompletion_ || index >= activeCompletion_->items.size()) {
-        return; // stale click racing a just-cleared/just-replaced popup
+    if (!activeCompletion_ || index >= activeCompletion_->Candidates().size()) {
+        return; // stale click racing a just-cleared/just-narrowed popup
     }
-    activeCompletion_->selectedIndex = index;
+    activeCompletion_->Select(index);
     AcceptActiveCompletion();
 }
 
@@ -6001,44 +6085,11 @@ void BufferView::TriggerSwitchProject() {
 }
 
 void BufferView::CycleActiveCompletion(int direction) {
-    if (!activeCompletion_ || activeCompletion_->items.empty()) {
+    if (!activeCompletion_) {
         return;
     }
-    const std::size_t count          = activeCompletion_->items.size();
-    const std::size_t current        = activeCompletion_->selectedIndex;
-    activeCompletion_->selectedIndex = (direction > 0) ? (current + 1) % count : (current + count - 1) % count;
+    activeCompletion_->Cycle(direction);
     NotifyCompletionChanged();
-}
-
-std::string BufferView::CompletionInsertSuffix(const editor::lsp::CompletionItem& item) const {
-    // activeCompletion_ is guaranteed set by its one call site
-    // (AcceptActiveCompletion, for a non-snippet item) -- this method only
-    // ever runs against one of its own items. Uses the prefixStart captured
-    // when the suggestion was populated (see ActiveCompletion's own doc
-    // comment) rather than recomputing it here:
-    // WordPrefixStart's ASCII alnum/'_' rule is wrong for a "ned/*" binding
-    // item, which was ranked against JanetSymbolPrefixStart's wider rule
-    // instead.
-    const text::Buffer&       buffer      = activeBuffer_.Get();
-    const text::ITextStorage& content     = buffer.Content();
-    const std::size_t         point       = buffer.Point();
-    const std::size_t         prefixStart = activeCompletion_->prefixStart;
-    const std::string         prefix      = content.Substring(prefixStart, point - prefixStart);
-
-    // snippet-expansion follow-up: a snippet-format item's raw insertText
-    // carries ${1:...} markers -- AcceptActiveCompletion never reaches this
-    // method for a snippet item (it expands via BeginSnippetExpansion
-    // instead), but item.isSnippet is still checked defensively here for
-    // the same reason the original ghost-text path did.
-    const std::string effectiveText =
-        item.isSnippet ? editor::ParseSnippet(item.insertText).text : item.insertText;
-    if (effectiveText.size() > prefix.size() && effectiveText.compare(0, prefix.size(), prefix) == 0) {
-        return effectiveText.substr(prefix.size());
-    }
-    // The server's insertText doesn't share our naively-computed word
-    // prefix (e.g. it used a textEdit range instead) -- shown in full
-    // rather than guessed at; a documented v1 limitation, not a crash risk.
-    return effectiveText;
 }
 
 std::optional<Point> BufferView::CompletionAnchorNow() const {
@@ -6070,12 +6121,15 @@ void BufferView::NotifyCompletionChanged() {
         return;
     }
 
+    const std::vector<editor::CompletionCandidate>& candidates = activeCompletion_->Candidates();
+
     ListPopupModel model;
-    model.selectedIndex = activeCompletion_->selectedIndex;
+    model.selectedIndex = activeCompletion_->SelectedIndex();
     model.anchor        = anchor;
-    model.rows.reserve(activeCompletion_->items.size());
-    for (const editor::lsp::CompletionItem& item : activeCompletion_->items) {
-        ListPopupRow row;
+    model.rows.reserve(candidates.size());
+    for (const editor::CompletionCandidate& candidate : candidates) {
+        const editor::lsp::CompletionItem& item = candidate.item;
+        ListPopupRow                       row;
         row.main  = item.label;
         row.right = item.detail;
         if (const std::optional<editor::SymbolKind> bucket = CompletionKindBucket(item.kind)) {
@@ -6096,7 +6150,7 @@ void BufferView::NotifyCompletionChanged() {
     // documentation, not every item's -- ListPopup renders it as a footer
     // below the row list, updated for free on every selection change since
     // this method already runs then (CycleActiveCompletion, a click, ...).
-    if (const std::string& documentation = activeCompletion_->items[activeCompletion_->selectedIndex].documentation;
+    if (const std::string& documentation = candidates[activeCompletion_->SelectedIndex()].item.documentation;
         !documentation.empty()) {
         model.previewText = documentation;
     }

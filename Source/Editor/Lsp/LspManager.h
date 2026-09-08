@@ -273,7 +273,10 @@ class LspManager {
     // parsing (ExtractCompletionItems) can be unit-tested directly against
     // crafted JSON without needing an LspManager/live client at all.
     // serverKey: see RequestHover's own doc comment above.
-    using CompletionCallback = std::function<void(std::vector<CompletionItem> items)>;
+    // completion-fidelity follow-up: hands over the whole CompletionList,
+    // not just its items -- isIncomplete decides whether the caller may
+    // narrow locally as the user keeps typing or has to re-ask.
+    using CompletionCallback = std::function<void(CompletionList list)>;
     void RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback, const std::string& serverKey = {});
 
     // code-actions follow-up. Same "resolve purely from bufferState_" shape

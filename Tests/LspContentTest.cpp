@@ -116,6 +116,112 @@ TEST_CASE("ExtractCompletionItems skips an item with no label", "[Lsp]") {
     REQUIRE(items[0].label == "has-label");
 }
 
+TEST_CASE("ExtractCompletionItems parses a plain textEdit and mirrors its newText into insertText", "[Lsp]") {
+    const Json result = Json::array({{
+        {"label", "foobar"},
+        {"insertText", "ignored-when-textEdit-present"},
+        {"textEdit",
+         {{"range", {{"start", {{"line", 3}, {"character", 4}}}, {"end", {{"line", 3}, {"character", 7}}}}},
+          {"newText", "foobar"}}},
+    }});
+    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    REQUIRE(items.size() == 1);
+    REQUIRE(items[0].textEdit.has_value());
+    REQUIRE(items[0].textEdit->start == ned::editor::lsp::LspPosition{.line = 3, .character = 4});
+    REQUIRE(items[0].textEdit->end == ned::editor::lsp::LspPosition{.line = 3, .character = 7});
+    REQUIRE(items[0].textEdit->newText == "foobar");
+    // The spec makes textEdit win outright over insertText when both are sent.
+    REQUIRE(items[0].insertText == "foobar");
+}
+
+TEST_CASE("ExtractCompletionItems takes an InsertReplaceEdit's insert range, not its replace range", "[Lsp]") {
+    // insert ends at the cursor; replace spans the whole token under it.
+    // Taking insert is what keeps accepting a completion from deleting text
+    // to the right of point -- see kUseInsertRangeForInsertReplace.
+    const Json result = Json::array({{
+        {"label", "foobar"},
+        {"textEdit",
+         {{"insert", {{"start", {{"line", 1}, {"character", 2}}}, {"end", {{"line", 1}, {"character", 5}}}}},
+          {"replace", {{"start", {{"line", 1}, {"character", 2}}}, {"end", {{"line", 1}, {"character", 9}}}}},
+          {"newText", "foobar"}}},
+    }});
+    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    REQUIRE(items.size() == 1);
+    REQUIRE(items[0].textEdit.has_value());
+    REQUIRE(items[0].textEdit->end == ned::editor::lsp::LspPosition{.line = 1, .character = 5});
+}
+
+TEST_CASE("ExtractCompletionItems leaves textEdit unset for a malformed one", "[Lsp]") {
+    const Json result = Json::array({
+        {{"label", "no-range"}, {"textEdit", {{"newText", "x"}}}},
+        {{"label", "not-an-object"}, {"textEdit", "garbage"}},
+    });
+    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    REQUIRE(items.size() == 2);
+    REQUIRE_FALSE(items[0].textEdit.has_value());
+    REQUIRE_FALSE(items[1].textEdit.has_value());
+    REQUIRE(items[0].insertText == "no-range"); // falls back to label, as if no textEdit had been sent at all
+}
+
+TEST_CASE("ExtractCompletionItems applies a CompletionList's itemDefaults.editRange", "[Lsp]") {
+    const Json result = {
+        {"isIncomplete", false},
+        {"itemDefaults",
+         {{"editRange", {{"start", {{"line", 0}, {"character", 2}}}, {"end", {{"line", 0}, {"character", 6}}}}}}},
+        {"items", Json::array({
+                      {{"label", "with-textEditText"}, {"textEditText", "resolved"}},
+                      {{"label", "with-insertText"}, {"insertText", "from-insert"}},
+                      {{"label", "bare"}},
+                      // An item's own textEdit still wins over the default.
+                      {{"label", "own"},
+                       {"textEdit",
+                        {{"range", {{"start", {{"line", 9}, {"character", 1}}}, {"end", {{"line", 9}, {"character", 2}}}}},
+                         {"newText", "own-text"}}}},
+                  })},
+    };
+    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    REQUIRE(items.size() == 4);
+    for (std::size_t i = 0; i < 3; ++i) {
+        REQUIRE(items[i].textEdit.has_value());
+        REQUIRE(items[i].textEdit->start == ned::editor::lsp::LspPosition{.line = 0, .character = 2});
+        REQUIRE(items[i].textEdit->end == ned::editor::lsp::LspPosition{.line = 0, .character = 6});
+    }
+    // textEditText, then insertText, then label -- the spec's own precedence
+    // for an item riding on itemDefaults.editRange.
+    REQUIRE(items[0].insertText == "resolved");
+    REQUIRE(items[1].insertText == "from-insert");
+    REQUIRE(items[2].insertText == "bare");
+    REQUIRE(items[3].textEdit->start == ned::editor::lsp::LspPosition{.line = 9, .character = 1});
+    REQUIRE(items[3].insertText == "own-text");
+}
+
+TEST_CASE("ExtractCompletionItems applies itemDefaults.insertTextFormat, an item's own winning", "[Lsp]") {
+    const Json result = {
+        {"itemDefaults", {{"insertTextFormat", 2}}},
+        {"items", Json::array({
+                      {{"label", "inherits-snippet"}},
+                      {{"label", "opts-out"}, {"insertTextFormat", 1}},
+                  })},
+    };
+    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    REQUIRE(items.size() == 2);
+    REQUIRE(items[0].isSnippet);
+    REQUIRE_FALSE(items[1].isSnippet);
+}
+
+TEST_CASE("ExtractCompletionItems defaults sortText and filterText to label", "[Lsp]") {
+    const Json result = Json::array({
+        {{"label", "plain"}},
+        {{"label", "foo (from bar)"}, {"sortText", "0001"}, {"filterText", "foo"}},
+    });
+    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    REQUIRE(items.size() == 2);
+    REQUIRE(items[0].sortText == "plain");
+    REQUIRE(items[0].filterText == "plain");
+    REQUIRE(items[1].sortText == "0001");
+    REQUIRE(items[1].filterText == "foo");
+}
+
 TEST_CASE("ExtractCompletionItems returns empty for a null result", "[Lsp]") {
     REQUIRE(ExtractCompletionItems(Json(nullptr)).empty());
 }

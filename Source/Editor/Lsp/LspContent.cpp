@@ -75,6 +75,90 @@ namespace {
         };
     }
 
+    // completion-fidelity follow-up. An InsertReplaceEdit carries two
+    // ranges for the same newText: "insert" ends at the cursor, "replace"
+    // extends over the whole token the cursor sits inside. Taking insert is
+    // deliberate and matches what this editor did before textEdit was
+    // honored at all -- accepting a completion has never deleted text to
+    // the *right* of point, and silently starting to would be a surprising
+    // behavior change smuggled in under a parsing fix. (VS Code exposes
+    // this as a user setting; if that's ever wanted here it belongs as a
+    // real ned/set-* toggle, not a constant.)
+    constexpr bool kUseInsertRangeForInsertReplace = true;
+
+    // completion-fidelity follow-up. Parses either spec shape of a
+    // completion item's "textEdit": a plain TextEdit {range, newText}, or an
+    // InsertReplaceEdit {insert, replace, newText}. nullopt for a missing or
+    // malformed value (no usable range object) -- the caller then falls back
+    // to itemDefaults.editRange, and past that to plain insertText, exactly
+    // the way a server that never sends textEdit at all is already handled.
+    std::optional<WorkspaceTextEdit> ParseCompletionTextEdit(const Json& textEdit) {
+        if (!textEdit.is_object()) {
+            return std::nullopt;
+        }
+        const char* const rangeKey = kUseInsertRangeForInsertReplace ? "insert" : "replace";
+        const Json*       range    = nullptr;
+        if (const auto it = textEdit.find("range"); it != textEdit.end() && it->is_object()) {
+            range = &*it;
+        }
+        else if (const auto insertReplaceIt = textEdit.find(rangeKey);
+                 insertReplaceIt != textEdit.end() && insertReplaceIt->is_object()) {
+            range = &*insertReplaceIt;
+        }
+        if (range == nullptr) {
+            return std::nullopt;
+        }
+        return WorkspaceTextEdit{
+            .start   = PositionFromJson(range->value("start", Json::object())),
+            .end     = PositionFromJson(range->value("end", Json::object())),
+            .newText = textEdit.value("newText", std::string()),
+        };
+    }
+
+    // completion-fidelity follow-up. A CompletionList's "itemDefaults"
+    // (LSP 3.17) hoists fields shared by every item out of the items
+    // themselves -- rust-analyzer and friends use it to keep a large list
+    // small on the wire. Only the two fields that change what gets inserted
+    // are read: editRange (itself either a bare Range or an
+    // {insert, replace} pair, same choice as ParseCompletionTextEdit's) and
+    // insertTextFormat. commitCharacters/data are deliberately not read --
+    // nothing consumes them yet, and a parsed-but-unused field reads like a
+    // capability this client has when it doesn't.
+    struct CompletionItemDefaults {
+        std::optional<WorkspaceTextEdit> editRange; // newText left empty -- filled per item
+        std::optional<int>               insertTextFormat;
+    };
+
+    CompletionItemDefaults ParseCompletionItemDefaults(const Json& result) {
+        CompletionItemDefaults defaults;
+        if (!result.is_object()) {
+            return defaults;
+        }
+        const auto it = result.find("itemDefaults");
+        if (it == result.end() || !it->is_object()) {
+            return defaults;
+        }
+        if (const auto rangeIt = it->find("editRange"); rangeIt != it->end()) {
+            // An editRange is a Range directly (no "range" wrapper key), or
+            // an {insert, replace} pair -- ParseCompletionTextEdit handles
+            // the latter, so only the bare-Range case needs wrapping here.
+            if (rangeIt->is_object() && rangeIt->contains("start")) {
+                defaults.editRange = WorkspaceTextEdit{
+                    .start   = PositionFromJson(rangeIt->value("start", Json::object())),
+                    .end     = PositionFromJson(rangeIt->value("end", Json::object())),
+                    .newText = {},
+                };
+            }
+            else {
+                defaults.editRange = ParseCompletionTextEdit(*rangeIt);
+            }
+        }
+        if (const auto formatIt = it->find("insertTextFormat"); formatIt != it->end() && formatIt->is_number()) {
+            defaults.insertTextFormat = formatIt->get<int>();
+        }
+        return defaults;
+    }
+
     // Shared by ExtractWorkspaceEditChanges/ExtractFormattingEdits: one
     // "changes" map entry's (or a bare formatting response's) TextEdit[]
     // into WorkspaceTextEdits. An entry missing "range" is skipped, not
@@ -398,10 +482,13 @@ std::optional<std::string> ExtractHoverText(const Json& result) {
     return text;
 }
 
-std::vector<CompletionItem> ExtractCompletionItems(const Json& result) {
-    std::vector<CompletionItem> items;
+std::vector<CompletionItem> ExtractCompletionItems(const Json& result) { return ExtractCompletionList(result).items; }
+
+CompletionList ExtractCompletionList(const Json& result) {
+    CompletionList               list;
+    std::vector<CompletionItem>& items = list.items;
     if (result.is_null()) {
-        return items;
+        return list;
     }
 
     const Json* rawItems = &result;
@@ -409,23 +496,44 @@ std::vector<CompletionItem> ExtractCompletionItems(const Json& result) {
         static const Json kEmptyArray = Json::array();
         const auto        it          = result.find("items");
         rawItems                      = (it != result.end()) ? &*it : &kEmptyArray;
+        list.isIncomplete             = result.value("isIncomplete", false);
     }
     if (!rawItems->is_array()) {
-        return items;
+        return list;
     }
+
+    // completion-fidelity follow-up: read once for the whole list, applied
+    // per item below only where that item didn't carry its own value.
+    const CompletionItemDefaults defaults = ParseCompletionItemDefaults(result);
 
     for (const Json& item : *rawItems) {
         if (!item.is_object() || !item.contains("label")) {
             continue;
         }
-        std::string label      = item.value("label", std::string());
-        std::string insertText = item.value("insertText", label);
-        // Item-level insertTextFormat only (1 = PlainText is the spec's own
-        // default); a completion list's itemDefaults.insertTextFormat is a
-        // documented v1 cut.
-        const bool  isSnippet = item.value("insertTextFormat", 1) == 2;
+        std::string label = item.value("label", std::string());
+        // completion-fidelity follow-up: textEdit wins over insertText per
+        // the spec when both are sent, and itemDefaults.editRange stands in
+        // for a missing textEdit -- in which case the item's own text comes
+        // from textEditText (the field that exists precisely for this case),
+        // then insertText, then label.
+        std::optional<WorkspaceTextEdit> textEdit;
+        if (const auto editIt = item.find("textEdit"); editIt != item.end()) {
+            textEdit = ParseCompletionTextEdit(*editIt);
+        }
+        if (!textEdit && defaults.editRange) {
+            textEdit         = *defaults.editRange;
+            textEdit->newText = item.value("textEditText", item.value("insertText", label));
+        }
+        std::string insertText = textEdit ? textEdit->newText : item.value("insertText", label);
+        // 1 = PlainText is the spec's own default; an item's own value wins
+        // over the list's itemDefaults, which wins over that default.
+        const bool  isSnippet = item.value("insertTextFormat", defaults.insertTextFormat.value_or(1)) == 2;
         const int   kind      = item.value("kind", 0);
         std::string detail    = item.value("detail", std::string());
+        // completion-fidelity follow-up: both default to label per the
+        // spec, resolved here so no consumer re-implements the fallback.
+        std::string sortText   = item.value("sortText", label);
+        std::string filterText = item.value("filterText", label);
         // completion-popup-preview follow-up: wraps the raw "documentation" value in
         // the same {"contents": ...} shape ExtractHoverText already expects, reusing
         // its string-or-MarkupContent extraction verbatim instead of duplicating it.
@@ -438,9 +546,12 @@ std::vector<CompletionItem> ExtractCompletionItems(const Json& result) {
                                        .isSnippet     = isSnippet,
                                        .kind          = kind,
                                        .detail        = std::move(detail),
-                                       .documentation = std::move(documentation)});
+                                       .documentation = std::move(documentation),
+                                       .textEdit      = std::move(textEdit),
+                                       .sortText      = std::move(sortText),
+                                       .filterText    = std::move(filterText)});
     }
-    return items;
+    return list;
 }
 
 CodeAction ExtractSingleCodeAction(const Json& item, const std::string& ownUri) {

@@ -2296,7 +2296,7 @@ void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset,
                                 callback({});
                                 return;
                             }
-                            callback(ExtractCompletionItems(*result));
+                            callback(ExtractCompletionList(*result));
                         });
 }
 
