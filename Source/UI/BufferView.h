@@ -2481,14 +2481,35 @@ class BufferView : public Widget {
     void BeginVcsCreateBranchPrompt(); // VCS side panel follow-up -- see BufferView.cpp's own comment
 
     // Links follow-up: another one-shot direct action, same shape as
-    // VisitSearchResult -- doesn't touch inputMode_. In an org-mode buffer,
-    // tries org::LinkAtPoint first (an internal "*Heading" target jumps
-    // point in-buffer via org::FindHeadlineByTitle; any other target is
-    // classified and handed to OpenDetectedLink below, reusing the same
-    // logic the generic path uses); falls back to (or, outside org-mode,
-    // goes straight to) editor::link::DetectLinkAtPoint. Reports "No link at
-    // point." via statusMessage_ if nothing is found either way.
+    // VisitSearchResult -- doesn't touch inputMode_.
+    //
+    // documentLink follow-up: the language server gets first refusal, since
+    // it resolves an include/import through the project's real build
+    // configuration (clangd against compile_commands.json) rather than the
+    // filesystem guesswork every tier below it has to fall back on. The LSP
+    // request is asynchronous, so the whole pre-existing resolution chain
+    // moved into OpenLinkAtPointWithoutLsp below and is re-entered from the
+    // response callback whenever the server reports no link covering point
+    // -- with no LSP manager wired up, or no server running for this buffer,
+    // LspManager::RequestDocumentLinks answers synchronously and the two
+    // paths collapse back into exactly the pre-existing behavior.
     void OpenLinkAtPoint();
+    // The pre-LSP chain, unchanged: in an org-mode buffer, tries
+    // org::LinkAtPoint first (an internal "*Heading" target jumps point
+    // in-buffer via org::FindHeadlineByTitle; any other target is classified
+    // and handed to OpenDetectedLink below, reusing the same logic the
+    // generic path uses), then a mode's own Mode::importTarget query, and
+    // finally editor::link::DetectLinkAtPoint. Reports "No link at point."
+    // via statusMessage_ if nothing is found any of those ways.
+    void OpenLinkAtPointWithoutLsp();
+    // documentLink follow-up: the open/report tail for a server-reported
+    // link. A file:// target that really exists on disk opens directly (no
+    // ResolveFileLink search needed -- the server already did the real
+    // resolution); anything else (a non-file URI, or a path the server named
+    // that isn't there) falls back to OpenLinkAtPointWithoutLsp rather than
+    // failing outright, so a stale/odd server answer never costs the user
+    // the heuristic they'd have had otherwise.
+    void OpenResolvedDocumentLink(const editor::lsp::LspManager::ResolvedDocumentLink& link);
     // The shared open/report tail both OpenLinkAtPoint paths above funnel
     // into: a Url opens via editor::link::OpenUrl; a File is resolved via
     // editor::link::ResolveFileLink against the active buffer's own
@@ -4302,6 +4323,13 @@ class BufferView : public Widget {
     // definitionRequestGeneration_ above, no selection list needed --
     // switchSourceHeader never returns more than one candidate.
     std::size_t switchHeaderSourceRequestGeneration_ = 0;
+
+    // documentLink follow-up: same staleness-guard shape once more, shared
+    // by both hops of the request (textDocument/documentLink and, for a
+    // link the server sent without a target, documentLink/resolve) -- a
+    // newer open-link-at-point invalidates an in-flight resolve just as it
+    // does an in-flight listing.
+    std::size_t documentLinkRequestGeneration_ = 0;
 
     // rename follow-up: same staleness-guard shape once more. renameTitle_
     // is the human-readable "N edits across M files" summary shown in the

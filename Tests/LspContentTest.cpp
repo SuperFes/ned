@@ -15,6 +15,7 @@ using ned::editor::lsp::ExtractCodeLenses;
 using ned::editor::lsp::ExtractCompletionItems;
 using ned::editor::lsp::ExtractDefinitionLocations;
 using ned::editor::lsp::ExtractDocumentHighlights;
+using ned::editor::lsp::ExtractDocumentLinks;
 using ned::editor::lsp::ExtractFileOperationFilters;
 using ned::editor::lsp::ExtractFormattingEdits;
 using ned::editor::lsp::ExtractHierarchyItems;
@@ -35,6 +36,7 @@ using ned::editor::lsp::ExtractSemanticTokensResultId;
 using ned::editor::lsp::ExtractSignatureHelp;
 using ned::editor::lsp::ExtractSingleCodeAction;
 using ned::editor::lsp::ExtractSingleCodeLens;
+using ned::editor::lsp::ExtractSingleDocumentLink;
 using ned::editor::lsp::ExtractSymbols;
 using ned::editor::lsp::ExtractTextDocumentSyncKind;
 using ned::editor::lsp::ExtractWorkspaceFoldersSupport;
@@ -1319,4 +1321,72 @@ TEST_CASE("ExtractLinkedEditingRanges returns empty for null or a missing/malfor
     REQUIRE(ExtractLinkedEditingRanges(Json(nullptr)).empty());
     REQUIRE(ExtractLinkedEditingRanges(Json::object()).empty());
     REQUIRE(ExtractLinkedEditingRanges(Json{{"ranges", "not-an-array"}}).empty());
+}
+
+TEST_CASE("ExtractDocumentLinks parses every link's range and target", "[Lsp]") {
+    // Shaped after a real clangd textDocument/documentLink response for a
+    // file with two #include lines -- the range covers the quoted/bracketed
+    // path token only, not the #include keyword ahead of it.
+    const Json result = Json::array({
+        {{"range", MakeRange(0, 9, 0, 18)}, {"target", "file:///usr/include/stdio.h"}},
+        {{"range", MakeRange(1, 9, 1, 16)}, {"target", "file:///project/own.h"}},
+    });
+    const auto links  = ExtractDocumentLinks(result);
+    REQUIRE(links.size() == 2);
+    REQUIRE(links[0].start.line == 0);
+    REQUIRE(links[0].start.character == 9);
+    REQUIRE(links[0].end.character == 18);
+    REQUIRE(links[0].hasTarget);
+    REQUIRE(links[0].target == "file:///usr/include/stdio.h");
+    REQUIRE(links[1].target == "file:///project/own.h");
+}
+
+TEST_CASE("ExtractDocumentLinks reports a target-less link as hasTarget false", "[Lsp]") {
+    // The spec's documentLink/resolve path: a server may send the range now
+    // and only compute the target when asked.
+    const Json result = Json::array({{{"range", MakeRange(3, 0, 3, 12)}, {"data", {{"token", 7}}}}});
+    const auto links  = ExtractDocumentLinks(result);
+    REQUIRE(links.size() == 1);
+    REQUIRE_FALSE(links[0].hasTarget);
+    REQUIRE(links[0].target.empty());
+    REQUIRE(links[0].raw["data"]["token"] == 7); // kept verbatim for the resolve round trip
+}
+
+TEST_CASE("ExtractDocumentLinks treats an empty-string target as no target at all", "[Lsp]") {
+    const Json result = Json::array({{{"range", MakeRange(0, 0, 0, 4)}, {"target", ""}}});
+    REQUIRE_FALSE(ExtractDocumentLinks(result)[0].hasTarget);
+}
+
+TEST_CASE("ExtractDocumentLinks skips an entry missing or malformed \"range\"", "[Lsp]") {
+    const Json result = Json::array({
+        {{"target", "file:///a.h"}},                               // no range at all
+        {{"range", {{"start", {{"line", 1}, {"character", 0}}}}}}, // range with no "end"
+        {{"range", MakeRange(2, 0, 2, 5)}, {"target", "file:///kept.h"}},
+    });
+    const auto links  = ExtractDocumentLinks(result);
+    REQUIRE(links.size() == 1);
+    REQUIRE(links[0].target == "file:///kept.h");
+}
+
+TEST_CASE("ExtractDocumentLinks returns empty for a null or non-array result", "[Lsp]") {
+    REQUIRE(ExtractDocumentLinks(Json(nullptr)).empty());
+    REQUIRE(ExtractDocumentLinks(Json::object()).empty());
+}
+
+TEST_CASE("ExtractSingleDocumentLink parses a documentLink/resolve response", "[Lsp]") {
+    const Json result = {{"range", MakeRange(3, 0, 3, 12)}, {"target", "https://example.com/docs"}};
+    const auto link   = ExtractSingleDocumentLink(result);
+    REQUIRE(link.hasTarget);
+    REQUIRE(link.target == "https://example.com/docs");
+    REQUIRE(link.start.line == 3);
+    REQUIRE(link.end.character == 12);
+}
+
+TEST_CASE("ExtractSingleDocumentLink keeps a default range for an item with no \"range\"", "[Lsp]") {
+    // Unlike the array form there's no other entry to fall back to, so a
+    // rangeless item still parses -- ExtractSingleCodeLens' own convention.
+    const auto link = ExtractSingleDocumentLink(Json{{"target", "file:///a.h"}});
+    REQUIRE(link.hasTarget);
+    REQUIRE(link.start.line == 0);
+    REQUIRE(link.end.line == 0);
 }

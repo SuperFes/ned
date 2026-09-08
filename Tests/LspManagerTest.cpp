@@ -4391,3 +4391,253 @@ TEST_CASE("LspManager::Shutdown never sends anything to a broker-backed client",
     // exits, so it must never receive this process's own shutdown/exit.
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 }
+
+// documentLink follow-up.
+TEST_CASE("LspManager::RequestDocumentLinks resolves a file:// target to a path and byte offsets", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-document-link-test.c";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("#include \"own.h\"\nint main() {}\n");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool                                          invoked = false;
+    std::vector<LspManager::ResolvedDocumentLink> got;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) {
+        invoked = true;
+        got     = std::move(links);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/documentLink");
+    REQUIRE(request["params"]["textDocument"].contains("uri"));
+    REQUIRE_FALSE(request["params"].contains("position")); // whole-document scope, no position param
+
+    const std::filesystem::path target   = std::filesystem::temp_directory_path() / "own.h";
+    const Json                  response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"range",
+                                  {{"start", {{"line", 0}, {"character", 9}}}, {"end", {{"line", 0}, {"character", 16}}}}},
+                                 {"target", "file://" + target.string()}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].path == target);
+    REQUIRE(got[0].url.empty());
+    REQUIRE_FALSE(got[0].needsResolve);
+    REQUIRE(got[0].startByte == 9); // "#include " is 9 bytes
+    REQUIRE(got[0].endByte == 16);  // through the closing quote
+}
+
+TEST_CASE("LspManager::RequestDocumentLinks keeps a non-file target as a url, not a path", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-document-link-url-test.c";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("// see https://example.com\n");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    std::vector<LspManager::ResolvedDocumentLink> got;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) { got = std::move(links); });
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"range",
+                                  {{"start", {{"line", 0}, {"character", 7}}}, {"end", {{"line", 0}, {"character", 26}}}}},
+                                 {"target", "https://example.com"}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].path.empty());
+    REQUIRE(got[0].url == "https://example.com");
+}
+
+TEST_CASE("LspManager::RequestDocumentLinks marks a target-less link needsResolve and keeps its raw item", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-document-link-resolve-test.c";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("#include \"own.h\"\n");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    std::vector<LspManager::ResolvedDocumentLink> got;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) { got = std::move(links); });
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"range",
+                                  {{"start", {{"line", 0}, {"character", 9}}}, {"end", {{"line", 0}, {"character", 16}}}}},
+                                 {"data", {{"token", 42}}}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].needsResolve);
+    REQUIRE(got[0].path.empty());
+    REQUIRE(got[0].url.empty());
+
+    // The second hop: documentLink/resolve takes the original item back
+    // verbatim as its whole params body, and the resolved target lands in
+    // the same shape an inline one would have.
+    const std::filesystem::path                     target = std::filesystem::temp_directory_path() / "own.h";
+    std::optional<LspManager::ResolvedDocumentLink> resolved;
+    manager.ResolveDocumentLink(buffer, got[0],
+                                [&](std::optional<LspManager::ResolvedDocumentLink> link) { resolved = std::move(link); });
+
+    const std::string resolveRaw     = ReadRawFrame(server.serverStdinRead);
+    const Json        resolveRequest = Json::parse(resolveRaw.substr(resolveRaw.find("\r\n\r\n") + 4));
+    REQUIRE(resolveRequest["method"] == "documentLink/resolve");
+    REQUIRE(resolveRequest["params"]["data"]["token"] == 42);
+
+    Json resolveResult         = resolveRequest["params"];
+    resolveResult["target"]    = "file://" + target.string();
+    const Json resolveResponse = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(resolveRaw)},
+        {"result", resolveResult},
+    };
+    client->DispatchFrame(resolveResponse.dump());
+
+    REQUIRE(resolved.has_value());
+    REQUIRE_FALSE(resolved->needsResolve);
+    REQUIRE(resolved->path == target);
+    REQUIRE(resolved->startByte == 9); // the original range stands
+    REQUIRE(resolved->endByte == 16);
+}
+
+TEST_CASE("LspManager::RequestDocumentLinks stops asking a server that answered with an error", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-document-link-latch-test.c";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    bool firstInvoked = false;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink>) { firstInvoked = true; });
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"error", {{"code", -32601}, {"message", "method not found"}}},
+    };
+    client->DispatchFrame(response.dump());
+    REQUIRE(firstInvoked);
+
+    bool secondInvoked = false;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) {
+        secondInvoked = true;
+        REQUIRE(links.empty());
+    });
+    REQUIRE(secondInvoked);                          // answered synchronously off the latch
+    REQUIRE(NoFrameArrives(server.serverStdinRead)); // and nothing went out on the wire
+}
+
+TEST_CASE("LspManager::RequestDocumentLinks answers empty when the buffer was never synced", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
+
+    bool invoked = false;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) {
+        invoked = true;
+        REQUIRE(links.empty());
+    });
+
+    REQUIRE(invoked); // synchronous, which is what lets BufferView fall straight through to its own resolution
+}
+
+TEST_CASE("LspManager percent-decodes a URI target before resolving it to a path", "[Lsp]") {
+    // Found live against clangd, which reports a system include's target as
+    // ".../g%2B%2B-v16/algorithm" -- undecoded, that path exists nowhere.
+    // documentLink is just the cheapest request to assert it through; the
+    // decoding sits in the shared uri->path boundary every location-shaped
+    // response goes through.
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-uri-decode-test.c";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("#include <algorithm>\n");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    std::vector<LspManager::ResolvedDocumentLink> got;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) { got = std::move(links); });
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"range",
+                                  {{"start", {{"line", 0}, {"character", 9}}}, {"end", {{"line", 0}, {"character", 20}}}}},
+                                 {"target", "file:///usr/include/g%2B%2B-v16/a%20b/algorithm"}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].path == std::filesystem::path("/usr/include/g++-v16/a b/algorithm"));
+}
+
+TEST_CASE("LspManager leaves a stray percent sign in a URI alone", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-uri-stray-percent-test.c";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("#include \"x.h\"\n");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    std::vector<LspManager::ResolvedDocumentLink> got;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) { got = std::move(links); });
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"range",
+                                  {{"start", {{"line", 0}, {"character", 9}}}, {"end", {{"line", 0}, {"character", 14}}}}},
+                                 {"target", "file:///tmp/100%-done/x.h"}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].path == std::filesystem::path("/tmp/100%-done/x.h"));
+}
