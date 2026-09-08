@@ -18,7 +18,11 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
                        editor::PromptHistory& promptHistory, text::BufferList& bufferList, editor::Dispatcher& dispatcher,
                        std::string& statusMessage, const editor::Mode& mode, const Theme& theme) : activeBuffer_(activeBuffer), killRing_(killRing), registers_(registers),
                                                                                                    promptHistory_(promptHistory), bufferList_(bufferList),
-                                                                                                   dispatcher_(dispatcher), statusMessage_(statusMessage), mode_(mode), theme_(theme) {
+                                                                                                   dispatcher_(dispatcher), statusMessage_(statusMessage), mode_(mode), theme_(theme),
+                                                                                                   context_{activeBuffer_, killRing_, registers_, promptHistory_, bufferList_,
+                                                                                                            dispatcher_, statusMessage_, mode_, theme_, lspManager_, dapManager_,
+                                                                                                            acpManager_, vcsRunner_, taskRunner_, testRunner_, projectUndo_,
+                                                                                                            eventLoop_, janetEnv_} {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
     }
@@ -59,12 +63,13 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
 }
 
 editor::CommandContext BufferView::MakeContext() {
-    editor::CommandContext context{activeBuffer_.Get(), killRing_, bufferList_, editor::KeyChord{}, &statusMessage_};
-    context.mode       = &mode_;
-    context.lspManager = lspManager_;
-    context.taskRunner  = taskRunner_;
-    context.testRunner  = testRunner_;
-    context.projectUndo = projectUndo_;
+    editor::CommandContext context{context_.activeBuffer.Get(), context_.killRing, context_.bufferList,
+                                   editor::KeyChord{}, &context_.statusMessage};
+    context.mode        = &context_.mode;
+    context.lspManager  = context_.lspManager;
+    context.taskRunner  = context_.taskRunner;
+    context.testRunner  = context_.testRunner;
+    context.projectUndo = context_.projectUndo;
     return context;
 }
 
