@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "ActiveBuffer.h"
+#include "UI/BufferView/CacheStamp.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Backup.h"
 #include "Editor/CodeFold.h"
@@ -3040,7 +3041,7 @@ class BufferView : public Widget {
     // file scrolled well past a short file's own last line rendered nothing
     // but blank rows), not hypothetical. EnsureTopLineValidForActiveBuffer,
     // called first thing in Paint() the same way highlightCacheBuffer_/
-    // hiddenLineRangesCacheBuffer_/linkCacheBuffer_ already detect "the
+    // hiddenLineRangesCacheStamp_/linkCacheStamp_ already detect "the
     // active buffer changed since I last looked," re-validates topLine_ via
     // ScrollToShowPoint() whenever this doesn't match the buffer Paint() is
     // about to render -- see EnsureTopLineValidForActiveBuffer's own
@@ -3428,8 +3429,7 @@ class BufferView : public Widget {
     // Paint() call and regressed a large-JSON [Performance] test to ~217ms
     // per call (10.9s for 50 calls), caught before shipping the same way
     // this project's other perf regressions have been.
-    text::Buffer*                      highlightCacheBuffer_     = nullptr;
-    std::size_t                        highlightCacheGeneration_ = 0;
+    bufferview::CacheStamp             highlightCacheStamp_;
     std::vector<editor::HighlightSpan> highlightCacheSpans_;
     // exhaustive-highlighting follow-up: a ned/set-capture-class remap
     // changes the SyntaxClass values *baked into* the cached spans above at
@@ -3437,7 +3437,6 @@ class BufferView : public Widget {
     // check compares this against editor::CaptureClassGeneration() too, the
     // same "cheap did-it-change counter" shape ContentGeneration() already
     // has.
-    std::size_t highlightCacheClassGeneration_ = 0;
 
     // semanticTokens follow-up: LspManager::SemanticTokensGeneration(buffer)
     // at the moment this cache entry was last built -- a third staleness
@@ -3447,7 +3446,6 @@ class BufferView : public Widget {
     // lspManager_ is unset, so every existing test/construction path that
     // never wires it behaves exactly as before -- see LspManager-sourced
     // spans' own appending comment at this cache's build site.
-    std::size_t highlightCacheSemanticTokensGeneration_ = 0;
 
     // per-buffer-highlight-cache follow-up: the three fields just above only
     // remember the *most recently painted* buffer -- switching away and
@@ -3536,16 +3534,16 @@ class BufferView : public Widget {
     // Mutable for the same const-query-methods reason
     // hiddenLineRangesCacheBuffer_ already is (EnsureHiddenLineRangesCache,
     // a const method, needs a fresh cache too).
-    mutable text::Buffer*                                    foldableBlocksCacheBuffer_     = nullptr;
-    mutable std::size_t                                      foldableBlocksCacheGeneration_ = 0;
+    mutable bufferview::CacheStamp                           foldableBlocksCacheStamp_;
     // huge-file-structural-gutters follow-up: the [start, end) window the
     // cached foldableBlocksCache_ was actually computed against -- see
     // HugeStructuralWindow's own doc comment. Always {0, ByteLength()} for
     // an ordinary buffer (and so never invalidates anything beyond what
     // foldableBlocksCacheGeneration_ already would), only meaningfully
     // narrower for a huge one.
-    mutable std::size_t                                      foldableBlocksCacheWindowStart_ = 0;
-    mutable std::size_t                                      foldableBlocksCacheWindowEnd_   = 0;
+    // Kept alongside the stamp because EnsureFoldGutterCache keys off the
+    // window this cache was last built for, not one it computes itself.
+    mutable std::pair<std::size_t, std::size_t>              foldableBlocksCacheWindow_{0, 0};
     mutable std::vector<std::pair<std::size_t, std::size_t>> foldableBlocksCache_;
     // per-buffer-highlight-cache follow-up: same persistence-across-a-switch
     // fix as highlightCacheByBuffer_ above, for mode_.fold instead of
@@ -3660,9 +3658,7 @@ class BufferView : public Widget {
     // don't reach for a per-element-allocating container under ASan"
     // discipline foldableBlocksCache_'s own doc comment already documents
     // finding the hard way for this exact code path.
-    mutable text::Buffer*                foldGutterCacheBuffer_            = nullptr;
-    mutable std::size_t                  foldGutterCacheContentGeneration_ = 0;
-    mutable std::size_t                  foldGutterCacheFoldGeneration_    = 0;
+    mutable bufferview::CacheStamp       foldGutterCacheStamp_;
     // huge-file-structural-gutters follow-up: foldableBlocksCache_ can now
     // change out from under this cache without either ContentGeneration()
     // or FoldGeneration() moving at all -- purely from
@@ -3671,8 +3667,6 @@ class BufferView : public Widget {
     // thing) already tracks via its own foldableBlocksCacheWindowStart_/
     // End_. Mirrored here too, or a window-only change (no content/fold
     // edit at all) would leave this cache silently stale.
-    mutable std::size_t                  foldGutterCacheWindowStart_       = 0;
-    mutable std::size_t                  foldGutterCacheWindowEnd_         = 0;
     mutable std::vector<FoldGutterEntry> foldGutterEntries_; // sorted by headerLine (free -- blocks arrive startByte-sorted)
     mutable std::array<std::vector<std::pair<std::size_t, std::size_t>>, kMaxFoldDepthColumns>
         foldGutterLineRangesByColumn_; // EXPANDED entries only, [headerLine+1, closerLine+1) per column
@@ -3688,9 +3682,7 @@ class BufferView : public Widget {
     // flat and disjoint by construction (no nesting concept here at all),
     // so rendering only ever needs a binary search against this cache, no
     // streaming stack state.
-    mutable text::Buffer*                                    unsavedChangeCacheBuffer_            = nullptr;
-    mutable std::size_t                                      unsavedChangeCacheContentGeneration_ = 0;
-    mutable std::size_t                                      unsavedChangeCacheGeneration_        = 0;
+    mutable bufferview::CacheStamp                           unsavedChangeCacheStamp_;
     mutable std::vector<std::pair<std::size_t, std::size_t>> unsavedChangeLineRanges_;
 
     // LSP client follow-up: converts buffer.Diagnostics()' byte ranges to
@@ -3705,8 +3697,7 @@ class BufferView : public Widget {
     // check is needed, since SetDiagnostics always replaces the set
     // wholesale (see Buffer::Diagnostic's own doc comment) rather than
     // being incrementally relocated across edits the way fold markers are.
-    mutable text::Buffer*                                                           diagnosticGutterCacheBuffer_     = nullptr;
-    mutable std::size_t                                                             diagnosticGutterCacheGeneration_ = 0;
+    mutable bufferview::CacheStamp                                                  diagnosticGutterCacheStamp_;
     mutable std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>> diagnosticLineSeverities_; // sorted by line
 
     // gutter-symbol-kind follow-up: at most one {line, SymbolKind} entry per
@@ -3724,27 +3715,23 @@ class BufferView : public Widget {
     // calls EnsureSymbolMarkersCache first and derives its own cache from
     // this one, rather than the two independently calling mode_.symbolKind
     // and reparsing/re-querying twice per Paint().
-    mutable text::Buffer*                     symbolMarkersCacheBuffer_            = nullptr;
-    mutable std::size_t                       symbolMarkersCacheContentGeneration_ = 0;
-    mutable std::size_t                       symbolMarkersCacheWindowStart_       = 0;
-    mutable std::size_t                       symbolMarkersCacheWindowEnd_         = 0;
+    mutable bufferview::CacheStamp             symbolMarkersCacheStamp_;
+    // Kept alongside the stamp for the same reason foldableBlocksCacheWindow_
+    // is: EnsureSymbolGutterCache keys off this cache's window.
+    mutable std::pair<std::size_t, std::size_t> symbolMarkersCacheWindow_{0, 0};
     mutable std::vector<editor::SymbolMarker> symbolMarkersCache_;
     void                                       EnsureSymbolMarkersCache() const;
 
-    mutable text::Buffer*                                           symbolGutterCacheBuffer_            = nullptr;
-    mutable std::size_t                                             symbolGutterCacheContentGeneration_ = 0;
+    mutable bufferview::CacheStamp                                  symbolGutterCacheStamp_;
     // huge-file-structural-gutters follow-up: see
     // foldableBlocksCacheWindowStart_/End_'s own doc comment above -- same
     // shape, for symbolGutterLineKinds_ instead of foldableBlocksCache_.
-    mutable std::size_t                                             symbolGutterCacheWindowStart_       = 0;
-    mutable std::size_t                                             symbolGutterCacheWindowEnd_         = 0;
     mutable std::vector<std::pair<std::size_t, editor::SymbolKind>> symbolGutterLineKinds_;
 
     // Merge Conflict Resolution Mode: EnsureConflictHunkCache's cache,
     // symbolGutterCacheBuffer_/symbolGutterCacheContentGeneration_'s exact
     // shape minus the huge-file window (see that method's own comment).
-    mutable text::Buffer*                   conflictHunkCacheBuffer_            = nullptr;
-    mutable std::size_t                     conflictHunkCacheContentGeneration_ = 0;
+    mutable bufferview::CacheStamp          conflictHunkCacheStamp_;
     mutable std::vector<text::ConflictHunk> conflictHunkCache_;
 
     // test-runner integration: per-line pass/fail/skip marks, the symbol
@@ -3754,14 +3741,10 @@ class BufferView : public Widget {
     // data is half external (the outcome) and half derived (discovery) --
     // both stamps together are what keep it honest. See
     // EnsureTestGutterCache in BufferView.cpp.
-    mutable text::Buffer*                                                            testGutterCacheBuffer_            = nullptr;
-    mutable std::size_t                                                              testGutterCacheContentGeneration_ = 0;
-    mutable std::size_t                                                              testGutterCacheOutcomeGeneration_ = 0;
+    mutable bufferview::CacheStamp                                                   testGutterCacheStamp_;
     // huge-file-structural-gutters follow-up: see
     // foldableBlocksCacheWindowStart_/End_'s own doc comment above -- same
     // shape, for testGutterEntries_ instead of foldableBlocksCache_.
-    mutable std::size_t                                                              testGutterCacheWindowStart_       = 0;
-    mutable std::size_t                                                              testGutterCacheWindowEnd_         = 0;
     // Part of the cache key, not just an input: configuring a filter command
     // after a run has landed changes which rows exist without touching
     // content, outcome, or window generation.
@@ -3787,8 +3770,7 @@ class BufferView : public Widget {
     // are). No huge-file windowing either, unlike testGutterEntries_/
     // symbolGutterLineKinds_ above -- there's no parse involved, just a map
     // lookup by line number, so this is cheap regardless of buffer size.
-    mutable text::Buffer*                                                       coverageGutterCacheBuffer_            = nullptr;
-    mutable std::size_t                                                         coverageGutterCacheReportGeneration_  = 0;
+    mutable bufferview::CacheStamp                                              coverageGutterCacheStamp_;
     mutable std::vector<std::pair<std::size_t, editor::coverage::LineStatus>>   coverageGutterLineStatuses_;
 
     // inline-diagnostics follow-up: see EnsureInlineDiagnosticCache's own
@@ -3802,19 +3784,16 @@ class BufferView : public Widget {
         std::size_t                        endByte;
         std::string                        message;
     };
-    mutable text::Buffer*                                     inlineDiagnosticCacheBuffer_            = nullptr;
-    mutable std::size_t                                       inlineDiagnosticCacheDiagGeneration_    = 0;
-    mutable std::size_t                                       inlineDiagnosticCacheContentGeneration_ = 0;
+    mutable bufferview::CacheStamp                            inlineDiagnosticCacheStamp_;
     mutable std::unordered_map<std::size_t, InlineDiagnostic> inlineDiagnosticsByLine_;
 
     // VCS blame gutter: populated only by RequestBlameForCurrentBuffer's
     // async completion (never recomputed from Paint() -- see
     // EnsureBlameGutterCache's own doc comment for why), sorted by
-    // (0-indexed) line. blameGutterCacheBuffer_/blameGutterCacheContentGeneration_
+    // (0-indexed) line. blameGutterCacheStamp_
     // record which buffer+generation blameLineInfo_ is valid for, so
     // EnsureBlameGutterCache can tell it's gone stale and clear it.
-    mutable text::Buffer*                                                  blameGutterCacheBuffer_            = nullptr;
-    mutable std::size_t                                                    blameGutterCacheContentGeneration_ = 0;
+    mutable bufferview::CacheStamp                                         blameGutterCacheStamp_;
     mutable std::vector<std::pair<std::size_t, editor::vcs::VcsBlameLine>> blameLineInfo_;
 
     // Diff gutter markers follow-up: live-refreshing added/modified/removed
@@ -3861,9 +3840,7 @@ class BufferView : public Widget {
     // (both const) refresh it too, the same "cache read by const query
     // methods" shape highlightCacheBuffer_ would also need if any const
     // method ever read it (none currently do).
-    mutable text::Buffer*                                    hiddenLineRangesCacheBuffer_            = nullptr;
-    mutable std::size_t                                      hiddenLineRangesCacheContentGeneration_ = 0;
-    mutable std::size_t                                      hiddenLineRangesCacheFoldGeneration_    = 0;
+    mutable bufferview::CacheStamp                           hiddenLineRangesCacheStamp_;
     mutable std::vector<std::pair<std::size_t, std::size_t>> hiddenLineRanges_;
 
     // line-wrap follow-up: see EnsureRowCountCache/RowsForLine's own doc
@@ -3877,10 +3854,10 @@ class BufferView : public Widget {
     // segment byte ranges anyway, not just a count) -- never eagerly for
     // the whole buffer, per this cache's own perf history.
     static constexpr std::size_t     kRowCountUnknown                = static_cast<std::size_t>(-1);
-    mutable text::Buffer*            rowCountCacheBuffer_            = nullptr;
-    mutable std::size_t              rowCountCacheContentGeneration_ = 0;
-    mutable int                      rowCountCacheContentWidth_      = 0;
-    mutable bool                     rowCountCacheWrapEnabled_       = false;
+    mutable bufferview::CacheStamp   rowCountCacheStamp_;
+    // Kept as its own member as well as a stamp value: RowsForLine reads the
+    // width back when it fills a line's memoized row count in lazily.
+    mutable int                      rowCountCacheContentWidth_ = 0;
     mutable std::vector<std::size_t> rowCountPerLine_;
 
     // Links follow-up: caches org::ParseLinks's result across Paint()/
@@ -3891,8 +3868,7 @@ class BufferView : public Widget {
     // every non-Org buffer (the common case across the whole editor) never
     // calls org::ParseLinks at all. Mutable for the same const-query-methods
     // reason hiddenLineRangesCacheBuffer_ already is.
-    mutable text::Buffer*                  linkCacheBuffer_     = nullptr;
-    mutable std::size_t                    linkCacheGeneration_ = 0;
+    mutable bufferview::CacheStamp         linkCacheStamp_;
     mutable std::vector<editor::org::Link> linkCache_;
 
     void EnsureLinkCache() const;

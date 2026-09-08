@@ -112,12 +112,12 @@ void BufferView::ClearBufferCaches(text::Buffer& buffer) {
     highlightCacheByBuffer_.erase(&buffer);
     embeddedDocumentCacheByBuffer_.erase(&buffer);
     foldableBlocksCacheByBuffer_.erase(&buffer);
-    if (highlightCacheBuffer_ == &buffer) {
-        highlightCacheBuffer_ = nullptr;
+    if (highlightCacheStamp_.IsFor(&buffer)) {
+        highlightCacheStamp_.Invalidate();
         highlightCacheSpans_.clear();
     }
-    if (foldableBlocksCacheBuffer_ == &buffer) {
-        foldableBlocksCacheBuffer_ = nullptr;
+    if (foldableBlocksCacheStamp_.IsFor(&buffer)) {
+        foldableBlocksCacheStamp_.Invalidate();
         foldableBlocksCache_.clear();
     }
 }

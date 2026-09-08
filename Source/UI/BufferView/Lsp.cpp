@@ -278,7 +278,7 @@ bool BufferView::ShouldSuppressAutoCompletion() const {
     }
     const text::ITextStorage& content = buffer.Content();
 
-    if (highlightCacheBuffer_ == &buffer) {
+    if (highlightCacheStamp_.IsFor(&buffer)) {
         const std::size_t                        line        = content.ByteOffsetToLine(point);
         const std::size_t                        lineStart   = content.LineToByteOffset(line);
         const std::size_t                        lineEnd     = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
