@@ -14,6 +14,7 @@
 
 #include <array>
 #include <atomic>
+#include <type_traits>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -29,6 +30,7 @@
 
 #include "ActiveBuffer.h"
 #include "UI/BufferView/CacheStamp.h"
+#include "UI/BufferView/EditorContext.h"
 #include "UI/BufferView/RequestSlot.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Backup.h"
@@ -4440,7 +4442,19 @@ class BufferView : public Widget {
     // failures that aren't tied to one subsystem; call sites that know
     // better (LSP, VCS, ...) pass their own.
     void ReportError(std::string message, editor::LogCategory category = editor::LogCategory::General);
+
+    // Declared last on purpose: its members are references bound to the ones
+    // above, so every one of them must already exist when this is initialised.
+    // The parts BufferView is being split into take this by reference rather
+    // than a dozen separate arguments -- see BufferView/EditorContext.h.
+    bufferview::EditorContext context_;
 };
+
+// context_ holds references to BufferView's own members, so moving one would
+// leave its context pointing into the moved-from object. Copying is already
+// deleted above and no move is declared; this is here so that stays true.
+static_assert(!std::is_move_constructible_v<BufferView>,
+              "BufferView must stay immovable: EditorContext binds to its sibling members");
 
 } // namespace ned::ui
 
