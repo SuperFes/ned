@@ -14,7 +14,8 @@ namespace ned::editor {
 namespace {
 
     std::mutex g_enabledMutex;
-    bool       g_enabled = true;
+    bool       g_enabled      = true;
+    bool       g_osc52Enabled = true; // see Clipboard.h's own comment on SetOsc52Enabled
 
     std::mutex                              g_copyOverrideMutex;
     std::optional<std::vector<std::string>> g_copyOverride;
@@ -173,6 +174,9 @@ namespace {
     }
 
     void WriteOsc52(std::string_view text) {
+        if (!Osc52Enabled()) {
+            return;
+        }
         const std::string sequence = BuildOsc52CopySequence(text, EnvIsSet("TMUX"));
         std::size_t       written  = 0;
         while (written < sequence.size()) {
@@ -194,6 +198,16 @@ void SetClipboardEnabled(bool enabled) {
 bool ClipboardEnabled() {
     const std::lock_guard<std::mutex> lock(g_enabledMutex);
     return g_enabled;
+}
+
+void SetOsc52Enabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_enabledMutex);
+    g_osc52Enabled = enabled;
+}
+
+bool Osc52Enabled() {
+    const std::lock_guard<std::mutex> lock(g_enabledMutex);
+    return g_osc52Enabled;
 }
 
 void SetClipboardCopyCommand(std::vector<std::string> argv) {
