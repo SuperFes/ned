@@ -1087,6 +1087,7 @@ if (NED_BUILD_TESTS)
             Tests/ClipboardTest.cpp
             Tests/ClipboardTestGuard.cpp
             Tests/SigpipeTestGuard.cpp
+            Tests/TerminalOutputTestGuard.cpp
             Tests/TabWidthTest.cpp
             Tests/FillColumnTest.cpp
             Tests/FillTest.cpp
