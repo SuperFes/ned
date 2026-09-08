@@ -9,6 +9,24 @@
 // against multi-megabyte content) to avoid flakiness on slow/loaded CI
 // machines, while still sitting far below what an O(document size) per-op
 // implementation would take at these sizes.
+//
+// unoptimized-build-budget follow-up: the budget scales with the build's
+// optimization level, keyed on NDEBUG. "Point navigation across a huge
+// (piece-table-backed) buffer stays fast" was a standing known failure under
+// the `sanitize` preset, recorded as suspected ASan instrumentation
+// overhead; measuring it (2026-09-08) showed that framing was wrong in a way
+// that matters. Same test, same machine: ~150ms under `default`
+// (RelWithDebInfo), ~1650ms under a plain Debug build with no sanitizers at
+// all, ~3000ms under Debug + ASan/UBSan. So the dominant cost is -O0, not
+// the sanitizers -- a `perf record` of the sanitized run puts ~82% of cycles
+// in un-inlined libstdc++ char-scanning (`string_view::operator[]`,
+// `equal_to<void>`, `__count_if`) underneath PieceTable::FindLineStart's own
+// newline count, and under 1% in the ASan/LSan runtime itself. Keying the
+// slack on a sanitizer macro would therefore have left a plain Debug build
+// failing; NDEBUG is the flag that actually tracks the cause. The slack is
+// deliberately an order of magnitude rather than a tuned fit, since these
+// tests exist to catch an O(document size) regression -- which is orders of
+// magnitude worse again, and still caught at either budget.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -33,6 +51,13 @@
 using namespace std::chrono;
 
 namespace {
+
+// See this file's own header comment for how these two numbers were measured.
+#ifdef NDEBUG
+constexpr long kBudgetMs = 500;
+#else
+constexpr long kBudgetMs = 5000;
+#endif
 
 std::string MakeMultiLineContent(std::size_t approxByteSize) {
     std::string content;
@@ -76,7 +101,7 @@ TEST_CASE("Inserting near the end of a multi-megabyte buffer stays fast", "[Perf
     }
     const auto elapsed = steady_clock::now() - start;
 
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }
 
 TEST_CASE("Point navigation across a multi-megabyte buffer stays fast", "[Performance]") {
@@ -91,7 +116,7 @@ TEST_CASE("Point navigation across a multi-megabyte buffer stays fast", "[Perfor
     }
     const auto elapsed = steady_clock::now() - start;
 
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }
 
 TEST_CASE("Point navigation across a huge (piece-table-backed) buffer stays fast", "[Performance][HugeFile]") {
@@ -123,7 +148,7 @@ TEST_CASE("Point navigation across a huge (piece-table-backed) buffer stays fast
     }
     const auto elapsed = steady_clock::now() - start;
 
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 
     std::filesystem::remove(path);
 }
@@ -140,7 +165,7 @@ TEST_CASE("Inserting into a pathologically long single line stays fast", "[Perfo
     }
     const auto elapsed = steady_clock::now() - start;
 
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }
 
 TEST_CASE("Grapheme-boundary point movement across a pathologically long line stays fast", "[Performance]") {
@@ -156,7 +181,7 @@ TEST_CASE("Grapheme-boundary point movement across a pathologically long line st
     }
     const auto elapsed = steady_clock::now() - start;
 
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }
 
 TEST_CASE("Vertical motion out of a pathologically long single line with tab-aware goal column stays fast",
@@ -184,7 +209,7 @@ TEST_CASE("Vertical motion out of a pathologically long single line with tab-awa
     }
     const auto elapsed = steady_clock::now() - start;
 
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }
 
 TEST_CASE("BufferView::paint on a pathologically long single line stays fast", "[Performance]") {
@@ -220,7 +245,7 @@ TEST_CASE("BufferView::paint on a pathologically long single line stays fast", "
     }
     const auto elapsed = steady_clock::now() - start;
 
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }
 
 TEST_CASE("BufferView::paint on a large wrap-enabled document stays fast across repeated calls",
@@ -287,7 +312,7 @@ TEST_CASE("BufferView::paint on a large wrap-enabled document stays fast across 
     }
     const auto elapsed = steady_clock::now() - start;
 
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }
 
 TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast on a large file",
@@ -345,7 +370,7 @@ TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast
     }
     const auto elapsed = steady_clock::now() - start;
 
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }
 
 TEST_CASE("BufferView::paint stays fast repeatedly switching between two tree-sitter-highlighted buffers",
@@ -394,5 +419,5 @@ TEST_CASE("BufferView::paint stays fast repeatedly switching between two tree-si
     }
     const auto elapsed = steady_clock::now() - start;
 
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }

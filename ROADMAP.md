@@ -706,15 +706,8 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
-- [ ] **`PerformanceTest.cpp`'s huge-buffer point-navigation test under
-      `build-sanitize`** (found 2026-09-03, unrelated to whatever change was in flight
-      at the time — reproduces on a clean stash of the tree too): "Point navigation
-      across a huge (piece-table-backed) buffer stays fast" fails its `< 500ms`
-      threshold under the ASan/UBSan configuration specifically (~3.2-3.5s observed,
-      consistently, across repeated runs), passing fine under the plain `build` preset.
-      Likely just sanitizer instrumentation overhead on a tight wall-clock threshold
-      rather than a real regression — the threshold was presumably tuned against an
-      uninstrumented build. Not reproduced under plain `ctest -j8`/`build`.
+Currently empty: `ctest -j8` is clean under both the `default` and `sanitize` presets as
+of 2026-09-08.
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 
