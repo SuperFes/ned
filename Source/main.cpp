@@ -2037,6 +2037,11 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // activeCompletion_ at a time in practice, since this popup is only
     // ever shown for the focused pane).
     completionPopup.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivateCompletionAt(index); });
+    // completion-popup-scroll follow-up: wheel over the completion popup
+    // moves its selection, the same way it already did for candidatePopup
+    // above -- this hook was simply never wired for this popup, so wheel
+    // scroll and hover-highlight did nothing here.
+    completionPopup.SetOnScrollBy([wm = windowManager.get()](int steps) { wm->ScrollCompletionPopup(steps); });
 
     // hover-tooltips follow-up: same anchored, non-focusable shape as
     // completionPopup above, but simpler content -- rows are always empty

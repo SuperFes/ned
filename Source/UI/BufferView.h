@@ -786,6 +786,13 @@ class BufferView : public Widget {
     // ListPopup::SetOnActivate in main.cpp.
     void AcceptActiveCompletionAt(std::size_t index);
 
+    // completion-popup-scroll follow-up: wheel over the completion popup,
+    // same "route to whichever pane is focused" shape as
+    // AcceptActiveCompletionAt above (WindowManager::ScrollCompletionPopup).
+    // A step moves the selection, which is what moves the popup's own
+    // window -- see the method's own comment.
+    void ScrollCompletionPopup(int steps);
+
     // peek-definition follow-up: a modal EchoArea-prompt-driven session the same
     // way SetOnCandidatesChanged's sessions are (entered only from inside
     // RequestPeekDefinitionAtPoint's async callback, ended by
