@@ -119,21 +119,27 @@ the server re-asked only when it said `isIncomplete` or point left the word) and
 needs a terminal, so it follows `IncrementalSearch`/`SnippetSession`'s precedent
 instead and is unit-tested without a `Screen`.
 
-Still ignored on the wire: `additionalTextEdits`, `commitCharacters`, `preselect`,
-`data`/`completionItem/resolve`. The remaining steps are independently shippable:
+`completion-resolve` closed the rest of the wire surface:
+`completionItem/resolve` (debounced on selection change, merging
+`documentation`/`detail`/`additionalTextEdits` back into the live session),
+`additionalTextEdits` (an accepted `std::vector` adds its `#include`, in the accept's
+own single undo step), server-declared `triggerCharacters` with a real `triggerKind: 2`,
+plus `preselect` and `commitCharacters`.
 
-- [ ] **`completionItem/resolve`** — lazily fetch `documentation`/`detail` for the
-      selected item only, debounced on selection change, into `ListPopup`'s existing
-      `previewText` pane.
-- [ ] **`additionalTextEdits`** — accepting `std::vector` should add the `#include`.
-      Applied through the existing multi-file `ApplyProjectEdit` machinery. Depends on the
-      resolve step above: most servers (rust-analyzer, jdtls) only ever send these on
-      `completionItem/resolve`, never in the initial list, so this is inert without it.
-- [ ] **Real trigger characters** — the auto-trigger set is hardcoded to a word codepoint
-      plus `.`, `:`, `>` (`BufferView.cpp:5618`, whose own comment notes the server's
-      `completionProvider.triggerCharacters` was never plumbed), and `triggerKind` is
-      always `1` (Invoked) even when a character triggered the request
-      (`LspManager.cpp:2284-2288`). `preselect` and `commitCharacters` belong here too.
+- [ ] `commitCharacters` and `preselect` are honored only where a server actually
+      declares them — no default set is ever substituted. That turned out to be
+      less protective than it sounds: verified live, `typescript-language-server`
+      sends `{".", ",", ";", "("}` on *every* item, so `ned/set-lsp-commit-characters`
+      (default on, VS Code's own default) is the switch for anyone who doesn't want
+      `;` accepting whatever suggestion happened to be showing. Revisit the default
+      if that proves annoying in practice.
+- [ ] `additionalTextEdits` are applied against the buffer as it stands at accept
+      time, not as it stood when the server computed them. Anything positioned
+      *before* point is unaffected by the intervening keystrokes (typing a newline
+      dismisses the session outright, so no line above point can shift), which covers
+      every real case — an `#include`/`import` near the top of the file. An edit
+      positioned after point on point's own line would be off by the characters typed
+      since; no server has been observed to send one.
 - [ ] Considered and deliberately *not* prioritized (recorded so it stays a conscious
       call): merging non-LSP candidates into the same popup. `RequestCompletionAtPoint`
       (`BufferView.cpp:5427-5438`) is a mutually-exclusive cascade — LSP if running, else

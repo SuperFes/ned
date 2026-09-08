@@ -4641,3 +4641,136 @@ TEST_CASE("LspManager leaves a stray percent sign in a URI alone", "[Lsp]") {
     REQUIRE(got.size() == 1);
     REQUIRE(got[0].path == std::filesystem::path("/tmp/100%-done/x.h"));
 }
+
+// ---------------------------------------------------------------------------
+// completion-resolve / completion-trigger-characters
+// ---------------------------------------------------------------------------
+
+TEST_CASE("LspManager::RequestCompletion reports triggerKind 2 and the character that caused it", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-completion-trigger-test.txt");
+    buffer.InsertAtPoint("foo.");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    manager.RequestCompletion(buffer, buffer.Point(), [](ned::editor::lsp::CompletionList) {}, "test-lang", ".");
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["params"]["context"]["triggerKind"] == 2);
+    REQUIRE(request["params"]["context"]["triggerCharacter"] == ".");
+}
+
+TEST_CASE("LspManager::RequestCompletion folds allCommitCharacters into items that declared none", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-commit-chars-test.txt");
+    buffer.InsertAtPoint("foo");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    // SetClientForTesting bypasses the handshake that would normally populate this.
+    manager.SetCompletionProviderForTesting("test-lang", ned::editor::lsp::CompletionProviderInfo{.allCommitCharacters = {";"}});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    std::vector<CompletionItem> gotItems;
+    manager.RequestCompletion(buffer, buffer.Point(), [&](ned::editor::lsp::CompletionList list) { gotItems = std::move(list.items); });
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result",
+         {{"isIncomplete", false},
+          {"items", Json::array({{{"label", "inherits"}}, {{"label", "keeps-own"}, {"commitCharacters", Json::array({"("})}}})}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(gotItems.size() == 2);
+    CHECK(gotItems[0].commitCharacters == std::vector<std::string>{";"});
+    CHECK(gotItems[1].commitCharacters == std::vector<std::string>{"("});
+}
+
+TEST_CASE("LspManager::ResolveCompletionItem round-trips the item's own raw JSON", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-completion-resolve-test.txt");
+    buffer.InsertAtPoint("vec");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    CompletionItem item;
+    item.label = "vector";
+    item.raw   = Json{{"label", "vector"}, {"data", {{"symbolId", 42}}}};
+
+    bool                          invoked = false;
+    std::optional<CompletionItem> got;
+    manager.ResolveCompletionItem(buffer, item, [&](std::optional<CompletionItem> resolved) {
+        invoked = true;
+        got     = std::move(resolved);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "completionItem/resolve");
+    // The whole item goes back verbatim -- "data" is the server's own handle onto it.
+    REQUIRE(request["params"]["data"]["symbolId"] == 42);
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", {{"label", "vector"}, {"detail", "std::vector<T>"}, {"documentation", "A dynamic array."}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.has_value());
+    CHECK(got->detail == "std::vector<T>");
+    CHECK(got->documentation == "A dynamic array.");
+}
+
+TEST_CASE("LspManager::ResolveCompletionItem answers nullopt for a synthesized item with no raw JSON", "[Lsp]") {
+    // dabbrev/Janet-binding items are built by this editor, not parsed off
+    // the wire -- there is nothing to hand back, and no request goes out.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-resolve-synth-test.txt");
+
+    CompletionItem synthesized;
+    synthesized.label = "buffer-word";
+
+    bool invoked = false;
+    manager.ResolveCompletionItem(buffer, synthesized, [&](std::optional<CompletionItem> resolved) {
+        invoked = true;
+        CHECK_FALSE(resolved.has_value());
+    });
+    CHECK(invoked);
+}
+
+TEST_CASE("LspManager captures completionProvider from a real initialize response", "[Lsp]") {
+    // The handshake is what populates this in production; ClientDisconnected
+    // must not leave a stale entry behind for a respawned server.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    manager.SetCompletionProviderForTesting(
+        "test-lang", ned::editor::lsp::CompletionProviderInfo{.triggerCharacters = {"."}, .resolveProvider = true});
+    const auto provider = manager.CompletionProviderFor("test-lang");
+    REQUIRE(provider.has_value());
+    CHECK(provider->triggerCharacters == std::vector<std::string>{"."});
+    CHECK(provider->resolveProvider);
+    CHECK_FALSE(manager.CompletionProviderFor("other-lang").has_value());
+}

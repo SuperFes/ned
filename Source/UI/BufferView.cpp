@@ -4729,6 +4729,26 @@ bool BufferView::OnKeyEvent(const Event& event) {
             CycleActiveCompletion(-1);
             return true;
         }
+        // completion-trigger-characters follow-up: a commit character
+        // accepts the selected item and *then* inserts itself -- typing "("
+        // after a function name completes the name and keeps the paren.
+        // Only characters the server (or the item) actually declared count:
+        // this client never substitutes a default set, so an editor talking
+        // to a server that declares none behaves exactly as it did before
+        // commitCharacters was parsed at all -- but the servers that do
+        // declare them are not shy: typescript-language-server sends
+        // {".", ",", ";", "("} on every item, so ned/set-lsp-commit-characters
+        // exists to turn the whole behavior off (see its own doc comment in
+        // LspServerConfig.h).
+        if (chord->Special == editor::SpecialKey::None && !chord->Control && !chord->Meta &&
+            editor::lsp::LspCommitCharactersEnabled() &&
+            activeCompletion_->IsCommitCharacter(text::EncodeCodepointUtf8(chord->Codepoint))) {
+            AcceptActiveCompletion();
+            ClampPointToNarrowing();
+            // Falls through to the ordinary dispatch below rather than
+            // returning, so the character itself still self-inserts -- that
+            // is the whole point of a commit character, as opposed to Tab.
+        }
         // completion-fidelity follow-up: a keystroke that edits the word
         // being completed no longer dismisses the popup here -- it falls
         // through to the ordinary dispatch below and then to
@@ -5464,7 +5484,7 @@ void BufferView::ReportError(std::string message, editor::LogCategory category) 
     statusMessage_ = std::move(message);
 }
 
-void BufferView::RequestCompletionAtPoint() {
+void BufferView::RequestCompletionAtPoint(const std::string& triggerCharacter) {
     // Completion is a Normal-mode-only construct (see OnKeyEvent's
     // activeCompletion_ block): a debounce timer armed by Normal-mode typing
     // can fire after an interactive session has since started -- found live
@@ -5537,6 +5557,95 @@ void BufferView::RequestCompletionAtPoint() {
                 // no popup.
                 activeCompletion_.reset();
             }
+            NotifyCompletionChanged();
+        },
+        serverKey, triggerCharacter);
+}
+
+std::vector<std::string> BufferView::CompletionTriggerCharacters() {
+    // completion-trigger-characters follow-up: this replaced a hardcoded
+    // ". : >" whose own comment noted that completionProvider.
+    // triggerCharacters "was never plumbed". The fallback below IS that
+    // hardcoded set, kept for exactly two cases it's still the best answer
+    // for: no LSP server at all (the dabbrev path, where nothing declares
+    // anything), and a server that advertises completion without naming any
+    // trigger characters. Member access "." plus C++ scope resolution "::"
+    // and arrow "->" -- both of the latter matched on their final character,
+    // which is why ":" and ">" are listed rather than the two-character
+    // sequences themselves.
+    static const std::vector<std::string> kFallback = {".", ":", ">"};
+    if (!lspManager_) {
+        return kFallback;
+    }
+    const text::Buffer&                                      buffer      = activeBuffer_.Get();
+    const std::string                                        serverKey   = ResolvedLspServerKey(buffer.Point());
+    const std::string                                        languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
+    const std::optional<editor::lsp::CompletionProviderInfo> provider =
+        lspManager_->CompletionProviderFor(lspManager_->ConnectionKeyForBuffer(buffer, languageKey));
+    if (!provider || provider->triggerCharacters.empty()) {
+        return kFallback;
+    }
+    return provider->triggerCharacters;
+}
+
+void BufferView::MaybeScheduleCompletionResolve() {
+    if (!activeCompletion_ || !lspManager_ || !eventLoop_) {
+        return;
+    }
+    const std::vector<editor::CompletionCandidate>& candidates = activeCompletion_->Candidates();
+    const std::size_t                               selected   = activeCompletion_->SelectedIndex();
+    if (selected >= candidates.size() || candidates[selected].resolved || candidates[selected].item.raw.is_null()) {
+        return; // already answered for, or a synthesized item with nothing to send back
+    }
+    text::Buffer&                                            buffer      = activeBuffer_.Get();
+    const std::string                                        serverKey   = ResolvedLspServerKey(buffer.Point());
+    const std::string                                        languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
+    const std::optional<editor::lsp::CompletionProviderInfo> provider =
+        lspManager_->CompletionProviderFor(lspManager_->ConnectionKeyForBuffer(buffer, languageKey));
+    if (!provider || !provider->resolveProvider) {
+        return; // this server never advertised completionItem/resolve -- see ResolveCompletionItem's own doc comment
+    }
+    ++completionResolveGeneration_;
+    completionResolveDebounceTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::LspCompletionDebounceMs()),
+                                        [this] { RequestCompletionResolve(); });
+}
+
+void BufferView::RequestCompletionResolve() {
+    if (!activeCompletion_ || !lspManager_ || inputMode_ != InputMode::Normal) {
+        return;
+    }
+    const std::size_t selected = activeCompletion_->SelectedIndex();
+    if (selected >= activeCompletion_->Candidates().size() || activeCompletion_->Candidates()[selected].resolved) {
+        return; // the selection moved (or was answered for) between arming and firing
+    }
+    // Copied, not referenced: ResolveCompletionItem's callback runs after a
+    // full round trip, by which point Refilter may have rebuilt the very
+    // vector this candidate lives in.
+    const editor::lsp::CompletionItem item       = activeCompletion_->Candidates()[selected].item;
+    text::Buffer&                     buffer     = activeBuffer_.Get();
+    text::Buffer* const               bufferPtr  = &buffer;
+    const std::string                 serverKey  = ResolvedLspServerKey(buffer.Point());
+    const std::size_t                 generation = completionResolveGeneration_;
+    lspManager_->ResolveCompletionItem(
+        buffer, item,
+        [this, bufferPtr, generation, selected, label = item.label](std::optional<editor::lsp::CompletionItem> resolved) {
+            if (generation != completionResolveGeneration_ || !activeCompletion_ || bufferPtr != &activeBuffer_.Get()) {
+                return; // superseded, dismissed, or the buffer changed under us
+            }
+            if (!resolved) {
+                return;
+            }
+            // The generation guard already rules out a *newer* selection,
+            // but not a list narrowed under this one by a keystroke that
+            // left the selection index numerically valid -- comparing the
+            // label is what confirms row `selected` is still the row this
+            // was requested for. ApplyResolution's own bounds check covers
+            // the rest.
+            const std::vector<editor::CompletionCandidate>& candidates = activeCompletion_->Candidates();
+            if (selected >= candidates.size() || candidates[selected].item.label != label) {
+                return;
+            }
+            activeCompletion_->ApplyResolution(selected, *resolved);
             NotifyCompletionChanged();
         },
         serverKey);
@@ -5713,22 +5822,31 @@ void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std:
         return; // only plain self-insert keystrokes schedule automatic completion
     }
     // completion-auto-trigger-gate follow-up: only a word-continuation
-    // keystroke (an identifier the user is actively typing) or a small,
-    // hardcoded set of real completion trigger characters (member access
-    // ".", C++ scope resolution "::"/arrow "->", both ending in one of
-    // ":"/">" ) schedules a request -- everything else (";", ")", "}", ",",
-    // whitespace, ...) is a statement/expression boundary, not a place
-    // completions are useful. Same "small fixed set, not real server-
-    // declared triggerCharacters capability negotiation" precedent
-    // MaybeScheduleSignatureHelp's own "(" / "," gate already establishes
-    // just below -- this codebase has no completionProvider.triggerCharacters
-    // plumbing to consult instead. Found live: typing ";" was popping the
-    // completion popup because clangd (like most servers) happily answers
-    // textDocument/completion with general in-scope symbols even for an
-    // empty/non-identifier prefix -- nothing here previously looked at
-    // *which* character was typed, only the syntax class already at point.
-    if (!IsWordCodepoint(chord.Codepoint) && chord.Codepoint != U'.' && chord.Codepoint != U':' && chord.Codepoint != U'>') {
-        return;
+    // keystroke (an identifier the user is actively typing) or a real
+    // completion trigger character schedules a request -- everything else
+    // (";", ")", "}", ",", whitespace, ...) is a statement/expression
+    // boundary, not a place completions are useful. Found live: typing ";"
+    // was popping the completion popup because clangd (like most servers)
+    // happily answers textDocument/completion with general in-scope symbols
+    // even for an empty/non-identifier prefix -- nothing here previously
+    // looked at *which* character was typed, only the syntax class already
+    // at point.
+    //
+    // completion-trigger-characters follow-up: that trigger set is now the
+    // running server's own completionProvider.triggerCharacters, falling
+    // back to the hardcoded ". : >" this shipped with -- see
+    // CompletionTriggerCharacters. A trigger-character keystroke is also
+    // reported as such to the server (triggerKind 2), which is a different
+    // question a server is entitled to answer differently: a request caused
+    // by "." should return members, not every in-scope symbol.
+    std::string triggerCharacter;
+    if (!IsWordCodepoint(chord.Codepoint)) {
+        const std::string              typed    = text::EncodeCodepointUtf8(chord.Codepoint);
+        const std::vector<std::string> triggers = CompletionTriggerCharacters();
+        if (std::find(triggers.begin(), triggers.end(), typed) == triggers.end()) {
+            return;
+        }
+        triggerCharacter = typed;
     }
     if (!contentChanged) {
         return; // nothing actually changed
@@ -5743,9 +5861,9 @@ void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std:
     // qualifying keystroke, cancelling the stale one outright, which is what
     // makes this a debounce rather than a fixed-interval repeat.
     if (eventLoop_) {
-        completionDebounceTimer_.Arm(*eventLoop_, delay, [this] {
+        completionDebounceTimer_.Arm(*eventLoop_, delay, [this, triggerCharacter = std::move(triggerCharacter)] {
             completionDebounceDeadline_.reset();
-            RequestCompletionAtPoint();
+            RequestCompletionAtPoint(triggerCharacter);
         });
     }
 }
@@ -6044,32 +6162,71 @@ void BufferView::AcceptActiveCompletion() {
     activeCompletion_.reset();
     NotifyCompletionChanged();
 
+    // completion-additional-edits follow-up: the server's own
+    // additionalTextEdits -- the "#include <vector>" an accepted std::vector
+    // needs, the "import foo" a Python symbol needs. Applied *before* the
+    // main insertion, not after, for two reasons: they were computed against
+    // the document as it was before this item was inserted (so their
+    // positions are only honest against that state), and applying them first
+    // means the main range only has to be relocated once, by
+    // ApplyWorkspaceTextEditsAndRelocate's own return value, rather than
+    // every additional edit having to be re-resolved against a document the
+    // insertion just moved.
+    //
+    // Deliberately NOT routed through ApplyProjectEdit despite ROADMAP's own
+    // framing: per spec these always target the completed document itself,
+    // so there is no second buffer for a multi-file transaction to hold, and
+    // going through it would open a separate undo group (and record a
+    // pointless one-file project transaction) rather than joining the
+    // accept's own single step.
+    const bool  hasAdditionalEdits = !plan->additionalEdits.empty();
+    std::size_t replaceStart       = plan->replaceStart;
+    std::size_t replaceEnd         = plan->replaceEnd;
+    if (hasAdditionalEdits) {
+        // Nestable, so this and the accept's own group below collapse into
+        // one undo step: an undo that removed the inserted symbol but left
+        // its "#include" behind would be a broken intermediate state, the
+        // same reasoning the delete+insert pair is already grouped for.
+        buffer.BeginUndoGroup();
+        const std::size_t shiftedStart = editor::lsp::ApplyWorkspaceTextEditsAndRelocate(buffer, plan->additionalEdits, replaceStart);
+        replaceEnd                     = (replaceEnd - replaceStart) + shiftedStart;
+        replaceStart                   = shiftedStart;
+    }
+    const auto endAdditionalEditGroup = [&buffer, hasAdditionalEdits] {
+        if (hasAdditionalEdits) {
+            buffer.EndUndoGroup();
+        }
+    };
+
     if (plan->isSnippet) {
         // snippet-expansion follow-up: a snippet-format item's insertText
         // is TextMate syntax, never literal text -- replace the range with
         // the parsed expansion and start a tabstop session, the exact
         // InteractiveRequest::SnippetExpand path. BeginSnippetExpansion
         // already takes a range and does its own undo grouping.
-        BeginSnippetExpansion(plan->replaceStart, plan->replaceEnd, plan->newText);
+        BeginSnippetExpansion(replaceStart, replaceEnd, plan->newText);
+        endAdditionalEditGroup();
         return;
     }
-    if (plan->replaceStart == plan->replaceEnd && plan->newText.empty()) {
-        return; // nothing to do -- don't open an undo group for a no-op
+    if (replaceStart == replaceEnd && plan->newText.empty()) {
+        endAdditionalEditGroup();
+        return; // nothing to insert -- but any additional edits already applied still stand
     }
     // One undo step for the delete+insert pair: accepting a completion is a
     // single user action, and an undo that left the typed prefix deleted
     // but the completion not inserted would be a broken intermediate state.
     buffer.BeginUndoGroup();
-    if (plan->replaceStart < plan->replaceEnd) {
+    if (replaceStart < replaceEnd) {
         // DeleteRange takes a *length*, not an end offset. Point sits at
         // replaceEnd, and DeleteRange relocates it to replaceStart, which is
         // exactly where InsertAtPoint below then writes.
-        buffer.DeleteRange(plan->replaceStart, plan->replaceEnd - plan->replaceStart);
+        buffer.DeleteRange(replaceStart, replaceEnd - replaceStart);
     }
     if (!plan->newText.empty()) {
         buffer.InsertAtPoint(plan->newText);
     }
     buffer.EndUndoGroup();
+    endAdditionalEditGroup();
 }
 
 void BufferView::AcceptActiveCompletionAt(std::size_t index) {
@@ -6206,6 +6363,13 @@ void BufferView::NotifyCompletionChanged() {
         model.previewText = documentation;
     }
     onCompletionChanged_(std::move(model));
+    // completion-resolve follow-up: every selection change funnels through
+    // here (cycling, a click, a wheel step, a narrowing keystroke), which
+    // makes this the one place a per-item resolve has to be armed from --
+    // and arming after the popup was already handed over means the fetched
+    // documentation arrives as a second, later repaint rather than delaying
+    // the first one behind a round trip.
+    MaybeScheduleCompletionResolve();
 }
 
 void BufferView::RequestCodeActionsAtPoint() {

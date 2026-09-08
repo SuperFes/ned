@@ -59,6 +59,20 @@ struct CompletionCandidate {
     // item's own textEdit range when the server sent one, else the caller's
     // word-boundary prefix start (see the constructor).
     std::size_t replaceStart = 0;
+    // completion-resolve follow-up: this candidate's index in the session's
+    // own unranked master list. candidates_ is a ranked *copy* of that list
+    // and is rebuilt from scratch on every keystroke, so a resolve response
+    // landing mid-typing has to write through to the master too or the
+    // fetched documentation would vanish on the very next character typed.
+    // Stable for the session's lifetime; a plain index rather than a pointer
+    // because both vectors reallocate.
+    std::size_t sourceIndex = 0;
+    // Whether completionItem/resolve has already answered for this item --
+    // what keeps the debounced resolve from re-asking for a row the user
+    // keeps cycling back to. Set even when the response merged nothing (a
+    // server with genuinely no extra detail): "asked, don't ask again" is
+    // the useful state, not "has documentation."
+    bool resolved = false;
 };
 
 class CompletionSession {
@@ -129,14 +143,53 @@ class CompletionSession {
         std::size_t replaceEnd   = 0;
         std::string newText;
         bool        isSnippet = false;
+        // completion-resolve follow-up: the item's additionalTextEdits --
+        // the "#include <vector>" an accepted std::vector needs. Positions,
+        // not byte offsets, because these are resolved against the buffer at
+        // apply time by the caller (Editor/Lsp/LspEditApply.h), which is
+        // also what relocates replaceStart/replaceEnd if one of these lands
+        // before them. Empty unless a resolve response filled them in.
+        std::vector<lsp::WorkspaceTextEdit> additionalEdits;
     };
     [[nodiscard]] std::optional<AcceptPlan> PlanAccept(std::size_t point) const;
+
+    // completion-resolve follow-up. Merges a completionItem/resolve response
+    // into the candidate at `index` (an index into Candidates(), i.e. the
+    // ranked list the popup shows) and into its master-list twin, and marks
+    // it resolved either way. Out-of-range indices are ignored, the same way
+    // Select's are and for the same reason: a response landing after the
+    // list narrowed under it must not silently write into a neighbor.
+    //
+    // Only documentation/detail/additionalTextEdits are taken, and only when
+    // the resolved item actually carries them -- the LSP spec forbids a
+    // server changing an item's insert behavior on resolve, and honoring
+    // that is what keeps a response landing mid-typing from rewriting what
+    // Tab would insert. label/sortText/filterText are likewise left alone so
+    // a resolve can never reorder the list under the user.
+    void ApplyResolution(std::size_t index, const lsp::CompletionItem& resolved);
+
+    // completion-trigger-characters follow-up. Whether `ch` (one typed
+    // character, UTF-8) is a commit character for the *selected* candidate:
+    // typing it should accept that candidate and then insert the character
+    // itself. False when there's no selection, or when the selected item
+    // declared none -- this session never substitutes a default set, so a
+    // server that declares nothing behaves exactly as it did before commit
+    // characters were parsed at all.
+    [[nodiscard]] bool IsCommitCharacter(std::string_view ch) const;
 
   private:
     // Ranks allCandidates_ against the typed prefix into candidates_, and
     // resets the selection. Shared by the constructor and Refilter so the
     // initial list and every narrowed one are ordered by the exact same
     // rule.
+    //
+    // completion-trigger-characters follow-up: for an *empty* prefix the
+    // reset selection honors the server's own preselect flag rather than
+    // landing on row 0 -- that flag is the server saying "this is the one,"
+    // and with nothing typed there is no better evidence. Once a prefix
+    // exists the fuzzy ranking is better evidence, so preselect is ignored
+    // from then on (VS Code's own rule, and it avoids the popup selecting a
+    // row the typed text scores worst).
     void Rank(std::string_view prefix);
 
     // Every candidate the server sent, untouched -- candidates_ is a ranked
