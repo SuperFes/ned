@@ -51,8 +51,10 @@ void BufferView::EnsureFoldableBlocksCache() const {
 
     if (!FoldGutterActive()) {
         foldableBlocksCache_.clear();
-        foldableBlocksCacheBuffer_     = &buffer;
-        foldableBlocksCacheGeneration_ = buffer.ContentGeneration();
+        // Deliberately a narrower key than the eligible path's below: the two
+        // never compare equal, so re-enabling the fold gutter always rebuilds
+        // rather than matching a stamp left behind while the cache was empty.
+        foldableBlocksCacheStamp_ = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
         return;
     }
 
@@ -60,8 +62,9 @@ void BufferView::EnsureFoldableBlocksCache() const {
     const bool                           huge                   = content.IsHuge();
     const auto [windowStart, windowEnd]                         = HugeStructuralWindow(content);
 
-    if (foldableBlocksCacheBuffer_ == &buffer && foldableBlocksCacheGeneration_ == buffer.ContentGeneration() &&
-        foldableBlocksCacheWindowStart_ == windowStart && foldableBlocksCacheWindowEnd_ == windowEnd) {
+    const bufferview::CacheStamp stamp =
+        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), windowStart, windowEnd});
+    if (foldableBlocksCacheStamp_.Matches(stamp)) {
         return;
     }
 
@@ -111,10 +114,8 @@ void BufferView::EnsureFoldableBlocksCache() const {
     else {
         foldableBlocksCache_ = it->second.ranges;
     }
-    foldableBlocksCacheBuffer_      = &buffer;
-    foldableBlocksCacheGeneration_  = buffer.ContentGeneration();
-    foldableBlocksCacheWindowStart_ = windowStart;
-    foldableBlocksCacheWindowEnd_   = windowEnd;
+    foldableBlocksCacheStamp_  = stamp;
+    foldableBlocksCacheWindow_ = {windowStart, windowEnd};
 }
 
 void BufferView::EnsureEmbeddedDocumentCache() {
@@ -142,9 +143,10 @@ void BufferView::EnsureFoldGutterCache() const {
     EnsureFoldableBlocksCache();
     text::Buffer& buffer = activeBuffer_.Get();
 
-    if (foldGutterCacheBuffer_ == &buffer && foldGutterCacheContentGeneration_ == buffer.ContentGeneration() &&
-        foldGutterCacheFoldGeneration_ == buffer.FoldGeneration() &&
-        foldGutterCacheWindowStart_ == foldableBlocksCacheWindowStart_ && foldGutterCacheWindowEnd_ == foldableBlocksCacheWindowEnd_) {
+    const bufferview::CacheStamp stamp =
+        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), buffer.FoldGeneration(),
+                                             foldableBlocksCacheWindow_.first, foldableBlocksCacheWindow_.second});
+    if (foldGutterCacheStamp_.Matches(stamp)) {
         return;
     }
 
@@ -221,18 +223,15 @@ void BufferView::EnsureFoldGutterCache() const {
         }
     }
 
-    foldGutterCacheBuffer_            = &buffer;
-    foldGutterCacheContentGeneration_ = buffer.ContentGeneration();
-    foldGutterCacheFoldGeneration_    = buffer.FoldGeneration();
-    foldGutterCacheWindowStart_       = foldableBlocksCacheWindowStart_;
-    foldGutterCacheWindowEnd_         = foldableBlocksCacheWindowEnd_;
+    foldGutterCacheStamp_ = stamp;
 }
 
 void BufferView::EnsureUnsavedChangeCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
-    if (unsavedChangeCacheBuffer_ == &buffer && unsavedChangeCacheContentGeneration_ == buffer.ContentGeneration() &&
-        unsavedChangeCacheGeneration_ == buffer.UnsavedChangeGeneration()) {
+    const bufferview::CacheStamp stamp =
+        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), buffer.UnsavedChangeGeneration()});
+    if (unsavedChangeCacheStamp_.Matches(stamp)) {
         return;
     }
 
@@ -258,15 +257,14 @@ void BufferView::EnsureUnsavedChangeCache() const {
         }
     }
 
-    unsavedChangeCacheBuffer_            = &buffer;
-    unsavedChangeCacheContentGeneration_ = buffer.ContentGeneration();
-    unsavedChangeCacheGeneration_        = buffer.UnsavedChangeGeneration();
+    unsavedChangeCacheStamp_ = stamp;
 }
 
 void BufferView::EnsureDiagnosticGutterCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
-    if (diagnosticGutterCacheBuffer_ == &buffer && diagnosticGutterCacheGeneration_ == buffer.DiagnosticsGeneration()) {
+    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(&buffer, {buffer.DiagnosticsGeneration()});
+    if (diagnosticGutterCacheStamp_.Matches(stamp)) {
         return;
     }
 
@@ -289,8 +287,7 @@ void BufferView::EnsureDiagnosticGutterCache() const {
     std::sort(diagnosticLineSeverities_.begin(), diagnosticLineSeverities_.end(),
               [](const auto& a, const auto& b) { return a.first < b.first; });
 
-    diagnosticGutterCacheBuffer_     = &buffer;
-    diagnosticGutterCacheGeneration_ = buffer.DiagnosticsGeneration();
+    diagnosticGutterCacheStamp_ = stamp;
 }
 
 void BufferView::EnsureSymbolMarkersCache() const {
@@ -303,8 +300,9 @@ void BufferView::EnsureSymbolMarkersCache() const {
     // call this same frame/buffer stays a cheap no-op.
     if (!mode_.symbolKind || buffer.ReadOnly()) {
         symbolMarkersCache_.clear();
-        symbolMarkersCacheBuffer_            = &buffer;
-        symbolMarkersCacheContentGeneration_ = buffer.ContentGeneration();
+        // Narrower key than the eligible path below, for the same reason
+        // EnsureFoldableBlocksCache's own ineligible path is.
+        symbolMarkersCacheStamp_ = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
         return;
     }
 
@@ -312,8 +310,9 @@ void BufferView::EnsureSymbolMarkersCache() const {
     const bool                huge     = content.IsHuge();
     const auto [windowStart, windowEnd] = HugeStructuralWindow(content);
 
-    if (symbolMarkersCacheBuffer_ == &buffer && symbolMarkersCacheContentGeneration_ == buffer.ContentGeneration() &&
-        symbolMarkersCacheWindowStart_ == windowStart && symbolMarkersCacheWindowEnd_ == windowEnd) {
+    const bufferview::CacheStamp stamp =
+        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), windowStart, windowEnd});
+    if (symbolMarkersCacheStamp_.Matches(stamp)) {
         return;
     }
 
@@ -331,19 +330,18 @@ void BufferView::EnsureSymbolMarkersCache() const {
             marker.endByte += windowStart;
         }
     }
-    symbolMarkersCacheBuffer_            = &buffer;
-    symbolMarkersCacheContentGeneration_ = buffer.ContentGeneration();
-    symbolMarkersCacheWindowStart_       = windowStart;
-    symbolMarkersCacheWindowEnd_         = windowEnd;
+    symbolMarkersCacheStamp_  = stamp;
+    symbolMarkersCacheWindow_ = {windowStart, windowEnd};
 }
 
 void BufferView::EnsureSymbolGutterCache() const {
     EnsureSymbolMarkersCache();
     text::Buffer& buffer = activeBuffer_.Get();
 
-    if (symbolGutterCacheBuffer_ == &buffer && symbolGutterCacheContentGeneration_ == buffer.ContentGeneration() &&
-        symbolGutterCacheWindowStart_ == symbolMarkersCacheWindowStart_ &&
-        symbolGutterCacheWindowEnd_ == symbolMarkersCacheWindowEnd_) {
+    const bufferview::CacheStamp stamp =
+        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), symbolMarkersCacheWindow_.first,
+                                             symbolMarkersCacheWindow_.second});
+    if (symbolGutterCacheStamp_.Matches(stamp)) {
         return;
     }
 
@@ -360,25 +358,17 @@ void BufferView::EnsureSymbolGutterCache() const {
     symbolGutterLineKinds_.assign(kindByLine.begin(), kindByLine.end());
     std::sort(symbolGutterLineKinds_.begin(), symbolGutterLineKinds_.end(),
               [](const auto& a, const auto& b) { return a.first < b.first; });
-    symbolGutterCacheBuffer_            = &buffer;
-    symbolGutterCacheContentGeneration_ = buffer.ContentGeneration();
-    symbolGutterCacheWindowStart_       = symbolMarkersCacheWindowStart_;
-    symbolGutterCacheWindowEnd_         = symbolMarkersCacheWindowEnd_;
-
-    symbolGutterCacheBuffer_            = &buffer;
-    symbolGutterCacheContentGeneration_ = buffer.ContentGeneration();
-    symbolGutterCacheWindowStart_       = symbolMarkersCacheWindowStart_;
-    symbolGutterCacheWindowEnd_         = symbolMarkersCacheWindowEnd_;
+    symbolGutterCacheStamp_ = stamp;
 }
 
 void BufferView::EnsureConflictHunkCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
-    if (conflictHunkCacheBuffer_ == &buffer && conflictHunkCacheContentGeneration_ == buffer.ContentGeneration()) {
+    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
+    if (conflictHunkCacheStamp_.Matches(stamp)) {
         return;
     }
     conflictHunkCache_                  = text::ParseConflictHunks(buffer.Text());
-    conflictHunkCacheBuffer_            = &buffer;
-    conflictHunkCacheContentGeneration_ = buffer.ContentGeneration();
+    conflictHunkCacheStamp_ = stamp;
 }
 
 void BufferView::EnsureTestGutterCache() const {
@@ -402,19 +392,19 @@ void BufferView::EnsureTestGutterCache() const {
     // argv vector out, which is why it isn't used here).
     if (!mode_.testDiscovery || buffer.ReadOnly() || testRunner_ == nullptr) {
         testGutterEntries_.clear();
-        testGutterCacheBuffer_            = &buffer;
-        testGutterCacheContentGeneration_ = buffer.ContentGeneration();
-        testGutterCacheOutcomeGeneration_ = testRunner_ != nullptr ? testRunner_->OutcomeGeneration() : 0;
-        testGutterCacheRunnable_          = false; // no runner -- no affordance is possible either
+        // Narrower key than the eligible path below, for the same reason
+        // EnsureFoldableBlocksCache's own ineligible path is.
+        testGutterCacheStamp_ = bufferview::CacheStamp::For(
+            &buffer, {buffer.ContentGeneration(), testRunner_ != nullptr ? testRunner_->OutcomeGeneration() : 0});
+        testGutterCacheRunnable_ = false; // no runner -- no affordance is possible either
         return;
     }
     const bool runnableAffordance = editor::testrun::HasTestFilterCommand();
     if (!testRunner_->LatestOutcome() && !runnableAffordance) {
         testGutterEntries_.clear();
-        testGutterCacheBuffer_            = &buffer;
-        testGutterCacheContentGeneration_ = buffer.ContentGeneration();
-        testGutterCacheOutcomeGeneration_ = testRunner_->OutcomeGeneration();
-        testGutterCacheRunnable_          = runnableAffordance;
+        testGutterCacheStamp_ =
+            bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), testRunner_->OutcomeGeneration()});
+        testGutterCacheRunnable_ = runnableAffordance;
         return;
     }
 
@@ -425,9 +415,10 @@ void BufferView::EnsureTestGutterCache() const {
     // testGutterCacheRunnable_ is part of the key, not just an input: a
     // filter command configured after a run has already landed changes what
     // rows exist without touching content, outcome, or window generation.
-    if (testGutterCacheBuffer_ == &buffer && testGutterCacheContentGeneration_ == buffer.ContentGeneration() &&
-        testGutterCacheOutcomeGeneration_ == testRunner_->OutcomeGeneration() && testGutterCacheWindowStart_ == windowStart &&
-        testGutterCacheWindowEnd_ == windowEnd && testGutterCacheRunnable_ == runnableAffordance) {
+    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(
+        &buffer, {buffer.ContentGeneration(), testRunner_->OutcomeGeneration(), windowStart, windowEnd,
+                  static_cast<std::size_t>(runnableAffordance)});
+    if (testGutterCacheStamp_.Matches(stamp)) {
         return;
     }
 
@@ -519,24 +510,20 @@ void BufferView::EnsureTestGutterCache() const {
                     [](const TestGutterEntry& a, const TestGutterEntry& b) { return a.line == b.line; }),
         testGutterEntries_.end());
 
-    testGutterCacheBuffer_            = &buffer;
-    testGutterCacheContentGeneration_ = buffer.ContentGeneration();
-    testGutterCacheOutcomeGeneration_ = testRunner_->OutcomeGeneration();
-    testGutterCacheWindowStart_       = windowStart;
-    testGutterCacheWindowEnd_         = windowEnd;
-    testGutterCacheRunnable_          = runnableAffordance;
+    testGutterCacheStamp_    = stamp;
+    testGutterCacheRunnable_ = runnableAffordance;
 }
 
 void BufferView::EnsureCoverageGutterCache() const {
     text::Buffer&     buffer           = activeBuffer_.Get();
     const std::size_t reportGeneration = editor::coverage::CoverageReportGeneration();
-    if (coverageGutterCacheBuffer_ == &buffer && coverageGutterCacheReportGeneration_ == reportGeneration) {
+    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(&buffer, {reportGeneration});
+    if (coverageGutterCacheStamp_.Matches(stamp)) {
         return;
     }
 
     coverageGutterLineStatuses_.clear();
-    coverageGutterCacheBuffer_           = &buffer;
-    coverageGutterCacheReportGeneration_ = reportGeneration;
+    coverageGutterCacheStamp_ = stamp;
 
     if (!buffer.Path()) {
         return; // unsaved/scratch buffer -- nothing to match a coverage report's SF: path against
@@ -562,8 +549,9 @@ void BufferView::EnsureCoverageGutterCache() const {
 
 void BufferView::EnsureInlineDiagnosticCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
-    if (inlineDiagnosticCacheBuffer_ == &buffer && inlineDiagnosticCacheDiagGeneration_ == buffer.DiagnosticsGeneration() &&
-        inlineDiagnosticCacheContentGeneration_ == buffer.ContentGeneration()) {
+    const bufferview::CacheStamp stamp =
+        bufferview::CacheStamp::For(&buffer, {buffer.DiagnosticsGeneration(), buffer.ContentGeneration()});
+    if (inlineDiagnosticCacheStamp_.Matches(stamp)) {
         return;
     }
 
@@ -597,14 +585,13 @@ void BufferView::EnsureInlineDiagnosticCache() const {
         };
     }
 
-    inlineDiagnosticCacheBuffer_            = &buffer;
-    inlineDiagnosticCacheDiagGeneration_    = buffer.DiagnosticsGeneration();
-    inlineDiagnosticCacheContentGeneration_ = buffer.ContentGeneration();
+    inlineDiagnosticCacheStamp_ = stamp;
 }
 
 void BufferView::EnsureBlameGutterCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
-    if (blameGutterCacheBuffer_ == &buffer && blameGutterCacheContentGeneration_ == buffer.ContentGeneration()) {
+    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
+    if (blameGutterCacheStamp_.Matches(stamp)) {
         return; // still valid for this buffer/content -- nothing to do (see this method's own header comment)
     }
     // Either the active buffer changed, or its content did since blame was
@@ -612,8 +599,7 @@ void BufferView::EnsureBlameGutterCache() const {
     // real line attribution. Clear it rather than trying to resynthesize
     // it; a fresh vcs-show-blame call is what repopulates it.
     blameLineInfo_.clear();
-    blameGutterCacheBuffer_            = &buffer;
-    blameGutterCacheContentGeneration_ = buffer.ContentGeneration();
+    blameGutterCacheStamp_ = stamp;
 }
 
 bool BufferView::BlameGutterActive() const {
@@ -621,7 +607,9 @@ bool BufferView::BlameGutterActive() const {
 }
 
 void BufferView::EnsureHiddenLineRangesCache() const {
-    text::Buffer& buffer = activeBuffer_.Get();
+    text::Buffer&                buffer = activeBuffer_.Get();
+    const bufferview::CacheStamp stamp =
+        bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration(), buffer.FoldGeneration()});
 
     if (buffer.FoldMarkers().empty()) {
         // Fast path: every buffer that's never had org-cycle/code-fold-toggle
@@ -629,15 +617,11 @@ void BufferView::EnsureHiddenLineRangesCache() const {
         // branch -- no call into org::FoldedLineRanges/codefold::FoldedLineRanges,
         // no outline re-parse or fold-query call, at all.
         hiddenLineRanges_.clear();
-        hiddenLineRangesCacheBuffer_            = &buffer;
-        hiddenLineRangesCacheContentGeneration_ = buffer.ContentGeneration();
-        hiddenLineRangesCacheFoldGeneration_    = buffer.FoldGeneration();
+        hiddenLineRangesCacheStamp_ = stamp;
         return;
     }
 
-    if (hiddenLineRangesCacheBuffer_ == &buffer &&
-        hiddenLineRangesCacheContentGeneration_ == buffer.ContentGeneration() &&
-        hiddenLineRangesCacheFoldGeneration_ == buffer.FoldGeneration()) {
+    if (hiddenLineRangesCacheStamp_.Matches(stamp)) {
         return;
     }
 
@@ -670,9 +654,7 @@ void BufferView::EnsureHiddenLineRangesCache() const {
     else {
         hiddenLineRanges_ = editor::org::FoldedLineRanges(buffer);
     }
-    hiddenLineRangesCacheBuffer_            = &buffer;
-    hiddenLineRangesCacheContentGeneration_ = buffer.ContentGeneration();
-    hiddenLineRangesCacheFoldGeneration_    = buffer.FoldGeneration();
+    hiddenLineRangesCacheStamp_ = stamp;
 }
 
 void BufferView::EnsureLinkCache() const {
@@ -680,19 +662,18 @@ void BufferView::EnsureLinkCache() const {
         // Fast path: every non-Org buffer never even reaches org::ParseLinks
         // -- see this cache's own doc comment in BufferView.h.
         linkCache_.clear();
-        linkCacheBuffer_     = nullptr;
-        linkCacheGeneration_ = 0;
+        linkCacheStamp_.Invalidate();
         return;
     }
 
     text::Buffer& buffer = activeBuffer_.Get();
-    if (linkCacheBuffer_ == &buffer && linkCacheGeneration_ == buffer.ContentGeneration()) {
+    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
+    if (linkCacheStamp_.Matches(stamp)) {
         return;
     }
 
     linkCache_           = editor::org::ParseLinks(buffer.Text());
-    linkCacheBuffer_     = &buffer;
-    linkCacheGeneration_ = buffer.ContentGeneration();
+    linkCacheStamp_ = stamp;
 }
 
 bool BufferView::IsLineHidden(std::size_t line) const {
@@ -733,6 +714,9 @@ void BufferView::EnsureRowCountCache() const {
     const std::size_t gutterWidth  = GutterWidth();
     const int         contentWidth = std::max(1, size().width - static_cast<int>(gutterWidth));
 
+    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(
+        &buffer, {buffer.ContentGeneration(), static_cast<std::size_t>(contentWidth), static_cast<std::size_t>(wrapEnabled)});
+
     if (!wrapEnabled) {
         // Fast path: every buffer with wrap off (the common case) never
         // needs a real per-line row count at all -- RowsForLine's own "1
@@ -740,15 +724,12 @@ void BufferView::EnsureRowCountCache() const {
         // rowCountPerLine_ in that case, so this just keeps the cache keys
         // themselves current without ever calling ComputeWrapSegments.
         rowCountPerLine_.clear();
-        rowCountCacheBuffer_            = &buffer;
-        rowCountCacheContentGeneration_ = buffer.ContentGeneration();
-        rowCountCacheContentWidth_      = contentWidth;
-        rowCountCacheWrapEnabled_       = false;
+        rowCountCacheContentWidth_ = contentWidth;
+        rowCountCacheStamp_        = stamp;
         return;
     }
 
-    if (rowCountCacheBuffer_ == &buffer && rowCountCacheContentGeneration_ == buffer.ContentGeneration() &&
-        rowCountCacheContentWidth_ == contentWidth && rowCountCacheWrapEnabled_ == wrapEnabled) {
+    if (rowCountCacheStamp_.Matches(stamp)) {
         return; // still valid -- whatever's already memoized in rowCountPerLine_ (per RowsForLine) stays
     }
 
@@ -762,10 +743,8 @@ void BufferView::EnsureRowCountCache() const {
     // scan here made every single Paint() call on a huge wrap-enabled
     // document pay for the full document's word-break cost up front.
     rowCountPerLine_.assign(buffer.Content().LineCount(), kRowCountUnknown);
-    rowCountCacheBuffer_            = &buffer;
-    rowCountCacheContentGeneration_ = buffer.ContentGeneration();
-    rowCountCacheContentWidth_      = contentWidth;
-    rowCountCacheWrapEnabled_       = wrapEnabled;
+    rowCountCacheContentWidth_ = contentWidth;
+    rowCountCacheStamp_        = stamp;
 }
 
 std::size_t BufferView::RowsForLine(std::size_t line) const {

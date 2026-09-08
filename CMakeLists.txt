@@ -1087,6 +1087,7 @@ if (NED_BUILD_TESTS)
             Tests/TerminalColorProbeTest.cpp
             Tests/DesktopThemeProbeTest.cpp
             Tests/ActiveBufferTest.cpp
+            Tests/CacheStampTest.cpp
             Tests/MinibufferPromptTest.cpp
             Tests/PromptHistoryTest.cpp
             Tests/TabBarTest.cpp

@@ -264,8 +264,8 @@ void BufferView::Paint(Canvas paneCanvas) {
         // visiting a fundamental-mode one left the symbol/test columns
         // permanently blank until the next edit. Discarding the stamps here
         // forces one recompute under the mode that will actually paint.
-        symbolGutterCacheBuffer_ = nullptr;
-        testGutterCacheBuffer_   = nullptr;
+        symbolGutterCacheStamp_.Invalidate();
+        testGutterCacheStamp_.Invalidate();
     }
     // Diff gutter markers follow-up: a newly-active buffer's diff markers
     // belong to a completely different file -- clearing immediately
@@ -594,14 +594,19 @@ void BufferView::Paint(Canvas paneCanvas) {
     // huge file that finishes loading and reverts to writable would
     // otherwise still pay a full buffer.Text() copy plus a whole-buffer
     // tree-sitter parse on every edit.
+    // Written once and used for both the check and the store, so the two
+    // cannot drift; a lambda rather than a plain local because the semantic
+    // tokens generation must stay lazily evaluated in the else-if below.
+    const auto highlightStampFor = [&](std::size_t semanticTokensGeneration) {
+        return bufferview::CacheStamp::For(
+            &buffer, {buffer.ContentGeneration(), editor::CaptureClassGeneration(), semanticTokensGeneration});
+    };
     if (!mode_.highlight || buffer.ReadOnly() || buffer.Size() > editor::MaxHighlightBytes()) {
-        highlightCacheBuffer_ = nullptr;
+        highlightCacheStamp_.Invalidate();
         highlightCacheSpans_.clear();
     }
     else if (const std::size_t semanticTokensGeneration = lspManager_ ? lspManager_->SemanticTokensGeneration(buffer) : 0;
-             highlightCacheBuffer_ != &buffer || highlightCacheGeneration_ != buffer.ContentGeneration() ||
-             highlightCacheClassGeneration_ != editor::CaptureClassGeneration() ||
-             highlightCacheSemanticTokensGeneration_ != semanticTokensGeneration) {
+             !highlightCacheStamp_.Matches(highlightStampFor(semanticTokensGeneration))) {
         // per-buffer-highlight-cache follow-up: persists across a buffer
         // switch, not just repeated Paint() calls on the same buffer -- see
         // highlightCacheByBuffer_'s own doc comment in BufferView.h. The
@@ -639,10 +644,7 @@ void BufferView::Paint(Canvas paneCanvas) {
         else {
             highlightCacheSpans_ = it->second.spans;
         }
-        highlightCacheBuffer_                   = &buffer;
-        highlightCacheGeneration_               = buffer.ContentGeneration();
-        highlightCacheClassGeneration_          = editor::CaptureClassGeneration();
-        highlightCacheSemanticTokensGeneration_ = semanticTokensGeneration;
+        highlightCacheStamp_ = highlightStampFor(semanticTokensGeneration);
     }
     const std::vector<editor::HighlightSpan>& highlightSpans = highlightCacheSpans_;
 
