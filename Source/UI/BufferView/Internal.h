@@ -18,7 +18,7 @@
 #ifndef NED_UI_BUFFERVIEWINTERNAL_H
 #define NED_UI_BUFFERVIEWINTERNAL_H
 
-#include "BufferView.h"
+#include "UI/BufferView.h"
 
 #include <algorithm>
 #include <cctype>
@@ -36,8 +36,8 @@
 #include <utility>
 #include <vector>
 
-#include "Border.h"
-#include "EchoArea.h"
+#include "UI/Border.h"
+#include "UI/EchoArea.h"
 #include "Editor/Acp/AcpConfig.h"
 #include "Editor/Bookmark.h"
 #include "Editor/BufferSave.h"
@@ -97,7 +97,7 @@
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
 #include "Janet/Environment.h"
-#include "KeyTranslation.h"
+#include "UI/KeyTranslation.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Utf8.h"
 #include "UI/ThemeFile.h"

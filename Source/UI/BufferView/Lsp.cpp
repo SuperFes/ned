@@ -1,16 +1,16 @@
 //
-// Part of BufferView -- see BufferView.h for the class itself and
+// Part of BufferView -- see UI/BufferView.h for the class itself and
 // Docs/BufferViewDecomposition.md for why this file exists.
 //
 // The LSP feature broker: completion, hover, signature help, code actions/lens,
 // definition/peek, symbols, hierarchy, rename, linked editing, and jump history.
 //
 
-#include "BufferViewInternal.h"
+#include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
 
-// The file-local helpers these definitions call live in BufferViewInternal.h
+// The file-local helpers these definitions call live in BufferView/Internal.h
 // now that several parts share them -- see that header. This using-directive is
 // what let the split leave every call site untouched.
 using namespace detail;
