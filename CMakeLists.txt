@@ -829,13 +829,13 @@ add_library(ned_lib STATIC
         Source/UI/BufferListPanel.cpp
         Source/UI/DapThreadsPanel.cpp
         Source/UI/BufferView.cpp
-        Source/UI/BufferViewPaint.cpp
-        Source/UI/BufferViewGutter.cpp
-        Source/UI/BufferViewPrompts.cpp
-        Source/UI/BufferViewLsp.cpp
-        Source/UI/BufferViewVcsDap.cpp
-        Source/UI/BufferViewBuffers.cpp
-        Source/UI/BufferViewMouse.cpp
+        Source/UI/BufferView/Paint.cpp
+        Source/UI/BufferView/Gutter.cpp
+        Source/UI/BufferView/Prompts.cpp
+        Source/UI/BufferView/Lsp.cpp
+        Source/UI/BufferView/VcsDap.cpp
+        Source/UI/BufferView/Buffers.cpp
+        Source/UI/BufferView/Mouse.cpp
         Source/UI/WindowManager.cpp
         Source/UI/AsyncFileLoader.cpp
         Source/UI/HugeFileLoader.cpp
