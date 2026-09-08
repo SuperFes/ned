@@ -106,34 +106,22 @@ is never the shortcut it looks like), `resolver-gaps` and `lsp-document-link`
       so it was left alone deliberately rather than overlooked. Revisit if a project path
       with a space/`#`/`?` in it ever misbehaves.
 
-**LSP completion fidelity** (scoped 2026-09-07 from a full survey of the path). Today's
-`textDocument/completion` support is a v1: `LspContent.h:28`'s `CompletionItem` parses
-`label`/`insertText`/`insertTextFormat`/`kind`/`detail`/`documentation` and nothing else,
-and the header contract at `LspContent.h:68-72` states it outright — *returned in server
-order, no client-side re-filtering or re-sorting*. `sortText`, `filterText`, `textEdit`,
-`additionalTextEdits`, `commitCharacters`, `preselect`, `data`/`completionItem/resolve`,
-`CompletionList.isIncomplete` and `itemDefaults` are all ignored. Each step below is
-independently shippable; there is currently no test covering `ExtractCompletionItems` or
-the accept path by name, so every step should bring its own. Steps 1-2 restructure the
-request lifecycle and `BufferView.cpp` is past 16k lines, so this belongs in a new
-`Source/UI/CompletionController.*` rather than growing that file further.
+**LSP completion fidelity** (scoped 2026-09-07 from a full survey of the path).
+Shipped since, one slug each for `git log --grep=`: `completion-fidelity` (honor
+`textEdit` — per-item replace ranges, both the TextEdit and InsertReplaceEdit shapes,
+`itemDefaults`, and one replace-`[replaceStart, point)` accept rule for every source,
+which also fixed a real line-corrupting bug against servers that fuzzy-match
+server-side; plus incremental narrowing — `sortText`/`filterText`/`isIncomplete`
+parsed, the item set kept across keystrokes and refiltered locally via `FuzzyMatch.h`,
+the server re-asked only when it said `isIncomplete` or point left the word) and
+`completion-popup-scroll`. Both live in `Editor/CompletionSession.h`, not the
+`Source/UI/CompletionController.*` this file originally proposed — none of that logic
+needs a terminal, so it follows `IncrementalSearch`/`SnippetSession`'s precedent
+instead and is unit-tested without a `Screen`.
 
-- [ ] **Incremental narrowing** — the single biggest reason completion doesn't feel
-      alive. `MaybeScheduleAutoCompletion` drops `activeCompletion_` on *every* keystroke
-      (`BufferView.cpp:5580`) and re-issues a whole new request after the debounce
-      (default 500ms), so each typed character costs a full round trip and the popup
-      blinks out in between. Parse `sortText`/`filterText`/`isIncomplete`, keep the item
-      set across keystrokes, refilter locally (`Editor/FuzzyMatch.h` with `sortText` as
-      the tiebreak — `FuzzyFilterAndRank` already backs every non-LSP picker in the
-      codebase but is never applied to LSP items), and re-request only when the server
-      said `isIncomplete` or the replace range moves.
-- [ ] **Honor `textEdit`** — `CompletionInsertSuffix` (`BufferView.cpp:5960`) does prefix
-      subtraction and falls back to inserting the *whole* string when `insertText` doesn't
-      start with the typed prefix (`:5988`), corrupting the line against any server doing
-      its own fuzzy matching. Needs a replace range per item, so
-      `ActiveCompletion::prefixStart` (`BufferView.h:4013` — one value shared by the whole
-      list, because the non-LSP fallback sources use different word-boundary rules) has to
-      move per-item. Also a prerequisite for the step above being correct.
+Still ignored on the wire: `additionalTextEdits`, `commitCharacters`, `preselect`,
+`data`/`completionItem/resolve`. The remaining steps are independently shippable:
+
 - [ ] **`completionItem/resolve`** — lazily fetch `documentation`/`detail` for the
       selected item only, debounced on selection change, into `ListPopup`'s existing
       `previewText` pane.
@@ -146,23 +134,16 @@ request lifecycle and `BufferView.cpp` is past 16k lines, so this belongs in a n
       `completionProvider.triggerCharacters` was never plumbed), and `triggerKind` is
       always `1` (Invoked) even when a character triggered the request
       (`LspManager.cpp:2284-2288`). `preselect` and `commitCharacters` belong here too.
-- [ ] **The completion popup can't scroll** — independent of every step above.
-      `ListPopup::Paint` truncates at the box height and always starts at row 0
-      (`ListPopup.cpp:196-199`); the prompt pickers work around this with a sliding window
-      computed *outside* the widget (`ComputeCandidatePopupWindow`/
-      `BuildFuzzyCandidatePopupModel`, `BufferView.cpp:254-300`), but
-      `NotifyCompletionChanged` pushes items unwindowed (`:6023`), so cycling past ~15
-      candidates scrolls the selection off the bottom invisibly. `SetOnScrollBy` is wired
-      for `candidatePopup` only (`main.cpp:1986`), never for the completion popup, so
-      wheel scroll and hover-highlight don't work there either.
 - [ ] Considered and deliberately *not* prioritized (recorded so it stays a conscious
       call): merging non-LSP candidates into the same popup. `RequestCompletionAtPoint`
       (`BufferView.cpp:5427-5438`) is a mutually-exclusive cascade — LSP if running, else
       Janet-binding completion in janet-mode, else dabbrev — so buffer words and snippet
       triggers are strict fallbacks that vanish the moment a server attaches, never ranked
       alongside server items. A real fix means a completion-source abstraction and a
-      source-neutral candidate type (`ActiveCompletion::items` is literally the LSP wire
-      struct today, and the fallback sources fake LSP items to fit it). Bigger than the
+      source-neutral candidate type. `completion-fidelity` moved this closer without
+      doing it: `CompletionSession`'s own `CompletionCandidate` is already the wrapper
+      such a type would grow out of, but its payload is still the LSP wire struct and
+      the fallback sources still synthesize LSP items to fit it. Bigger than the
       fidelity work above and independent of it.
 
 ### Mouse Ergonomics
