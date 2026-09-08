@@ -34,8 +34,7 @@ void BufferView::DispatchBlameForTesting(std::vector<editor::vcs::VcsBlameLine> 
     for (std::size_t i = 0; i < lines.size(); ++i) {
         blameLineInfo_.emplace_back(i, std::move(lines[i]));
     }
-    blameGutterCacheBuffer_            = &buffer;
-    blameGutterCacheContentGeneration_ = buffer.ContentGeneration();
+    blameGutterCacheStamp_ = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
 }
 
 void BufferView::RequestBlameForCurrentBuffer() {
@@ -44,13 +43,13 @@ void BufferView::RequestBlameForCurrentBuffer() {
     // reported, real gap this fixes is that there was previously no way to
     // turn it back off at all short of switching buffers and back (which
     // clears it as a side effect of Paint()'s own buffer-switch handling,
-    // not a deliberate toggle). Guarded on blameGutterCacheBuffer_
+    // not a deliberate toggle). Guarded on blameGutterCacheStamp_'s buffer
     // specifically (not just BlameGutterActive()) so pressing the key
     // again for a *different* buffer than the one blame is currently
     // loaded for still fetches fresh, rather than clearing the wrong
     // buffer's (already-stale-by-definition, since it's a different
     // buffer) data.
-    if (BlameGutterActive() && blameGutterCacheBuffer_ == &activeBuffer_.Get()) {
+    if (BlameGutterActive() && blameGutterCacheStamp_.IsFor(&activeBuffer_.Get())) {
         blameLineInfo_.clear();
         statusMessage_ = "blame hidden";
         return;
