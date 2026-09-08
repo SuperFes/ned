@@ -1029,7 +1029,7 @@ void BufferView::RequestQuickFixAtPoint() {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = ++codeActionRequestGeneration_;
+    const std::size_t   generation = codeActionRequest_.Begin();
 
     // Same diagnostic-at-point range/server-routing preference as
     // RequestCodeActionsAtPoint -- see that method's own doc comment.
@@ -1055,7 +1055,7 @@ void BufferView::RequestQuickFixAtPoint() {
     lspManager_->RequestCodeActions(
         buffer, rangeStart, rangeEnd,
         [this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
-            if (generation != codeActionRequestGeneration_) {
+            if (codeActionRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {

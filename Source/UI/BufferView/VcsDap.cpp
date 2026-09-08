@@ -896,11 +896,11 @@ void BufferView::ExpandPointerGraphNode(std::size_t index) {
     PushPointerGraphModel(); // shows the loading glyph immediately
 
     const int         variablesReference = node.variablesReference;
-    const std::size_t generation         = ++pointerGraphRequestGeneration_;
+    const std::size_t generation         = pointerGraphRequest_.Begin();
     dapManager_->RequestVariables(
         variablesReference,
         [this, index, generation](std::vector<editor::dap::DapManager::Variable> variables) {
-            if (!pointerGraphSession_ || generation != pointerGraphRequestGeneration_) {
+            if (!pointerGraphSession_ || pointerGraphRequest_.IsStale(generation)) {
                 return; // superseded by a newer request, or the session ended -- ExpandHierarchyNode's own guard
             }
             PointerGraphSession&                  session = *pointerGraphSession_;
