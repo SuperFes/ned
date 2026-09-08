@@ -128,7 +128,9 @@ void PtyProcess::StartReadLoop() {
                 // negative timeout is WaitReadable's own "block forever"
                 // sentinel (poll(2)'s convention), matching idle-shell
                 // silence being perfectly normal here.
-                [[maybe_unused]] const bool ready = child_.WaitReadable(std::chrono::milliseconds(-1)); // always true -- a negative timeout never times out
+                if (!child_.WaitReadable(std::chrono::milliseconds(-1))) {
+                    break; // a negative timeout never times out, so this is the closed-connection case -- the same teardown exit EOF/EIO below takes
+                }
                 continue;
             }
             if (count <= 0) {

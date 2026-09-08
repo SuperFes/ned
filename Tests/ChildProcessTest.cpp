@@ -275,3 +275,43 @@ TEST_CASE("ChildProcess::CloseConnection is idempotent and safe before the destr
     child.CloseConnection(); // must not double-close a recycled fd number
     REQUIRE(child.ReadFd() == -1);
 }
+
+// closed-connection-never-parks follow-up. The deterministic regression test
+// for the flaky protocol-client `ctest -j8` timeouts: poll(2) *ignores* a
+// negative fd rather than failing on it, so a one-entry pollfd set holding
+// only -1 waits out its full timeout -- and the unbounded (negative-timeout)
+// first-byte wait every framing reader uses parks forever. A protocol
+// client's read thread that hadn't been scheduled into its first read by the
+// time its owner was destroyed landed exactly here, wedging the destructor's
+// own join() behind it.
+TEST_CASE("ChildProcess::WaitReadable returns immediately on a closed connection instead of parking", "[Process]") {
+    ChildProcess child({"cat"});
+    child.CloseConnection();
+
+    const auto start = std::chrono::steady_clock::now();
+    REQUIRE_FALSE(child.WaitReadable(std::chrono::milliseconds(-1))); // poll(2)'s "block forever" sentinel
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    REQUIRE(elapsed < std::chrono::seconds(1));
+}
+
+TEST_CASE("ChildProcess::WaitWritable returns immediately on a closed connection instead of parking", "[Process]") {
+    ChildProcess child({"cat"});
+    child.CloseConnection();
+
+    const auto start = std::chrono::steady_clock::now();
+    REQUIRE_FALSE(child.WaitWritable(std::chrono::milliseconds(-1)));
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    REQUIRE(elapsed < std::chrono::seconds(1));
+}
+
+// The read-side half of the same fix: a framing reader's unbounded
+// first-byte wait against an already-closed connection must report a clean
+// disconnect (nullopt/EOF), not a "stalled mid-message" error and not a hang.
+TEST_CASE("ChildProcess::ReadSome returns EOF rather than parking once the connection is closed", "[Process]") {
+    ChildProcess child({"cat"});
+    child.CloseConnection();
+
+    const auto start = std::chrono::steady_clock::now();
+    REQUIRE(child.ReadSome().empty()); // empty == EOF
+    REQUIRE(std::chrono::steady_clock::now() - start < std::chrono::seconds(1));
+}

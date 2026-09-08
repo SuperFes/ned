@@ -42,6 +42,9 @@ namespace {
             const bool             unbounded = first && waitFirstByteUnbounded;
             const std::chrono::milliseconds waitTimeout = unbounded ? std::chrono::milliseconds(-1) : stallTimeout;
             if (!child.WaitReadable(waitTimeout)) {
+                if (unbounded) {
+                    return false; // closed connection, not a stall -- see Acp/Transport.cpp's identical guard
+                }
                 throw std::runtime_error("ned: LSP transport stalled mid-frame");
             }
             first                = false;
