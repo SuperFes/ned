@@ -31,6 +31,7 @@
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Backup.h"
 #include "Editor/CodeFold.h"
+#include "Editor/CompletionSession.h"
 #include "Editor/Command.h"
 #include "Editor/Coverage/CoverageReport.h"
 #include "Editor/Dap/DapManager.h"
@@ -4029,27 +4030,33 @@ class BufferView : public Widget {
 
     // hover/completion follow-up. See Command.h's InteractiveRequest::
     // LspComplete doc comment and completionDebounceTimer_ above for the
-    // request/debounce flow; ActiveCompletion itself is transient UI state,
-    // not modal -- it coexists with ordinary InputMode::Normal editing
-    // rather than replacing it (no dedicated InputMode value), the same way
-    // e.g. a diagnostic gutter marker does. completion-popup follow-up:
-    // renamed from GhostCompletion -- rendering moved from an inline dimmed
-    // suffix to a real ListPopup (see NotifyCompletionChanged), so nothing
-    // about this state is "ghost" anymore.
-    struct ActiveCompletion {
-        std::size_t                              requestPoint = 0; // buffer.Point() when this was requested/received -- stale if point has since moved
-        std::vector<editor::lsp::CompletionItem> items;
-        std::size_t                              selectedIndex = 0;
-        // Self-hosting-completion follow-up: the word-boundary start each
-        // item's insertText was ranked/computed against (WordPrefixStart's
-        // ASCII alnum/'_' rule for LSP/dabbrev items, JanetSymbolPrefixStart's
-        // wider '-'/'/' -inclusive rule for ned/* binding items) -- stored
-        // once at request time rather than recomputed by CompletionInsertSuffix
-        // from whichever rule happens to be lexically closest, since the two
-        // rules disagree on where a name like "ned/register-command" starts.
-        std::size_t prefixStart = 0;
-    };
-    std::optional<ActiveCompletion> activeCompletion_;
+    // request/debounce flow; this is transient UI state, not modal -- it
+    // coexists with ordinary InputMode::Normal editing rather than replacing
+    // it (no dedicated InputMode value), the same way e.g. a diagnostic
+    // gutter marker does.
+    //
+    // completion-fidelity follow-up: was a local ActiveCompletion struct
+    // (a flat item vector, one shared prefixStart, an index). Everything
+    // that isn't terminal I/O now lives in Editor/CompletionSession.h --
+    // per-item replace ranges, ranking, and the narrow-vs-re-request
+    // decision -- so this class holds only the request/paint/apply half.
+    // The session is UI-free and unit-tested directly; see its header for
+    // the two invariants the accept path depends on.
+    std::optional<editor::CompletionSession> activeCompletion_;
+
+    // Which word-boundary rule built activeCompletion_. The two genuinely
+    // disagree -- WordPrefixStart's ASCII alnum/'_' rule stops at the "/"
+    // in "ned/register-command", JanetSymbolPrefixStart's doesn't -- and
+    // Refilter needs the *same* rule re-applied at the new point to decide
+    // whether point is still inside the word the session was requested for.
+    // Recorded here rather than inside CompletionSession because it's this
+    // class's own source-selection policy (LSP/dabbrev vs. Janet bindings),
+    // not something a pure session should know about.
+    enum class CompletionPrefixRule { Word, JanetSymbol };
+    CompletionPrefixRule completionPrefixRule_ = CompletionPrefixRule::Word;
+
+    // completionPrefixRule_ applied at an arbitrary point.
+    [[nodiscard]] std::size_t CurrentCompletionPrefixStart(const text::Buffer& buffer, std::size_t point) const;
 
     // completion-popup follow-up: the screen-absolute anchor last sent to
     // onCompletionChanged_, so Paint() can cheaply detect "point's on-screen
@@ -4197,8 +4204,10 @@ class BufferView : public Widget {
     // RequestCompletionAtPoint, tried ahead of ApplyDabbrevCompletion --
     // fuzzy-ranks every live "ned/*" binding name (Janet/Environment.h's
     // BindingNamesWithPrefix) against the Janet-symbol-aware prefix at point
-    // (JanetSymbolPrefixStart, not WordPrefixStart -- see ActiveCompletion's
-    // own prefixStart doc comment). Returns false (activeCompletion_ left
+    // (JanetSymbolPrefixStart, not WordPrefixStart -- the two rules disagree
+    // on where a name like "ned/register-command" starts, which is why the
+    // applicable one is passed into CompletionSession rather than recomputed
+    // there). Returns false (activeCompletion_ left
     // untouched) when there's no janetEnv_ wired, the prefix is empty, or
     // nothing fuzzy-matches, so the caller falls through to plain
     // dabbrev-expand instead of showing an empty suggestion.
@@ -4207,7 +4216,6 @@ class BufferView : public Widget {
     void                      MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
     void                      AcceptActiveCompletion();
     void                      CycleActiveCompletion(int direction);
-    [[nodiscard]] std::string CompletionInsertSuffix(const editor::lsp::CompletionItem& item) const;
 
     // completion-popup follow-up: builds a ListPopupModel from
     // activeCompletion_ (kind glyph + label + detail per row, anchored at

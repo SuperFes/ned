@@ -280,9 +280,9 @@ TEST_CASE("LspManager::RequestCompletion resolves synchronously to an empty list
 
     bool                        invoked = false;
     std::vector<CompletionItem> gotItems;
-    manager.RequestCompletion(buffer, 0, [&](std::vector<CompletionItem> items) {
+    manager.RequestCompletion(buffer, 0, [&](ned::editor::lsp::CompletionList list) {
         invoked  = true;
-        gotItems = std::move(items);
+        gotItems = std::move(list.items);
     });
 
     REQUIRE(invoked);
@@ -1465,9 +1465,9 @@ TEST_CASE("LspManager::RequestCompletion round-trips a real request/response thr
 
     bool                        invoked = false;
     std::vector<CompletionItem> gotItems;
-    manager.RequestCompletion(buffer, buffer.Point(), [&](std::vector<CompletionItem> items) {
+    manager.RequestCompletion(buffer, buffer.Point(), [&](ned::editor::lsp::CompletionList list) {
         invoked  = true;
-        gotItems = std::move(items);
+        gotItems = std::move(list.items);
     });
 
     const std::string raw     = ReadRawFrame(server.serverStdinRead);
