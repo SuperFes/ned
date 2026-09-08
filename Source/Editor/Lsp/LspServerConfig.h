@@ -94,6 +94,23 @@ void              SetLspSyncDebounceMs(int milliseconds); // default 150
 void              SetLspSignatureHelpAutoTriggerEnabled(bool enabled); // default true
 [[nodiscard]] bool LspSignatureHelpAutoTriggerEnabled();
 
+// completion-trigger-characters follow-up. Whether typing a character a
+// server declared as one of a completion item's commitCharacters accepts
+// that item (and then inserts the character) while the popup is up. Same
+// editor-wide-toggle shape as the two above.
+//
+// Default true -- it's what VS Code and every mainstream LSP client do, and
+// it's inert against a server that declares no commit characters at all
+// (this client never substitutes a default set of its own). The toggle
+// exists because the servers that DO declare them are not shy about it:
+// typescript-language-server sends {".", ",", ";", "("} on every single
+// item, so with it on, typing ";" to end a statement while a popup happens
+// to be up accepts the highlighted suggestion instead of dismissing it.
+// That's the standard behavior, and also the exact thing someone may want
+// off (VS Code exposes the same switch as editor.acceptSuggestionOnCommitCharacter).
+void               SetLspCommitCharactersEnabled(bool enabled); // default true
+[[nodiscard]] bool LspCommitCharactersEnabled();
+
 // hover-tooltips follow-up. Same shape as SetLspSignatureHelpAutoTriggerEnabled
 // immediately above (a single editor-wide toggle, not per-language) --
 // BufferView::MaybeScheduleHover checks this before ever arming its debounce

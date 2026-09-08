@@ -68,6 +68,24 @@ namespace {
         return {};
     }
 
+    // Shared by every "array of plain strings" capability/list field
+    // (trigger/commit characters, a semantic-tokens legend, ...). Non-string
+    // entries are skipped rather than treated as a parse failure, the same
+    // convention every ExtractX in this file uses.
+    [[nodiscard]] std::vector<std::string> StringArray(const Json& array) {
+        std::vector<std::string> values;
+        if (!array.is_array()) {
+            return values;
+        }
+        values.reserve(array.size());
+        for (const Json& entry : array) {
+            if (entry.is_string()) {
+                values.push_back(entry.get<std::string>());
+            }
+        }
+        return values;
+    }
+
     LspPosition PositionFromJson(const Json& position) {
         return LspPosition{
             .line      = position.value("line", static_cast<std::size_t>(0)),
@@ -127,6 +145,12 @@ namespace {
     struct CompletionItemDefaults {
         std::optional<WorkspaceTextEdit> editRange; // newText left empty -- filled per item
         std::optional<int>               insertTextFormat;
+        // completion-trigger-characters follow-up: the list-level default an
+        // item with no commitCharacters of its own inherits. Distinct from
+        // the server-level allCommitCharacters, which sits one tier further
+        // out (ExtractCompletionProvider) and is folded in by LspManager, not
+        // here -- this pure parsing layer never sees the initialize response.
+        std::optional<std::vector<std::string>> commitCharacters;
     };
 
     CompletionItemDefaults ParseCompletionItemDefaults(const Json& result) {
@@ -156,6 +180,9 @@ namespace {
         if (const auto formatIt = it->find("insertTextFormat"); formatIt != it->end() && formatIt->is_number()) {
             defaults.insertTextFormat = formatIt->get<int>();
         }
+        if (const auto commitIt = it->find("commitCharacters"); commitIt != it->end() && commitIt->is_array()) {
+            defaults.commitCharacters = StringArray(*commitIt);
+        }
         return defaults;
     }
 
@@ -178,6 +205,72 @@ namespace {
             });
         }
         return edits;
+    }
+
+    // completion-fidelity follow-up, extracted by completion-resolve. One
+    // item out of a CompletionList's "items" array -- or, with a
+    // default-constructed `defaults`, the bare item a completionItem/resolve
+    // response is. The caller has already checked is_object()/"label".
+    CompletionItem ParseCompletionItem(const Json& item, const CompletionItemDefaults& defaults) {
+        std::string label = item.value("label", std::string());
+        // completion-fidelity follow-up: textEdit wins over insertText per
+        // the spec when both are sent, and itemDefaults.editRange stands in
+        // for a missing textEdit -- in which case the item's own text comes
+        // from textEditText (the field that exists precisely for this case),
+        // then insertText, then label.
+        std::optional<WorkspaceTextEdit> textEdit;
+        if (const auto editIt = item.find("textEdit"); editIt != item.end()) {
+            textEdit = ParseCompletionTextEdit(*editIt);
+        }
+        if (!textEdit && defaults.editRange) {
+            textEdit          = *defaults.editRange;
+            textEdit->newText = item.value("textEditText", item.value("insertText", label));
+        }
+        std::string insertText = textEdit ? textEdit->newText : item.value("insertText", label);
+        // 1 = PlainText is the spec's own default; an item's own value wins
+        // over the list's itemDefaults, which wins over that default.
+        const bool  isSnippet = item.value("insertTextFormat", defaults.insertTextFormat.value_or(1)) == 2;
+        const int   kind      = item.value("kind", 0);
+        std::string detail    = item.value("detail", std::string());
+        // completion-fidelity follow-up: both default to label per the
+        // spec, resolved here so no consumer re-implements the fallback.
+        std::string sortText   = item.value("sortText", label);
+        std::string filterText = item.value("filterText", label);
+        // completion-popup-preview follow-up: wraps the raw "documentation" value in
+        // the same {"contents": ...} shape ExtractHoverText already expects, reusing
+        // its string-or-MarkupContent extraction verbatim instead of duplicating it.
+        std::string documentation;
+        if (const auto docIt = item.find("documentation"); docIt != item.end()) {
+            documentation = ExtractHoverText(Json{{"contents", *docIt}}).value_or(std::string());
+        }
+        // completion-resolve follow-up: an item's own commitCharacters wins
+        // over the list's itemDefaults; the server-level allCommitCharacters
+        // tier below both is applied by LspManager (see this file's
+        // CompletionItemDefaults comment for why it can't be applied here).
+        std::vector<std::string> commitCharacters;
+        if (const auto commitIt = item.find("commitCharacters"); commitIt != item.end() && commitIt->is_array()) {
+            commitCharacters = StringArray(*commitIt);
+        }
+        else if (defaults.commitCharacters) {
+            commitCharacters = *defaults.commitCharacters;
+        }
+        std::vector<WorkspaceTextEdit> additionalTextEdits;
+        if (const auto additionalIt = item.find("additionalTextEdits"); additionalIt != item.end() && additionalIt->is_array()) {
+            additionalTextEdits = ParseTextEditArray(*additionalIt);
+        }
+        return CompletionItem{.label               = std::move(label),
+                              .insertText          = std::move(insertText),
+                              .isSnippet           = isSnippet,
+                              .kind                = kind,
+                              .detail              = std::move(detail),
+                              .documentation       = std::move(documentation),
+                              .textEdit            = std::move(textEdit),
+                              .sortText            = std::move(sortText),
+                              .filterText          = std::move(filterText),
+                              .raw                 = item,
+                              .additionalTextEdits = std::move(additionalTextEdits),
+                              .preselect           = item.value("preselect", false),
+                              .commitCharacters    = std::move(commitCharacters)};
     }
 
     // edit-application-gaps follow-up: parses a WorkspaceEdit's
@@ -510,48 +603,18 @@ CompletionList ExtractCompletionList(const Json& result) {
         if (!item.is_object() || !item.contains("label")) {
             continue;
         }
-        std::string label = item.value("label", std::string());
-        // completion-fidelity follow-up: textEdit wins over insertText per
-        // the spec when both are sent, and itemDefaults.editRange stands in
-        // for a missing textEdit -- in which case the item's own text comes
-        // from textEditText (the field that exists precisely for this case),
-        // then insertText, then label.
-        std::optional<WorkspaceTextEdit> textEdit;
-        if (const auto editIt = item.find("textEdit"); editIt != item.end()) {
-            textEdit = ParseCompletionTextEdit(*editIt);
-        }
-        if (!textEdit && defaults.editRange) {
-            textEdit         = *defaults.editRange;
-            textEdit->newText = item.value("textEditText", item.value("insertText", label));
-        }
-        std::string insertText = textEdit ? textEdit->newText : item.value("insertText", label);
-        // 1 = PlainText is the spec's own default; an item's own value wins
-        // over the list's itemDefaults, which wins over that default.
-        const bool  isSnippet = item.value("insertTextFormat", defaults.insertTextFormat.value_or(1)) == 2;
-        const int   kind      = item.value("kind", 0);
-        std::string detail    = item.value("detail", std::string());
-        // completion-fidelity follow-up: both default to label per the
-        // spec, resolved here so no consumer re-implements the fallback.
-        std::string sortText   = item.value("sortText", label);
-        std::string filterText = item.value("filterText", label);
-        // completion-popup-preview follow-up: wraps the raw "documentation" value in
-        // the same {"contents": ...} shape ExtractHoverText already expects, reusing
-        // its string-or-MarkupContent extraction verbatim instead of duplicating it.
-        std::string documentation;
-        if (const auto docIt = item.find("documentation"); docIt != item.end()) {
-            documentation = ExtractHoverText(Json{{"contents", *docIt}}).value_or(std::string());
-        }
-        items.push_back(CompletionItem{.label         = std::move(label),
-                                       .insertText    = std::move(insertText),
-                                       .isSnippet     = isSnippet,
-                                       .kind          = kind,
-                                       .detail        = std::move(detail),
-                                       .documentation = std::move(documentation),
-                                       .textEdit      = std::move(textEdit),
-                                       .sortText      = std::move(sortText),
-                                       .filterText    = std::move(filterText)});
+        items.push_back(ParseCompletionItem(item, defaults));
     }
     return list;
+}
+
+CompletionItem ExtractSingleCompletionItem(const Json& item) {
+    if (!item.is_object() || !item.contains("label")) {
+        return CompletionItem{};
+    }
+    // A resolve response is a bare item with no list around it, so there
+    // are no itemDefaults to inherit -- see this function's own doc comment.
+    return ParseCompletionItem(item, CompletionItemDefaults{});
 }
 
 CodeAction ExtractSingleCodeAction(const Json& item, const std::string& ownUri) {
@@ -753,24 +816,6 @@ std::optional<std::string> ExtractSignatureHelp(const Json& result) {
     return label;
 }
 
-namespace {
-
-[[nodiscard]] std::vector<std::string> StringArray(const Json& array) {
-    std::vector<std::string> values;
-    if (!array.is_array()) {
-        return values;
-    }
-    values.reserve(array.size());
-    for (const Json& entry : array) {
-        if (entry.is_string()) {
-            values.push_back(entry.get<std::string>());
-        }
-    }
-    return values;
-}
-
-} // namespace
-
 std::optional<SemanticTokensLegend> ExtractSemanticTokensLegend(const Json& initializeResult) {
     if (!initializeResult.is_object()) {
         return std::nullopt;
@@ -808,6 +853,29 @@ std::optional<SemanticTokensLegend> ExtractSemanticTokensLegend(const Json& init
         legend.rangeSupported = (rangeIt->is_boolean() && rangeIt->get<bool>()) || rangeIt->is_object();
     }
     return legend;
+}
+
+std::optional<CompletionProviderInfo> ExtractCompletionProvider(const Json& initializeResult) {
+    if (!initializeResult.is_object()) {
+        return std::nullopt;
+    }
+    const auto capabilitiesIt = initializeResult.find("capabilities");
+    if (capabilitiesIt == initializeResult.end() || !capabilitiesIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto providerIt = capabilitiesIt->find("completionProvider");
+    if (providerIt == capabilitiesIt->end() || !providerIt->is_object()) {
+        return std::nullopt;
+    }
+    CompletionProviderInfo info;
+    if (const auto triggersIt = providerIt->find("triggerCharacters"); triggersIt != providerIt->end()) {
+        info.triggerCharacters = StringArray(*triggersIt);
+    }
+    if (const auto commitIt = providerIt->find("allCommitCharacters"); commitIt != providerIt->end()) {
+        info.allCommitCharacters = StringArray(*commitIt);
+    }
+    info.resolveProvider = providerIt->value("resolveProvider", false);
+    return info;
 }
 
 std::optional<OnTypeFormattingTriggers> ExtractOnTypeFormattingTriggers(const Json& initializeResult) {
