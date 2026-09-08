@@ -20,6 +20,17 @@ namespace {
     struct DisableClipboardForTests {
         DisableClipboardForTests() {
             ned::editor::SetClipboardEnabled(false);
+            // osc52-test-hermeticity follow-up: SetClipboardEnabled(false)
+            // alone was not enough. Tests/TerminalPanelTest.cpp and
+            // Tests/BufferViewTest.cpp re-enable the clipboard locally to
+            // exercise the shell-out path against an injected fake tool, and
+            // CopyToSystemClipboard's OSC 52 half then wrote a real escape
+            // sequence to whatever terminal ned_tests was running under --
+            // overwriting the developer's own system clipboard with test
+            // fixture text ("hello from ned", "world", ...) on every suite
+            // run. Nothing re-enables this one, so it stays off for the
+            // whole binary.
+            ned::editor::SetOsc52Enabled(false);
         }
     };
 

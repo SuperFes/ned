@@ -56,6 +56,22 @@ namespace ned::editor {
 void               SetClipboardEnabled(bool enabled);
 [[nodiscard]] bool ClipboardEnabled();
 
+// Default true. A second, narrower switch over just the OSC 52 half of
+// CopyToSystemClipboard's two mechanisms, independent of the hard kill
+// switch above -- suppressing the escape-sequence write while leaving the
+// CLI-tool shell-out alone. Exists for exactly one reason: SetClipboardEnabled
+// isn't sufficient to keep ned_tests hermetic, because several tests
+// (Tests/TerminalPanelTest.cpp, Tests/BufferViewTest.cpp) have to re-enable
+// the clipboard locally to exercise the shell-out path against an injected
+// fake tool, and the OSC 52 write then reached the real terminal ned_tests
+// was running under -- silently overwriting the developer's own system
+// clipboard with test-fixture text on every suite run (found 2026-09-08 by
+// reading raw escape bytes out of a full-suite log). Tests/ClipboardTestGuard.cpp
+// forces this false once for the whole binary, so no future test can
+// reintroduce that side effect by re-enabling the clipboard.
+void               SetOsc52Enabled(bool enabled);
+[[nodiscard]] bool Osc52Enabled();
+
 // Explicit overrides for the copy/paste CLI tool's argv, independently
 // settable -- e.g. override just paste while leaving copy on
 // auto-detection. Same "empty argv clears the override, reverts to
@@ -96,7 +112,8 @@ void SetClipboardPrimaryPasteCommand(std::vector<std::string> argv);
 // writes a raw OSC 52 escape sequence to the terminal (wrapped for tmux's
 // own DCS passthrough convention if $TMUX is set) -- see this file's own
 // header comment for why both, unconditionally. A complete no-op if
-// ClipboardEnabled() is false.
+// ClipboardEnabled() is false; the OSC 52 write alone is additionally
+// skipped when Osc52Enabled() is false.
 void CopyToSystemClipboard(std::string_view text);
 
 // Reads the system clipboard via ResolvedClipboardPasteCommand(), if one is
