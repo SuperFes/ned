@@ -6073,11 +6073,41 @@ void BufferView::AcceptActiveCompletion() {
 }
 
 void BufferView::AcceptActiveCompletionAt(std::size_t index) {
-    if (!activeCompletion_ || index >= activeCompletion_->Candidates().size()) {
-        return; // stale click racing a just-cleared/just-narrowed popup
+    if (!activeCompletion_) {
+        return;
     }
-    activeCompletion_->Select(index);
+    // completion-popup-scroll follow-up: `index` is a raw popup row, which
+    // since the rows became windowed is no longer the same thing as an index
+    // into the candidate list -- it's offset by the "N more above" divider
+    // and relative to the window's own start. Same inverse mapping the
+    // prompt pickers' own click path uses; a click on a divider row (or past
+    // the end, a stale click racing a just-narrowed list) resolves to
+    // nullopt and is ignored rather than accepting a neighbor.
+    const std::optional<std::size_t> resolved =
+        ResolveFuzzyCandidateRowIndex(index, activeCompletion_->SelectedIndex(), activeCompletion_->Candidates().size());
+    if (!resolved) {
+        return;
+    }
+    activeCompletion_->Select(*resolved);
     AcceptActiveCompletion();
+}
+
+void BufferView::ScrollCompletionPopup(int steps) {
+    // completion-popup-scroll follow-up: the completion popup has no scroll
+    // offset independent of its selection -- the window is derived from the
+    // selected row (see NotifyCompletionChanged) -- so a wheel step *is* a
+    // selection step, which also keeps wheel and Up/Down agreeing about what
+    // Tab would accept. ScrollCandidatePopup's own shape, minus the
+    // InputMode switch: completion is Normal-mode-only.
+    if (steps == 0 || !activeCompletion_) {
+        return;
+    }
+    const int direction = steps > 0 ? 1 : -1;
+    const int count     = steps > 0 ? steps : -steps;
+    for (int i = 0; i < count; ++i) {
+        activeCompletion_->Cycle(direction);
+    }
+    NotifyCompletionChanged();
 }
 
 void BufferView::TriggerSwitchProject() {
@@ -6122,13 +6152,31 @@ void BufferView::NotifyCompletionChanged() {
     }
 
     const std::vector<editor::CompletionCandidate>& candidates = activeCompletion_->Candidates();
+    if (candidates.empty()) {
+        onCompletionChanged_(std::nullopt);
+        return;
+    }
+
+    // completion-popup-scroll follow-up: the rows are windowed around the
+    // selection, exactly the way BuildFuzzyCandidatePopupModel already does
+    // it for every prompt picker -- ListPopup::Paint truncates at the box
+    // height and always starts at row 0, so an unwindowed push of every
+    // candidate scrolled the selection off the bottom invisibly once the
+    // list passed the popup's own height. Reuses ComputeCandidatePopupWindow
+    // so a click's own inverse mapping (ResolveFuzzyCandidateRowIndex in
+    // AcceptActiveCompletionAt) can reproduce the identical window without
+    // a second copy of the math.
+    const auto [windowStart, windowEnd] = ComputeCandidatePopupWindow(activeCompletion_->SelectedIndex(), candidates.size());
 
     ListPopupModel model;
-    model.selectedIndex = activeCompletion_->SelectedIndex();
-    model.anchor        = anchor;
-    model.rows.reserve(candidates.size());
-    for (const editor::CompletionCandidate& candidate : candidates) {
-        const editor::lsp::CompletionItem& item = candidate.item;
+    model.anchor = anchor;
+    model.rows.reserve((windowEnd - windowStart) + 2);
+    if (windowStart > 0) {
+        model.rows.push_back({.main = "↑ " + std::to_string(windowStart) + " more above"});
+    }
+    model.selectedIndex = (activeCompletion_->SelectedIndex() - windowStart) + (windowStart > 0 ? 1 : 0);
+    for (std::size_t i = windowStart; i < windowEnd; ++i) {
+        const editor::lsp::CompletionItem& item = candidates[i].item;
         ListPopupRow                       row;
         row.main  = item.label;
         row.right = item.detail;
@@ -6145,6 +6193,9 @@ void BufferView::NotifyCompletionChanged() {
             row.leftForeground = theme_.ghostTextForeground;
         }
         model.rows.push_back(std::move(row));
+    }
+    if (const std::size_t hiddenBelow = candidates.size() - windowEnd; hiddenBelow > 0) {
+        model.rows.push_back({.main = "↓ " + std::to_string(hiddenBelow) + " more below"});
     }
     // completion-popup-preview follow-up: the *selected* item's own
     // documentation, not every item's -- ListPopup renders it as a footer

@@ -8931,6 +8931,75 @@ TEST_CASE("Typing narrows a complete completion list locally, with no second req
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 }
 
+TEST_CASE("A long completion list is windowed around the selection with scroll indicators", "[BufferView]") {
+    // completion-popup-scroll follow-up: ListPopup::Paint truncates at the
+    // box height and always starts at row 0, so pushing every candidate
+    // unwindowed scrolled the selection off the bottom invisibly once the
+    // list grew past the popup's own height.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_completion_window_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("f");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw = ReadRawLspFrame(server.serverStdinRead);
+
+    // 30 candidates, named so their default sortText (== label) ordering is
+    // the same as their arrival order.
+    auto items = ned::editor::lsp::Json::array();
+    for (int i = 0; i < 30; ++i) {
+        const std::string name = std::string("f_") + (i < 10 ? "0" : "") + std::to_string(i);
+        items.push_back({{"label", name}});
+    }
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", {{"isIncomplete", false}, {"items", items}}},
+    }.dump());
+
+    REQUIRE(fixture.completion.has_value());
+    // Windowed, not all 30 -- and with nothing above the selection yet,
+    // there's only a trailing "more below" indicator.
+    REQUIRE(fixture.completion->rows.size() < 30);
+    REQUIRE(fixture.completion->rows.front().main == "f_00");
+    REQUIRE(fixture.completion->rows.back().main.starts_with("\xE2\x86\x93")); // "↓ N more below"
+    REQUIRE(fixture.completion->selectedIndex == std::optional<std::size_t>(0));
+
+    // Cycle past the window's own end: the window follows the selection, so
+    // the selected row stays visible instead of scrolling off invisibly.
+    for (int i = 0; i < 20; ++i) {
+        view.OnEvent(ned::ui::test::ArrowDown());
+    }
+    REQUIRE(fixture.completion.has_value());
+    REQUIRE(fixture.completion->rows.front().main.starts_with("\xE2\x86\x91")); // "↑ N more above"
+    REQUIRE(fixture.completion->selectedIndex.has_value());
+    REQUIRE(*fixture.completion->selectedIndex < fixture.completion->rows.size());
+    REQUIRE(fixture.completion->rows[*fixture.completion->selectedIndex].main == "f_20");
+
+    // A click resolves through the same window: row indices are offset by
+    // the "more above" divider, so accepting must map back, not index the
+    // candidate list raw.
+    const std::size_t selectedRow = *fixture.completion->selectedIndex;
+    view.AcceptActiveCompletionAt(selectedRow);
+    REQUIRE(buffer.Text() == "f_20");
+}
+
 TEST_CASE("Up/Down and M-n/M-p both cycle the completion popup's selection", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_complete_cycle_test.txt";
