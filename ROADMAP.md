@@ -712,9 +712,20 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
-Currently empty as of 2026-09-08: `ctest -j8` is clean under both the `default` and
+As of 2026-09-08: `ctest -j8` is clean under both the `default` and
 `sanitize` presets, and so is the single-process `./build/ned_tests` (see the build/test
-note at the end of this file for why that is a separate check worth making).
+note at the end of this file for why that is a separate check worth making). One
+documented behavioral limitation, not a flake:
+
+- A save of a file with more than one hard link writes that file's own inode in place
+  (`Text/FilePreservation.h`'s `ShouldWriteInPlace`) rather than taking the usual
+  temp-file-then-rename path, because a rename always produces a new inode and would
+  leave every other link on the stale content. That trade costs the atomic path's crash
+  protection for those files specifically: a crash or a full disk mid-write can leave one
+  truncated, recoverable only from the `Editor/Backup.h` version written moments earlier.
+  `ned/set-preserve-hard-links-on-save false` opts back into the atomic path (and back
+  into breaking the link). Fixing this properly would need a write-then-relink scheme that
+  POSIX doesn't really offer; not worth building until someone actually hits it.
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 

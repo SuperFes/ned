@@ -242,3 +242,40 @@ TEST_CASE("ReplaceMatches supports lookaround and named-group replacements", "[P
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("ReplaceMatches preserves the rewritten file's permissions and hard links", "[ProjectReplace]") {
+    // file-attribute-preservation follow-up: this rewrites the user's own
+    // files with the same temp-then-rename pattern Buffer::SaveToFile uses,
+    // and had the same defect -- see Text/FilePreservation.h.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_replace_test_preserve";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+
+    const std::filesystem::path script = dir / "run.sh";
+    {
+        std::ofstream(script) << "echo cat\n";
+    }
+    std::filesystem::permissions(script, std::filesystem::perms::owner_all);
+
+    const std::filesystem::path linked = dir / "linked.txt";
+    const std::filesystem::path alias  = dir / "alias.txt";
+    {
+        std::ofstream(linked) << "a cat here\n";
+    }
+    std::filesystem::create_hard_link(linked, alias);
+
+    const std::vector<SearchMatch> matches{
+        SearchMatch{script, 1, "echo cat"},
+        SearchMatch{linked, 1, "a cat here"},
+    };
+    const ReplaceSummary summary = ReplaceMatches(matches, "cat", "dog");
+    REQUIRE(summary.filesChanged == 2);
+
+    REQUIRE(ReadFile(script) == "echo dog\n");
+    REQUIRE((std::filesystem::status(script).permissions() & std::filesystem::perms::owner_exec) !=
+            std::filesystem::perms::none);
+
+    REQUIRE(ReadFile(linked) == "a dog here\n");
+    REQUIRE(std::filesystem::equivalent(linked, alias));
+    REQUIRE(ReadFile(alias) == "a dog here\n");
+}

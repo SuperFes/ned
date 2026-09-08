@@ -618,6 +618,7 @@ add_library(ned_lib STATIC
         Source/Text/PieceTable.cpp
         Source/Text/PieceTableStorage.cpp
         Source/Text/DiskSpace.cpp
+        Source/Text/FilePreservation.cpp
         Source/Text/Grapheme.cpp
         Source/Text/UndoTree.cpp
         Source/Text/KillRing.cpp
@@ -1011,6 +1012,7 @@ if (NED_BUILD_TESTS)
             Tests/BufferSaveEquivalenceTest.cpp
             Tests/MultiCursorTest.cpp
             Tests/BufferListTest.cpp
+            Tests/FilePreservationTest.cpp
             Tests/BinaryDetectTest.cpp
             Tests/LineEndingTest.cpp
             Tests/LineEndingPolicyTest.cpp

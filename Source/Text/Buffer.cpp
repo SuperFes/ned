@@ -12,6 +12,7 @@
 #include "BinaryDetect.h"
 #include "BufferList.h"
 #include "DiskSpace.h"
+#include "FilePreservation.h"
 #include "Grapheme.h"
 #include "LineEnding.h"
 #include "PieceTable.h"
@@ -168,6 +169,85 @@ namespace {
         bool        wroteAnything_       = false;
         bool        endsWithNewline_     = false;
     };
+
+    // The full content transform (trim -> ensureFinalNewline -> line-ending
+    // re-expansion) plus the write itself, shared by SaveToFile's two write
+    // modes -- the sibling-temp-then-rename atomic path and the in-place
+    // truncate a hard-linked file needs. Deliberately leaves the stream's
+    // failure state for the caller to check: the two modes recover from a
+    // failed write very differently (remove the temp file vs. report a
+    // possibly-truncated real file).
+    void WriteBufferContent(std::ofstream& file, const ITextStorage& storage, LineEnding effectiveEnding, bool trimTrailingWhitespace,
+                            bool ensureFinalNewline) {
+        if (storage.IsHuge()) {
+            // huge-file-editing follow-up: same trim/ensureFinalNewline/
+            // line-ending pipeline as the non-huge path below, but streamed
+            // through StreamingSaveWriter instead of materializing the
+            // whole document into one string first -- the entire point of
+            // this branch. Deliberately kept as a separate code path rather
+            // than routing every buffer through the streaming writer: the
+            // non-huge path below is unchanged, proven, and (for a buffer
+            // that's merely large, not huge, e.g. tens/hundreds of MB via
+            // the async-loader tier) faster than a byte-at-a-time state
+            // machine would be -- no reason to pay that cost when the
+            // simple whole-string approach is already correct and cheap
+            // enough for anything below HugeFileThreshold.
+            StreamingSaveWriter writer(file, effectiveEnding, trimTrailingWhitespace, ensureFinalNewline);
+            storage.ForEachChunk([&writer](std::string_view chunk) { writer(chunk); });
+            writer.Finish();
+            return;
+        }
+
+        std::string content = storage.ToString();
+        // trim-on-save follow-up: strips trailing spaces/tabs from every
+        // line, then collapses any run of trailing blank lines down to
+        // nothing -- ensureFinalNewline below is what puts exactly one '\n'
+        // back if the caller still wants one. Disk-only, same reasoning as
+        // ensureFinalNewline itself: only this local copy is touched, never
+        // Storage_ (see Editor/TrimOnSave.h).
+        if (trimTrailingWhitespace && !content.empty()) {
+            std::string trimmed;
+            trimmed.reserve(content.size());
+            std::size_t lineStart = 0;
+            for (std::size_t i = 0; i <= content.size(); ++i) {
+                if (i == content.size() || content[i] == '\n') {
+                    std::size_t lineEnd = i;
+                    while (lineEnd > lineStart && (content[lineEnd - 1] == ' ' || content[lineEnd - 1] == '\t')) {
+                        --lineEnd;
+                    }
+                    trimmed.append(content, lineStart, lineEnd - lineStart);
+                    if (i < content.size()) {
+                        trimmed.push_back('\n');
+                    }
+                    lineStart = i + 1;
+                }
+            }
+            while (!trimmed.empty() && trimmed.back() == '\n') {
+                trimmed.pop_back();
+            }
+            content = std::move(trimmed);
+        }
+        // An empty buffer stays empty (not turned into a bare "\n") -- and
+        // Storage_ itself is never touched, only this local copy that's about
+        // to be written; see the ensureFinalNewline doc comment on the
+        // header for why that's deliberate.
+        if (ensureFinalNewline && !content.empty() && content.back() != '\n') {
+            content.push_back('\n');
+        }
+
+        // crlf-handling follow-up: re-expand LF back to whichever ending
+        // this save should use -- lineEndingOverride lets a caller apply
+        // Editor::ResolveLineEndingForSave's policy (Force*) without Text/
+        // depending on Editor/; absent an override, this just keeps writing
+        // whatever LineEnding_ already tracks (the common Preserve case).
+        // Content up to here is always LF-only (Storage_->ToString() never
+        // holds a '\r'), so this is always the last transform before write.
+        if (effectiveEnding != LineEnding::LF) {
+            content = ApplyLineEnding(content, effectiveEnding);
+        }
+
+        file.write(content.data(), static_cast<std::streamsize>(content.size()));
+    }
 
     // See MoveForwardSentence/MoveBackwardSentence's own doc comment in
     // Buffer.h for why this is a plain ASCII punctuation set.
@@ -502,120 +582,88 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
         throw std::runtime_error("ned: cannot save \"" + Name_ + "\" -- still loading in the background");
     }
 
-    // Write to a sibling temp file and rename over the target so a failure
-    // partway through (e.g. disk full) can't leave the original truncated or
-    // corrupted -- std::filesystem::rename is atomic on POSIX when both
-    // paths are on the same filesystem, which a sibling file guarantees.
-    const std::filesystem::path tempPath = path.string() + ".ned-tmp";
+    // file-attribute-preservation follow-up: everything below writes to the
+    // *resolved* target, not to `path` itself -- saving through a symlink
+    // must update what the link points at, not replace the link with a
+    // regular file. Path_ still records the original `path` at the end, so
+    // the buffer keeps the identity it was opened under.
+    const std::filesystem::path target          = ResolveSaveTarget(path);
     const LineEnding            effectiveEnding = lineEndingOverride.value_or(LineEnding_);
 
     // disk-space-safety follow-up: the hard backstop -- no override, unlike
     // FromHugeFile's open-time downgrade (see SaveToFile's own doc comment
-    // in Buffer.h). Checked before the temp file is even opened, so an
-    // unsafe save never wastes I/O writing something that would fail
-    // partway through anyway.
+    // in Buffer.h). Checked before anything is opened, so an unsafe save
+    // never wastes I/O writing something that would fail partway through
+    // anyway.
     if (Storage_->IsHuge() && HugeFileDiskSpaceCheckEnabled()) {
-        const DiskSpaceCheck check = CheckFreeSpaceForSave(path, Storage_->ByteLength(), HugeFileMinFreeSpaceMultiplier());
+        const DiskSpaceCheck check = CheckFreeSpaceForSave(target, Storage_->ByteLength(), HugeFileMinFreeSpaceMultiplier());
         if (!check.sufficient) {
-            throw std::runtime_error("ned: not enough free disk space to safely save \"" + path.string() + "\" (need ~" +
+            throw std::runtime_error("ned: not enough free disk space to safely save \"" + target.string() + "\" (need ~" +
                                      FormatBytesHuman(check.requiredBytes) + " free, ~" + FormatBytesHuman(check.availableBytes) +
                                      " available)");
         }
     }
 
-    {
+    // Read before the file is replaced -- see Text/FilePreservation.h for
+    // what a rename silently discards and why each piece has to be put back
+    // by hand.
+    const PreservedFileAttributes attributes = CaptureFileAttributes(target);
+
+    // A multiply-linked file can only stay linked if its own inode is
+    // written; a rename would give every other link the stale content. That
+    // costs this path's crash atomicity, which is acceptable precisely
+    // because save-buffer has already written an Editor/Backup.h version by
+    // the time it gets here.
+    if (ShouldWriteInPlace(attributes)) {
+        WriteInPlace(target, effectiveEnding, trimTrailingWhitespace, ensureFinalNewline);
+    }
+    else {
+        // Write to a sibling temp file and rename over the target so a failure
+        // partway through (e.g. disk full) can't leave the original truncated or
+        // corrupted -- std::filesystem::rename is atomic on POSIX when both
+        // paths are on the same filesystem, which a sibling file guarantees.
+        const std::filesystem::path tempPath = target.string() + ".ned-tmp";
+
         std::ofstream file(tempPath, std::ios::binary | std::ios::trunc);
         if (!file) {
-            throw std::runtime_error("ned: cannot open file for writing: " + tempPath.string());
-        }
-
-        if (Storage_->IsHuge()) {
-            // huge-file-editing follow-up: same trim/ensureFinalNewline/
-            // line-ending pipeline as the non-huge path below, but streamed
-            // through StreamingSaveWriter instead of materializing the
-            // whole document into one string first -- the entire point of
-            // this branch. Deliberately kept as a separate code path rather
-            // than routing every buffer through the streaming writer: the
-            // non-huge path below is unchanged, proven, and (for a buffer
-            // that's merely large, not huge, e.g. tens/hundreds of MB via
-            // the async-loader tier) faster than a byte-at-a-time state
-            // machine would be -- no reason to pay that cost when the
-            // simple whole-string approach is already correct and cheap
-            // enough for anything below HugeFileThreshold.
-            StreamingSaveWriter writer(file, effectiveEnding, trimTrailingWhitespace, ensureFinalNewline);
-            Storage_->ForEachChunk([&writer](std::string_view chunk) { writer(chunk); });
-            writer.Finish();
-
-            if (!file) {
-                file.close();
-                std::filesystem::remove(tempPath);
-                throw std::runtime_error("ned: error writing file: " + tempPath.string());
+            // A writable file inside a directory we can't create the temp
+            // file in (a read-only source tree with one checked-out file
+            // made writable, a directory owned by someone else). The atomic
+            // path simply isn't available there, but the save itself still
+            // is. Gated on CanCreateSiblingFile rather than on the open
+            // failure alone: a temp file can also fail to open because the
+            // disk is full or something already occupies its path, and
+            // truncating the real file in place for *those* would destroy
+            // exactly what this path exists to protect.
+            if (attributes.existed && !CanCreateSiblingFile(target)) {
+                WriteInPlace(target, effectiveEnding, trimTrailingWhitespace, ensureFinalNewline);
+            }
+            else {
+                throw std::runtime_error("ned: cannot open file for writing: " + tempPath.string());
             }
         }
         else {
-            std::string content = Storage_->ToString();
-            // trim-on-save follow-up: strips trailing spaces/tabs from every
-            // line, then collapses any run of trailing blank lines down to
-            // nothing -- ensureFinalNewline below is what puts exactly one '\n'
-            // back if the caller still wants one. Disk-only, same reasoning as
-            // ensureFinalNewline itself: only this local copy is touched, never
-            // Storage_ (see Editor/TrimOnSave.h).
-            if (trimTrailingWhitespace && !content.empty()) {
-                std::string trimmed;
-                trimmed.reserve(content.size());
-                std::size_t lineStart = 0;
-                for (std::size_t i = 0; i <= content.size(); ++i) {
-                    if (i == content.size() || content[i] == '\n') {
-                        std::size_t lineEnd = i;
-                        while (lineEnd > lineStart && (content[lineEnd - 1] == ' ' || content[lineEnd - 1] == '\t')) {
-                            --lineEnd;
-                        }
-                        trimmed.append(content, lineStart, lineEnd - lineStart);
-                        if (i < content.size()) {
-                            trimmed.push_back('\n');
-                        }
-                        lineStart = i + 1;
-                    }
-                }
-                while (!trimmed.empty() && trimmed.back() == '\n') {
-                    trimmed.pop_back();
-                }
-                content = std::move(trimmed);
-            }
-            // An empty buffer stays empty (not turned into a bare "\n") -- and
-            // Storage_ itself is never touched, only this local copy that's about
-            // to be written; see the ensureFinalNewline doc comment on the
-            // header for why that's deliberate.
-            if (ensureFinalNewline && !content.empty() && content.back() != '\n') {
-                content.push_back('\n');
-            }
+            WriteBufferContent(file, *Storage_, effectiveEnding, trimTrailingWhitespace, ensureFinalNewline);
+            const bool writeFailed = !file;
+            file.close();
 
-            // crlf-handling follow-up: re-expand LF back to whichever ending
-            // this save should use -- lineEndingOverride lets a caller apply
-            // Editor::ResolveLineEndingForSave's policy (Force*) without Text/
-            // depending on Editor/; absent an override, this just keeps writing
-            // whatever LineEnding_ already tracks (the common Preserve case).
-            // Content up to here is always LF-only (Storage_->ToString() never
-            // holds a '\r'), so this is always the last transform before write.
-            if (effectiveEnding != LineEnding::LF) {
-                content = ApplyLineEnding(content, effectiveEnding);
-            }
-
-            file.write(content.data(), static_cast<std::streamsize>(content.size()));
-
-            if (!file) {
-                file.close();
+            if (writeFailed) {
                 std::filesystem::remove(tempPath);
                 throw std::runtime_error("ned: error writing file: " + tempPath.string());
             }
-        }
-    } // closed here, so its contents are flushed before the rename below
 
-    std::error_code ec;
-    std::filesystem::rename(tempPath, path, ec);
-    if (ec) {
-        std::filesystem::remove(tempPath);
-        throw std::runtime_error("ned: cannot save file: " + path.string() + " (" + ec.message() + ")");
+            // Strictly between the write and the rename: the temp file is
+            // fully written but not yet visible under the target's name, so
+            // nothing ever observes it with the wrong mode.
+            ApplyFileAttributes(tempPath, attributes);
+
+            std::error_code ec;
+            std::filesystem::rename(tempPath, target, ec);
+            if (ec) {
+                std::filesystem::remove(tempPath);
+                throw std::runtime_error("ned: cannot save file: " + target.string() + " (" + ec.message() + ")");
+            }
+        }
     }
 
     Path_          = path;
@@ -624,6 +672,32 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
     UnsavedChangeRanges_.clear();
     ++UnsavedChangeGeneration_;
     CaptureDiskTimestamp();
+}
+
+// Truncate-and-write the target's own inode, preserving everything hanging
+// off it (mode, owner, xattrs/ACLs, and every hard link) at the cost of the
+// sibling-temp-then-rename path's crash atomicity. See SaveToFile above for
+// the two situations that select this.
+void Buffer::WriteInPlace(const std::filesystem::path& target, LineEnding effectiveEnding, bool trimTrailingWhitespace,
+                          bool ensureFinalNewline) {
+    std::ofstream file(target, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        throw std::runtime_error("ned: cannot open file for writing: " + target.string());
+    }
+
+    WriteBufferContent(file, *Storage_, effectiveEnding, trimTrailingWhitespace, ensureFinalNewline);
+    const bool writeFailed = !file;
+    file.close();
+
+    if (writeFailed) {
+        // Deliberately not removed or restored: unlike the temp-file path,
+        // this *is* the real file, and there's no intact copy to fall back
+        // to here -- Editor/Backup.h's pre-save version is the recovery
+        // route, so the message has to say so rather than imply the file is
+        // still intact.
+        throw std::runtime_error("ned: error writing file: " + target.string() +
+                                 " -- it may now be truncated; recover from a backup version if needed");
+    }
 }
 
 void Buffer::Save(bool ensureFinalNewline, bool trimTrailingWhitespace, std::optional<LineEnding> lineEndingOverride) {
