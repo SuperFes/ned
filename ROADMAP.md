@@ -1036,8 +1036,22 @@ for closed-issue history.
 
 As of 2026-09-08: `ctest -j8` is clean under both the `default` and
 `sanitize` presets, and so is the single-process `./build/ned_tests` (see the build/test
-note at the end of this file for why that is a separate check worth making). One
-documented behavioral limitation, not a flake:
+note at the end of this file for why that is a separate check worth making). One flake
+and one documented behavioral limitation:
+
+- **Fold gutter huge-buffer window remap test, under `ctest -j8` only.** "Fold gutter
+  remaps a huge buffer's window-relative offsets back to the correct absolute line when
+  the window starts deep in the file" (`BufferViewHugeStructuralGutterTest.cpp`) failed
+  once during the BufferView decomposition work on 2026-09-08, then passed on
+  `--rerun-failed` and on two consecutive full `-j8` runs. Seen once, not reproduced;
+  the test builds a genuinely huge buffer and is one of the slower ones, so the most
+  likely cause is load-dependent timing under parallel execution rather than anything
+  in the fold windowing itself. Noted rather than chased because a single unreproduced
+  failure gives nothing to bisect against — if it recurs, capture the `-j8` seed and
+  the machine load before touching the windowing code, which is separately covered by
+  the rest of that file.
+
+One documented behavioral limitation, not a flake:
 
 - A save of a file with more than one hard link writes that file's own inode in place
   (`Text/FilePreservation.h`'s `ShouldWriteInPlace`) rather than taking the usual
