@@ -22,8 +22,15 @@ namespace ned::editor::lsp {
 // codepoint offset -- LSP's own Position shape (see the "specification"
 // section of the LSP spec on "Position").
 struct LspPosition {
-    std::size_t line;
-    std::size_t character;
+    // Both default-initialized: several types hold an LspPosition by value
+    // and are themselves default-constructed before being conditionally
+    // filled in (DocumentLink's range when the server sent none,
+    // WorkspaceTextEdit inside an unset CompletionItem::textEdit). Without
+    // these, "the default is 0:0" -- which those call sites and their tests
+    // both rely on -- is an indeterminate read that only happens to hold
+    // under whatever the stack last contained.
+    std::size_t line      = 0;
+    std::size_t character = 0;
 
     bool operator==(const LspPosition&) const = default;
 };
