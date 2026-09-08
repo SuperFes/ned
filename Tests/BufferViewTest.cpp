@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -560,15 +561,35 @@ std::vector<ned::editor::lsp::Json> ParseConcatenatedLspFrames(const std::string
 // documentHighlight and signatureHelp, both triggered by the same typed
 // content-generation change) queued back-to-back by a single
 // DrainPosted_() call, arriving concatenated in one ::read(). Reads until
-// at least frameCount complete frames are present -- safe against blocking
-// forever since, by the time a caller reaches here, DrainPosted_() has
-// already synchronously run every producing callback, so every expected
-// frame's bytes are already fully written to the pipe.
-std::vector<ned::editor::lsp::Json> ReadLspFrames(int fd, std::size_t frameCount) {
-    std::string all;
-    char        buffer[512];
-    for (int i = 0; i < 8; ++i) {
-        if (ParseConcatenatedLspFrames(all).size() >= frameCount) {
+// `done` accepts the frames parsed so far, or timeout elapses.
+//
+// async-write-queue follow-up: this used to be a bare cap of 8 blocking
+// ::read() calls, justified by "by the time a caller reaches here,
+// DrainPosted_() has already synchronously run every producing callback, so
+// every expected frame's bytes are already fully written to the pipe." That
+// stopped being true when LspClient moved its writes onto a writeThread_ --
+// a producing callback now only *enqueues*, and the bytes reach the pipe
+// whenever that thread is next scheduled. Hence a real poll(2)-based
+// deadline instead: a frame that is merely late is waited for, and a frame
+// that genuinely never comes fails the caller's own assertion rather than
+// blocking the suite forever.
+std::vector<ned::editor::lsp::Json> ReadLspFramesUntil(int fd, const std::function<bool(const std::vector<ned::editor::lsp::Json>&)>& done,
+                                                       std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+    std::string      all;
+    char             buffer[512];
+    const auto       deadline = std::chrono::steady_clock::now() + timeout;
+    std::vector<ned::editor::lsp::Json> frames;
+    while (true) {
+        frames = ParseConcatenatedLspFrames(all);
+        if (done(frames)) {
+            break;
+        }
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+        if (remaining.count() <= 0) {
+            break;
+        }
+        pollfd pfd{fd, POLLIN, 0};
+        if (::poll(&pfd, 1, static_cast<int>(remaining.count())) <= 0) {
             break;
         }
         const ssize_t n = ::read(fd, buffer, sizeof(buffer));
@@ -577,7 +598,35 @@ std::vector<ned::editor::lsp::Json> ReadLspFrames(int fd, std::size_t frameCount
         }
         all.append(buffer, static_cast<std::size_t>(n));
     }
-    return ParseConcatenatedLspFrames(all);
+    return frames;
+}
+
+std::vector<ned::editor::lsp::Json> ReadLspFrames(int fd, std::size_t frameCount) {
+    return ReadLspFramesUntil(fd, [frameCount](const std::vector<ned::editor::lsp::Json>& frames) { return frames.size() >= frameCount; });
+}
+
+// codeLens follow-up. The shape every "wait for request X" assertion should
+// use, rather than reading a fixed frame count and searching what turned up:
+// a Paint() burst fires several unrelated background requests (didOpen,
+// inlayHint, codeLens, semanticTokens, ...) whose exact number is
+// *nondeterministic* -- codeLens in particular races the server-capability
+// handshake, so it is sometimes present and sometimes not. Counting frames
+// therefore makes the request under test land outside the window roughly one
+// suite run in three (root-caused 2026-09-08 from the intermittent
+// "Right-click in the content area auto-fills real LSP quick-fixes" failure:
+// the three frames read were didOpen/inlayHint/codeLens, with codeAction
+// arriving immediately after). Keying on the method instead is immune to
+// however many unrelated requests share the burst.
+ned::editor::lsp::Json ReadLspFrameWithMethod(int fd, std::string_view method) {
+    const std::vector<ned::editor::lsp::Json> frames =
+        ReadLspFramesUntil(fd, [method](const std::vector<ned::editor::lsp::Json>& parsed) {
+            return std::any_of(parsed.begin(), parsed.end(),
+                               [method](const ned::editor::lsp::Json& f) { return f.value("method", std::string()) == method; });
+        });
+    const auto it = std::find_if(frames.begin(), frames.end(),
+                                 [method](const ned::editor::lsp::Json& f) { return f.value("method", std::string()) == method; });
+    REQUIRE(it != frames.end()); // never arrived within the deadline
+    return *it;
 }
 
 // DAP client slice 2: the pipe-backed fake-adapter counterpart of
@@ -1363,18 +1412,12 @@ TEST_CASE("A textDocument/semanticTokens/full response overrides tree-sitter's o
 
     // Both can land in the same read() -- ReadRawLspFrame's own one-frame-
     // per-call assumption breaks here, same as the pull-diagnostics tests'
-    // own precedent above.
-    // A third background request (e.g. codeLens) can non-deterministically
-    // race in alongside semanticTokens on the same Paint() burst -- see the
-    // codeLens follow-up comment on ReadLspFrames above -- so find the
-    // semanticTokens request by method instead of assuming it's frames[1].
-    const std::vector<ned::editor::lsp::Json> frames = ReadLspFrames(server.serverStdinRead, 2);
-    REQUIRE(frames[0]["method"] == "textDocument/didOpen");
-    const auto semanticIt = std::find_if(frames.begin(), frames.end(), [](const ned::editor::lsp::Json& f) {
-        return f["method"] == "textDocument/semanticTokens/full";
-    });
-    REQUIRE(semanticIt != frames.end());
-    const ned::editor::lsp::Json& semanticRequest = *semanticIt;
+    // own precedent above. A third background request (e.g. codeLens) can
+    // non-deterministically race in alongside semanticTokens on the same
+    // Paint() burst, so wait for the semanticTokens request by method rather
+    // than reading a fixed frame count -- see ReadLspFrameWithMethod's own
+    // doc comment.
+    const ned::editor::lsp::Json semanticRequest = ReadLspFrameWithMethod(server.serverStdinRead, "textDocument/semanticTokens/full");
 
     // '1' at byte 6, length 1, type index 0 ("keyword").
     const auto response = ned::editor::lsp::Json{
@@ -1868,17 +1911,12 @@ TEST_CASE("Right-click in the content area auto-fills real LSP quick-fixes above
                                     "Format Buffer"}); // no fixes have arrived yet
 
     // didOpen and an unconditional per-Paint() inlayHint request both land
-    // ahead of the codeAction request my right-click fires (confirmed by
-    // inspection -- inlay hints, unlike semanticTokens/codeLens, fire on
-    // every Paint() with no extra per-test setup needed) -- same "several
-    // frames can land in one read()" precedent the semantic-tokens test
-    // above documents, just three deep here instead of two.
-    const std::vector<ned::editor::lsp::Json> frames    = ReadLspFrames(server.serverStdinRead, 3);
-    const auto                                requestIt = std::find_if(frames.begin(), frames.end(), [](const ned::editor::lsp::Json& f) {
-        return f["method"] == "textDocument/codeAction";
-    });
-    REQUIRE(requestIt != frames.end());
-    const ned::editor::lsp::Json& request = *requestIt;
+    // ahead of the codeAction request my right-click fires, and codeLens
+    // sometimes makes a third -- how many unrelated background requests share
+    // the burst is nondeterministic, so wait for codeAction by method rather
+    // than reading a fixed frame count (see ReadLspFrameWithMethod's own doc
+    // comment, which this test's own intermittent failure is what produced).
+    const ned::editor::lsp::Json request = ReadLspFrameWithMethod(server.serverStdinRead, "textDocument/codeAction");
     const ned::editor::lsp::Json  response = {
         {"jsonrpc", "2.0"},
         {"id", request["id"]},
