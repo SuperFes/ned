@@ -81,6 +81,7 @@
 #include "UI/BufferView/ConfirmPrompt.h"
 #include "UI/BufferView/EditorContext.h"
 #include "UI/BufferView/FuzzyPrompt.h"
+#include "UI/BufferView/GutterLayout.h"
 #include "UI/BufferView/GutterModel.h"
 #include "UI/BufferView/RequestSlot.h"
 #include "UI/BufferView/TextEntryPrompt.h"
@@ -2593,7 +2594,10 @@ class BufferView : public Widget {
     // Width in columns of the line-number gutter (digits needed for the
     // buffer's last line number, plus one separating column). Always
     // present -- there's no toggle to hide it yet.
-    [[nodiscard]] std::size_t GutterWidth() const;
+    // Where every gutter column sits this frame. GutterWidth is this layout's
+    // totalWidth -- the two used to be computed separately and had to agree.
+    [[nodiscard]] bufferview::GutterLayout ComputeGutterLayout(std::size_t totalLines) const;
+    [[nodiscard]] std::size_t              GutterWidth() const;
 
     // Diff gutter markers follow-up: same "only reserve the column when
     // there's something to show" gate BlameGutterActive() established --

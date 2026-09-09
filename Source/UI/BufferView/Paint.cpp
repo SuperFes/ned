@@ -331,64 +331,19 @@ void BufferView::Paint(Canvas paneCanvas) {
         minimap_->item_visual_length = 1;
     }
 
-    const std::size_t gutterWidth = GutterWidth();
-    // status/line-number-spacing follow-up: GutterWidth() already reserves
-    // these columns only when actually wanted (see its own doc comment) --
-    // recomputing the same condition here keeps the layout math below in
-    // agreement with it without a second source of truth. Column offsets,
-    // left to right: [diff][status][diagnostic][gap][digits][gap][symbol]
-    // [fold][blame] (diff-gutter-markers follow-up put diff leftmost,
-    // matching real editors' own git-gutter placement -- see kDiffWidth's
-    // own doc comment; blame stayed the rightmost region, past fold; symbol
-    // -- gutter-symbol-kind follow-up -- sits just before fold, clustering
-    // the two structure-related columns together).
-    const std::size_t foldColumnWidth   = gutters_.FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-    const std::size_t blameColumnWidth  = BlameGutterActive() ? kBlameWidth : 0;
-    const std::size_t diffColumnWidth   = DiffGutterActive() ? kDiffWidth : 0;
-    const std::size_t symbolColumnWidth = gutters_.SymbolGutterActive() ? kSymbolWidth : 0;
-    // test-runner integration: pass/fail marks, immediately left of the
-    // symbol column (landmark columns clustered together).
-    const std::size_t testColumnWidth = gutters_.TestGutterActive() ? kTestWidth : 0;
-    // code-coverage-gutter follow-up: covered/uncovered/partial marks,
-    // between test and symbol (the third testing/structure-related landmark
-    // column in the same cluster).
-    const std::size_t coverageColumnWidth = gutters_.CoverageGutterActive() ? kCoverageWidth : 0;
-    // DAP client slice 2: the debug-marker column, leftmost of all when
-    // active -- see kDapWidth's own doc comment for the full layout.
-    const std::size_t dapColumnWidth  = DapGutterActive() ? kDapWidth : 0;
-    const std::size_t diffStart       = dapColumnWidth;
-    const std::size_t statusStart     = diffStart + diffColumnWidth;
-    const std::size_t diagnosticStart = statusStart + kStatusWidth;
+    // Every column offset for this frame, from the same computation that
+    // decides how wide the gutter is -- see BufferView/GutterLayout.h.
+    const bufferview::GutterLayout gutter = ComputeGutterLayout(totalLines);
 
-    // Fetched once per Paint(), not once per row -- BreakpointsForKey
-    // returns a copy, and the stop location never changes mid-frame.
-    // dapPathKey_ is current here: DapGutterActive() just above ran
-    // EnsureDapPathKey(). Slice 4: the richer per-line Breakpoint (kind +
-    // verified) rather than bare line numbers, for the gutter's
-    // glyph-by-kind/color-by-verified rendering below.
     std::vector<editor::dap::DapManager::Breakpoint>   dapBreakpoints;
     std::optional<std::pair<std::string, std::size_t>> dapStop;
-    if (dapColumnWidth > 0) {
+    if (gutter.dapWidth > 0) {
         dapBreakpoints = dapManager_->BreakpointsForKey(dapPathKey_);
         dapStop        = dapManager_->CurrentStopKeyAndLine();
         if (dapStop && dapStop->first != dapPathKey_) {
             dapStop.reset(); // stopped in some other file -- nothing to mark here
         }
     }
-    // Multibuffers follow-up: LineNumberGutterActive() recomputed here
-    // (not derived from gutterWidth by subtraction) for the same
-    // "recompute the same condition, don't make gutterWidth a second
-    // source of truth" reason foldColumnWidth/blameColumnWidth/
-    // diffColumnWidth above already recompute their own XActive() checks
-    // rather than trying to unpack them back out of gutterWidth.
-    const std::size_t lineNumberGapWidth = LineNumberGutterActive() ? kLineNumberGap : 0;
-    const std::size_t digitsStart        = diagnosticStart + kDiagnosticWidth + lineNumberGapWidth;
-    const std::size_t gutterDigits       = LineNumberGutterActive() ? std::to_string(totalLines).size() : 0;
-    const std::size_t testStart          = digitsStart + gutterDigits + lineNumberGapWidth;
-    const std::size_t coverageStart      = testStart + testColumnWidth;
-    const std::size_t symbolStart        = coverageStart + coverageColumnWidth;
-    const std::size_t foldStart          = symbolStart + symbolColumnWidth;
-    const std::size_t blameStart         = foldStart + foldColumnWidth;
 
     // status-gutter unsaved-change-indicator follow-up: recomputed once
     // per Paint() call (not per row) -- see EnsureUnsavedChangeCache's own
@@ -756,7 +711,7 @@ void BufferView::Paint(Canvas paneCanvas) {
     // viewport_.ByteOffsetForPoint() read it back so the terminal cursor, popup
     // anchors, and mouse-click row resolution all agree with what got drawn
     // this frame.
-    stickyRowCount_ = PaintStickyScrollRows(paneCanvas, gutterWidth);
+    stickyRowCount_ = PaintStickyScrollRows(paneCanvas, gutter.totalWidth);
     Box shiftedBox  = Box_();
     shiftedBox.y_min += stickyRowCount_;
     Canvas c = paneCanvas.ForBox(shiftedBox);
@@ -771,7 +726,7 @@ void BufferView::Paint(Canvas paneCanvas) {
         }
 
         if (pendingAnnotationLine) {
-            PaintInlineDiagnosticRow(c, row, *pendingAnnotationLine, gutterWidth);
+            PaintInlineDiagnosticRow(c, row, *pendingAnnotationLine, gutter.totalWidth);
             pendingAnnotationLine.reset();
             continue; // consumed this row; `line` already points at the next buffer line
         }
@@ -785,7 +740,7 @@ void BufferView::Paint(Canvas paneCanvas) {
         // this branch from re-triggering on that next iteration.
         if (line < renderEndLine && segmentIndex == 0 && line != leadingAnnotationEmittedLine &&
             LeadingAnnotationRowsForLine(line) > 0) {
-            PaintCodeLensRow(c, row, line, gutterWidth);
+            PaintCodeLensRow(c, row, line, gutter.totalWidth);
             leadingAnnotationEmittedLine = line;
             continue;
         }
@@ -860,7 +815,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 }
                 currentLineIsExecutionLine = dapStop && dapStop->second == line + 1; // dapStop already file-filtered above
                 currentLineDiffTint.reset();
-                if (diffColumnWidth > 0) {
+                if (gutter.diffWidth > 0) {
                     const auto diffIt = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
                                                          [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
                     if (diffIt != diffLineKinds_.end() && diffIt->first == line && diffIt->second != DiffLineKind::Removed) {
@@ -874,7 +829,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     }
                 }
                 if (wrapActive) {
-                    const int fullWidth = std::max(1, c.size().width - static_cast<int>(gutterWidth));
+                    const int fullWidth = std::max(1, c.size().width - static_cast<int>(gutter.totalWidth));
                     lineSegments        = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, currentLineLinks);
                 }
                 else {
@@ -934,7 +889,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // geometric-shapes range as the scroll arrows -- DAP round 3
                 // adds ◇, the open-diamond hit-count sibling of ◆'s filled
                 // condition glyph).
-                if (dapColumnWidth > 0) {
+                if (gutter.dapWidth > 0) {
                     Cell& cell = c[{.x = 0, .y = row}];
                     if (currentLineIsExecutionLine) {
                         cell.character = "▸";
@@ -972,15 +927,15 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // Theme::BrushFor(SyntaxClass) -- same bypass the blame
                 // gutter's own hash coloring already uses, for the same
                 // reason (this isn't a tree-sitter capture category).
-                // Drawn at diffStart -- the diff column's own x. This used
-                // to (wrongly) target statusStart, where the unsaved-change
+                // Drawn at gutter.diffStart -- the diff column's own x. This used
+                // to (wrongly) target gutter.statusStart, where the unsaved-change
                 // swatch below then unconditionally overwrote it every
                 // frame, leaving the reserved diff column permanently
                 // blank; found while adding the debug column and fixed on
                 // request rather than silently, since the visible diff
                 // styling (colored line numbers + content gradient) had
                 // been tuned with the swatch invisibly absent.
-                if (diffColumnWidth > 0) {
+                if (gutter.diffWidth > 0) {
                     const auto it = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
                                                      [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
                     if (it != diffLineKinds_.end() && it->first == line) {
@@ -992,7 +947,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                         // icons. ▔ stays for a deletion: it's already
                         // iconographic (the notch marks where the deleted
                         // lines sat, at this line's own top edge).
-                        Cell& cell            = c[{.x = static_cast<int>(diffStart), .y = row}];
+                        Cell& cell            = c[{.x = static_cast<int>(gutter.diffStart), .y = row}];
                         cell.background_color = theme_.background;
                         cell.bold             = true;
                         switch (it->second) {
@@ -1028,7 +983,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     const bool  changed        = it != unsavedChangeLineRanges.end() && it->first <= line;
                     const Color indicatorColor = changed ? theme_.unsavedChangeIndicator : theme_.background;
                     const Brush statusBrush{.background = indicatorColor, .foreground = indicatorColor};
-                    Cell&       cell = c[{.x = static_cast<int>(statusStart), .y = row}];
+                    Cell&       cell = c[{.x = static_cast<int>(gutter.statusStart), .y = row}];
                     cell.character   = " ";
                     statusBrush.ApplyTo(cell);
                 }
@@ -1048,11 +1003,11 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // own doc comment for why a plain binary search suffices here
                 // (at most one entry per line -- the most severe -- already
                 // sorted).
-                if (static_cast<int>(diagnosticStart) < c.size().width) {
+                if (static_cast<int>(gutter.diagnosticStart) < c.size().width) {
                     const auto it            = std::lower_bound(diagnosticLineSeverities.begin(), diagnosticLineSeverities.end(), line,
                                                                 [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
                     const bool hasDiagnostic = it != diagnosticLineSeverities.end() && it->first == line;
-                    Cell&      cell          = c[{.x = static_cast<int>(diagnosticStart), .y = row}];
+                    Cell&      cell          = c[{.x = static_cast<int>(gutter.diagnosticStart), .y = row}];
                     if (!hasDiagnostic) {
                         cell.character = " ";
                         Brush{.background = theme_.background, .foreground = theme_.background}.ApplyTo(cell);
@@ -1073,9 +1028,9 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // would be meaningless noise next to the dual old/new
                 // columns already baked into a *vcs diff*-style excerpt's
                 // own text -- see LineNumberGutterActive()'s own doc
-                // comment. gutterDigits/digitsStart are already computed
+                // comment. gutter.digits/gutter.digitsStart are already computed
                 // as 0-width/collapsed in that case (see this function's
-                // own gutterDigits/digitsStart derivation above), but the
+                // own gutter.digits/gutter.digitsStart derivation above), but the
                 // digit string itself (line + 1) is never zero-width, so
                 // the write loop below has to be skipped outright rather
                 // than trusted to naturally emit nothing.
@@ -1098,31 +1053,31 @@ void BufferView::Paint(Canvas paneCanvas) {
                     const std::string number  = editor::RelativeLineNumbersEnabled() && line != pointLine
                                                     ? std::to_string(line > pointLine ? line - pointLine : pointLine - line)
                                                     : std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
-                    const std::size_t padding = gutterDigits > number.size() ? gutterDigits - number.size() : 0;
+                    const std::size_t padding = gutter.digits > number.size() ? gutter.digits - number.size() : 0;
                     // Leading gap (status/line-number-spacing follow-up -- the
                     // line-number gutter now gets breathing room on BOTH sides,
                     // not just the trailing gap it already had). Sits right after
                     // the diagnostic column now (LSP client follow-up), not
-                    // directly after the status column -- digitsStart itself
+                    // directly after the status column -- gutter.digitsStart itself
                     // already accounts for kDiagnosticWidth, so this is just
-                    // "one column before digitsStart."
-                    if (static_cast<int>(digitsStart - kLineNumberGap) < c.size().width) {
-                        Cell& cell     = c[{.x = static_cast<int>(digitsStart - kLineNumberGap), .y = row}];
+                    // "one column before gutter.digitsStart."
+                    if (static_cast<int>(gutter.digitsStart - kLineNumberGap) < c.size().width) {
+                        Cell& cell     = c[{.x = static_cast<int>(gutter.digitsStart - kLineNumberGap), .y = row}];
                         cell.character = " ";
                         gutterGapBrush.ApplyTo(cell);
                     }
-                    for (std::size_t i = 0; i < padding && static_cast<int>(digitsStart + i) < c.size().width; ++i) {
-                        Cell& cell     = c[{.x = static_cast<int>(digitsStart + i), .y = row}];
+                    for (std::size_t i = 0; i < padding && static_cast<int>(gutter.digitsStart + i) < c.size().width; ++i) {
+                        Cell& cell     = c[{.x = static_cast<int>(gutter.digitsStart + i), .y = row}];
                         cell.character = " ";
                         gutterBrush.ApplyTo(cell);
                     }
-                    for (std::size_t i = 0; i < number.size() && static_cast<int>(digitsStart + padding + i) < c.size().width; ++i) {
-                        Cell& cell     = c[{.x = static_cast<int>(digitsStart + padding + i), .y = row}];
+                    for (std::size_t i = 0; i < number.size() && static_cast<int>(gutter.digitsStart + padding + i) < c.size().width; ++i) {
+                        Cell& cell     = c[{.x = static_cast<int>(gutter.digitsStart + padding + i), .y = row}];
                         cell.character = std::string(1, number[i]);
                         gutterBrush.ApplyTo(cell);
                     }
-                    if (static_cast<int>(digitsStart + gutterDigits) < c.size().width) {
-                        Cell& cell     = c[{.x = static_cast<int>(digitsStart + gutterDigits), .y = row}];
+                    if (static_cast<int>(gutter.digitsStart + gutter.digits) < c.size().width) {
+                        Cell& cell     = c[{.x = static_cast<int>(gutter.digitsStart + gutter.digits), .y = row}];
                         cell.character = " ";
                         gutterGapBrush.ApplyTo(cell);
                     }
@@ -1164,11 +1119,11 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // lower_bound lookup the blame gutter below already uses.
                 // Placed right before fold, matching [digits][gap][symbol]
                 // [fold][blame]'s own layout comment above.
-                if (symbolColumnWidth > 0 && static_cast<int>(symbolStart) < c.size().width) {
+                if (gutter.symbolWidth > 0 && static_cast<int>(gutter.symbolStart) < c.size().width) {
                     const auto it = std::lower_bound(gutters_.SymbolLineKinds().begin(), gutters_.SymbolLineKinds().end(), line,
                                                      [](const auto& entry, std::size_t l) { return entry.first < l; });
                     if (it != gutters_.SymbolLineKinds().end() && it->first == line) {
-                        Cell& cell     = c[{.x = static_cast<int>(symbolStart), .y = row}];
+                        Cell& cell     = c[{.x = static_cast<int>(gutter.symbolStart), .y = row}];
                         cell.character = SymbolGlyphFor(it->second);
                         theme_.BrushFor(editor::SyntaxClassFor(it->second)).ApplyTo(cell);
                     }
@@ -1176,11 +1131,11 @@ void BufferView::Paint(Canvas paneCanvas) {
 
                 // test-runner integration: the pass/fail mark on a discovered
                 // test's own first line -- symbol block's exact lookup shape.
-                if (testColumnWidth > 0 && static_cast<int>(testStart) < c.size().width) {
+                if (gutter.testWidth > 0 && static_cast<int>(gutter.testStart) < c.size().width) {
                     const auto it = std::lower_bound(gutters_.TestEntries().begin(), gutters_.TestEntries().end(), line,
                                                      [](const TestGutterEntry& entry, std::size_t l) { return entry.line < l; });
                     if (it != gutters_.TestEntries().end() && it->line == line) {
-                        Cell& cell            = c[{.x = static_cast<int>(testStart), .y = row}];
+                        Cell& cell            = c[{.x = static_cast<int>(gutter.testStart), .y = row}];
                         cell.character        = TestGlyphFor(it->status);
                         cell.foreground_color = TestStatusColor(it->status);
                         cell.bold             = true;
@@ -1200,7 +1155,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // just untested code in general. DiffLineKind::Removed is
                 // excluded -- it's a deletion-boundary marker, not a real
                 // line in this version of the file.
-                if (coverageColumnWidth > 0 && static_cast<int>(coverageStart) < c.size().width) {
+                if (gutter.coverageWidth > 0 && static_cast<int>(gutter.coverageStart) < c.size().width) {
                     const auto it = std::lower_bound(gutters_.CoverageLineStatuses().begin(), gutters_.CoverageLineStatuses().end(),
                                                      line, [](const auto& entry, std::size_t l) { return entry.first < l; });
                     if (it != gutters_.CoverageLineStatuses().end() && it->first == line) {
@@ -1209,7 +1164,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                         const bool changed = diffIt != diffLineKinds_.end() && diffIt->first == line &&
                                              diffIt->second != DiffLineKind::Removed;
 
-                        Cell& cell = c[{.x = static_cast<int>(coverageStart), .y = row}];
+                        Cell& cell = c[{.x = static_cast<int>(gutter.coverageStart), .y = row}];
                         if (it->second == editor::coverage::LineStatus::Uncovered && changed) {
                             cell.character        = "!";
                             cell.foreground_color = Color::BrightRed;
@@ -1235,7 +1190,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     }
                 }
 
-                if (foldColumnWidth > 0) {
+                if (gutter.foldWidth > 0) {
                     foldGutterHeaderAtColumn.fill(nullptr);
                     // <= line, not == line: when viewport_.TopLine() > 0 (scrolled past
                     // any blocks whose header sits earlier in the file), those
@@ -1272,7 +1227,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                             openEnds.pop_back();
                         }
 
-                        const int screenCol = static_cast<int>(foldStart) + col;
+                        const int screenCol = static_cast<int>(gutter.foldStart) + col;
                         if (screenCol >= c.size().width) {
                             continue;
                         }
@@ -1299,14 +1254,14 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // diagnostic gutter's glyph coloring already uses (see
                 // SpanAtOffset's own precedent) since SyntaxClass is
                 // tree-sitter-capture-oriented, not a fit for this.
-                if (blameColumnWidth > 0) {
+                if (gutter.blameWidth > 0) {
                     const auto it = std::lower_bound(blameLineInfo_.begin(), blameLineInfo_.end(), line,
                                                      [](const auto& entry, std::size_t l) { return entry.first < l; });
                     if (it != blameLineInfo_.end() && it->first == line) {
                         const std::string shortHash = it->second.commitHash.substr(0, std::min<std::size_t>(8, it->second.commitHash.size()));
                         const Color       hashColor = BlameHashColor(it->second.date);
-                        for (std::size_t i = 0; i < shortHash.size() && static_cast<int>(blameStart + i) < c.size().width; ++i) {
-                            Cell& cell            = c[{.x = static_cast<int>(blameStart + i), .y = row}];
+                        for (std::size_t i = 0; i < shortHash.size() && static_cast<int>(gutter.blameStart + i) < c.size().width; ++i) {
+                            Cell& cell            = c[{.x = static_cast<int>(gutter.blameStart + i), .y = row}];
                             cell.character        = std::string(1, shortHash[i]);
                             cell.foreground_color = hashColor;
                             cell.background_color = theme_.background;
@@ -1341,7 +1296,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     offset += decoded.byteLength;
                 }
             }
-            int col = static_cast<int>(gutterWidth);
+            int col = static_cast<int>(gutter.totalWidth);
             while (offset < currentSegment.endByte && col < c.size().width) {
                 if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
                     // Links follow-up: real Org's own "descriptive links" --
@@ -1553,7 +1508,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     const bool inIndent = editor::IndentGuidesEnabled() && offset < currentLineIndentEnd;
                     for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
                         Cell&     cell          = c[{.x = col, .y = row}];
-                        const int displayColumn = col - static_cast<int>(gutterWidth);
+                        const int displayColumn = col - static_cast<int>(gutter.totalWidth);
                         if (inIndent && displayColumn > 0 && displayColumn % tabWidth == 0) {
                             // Whitespace-visualization follow-up: a guide
                             // glyph in place of one of the expanded tab's
@@ -1605,7 +1560,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 }
                 else {
                     Cell&     cell          = c[{.x = col, .y = row}];
-                    const int displayColumn = col - static_cast<int>(gutterWidth);
+                    const int displayColumn = col - static_cast<int>(gutter.totalWidth);
                     // offset < currentLineIndentEnd here only ever holds for
                     // a space cell (see that field's own doc comment: the
                     // scan that computes it stops at the first non-space/tab
@@ -1818,12 +1773,12 @@ void BufferView::Paint(Canvas paneCanvas) {
             // row was already blanked by the top-of-loop wash, genuinely
             // empty past the gutter, so a callout brace may use it as
             // padding.
-            rowContentEndColumn[row] = static_cast<int>(gutterWidth);
+            rowContentEndColumn[row] = static_cast<int>(gutter.totalWidth);
             line                     = viewport_.NextVisibleLine(line + 1, renderEndLine);
         }
     }
 
-    PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutterWidth);
+    PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutter.totalWidth);
 
     // completion-popup follow-up: activeCompletion_ mutation sites already
     // notify onCompletionChanged_ directly (NotifyCompletionChanged), but
