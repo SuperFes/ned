@@ -1313,6 +1313,89 @@ bool BufferView::EmitCollapsedLink(Canvas& c, int row, int& col, std::size_t& of
     return false;
 }
 
+// Paints the fold ellipsis, and any preview of what is hidden, after a line's
+// own content. Drawn when something below this line is currently folded away.
+// The caller places it on the line's LAST visual row: it means "content after
+// this line is hidden", which belongs at the end of the line rather than
+// repeated on every wrapped continuation row.
+void BufferView::PaintFoldEllipsis(Canvas& c, int row, int& col, std::size_t line, std::size_t lineStart,
+                                   const FramePaint& frame) const {
+    // Org-mode fold/unfold follow-up: any marked headline (Collapsed or
+    // ChildrenVisible -- either way, something below this line is
+    // currently hidden) gets a short ellipsis painted right after its
+    // own frame.content, real Org's own visual cue that there's more here
+    // than what's shown. Reuses theme_.lineNumberForeground rather than
+    // a new dedicated Theme field -- deliberately minimal, a distinct
+    // color is an easy follow-up if it turns out to matter in practice.
+    // generic-code-folding follow-up: was `frame.buffer.FoldMarkerAt(lineStart).has_value()`
+    // -- correct for Org, whose marker key always IS the headline
+    // line's own start byte, but not for a code fold, whose marker
+    // key is a foldable block's own startByte (e.g. a function's
+    // "{"), which sits partway through its header line, not at
+    // column 0. Checking viewport_.HiddenLineRanges() for an entry starting
+    // right after this line is the one condition both fold sources
+    // agree on (see FoldedLineRanges' own [startLine+1, endLine+1)
+    // convention, shared by org:: and codefold:: alike), so this is
+    // the generic trigger both the ellipsis and the preview below
+    // key off, rather than a marker lookup at all.
+    for (const auto& [hiddenStart, hiddenEnd] : viewport_.HiddenLineRanges()) {
+        if (hiddenStart != line + 1 || hiddenEnd == hiddenStart) {
+            continue;
+        }
+        const Brush foldBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
+        for (const char32_t glyph : {U' ', kFoldEllipsis}) {
+            if (col >= c.size().width)
+                break;
+            Cell& cell     = c[{.x = col, .y = row}];
+            cell.character = text::EncodeCodepointUtf8(glyph);
+            foldBrush.ApplyTo(cell);
+            ++col;
+        }
+
+        // A short, dim preview of the folded region's own last line
+        // (e.g. a closing "}" or "};") right after the ellipsis, so
+        // collapsing a block doesn't fully erase what its closing
+        // line looked like -- every folded line is hidden from
+        // rendering by definition, so this preview is the only way
+        // that line's frame.content ever reaches the screen while the
+        // fold is closed. Leading whitespace is skipped (this is a
+        // preview snippet, not a faithful column-accurate render,
+        // so the closing line's own indentation would just waste
+        // columns).
+        const std::size_t lastHiddenLine = hiddenEnd - 1;
+        std::size_t       previewOffset  = frame.content.LineToByteOffset(lastHiddenLine);
+        const std::size_t previewEnd     = (lastHiddenLine + 1 < frame.totalLines)
+                                               ? frame.content.LineToByteOffset(lastHiddenLine + 1) - 1
+                                               : frame.content.ByteLength();
+        while (previewOffset < previewEnd) {
+            const auto decoded = frame.content.CodepointAt(previewOffset);
+            if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
+                break;
+            }
+            previewOffset += decoded.byteLength;
+        }
+        if (previewOffset >= previewEnd || col >= c.size().width) {
+            break;
+        }
+        const Brush previewBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
+        {
+            Cell& spaceCell     = c[{.x = col, .y = row}];
+            spaceCell.character = " ";
+            previewBrush.ApplyTo(spaceCell);
+            ++col;
+        }
+        while (previewOffset < previewEnd && col < c.size().width) {
+            const auto decoded = frame.content.CodepointAt(previewOffset);
+            Cell&      cell    = c[{.x = col, .y = row}];
+            cell.character     = text::EncodeCodepointUtf8(decoded.codepoint);
+            previewBrush.ApplyTo(cell);
+            ++col;
+            previewOffset += decoded.byteLength;
+        }
+        break;
+    }
+}
+
 void BufferView::Paint(Canvas paneCanvas) {
     viewport_.EnsureTopLineValidForActiveBuffer();
     EnsureStatusMessageFreshness();
@@ -1683,81 +1766,8 @@ void BufferView::Paint(Canvas paneCanvas) {
             // this line is hidden" -- belongs on the line's own last visual
             // row, not every wrap continuation row.
             if (segmentIndex + 1 == lineState.segments.size()) {
-                // Org-mode fold/unfold follow-up: any marked headline (Collapsed or
-                // ChildrenVisible -- either way, something below this line is
-                // currently hidden) gets a short ellipsis painted right after its
-                // own content, real Org's own visual cue that there's more here
-                // than what's shown. Reuses theme_.lineNumberForeground rather than
-                // a new dedicated Theme field -- deliberately minimal, a distinct
-                // color is an easy follow-up if it turns out to matter in practice.
-                // generic-code-folding follow-up: was `buffer.FoldMarkerAt(lineStart).has_value()`
-                // -- correct for Org, whose marker key always IS the headline
-                // line's own start byte, but not for a code fold, whose marker
-                // key is a foldable block's own startByte (e.g. a function's
-                // "{"), which sits partway through its header line, not at
-                // column 0. Checking viewport_.HiddenLineRanges() for an entry starting
-                // right after this line is the one condition both fold sources
-                // agree on (see FoldedLineRanges' own [startLine+1, endLine+1)
-                // convention, shared by org:: and codefold:: alike), so this is
-                // the generic trigger both the ellipsis and the preview below
-                // key off, rather than a marker lookup at all.
-                for (const auto& [hiddenStart, hiddenEnd] : viewport_.HiddenLineRanges()) {
-                    if (hiddenStart != line + 1 || hiddenEnd == hiddenStart) {
-                        continue;
-                    }
-                    const Brush foldBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
-                    for (const char32_t glyph : {U' ', kFoldEllipsis}) {
-                        if (col >= c.size().width)
-                            break;
-                        Cell& cell     = c[{.x = col, .y = row}];
-                        cell.character = text::EncodeCodepointUtf8(glyph);
-                        foldBrush.ApplyTo(cell);
-                        ++col;
-                    }
-
-                    // A short, dim preview of the folded region's own last line
-                    // (e.g. a closing "}" or "};") right after the ellipsis, so
-                    // collapsing a block doesn't fully erase what its closing
-                    // line looked like -- every folded line is hidden from
-                    // rendering by definition, so this preview is the only way
-                    // that line's content ever reaches the screen while the
-                    // fold is closed. Leading whitespace is skipped (this is a
-                    // preview snippet, not a faithful column-accurate render,
-                    // so the closing line's own indentation would just waste
-                    // columns).
-                    const std::size_t lastHiddenLine = hiddenEnd - 1;
-                    std::size_t       previewOffset  = content.LineToByteOffset(lastHiddenLine);
-                    const std::size_t previewEnd     = (lastHiddenLine + 1 < totalLines)
-                                                           ? content.LineToByteOffset(lastHiddenLine + 1) - 1
-                                                           : content.ByteLength();
-                    while (previewOffset < previewEnd) {
-                        const auto decoded = content.CodepointAt(previewOffset);
-                        if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
-                            break;
-                        }
-                        previewOffset += decoded.byteLength;
-                    }
-                    if (previewOffset >= previewEnd || col >= c.size().width) {
-                        break;
-                    }
-                    const Brush previewBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
-                    {
-                        Cell& spaceCell     = c[{.x = col, .y = row}];
-                        spaceCell.character = " ";
-                        previewBrush.ApplyTo(spaceCell);
-                        ++col;
-                    }
-                    while (previewOffset < previewEnd && col < c.size().width) {
-                        const auto decoded = content.CodepointAt(previewOffset);
-                        Cell&      cell    = c[{.x = col, .y = row}];
-                        cell.character     = text::EncodeCodepointUtf8(decoded.codepoint);
-                        previewBrush.ApplyTo(cell);
-                        ++col;
-                        previewOffset += decoded.byteLength;
-                    }
-                    break;
-                }
-            } // if (segmentIndex + 1 == lineState.segments.size()) -- fold ellipsis/preview
+                PaintFoldEllipsis(c, row, col, line, lineStart, frame);
+            }
 
             // trailing-blank-line-gutter follow-up: the buffer's own true
             // last line (line + 1 == totalLines) never gets a phantom empty
