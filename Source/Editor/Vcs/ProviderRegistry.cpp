@@ -1,4 +1,4 @@
-#include "VcsProviderRegistry.h"
+#include "ProviderRegistry.h"
 
 #include <mutex>
 #include <unordered_map>
@@ -18,8 +18,8 @@ namespace {
     // wins" rule, so providers are kept in a vector rather than an
     // unordered_map; g_index lets RegisterProvider still overwrite an
     // existing name in place instead of appending a duplicate.
-    std::vector<std::pair<std::string, std::unique_ptr<VcsProvider>>>& Providers() {
-        static std::vector<std::pair<std::string, std::unique_ptr<VcsProvider>>> providers;
+    std::vector<std::pair<std::string, std::unique_ptr<Provider>>>& Providers() {
+        static std::vector<std::pair<std::string, std::unique_ptr<Provider>>> providers;
         return providers;
     }
 
@@ -28,14 +28,14 @@ namespace {
         return index;
     }
 
-    std::unordered_map<std::filesystem::path, VcsProvider*>& RootCache() {
-        static std::unordered_map<std::filesystem::path, VcsProvider*> cache;
+    std::unordered_map<std::filesystem::path, Provider*>& RootCache() {
+        static std::unordered_map<std::filesystem::path, Provider*> cache;
         return cache;
     }
 
 } // namespace
 
-void RegisterProvider(const std::string& name, std::unique_ptr<VcsProvider> provider) {
+void RegisterProvider(const std::string& name, std::unique_ptr<Provider> provider) {
     const std::lock_guard lock(RegistryMutex());
 
     auto& providers = Providers();
@@ -50,7 +50,7 @@ void RegisterProvider(const std::string& name, std::unique_ptr<VcsProvider> prov
     providers.emplace_back(name, std::move(provider));
 }
 
-VcsProvider* ActiveProviderFor(const std::filesystem::path& root) {
+Provider* ActiveProviderFor(const std::filesystem::path& root) {
     const std::lock_guard lock(RegistryMutex());
 
     auto& cache = RootCache();

@@ -9,7 +9,7 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
-#include "Editor/Vcs/VcsProvider.h"
+#include "Editor/Vcs/Provider.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -17,7 +17,7 @@
 #include "UI/BufferView.h"
 #include "UI/Theme.h"
 
-using ned::editor::vcs::VcsDiffHunk;
+using ned::editor::vcs::DiffHunk;
 using ned::ui::BufferView;
 
 namespace {
@@ -75,7 +75,7 @@ TEST_CASE("JumpToNextHunk walks forward through every hunk then stops", "[Buffer
     // Same hunk set BufferViewDiffGutterTest.cpp's own gutter-rendering test
     // uses: Added at 0-indexed line 1, Modified at line 2, Removed boundary
     // at line 3.
-    view.DispatchDiffForTesting({VcsDiffHunk{1, 0, 2, 1}, VcsDiffHunk{3, 1, 3, 1}, VcsDiffHunk{5, 1, 3, 0}});
+    view.DispatchDiffForTesting({DiffHunk{1, 0, 2, 1}, DiffHunk{3, 1, 3, 1}, DiffHunk{5, 1, 3, 0}});
 
     const ned::text::ITextStorage& content = fixture.buffer.Content();
 
@@ -99,7 +99,7 @@ TEST_CASE("JumpToPreviousHunk walks backward through every hunk then stops", "[B
     Fixture fixture;
     fixture.buffer.InsertAtPoint("one\ntwo\nthree\nfour\n");
     BufferView view = fixture.View();
-    view.DispatchDiffForTesting({VcsDiffHunk{1, 0, 2, 1}, VcsDiffHunk{3, 1, 3, 1}, VcsDiffHunk{5, 1, 3, 0}});
+    view.DispatchDiffForTesting({DiffHunk{1, 0, 2, 1}, DiffHunk{3, 1, 3, 1}, DiffHunk{5, 1, 3, 0}});
 
     const ned::text::ITextStorage& content = fixture.buffer.Content();
     fixture.buffer.SetPoint(content.LineToByteOffset(3));

@@ -144,17 +144,17 @@ namespace {
     // file-tree decorations do. Mirrors RevealPath's own ancestor-walk loop
     // exactly (walk parent_path() up to root, bail out at the filesystem
     // root if root is somehow never reached).
-    std::unordered_map<std::filesystem::path, VcsRowStatus> BuildVcsStatusIndex(
-        const std::vector<editor::vcs::VcsStatusEntry>& entries, const std::filesystem::path& root) {
-        std::unordered_map<std::filesystem::path, VcsRowStatus> index;
-        auto                                                    merge = [&index](const std::filesystem::path& path, VcsRowStatus status) {
+    std::unordered_map<std::filesystem::path, RowStatus> BuildVcsStatusIndex(
+        const std::vector<editor::vcs::StatusEntry>& entries, const std::filesystem::path& root) {
+        std::unordered_map<std::filesystem::path, RowStatus> index;
+        auto                                                    merge = [&index](const std::filesystem::path& path, RowStatus status) {
             auto [it, inserted] = index.try_emplace(path, status);
             if (!inserted && status > it->second) {
                 it->second = status;
             }
         };
-        for (const editor::vcs::VcsStatusEntry& entry : entries) {
-            const VcsRowStatus          status   = editor::vcs::ClassifyPorcelainStatus(entry.state);
+        for (const editor::vcs::StatusEntry& entry : entries) {
+            const RowStatus          status   = editor::vcs::ClassifyPorcelainStatus(entry.state);
             const std::filesystem::path filePath = (root / entry.path).lexically_normal();
             merge(filePath, status);
 
@@ -171,10 +171,10 @@ namespace {
         return index;
     }
 
-    [[nodiscard]] VcsRowStatus LookupVcsStatus(const std::unordered_map<std::filesystem::path, VcsRowStatus>& index,
+    [[nodiscard]] RowStatus LookupVcsStatus(const std::unordered_map<std::filesystem::path, RowStatus>& index,
                                                const std::filesystem::path&                                   path) {
         const auto it = index.find(path.lexically_normal());
-        return it == index.end() ? VcsRowStatus::None : it->second;
+        return it == index.end() ? RowStatus::None : it->second;
     }
 
     // Reuses the diff gutter's own three constants (BufferView.cpp) rather
@@ -183,17 +183,17 @@ namespace {
     // documents (a background wash was tried for the live gutter and
     // reverted for fighting syntax-highlight contrast). BrightCyan for
     // Untracked is the one new addition, since nothing existing covers it.
-    [[nodiscard]] std::optional<Color> VcsStatusColor(VcsRowStatus status) {
+    [[nodiscard]] std::optional<Color> VcsStatusColor(RowStatus status) {
         switch (status) {
-            case VcsRowStatus::Deleted:
+            case RowStatus::Deleted:
                 return Color::BrightRed;
-            case VcsRowStatus::Modified:
+            case RowStatus::Modified:
                 return Color::BrightBlue;
-            case VcsRowStatus::Added:
+            case RowStatus::Added:
                 return Color::BrightGreen;
-            case VcsRowStatus::Untracked:
+            case RowStatus::Untracked:
                 return Color::BrightCyan;
-            case VcsRowStatus::None:
+            case RowStatus::None:
                 return std::nullopt;
         }
         return std::nullopt;
@@ -304,11 +304,11 @@ void ProjectSidebar::InvalidateTree() {
     treeCacheValid_ = false;
 }
 
-void ProjectSidebar::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
+void ProjectSidebar::SetVcsRunner(editor::vcs::Runner* vcsRunner) {
     vcsRunner_ = vcsRunner;
 }
 
-void ProjectSidebar::DispatchVcsStatusForTesting(const std::vector<editor::vcs::VcsStatusEntry>& entries) {
+void ProjectSidebar::DispatchVcsStatusForTesting(const std::vector<editor::vcs::StatusEntry>& entries) {
     vcsStatus_ = BuildVcsStatusIndex(entries, editor::ProjectRoot());
 }
 
@@ -324,7 +324,7 @@ void ProjectSidebar::RefreshVcsStatus(const std::filesystem::path& root) {
     // resolving for root behaves the same way, which is exactly
     // "highlighting is only meaningful in a VCS-tracked project tree".
     vcsRunner_->RequestStatus(
-        [this, root](std::vector<editor::vcs::VcsStatusEntry> entries) { vcsStatus_ = BuildVcsStatusIndex(entries, root); },
+        [this, root](std::vector<editor::vcs::StatusEntry> entries) { vcsStatus_ = BuildVcsStatusIndex(entries, root); },
         [](const std::string&) {});
 }
 

@@ -58,7 +58,7 @@ void SetWrapForFilename(const std::string& filename, bool wrap);
 // table, for a path-less synthetic buffer (e.g. "*acp: <agent>*") that
 // wants word-wrap without the VCS commit-message buffer's own workaround
 // of inventing a fake on-disk path just to make the file-based tables
-// above resolvable (see Editor/Vcs/VcsRunner.h's kVcsCommitMessageFilename
+// above resolvable (see Editor/Vcs/Runner.h's kVcsCommitMessageFilename
 // comment) -- a real path drags in dedupe-by-path/save/AutoRevert/
 // AutoMerge/FileWatch semantics a pure in-memory log buffer has no business
 // picking up. Exact-name match only, no extension-style matching (a

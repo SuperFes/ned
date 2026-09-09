@@ -10,7 +10,7 @@
 #include "Editor/SanitizerOutputParser.h"
 #include "Editor/ValgrindOutputParser.h"
 #include "TestOutputParser.h"
-#include "TestRunConfig.h"
+#include "Config.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 
@@ -191,7 +191,7 @@ void TestRunner::DispatchProcessExit(std::optional<int> exitCode) {
         parseInput   = &fileContents;
     }
 
-    TestRunOutcome fresh;
+    Outcome fresh;
     if (const std::optional<TestParserFn> registered = RegisteredTestParser(format)) {
         try {
             fresh = (*registered)(*parseInput);
@@ -203,7 +203,7 @@ void TestRunner::DispatchProcessExit(std::optional<int> exitCode) {
             fresh.parsedOk = false;
         }
     }
-    else if (const std::optional<TestRunOutcome> builtIn = ParseTestOutput(format, *parseInput)) {
+    else if (const std::optional<Outcome> builtIn = ParseTestOutput(format, *parseInput)) {
         fresh = *builtIn;
     }
     else {
@@ -239,13 +239,13 @@ void TestRunner::DispatchProcessExit(std::optional<int> exitCode) {
     }
 }
 
-void TestRunner::MergeOutcome(TestRunOutcome fresh) {
+void TestRunner::MergeOutcome(Outcome fresh) {
     lastFiltered_ = currentFiltered_;
 
     if (currentFiltered_ && latestOutcome_ && fresh.parsedOk) {
         // Replace-by-name into the previous outcome; anything the filtered
         // run didn't touch keeps its old result.
-        TestRunOutcome merged = *latestOutcome_;
+        Outcome merged = *latestOutcome_;
         for (TestResult& result : fresh.results) {
             const auto match = std::ranges::find_if(merged.results,
                                                     [&](const TestResult& existing) { return existing.name == result.name; });
@@ -300,7 +300,7 @@ bool TestRunner::IsRunning() const {
     return running_;
 }
 
-const std::optional<TestRunOutcome>& TestRunner::LatestOutcome() const {
+const std::optional<Outcome>& TestRunner::LatestOutcome() const {
     return latestOutcome_;
 }
 

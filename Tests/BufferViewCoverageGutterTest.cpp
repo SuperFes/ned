@@ -10,7 +10,7 @@
 #include "Editor/Mode.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
-#include "Editor/Vcs/VcsProvider.h"
+#include "Editor/Vcs/Provider.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -21,7 +21,7 @@
 using ned::editor::coverage::ClearCoverageReport;
 using ned::editor::coverage::LoadCoverageReport;
 using ned::editor::coverage::SetFile;
-using ned::editor::vcs::VcsDiffHunk;
+using ned::editor::vcs::DiffHunk;
 using ned::ui::BufferView;
 using ned::ui::Color;
 
@@ -155,7 +155,7 @@ TEST_CASE("Coverage gutter flags an uncovered line that's also newly changed", "
 
     BufferView view = fixture.View();
     // Line 2 (1-indexed) is a fresh addition -- oldCount == 0.
-    view.DispatchDiffForTesting({VcsDiffHunk{.oldStart = 1, .oldCount = 0, .newStart = 2, .newCount = 1}});
+    view.DispatchDiffForTesting({DiffHunk{.oldStart = 1, .oldCount = 0, .newStart = 2, .newCount = 1}});
 
     ned::ui::Screen screen(60, 5);
     PaintInto(view, screen);

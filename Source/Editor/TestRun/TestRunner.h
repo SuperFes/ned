@@ -5,7 +5,7 @@
 // output still streams into a read-only buffer exactly like a task's, but
 // it is also accumulated and, when the process exits, parsed (built-in
 // TestOutputParser.h format or a registered TestParserFn -- registry wins,
-// see TestRunConfig.h) into a TestRunOutcome that the "*test results*"
+// see Config.h) into a Outcome that the "*test results*"
 // buffer and BufferView's per-test gutter marks consume.
 //
 // Threading: constructed and driven on the main thread; the spawned
@@ -74,7 +74,7 @@ class TestRunner {
     [[nodiscard]] bool IsRunning() const;
 
     // nullopt until a run's output has been parsed at least once.
-    [[nodiscard]] const std::optional<TestRunOutcome>& LatestOutcome() const;
+    [[nodiscard]] const std::optional<Outcome>& LatestOutcome() const;
     // Bumped on every parse -- the gutter cache's invalidation key.
     [[nodiscard]] std::size_t OutcomeGeneration() const;
     // True when the newest parse came from a filtered run -- the gutter's
@@ -96,13 +96,13 @@ class TestRunner {
   private:
     text::Buffer* StartRun(const std::vector<std::string>& argv, bool filtered);
     text::Buffer* OutputBuffer();
-    void          MergeOutcome(TestRunOutcome fresh);
+    void          MergeOutcome(Outcome fresh);
 
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
 
     std::string                   accumulated_;
-    std::optional<TestRunOutcome> latestOutcome_;
+    std::optional<Outcome> latestOutcome_;
     std::size_t                   generation_      = 0;
     bool                          running_         = false;
     bool                          currentFiltered_ = false;
@@ -116,7 +116,7 @@ class TestRunner {
     // Kept allocated after exit (running_ is the liveness flag) and only
     // replaced on the next StartRun -- destroying it from inside its own
     // onExit callback would destroy the closure mid-execution, the exact
-    // use-after-free VcsRunner::RunAndCollect's ordering comment documents.
+    // use-after-free Runner::RunAndCollect's ordering comment documents.
     std::unique_ptr<tasks::TaskProcess> process_;
 };
 

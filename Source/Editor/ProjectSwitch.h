@@ -46,7 +46,7 @@ enum class ProjectActivationOutcome {
 
 // Pure: replaces every "{root}" occurrence in each argv element with root's
 // own string form -- never a shell, each element substituted independently,
-// mirroring TestRunConfig.h's own placeholder-substitution convention.
+// mirroring Config.h's own placeholder-substitution convention.
 [[nodiscard]] std::vector<std::string> SubstituteProjectOpenCommandArgv(const std::vector<std::string>& argvTemplate,
                                                                         const std::filesystem::path&    root);
 

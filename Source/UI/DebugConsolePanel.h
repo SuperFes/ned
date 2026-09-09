@@ -1,8 +1,8 @@
 //
 // DAP round 2: the debug console (REPL) panel. Where AcpPanel renders
-// AcpManager's structured transcript, this panel keeps its own small
+// Manager's structured transcript, this panel keeps its own small
 // transcript (input echo / result / error) -- Manager has no transcript
-// concept of its own, unlike AcpManager, since a debug session is a
+// concept of its own, unlike Manager, since a debug session is a
 // request/response protocol with no persistent conversational log.
 //
 // tabbed-bottom-dock-overlays follow-up: this panel is hosted as one tab

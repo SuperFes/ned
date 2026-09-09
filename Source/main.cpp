@@ -29,9 +29,9 @@
 
 #include "Application.h"
 
-#include "Editor/Acp/AcpConfig.h"
-#include "Editor/Acp/AcpManager.h"
-#include "Editor/Acp/AcpPanelConfig.h"
+#include "Editor/Acp/Config.h"
+#include "Editor/Acp/Manager.h"
+#include "Editor/Acp/PanelConfig.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
 #include "Editor/Bookmark.h"
@@ -72,7 +72,7 @@
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/Variables.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/Runner.h"
 
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
@@ -201,7 +201,7 @@ int RunLspBrokerStop() {
 // `ned --mcp-stdio-relay <socket-path>`: the ACP MCP tool-server bridge's
 // relay subprocess (Editor/Mcp/BridgeServer.h) -- the "command" the live
 // `ned` process hands the ACP agent as its configured stdio MCP server (see
-// AcpManager::StartSession's mcpServers payload). This process is not the
+// Manager::StartSession's mcpServers payload). This process is not the
 // live editor; it has no access to any buffer/manager. It's a dumb byte
 // pump: connect to the given Unix socket (the live `ned` process listening
 // on it), then relay stdin -> socket and socket -> stdout until either side
@@ -1172,7 +1172,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // VCS blame gutter follow-up: same "constructed here, needs a real
     // EventLoop&" shape as taskRunner just above, and the same "wired into
     // windowManager, connect after construction" convention.
-    ned::editor::vcs::VcsRunner vcsRunner(eventLoop);
+    ned::editor::vcs::Runner vcsRunner(eventLoop);
     windowManager->SetVcsRunner(&vcsRunner);
 
     // DAP client slice 1: same shape as vcsRunner just above.
@@ -1210,13 +1210,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // ACP client slice 2: same "constructed here, needs a real EventLoop&"
     // shape as dapManager just above, and the same "wired into
     // windowManager, connect after construction" convention.
-    ned::editor::acp::AcpManager acpManager(bufferList, eventLoop);
+    ned::editor::acp::Manager acpManager(bufferList, eventLoop);
     windowManager->SetAcpManager(&acpManager);
 
     // ACP MCP tool-server bridge, slice 1: registry construction is cheap
     // (just builds the name->schema->handler table), so it's always built;
     // the bridge socket itself is only ever actually opened lazily, from
-    // AcpManager::StartSession, and only when ned/set-acp-mcp-bridge (see
+    // Manager::StartSession, and only when ned/set-acp-mcp-bridge (see
     // Editor/Mcp/BridgeSetting.h, default on) allows it.
     ned::editor::mcp::ToolRegistry    mcpToolRegistry(bufferList, lspManager, vcsRunner, testRunner, dapManager);
     ned::editor::mcp::BridgeServer mcpBridgeServer(mcpToolRegistry, eventLoop);
@@ -1502,7 +1502,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // re-read live the way most settings in this file are -- flipping
     // ned/set-acp-panel-dock at runtime won't move ACP between the tabbed
     // dock and its own standalone right-dock overlay without a restart.
-    const bool acpBottomDocked = ned::editor::acp::GetAcpPanelDock() != ned::editor::acp::AcpPanelDock::Right;
+    const bool acpBottomDocked = ned::editor::acp::GetAcpPanelDock() != ned::editor::acp::PanelDock::Right;
 
     ned::ui::PanelDock panelDock(theme);
 
@@ -1611,7 +1611,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     if (acpBottomDocked) {
         acpPanel.SetDockHosted(true);
         acpTabIndex = panelDock.AddPanel(
-            "Claude", acpPanel, [panel = &acpPanel] { return panel->TitleText(); }, &ned::editor::acp::AcpPanelSizePercent,
+            "Claude", acpPanel, [panel = &acpPanel] { return panel->TitleText(); }, &ned::editor::acp::PanelSizePercent,
             &ned::editor::acp::SetAcpPanelSizePercent);
     }
     const std::size_t debugConsoleTabIndex =
@@ -1708,8 +1708,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                 // hide), if this project has never started one before, or if
                 // the remembered agent name is no longer configured
                 // (renamed/removed from init.janet since).
-                if (acpManager.State() == ned::editor::acp::AcpManager::SessionState::Inactive && lastAcpAgent &&
-                    ned::editor::acp::AcpAgentCommand(*lastAcpAgent)) {
+                if (acpManager.State() == ned::editor::acp::Manager::SessionState::Inactive && lastAcpAgent &&
+                    ned::editor::acp::AgentCommand(*lastAcpAgent)) {
                     acpManager.StartSession(*lastAcpAgent);
                 }
             }
@@ -1744,7 +1744,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                 const int xMin = size.width - 1 - minimapReserve;
                 return Box{.x_min = xMin, .x_max = xMin, .y_min = 1, .y_max = yMax};
             }
-            const int width = std::clamp(size.width * ned::editor::acp::AcpPanelSizePercent() / 100, 20, size.width - 1);
+            const int width = std::clamp(size.width * ned::editor::acp::PanelSizePercent() / 100, 20, size.width - 1);
             const int xMin  = size.width - width;
             return Box{.x_min = xMin, .x_max = std::max(xMin, size.width - 1 - minimapReserve), .y_min = 1, .y_max = yMax};
         });
@@ -1761,8 +1761,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                 overlays.Show(*panel);
                 panel->SetCollapsed(false);
                 panel->TakeFocus();
-                if (acpManager.State() == ned::editor::acp::AcpManager::SessionState::Inactive && lastAcpAgent &&
-                    ned::editor::acp::AcpAgentCommand(*lastAcpAgent)) {
+                if (acpManager.State() == ned::editor::acp::Manager::SessionState::Inactive && lastAcpAgent &&
+                    ned::editor::acp::AgentCommand(*lastAcpAgent)) {
                     acpManager.StartSession(*lastAcpAgent);
                 }
             }

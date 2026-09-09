@@ -9,7 +9,7 @@
 
 #include <string>
 
-#include "Editor/Acp/AcpManager.h"
+#include "Editor/Acp/Manager.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
@@ -55,8 +55,8 @@ struct Fixture {
 };
 
 // Three options, so a digit past the end has somewhere obvious to go wrong.
-ned::editor::acp::AcpManager::PermissionPrompt ThreeOptions() {
-    ned::editor::acp::AcpManager::PermissionPrompt prompt;
+ned::editor::acp::Manager::PermissionPrompt ThreeOptions() {
+    ned::editor::acp::Manager::PermissionPrompt prompt;
     prompt.description = "Run command";
     prompt.options     = {{.optionId = "once", .name = "Allow once"},
                           {.optionId = "always", .name = "Allow always"},

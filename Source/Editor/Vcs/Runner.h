@@ -1,18 +1,18 @@
 //
-// Async execution glue between VcsProvider (Vcs/VcsProvider.h) and a real
+// Async execution glue between Provider (Vcs/Provider.h) and a real
 // subprocess -- resolves the active provider, calls its argv-building
 // callback synchronously, spawns the resulting command via TaskProcess
 // (Tasks/TaskProcess.h) on a background thread, and once it exits, calls
 // the provider's parse callback synchronously on the exit-notification's
 // own thread (the main thread, per TaskProcess's own contract -- see its
 // header comment). Both provider calls happening synchronously on the main
-// thread is required, not incidental: see VcsProvider.h's own header
+// thread is required, not incidental: see Provider.h's own header
 // comment for why a Janet-backed provider's callbacks must never run off
 // the main thread.
 //
 
-#ifndef NED_EDITOR_VCS_VCSRUNNER_H
-#define NED_EDITOR_VCS_VCSRUNNER_H
+#ifndef NED_EDITOR_VCS_RUNNER_H
+#define NED_EDITOR_VCS_RUNNER_H
 
 #include <filesystem>
 #include <functional>
@@ -24,7 +24,7 @@
 #include <vector>
 
 #include "Editor/Tasks/TaskProcess.h"
-#include "VcsProvider.h"
+#include "Provider.h"
 
 namespace ned::text {
 class Buffer;
@@ -48,13 +48,13 @@ inline constexpr std::string_view kVcsCommitMessageFilename = "COMMIT_EDITMSG";
 // function, not a plain constant, since temp_directory_path() itself can
 // throw (an unusual environment with no writable temp dir) and every real
 // call site already runs inside a context that tolerates that.
-[[nodiscard]] std::filesystem::path VcsCommitMessagePath();
+[[nodiscard]] std::filesystem::path CommitMessagePath();
 
 // Strips every '#'-prefixed line (git's own core.commentChar convention,
 // hard-coded the same way git itself defaults to it) and trims trailing
-// whitespace -- pure text processing, unit-testable with no Buffer/VcsRunner
+// whitespace -- pure text processing, unit-testable with no Buffer/Runner
 // involved. "" for an all-comments-or-blank result, which
-// BufferView::VcsCommitFinish treats as "nothing to commit."
+// BufferView::CommitFinish treats as "nothing to commit."
 [[nodiscard]] std::string ExtractCommitMessage(std::string_view bufferText);
 
 // The instructional comment block BeginVcsCommitMessage seeds a freshly
@@ -68,15 +68,15 @@ inline constexpr std::string_view kVcsCommitMessageTemplate =
     "#\n"
     "# C-c C-c to commit, C-c C-k to abort.\n";
 
-class VcsRunner {
+class Runner {
   public:
-    // eventLoop must outlive this VcsRunner, same requirement
+    // eventLoop must outlive this Runner, same requirement
     // TaskRunner/Manager's own constructors document.
-    explicit VcsRunner(ned::ui::EventLoop& eventLoop);
-    ~VcsRunner() = default;
+    explicit Runner(ned::ui::EventLoop& eventLoop);
+    ~Runner() = default;
 
-    VcsRunner(const VcsRunner&)            = delete;
-    VcsRunner& operator=(const VcsRunner&) = delete;
+    Runner(const Runner&)            = delete;
+    Runner& operator=(const Runner&) = delete;
 
     // Resolves the active provider for editor::ProjectRoot(), calls its
     // BlameArgv(path) synchronously, spawns the resulting command, and on
@@ -90,25 +90,25 @@ class VcsRunner {
     // A second call for the same buffer path while one is already running
     // is a no-op (onError fires immediately) -- one concurrent blame/log
     // request per file.
-    void RequestBlame(const text::Buffer& buffer, std::function<void(std::vector<VcsBlameLine>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestLog(const text::Buffer& buffer, std::function<void(std::vector<VcsLogEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestBlame(const text::Buffer& buffer, std::function<void(std::vector<BlameLine>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestLog(const text::Buffer& buffer, std::function<void(std::vector<LogEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     // Diff gutter follow-up: same shape/guarantees as RequestBlame/RequestLog
     // above, calling DiffArgv/ParseDiff instead. Meant to be called
     // repeatedly (live refresh, debounced by the caller) rather than once
     // per user action the way blame/log are -- the "already running" guard
     // above is what keeps a slow git process from piling up duplicate
     // concurrent diffs if refreshes are requested faster than one completes.
-    void RequestDiff(const text::Buffer& buffer, std::function<void(std::vector<VcsDiffHunk>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestDiff(const text::Buffer& buffer, std::function<void(std::vector<DiffHunk>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
     // Multibuffers follow-up: root-scoped, real raw diff text (every changed
-    // file, real context lines) -- see VcsProvider::WorkingDiffArgv's own
+    // file, real context lines) -- see Provider::WorkingDiffArgv's own
     // doc comment for how this differs from RequestDiff above. No parse
     // half: onComplete gets the raw stdout, meant for Vcs/DiffPatch.h's
     // ParseDiffHunks, not a provider-side structured parse.
     void RequestFullDiff(std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
     // Full commit diff view follow-up: RequestFullDiff's own single-commit
-    // sibling -- calls VcsProvider::CommitDiffArgv(root, commitHash) instead
+    // sibling -- calls Provider::CommitDiffArgv(root, commitHash) instead
     // of WorkingDiffArgv, same "no parse half, hand back raw stdout" shape
     // (Vcs/DiffPatch.h's ParseDiffHunks consumes it either way). commitHash
     // is passed through verbatim to whatever the active provider considers
@@ -130,7 +130,7 @@ class VcsRunner {
     // handed the subprocess output's first line (e.g. git's own
     // "[main abc1234] message" summary) since that's genuinely worth
     // showing, while the rest report nothing beyond success.
-    void RequestStatus(std::function<void(std::vector<VcsStatusEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestStatus(std::function<void(std::vector<StatusEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestStage(const std::filesystem::path& path, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestUnstage(const std::filesystem::path& path, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
 
@@ -161,14 +161,14 @@ class VcsRunner {
     void RequestHunkApply(const std::filesystem::path& path, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     // mouse-ergonomics follow-up: discards one hunk's change from the
     // working tree -- RequestHunkApply's own diff-then-patch chain, reading
-    // from the same unstaged diff `stage=true` does (VcsProvider::DiffArgv),
+    // from the same unstaged diff `stage=true` does (Provider::DiffArgv),
     // but applying via RevertPatchArgv instead of Stage/UnstagePatchArgv.
     // Destructive and entirely unconfirmed at this layer, same as
     // RequestRevert above -- BufferView::RevertHunkAtPoint's own y/n gate is
     // what makes this safe to call, not anything here.
     void RequestHunkRevert(const text::Buffer& buffer, std::size_t targetLine, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestCommit(const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestBranchList(std::function<void(std::vector<VcsBranchEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestBranchList(std::function<void(std::vector<BranchEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchCreate(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
 
@@ -180,23 +180,23 @@ class VcsRunner {
     // ahead-behind) take no path, matching RequestStatus/RequestCommit's
     // own shape.
     void RequestRevert(const std::filesystem::path& path, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestStashList(std::function<void(std::vector<VcsStashEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
-    // message may be empty -- see VcsProvider::StashPushArgv's own doc comment.
+    void RequestStashList(std::function<void(std::vector<StashEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    // message may be empty -- see Provider::StashPushArgv's own doc comment.
     void RequestStashPush(const std::string& message, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestStashPop(const std::string& stashRef, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestStashDrop(const std::string& stashRef, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestPush(std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestPull(std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestFetch(std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestAheadBehind(std::function<void(VcsAheadBehind)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestAheadBehind(std::function<void(AheadBehind)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
     // VCS side panel follow-up: raw diff text for one file (unstaged
     // worktree diff, or -- when staged is true -- the staged/index-vs-HEAD
     // diff), for the panel's inline diff preview. RequestFullDiff's own "no
     // parse half, hand back raw stdout" shape, scoped to one path instead
-    // of the whole root -- needed because VcsDiffHunk/ParseDiff is
-    // deliberately header-only (no +/- line bodies, see VcsDiffHunk's own
-    // doc comment in VcsProvider.h); Editor/Vcs/DiffPatch.h's
+    // of the whole root -- needed because DiffHunk/ParseDiff is
+    // deliberately header-only (no +/- line bodies, see DiffHunk's own
+    // doc comment in Provider.h); Editor/Vcs/DiffPatch.h's
     // ParseDiffHunks is what turns this raw text into renderable hunks.
     void RequestFileDiffText(const std::filesystem::path& path, bool staged, std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
@@ -223,8 +223,8 @@ class VcsRunner {
     // (parse there, or ignore it for exit-code-only operations); any
     // throw from either lands in onError.
     void RunProviderOperation(const char* operation, const std::string& key,
-                              const std::function<VcsCommandSpec(VcsProvider&)>&    buildSpec,
-                              std::function<void(VcsProvider&, std::string output)> onOutput,
+                              const std::function<CommandSpec(Provider&)>&    buildSpec,
+                              std::function<void(Provider&, std::string output)> onOutput,
                               std::function<void(std::string)>                      onError);
 
     ned::ui::EventLoop& eventLoop_;
@@ -234,4 +234,4 @@ class VcsRunner {
 
 } // namespace ned::editor::vcs
 
-#endif // NED_EDITOR_VCS_VCSRUNNER_H
+#endif // NED_EDITOR_VCS_RUNNER_H

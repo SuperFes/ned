@@ -16,7 +16,7 @@
 #include "Editor/Mcp/ToolRegistry.h"
 #include "Editor/Mcp/Transport.h"
 #include "Editor/TestRun/TestRunner.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
@@ -26,7 +26,7 @@ using ned::editor::mcp::BridgeServer;
 using ned::editor::mcp::ToolRegistry;
 using ned::editor::mcp::Transport;
 using ned::editor::testrun::TestRunner;
-using ned::editor::vcs::VcsRunner;
+using ned::editor::vcs::Runner;
 using ned::text::BufferList;
 
 namespace {
@@ -37,7 +37,7 @@ struct Fixture {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
     ned::editor::lsp::Manager lspManager{bufferList, eventLoop};
-    VcsRunner          vcsRunner{eventLoop};
+    Runner          vcsRunner{eventLoop};
     TestRunner         testRunner{bufferList, eventLoop};
     ned::editor::dap::Manager dapManager{eventLoop};
     ToolRegistry       registry{bufferList, lspManager, vcsRunner, testRunner, dapManager};

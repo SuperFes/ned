@@ -20,8 +20,8 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
-#include "Editor/Vcs/VcsProviderRegistry.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/ProviderRegistry.h"
+#include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -83,17 +83,17 @@ struct ProjectRootGuard {
 struct CommitTempFileGuard {
     CommitTempFileGuard() {
         std::error_code ec;
-        std::filesystem::remove(ned::editor::vcs::VcsCommitMessagePath(), ec);
+        std::filesystem::remove(ned::editor::vcs::CommitMessagePath(), ec);
     }
     ~CommitTempFileGuard() {
         std::error_code ec;
-        std::filesystem::remove(ned::editor::vcs::VcsCommitMessagePath(), ec);
+        std::filesystem::remove(ned::editor::vcs::CommitMessagePath(), ec);
     }
 };
 
 } // namespace
 
-TEST_CASE("BeginVcsCommitMessage without a wired VcsRunner reports and creates nothing", "[BufferView][Vcs]") {
+TEST_CASE("BeginVcsCommitMessage without a wired Runner reports and creates nothing", "[BufferView][Vcs]") {
     Fixture             fixture;
     CommitTempFileGuard tempGuard;
     BufferView          view = fixture.View();
@@ -101,7 +101,7 @@ TEST_CASE("BeginVcsCommitMessage without a wired VcsRunner reports and creates n
     view.BeginVcsCommitMessageForTesting();
 
     REQUIRE(fixture.statusMessage == "no vcs runner configured");
-    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::VcsCommitMessagePath()) == nullptr);
+    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
 }
 
 TEST_CASE("BeginVcsCommitMessage opens a fresh, template-seeded buffer with point at 0 and switches to it",
@@ -111,13 +111,13 @@ TEST_CASE("BeginVcsCommitMessage opens a fresh, template-seeded buffer with poin
     ProjectRootGuard    rootGuard("/repo");
     ned::editor::vcs::ClearRegistry();
     ned::ui::EventLoop          eventLoop;
-    ned::editor::vcs::VcsRunner runner(eventLoop);
+    ned::editor::vcs::Runner runner(eventLoop);
     BufferView                  view = fixture.View();
     view.SetVcsRunner(&runner);
 
     view.BeginVcsCommitMessageForTesting();
 
-    ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::VcsCommitMessagePath());
+    ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
     REQUIRE(commitBuffer != nullptr);
     REQUIRE(&fixture.activeBuffer.Get() == commitBuffer);
     REQUIRE(commitBuffer->Text().find("# Please enter the commit message") != std::string::npos);
@@ -131,12 +131,12 @@ TEST_CASE("BeginVcsCommitMessage reuses an already-open commit buffer, preservin
     ProjectRootGuard    rootGuard("/repo");
     ned::editor::vcs::ClearRegistry();
     ned::ui::EventLoop          eventLoop;
-    ned::editor::vcs::VcsRunner runner(eventLoop);
+    ned::editor::vcs::Runner runner(eventLoop);
     BufferView                  view = fixture.View();
     view.SetVcsRunner(&runner);
 
     view.BeginVcsCommitMessageForTesting();
-    ned::text::Buffer* firstOpen = fixture.bufferList.FindByPath(ned::editor::vcs::VcsCommitMessagePath());
+    ned::text::Buffer* firstOpen = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
     REQUIRE(firstOpen != nullptr);
     firstOpen->SetPoint(0);
     firstOpen->InsertAtPoint("My in-progress message\n");
@@ -144,7 +144,7 @@ TEST_CASE("BeginVcsCommitMessage reuses an already-open commit buffer, preservin
     fixture.activeBuffer.Set(fixture.original); // simulate switching away
     view.BeginVcsCommitMessageForTesting();     // and re-running vcs-commit
 
-    ned::text::Buffer* secondOpen = fixture.bufferList.FindByPath(ned::editor::vcs::VcsCommitMessagePath());
+    ned::text::Buffer* secondOpen = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
     REQUIRE(secondOpen == firstOpen); // same buffer, not a fresh re-seed
     REQUIRE(secondOpen->Text().find("My in-progress message") != std::string::npos);
     REQUIRE(&fixture.activeBuffer.Get() == secondOpen);
@@ -157,12 +157,12 @@ TEST_CASE("FinishVcsCommitMessage strips the comment template, fires RequestComm
     ProjectRootGuard    rootGuard("/repo");
     ned::editor::vcs::ClearRegistry(); // no provider -- RequestCommit's own guard resolves synchronously
     ned::ui::EventLoop          eventLoop;
-    ned::editor::vcs::VcsRunner runner(eventLoop);
+    ned::editor::vcs::Runner runner(eventLoop);
     BufferView                  view = fixture.View();
     view.SetVcsRunner(&runner);
 
     view.BeginVcsCommitMessageForTesting();
-    ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::VcsCommitMessagePath());
+    ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
     REQUIRE(commitBuffer != nullptr);
     commitBuffer->SetPoint(0);
     commitBuffer->InsertAtPoint("Fix the thing\n");
@@ -170,10 +170,10 @@ TEST_CASE("FinishVcsCommitMessage strips the comment template, fires RequestComm
     view.FinishVcsCommitMessageForTesting();
 
     REQUIRE(fixture.statusMessage == "vcs commit: no vcs provider registered for this project");
-    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::VcsCommitMessagePath()) == nullptr);
+    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
     REQUIRE(&fixture.activeBuffer.Get() == &fixture.original); // only other buffer left in bufferList_
     std::error_code ec;
-    REQUIRE_FALSE(std::filesystem::exists(ned::editor::vcs::VcsCommitMessagePath(), ec));
+    REQUIRE_FALSE(std::filesystem::exists(ned::editor::vcs::CommitMessagePath(), ec));
 }
 
 TEST_CASE("FinishVcsCommitMessage with only the template (no real message) doesn't call RequestCommit",
@@ -183,7 +183,7 @@ TEST_CASE("FinishVcsCommitMessage with only the template (no real message) doesn
     ProjectRootGuard    rootGuard("/repo");
     ned::editor::vcs::ClearRegistry();
     ned::ui::EventLoop          eventLoop;
-    ned::editor::vcs::VcsRunner runner(eventLoop);
+    ned::editor::vcs::Runner runner(eventLoop);
     BufferView                  view = fixture.View();
     view.SetVcsRunner(&runner);
 
@@ -191,7 +191,7 @@ TEST_CASE("FinishVcsCommitMessage with only the template (no real message) doesn
     view.FinishVcsCommitMessageForTesting(); // nothing typed above the template's comment block
 
     REQUIRE(fixture.statusMessage == "Empty commit message -- not committing.");
-    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::VcsCommitMessagePath()) == nullptr);
+    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
 }
 
 TEST_CASE("AbortVcsCommitMessage discards the buffer without committing", "[BufferView][Vcs]") {
@@ -200,12 +200,12 @@ TEST_CASE("AbortVcsCommitMessage discards the buffer without committing", "[Buff
     ProjectRootGuard    rootGuard("/repo");
     ned::editor::vcs::ClearRegistry();
     ned::ui::EventLoop          eventLoop;
-    ned::editor::vcs::VcsRunner runner(eventLoop);
+    ned::editor::vcs::Runner runner(eventLoop);
     BufferView                  view = fixture.View();
     view.SetVcsRunner(&runner);
 
     view.BeginVcsCommitMessageForTesting();
-    ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::VcsCommitMessagePath());
+    ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
     REQUIRE(commitBuffer != nullptr);
     commitBuffer->SetPoint(0);
     commitBuffer->InsertAtPoint("A message nobody will ever see\n");
@@ -213,6 +213,6 @@ TEST_CASE("AbortVcsCommitMessage discards the buffer without committing", "[Buff
     view.AbortVcsCommitMessageForTesting();
 
     REQUIRE(fixture.statusMessage == "Commit aborted.");
-    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::VcsCommitMessagePath()) == nullptr);
+    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
     REQUIRE(&fixture.activeBuffer.Get() == &fixture.original);
 }

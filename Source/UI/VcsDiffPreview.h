@@ -2,8 +2,8 @@
 // Inline diff preview (VCS side panel follow-up): a read-only, non-focusable
 // widget showing one file's diff hunks with a click-to-stage/unstage
 // affordance per hunk -- VcsPanel's own selection drives what's displayed
-// (see VcsPanel::SetOnSelectionChanged), this widget never reads VcsRunner/
-// VcsProvider itself. Docked as an OverlayHost bottom drawer in main.cpp,
+// (see VcsPanel::SetOnSelectionChanged), this widget never reads Runner/
+// Provider itself. Docked as an OverlayHost bottom drawer in main.cpp,
 // TerminalPanel/AcpPanel's own geometry -- the natural fit for a
 // *contextual* preview (shown/hidden by VcsPanel's selection moving on/off
 // a file row, no separate toggle keybinding), not a permanent
@@ -48,12 +48,12 @@ class VcsDiffPreview : public Widget {
     // gets painted while it's visible). staged=false is the worktree diff
     // (DiffArgv) -- a hunk here can be *staged*; staged=true is the
     // index-vs-HEAD diff (StagedDiffArgv) -- a hunk here can be *unstaged*.
-    // Matches VcsRunner::RequestFileDiffText's own staged parameter.
+    // Matches Runner::RequestFileDiffText's own staged parameter.
     void SetModel(std::optional<VcsDiffPreviewModel> model);
 
     // Fired when a hunk's own [stage]/[unstage] affordance is clicked --
     // newStart is the hunk's own new-side start line, ExtractHunkPatch's
-    // own 1-indexed "targetLine" convention (VcsRunner::RequestHunkApply
+    // own 1-indexed "targetLine" convention (Runner::RequestHunkApply
     // re-derives everything else from path+targetLine+stage). stage is the
     // opposite of the currently-displayed model's own `staged` (staging a
     // hunk out of the worktree diff, or unstaging one out of the staged

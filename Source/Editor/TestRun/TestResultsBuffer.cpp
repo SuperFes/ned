@@ -12,7 +12,7 @@ namespace ned::editor::testrun {
 
 namespace {
 
-    std::string FormatSummary(const TestRunOutcome& outcome) {
+    std::string FormatSummary(const Outcome& outcome) {
         std::string summary = "Tests: " + std::to_string(outcome.passed) + " passed, " + std::to_string(outcome.failed) +
                               " failed, " + std::to_string(outcome.skipped) + " skipped";
         if (!outcome.format.empty()) {
@@ -61,7 +61,7 @@ std::string TestResultsBufferName() {
     return "*test results*";
 }
 
-text::Buffer& RebuildTestResultsBuffer(text::BufferList& bufferList, const TestRunOutcome& outcome) {
+text::Buffer& RebuildTestResultsBuffer(text::BufferList& bufferList, const Outcome& outcome) {
     text::Buffer* buffer = bufferList.Find(TestResultsBufferName());
     if (!buffer) {
         buffer = &bufferList.CreateBuffer(TestResultsBufferName());

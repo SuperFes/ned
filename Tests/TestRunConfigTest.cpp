@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "Editor/TestRun/TestRunConfig.h"
+#include "Editor/TestRun/Config.h"
 
 using ned::editor::testrun::HasTestFilterCommand;
 using ned::editor::testrun::RegisteredTestParser;
@@ -15,7 +15,7 @@ using ned::editor::testrun::SubstituteFilterTemplate;
 using ned::editor::testrun::TestCommand;
 using ned::editor::testrun::TestFilterCommand;
 using ned::editor::testrun::TestResultsFile;
-using ned::editor::testrun::TestRunOutcome;
+using ned::editor::testrun::Outcome;
 
 TEST_CASE("TestCommand is nullopt until configured; empty argv clears", "[TestRun]") {
     REQUIRE_FALSE(TestCommand().has_value());
@@ -45,7 +45,7 @@ TEST_CASE("TestFilterCommand round-trips and clears on empty", "[TestRun]") {
 
 TEST_CASE("HasTestFilterCommand agrees with TestFilterCommand without copying it", "[TestRun]") {
     // The per-frame test-gutter path asks only this question, so the two
-    // must never disagree (see TestRunConfig.h).
+    // must never disagree (see Config.h).
     REQUIRE(HasTestFilterCommand() == TestFilterCommand().has_value());
 
     SetTestFilterCommand({"pytest", "-v", "-k", "{test}"});
@@ -83,7 +83,7 @@ TEST_CASE("RegisterTestParser registers, overwrites, and clears on empty fn", "[
     REQUIRE_FALSE(RegisteredTestParser("test-run-config-test-custom").has_value());
 
     RegisterTestParser("test-run-config-test-custom", [](const std::string&) {
-        TestRunOutcome outcome;
+        Outcome outcome;
         outcome.format   = "first";
         outcome.parsedOk = true;
         return outcome;
@@ -93,7 +93,7 @@ TEST_CASE("RegisterTestParser registers, overwrites, and clears on empty fn", "[
     REQUIRE((*parser)("").format == "first");
 
     RegisterTestParser("test-run-config-test-custom", [](const std::string&) {
-        TestRunOutcome outcome;
+        Outcome outcome;
         outcome.format = "second";
         return outcome;
     });

@@ -746,15 +746,15 @@ add_library(ned_lib STATIC
         Source/Editor/Vim/GlobalMarks.cpp
         Source/Editor/Vim/Magic.cpp
         Source/Editor/Vcs/DiffPatch.cpp
-        Source/Editor/Vcs/VcsProviderRegistry.cpp
-        Source/Editor/Vcs/VcsRowStatus.cpp
-        Source/Editor/Vcs/VcsRunner.cpp
+        Source/Editor/Vcs/ProviderRegistry.cpp
+        Source/Editor/Vcs/RowStatus.cpp
+        Source/Editor/Vcs/Runner.cpp
         Source/Editor/Process/ChildProcess.cpp
         Source/Editor/Acp/Transport.cpp
-        Source/Editor/Acp/AcpClient.cpp
-        Source/Editor/Acp/AcpConfig.cpp
-        Source/Editor/Acp/AcpPanelConfig.cpp
-        Source/Editor/Acp/AcpManager.cpp
+        Source/Editor/Acp/Client.cpp
+        Source/Editor/Acp/Config.cpp
+        Source/Editor/Acp/PanelConfig.cpp
+        Source/Editor/Acp/Manager.cpp
         Source/Editor/Lsp/Transport.cpp
         Source/Editor/Lsp/Client.cpp
         Source/Editor/Lsp/ServerConfig.cpp
@@ -782,7 +782,7 @@ add_library(ned_lib STATIC
         Source/Editor/TestRun/TestOutputParser.cpp
         Source/Editor/TestRun/TestResult.cpp
         Source/Editor/TestRun/TestResultsBuffer.cpp
-        Source/Editor/TestRun/TestRunConfig.cpp
+        Source/Editor/TestRun/Config.cpp
         Source/Editor/TestRun/TestRunner.cpp
         Source/Editor/TestRun/TestSourceResolver.cpp
         Source/Editor/Coverage/Report.cpp

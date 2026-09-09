@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "Editor/ProjectRoot.h"
-#include "Editor/Vcs/VcsProviderRegistry.h"
+#include "Editor/Vcs/ProviderRegistry.h"
 #include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
@@ -15,9 +15,9 @@
 #include "UI/LeftDock.h"
 #include "UI/VcsPanel.h"
 
-using ned::editor::vcs::VcsCommandSpec;
-using ned::editor::vcs::VcsProvider;
-using ned::editor::vcs::VcsRunner;
+using ned::editor::vcs::CommandSpec;
+using ned::editor::vcs::Provider;
+using ned::editor::vcs::Runner;
 
 namespace {
 
@@ -71,7 +71,7 @@ struct RegistryResetGuard {
 // (EventLoop::Run() is never started), so only the *synchronous* guard/
 // error path -- "does VcsPanel target the right file(s)" -- is meaningfully
 // testable here, not a real stage success.
-class ThrowingProvider : public VcsProvider {
+class ThrowingProvider : public Provider {
   public:
     [[nodiscard]] bool Detect(const std::filesystem::path&) const override {
         return true;
@@ -245,7 +245,7 @@ TEST_CASE("Clicking the checkbox glyph toggles selection; clicking elsewhere on 
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("Staging with no VcsRunner configured reports an error rather than crashing", "[VcsPanel]") {
+TEST_CASE("Staging with no Runner configured reports an error rather than crashing", "[VcsPanel]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_no_runner";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -280,7 +280,7 @@ TEST_CASE("Staging targets the selection set when non-empty, else falls back to 
 
     ned::editor::vcs::RegisterProvider("throwing", std::make_unique<ThrowingProvider>());
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     ned::text::BufferList list;
     ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
@@ -372,7 +372,7 @@ TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jump
         {" M", "clean.txt"},
     });
     // DispatchVcsStatusForTesting only builds sections_ (ProjectSidebar's
-    // own DispatchVcsStatusForTesting precedent bypasses VcsRunner
+    // own DispatchVcsStatusForTesting precedent bypasses Runner
     // entirely) -- the conflict scan itself is a real disk read driven by
     // RefreshStatus's success callback, so exercise it directly here the
     // same way.
@@ -408,7 +408,7 @@ TEST_CASE("'x' enters a discard/revert confirm state that only 'y' actually conf
 
     ned::editor::vcs::RegisterProvider("throwing", std::make_unique<ThrowingProvider>());
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     ned::text::BufferList list;
     ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
@@ -458,7 +458,7 @@ TEST_CASE("Stash section is hidden when empty and shows entries when not, with p
 
     ned::editor::vcs::RegisterProvider("throwing", std::make_unique<ThrowingProvider>());
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     ned::text::BufferList list;
     ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
@@ -516,7 +516,7 @@ TEST_CASE("'f'/'F'/'P' fire fetch/pull/push", "[VcsPanel]") {
 
     ned::editor::vcs::RegisterProvider("throwing", std::make_unique<ThrowingProvider>());
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     ned::text::BufferList list;
     ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
@@ -713,14 +713,14 @@ TEST_CASE("RequestStageOrUnstage/RequestDiscardConfirm/PopStash/DropStash act on
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 50, 12);
 
-    // No VcsRunner yet -- same "report, don't crash" guard the keyboard path uses.
+    // No Runner yet -- same "report, don't crash" guard the keyboard path uses.
     panel.RequestStageOrUnstage("a.txt", /*stage=*/true);
     REQUIRE(statusMessage == "no vcs runner configured");
     statusMessage.clear();
 
     ned::editor::vcs::RegisterProvider("throwing", std::make_unique<ThrowingProvider>());
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
     panel.SetVcsRunner(&runner);
 
     // ThrowingProvider's Stage/UnstageArgv default-throw synchronously,

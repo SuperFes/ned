@@ -1,19 +1,19 @@
 //
-// The process-wide registry of VcsProvider implementations, and the
+// The process-wide registry of Provider implementations, and the
 // "which one is active for this project" resolution on top of it.
 // Mutex-guarded static state, mirroring TabWidth.h/ProjectRoot.h's exact
 // pattern (see either for the convention this follows), just holding a
 // provider table instead of one scalar.
 //
 
-#ifndef NED_EDITOR_VCS_VCSPROVIDERREGISTRY_H
-#define NED_EDITOR_VCS_VCSPROVIDERREGISTRY_H
+#ifndef NED_EDITOR_VCS_PROVIDERREGISTRY_H
+#define NED_EDITOR_VCS_PROVIDERREGISTRY_H
 
 #include <filesystem>
 #include <memory>
 #include <string>
 
-#include "VcsProvider.h"
+#include "Provider.h"
 
 namespace ned::editor::vcs {
 
@@ -23,7 +23,7 @@ namespace ned::editor::vcs {
 // CommandRegistry::Register/ModeOverrides::RegisterDynamicMode already
 // establish -- a Janet plugin reloading its own init code is expected
 // use, not something to guard against.
-void RegisterProvider(const std::string& name, std::unique_ptr<VcsProvider> provider);
+void RegisterProvider(const std::string& name, std::unique_ptr<Provider> provider);
 
 // Returns whichever registered provider's Detect(root) returns true
 // first, checked in registration order (first match wins) -- deliberately
@@ -36,7 +36,7 @@ void RegisterProvider(const std::string& name, std::unique_ptr<VcsProvider> prov
 // already-cached resolution) -- Detect() may touch the filesystem, so
 // this must not run on every frame/every call. Returns nullptr if no
 // registered provider's Detect matches.
-[[nodiscard]] VcsProvider* ActiveProviderFor(const std::filesystem::path& root);
+[[nodiscard]] Provider* ActiveProviderFor(const std::filesystem::path& root);
 
 // Clears any cached root -> provider resolutions from ActiveProviderFor,
 // without touching the registry itself. Call after registering a
@@ -53,4 +53,4 @@ void ClearRegistry();
 
 } // namespace ned::editor::vcs
 
-#endif // NED_EDITOR_VCS_VCSPROVIDERREGISTRY_H
+#endif // NED_EDITOR_VCS_PROVIDERREGISTRY_H

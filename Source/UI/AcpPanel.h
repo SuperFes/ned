@@ -1,7 +1,7 @@
 //
-// ACP chat panel: a dockable OverlayHost widget displaying AcpManager's
-// structured transcript (AcpManager::Transcript()), plus its own
-// prompt-composition input row -- see AcpManager.h's own header comment for
+// ACP chat panel: a dockable OverlayHost widget displaying Manager's
+// structured transcript (Manager::Transcript()), plus its own
+// prompt-composition input row -- see Manager.h's own header comment for
 // why the flat "*acp: <agent>*" output buffer stays untouched alongside
 // this. Structurally mirrors TerminalPanel: registered with main.cpp's
 // OverlayHost, floats over BufferView without reflowing anything, an
@@ -10,7 +10,7 @@
 //
 // Deliberate v1 cut: permission-prompt *resolution* keystrokes stay in the
 // already-shipped BufferView flow (InputMode::AcpPermissionPrompt) -- this
-// panel only *displays* the pending prompt (AcpManager::PendingPermissionPrompt())
+// panel only *displays* the pending prompt (Manager::PendingPermissionPrompt())
 // read-only. Also no scrollback (TerminalPanel's own documented v1 cut, same
 // status here): the content rows show only the tail of the transcript that
 // fits.
@@ -28,7 +28,7 @@
 #include <vector>
 
 #include "ActiveBuffer.h"
-#include "Editor/Acp/AcpManager.h"
+#include "Editor/Acp/Manager.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Theme.h"
@@ -42,7 +42,7 @@ class AcpPanel : public Widget {
 
     // Connect-after-construction, unset is a safe no-op -- this class's
     // usual convention. Must outlive this AcpPanel.
-    void SetAcpManager(editor::acp::AcpManager* acpManager);
+    void SetAcpManager(editor::acp::Manager* acpManager);
 
     // ACP context auto-attach follow-up: the "@buffer"/"@selection"
     // built-in mentions (see RefreshMentionCandidates/ResolveMentionAttachments)
@@ -94,10 +94,10 @@ class AcpPanel : public Widget {
     // ACP checkpoint/rewind follow-up: main.cpp's SetOnAcpRewindRequest
     // wiring calls this after showing/focusing the panel (acp-rewind, C-c A
     // r). Replaces the transcript view with a numbered list of past turns
-    // (FormatRewindPicker) built from AcpManager::CheckpointCount()/
-    // CheckpointAt() -- a digit 1-9 rewinds to that turn (AcpManager::
+    // (FormatRewindPicker) built from Manager::CheckpointCount()/
+    // CheckpointAt() -- a digit 1-9 rewinds to that turn (Manager::
     // RewindTo) and closes the picker; Escape cancels with no effect. A
-    // no-op if no AcpManager is set.
+    // no-op if no Manager is set.
     void OpenRewindPicker();
 
     // ACP chat-feel round 2 -- panel resize/minimize follow-up. Collapsed()
@@ -120,7 +120,7 @@ class AcpPanel : public Widget {
 
     // The full terminal size, refreshed by main.cpp's placement lambda every
     // Reflow -- needed to convert a resize-drag's pixel delta into an
-    // AcpPanelSizePercent() delta (this panel's own Box only ever reports its
+    // PanelSizePercent() delta (this panel's own Box only ever reports its
     // *own* current size, not the terminal's). Safe to leave unset in tests:
     // resize-dragging is simply inert (BeginResize/UpdateResize compute a
     // zero-sized percent delta) until this is called at least once.
@@ -214,7 +214,7 @@ class AcpPanel : public Widget {
     // diff-preview-line-diff-utility follow-up: a compact +/- unified-diff
     // rendering (Text/LineDiff.h's UnifiedDiff) shared by Kind::ToolCall's
     // own diff sub-lines and the Permission entry's pending-prompt diff --
-    // both carry the exact same {oldText, newText} shape (AcpManager::
+    // both carry the exact same {oldText, newText} shape (Manager::
     // TranscriptEntry / PermissionPrompt's own doc comments). Capped at
     // kMaxDiffPreviewLines with a FormatMentionPicker-style "(N more...)"
     // tail beyond that, so one large edit can't push the rest of the
@@ -233,7 +233,7 @@ class AcpPanel : public Widget {
     // growing drag crosses into a sibling widget's territory, there's no
     // single consistent "previous event" to diff against). Percent is
     // applied live via SetAcpPanelSizePercent on every Update, not just on
-    // End -- unlike ProjectSidebar's width_, AcpPanelSizePercent() already
+    // End -- unlike ProjectSidebar's width_, PanelSizePercent() already
     // *is* the one live value the placement lambda reads every frame, so
     // there's no separate "committed" step to wire.
     void BeginResize(Point globalMouse);
@@ -291,11 +291,11 @@ class AcpPanel : public Widget {
     // AcceptMentionCandidate already let the user splice in (word-boundary
     // matched, the same "@ must start a word" rule RefreshMentionState
     // uses), replaces each one found with a short "[attached: name]" marker
-    // in `text`, and returns one AcpManager::PromptAttachment per token
+    // in `text`, and returns one Manager::PromptAttachment per token
     // actually resolved (a token present with no activeBufferProvider_ set,
     // or "@selection" with no active mark, is left as literal text --
     // silently not treated as a mention at all, rather than erroring).
-    [[nodiscard]] std::vector<editor::acp::AcpManager::PromptAttachment> ResolveMentionAttachments(std::string& text) const;
+    [[nodiscard]] std::vector<editor::acp::Manager::PromptAttachment> ResolveMentionAttachments(std::string& text) const;
 
     // Prose-check-the-composer follow-up: called once per Paint() (there's
     // no per-keystroke edit hook the way RefreshMentionState has -- Paint()
@@ -308,7 +308,7 @@ class AcpPanel : public Widget {
     void RequestProseCheckIfNeeded();
 
     const Theme&             theme_;
-    editor::acp::AcpManager* acpManager_ = nullptr;
+    editor::acp::Manager* acpManager_ = nullptr;
     editor::MinibufferPrompt prompt_;
     std::function<void()>    onToggleRequest_;
     bool                     dockHosted_ = false; // see SetDockHosted

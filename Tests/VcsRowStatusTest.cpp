@@ -1,28 +1,28 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "Editor/Vcs/VcsRowStatus.h"
+#include "Editor/Vcs/RowStatus.h"
 
 using ned::editor::vcs::ClassifyPorcelainStatus;
 using ned::editor::vcs::PartitionVcsStatus;
-using ned::editor::vcs::VcsRowStatus;
-using ned::editor::vcs::VcsStatusEntry;
+using ned::editor::vcs::RowStatus;
+using ned::editor::vcs::StatusEntry;
 
-TEST_CASE("ClassifyPorcelainStatus buckets git's own two-letter status codes", "[VcsRowStatus]") {
-    REQUIRE(ClassifyPorcelainStatus("??") == VcsRowStatus::Untracked);
-    REQUIRE(ClassifyPorcelainStatus(" M") == VcsRowStatus::Modified);
-    REQUIRE(ClassifyPorcelainStatus("M ") == VcsRowStatus::Modified);
-    REQUIRE(ClassifyPorcelainStatus("A ") == VcsRowStatus::Added);
-    REQUIRE(ClassifyPorcelainStatus(" D") == VcsRowStatus::Deleted);
-    REQUIRE(ClassifyPorcelainStatus("D ") == VcsRowStatus::Deleted);
+TEST_CASE("ClassifyPorcelainStatus buckets git's own two-letter status codes", "[RowStatus]") {
+    REQUIRE(ClassifyPorcelainStatus("??") == RowStatus::Untracked);
+    REQUIRE(ClassifyPorcelainStatus(" M") == RowStatus::Modified);
+    REQUIRE(ClassifyPorcelainStatus("M ") == RowStatus::Modified);
+    REQUIRE(ClassifyPorcelainStatus("A ") == RowStatus::Added);
+    REQUIRE(ClassifyPorcelainStatus(" D") == RowStatus::Deleted);
+    REQUIRE(ClassifyPorcelainStatus("D ") == RowStatus::Deleted);
     // D beats M beats A when a letter with no dedicated bucket -- or both
     // columns set -- forces a priority pick.
-    REQUIRE(ClassifyPorcelainStatus("AM") == VcsRowStatus::Modified);
-    REQUIRE(ClassifyPorcelainStatus("MD") == VcsRowStatus::Deleted);
+    REQUIRE(ClassifyPorcelainStatus("AM") == RowStatus::Modified);
+    REQUIRE(ClassifyPorcelainStatus("MD") == RowStatus::Deleted);
     // No dedicated bucket (rename) falls back to Modified.
-    REQUIRE(ClassifyPorcelainStatus("R ") == VcsRowStatus::Modified);
+    REQUIRE(ClassifyPorcelainStatus("R ") == RowStatus::Modified);
 }
 
-TEST_CASE("PartitionVcsStatus splits staged/unstaged/untracked by porcelain column", "[VcsRowStatus]") {
+TEST_CASE("PartitionVcsStatus splits staged/unstaged/untracked by porcelain column", "[RowStatus]") {
     const auto sections = PartitionVcsStatus({
         {"M ", "staged_only.txt"},
         {" M", "unstaged_only.txt"},
@@ -42,7 +42,7 @@ TEST_CASE("PartitionVcsStatus splits staged/unstaged/untracked by porcelain colu
     REQUIRE(sections.untracked[0].path == "untracked.txt");
 }
 
-TEST_CASE("PartitionVcsStatus on an empty status list produces three empty sections", "[VcsRowStatus]") {
+TEST_CASE("PartitionVcsStatus on an empty status list produces three empty sections", "[RowStatus]") {
     const auto sections = PartitionVcsStatus({});
     REQUIRE(sections.staged.empty());
     REQUIRE(sections.unstaged.empty());

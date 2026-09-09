@@ -29,7 +29,7 @@
 #include <vector>
 
 #include "ActiveBuffer.h"
-#include "Editor/Acp/AcpManager.h"
+#include "Editor/Acp/Manager.h"
 #include "Editor/Backup.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
@@ -60,8 +60,8 @@
 #include "Editor/Snippet.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/TestRun/TestRunner.h"
-#include "Editor/Vcs/VcsProvider.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/Provider.h"
+#include "Editor/Vcs/Runner.h"
 #include "Editor/Vim/Engine.h"
 #include "EventLoop.h"
 #include "LeftDock.h"
@@ -282,12 +282,12 @@ class BufferView : public Widget {
     // was never called).
     void SetTestRunner(editor::testrun::TestRunner* testRunner);
 
-    // VCS blame gutter: registers the shared VcsRunner -- same "unset is a
+    // VCS blame gutter: registers the shared Runner -- same "unset is a
     // safe no-op" convention SetLspManager/SetTaskRunner already establish
     // (vcs-show-blame simply reports "no vcs runner configured" via
     // statusMessage_ if this was never called, the same way run-task
     // degrades with no TaskRunner).
-    void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
+    void SetVcsRunner(editor::vcs::Runner* vcsRunner);
 
     // vcs-diff-gutter-staleness follow-up: a public entry point for
     // WindowManager to force this pane's diff gutter fresh from outside --
@@ -298,7 +298,7 @@ class BufferView : public Widget {
     // indefinitely -- nothing in this codebase polls for VCS state changing
     // for a reason ned itself didn't cause). Just forwards to
     // RequestDiffForCurrentBuffer below, which already silently no-ops with
-    // no VcsRunner wired -- this exists as its own public method rather than
+    // no Runner wired -- this exists as its own public method rather than
     // widening that one's access, since its own doc comment specifically
     // describes two different, narrower existing call sites.
     void RefreshVcsDiff();
@@ -309,11 +309,11 @@ class BufferView : public Widget {
     // statusMessage_ if this was never called).
     void SetDapManager(editor::dap::Manager* dapManager);
 
-    // ACP client slice 2: registers the shared AcpManager -- same "unset is
+    // ACP client slice 2: registers the shared Manager -- same "unset is
     // a safe no-op" convention as SetDapManager (the acp-* commands report
     // "No ACP manager available." via statusMessage_ if this was never
     // called).
-    void SetAcpManager(editor::acp::AcpManager* acpManager);
+    void SetAcpManager(editor::acp::Manager* acpManager);
 
     // user-facing-hang-affordance follow-up (ChildProcess-hang-protection-
     // round-2 -- see ROADMAP.md). Whether this pane's Paint() polls
@@ -341,7 +341,7 @@ class BufferView : public Widget {
     // BindingNamesWithPrefix's own doc comment).
     void SetJanetEnvironment(const janet::Environment* janetEnv);
 
-    // ACP client slice 2: entered directly by WindowManager's AcpManager
+    // ACP client slice 2: entered directly by WindowManager's Manager
     // wiring the moment a session/request_permission request arrives (an
     // agent-initiated request, never reached through the ordinary
     // InteractiveRequest/StartInteractiveSession path -- see
@@ -351,7 +351,7 @@ class BufferView : public Widget {
     // InputMode::AcpPermissionPrompt and renders prompt as a numbered
     // choice list (RefreshAcpPermissionPromptStatus), the same
     // LspCodeActionSelect shape.
-    void ShowAcpPermissionPrompt(const editor::acp::AcpManager::PermissionPrompt& prompt);
+    void ShowAcpPermissionPrompt(const editor::acp::Manager::PermissionPrompt& prompt);
 
     // Opens path (via BufferList::OpenOrCreateFile) and moves point to the
     // start of line (1-indexed, matching the "path:line" convention every
@@ -363,12 +363,12 @@ class BufferView : public Widget {
     void JumpToPathLine(const std::filesystem::path& path, std::size_t line);
 
     // vcs-show-blame's entry point (see StartInteractiveSession's
-    // VcsShowBlame case) -- kicks off an async VcsRunner::RequestBlame for
+    // VcsShowBlame case) -- kicks off an async Runner::RequestBlame for
     // the active buffer; on completion (which lands back here via
     // EventLoop::Post, same as every other async completion in this class)
     // populates blameLineInfo_ and the two generation-tracking fields below,
     // so the gutter starts rendering on the next Paint(). A no-op (reports
-    // via statusMessage_) if no VcsRunner is registered.
+    // via statusMessage_) if no Runner is registered.
     void RequestBlameForCurrentBuffer();
 
     // depth-aware-fold-gutter-style "only reserve the column when there's
@@ -383,36 +383,36 @@ class BufferView : public Widget {
     // Public primarily for tests -- mirrors TaskProcess::DispatchOutput/
     // DispatchExit's own "public primarily for tests" precedent (see that
     // class's doc comment): the real async path always reaches this via
-    // VcsRunner::RequestBlame's onComplete callback (see
+    // Runner::RequestBlame's onComplete callback (see
     // RequestBlameForCurrentBuffer), which requires a live, running
     // EventLoop to ever actually fire -- this codebase's established
     // convention is to never run one in a unit test (see TaskProcessTest.cpp/
     // TaskRunnerTest.cpp's own header comments). Calling this directly
     // exercises the exact same blameLineInfo_ population/cache-generation
     // update without needing one.
-    void DispatchBlameForTesting(std::vector<editor::vcs::VcsBlameLine> lines);
+    void DispatchBlameForTesting(std::vector<editor::vcs::BlameLine> lines);
 
     // Public primarily for tests -- same "public primarily for tests"
     // precedent DispatchBlameForTesting just above establishes, for the
     // same reason: the real async path always reaches this via
-    // VcsRunner::RequestDiff's onComplete callback (see
+    // Runner::RequestDiff's onComplete callback (see
     // RequestDiffForCurrentBuffer), which needs a live EventLoop to ever
     // fire. Converts raw hunks into diffLineKinds_ directly, exercising
     // the exact same classification RequestDiffForCurrentBuffer's own
     // completion handler uses.
-    void DispatchDiffForTesting(std::vector<editor::vcs::VcsDiffHunk> hunks);
+    void DispatchDiffForTesting(std::vector<editor::vcs::DiffHunk> hunks);
 
     // Public primarily for tests, same precedent again (vocabulary-
     // completion follow-up): the real async paths reach
     // BuildVcsStatusBuffer/BuildVcsBranchesBuffer/ResolveVcsFileTarget
-    // via VcsRunner callbacks that need a live EventLoop to ever fire.
+    // via Runner callbacks that need a live EventLoop to ever fire.
     // DispatchStatusForTesting is exactly RequestVcsStatusBuffer's
     // onComplete body; DispatchBranchesForTesting is
     // RequestVcsBranchesBuffer's; ResolveVcsFileTargetForTesting exposes
     // the status-line-at-point/active-buffer-path target resolution
     // stage/unstage share.
-    void                                               DispatchStatusForTesting(std::vector<editor::vcs::VcsStatusEntry> entries);
-    void                                               DispatchBranchesForTesting(std::vector<editor::vcs::VcsBranchEntry> entries);
+    void                                               DispatchStatusForTesting(std::vector<editor::vcs::StatusEntry> entries);
+    void                                               DispatchBranchesForTesting(std::vector<editor::vcs::BranchEntry> entries);
     [[nodiscard]] std::optional<std::filesystem::path> ResolveVcsFileTargetForTesting();
     // Hunk-staging follow-up: same seam again, for StageOrUnstageHunkAtPoint's
     // synchronous guards (no runner / modified buffer / no path) -- the
@@ -431,19 +431,19 @@ class BufferView : public Widget {
     void AbortVcsCommitMessageForTesting();
     // Hunk-navigation follow-up: same seam again, for JumpToNextHunk/
     // JumpToPreviousHunk -- both are fully synchronous (a plain search over
-    // diffHunkStartLines_, no VcsRunner round trip), so these wrappers need
+    // diffHunkStartLines_, no Runner round trip), so these wrappers need
     // no live EventLoop at all, unlike most *ForTesting entries above.
     void JumpToNextHunkForTesting();
     void JumpToPreviousHunkForTesting();
     // next-error follow-up: same seam again, for NextError/PreviousError --
     // fully synchronous (Editor/NextError.h's CollectResultLocations is a
-    // plain scan, no VcsRunner/LSP round trip), so no live EventLoop needed.
+    // plain scan, no Runner/LSP round trip), so no live EventLoop needed.
     void NextErrorForTesting();
     void PreviousErrorForTesting();
 
     // Diagnostics-multibuffer follow-up: same "public primarily for tests"
     // seam, but RequestDiagnosticsBuffer needs no live EventLoop at all --
-    // it's fully synchronous, no VcsRunner-style callback in between. This
+    // it's fully synchronous, no Runner-style callback in between. This
     // is a plain passthrough rather than a partial "guards only" exposure.
     void RequestDiagnosticsBufferForTesting();
 
@@ -1124,7 +1124,7 @@ class BufferView : public Widget {
                            // async branch-list callback (the RequestRenameAtPoint
                            // enter-a-mode-from-a-callback pattern) so Tab completes
                            // against vcsBranchCandidates_; VcsCreateBranch is a plain
-                           // name prompt. Enter fires the matching async VcsRunner
+                           // name prompt. Enter fires the matching async Runner
                            // request fire-and-forget, results landing in statusMessage_
                            // from the callback (DapEvaluate's shape).
                            VcsSwitchBranch,
@@ -1137,7 +1137,7 @@ class BufferView : public Widget {
                            // all, since a session/request_permission request is
                            // agent-initiated, not user-command-initiated; entered
                            // directly by ShowAcpPermissionPrompt (called from
-                           // WindowManager's AcpManager wiring) and driven by its own
+                           // WindowManager's Manager wiring) and driven by its own
                            // HandleAcpPermissionPromptKey, the same numbered-list shape
                            // LspCodeActionSelect uses.
                            AcpAgentName,
@@ -1609,11 +1609,11 @@ class BufferView : public Widget {
     void RefreshAcpPermissionPromptStatus();
     // Up/Down move acpPermissionSelection_ (clamped) and refresh; a digit
     // '1'-'9' or Enter resolves the (possibly just-picked) option directly
-    // via AcpManager::ResolvePermissionPrompt -- unlike a code action,
+    // via Manager::ResolvePermissionPrompt -- unlike a code action,
     // there is no separate confirm stage: the options an agent offers are
     // already the concrete choices ("Allow once", "Reject", ...), not a
     // list of actions needing a second y/n. Escape/C-g resolves as
-    // cancelled via AcpManager::CancelPermissionPrompt.
+    // cancelled via Manager::CancelPermissionPrompt.
     void HandleAcpPermissionPromptKey(const editor::KeyChord& chord);
     // Refuses (reports via statusMessage_, no buffer mutation) if
     // action.touchesUnsupportedForm (a "documentChanges" WorkspaceEdit --
@@ -2120,7 +2120,7 @@ class BufferView : public Widget {
     void RefreshVcsSwitchBranchStatus();
 
     // dropdown-path-completion follow-up: same shape, over
-    // editor::acp::AcpAgentNames().
+    // editor::acp::AgentNames().
     void HandleAcpAgentNameKey(const editor::KeyChord& chord);
     void RefreshAcpAgentNameStatus();
 
@@ -2302,7 +2302,7 @@ class BufferView : public Widget {
 
     // vcs-blame-buffer/vcs-show-log's actual entry points (see
     // StartInteractiveSession's VcsBlameBuffer/VcsShowLog cases) -- resolve
-    // the active buffer's path, kick off an async VcsRunner request, and on
+    // the active buffer's path, kick off an async Runner request, and on
     // completion (which may arrive after further user input -- checked via
     // the same buffer-identity staleness guard RequestBlameForCurrentBuffer
     // already uses) build and switch to a synthesized results buffer. The
@@ -2316,7 +2316,7 @@ class BufferView : public Widget {
 
     // vcs-blame-detail-at-point's entry point: a synchronous read of
     // already-loaded blameLineInfo_ for the buffer line at point -- no new
-    // VcsRunner request. Reports the full commit hash/author/date/summary
+    // Runner request. Reports the full commit hash/author/date/summary
     // via statusMessage_ (the gutter's own fixed-width column only ever
     // shows a short hash), or a clear "no blame data" message if
     // BlameGutterActive() is false or point's line isn't covered (e.g. an
@@ -2329,7 +2329,7 @@ class BufferView : public Widget {
     // keeps pushing the deadline out rather than spawning a `git diff` per
     // keystroke (the exact debounce shape completionDebounceTimer_ already
     // established for LSP ghost-text completion). A no-op if no
-    // EventLoop/VcsRunner is wired in (headless tests, most notably).
+    // EventLoop/Runner is wired in (headless tests, most notably).
     void ScheduleDiffRefresh();
     // The actual request, called either from ScheduleDiffRefresh's fired
     // timer or immediately after a save (RunCommandAndHandleOutcome
@@ -2347,7 +2347,7 @@ class BufferView : public Widget {
     // line can be visited the same way a search result can. Buffer name is
     // "*vcs blame <basename>*" -- generic, not "*git ...*", since the
     // active provider might not be git.
-    void BuildVcsBlameBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsBlameLine>& lines);
+    void BuildVcsBlameBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::BlameLine>& lines);
     // One line per commit ("<hash> <date> <author>: <summary>"), oldest-to-
     // newest order preserved as returned by the provider. Log entries don't
     // map to a specific source line -- VisitVcsResult on one of these lines
@@ -2355,10 +2355,10 @@ class BufferView : public Widget {
     // follow-up: RequestVcsCommitDiffBuffer, keyed off the line's leading
     // hash token) rather than being a no-op, same shape as any other
     // results buffer VisitResultUnderPoint knows how to visit.
-    void BuildVcsLogBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsLogEntry>& entries);
+    void BuildVcsLogBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::LogEntry>& entries);
 
     // Multibuffers follow-up: vcs-full-diff-buffer's entry point -- async
-    // VcsRunner::RequestFullDiff, then Vcs/DiffPatch.h's ParseDiffHunks and
+    // Runner::RequestFullDiff, then Vcs/DiffPatch.h's ParseDiffHunks and
     // Editor/Multibuffer.h's BuildMultibuffer turn the raw diff text into a
     // real, stitched "*vcs diff*" buffer (one excerpt per hunk, each
     // carrying its own file/line provenance for vcs-visit-result to jump
@@ -2370,7 +2370,7 @@ class BufferView : public Widget {
     void RequestVcsFullDiffBuffer();
 
     // Full commit diff view follow-up: VisitResultUnderPoint's entry point
-    // for a *vcs log <name>* buffer -- async VcsRunner::RequestCommitDiff
+    // for a *vcs log <name>* buffer -- async Runner::RequestCommitDiff
     // (`git show`-shaped: one commit's whole changeset, real context lines)
     // through the same BuildDiffHunksMultibuffer tail RequestVcsFullDiffBuffer
     // uses, into a "*vcs commit <hash>*" multibuffer. commitHash is whatever
@@ -2380,7 +2380,7 @@ class BufferView : public Widget {
     void RequestVcsCommitDiffBuffer(const std::string& commitHash);
 
     // The shared tail both RequestVcsFullDiffBuffer and
-    // RequestVcsCommitDiffBuffer delegate to once their respective VcsRunner
+    // RequestVcsCommitDiffBuffer delegate to once their respective Runner
     // request completes: ParseDiffHunks + BuildMultibuffer, differing only in
     // the resulting buffer's name and what to say when rawDiff carries no
     // hunks at all.
@@ -2389,7 +2389,7 @@ class BufferView : public Widget {
 
     // Diagnostics-multibuffer follow-up: lsp-diagnostics-buffer's entry
     // point -- synchronous (every diagnostic is already resident on its own
-    // open Buffer, no VcsRunner-style subprocess round trip needed), unlike
+    // open Buffer, no Runner-style subprocess round trip needed), unlike
     // RequestVcsFullDiffBuffer's async shape. Builds one excerpt per
     // Code-origin diagnostic (its own single source line, verbatim) via
     // Editor/Multibuffer.h's BuildMultibuffer, then translates each
@@ -2456,7 +2456,7 @@ class BufferView : public Widget {
     void RequestProjectFindReferences();
 
     // VCS vocabulary-completion follow-up. vcs-status's entry point --
-    // async VcsRunner::RequestStatus, building/switching to the *vcs
+    // async Runner::RequestStatus, building/switching to the *vcs
     // status* buffer on completion.
     void RequestVcsStatusBuffer();
     // "<absolute path>:1: <state> <root-relative path>" per entry -- the
@@ -2470,7 +2470,7 @@ class BufferView : public Widget {
     // stage/unstage/commit re-trigger it programmatically. announce=false
     // is the background-refresh variant: no buffer switch, no
     // statusMessage_ (so it can't clobber "Staged foo"'s own report).
-    void BuildVcsStatusBuffer(const std::vector<editor::vcs::VcsStatusEntry>& entries, bool announce);
+    void BuildVcsStatusBuffer(const std::vector<editor::vcs::StatusEntry>& entries, bool announce);
     // Background re-request after a stage/unstage/commit/branch-switch
     // changed what status would report -- a no-op unless the *vcs status*
     // buffer already exists (never conjures one unasked), with errors
@@ -2483,7 +2483,7 @@ class BufferView : public Widget {
     // git plugin's worktree-vs-index diff stops reporting).
     void StageOrUnstageFileAtPoint(bool stage);
     // Hunk-staging follow-up (vcs-stage-hunk/vcs-unstage-hunk): hands
-    // point's 1-indexed line to VcsRunner::RequestHunkApply after three
+    // point's 1-indexed line to Runner::RequestHunkApply after three
     // synchronous gates -- a runner is wired, the buffer has a path, and
     // the buffer is NOT Modified(): the diff describes the file on disk
     // while point counts buffer lines, so staging from mismatched numbers
@@ -2497,7 +2497,7 @@ class BufferView : public Widget {
     void StageOrUnstageHunkAtPoint(bool stage);
     // mouse-ergonomics follow-up (vcs-revert-hunk): StageOrUnstageHunkAtPoint's
     // destructive sibling -- discards the hunk covering point from the
-    // working tree via VcsRunner::RequestHunkRevert, same three gates
+    // working tree via Runner::RequestHunkRevert, same three gates
     // (runner wired, buffer has a path, buffer NOT Modified()) and the same
     // success refresh. Only ever called from HandleConfirmRevertHunkKey's
     // 'y' branch -- StartInteractiveSession(ConfirmRevertHunk) is what a
@@ -2526,7 +2526,7 @@ class BufferView : public Widget {
     // mid-composition, just switches to) the *vcs commit message* buffer --
     // InteractiveRequest::VcsCommit's entry point.
     void BeginVcsCommitMessage();
-    // InteractiveRequest::VcsCommitFinish/VcsCommitAbort's entry points --
+    // InteractiveRequest::CommitFinish/VcsCommitAbort's entry points --
     // strip the '#'-comment template and fire RequestCommit, or just
     // discard, then either way close the buffer via
     // CloseVcsCommitMessageBuffer below.
@@ -2546,7 +2546,7 @@ class BufferView : public Widget {
     // per-branch buffer -- also a Find-first in-place singleton, same
     // reasoning as the status buffer.
     void RequestVcsBranchesBuffer();
-    void BuildVcsBranchesBuffer(const std::vector<editor::vcs::VcsBranchEntry>& entries);
+    void BuildVcsBranchesBuffer(const std::vector<editor::vcs::BranchEntry>& entries);
     // vcs-switch-branch's entry point: fetches the branch list first and
     // only then -- from the async callback, the RequestRenameAtPoint
     // enter-a-mode-from-a-callback pattern -- opens the
@@ -2789,7 +2789,7 @@ class BufferView : public Widget {
     void BuildDebugInfoLines(std::function<void(std::vector<std::string>)> onComplete);
     // DAP<->ACP debugging bridge: dap-ask-agent's body -- formats
     // BuildDebugInfoLines' own output as one plain-text prompt and sends it
-    // via AcpManager::SendPrompt. Guarded by the caller (StartInteractiveSession)
+    // via Manager::SendPrompt. Guarded by the caller (StartInteractiveSession)
     // on dapManager_/acpManager_ both being present and the DAP session being
     // Stopped -- this method assumes both are already true.
     void SendDebugStateToAgent();
@@ -2929,7 +2929,7 @@ class BufferView : public Widget {
     // this does NOT recompute blameLineInfo_ from anything -- there's no
     // cheap synchronous source to recompute it from (populating it means
     // running `git blame`, which is what RequestBlameForCurrentBuffer's
-    // async VcsRunner call is for). All this does, called unconditionally
+    // async Runner call is for). All this does, called unconditionally
     // every Paint() like the other two: if the active buffer's identity or
     // ContentGeneration() has changed since blameLineInfo_ was last
     // populated, CLEARS it (blame goes stale the instant the buffer is
@@ -3044,9 +3044,9 @@ class BufferView : public Widget {
     editor::tasks::TaskRunner*            taskRunner_              = nullptr; // see SetTaskRunner
     editor::ProjectUndoManager*           projectUndo_             = nullptr; // see SetProjectUndo
     editor::testrun::TestRunner*          testRunner_              = nullptr; // see SetTestRunner
-    editor::vcs::VcsRunner*               vcsRunner_               = nullptr; // see SetVcsRunner
+    editor::vcs::Runner*               vcsRunner_               = nullptr; // see SetVcsRunner
     editor::dap::Manager*              dapManager_              = nullptr; // see SetDapManager
-    editor::acp::AcpManager*              acpManager_              = nullptr; // see SetAcpManager
+    editor::acp::Manager*              acpManager_              = nullptr; // see SetAcpManager
     const janet::Environment*             janetEnv_                = nullptr; // see SetJanetEnvironment
     bool                                  surfaceUnseenLogEntries_ = false;   // see SetSurfaceUnseenLogEntries
 
@@ -3055,7 +3055,7 @@ class BufferView : public Widget {
     // consumed by RefreshAcpPermissionPromptStatus/HandleAcpPermissionPromptKey)
     // -- same "not cleared eagerly outside that mode" convention
     // pendingCodeActions_/codeActionSelection_ establish.
-    std::vector<editor::acp::AcpManager::PermissionOption> pendingAcpPermissionOptions_;
+    std::vector<editor::acp::Manager::PermissionOption> pendingAcpPermissionOptions_;
     std::size_t                                            acpPermissionSelection_ = 0;
     std::string                                            acpPermissionDescription_;
 
@@ -3497,7 +3497,7 @@ class BufferView : public Widget {
     // record which buffer+generation blameLineInfo_ is valid for, so
     // EnsureBlameGutterCache can tell it's gone stale and clear it.
     mutable bufferview::CacheStamp                                         blameGutterCacheStamp_;
-    mutable std::vector<std::pair<std::size_t, editor::vcs::VcsBlameLine>> blameLineInfo_;
+    mutable std::vector<std::pair<std::size_t, editor::vcs::BlameLine>> blameLineInfo_;
 
     // Diff gutter markers follow-up: live-refreshing added/modified/removed
     // line indicators against HEAD. Unlike blameLineInfo_, this is NOT
@@ -3505,7 +3505,7 @@ class BufferView : public Widget {
     // expected to briefly show slightly-stale markers during its own
     // debounce window (see ScheduleDiffRefresh), the same tolerance any
     // other live-updating editor's git gutter already has; it's simply
-    // overwritten wholesale once a fresh VcsRunner::RequestDiff completes.
+    // overwritten wholesale once a fresh Runner::RequestDiff completes.
     // Sorted by (0-indexed) line -- one entry per changed line for
     // Added/Modified; a Removed entry marks the single line immediately
     // after a pure deletion (a boundary, not a covered range) and is

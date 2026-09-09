@@ -54,13 +54,13 @@ TEST_CASE("DetectLinkAtPoint classifies a dotted-extension token as a File candi
 }
 
 TEST_CASE("DetectLinkAtPoint strips quotes off a #include-style target", "[Link]") {
-    const std::string text  = "#include \"Editor/Acp/AcpManager.h\"\n";
-    const std::size_t point = text.find("AcpManager");
+    const std::string text  = "#include \"Editor/Acp/Manager.h\"\n";
+    const std::size_t point = text.find("Manager");
 
     const auto detected = DetectLinkAtPoint(text, point);
     REQUIRE(detected.has_value());
     CHECK(detected->kind == LinkKind::File);
-    CHECK(detected->target == "Editor/Acp/AcpManager.h");
+    CHECK(detected->target == "Editor/Acp/Manager.h");
 }
 
 TEST_CASE("DetectLinkAtPoint strips angle brackets off a #include-style target", "[Link]") {
@@ -88,13 +88,13 @@ TEST_CASE("DetectLinkAtPoint finds a #include target with point anywhere on the 
 }
 
 TEST_CASE("DetectLinkAtPoint finds a quoted #include target with point anywhere on the line", "[Link]") {
-    const std::string text  = "#include \"Editor/Acp/AcpManager.h\"\n";
+    const std::string text  = "#include \"Editor/Acp/Manager.h\"\n";
     const std::size_t point = text.find("#include");
 
     const auto detected = DetectLinkAtPoint(text, point);
     REQUIRE(detected.has_value());
     CHECK(detected->kind == LinkKind::File);
-    CHECK(detected->target == "Editor/Acp/AcpManager.h");
+    CHECK(detected->target == "Editor/Acp/Manager.h");
 }
 
 TEST_CASE("DetectLinkAtPoint does not treat template angle brackets as a file target on a non-#include line", "[Link]") {

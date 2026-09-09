@@ -11,7 +11,7 @@
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/ProjectRoot.h"
-#include "Editor/TestRun/TestRunConfig.h"
+#include "Editor/TestRun/Config.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Text/ITextStorage.h"
 #include "UI/ActiveBuffer.h"
@@ -411,8 +411,8 @@ void GutterModel::EnsureTestEntries() const {
     // May hold nothing at all now (the runnable-affordance case above): the
     // marker loop then finds no matching result for any test and every row
     // comes out status-less, which is exactly the pre-run state.
-    static const editor::testrun::TestRunOutcome kNoOutcome{};
-    const editor::testrun::TestRunOutcome&       outcome =
+    static const editor::testrun::Outcome kNoOutcome{};
+    const editor::testrun::Outcome&       outcome =
         context_.testRunner->LatestOutcome() ? *context_.testRunner->LatestOutcome() : kNoOutcome;
     const std::string bufferBasename = buffer.Path() ? buffer.Path()->filename().string() : std::string();
 

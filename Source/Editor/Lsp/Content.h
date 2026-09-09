@@ -62,7 +62,7 @@ struct CompletionItem {
     // spec section 3.17.2.3), 0 for unset/unknown -- BufferView buckets
     // this down to a small glyph via its own CompletionKindBucket, the
     // same "keep the wire value verbatim, let the UI layer interpret it"
-    // split VcsStatusEntry::state/VcsBlameLine::date already establish
+    // split StatusEntry::state/BlameLine::date already establish
     // elsewhere. detail is the server's short type/signature string (e.g.
     // "(int, int) -> int"), shown as the popup row's right-aligned column;
     // empty when the server omitted it.

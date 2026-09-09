@@ -183,8 +183,8 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
            const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
            std::string& statusMessage, const Theme& theme, ProjectSidebar* projectSidebar,
            editor::lsp::Manager* lspManager, editor::tasks::TaskRunner* taskRunner,
-           editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::Manager* dapManager,
-           editor::acp::AcpManager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
+           editor::testrun::TestRunner* testRunner, editor::vcs::Runner* vcsRunner, editor::dap::Manager* dapManager,
+           editor::acp::Manager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
            std::function<void(editor::InteractiveRequest)> onWindowRequest,
            std::function<void(text::Buffer&)>              onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
                                                                 dispatcher_(registry, editor::KeymapStack({&janetKeymap, &mode_.keymap, &globalKeymap})),
@@ -842,7 +842,7 @@ void WindowManager::SetProjectUndo(editor::ProjectUndoManager* projectUndo) {
     }
 }
 
-void WindowManager::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
+void WindowManager::SetVcsRunner(editor::vcs::Runner* vcsRunner) {
     vcsRunner_ = vcsRunner;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetVcsRunner(vcsRunner);
@@ -895,7 +895,7 @@ void WindowManager::SetDapManager(editor::dap::Manager* dapManager) {
     dapManager->SetOnSessionEnded([this](std::string reason) { statusMessage_ = std::move(reason); });
 }
 
-void WindowManager::SetAcpManager(editor::acp::AcpManager* acpManager) {
+void WindowManager::SetAcpManager(editor::acp::Manager* acpManager) {
     acpManager_ = acpManager;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetAcpManager(acpManager);
@@ -907,7 +907,7 @@ void WindowManager::SetAcpManager(editor::acp::AcpManager* acpManager) {
     // SetDapManager's own SetOnStopped wiring just above -- a specific
     // BufferView captured when this was called could be a pane that's
     // since been split away or closed.
-    acpManager->SetOnPermissionRequest([this](const editor::acp::AcpManager::PermissionPrompt& prompt) {
+    acpManager->SetOnPermissionRequest([this](const editor::acp::Manager::PermissionPrompt& prompt) {
         // ACP round-1-live-validation follow-up: the AcpPanel, when focused,
         // resolves this itself (AcpPanel::OnEvent) -- see
         // SetAcpPanelFocusChecker's own doc comment. Routing to the pane's
@@ -1323,7 +1323,7 @@ void WindowManager::SaveProjectSessionNow() {
     }
 
     // ACP auto-reconnect follow-up: AgentName() is sticky for the rest of
-    // this process once a session has ever been started (AcpManager.cpp's
+    // this process once a session has ever been started (Manager.cpp's
     // own StartSession is the only assignment site, never cleared by
     // StopSession) -- prefer it live whenever set, falling back to
     // lastAcpAgentSeed_ (what SetLastKnownAcpAgent seeded from the
