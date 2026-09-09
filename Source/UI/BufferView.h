@@ -2028,6 +2028,10 @@ class BufferView : public Widget {
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmSaveWithConflictsPrompt();
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmOpenBinaryPrompt();
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmRevertHunkPrompt();
+    // The second stage of the two-stage delete/recover prompts, which is an
+    // ordinary confirmation once the target has been chosen.
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmDeleteFilePrompt();
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmRecoverFilePrompt();
 
     // Shared by the two save confirmations, which both answer by forcing the
     // save the guard had stopped.
