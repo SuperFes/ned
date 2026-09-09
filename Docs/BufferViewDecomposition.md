@@ -343,6 +343,27 @@ The biggest maintenance win. Order within the phase:
    `StartInteractiveSession` switch splits into three tables: session starts,
    one-shot forwards to a `std::function`, and one-shot direct actions.
 
+### Phase 5 — `LspFeatures`, `VcsFeatures`, `DapFeatures`, `DerivedBuffers` — deferred to last
+
+**Measured and deliberately postponed.** Of `BufferView.h`'s remaining 198 members, 55
+belong to the LSP features — by far the largest single cluster, and the reason the header
+has not shrunk the way the `.cpp` files have. Extracting them is what would finally cut
+`BufferView.h` down.
+
+It is postponed rather than skipped because it is a genuinely bigger job than the phases
+around it, and unlike them it cannot be done with an `EditorContext` alone. These features
+push popup models out through public `SetOnCompletionChanged`/`SetOnHoverChanged`/
+`SetOnPeekChanged`/`SetOnHierarchyChanged` hooks that callers outside `BufferView` wire
+up, and several of them start interactive sessions by setting `inputMode_`. So it needs a
+real `ViewServices` expansion — the same shape `Viewport::Host` established in Phase 3,
+but wider — and that surface should be designed once, against all of `LspFeatures`,
+`VcsFeatures` and `DapFeatures` at once, rather than guessed at from the first one.
+
+Do this after the cheaper repeated-shape collapses have run out. They keep finding real
+bugs (see Phase 4's stray-digit fall-through) at a fraction of the risk.
+
+#### Original sketch
+
 ### Phase 5 — `LspFeatures`, `VcsFeatures`, `DapFeatures`, `DerivedBuffers`
 
 Independent of each other; can land in any order or in parallel. `DerivedBuffers` first
