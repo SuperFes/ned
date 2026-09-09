@@ -1,0 +1,9 @@
+# Revisions that only reformat, listed so `git blame` skips straight past them
+# to the commit that last actually changed a line.
+#
+# Enabled for this clone with:
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub and GitLab both read this file by name with no configuration.
+
+# style: clang-format the whole tree (276 files, whitespace only)
+3ea80f3ecd92047fb30063ef4e0ed1970c666ede
