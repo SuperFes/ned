@@ -2630,6 +2630,26 @@ class BufferView : public Widget {
         const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& diagnosticLineSeverities;
     };
 
+    // Per-frame bookkeeping Paint does before it draws anything. Kept separate
+    // so Paint reads as "bring everything up to date, then render" rather than
+    // interleaving the two.
+    //
+    // Re-point the caches and requests that follow the active buffer, when the
+    // pane has switched to a different one since the last frame.
+    void SyncBufferSwitch();
+    // Push the scroll position and extent to whichever of the scroll bar,
+    // arrows and minimap are wired up.
+    void SyncScrollWidgets(std::size_t totalLines, std::size_t renderEndLine);
+    // Hand the active buffer's current content to the language server, and ask
+    // for whatever the viewport now needs.
+    void SyncLspForFrame();
+    // Surface an unseen LSP or *Messages* log entry in the echo area, if
+    // nothing else is using it.
+    void SurfaceLogMessages();
+    // Echo the diagnostic on point's own line, updating as point moves. Only
+    // ever overwrites or clears the message it last wrote itself.
+    void EchoPointDiagnostic();
+
     // Everything about one buffer line the row painting needs. Recomputed when a
     // new line starts, not per visual row: a wrapped line occupies several rows
     // and they all draw from the same spans, links, hints and tints.
