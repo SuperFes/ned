@@ -242,6 +242,436 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
     return static_cast<int>(chain.size());
 }
 
+void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size_t lineStart,
+                                 std::size_t lineEnd, const FramePaint& frame,
+                                 std::optional<DiffLineKind> lineDiffTint, bool isExecutionLine,
+                                 FoldColumnStream& folds) {
+    // Includes the line's own newline (unlike lineEnd above), so a
+    // region selected through to the start of the next line still
+    // counts this one as fully selected -- see ClassifyGutterSelection.
+    const std::size_t     lineEndWithNewline = (line + 1 < frame.totalLines) ? frame.content.LineToByteOffset(line + 1) : frame.content.ByteLength();
+    const GutterSelection gutterSelection    = ClassifyGutterSelection(frame.buffer, lineStart, lineEndWithNewline);
+
+    // Diff gutter markers follow-up: a changed line's own
+    // number gets colored toward the accent instead of the
+    // usual line-number foreground -- real visual signal
+    // without ever touching the code text's own contrast
+    // (revised away from a whole-line background wash, which
+    // by definition fights contrast against similarly-hued
+    // foreground text; a user-reported "wipes out the text"
+    // complaint against exactly that approach is what drove
+    // this). lineDiffTint is only ever set for
+    // Added/Modified (never Removed -- see where it's
+    // computed just above), matching the diff gutter column's
+    // own choice to give Removed a distinct glyph instead.
+    const Color gutterForeground = lineDiffTint
+                                       ? (lineDiffTint == DiffLineKind::Added ? Color::BrightGreen : Color::BrightBlue)
+                                   : (line == frame.pointLine) ? theme_.currentLineNumberForeground
+                                                               : theme_.lineNumberForeground;
+    // Digits+padding get the full selection background only when the
+    // whole line is covered; the one-column gap after them gets it for
+    // Partial too, so a partially-selected line still shows a thin
+    // highlighted edge instead of no indication at all.
+    const Brush gutterBrush{
+        .background = (gutterSelection == GutterSelection::Full) ? theme_.selectionBackground : theme_.background,
+        .foreground = gutterForeground,
+    };
+    const Brush gutterGapBrush{
+        .background = (gutterSelection != GutterSelection::None) ? theme_.selectionBackground : theme_.background,
+        .foreground = gutterForeground,
+    };
+    // DAP client slice 2/4: the debug-marker column -- an
+    // execution arrow where the debuggee is stopped (winning
+    // over a breakpoint marker on the same line: "you are
+    // here" beats "you asked to stop here"), else a glyph by
+    // breakpoint kind (plain/conditional/hit-count/logpoint)
+    // colored by verified state. Same plain-single-width-Unicode
+    // discipline as the diagnostic glyphs (▸ is the sidebar's
+    // own proven disclosure triangle; ●/◆/◇/○ are from the same
+    // geometric-shapes range as the scroll arrows -- DAP round 3
+    // adds ◇, the open-diamond hit-count sibling of ◆'s filled
+    // condition glyph).
+    if (frame.gutter.dapWidth > 0) {
+        Cell& cell = c[{.x = 0, .y = row}];
+        if (isExecutionLine) {
+            cell.character = "▸";
+            Brush{.background = theme_.background, .foreground = theme_.executionMarker, .bold = true}.ApplyTo(cell);
+        }
+        else {
+            // DAP round 4: frame.dapBreakpoints stays sorted by the
+            // *requested* line (toggle/condition/logMessage/
+            // hitCondition all still address that) -- so a
+            // linear scan on the *display* line (actualLine when
+            // the adapter snapped it elsewhere, else line) is
+            // what actually shows a moved breakpoint where it
+            // really lands, rather than where it was toggled.
+            // Per-file breakpoint counts are small; a lower_bound
+            // can't be reused once the sort key and lookup key
+            // diverge like this.
+            const auto bpIt = std::find_if(frame.dapBreakpoints.begin(), frame.dapBreakpoints.end(),
+                                           [line](const editor::dap::DapManager::Breakpoint& bp) {
+                                               return (bp.actualLine != 0 ? bp.actualLine : bp.line) == line + 1;
+                                           });
+            if (bpIt != frame.dapBreakpoints.end()) {
+                cell.character    = !bpIt->logMessage.empty()     ? "○"
+                                    : !bpIt->condition.empty()    ? "◆"
+                                    : !bpIt->hitCondition.empty() ? "◇"
+                                                                  : "●";
+                const Color color = bpIt->verified ? theme_.breakpointMarker : theme_.unverifiedBreakpointMarker;
+                Brush{.background = theme_.background, .foreground = color}.ApplyTo(cell);
+            }
+        }
+    }
+
+    // Diff gutter markers follow-up: leftmost of the non-debug
+    // regions, matching real editors' own git-gutter placement.
+    // Direct Color constants, not routed through
+    // Theme::BrushFor(SyntaxClass) -- same bypass the blame
+    // gutter's own hash coloring already uses, for the same
+    // reason (this isn't a tree-sitter capture category).
+    // Drawn at frame.gutter.diffStart -- the diff column's own x. This used
+    // to (wrongly) target frame.gutter.statusStart, where the unsaved-change
+    // swatch below then unconditionally overwrote it every
+    // frame, leaving the reserved diff column permanently
+    // blank; found while adding the debug column and fixed on
+    // request rather than silently, since the visible diff
+    // styling (colored line numbers + frame.content gradient) had
+    // been tuned with the swatch invisibly absent.
+    if (frame.gutter.diffWidth > 0) {
+        const auto it = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
+                                         [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
+        if (it != diffLineKinds_.end() && it->first == line) {
+            // diff-gutter-icons follow-up (was a solid color
+            // swatch for Added/Modified): vim-gitgutter's own
+            // classic glyph vocabulary -- the shape says WHAT
+            // changed, not just that something did, same
+            // reasoning as the diagnostic column's severity
+            // icons. ▔ stays for a deletion: it's already
+            // iconographic (the notch marks where the deleted
+            // lines sat, at this line's own top edge).
+            Cell& cell            = c[{.x = static_cast<int>(frame.gutter.diffStart), .y = row}];
+            cell.background_color = theme_.background;
+            cell.bold             = true;
+            switch (it->second) {
+                case DiffLineKind::Added:
+                    cell.character        = "+";
+                    cell.foreground_color = Color::BrightGreen;
+                    break;
+                case DiffLineKind::Modified:
+                    cell.character        = "~";
+                    cell.foreground_color = Color::BrightBlue;
+                    break;
+                case DiffLineKind::Removed:
+                    cell.character        = "▔"; // UPPER ONE EIGHTH BLOCK
+                    cell.foreground_color = Color::BrightRed;
+                    break;
+            }
+        }
+    }
+
+    // status-gutter unsaved-change-indicator follow-up: a solid
+    // colored cell (character " ", not a glyph -- a 1-char-wide
+    // color swatch, matching the user's own "just 1 char width"
+    // ask and ScrollBar's own thumb-via-cell.inverted precedent)
+    // when this line has edits since the frame.buffer was last
+    // loaded/saved. A plain binary search against
+    // unsavedChangeLineRanges_ -- these ranges are flat and
+    // disjoint by construction, unlike the fold depth columns, so
+    // no streaming stack state is needed here.
+    {
+        const auto it = std::lower_bound(
+            frame.unsavedChangeLineRanges.begin(), frame.unsavedChangeLineRanges.end(), line,
+            [](const auto& range, std::size_t targetLine) { return range.second <= targetLine; });
+        const bool  changed        = it != frame.unsavedChangeLineRanges.end() && it->first <= line;
+        const Color indicatorColor = changed ? theme_.unsavedChangeIndicator : theme_.background;
+        const Brush statusBrush{.background = indicatorColor, .foreground = indicatorColor};
+        Cell&       cell = c[{.x = static_cast<int>(frame.gutter.statusStart), .y = row}];
+        cell.character   = " ";
+        statusBrush.ApplyTo(cell);
+    }
+
+    // LSP client follow-up (was a solid color swatch like the
+    // status column just above; diagnostic-gutter-icons follow-up
+    // made it a real glyph): a severity-specific icon in the
+    // severity's theme color, so the column says what KIND of
+    // diagnostic a line has, not just that one exists. Glyphs are
+    // deliberately plain single-width Unicode, not Nerd Font
+    // icons or emoji -- same portability/column-math reasoning
+    // ProjectSidebar's own glyph-choice comment documents; every
+    // pick is from a range this codebase already renders
+    // single-width somewhere (geometric shapes: ScrollArrowButton's
+    // own arrows; dingbat/ASCII/Latin-1: TabBar's close icon, the
+    // gutter digits themselves). See diagnosticLineSeverities_'s
+    // own doc comment for why a plain binary search suffices here
+    // (at most one entry per line -- the most severe -- already
+    // sorted).
+    if (static_cast<int>(frame.gutter.diagnosticStart) < c.size().width) {
+        const auto it            = std::lower_bound(frame.diagnosticLineSeverities.begin(), frame.diagnosticLineSeverities.end(), line,
+                                                    [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
+        const bool hasDiagnostic = it != frame.diagnosticLineSeverities.end() && it->first == line;
+        Cell&      cell          = c[{.x = static_cast<int>(frame.gutter.diagnosticStart), .y = row}];
+        if (!hasDiagnostic) {
+            cell.character = " ";
+            Brush{.background = theme_.background, .foreground = theme_.background}.ApplyTo(cell);
+        }
+        else {
+            // Glyph choice shared with the inline annotation
+            // rows via DiagnosticGlyphFor -- see its own doc
+            // comment (was an inline switch here).
+            const DiagnosticGlyph glyph = DiagnosticGlyphFor(it->second);
+            cell.character              = glyph.glyph;
+            Brush{.background = theme_.background, .foreground = DiagnosticSeverityColor(theme_, it->second), .bold = glyph.bold}
+                .ApplyTo(cell);
+        }
+    }
+
+    // Multibuffers follow-up: entirely skipped (not just
+    // zero-width) for a frame.buffer whose own composite line numbers
+    // would be meaningless noise next to the dual old/new
+    // columns already baked into a *vcs diff*-style excerpt's
+    // own text -- see LineNumberGutterActive()'s own doc
+    // comment. frame.gutter.digits/frame.gutter.digitsStart are already computed
+    // as 0-width/collapsed in that case (see this function's
+    // own frame.gutter.digits/frame.gutter.digitsStart derivation above), but the
+    // digit string itself (line + 1) is never zero-width, so
+    // the write loop below has to be skipped outright rather
+    // than trusted to naturally emit nothing.
+    // trailing-blank-line-gutter follow-up: line frame.totalLines-1
+    // being empty, with more than one line total, means it
+    // exists purely because the frame.buffer's own final byte is a
+    // newline (ITextStorage::LineCount()'s own "newline count +
+    // 1" contract) -- not a line anyone ever typed into.
+    // Numbering it like a real line is misleading, so it stays
+    // unnumbered until it actually holds frame.content (typing into
+    // it makes lineStart != lineEnd, and it renders normally
+    // from that frame.point on). A brand new, genuinely empty frame.buffer
+    // (frame.totalLines == 1) is excluded -- that lone line is real
+    // and still gets "1".
+    const bool isEmptyTrailingPhantomLine = line + 1 == frame.totalLines && lineStart == lineEnd && frame.totalLines > 1;
+    if (LineNumberGutterActive() && !isEmptyTrailingPhantomLine) {
+        // Vim's "relativenumber": current line keeps its real
+        // (1-indexed) number, every other visible line shows its
+        // distance from it instead.
+        const std::string number  = editor::RelativeLineNumbersEnabled() && line != frame.pointLine
+                                        ? std::to_string(line > frame.pointLine ? line - frame.pointLine : frame.pointLine - line)
+                                        : std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
+        const std::size_t padding = frame.gutter.digits > number.size() ? frame.gutter.digits - number.size() : 0;
+        // Leading gap (status/line-number-spacing follow-up -- the
+        // line-number gutter now gets breathing room on BOTH sides,
+        // not just the trailing gap it already had). Sits right after
+        // the diagnostic column now (LSP client follow-up), not
+        // directly after the status column -- frame.gutter.digitsStart itself
+        // already accounts for kDiagnosticWidth, so this is just
+        // "one column before frame.gutter.digitsStart."
+        if (static_cast<int>(frame.gutter.digitsStart - kLineNumberGap) < c.size().width) {
+            Cell& cell     = c[{.x = static_cast<int>(frame.gutter.digitsStart - kLineNumberGap), .y = row}];
+            cell.character = " ";
+            gutterGapBrush.ApplyTo(cell);
+        }
+        for (std::size_t i = 0; i < padding && static_cast<int>(frame.gutter.digitsStart + i) < c.size().width; ++i) {
+            Cell& cell     = c[{.x = static_cast<int>(frame.gutter.digitsStart + i), .y = row}];
+            cell.character = " ";
+            gutterBrush.ApplyTo(cell);
+        }
+        for (std::size_t i = 0; i < number.size() && static_cast<int>(frame.gutter.digitsStart + padding + i) < c.size().width; ++i) {
+            Cell& cell     = c[{.x = static_cast<int>(frame.gutter.digitsStart + padding + i), .y = row}];
+            cell.character = std::string(1, number[i]);
+            gutterBrush.ApplyTo(cell);
+        }
+        if (static_cast<int>(frame.gutter.digitsStart + frame.gutter.digits) < c.size().width) {
+            Cell& cell     = c[{.x = static_cast<int>(frame.gutter.digitsStart + frame.gutter.digits), .y = row}];
+            cell.character = " ";
+            gutterGapBrush.ApplyTo(cell);
+        }
+    }
+
+    // depth-aware-fold-gutter follow-up: one column per nesting
+    // level (capped at kMaxFoldDepthColumns) -- a block's OWN
+    // header row shows its ⊞/⊟ toggle at its own column (⊟, real
+    // Org's own "there's more, click to open" shape inverted --
+    // classic outline-widget convention: minus means "already
+    // open, click to close" -- when expanded; ⊞, "click to expand,"
+    // when collapsed, frame.buffer.FoldMarkerAt has an entry for it, cell
+    // rendered inverted matching ScrollBar's own solid-thumb
+    // convention so it visually pops). Every other row a block's
+    // own EXPANDED span covers gets a guide line ('│', or '└' --
+    // reusing ProjectSidebar's own box-drawing connector glyph
+    // rather than inventing new Unicode -- on the span's own last
+    // row) at that block's column, tracing where it closes; a
+    // COLLAPSED block gets no line at all, only its header ⊞ --
+    // there's nothing to trace while its body is hidden (an
+    // explicit user choice, not an oversight).
+    //
+    // foldGutterHeaderAtColumn_/foldColumnOpenEnds_/foldColumnCursor_
+    // (declared just above the row loop) turn this into a single
+    // linear streaming pass over gutters_.FoldEntries()/
+    // gutters_.FoldLineRangesByColumn() across the WHOLE row loop --
+    // amortized O(blocks in viewport), not a fresh per-row scan or
+    // binary search -- correct because same-column ranges from a
+    // real syntax tree are always either disjoint or properly
+    // nested (a laminar family), so a plain per-column stack,
+    // advanced as `line` monotonically increases row by row, is
+    // exactly the right structure: an ancestor's own range can
+    // never close before a still-open descendant mapped to the
+    // same (capped) column does.
+    // gutter-symbol-kind follow-up: one glyph on each definition
+    // line, colored via the matching SyntaxClass (a function
+    // definition's glyph is colored the same as a function name
+    // would be in the frame.buffer text itself) -- same sorted-by-line
+    // lower_bound lookup the blame gutter below already uses.
+    // Placed right before fold, matching [digits][gap][symbol]
+    // [fold][blame]'s own layout comment above.
+    if (frame.gutter.symbolWidth > 0 && static_cast<int>(frame.gutter.symbolStart) < c.size().width) {
+        const auto it = std::lower_bound(gutters_.SymbolLineKinds().begin(), gutters_.SymbolLineKinds().end(), line,
+                                         [](const auto& entry, std::size_t l) { return entry.first < l; });
+        if (it != gutters_.SymbolLineKinds().end() && it->first == line) {
+            Cell& cell     = c[{.x = static_cast<int>(frame.gutter.symbolStart), .y = row}];
+            cell.character = SymbolGlyphFor(it->second);
+            theme_.BrushFor(editor::SyntaxClassFor(it->second)).ApplyTo(cell);
+        }
+    }
+
+    // test-runner integration: the pass/fail mark on a discovered
+    // test's own first line -- symbol block's exact lookup shape.
+    if (frame.gutter.testWidth > 0 && static_cast<int>(frame.gutter.testStart) < c.size().width) {
+        const auto it = std::lower_bound(gutters_.TestEntries().begin(), gutters_.TestEntries().end(), line,
+                                         [](const TestGutterEntry& entry, std::size_t l) { return entry.line < l; });
+        if (it != gutters_.TestEntries().end() && it->line == line) {
+            Cell& cell            = c[{.x = static_cast<int>(frame.gutter.testStart), .y = row}];
+            cell.character        = TestGlyphFor(it->status);
+            cell.foreground_color = TestStatusColor(it->status);
+            cell.bold             = true;
+        }
+    }
+
+    // code-coverage-gutter follow-up: the covered/uncovered/
+    // partial-branch mark, test block's own lookup shape. A
+    // solid color swatch (character " ", status-gutter unsaved-
+    // change-indicator's own precedent) rather than a glyph --
+    // this is a per-line coverage bar, not a discrete landmark
+    // like the test/symbol columns either side of it. Cross-
+    // referenced against diffLineKinds_ (already loaded for the
+    // diff column above, no extra cache needed): an uncovered
+    // line that's also newly added/modified gets a louder "!"
+    // mark instead of the plain bar -- untested new code, not
+    // just untested code in general. DiffLineKind::Removed is
+    // excluded -- it's a deletion-boundary marker, not a real
+    // line in this version of the file.
+    if (frame.gutter.coverageWidth > 0 && static_cast<int>(frame.gutter.coverageStart) < c.size().width) {
+        const auto it = std::lower_bound(gutters_.CoverageLineStatuses().begin(), gutters_.CoverageLineStatuses().end(),
+                                         line, [](const auto& entry, std::size_t l) { return entry.first < l; });
+        if (it != gutters_.CoverageLineStatuses().end() && it->first == line) {
+            const auto diffIt  = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
+                                                  [](const auto& entry, std::size_t l) { return entry.first < l; });
+            const bool changed = diffIt != diffLineKinds_.end() && diffIt->first == line &&
+                                 diffIt->second != DiffLineKind::Removed;
+
+            Cell& cell = c[{.x = static_cast<int>(frame.gutter.coverageStart), .y = row}];
+            if (it->second == editor::coverage::LineStatus::Uncovered && changed) {
+                cell.character        = "!";
+                cell.foreground_color = Color::BrightRed;
+                cell.bold             = true;
+            }
+            else {
+                Color color = Color::Green;
+                switch (it->second) {
+                    case editor::coverage::LineStatus::Covered:
+                        color = Color::Green;
+                        break;
+                    case editor::coverage::LineStatus::Partial:
+                        color = Color::BrightYellow;
+                        break;
+                    case editor::coverage::LineStatus::Uncovered:
+                        color = Color::BrightRed;
+                        break;
+                }
+                cell.character        = " ";
+                cell.background_color = color;
+                cell.foreground_color = color;
+            }
+        }
+    }
+
+    if (frame.gutter.foldWidth > 0) {
+        folds.headerAtColumn.fill(nullptr);
+        // <= line, not == line: when viewport_.TopLine() > 0 (scrolled past
+        // any blocks whose header sits earlier in the file), those
+        // earlier entries must still be consumed here to advance
+        // the cursor past them -- an exact-match-only condition
+        // left the cursor permanently stuck on the first entry
+        // whose headerLine falls before viewport_.TopLine(), silently
+        // suppressing every ⊞/⊟ glyph for the rest of the frame.buffer
+        // (a real, reported bug: scrolling past ~line 50 in a file
+        // with earlier foldable blocks stopped drawing them at
+        // all). Only an exact match actually gets recorded for
+        // rendering; anything strictly earlier is skipped, not
+        // rendered, matching mid-scroll-start behavior
+        // folds.columnCursor's own analogous `<=` loop below already
+        // got right the first time.
+        while (folds.entryCursor < gutters_.FoldEntries().size() &&
+               gutters_.FoldEntries()[folds.entryCursor].headerLine <= line) {
+            const auto& entry = gutters_.FoldEntries()[folds.entryCursor];
+            if (entry.headerLine == line) {
+                folds.headerAtColumn[entry.column] = &entry;
+            }
+            ++folds.entryCursor;
+        }
+
+        for (int col = 0; col < kMaxFoldDepthColumns; ++col) {
+            auto&       cursor   = folds.columnCursor[col];
+            auto&       openEnds = folds.columnOpenEnds[col];
+            const auto& ranges   = gutters_.FoldLineRangesByColumn()[col];
+            while (cursor < ranges.size() && ranges[cursor].first <= line) {
+                openEnds.push_back(ranges[cursor].second);
+                ++cursor;
+            }
+            while (!openEnds.empty() && openEnds.back() <= line) {
+                openEnds.pop_back();
+            }
+
+            const int screenCol = static_cast<int>(frame.gutter.foldStart) + col;
+            if (screenCol >= c.size().width) {
+                continue;
+            }
+            char32_t glyph    = U' ';
+            bool     inverted = false;
+            if (const FoldGutterEntry* header = folds.headerAtColumn[col]; header != nullptr) {
+                inverted = frame.buffer.FoldMarkerAt(header->blockStart).has_value();
+                glyph    = inverted ? U'⊞' : U'⊟'; // ⊞ collapsed / ⊟ expanded
+            }
+            else if (!openEnds.empty()) {
+                glyph = (openEnds.back() - 1 == line) ? U'└' : U'│'; // closing row / mid-span
+            }
+            Cell& cell     = c[{.x = screenCol, .y = row}];
+            cell.character = text::EncodeCodepointUtf8(glyph);
+            gutterBrush.ApplyTo(cell);
+            cell.inverted = inverted;
+        }
+    }
+
+    // VCS blame gutter: an 8-hex-char short commit hash per
+    // blamed line, color-interpolated by commit age (newer =
+    // brighter) -- a directly computed Color, not routed
+    // through Theme::BrushFor(SyntaxClass), same bypass the
+    // diagnostic gutter's glyph coloring already uses (see
+    // SpanAtOffset's own precedent) since SyntaxClass is
+    // tree-sitter-capture-oriented, not a fit for this.
+    if (frame.gutter.blameWidth > 0) {
+        const auto it = std::lower_bound(blameLineInfo_.begin(), blameLineInfo_.end(), line,
+                                         [](const auto& entry, std::size_t l) { return entry.first < l; });
+        if (it != blameLineInfo_.end() && it->first == line) {
+            const std::string shortHash = it->second.commitHash.substr(0, std::min<std::size_t>(8, it->second.commitHash.size()));
+            const Color       hashColor = BlameHashColor(it->second.date);
+            for (std::size_t i = 0; i < shortHash.size() && static_cast<int>(frame.gutter.blameStart + i) < c.size().width; ++i) {
+                Cell& cell            = c[{.x = static_cast<int>(frame.gutter.blameStart + i), .y = row}];
+                cell.character        = std::string(1, shortHash[i]);
+                cell.foreground_color = hashColor;
+                cell.background_color = theme_.background;
+            }
+        }
+    }
+}
+
 void BufferView::Paint(Canvas paneCanvas) {
     viewport_.EnsureTopLineValidForActiveBuffer();
     EnsureStatusMessageFreshness();
@@ -354,6 +784,10 @@ void BufferView::Paint(Canvas paneCanvas) {
     // reasoning as EnsureUnsavedChangeCache above.
     const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& diagnosticLineSeverities =
         gutters_.DiagnosticLineSeverities();
+
+    const FramePaint frame{buffer, content, gutter, totalLines,
+                           point, pointLine, dapBreakpoints, unsavedChangeLineRanges,
+                           diagnosticLineSeverities};
     // VCS blame gutter: unconditional every Paint() like the two above, but
     // this only ever clears (never repopulates) blameLineInfo_ -- see its
     // own doc comment.
@@ -603,15 +1037,7 @@ void BufferView::Paint(Canvas paneCanvas) {
     // Links follow-up: see EnsureLinkCache's own doc comment in BufferView.h
     // for why this is a no-op outside an org-mode buffer.
 
-    // depth-aware-fold-gutter follow-up: streaming state for the per-row
-    // gutter rendering below -- one pass over the whole row loop, not
-    // rebuilt per row; see that code's own doc comment for why a plain
-    // per-column stack is the correct (and correctly performing) structure
-    // here. Plain Paint()-local state, reset fresh every call.
-    std::size_t                                                foldGutterEntryCursor = 0;
-    std::array<const FoldGutterEntry*, kMaxFoldDepthColumns>   foldGutterHeaderAtColumn{};
-    std::array<std::size_t, kMaxFoldDepthColumns>              foldColumnCursor{};
-    std::array<std::vector<std::size_t>, kMaxFoldDepthColumns> foldColumnOpenEnds;
+    FoldColumnStream folds;
 
     // A running buffer-line cursor, seeded at viewport_.TopLine() (already guaranteed
     // visible by SetTopLine) and advanced by NextVisibleLine each iteration
@@ -844,431 +1270,9 @@ void BufferView::Paint(Canvas paneCanvas) {
             // row of a wrapped line; the top-of-row blanking pass already
             // washed this row's gutter columns blank.
             if (segmentIndex == 0) {
-                // Includes the line's own newline (unlike lineEnd above), so a
-                // region selected through to the start of the next line still
-                // counts this one as fully selected -- see ClassifyGutterSelection.
-                const std::size_t     lineEndWithNewline = (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) : content.ByteLength();
-                const GutterSelection gutterSelection    = ClassifyGutterSelection(buffer, lineStart, lineEndWithNewline);
-
-                // Diff gutter markers follow-up: a changed line's own
-                // number gets colored toward the accent instead of the
-                // usual line-number foreground -- real visual signal
-                // without ever touching the code text's own contrast
-                // (revised away from a whole-line background wash, which
-                // by definition fights contrast against similarly-hued
-                // foreground text; a user-reported "wipes out the text"
-                // complaint against exactly that approach is what drove
-                // this). currentLineDiffTint is only ever set for
-                // Added/Modified (never Removed -- see where it's
-                // computed just above), matching the diff gutter column's
-                // own choice to give Removed a distinct glyph instead.
-                const Color gutterForeground = currentLineDiffTint
-                                                   ? (currentLineDiffTint == DiffLineKind::Added ? Color::BrightGreen : Color::BrightBlue)
-                                               : (line == pointLine) ? theme_.currentLineNumberForeground
-                                                                     : theme_.lineNumberForeground;
-                // Digits+padding get the full selection background only when the
-                // whole line is covered; the one-column gap after them gets it for
-                // Partial too, so a partially-selected line still shows a thin
-                // highlighted edge instead of no indication at all.
-                const Brush gutterBrush{
-                    .background = (gutterSelection == GutterSelection::Full) ? theme_.selectionBackground : theme_.background,
-                    .foreground = gutterForeground,
-                };
-                const Brush gutterGapBrush{
-                    .background = (gutterSelection != GutterSelection::None) ? theme_.selectionBackground : theme_.background,
-                    .foreground = gutterForeground,
-                };
-                // DAP client slice 2/4: the debug-marker column -- an
-                // execution arrow where the debuggee is stopped (winning
-                // over a breakpoint marker on the same line: "you are
-                // here" beats "you asked to stop here"), else a glyph by
-                // breakpoint kind (plain/conditional/hit-count/logpoint)
-                // colored by verified state. Same plain-single-width-Unicode
-                // discipline as the diagnostic glyphs (▸ is the sidebar's
-                // own proven disclosure triangle; ●/◆/◇/○ are from the same
-                // geometric-shapes range as the scroll arrows -- DAP round 3
-                // adds ◇, the open-diamond hit-count sibling of ◆'s filled
-                // condition glyph).
-                if (gutter.dapWidth > 0) {
-                    Cell& cell = c[{.x = 0, .y = row}];
-                    if (currentLineIsExecutionLine) {
-                        cell.character = "▸";
-                        Brush{.background = theme_.background, .foreground = theme_.executionMarker, .bold = true}.ApplyTo(cell);
-                    }
-                    else {
-                        // DAP round 4: dapBreakpoints stays sorted by the
-                        // *requested* line (toggle/condition/logMessage/
-                        // hitCondition all still address that) -- so a
-                        // linear scan on the *display* line (actualLine when
-                        // the adapter snapped it elsewhere, else line) is
-                        // what actually shows a moved breakpoint where it
-                        // really lands, rather than where it was toggled.
-                        // Per-file breakpoint counts are small; a lower_bound
-                        // can't be reused once the sort key and lookup key
-                        // diverge like this.
-                        const auto bpIt = std::find_if(dapBreakpoints.begin(), dapBreakpoints.end(),
-                                                       [line](const editor::dap::DapManager::Breakpoint& bp) {
-                                                           return (bp.actualLine != 0 ? bp.actualLine : bp.line) == line + 1;
-                                                       });
-                        if (bpIt != dapBreakpoints.end()) {
-                            cell.character    = !bpIt->logMessage.empty()     ? "○"
-                                                : !bpIt->condition.empty()    ? "◆"
-                                                : !bpIt->hitCondition.empty() ? "◇"
-                                                                              : "●";
-                            const Color color = bpIt->verified ? theme_.breakpointMarker : theme_.unverifiedBreakpointMarker;
-                            Brush{.background = theme_.background, .foreground = color}.ApplyTo(cell);
-                        }
-                    }
-                }
-
-                // Diff gutter markers follow-up: leftmost of the non-debug
-                // regions, matching real editors' own git-gutter placement.
-                // Direct Color constants, not routed through
-                // Theme::BrushFor(SyntaxClass) -- same bypass the blame
-                // gutter's own hash coloring already uses, for the same
-                // reason (this isn't a tree-sitter capture category).
-                // Drawn at gutter.diffStart -- the diff column's own x. This used
-                // to (wrongly) target gutter.statusStart, where the unsaved-change
-                // swatch below then unconditionally overwrote it every
-                // frame, leaving the reserved diff column permanently
-                // blank; found while adding the debug column and fixed on
-                // request rather than silently, since the visible diff
-                // styling (colored line numbers + content gradient) had
-                // been tuned with the swatch invisibly absent.
-                if (gutter.diffWidth > 0) {
-                    const auto it = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
-                                                     [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
-                    if (it != diffLineKinds_.end() && it->first == line) {
-                        // diff-gutter-icons follow-up (was a solid color
-                        // swatch for Added/Modified): vim-gitgutter's own
-                        // classic glyph vocabulary -- the shape says WHAT
-                        // changed, not just that something did, same
-                        // reasoning as the diagnostic column's severity
-                        // icons. ▔ stays for a deletion: it's already
-                        // iconographic (the notch marks where the deleted
-                        // lines sat, at this line's own top edge).
-                        Cell& cell            = c[{.x = static_cast<int>(gutter.diffStart), .y = row}];
-                        cell.background_color = theme_.background;
-                        cell.bold             = true;
-                        switch (it->second) {
-                            case DiffLineKind::Added:
-                                cell.character        = "+";
-                                cell.foreground_color = Color::BrightGreen;
-                                break;
-                            case DiffLineKind::Modified:
-                                cell.character        = "~";
-                                cell.foreground_color = Color::BrightBlue;
-                                break;
-                            case DiffLineKind::Removed:
-                                cell.character        = "▔"; // UPPER ONE EIGHTH BLOCK
-                                cell.foreground_color = Color::BrightRed;
-                                break;
-                        }
-                    }
-                }
-
-                // status-gutter unsaved-change-indicator follow-up: a solid
-                // colored cell (character " ", not a glyph -- a 1-char-wide
-                // color swatch, matching the user's own "just 1 char width"
-                // ask and ScrollBar's own thumb-via-cell.inverted precedent)
-                // when this line has edits since the buffer was last
-                // loaded/saved. A plain binary search against
-                // unsavedChangeLineRanges_ -- these ranges are flat and
-                // disjoint by construction, unlike the fold depth columns, so
-                // no streaming stack state is needed here.
-                {
-                    const auto it = std::lower_bound(
-                        unsavedChangeLineRanges.begin(), unsavedChangeLineRanges.end(), line,
-                        [](const auto& range, std::size_t targetLine) { return range.second <= targetLine; });
-                    const bool  changed        = it != unsavedChangeLineRanges.end() && it->first <= line;
-                    const Color indicatorColor = changed ? theme_.unsavedChangeIndicator : theme_.background;
-                    const Brush statusBrush{.background = indicatorColor, .foreground = indicatorColor};
-                    Cell&       cell = c[{.x = static_cast<int>(gutter.statusStart), .y = row}];
-                    cell.character   = " ";
-                    statusBrush.ApplyTo(cell);
-                }
-
-                // LSP client follow-up (was a solid color swatch like the
-                // status column just above; diagnostic-gutter-icons follow-up
-                // made it a real glyph): a severity-specific icon in the
-                // severity's theme color, so the column says what KIND of
-                // diagnostic a line has, not just that one exists. Glyphs are
-                // deliberately plain single-width Unicode, not Nerd Font
-                // icons or emoji -- same portability/column-math reasoning
-                // ProjectSidebar's own glyph-choice comment documents; every
-                // pick is from a range this codebase already renders
-                // single-width somewhere (geometric shapes: ScrollArrowButton's
-                // own arrows; dingbat/ASCII/Latin-1: TabBar's close icon, the
-                // gutter digits themselves). See diagnosticLineSeverities_'s
-                // own doc comment for why a plain binary search suffices here
-                // (at most one entry per line -- the most severe -- already
-                // sorted).
-                if (static_cast<int>(gutter.diagnosticStart) < c.size().width) {
-                    const auto it            = std::lower_bound(diagnosticLineSeverities.begin(), diagnosticLineSeverities.end(), line,
-                                                                [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
-                    const bool hasDiagnostic = it != diagnosticLineSeverities.end() && it->first == line;
-                    Cell&      cell          = c[{.x = static_cast<int>(gutter.diagnosticStart), .y = row}];
-                    if (!hasDiagnostic) {
-                        cell.character = " ";
-                        Brush{.background = theme_.background, .foreground = theme_.background}.ApplyTo(cell);
-                    }
-                    else {
-                        // Glyph choice shared with the inline annotation
-                        // rows via DiagnosticGlyphFor -- see its own doc
-                        // comment (was an inline switch here).
-                        const DiagnosticGlyph glyph = DiagnosticGlyphFor(it->second);
-                        cell.character              = glyph.glyph;
-                        Brush{.background = theme_.background, .foreground = DiagnosticSeverityColor(theme_, it->second), .bold = glyph.bold}
-                            .ApplyTo(cell);
-                    }
-                }
-
-                // Multibuffers follow-up: entirely skipped (not just
-                // zero-width) for a buffer whose own composite line numbers
-                // would be meaningless noise next to the dual old/new
-                // columns already baked into a *vcs diff*-style excerpt's
-                // own text -- see LineNumberGutterActive()'s own doc
-                // comment. gutter.digits/gutter.digitsStart are already computed
-                // as 0-width/collapsed in that case (see this function's
-                // own gutter.digits/gutter.digitsStart derivation above), but the
-                // digit string itself (line + 1) is never zero-width, so
-                // the write loop below has to be skipped outright rather
-                // than trusted to naturally emit nothing.
-                // trailing-blank-line-gutter follow-up: line totalLines-1
-                // being empty, with more than one line total, means it
-                // exists purely because the buffer's own final byte is a
-                // newline (ITextStorage::LineCount()'s own "newline count +
-                // 1" contract) -- not a line anyone ever typed into.
-                // Numbering it like a real line is misleading, so it stays
-                // unnumbered until it actually holds content (typing into
-                // it makes lineStart != lineEnd, and it renders normally
-                // from that point on). A brand new, genuinely empty buffer
-                // (totalLines == 1) is excluded -- that lone line is real
-                // and still gets "1".
-                const bool isEmptyTrailingPhantomLine = line + 1 == totalLines && lineStart == lineEnd && totalLines > 1;
-                if (LineNumberGutterActive() && !isEmptyTrailingPhantomLine) {
-                    // Vim's "relativenumber": current line keeps its real
-                    // (1-indexed) number, every other visible line shows its
-                    // distance from it instead.
-                    const std::string number  = editor::RelativeLineNumbersEnabled() && line != pointLine
-                                                    ? std::to_string(line > pointLine ? line - pointLine : pointLine - line)
-                                                    : std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
-                    const std::size_t padding = gutter.digits > number.size() ? gutter.digits - number.size() : 0;
-                    // Leading gap (status/line-number-spacing follow-up -- the
-                    // line-number gutter now gets breathing room on BOTH sides,
-                    // not just the trailing gap it already had). Sits right after
-                    // the diagnostic column now (LSP client follow-up), not
-                    // directly after the status column -- gutter.digitsStart itself
-                    // already accounts for kDiagnosticWidth, so this is just
-                    // "one column before gutter.digitsStart."
-                    if (static_cast<int>(gutter.digitsStart - kLineNumberGap) < c.size().width) {
-                        Cell& cell     = c[{.x = static_cast<int>(gutter.digitsStart - kLineNumberGap), .y = row}];
-                        cell.character = " ";
-                        gutterGapBrush.ApplyTo(cell);
-                    }
-                    for (std::size_t i = 0; i < padding && static_cast<int>(gutter.digitsStart + i) < c.size().width; ++i) {
-                        Cell& cell     = c[{.x = static_cast<int>(gutter.digitsStart + i), .y = row}];
-                        cell.character = " ";
-                        gutterBrush.ApplyTo(cell);
-                    }
-                    for (std::size_t i = 0; i < number.size() && static_cast<int>(gutter.digitsStart + padding + i) < c.size().width; ++i) {
-                        Cell& cell     = c[{.x = static_cast<int>(gutter.digitsStart + padding + i), .y = row}];
-                        cell.character = std::string(1, number[i]);
-                        gutterBrush.ApplyTo(cell);
-                    }
-                    if (static_cast<int>(gutter.digitsStart + gutter.digits) < c.size().width) {
-                        Cell& cell     = c[{.x = static_cast<int>(gutter.digitsStart + gutter.digits), .y = row}];
-                        cell.character = " ";
-                        gutterGapBrush.ApplyTo(cell);
-                    }
-                }
-
-                // depth-aware-fold-gutter follow-up: one column per nesting
-                // level (capped at kMaxFoldDepthColumns) -- a block's OWN
-                // header row shows its ⊞/⊟ toggle at its own column (⊟, real
-                // Org's own "there's more, click to open" shape inverted --
-                // classic outline-widget convention: minus means "already
-                // open, click to close" -- when expanded; ⊞, "click to expand,"
-                // when collapsed, buffer.FoldMarkerAt has an entry for it, cell
-                // rendered inverted matching ScrollBar's own solid-thumb
-                // convention so it visually pops). Every other row a block's
-                // own EXPANDED span covers gets a guide line ('│', or '└' --
-                // reusing ProjectSidebar's own box-drawing connector glyph
-                // rather than inventing new Unicode -- on the span's own last
-                // row) at that block's column, tracing where it closes; a
-                // COLLAPSED block gets no line at all, only its header ⊞ --
-                // there's nothing to trace while its body is hidden (an
-                // explicit user choice, not an oversight).
-                //
-                // foldGutterHeaderAtColumn_/foldColumnOpenEnds_/foldColumnCursor_
-                // (declared just above the row loop) turn this into a single
-                // linear streaming pass over gutters_.FoldEntries()/
-                // gutters_.FoldLineRangesByColumn() across the WHOLE row loop --
-                // amortized O(blocks in viewport), not a fresh per-row scan or
-                // binary search -- correct because same-column ranges from a
-                // real syntax tree are always either disjoint or properly
-                // nested (a laminar family), so a plain per-column stack,
-                // advanced as `line` monotonically increases row by row, is
-                // exactly the right structure: an ancestor's own range can
-                // never close before a still-open descendant mapped to the
-                // same (capped) column does.
-                // gutter-symbol-kind follow-up: one glyph on each definition
-                // line, colored via the matching SyntaxClass (a function
-                // definition's glyph is colored the same as a function name
-                // would be in the buffer text itself) -- same sorted-by-line
-                // lower_bound lookup the blame gutter below already uses.
-                // Placed right before fold, matching [digits][gap][symbol]
-                // [fold][blame]'s own layout comment above.
-                if (gutter.symbolWidth > 0 && static_cast<int>(gutter.symbolStart) < c.size().width) {
-                    const auto it = std::lower_bound(gutters_.SymbolLineKinds().begin(), gutters_.SymbolLineKinds().end(), line,
-                                                     [](const auto& entry, std::size_t l) { return entry.first < l; });
-                    if (it != gutters_.SymbolLineKinds().end() && it->first == line) {
-                        Cell& cell     = c[{.x = static_cast<int>(gutter.symbolStart), .y = row}];
-                        cell.character = SymbolGlyphFor(it->second);
-                        theme_.BrushFor(editor::SyntaxClassFor(it->second)).ApplyTo(cell);
-                    }
-                }
-
-                // test-runner integration: the pass/fail mark on a discovered
-                // test's own first line -- symbol block's exact lookup shape.
-                if (gutter.testWidth > 0 && static_cast<int>(gutter.testStart) < c.size().width) {
-                    const auto it = std::lower_bound(gutters_.TestEntries().begin(), gutters_.TestEntries().end(), line,
-                                                     [](const TestGutterEntry& entry, std::size_t l) { return entry.line < l; });
-                    if (it != gutters_.TestEntries().end() && it->line == line) {
-                        Cell& cell            = c[{.x = static_cast<int>(gutter.testStart), .y = row}];
-                        cell.character        = TestGlyphFor(it->status);
-                        cell.foreground_color = TestStatusColor(it->status);
-                        cell.bold             = true;
-                    }
-                }
-
-                // code-coverage-gutter follow-up: the covered/uncovered/
-                // partial-branch mark, test block's own lookup shape. A
-                // solid color swatch (character " ", status-gutter unsaved-
-                // change-indicator's own precedent) rather than a glyph --
-                // this is a per-line coverage bar, not a discrete landmark
-                // like the test/symbol columns either side of it. Cross-
-                // referenced against diffLineKinds_ (already loaded for the
-                // diff column above, no extra cache needed): an uncovered
-                // line that's also newly added/modified gets a louder "!"
-                // mark instead of the plain bar -- untested new code, not
-                // just untested code in general. DiffLineKind::Removed is
-                // excluded -- it's a deletion-boundary marker, not a real
-                // line in this version of the file.
-                if (gutter.coverageWidth > 0 && static_cast<int>(gutter.coverageStart) < c.size().width) {
-                    const auto it = std::lower_bound(gutters_.CoverageLineStatuses().begin(), gutters_.CoverageLineStatuses().end(),
-                                                     line, [](const auto& entry, std::size_t l) { return entry.first < l; });
-                    if (it != gutters_.CoverageLineStatuses().end() && it->first == line) {
-                        const auto diffIt  = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
-                                                              [](const auto& entry, std::size_t l) { return entry.first < l; });
-                        const bool changed = diffIt != diffLineKinds_.end() && diffIt->first == line &&
-                                             diffIt->second != DiffLineKind::Removed;
-
-                        Cell& cell = c[{.x = static_cast<int>(gutter.coverageStart), .y = row}];
-                        if (it->second == editor::coverage::LineStatus::Uncovered && changed) {
-                            cell.character        = "!";
-                            cell.foreground_color = Color::BrightRed;
-                            cell.bold             = true;
-                        }
-                        else {
-                            Color color = Color::Green;
-                            switch (it->second) {
-                                case editor::coverage::LineStatus::Covered:
-                                    color = Color::Green;
-                                    break;
-                                case editor::coverage::LineStatus::Partial:
-                                    color = Color::BrightYellow;
-                                    break;
-                                case editor::coverage::LineStatus::Uncovered:
-                                    color = Color::BrightRed;
-                                    break;
-                            }
-                            cell.character        = " ";
-                            cell.background_color = color;
-                            cell.foreground_color = color;
-                        }
-                    }
-                }
-
-                if (gutter.foldWidth > 0) {
-                    foldGutterHeaderAtColumn.fill(nullptr);
-                    // <= line, not == line: when viewport_.TopLine() > 0 (scrolled past
-                    // any blocks whose header sits earlier in the file), those
-                    // earlier entries must still be consumed here to advance
-                    // the cursor past them -- an exact-match-only condition
-                    // left the cursor permanently stuck on the first entry
-                    // whose headerLine falls before viewport_.TopLine(), silently
-                    // suppressing every ⊞/⊟ glyph for the rest of the buffer
-                    // (a real, reported bug: scrolling past ~line 50 in a file
-                    // with earlier foldable blocks stopped drawing them at
-                    // all). Only an exact match actually gets recorded for
-                    // rendering; anything strictly earlier is skipped, not
-                    // rendered, matching mid-scroll-start behavior
-                    // foldColumnCursor's own analogous `<=` loop below already
-                    // got right the first time.
-                    while (foldGutterEntryCursor < gutters_.FoldEntries().size() &&
-                           gutters_.FoldEntries()[foldGutterEntryCursor].headerLine <= line) {
-                        const auto& entry = gutters_.FoldEntries()[foldGutterEntryCursor];
-                        if (entry.headerLine == line) {
-                            foldGutterHeaderAtColumn[entry.column] = &entry;
-                        }
-                        ++foldGutterEntryCursor;
-                    }
-
-                    for (int col = 0; col < kMaxFoldDepthColumns; ++col) {
-                        auto&       cursor   = foldColumnCursor[col];
-                        auto&       openEnds = foldColumnOpenEnds[col];
-                        const auto& ranges   = gutters_.FoldLineRangesByColumn()[col];
-                        while (cursor < ranges.size() && ranges[cursor].first <= line) {
-                            openEnds.push_back(ranges[cursor].second);
-                            ++cursor;
-                        }
-                        while (!openEnds.empty() && openEnds.back() <= line) {
-                            openEnds.pop_back();
-                        }
-
-                        const int screenCol = static_cast<int>(gutter.foldStart) + col;
-                        if (screenCol >= c.size().width) {
-                            continue;
-                        }
-                        char32_t glyph    = U' ';
-                        bool     inverted = false;
-                        if (const FoldGutterEntry* header = foldGutterHeaderAtColumn[col]; header != nullptr) {
-                            inverted = buffer.FoldMarkerAt(header->blockStart).has_value();
-                            glyph    = inverted ? U'⊞' : U'⊟'; // ⊞ collapsed / ⊟ expanded
-                        }
-                        else if (!openEnds.empty()) {
-                            glyph = (openEnds.back() - 1 == line) ? U'└' : U'│'; // closing row / mid-span
-                        }
-                        Cell& cell     = c[{.x = screenCol, .y = row}];
-                        cell.character = text::EncodeCodepointUtf8(glyph);
-                        gutterBrush.ApplyTo(cell);
-                        cell.inverted = inverted;
-                    }
-                }
-
-                // VCS blame gutter: an 8-hex-char short commit hash per
-                // blamed line, color-interpolated by commit age (newer =
-                // brighter) -- a directly computed Color, not routed
-                // through Theme::BrushFor(SyntaxClass), same bypass the
-                // diagnostic gutter's glyph coloring already uses (see
-                // SpanAtOffset's own precedent) since SyntaxClass is
-                // tree-sitter-capture-oriented, not a fit for this.
-                if (gutter.blameWidth > 0) {
-                    const auto it = std::lower_bound(blameLineInfo_.begin(), blameLineInfo_.end(), line,
-                                                     [](const auto& entry, std::size_t l) { return entry.first < l; });
-                    if (it != blameLineInfo_.end() && it->first == line) {
-                        const std::string shortHash = it->second.commitHash.substr(0, std::min<std::size_t>(8, it->second.commitHash.size()));
-                        const Color       hashColor = BlameHashColor(it->second.date);
-                        for (std::size_t i = 0; i < shortHash.size() && static_cast<int>(gutter.blameStart + i) < c.size().width; ++i) {
-                            Cell& cell            = c[{.x = static_cast<int>(gutter.blameStart + i), .y = row}];
-                            cell.character        = std::string(1, shortHash[i]);
-                            cell.foreground_color = hashColor;
-                            cell.background_color = theme_.background;
-                        }
-                    }
-                }
-            } // if (segmentIndex == 0) -- line-level gutter rendering
+                PaintLineGutter(c, row, line, lineStart, lineEnd, frame, currentLineDiffTint,
+                                currentLineIsExecutionLine, folds);
+            }
 
             const std::vector<editor::HighlightSpan>& lineSpans = currentLineSpans;
             const std::vector<RenderedLink>&          lineLinks = currentLineLinks;
