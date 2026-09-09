@@ -1128,6 +1128,26 @@ Ideas worth remembering but not worth scoping yet — too undecided for "Open It
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
 
+- [ ] **Split BufferView's prompt/session machine out, with its LSP pickers** — the
+      BufferView decomposition (`Docs/BufferViewDecomposition.md`) shrank `BufferView.cpp`
+      from 16,823 lines to ~1,700 and `Paint` from 1,597 to 459, but `BufferView.h` is
+      still ~4,000 lines and 198 members. Its plan's phase 5 said to fix that by
+      extracting `LspFeatures`. That boundary was measured and rejected: 9 of the LSP
+      functions *set* `inputMode_` and 17 read it, because most LSP features **are**
+      prompts (code-action select, go-to-definition select, peek, document/workspace
+      symbols, rename). Extracting them by protocol would bounce callbacks across a
+      boundary for what is one interaction, and the sub-clusters that genuinely are
+      ambient (hover, document highlight, signature help — 61 of 83 functions never touch
+      session state) are ~4 members each and do not justify a class plus a callback
+      struct.
+      The boundary that would work is by *role* rather than by protocol: lift the
+      prompt/session state machine (`inputMode_`, `prompt_`, the four shared drivers, the
+      per-session state) into its own type and take the LSP pickers with it, leaving
+      BufferView with the widget and its key/mouse entry points. That is a bigger piece
+      of design than the plan describes and is the reason this is a maybe rather than an
+      open item — it is worth doing only if the header actually starts costing time, not
+      merely because it is long.
+
 - [ ] **Merge-aware cross-session undo** — persistent undo (`Editor/PersistentUndo.h`,
       shipped 2026-08-25) content-gates: on reopen, restores the full tree only if the
       file's current on-disk content exactly matches some node already in the persisted
