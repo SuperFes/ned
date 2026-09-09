@@ -114,18 +114,7 @@ std::size_t BufferView::GutterWidth() const {
 }
 
 std::size_t BufferView::TestGutterColumnStart() const {
-    // Mirrors Paint()'s own left-to-right column sum
-    // ([dap][diff][status][diagnostic][gap][digits][gap][test]) rather than
-    // the fold-click's subtract-from-the-right trick -- that one works only
-    // because fold and blame are the two rightmost regions, which the test
-    // column is not.
-    const std::size_t dapColumnWidth     = DapGutterActive() ? kDapWidth : 0;
-    const std::size_t diffColumnWidth    = DiffGutterActive() ? kDiffWidth : 0;
-    const std::size_t lineNumberGapWidth = LineNumberGutterActive() ? kLineNumberGap : 0;
-    const std::size_t gutterDigits =
-        LineNumberGutterActive() ? std::to_string(activeBuffer_.Get().Content().LineCount()).size() : 0;
-    return dapColumnWidth + diffColumnWidth + kStatusWidth + kDiagnosticWidth + lineNumberGapWidth + gutterDigits +
-           lineNumberGapWidth;
+    return ComputeGutterLayout(activeBuffer_.Get().Content().LineCount()).testStart;
 }
 
 bool BufferView::DiffGutterActive() const {

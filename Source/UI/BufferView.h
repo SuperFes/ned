@@ -1267,6 +1267,13 @@ class BufferView : public Widget {
     // key_press/mouse_press/mouse_move/mouse_release/mouse_wheel.
     bool OnKeyEvent(const Event& event);
     bool OnMouseEvent(const Event& event);
+    // A left button press in the content area -- gutter columns get first
+    // refusal, then point placement, drag selection and click counting.
+    bool HandleLeftPress(const MouseEvent& mouseEvent);
+    // Events belonging to a drag another widget started -- Notcurses has no
+    // mouse capture, so this view forwards or completes them rather than
+    // treating them as its own click. True when the event was one of those.
+    bool ForwardMouseWhileSiblingDrags(const MouseEvent& rawMouse);
 
     void StartInteractiveSession(editor::InteractiveRequest request);
     void EndInteractiveSession();
