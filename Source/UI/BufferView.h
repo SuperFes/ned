@@ -2016,10 +2016,9 @@ class BufferView : public Widget {
     // below, so the "no floating/popup widget concept" claim this comment
     // used to make no longer holds.)
     // Whether `mode` is one of the plain text-entry prompts HandlePromptKey
-    // drives, and if so what Tab offers there. nullopt means it is not a
-    // text-entry prompt at all. This is the single table both the key dispatch
-    // and Tab handling read -- see BufferView/TextEntryPrompt.h for why it is
-    // one table and not two lists.
+    // drives, and if so what Tab offers there and what it is called when
+    // cancelled. nullopt means it is not a text-entry prompt. Dispatch is
+    // OnKeyEvent's switch, not this -- see BufferView/TextEntryPrompt.h.
     // What Enter does in each text-entry prompt, one branch per mode. Split out
     // of HandlePromptKey so the key handling and the twenty-odd commit actions
     // are not the same 668-line function.
