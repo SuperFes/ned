@@ -46,8 +46,8 @@
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/VcsProvider.h"
-#include "Editor/Vim/VimGlobalMarks.h"
-#include "Editor/Vim/VimSettings.h"
+#include "Editor/Vim/GlobalMarks.h"
+#include "Editor/Vim/Settings.h"
 #include "Editor/WhichKeySettings.h"
 #include "Editor/WrapOverrides.h"
 #include "TestEvents.h"
@@ -107,12 +107,12 @@ struct TabWidthGuard {
     }
 };
 
-// VimModeEnabled is process-wide state too (Editor/Vim/VimSettings.h's own
+// ModeEnabled is process-wide state too (Editor/Vim/Settings.h's own
 // TabWidth.h-shaped pattern) -- restores whatever was configured before the
 // test ran (default false) rather than unconditionally disabling it.
 class VimModeGuard {
   public:
-    VimModeGuard() : previous_(ned::editor::vim::VimModeEnabled()) {
+    VimModeGuard() : previous_(ned::editor::vim::ModeEnabled()) {
         ned::editor::vim::SetVimModeEnabled(true);
     }
     ~VimModeGuard() {

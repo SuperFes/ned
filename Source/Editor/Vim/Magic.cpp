@@ -1,11 +1,11 @@
-#include "VimMagic.h"
+#include "Magic.h"
 
 namespace ned::editor::vim {
 
 namespace {
 
     // PCRE2 has no directional word-boundary atoms the way vim's \< (word start) and \>
-    // (word end) do -- \b matches both edges, a documented approximation (see VimMagic.h).
+    // (word end) do -- \b matches both edges, a documented approximation (see Magic.h).
     constexpr std::string_view kWordBoundary = "\\b";
 
 } // namespace
@@ -75,7 +75,7 @@ std::string TranslateVimMagicPattern(std::string_view pattern) {
                         continue;
                     }
                     // \ze (reset the match *end*) has no clean PCRE2 equivalent --
-                    // passed through verbatim, a documented cut (VimMagic.h).
+                    // passed through verbatim, a documented cut (Magic.h).
                     out += c;
                     out += next;
                     i += 2;
@@ -171,7 +171,7 @@ std::string TranslateVimMagicReplacement(std::string_view replacement) {
                 continue;
             }
             // \r, \u, \l, \U, \L, \e, \E, ~ and anything else unrecognized: passed
-            // through byte-for-byte, a documented cut (VimMagic.h).
+            // through byte-for-byte, a documented cut (Magic.h).
             out += c;
             out += next;
             i += 2;

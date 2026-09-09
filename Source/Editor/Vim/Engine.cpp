@@ -1,4 +1,4 @@
-#include "VimEngine.h"
+#include "Engine.h"
 
 #include <algorithm>
 #include <cctype>
@@ -13,12 +13,12 @@
 #include "Editor/TabWidth.h"
 #include "Text/Grapheme.h"
 #include "Text/Utf8.h"
-#include "VimGlobalMarks.h"
-#include "VimLineUtil.h"
-#include "VimMagic.h"
-#include "VimMotion.h"
-#include "VimSurround.h"
-#include "VimTextObject.h"
+#include "GlobalMarks.h"
+#include "LineUtil.h"
+#include "Magic.h"
+#include "Motion.h"
+#include "Surround.h"
+#include "TextObject.h"
 
 namespace ned::editor::vim {
 
@@ -176,38 +176,38 @@ namespace {
 
 } // namespace
 
-Mode VimEngine::CurrentMode() const {
+Mode Engine::CurrentMode() const {
     return mode_;
 }
 
-const std::string& VimEngine::StatusText() const {
+const std::string& Engine::StatusText() const {
     return statusText_;
 }
 
-void VimEngine::SetViewport(std::size_t topLine, std::size_t height) {
+void Engine::SetViewport(std::size_t topLine, std::size_t height) {
     topLine_        = topLine;
     viewportHeight_ = height;
 }
 
-PendingIntent VimEngine::TakePendingIntent() {
+PendingIntent Engine::TakePendingIntent() {
     const PendingIntent intent = pendingIntent_;
     pendingIntent_             = PendingIntent::None;
     return intent;
 }
 
-std::optional<std::size_t> VimEngine::TakePendingTopLine() {
+std::optional<std::size_t> Engine::TakePendingTopLine() {
     const std::optional<std::size_t> line = pendingTopLine_;
     pendingTopLine_                       = std::nullopt;
     return line;
 }
 
-std::optional<VimEngine::PendingBufferJump> VimEngine::TakePendingBufferJump() {
+std::optional<Engine::PendingBufferJump> Engine::TakePendingBufferJump() {
     std::optional<PendingBufferJump> jump = std::move(pendingBufferJump_);
     pendingBufferJump_                    = std::nullopt;
     return jump;
 }
 
-std::string VimEngine::ModeIndicator() const {
+std::string Engine::ModeIndicator() const {
     switch (mode_) {
         case Mode::Normal:
             return "NORMAL";
@@ -227,7 +227,7 @@ std::string VimEngine::ModeIndicator() const {
     return "";
 }
 
-long VimEngine::EffectiveCount() const {
+long Engine::EffectiveCount() const {
     const long motionCount = hasCount_ ? std::max<long>(1, countBuffer_) : 1;
     if (pendingOperator_ && operatorCount_ > 0) {
         return operatorCount_ * motionCount;
@@ -235,7 +235,7 @@ long VimEngine::EffectiveCount() const {
     return motionCount;
 }
 
-void VimEngine::FinishCommand(text::Buffer& buffer) {
+void Engine::FinishCommand(text::Buffer& buffer) {
     if (mode_ != Mode::Normal) {
         return; // stays accumulating currentCommandChords_ across a Visual/Insert/Replace session
     }
@@ -265,7 +265,7 @@ void VimEngine::FinishCommand(text::Buffer& buffer) {
     pendingRegisterName_ = 0;
 }
 
-void VimEngine::UpdateGoalColumn(const text::Buffer& buffer) {
+void Engine::UpdateGoalColumn(const text::Buffer& buffer) {
     const std::size_t line = LineOf(buffer, buffer.Point());
     goalColumn_            = buffer.VisualColumnForByteOffset(LineStart(buffer, line), buffer.Point(), TabWidth());
 }
@@ -274,7 +274,7 @@ void VimEngine::UpdateGoalColumn(const text::Buffer& buffer) {
 // Top-level dispatch
 // ---------------------------------------------------------------------------------
 
-void VimEngine::HandleKey(text::Buffer& buffer, const KeyChord& chord) {
+void Engine::HandleKey(text::Buffer& buffer, const KeyChord& chord) {
     statusText_.clear();
 
     // buffer-scoped-marks follow-up: see currentBufferIdentity_'s own doc comment --
@@ -283,7 +283,7 @@ void VimEngine::HandleKey(text::Buffer& buffer, const KeyChord& chord) {
     // same problem (raw byte offsets with no buffer/file identity of their own) --
     // cleared here too rather than given real vim's own cross-file jumplist capability,
     // a documented v1 cut (jumpList_/changeList_ stay buffer-scoped, not global, unlike
-    // uppercase marks -- see VimGlobalMarks.h).
+    // uppercase marks -- see GlobalMarks.h).
     if (&buffer != currentBufferIdentity_) {
         currentBufferIdentity_ = &buffer;
         marks_.clear();
@@ -327,7 +327,7 @@ void VimEngine::HandleKey(text::Buffer& buffer, const KeyChord& chord) {
     }
 }
 
-void VimEngine::RecordInsertKey(const KeyChord& chord) {
+void Engine::RecordInsertKey(const KeyChord& chord) {
     currentCommandChords_.push_back(chord);
     if (isRecordingMacro_) {
         macroRecordingBuffer_.push_back(chord);
@@ -346,7 +346,7 @@ void VimEngine::RecordInsertKey(const KeyChord& chord) {
     }
 }
 
-void VimEngine::ExitInsertToNormal(text::Buffer& buffer) {
+void Engine::ExitInsertToNormal(text::Buffer& buffer) {
     const KeyChord escape{false, false, false, SpecialKey::Escape, 0};
     currentCommandChords_.push_back(escape);
     if (isRecordingMacro_) {
@@ -365,9 +365,9 @@ void VimEngine::ExitInsertToNormal(text::Buffer& buffer) {
     statusText_.clear();
 }
 
-void VimEngine::HandleInsertKeyDirectly(text::Buffer& buffer, const KeyChord& chord) {
+void Engine::HandleInsertKeyDirectly(text::Buffer& buffer, const KeyChord& chord) {
     // Only exercised during "."/macro replay -- live Insert-mode typing bypasses
-    // VimEngine entirely at the BufferView level (see this file's own header comment).
+    // Engine entirely at the BufferView level (see this file's own header comment).
     // A simplified direct-edit path: no auto-pair/snippet-trigger/ghost-completion
     // during replay, a documented v1 simplification.
     if (chord.Special == SpecialKey::Escape) {
@@ -395,7 +395,7 @@ void VimEngine::HandleInsertKeyDirectly(text::Buffer& buffer, const KeyChord& ch
     }
 }
 
-bool VimEngine::HandleInsertModeChord(text::Buffer& buffer, const KeyChord& chord) {
+bool Engine::HandleInsertModeChord(text::Buffer& buffer, const KeyChord& chord) {
     if (awaitingInsertRegisterName_) {
         awaitingInsertRegisterName_ = false;
         if (IsPlainCharChord(chord)) {
@@ -431,7 +431,7 @@ bool VimEngine::HandleInsertModeChord(text::Buffer& buffer, const KeyChord& chor
     return true;
 }
 
-void VimEngine::BeginOneShotNormal(text::Buffer& buffer) {
+void Engine::BeginOneShotNormal(text::Buffer& buffer) {
     (void)buffer;
     oneShotNormalPending_ = true;
     mode_                 = Mode::Normal;
@@ -441,7 +441,7 @@ void VimEngine::BeginOneShotNormal(text::Buffer& buffer) {
     // "the whole Insert session undoes as one step, C-o excursions included" behavior.
 }
 
-void VimEngine::DeleteWordBackInInsert(text::Buffer& buffer) {
+void Engine::DeleteWordBackInInsert(text::Buffer& buffer) {
     const std::size_t  point = buffer.Point();
     const MotionResult m     = WordBackward(buffer, point, 1, false);
     if (m.target < point) {
@@ -450,7 +450,7 @@ void VimEngine::DeleteWordBackInInsert(text::Buffer& buffer) {
     }
 }
 
-void VimEngine::DeleteToLineStartInInsert(text::Buffer& buffer) {
+void Engine::DeleteToLineStartInInsert(text::Buffer& buffer) {
     const std::size_t point = buffer.Point();
     const std::size_t ls    = LineStart(buffer, LineOf(buffer, point));
     if (point > ls) {
@@ -459,7 +459,7 @@ void VimEngine::DeleteToLineStartInInsert(text::Buffer& buffer) {
     }
 }
 
-void VimEngine::ShiftInsertLine(text::Buffer& buffer, bool more) {
+void Engine::ShiftInsertLine(text::Buffer& buffer, bool more) {
     const std::size_t point = buffer.Point();
     const std::size_t line  = LineOf(buffer, point);
     const std::size_t ls    = LineStart(buffer, line);
@@ -485,7 +485,7 @@ void VimEngine::ShiftInsertLine(text::Buffer& buffer, bool more) {
     buffer.SetPoint(point > ls + removeCount ? point - removeCount : ls);
 }
 
-std::optional<RegisterEntry> VimEngine::ReadRegister(const text::Buffer& buffer, char32_t name) const {
+std::optional<RegisterEntry> Engine::ReadRegister(const text::Buffer& buffer, char32_t name) const {
     if (name == U'/') {
         if (!lastSearchPattern_) {
             return std::nullopt;
@@ -513,7 +513,7 @@ std::optional<RegisterEntry> VimEngine::ReadRegister(const text::Buffer& buffer,
     return registers_.Get(name);
 }
 
-void VimEngine::InsertRegisterAtPoint(text::Buffer& buffer, char32_t name) {
+void Engine::InsertRegisterAtPoint(text::Buffer& buffer, char32_t name) {
     const std::optional<RegisterEntry> entry = ReadRegister(buffer, name);
     if (!entry) {
         return;
@@ -524,7 +524,7 @@ void VimEngine::InsertRegisterAtPoint(text::Buffer& buffer, char32_t name) {
     buffer.SetPoint(point + text.size());
 }
 
-void VimEngine::HandleReplaceKey(text::Buffer& buffer, const KeyChord& chord) {
+void Engine::HandleReplaceKey(text::Buffer& buffer, const KeyChord& chord) {
     currentCommandChords_.push_back(chord);
     if (chord.Special == SpecialKey::Escape) {
         buffer.EndUndoGroup();
@@ -555,7 +555,7 @@ void VimEngine::HandleReplaceKey(text::Buffer& buffer, const KeyChord& chord) {
     }
 }
 
-void VimEngine::HandleCommandLineKey(text::Buffer& buffer, const KeyChord& chord) {
+void Engine::HandleCommandLineKey(text::Buffer& buffer, const KeyChord& chord) {
     if (chord.Special == SpecialKey::Escape) {
         mode_ = Mode::Normal;
         commandLineText_.clear();
@@ -602,7 +602,7 @@ void VimEngine::HandleCommandLineKey(text::Buffer& buffer, const KeyChord& chord
 // Normal / Visual grammar
 // ---------------------------------------------------------------------------------
 
-void VimEngine::HandleNormalOrVisualKey(text::Buffer& buffer, const KeyChord& chord) {
+void Engine::HandleNormalOrVisualKey(text::Buffer& buffer, const KeyChord& chord) {
     if (mode_ == Mode::Normal && !pendingOperator_ && !pendingCharHandler_ && IsPlainChar(chord, U'.')) {
         RepeatLastChange(buffer);
         return;
@@ -637,7 +637,7 @@ void VimEngine::HandleNormalOrVisualKey(text::Buffer& buffer, const KeyChord& ch
         return;
     }
 
-    // ds/cs/ys (Editor/Vim/VimSurround.h): 's' arriving right after 'd'/'c'/'y' has
+    // ds/cs/ys (Editor/Vim/Surround.h): 's' arriving right after 'd'/'c'/'y' has
     // already set pendingOperator_ pending. Must come before the doubled-operator/
     // ResolveOperatorChord/HandleAction checks below -- HandleAction's own plain 's'
     // binding (substitute-char) would otherwise fire instead, silently ignoring the
@@ -740,7 +740,7 @@ void VimEngine::HandleNormalOrVisualKey(text::Buffer& buffer, const KeyChord& ch
     HandleAction(buffer, chord, count);
 }
 
-std::optional<char32_t> VimEngine::ResolveOperatorChord(const KeyChord& chord) const {
+std::optional<char32_t> Engine::ResolveOperatorChord(const KeyChord& chord) const {
     if (!IsPlainCharChord(chord)) {
         return std::nullopt;
     }
@@ -756,7 +756,7 @@ std::optional<char32_t> VimEngine::ResolveOperatorChord(const KeyChord& chord) c
     }
 }
 
-std::optional<MotionResult> VimEngine::TryImmediateMotion(const text::Buffer& buffer, const KeyChord& chord, long count) {
+std::optional<MotionResult> Engine::TryImmediateMotion(const text::Buffer& buffer, const KeyChord& chord, long count) {
     if (chord.Special == SpecialKey::Left) {
         return CharLeft(buffer, buffer.Point(), count);
     }
@@ -833,7 +833,7 @@ std::optional<MotionResult> VimEngine::TryImmediateMotion(const text::Buffer& bu
     }
 }
 
-void VimEngine::ResolveMotionAndAct(text::Buffer& buffer, const MotionResult& motion, bool horizontal) {
+void Engine::ResolveMotionAndAct(text::Buffer& buffer, const MotionResult& motion, bool horizontal) {
     if (!motion.found) {
         FinishCommand(buffer);
         return;
@@ -855,7 +855,7 @@ void VimEngine::ResolveMotionAndAct(text::Buffer& buffer, const MotionResult& mo
     FinishCommand(buffer);
 }
 
-void VimEngine::ApplyOperatorRange(text::Buffer& buffer, char32_t op, std::size_t anchor, std::size_t target, bool linewise,
+void Engine::ApplyOperatorRange(text::Buffer& buffer, char32_t op, std::size_t anchor, std::size_t target, bool linewise,
                                    bool inclusive) {
     std::size_t start = std::min(anchor, target);
     std::size_t end   = std::max(anchor, target);
@@ -871,7 +871,7 @@ void VimEngine::ApplyOperatorRange(text::Buffer& buffer, char32_t op, std::size_
     ApplyOperator(buffer, op, start, end, linewise);
 }
 
-void VimEngine::ApplyOperator(text::Buffer& buffer, char32_t op, std::size_t start, std::size_t end, bool linewise) {
+void Engine::ApplyOperator(text::Buffer& buffer, char32_t op, std::size_t start, std::size_t end, bool linewise) {
     if (start > end) {
         std::swap(start, end);
     }
@@ -922,7 +922,7 @@ void VimEngine::ApplyOperator(text::Buffer& buffer, char32_t op, std::size_t sta
     }
 }
 
-void VimEngine::ApplyDoubledOperator(text::Buffer& buffer, char32_t op, long count) {
+void Engine::ApplyDoubledOperator(text::Buffer& buffer, char32_t op, long count) {
     const std::size_t startLine = LineOf(buffer, buffer.Point());
     const std::size_t endLine =
         std::min(EffectiveLastLine(buffer), startLine + static_cast<std::size_t>(std::max<long>(1, count) - 1));
@@ -931,7 +931,7 @@ void VimEngine::ApplyDoubledOperator(text::Buffer& buffer, char32_t op, long cou
     ApplyOperator(buffer, op, start, end, true);
 }
 
-ObjectRange VimEngine::ResolveTextObjectRange(const text::Buffer& buffer, bool inner, char32_t c, long count) const {
+ObjectRange Engine::ResolveTextObjectRange(const text::Buffer& buffer, bool inner, char32_t c, long count) const {
     if (c == U'w') {
         return inner ? InnerWord(buffer, buffer.Point(), false, count) : AroundWord(buffer, buffer.Point(), false, count);
     }
@@ -965,12 +965,12 @@ ObjectRange VimEngine::ResolveTextObjectRange(const text::Buffer& buffer, bool i
     return ObjectRange{buffer.Point(), buffer.Point(), false, false};
 }
 
-void VimEngine::ApplyTextObject(text::Buffer& buffer, bool inner, const KeyChord& objectChord) {
+void Engine::ApplyTextObject(text::Buffer& buffer, bool inner, const KeyChord& objectChord) {
     if (!IsPlainCharChord(objectChord)) {
         FinishCommand(buffer);
         return;
     }
-    const long        count = EffectiveCount(); // only word/sentence objects honor a count > 1 -- see VimTextObject.h
+    const long        count = EffectiveCount(); // only word/sentence objects honor a count > 1 -- see TextObject.h
     const ObjectRange range = ResolveTextObjectRange(buffer, inner, objectChord.Codepoint, count);
 
     if (!range.found) {
@@ -991,7 +991,7 @@ void VimEngine::ApplyTextObject(text::Buffer& buffer, bool inner, const KeyChord
     FinishCommand(buffer);
 }
 
-void VimEngine::FinishAddSurround(text::Buffer& buffer, std::size_t start, std::size_t end, char32_t to) {
+void Engine::FinishAddSurround(text::Buffer& buffer, std::size_t start, std::size_t end, char32_t to) {
     std::size_t point = start;
     if (AddSurround(buffer, start, end, to, point)) {
         buffer.SetPoint(point);
@@ -999,7 +999,7 @@ void VimEngine::FinishAddSurround(text::Buffer& buffer, std::size_t start, std::
     FinishCommand(buffer);
 }
 
-void VimEngine::BeginSurroundSequence(text::Buffer& buffer, char32_t op) {
+void Engine::BeginSurroundSequence(text::Buffer& buffer, char32_t op) {
     if (op == U'd') {
         pendingCharHandler_ = [this](text::Buffer& buf, const KeyChord& c) {
             if (IsPlainCharChord(c)) {
@@ -1068,7 +1068,7 @@ void VimEngine::BeginSurroundSequence(text::Buffer& buffer, char32_t op) {
     };
 }
 
-void VimEngine::HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord) {
+void Engine::HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord) {
     if (!IsPlainCharChord(chord)) {
         FinishCommand(buffer);
         return;
@@ -1137,7 +1137,7 @@ void VimEngine::HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord) {
     FinishCommand(buffer);
 }
 
-void VimEngine::HandleZPrefixed(text::Buffer& buffer, const KeyChord& chord) {
+void Engine::HandleZPrefixed(text::Buffer& buffer, const KeyChord& chord) {
     if (!IsPlainCharChord(chord)) {
         FinishCommand(buffer);
         return;
@@ -1159,7 +1159,7 @@ void VimEngine::HandleZPrefixed(text::Buffer& buffer, const KeyChord& chord) {
     FinishCommand(buffer);
 }
 
-void VimEngine::HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& chord) {
+void Engine::HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& chord) {
     if (IsPlainChar(chord, U'Z')) { // ZZ -- save and close, same body as :wq
         buffer.Save();
         pendingIntent_ = PendingIntent::CloseBuffer;
@@ -1170,7 +1170,7 @@ void VimEngine::HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& cho
     FinishCommand(buffer);
 }
 
-bool VimEngine::HandleVisualSpecific(text::Buffer& buffer, const KeyChord& chord, long count) {
+bool Engine::HandleVisualSpecific(text::Buffer& buffer, const KeyChord& chord, long count) {
     (void)count;
     if (IsPlainChar(chord, U'o')) {
         const std::size_t p = buffer.Point();
@@ -1207,7 +1207,7 @@ bool VimEngine::HandleVisualSpecific(text::Buffer& buffer, const KeyChord& chord
         FinishCommand(buffer);
         return true;
     }
-    // S (Editor/Vim/VimSurround.h) -- vim-surround's own visual-mode add-surround. Plain
+    // S (Editor/Vim/Surround.h) -- vim-surround's own visual-mode add-surround. Plain
     // Visual/VisualLine only: real vim's own 'S' has no meaningful block-mode behavior,
     // and this engine's default (unmapped) Visual 'S' was already a no-op, so there's no
     // existing binding here to preserve.
@@ -1258,7 +1258,7 @@ bool VimEngine::HandleVisualSpecific(text::Buffer& buffer, const KeyChord& chord
     return false;
 }
 
-void VimEngine::ApplyVisualOperator(text::Buffer& buffer, char32_t op) {
+void Engine::ApplyVisualOperator(text::Buffer& buffer, char32_t op) {
     const Mode activeVisual = mode_;
     RememberVisualRange(buffer);
     const std::size_t anchor = visualAnchor_;
@@ -1275,7 +1275,7 @@ void VimEngine::ApplyVisualOperator(text::Buffer& buffer, char32_t op) {
     FinishCommand(buffer);
 }
 
-void VimEngine::ApplyVisualBlockOperator(text::Buffer& buffer, char32_t op, std::size_t anchor, std::size_t point) {
+void Engine::ApplyVisualBlockOperator(text::Buffer& buffer, char32_t op, std::size_t anchor, std::size_t point) {
     const bool isCaseOp = op == kOpLowercase || op == kOpUppercase || op == kOpToggleCase;
     if (op != U'd' && op != U'y' && op != U'>' && op != U'<' && !isCaseOp) {
         statusText_ = "Visual block: operator not supported";
@@ -1335,7 +1335,7 @@ void VimEngine::ApplyVisualBlockOperator(text::Buffer& buffer, char32_t op, std:
     buffer.EndUndoGroup();
 }
 
-void VimEngine::ApplyVisualBlockInsert(text::Buffer& buffer, bool atStart) {
+void Engine::ApplyVisualBlockInsert(text::Buffer& buffer, bool atStart) {
     RememberVisualRange(buffer);
     const std::size_t anchor    = visualAnchor_;
     const std::size_t point     = buffer.Point();
@@ -1364,7 +1364,7 @@ void VimEngine::ApplyVisualBlockInsert(text::Buffer& buffer, bool atStart) {
     BeginInsertSession(buffer);
 }
 
-void VimEngine::ApplyVisualBlockChange(text::Buffer& buffer) {
+void Engine::ApplyVisualBlockChange(text::Buffer& buffer) {
     RememberVisualRange(buffer);
     const std::size_t anchor    = visualAnchor_;
     const std::size_t point     = buffer.Point();
@@ -1398,7 +1398,7 @@ void VimEngine::ApplyVisualBlockChange(text::Buffer& buffer) {
     BeginInsertSession(buffer);
 }
 
-void VimEngine::HandleAction(text::Buffer& buffer, const KeyChord& chord, long count) {
+void Engine::HandleAction(text::Buffer& buffer, const KeyChord& chord, long count) {
     if (chord.Control && !chord.Meta && chord.Special == SpecialKey::None) {
         if (chord.Codepoint == U'r') {
             for (long i = 0; i < count && buffer.CanRedo(); ++i) {
@@ -1413,7 +1413,7 @@ void VimEngine::HandleAction(text::Buffer& buffer, const KeyChord& chord, long c
             return;
         }
         // jumplist-ring follow-up: C-o/C-i walk jumpList_ -- see its own doc comment in
-        // VimEngine.h. Normal mode only, matching real vim (Visual/Insert don't bind
+        // Engine.h. Normal mode only, matching real vim (Visual/Insert don't bind
         // these). C-i is byte-identical to plain Tab over a raw terminal without an
         // extended keyboard protocol (kitty/etc.) telling them apart -- real vim has this
         // exact same ambiguity and a bare Tab keypress genuinely does jump forward in
@@ -1793,29 +1793,29 @@ void VimEngine::HandleAction(text::Buffer& buffer, const KeyChord& chord, long c
     FinishCommand(buffer);
 }
 
-void VimEngine::BeginInsertSession(text::Buffer& /*buffer*/) {
+void Engine::BeginInsertSession(text::Buffer& /*buffer*/) {
     mode_ = Mode::Insert;
     insertModeTypedText_.clear();
     // Defensive: a one-shot C-o command that itself starts a fresh Insert session (an
     // unusual thing to type, e.g. "C-o A") reaches Mode::Insert by this path rather than
     // FinishCommand's own resume branch -- clear here too so the flag never gets stuck
     // true and hijacks some later, unrelated command. See oneShotNormalPending_'s own
-    // doc comment in VimEngine.h.
+    // doc comment in Engine.h.
     oneShotNormalPending_ = false;
 }
 
-void VimEngine::BeginReplaceSession(text::Buffer& /*buffer*/) {
+void Engine::BeginReplaceSession(text::Buffer& /*buffer*/) {
     mode_                 = Mode::Replace;
     oneShotNormalPending_ = false; // see BeginInsertSession's own comment on this
 }
 
-void VimEngine::EnterVisual(text::Buffer& buffer, Mode kind) {
+void Engine::EnterVisual(text::Buffer& buffer, Mode kind) {
     mode_                 = kind;
     visualAnchor_         = buffer.Point();
     oneShotNormalPending_ = false; // see BeginInsertSession's own comment on this
 }
 
-void VimEngine::RememberVisualRange(text::Buffer& buffer) {
+void Engine::RememberVisualRange(text::Buffer& buffer) {
     const std::size_t l1 = LineOf(buffer, visualAnchor_);
     const std::size_t l2 = LineOf(buffer, buffer.Point());
     lastVisualRange_     = ExRange{true, std::min(l1, l2), std::max(l1, l2)};
@@ -1828,7 +1828,7 @@ void VimEngine::RememberVisualRange(text::Buffer& buffer) {
     hasLastVisual_    = true;
 }
 
-void VimEngine::InsertLineBlock(text::Buffer& buffer, const std::vector<std::string>& pieces, std::size_t line, bool before) {
+void Engine::InsertLineBlock(text::Buffer& buffer, const std::vector<std::string>& pieces, std::size_t line, bool before) {
     const bool  atVeryEndNoNewline = !LineHasTrailingNewline(buffer, line);
     std::string block;
     for (const std::string& p : pieces) {
@@ -1851,7 +1851,7 @@ void VimEngine::InsertLineBlock(text::Buffer& buffer, const std::vector<std::str
     buffer.SetPoint(FirstNonBlankOffset(buffer, pastedLine));
 }
 
-void VimEngine::PasteRegister(text::Buffer& buffer, bool before, long count) {
+void Engine::PasteRegister(text::Buffer& buffer, bool before, long count) {
     const char32_t regName                   = pendingRegisterName_;
     pendingRegisterName_                     = 0;
     const std::optional<RegisterEntry> entry = ReadRegister(buffer, regName);
@@ -1905,7 +1905,7 @@ void VimEngine::PasteRegister(text::Buffer& buffer, bool before, long count) {
     FinishCommand(buffer);
 }
 
-void VimEngine::ShiftLines(text::Buffer& buffer, std::size_t start, std::size_t end, bool more) {
+void Engine::ShiftLines(text::Buffer& buffer, std::size_t start, std::size_t end, bool more) {
     const std::size_t startLine = LineOf(buffer, start);
     const std::size_t endLine   = end > start ? LineOf(buffer, end - 1) : startLine;
     const std::size_t width     = static_cast<std::size_t>(std::max(1, TabWidth()));
@@ -1937,7 +1937,7 @@ void VimEngine::ShiftLines(text::Buffer& buffer, std::size_t start, std::size_t 
     buffer.EndUndoGroup();
 }
 
-void VimEngine::ToggleCaseRange(text::Buffer& buffer, std::size_t start, std::size_t end, char32_t op) {
+void Engine::ToggleCaseRange(text::Buffer& buffer, std::size_t start, std::size_t end, char32_t op) {
     std::string text = buffer.Content().Substring(start, end - start);
     for (char& ch : text) {
         const unsigned char c = static_cast<unsigned char>(ch);
@@ -1963,7 +1963,7 @@ void VimEngine::ToggleCaseRange(text::Buffer& buffer, std::size_t start, std::si
     buffer.EndUndoGroup();
 }
 
-void VimEngine::JoinLines(text::Buffer& buffer, long count, bool insertSpace) {
+void Engine::JoinLines(text::Buffer& buffer, long count, bool insertSpace) {
     const std::size_t n = static_cast<std::size_t>(std::max<long>(1, count > 1 ? count - 1 : 1));
     buffer.BeginUndoGroup();
     for (std::size_t i = 0; i < n; ++i) {
@@ -1987,7 +1987,7 @@ void VimEngine::JoinLines(text::Buffer& buffer, long count, bool insertSpace) {
     buffer.EndUndoGroup();
 }
 
-void VimEngine::RepeatLastFind(text::Buffer& buffer, bool sameDirection) {
+void Engine::RepeatLastFind(text::Buffer& buffer, bool sameDirection) {
     if (!hasLastFind_) {
         FinishCommand(buffer);
         return;
@@ -1998,7 +1998,7 @@ void VimEngine::RepeatLastFind(text::Buffer& buffer, bool sameDirection) {
     ResolveMotionAndAct(buffer, m, false);
 }
 
-void VimEngine::RepeatLastChange(text::Buffer& buffer) {
+void Engine::RepeatLastChange(text::Buffer& buffer) {
     // dot-repeat-count-override follow-up: a count typed right before "." (e.g. "5.")
     // replaces the recorded command's own count rather than combining with it -- real
     // vim's own rule. Captured before clearing hasCount_/countBuffer_ below, which must
@@ -2046,10 +2046,10 @@ void VimEngine::RepeatLastChange(text::Buffer& buffer) {
     --replayDepth_;
 }
 
-void VimEngine::SetMarkAt(text::Buffer& buffer, char32_t name) {
+void Engine::SetMarkAt(text::Buffer& buffer, char32_t name) {
     // vim-global-marks follow-up: an uppercase mark is cross-file -- recorded into the
     // process-wide store by (path, line, column), not a byte offset (see
-    // VimGlobalMarks.h's own doc comment for why), instead of the ordinary buffer-local
+    // GlobalMarks.h's own doc comment for why), instead of the ordinary buffer-local
     // marks_ map. A buffer with no path (a scratch/new-file buffer) can't be resolved
     // from a different pane later, so it's silently skipped -- a documented v1 cut,
     // consistent with this engine already requiring a real file for other
@@ -2070,7 +2070,7 @@ namespace {
     constexpr std::size_t kMaxJumpList = 100;
 } // namespace
 
-void VimEngine::PushJumpListEntry(const text::Buffer& buffer) {
+void Engine::PushJumpListEntry(const text::Buffer& buffer) {
     // A new jump branches off -- any forward history past the current navigation
     // position is discarded, mirroring a browser's own back/forward truncation-on-branch
     // rule (BufferView's unrelated, Emacs-flavored jumpBackStack_/jumpForwardStack_ pair
@@ -2088,7 +2088,7 @@ void VimEngine::PushJumpListEntry(const text::Buffer& buffer) {
     jumpListPos_ = jumpList_.size(); // back to "live"
 }
 
-void VimEngine::JumpListBack(text::Buffer& buffer) {
+void Engine::JumpListBack(text::Buffer& buffer) {
     if (jumpListPos_ == 0) {
         FinishCommand(buffer); // no earlier jumps -- a silent no-op, matching real vim
         return;
@@ -2105,7 +2105,7 @@ void VimEngine::JumpListBack(text::Buffer& buffer) {
     FinishCommand(buffer);
 }
 
-void VimEngine::JumpListForward(text::Buffer& buffer) {
+void Engine::JumpListForward(text::Buffer& buffer) {
     if (jumpListPos_ + 1 >= jumpList_.size()) {
         FinishCommand(buffer); // already at the newest recorded entry -- silent no-op
         return;
@@ -2116,7 +2116,7 @@ void VimEngine::JumpListForward(text::Buffer& buffer) {
     FinishCommand(buffer);
 }
 
-void VimEngine::PushChangeListEntry(text::Buffer& buffer) {
+void Engine::PushChangeListEntry(text::Buffer& buffer) {
     const std::size_t point = buffer.Point();
     // Consecutive changes on the same line collapse into one, updated entry -- real
     // vim's own documented changelist behavior -- rather than one entry per edit.
@@ -2132,7 +2132,7 @@ void VimEngine::PushChangeListEntry(text::Buffer& buffer) {
     changeListPos_ = changeList_.size() - 1; // always points at the newest entry after a push
 }
 
-void VimEngine::ChangeListOlder(text::Buffer& buffer) {
+void Engine::ChangeListOlder(text::Buffer& buffer) {
     if (changeList_.empty() || changeListPos_ == 0) {
         FinishCommand(buffer); // nothing recorded, or already at the oldest -- silent no-op
         return;
@@ -2143,7 +2143,7 @@ void VimEngine::ChangeListOlder(text::Buffer& buffer) {
     FinishCommand(buffer);
 }
 
-void VimEngine::ChangeListNewer(text::Buffer& buffer) {
+void Engine::ChangeListNewer(text::Buffer& buffer) {
     if (changeList_.empty() || changeListPos_ + 1 >= changeList_.size()) {
         FinishCommand(buffer); // already at the newest entry -- silent no-op
         return;
@@ -2154,7 +2154,7 @@ void VimEngine::ChangeListNewer(text::Buffer& buffer) {
     FinishCommand(buffer);
 }
 
-void VimEngine::GotoMark(text::Buffer& buffer, char32_t name, bool linewise) {
+void Engine::GotoMark(text::Buffer& buffer, char32_t name, bool linewise) {
     std::size_t target;
     if (name == U'<' || name == U'>') {
         if (!lastVisualRange_) {
@@ -2214,7 +2214,7 @@ void VimEngine::GotoMark(text::Buffer& buffer, char32_t name, bool linewise) {
     FinishCommand(buffer);
 }
 
-void VimEngine::StartMacroRecording(char32_t name) {
+void Engine::StartMacroRecording(char32_t name) {
     const bool     isUpper = name >= U'A' && name <= U'Z';
     const char32_t lower   = isUpper ? name - U'A' + U'a' : name;
     if (!(lower >= U'a' && lower <= U'z')) {
@@ -2242,7 +2242,7 @@ void VimEngine::StartMacroRecording(char32_t name) {
     statusText_ = "recording @" + std::string(1, static_cast<char>(lower));
 }
 
-void VimEngine::StopMacroRecording() {
+void Engine::StopMacroRecording() {
     if (!isRecordingMacro_) {
         return;
     }
@@ -2265,7 +2265,7 @@ void VimEngine::StopMacroRecording() {
     statusText_.clear();
 }
 
-void VimEngine::PlayMacro(text::Buffer& buffer, char32_t name, long count) {
+void Engine::PlayMacro(text::Buffer& buffer, char32_t name, long count) {
     const char32_t reg = name == U'@' ? lastMacroRegister_ : name;
     if (!(reg >= U'a' && reg <= U'z')) {
         FinishCommand(buffer);
@@ -2352,7 +2352,7 @@ namespace {
 
 } // namespace
 
-void VimEngine::RunSearch(text::Buffer& buffer, bool forward, const std::string& pattern) {
+void Engine::RunSearch(text::Buffer& buffer, bool forward, const std::string& pattern) {
     marks_[kJumpMark] = buffer.Point(); // /, ?, n, N, *, # all funnel through here
     PushJumpListEntry(buffer);
     try {
@@ -2421,7 +2421,7 @@ void VimEngine::RunSearch(text::Buffer& buffer, bool forward, const std::string&
     FinishCommand(buffer);
 }
 
-void VimEngine::PerformSearch(text::Buffer& buffer, bool forward, const std::string& pattern) {
+void Engine::PerformSearch(text::Buffer& buffer, bool forward, const std::string& pattern) {
     if (pattern.empty()) {
         if (!lastSearchPattern_) {
             statusText_ = "E35: No previous regular expression";
@@ -2440,7 +2440,7 @@ void VimEngine::PerformSearch(text::Buffer& buffer, bool forward, const std::str
     RunSearch(buffer, forward, *lastSearchPattern_);
 }
 
-void VimEngine::RepeatSearch(text::Buffer& buffer, bool sameDirection) {
+void Engine::RepeatSearch(text::Buffer& buffer, bool sameDirection) {
     if (!lastSearchPattern_) {
         statusText_ = "E35: No previous regular expression";
         FinishCommand(buffer);
@@ -2449,7 +2449,7 @@ void VimEngine::RepeatSearch(text::Buffer& buffer, bool sameDirection) {
     RunSearch(buffer, sameDirection ? lastSearchForward_ : !lastSearchForward_, *lastSearchPattern_);
 }
 
-void VimEngine::SearchWordUnderPoint(text::Buffer& buffer, bool forward) {
+void Engine::SearchWordUnderPoint(text::Buffer& buffer, bool forward) {
     const ObjectRange w = InnerWord(buffer, buffer.Point(), false);
     if (!w.found || w.end <= w.start) {
         FinishCommand(buffer);
@@ -2468,7 +2468,7 @@ void VimEngine::SearchWordUnderPoint(text::Buffer& buffer, bool forward) {
     RunSearch(buffer, forward, *lastSearchPattern_);
 }
 
-void VimEngine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) {
+void Engine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) {
     const std::size_t currentLine = LineOf(buffer, buffer.Point());
     const std::size_t lastLine    = EffectiveLastLine(buffer);
     const auto        cmd         = ParseExCommand(text, currentLine, lastLine, lastVisualRange_);
@@ -2612,7 +2612,7 @@ void VimEngine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) 
     FinishCommand(buffer);
 }
 
-void VimEngine::SubstituteLineRange(text::Buffer& buffer, const ExSubstituteArgs& args, std::size_t startLine, std::size_t endLine) {
+void Engine::SubstituteLineRange(text::Buffer& buffer, const ExSubstituteArgs& args, std::size_t startLine, std::size_t endLine) {
     const bool         global = args.flags.find('g') != std::string::npos;
     const RegexPattern re(args.pattern); // may throw RegexPatternError -- callers catch
     buffer.BeginUndoGroup();
@@ -2648,7 +2648,7 @@ void VimEngine::SubstituteLineRange(text::Buffer& buffer, const ExSubstituteArgs
     statusText_ = count > 0 ? (std::to_string(count) + " substitution" + (count == 1 ? "" : "s")) : "E486: Pattern not found";
 }
 
-void VimEngine::ExecuteSubstitute(text::Buffer& buffer, const ExCommand& cmd) {
+void Engine::ExecuteSubstitute(text::Buffer& buffer, const ExCommand& cmd) {
     auto args = ParseSubstituteArgs(cmd.rest);
     if (!args || args->pattern.empty()) {
         statusText_ = "E486: Pattern not found";
@@ -2671,7 +2671,7 @@ void VimEngine::ExecuteSubstitute(text::Buffer& buffer, const ExCommand& cmd) {
     }
 }
 
-void VimEngine::ExecuteGlobal(text::Buffer& buffer, const ExCommand& cmd) {
+void Engine::ExecuteGlobal(text::Buffer& buffer, const ExCommand& cmd) {
     auto args = ParseGlobalArgs(cmd.rest);
     if (!args || args->pattern.empty()) {
         statusText_ = "E471: Argument required";
@@ -2721,7 +2721,7 @@ void VimEngine::ExecuteGlobal(text::Buffer& buffer, const ExCommand& cmd) {
     }
 }
 
-void VimEngine::ExecuteMoveOrCopy(text::Buffer& buffer, const ExCommand& cmd, bool isMove) {
+void Engine::ExecuteMoveOrCopy(text::Buffer& buffer, const ExCommand& cmd, bool isMove) {
     const std::size_t currentLine = LineOf(buffer, buffer.Point());
     const std::size_t lastLine    = EffectiveLastLine(buffer);
     const std::size_t sl          = cmd.range.present ? cmd.range.startLine : currentLine;
@@ -2762,7 +2762,7 @@ void VimEngine::ExecuteMoveOrCopy(text::Buffer& buffer, const ExCommand& cmd, bo
     buffer.EndUndoGroup();
 }
 
-void VimEngine::ExecuteSort(text::Buffer& buffer, const ExCommand& cmd) {
+void Engine::ExecuteSort(text::Buffer& buffer, const ExCommand& cmd) {
     const std::size_t lastLine = EffectiveLastLine(buffer);
     const std::size_t sl       = cmd.range.present ? cmd.range.startLine : 0;
     const std::size_t el       = cmd.range.present ? cmd.range.endLine : lastLine;
@@ -2800,7 +2800,7 @@ void VimEngine::ExecuteSort(text::Buffer& buffer, const ExCommand& cmd) {
     buffer.EndUndoGroup();
 }
 
-void VimEngine::ExecuteRead(text::Buffer& buffer, const ExCommand& cmd) {
+void Engine::ExecuteRead(text::Buffer& buffer, const ExCommand& cmd) {
     std::string filename = cmd.rest;
     while (!filename.empty() && filename.front() == ' ') {
         filename.erase(0, 1);

@@ -11,8 +11,8 @@
 // independently duplicated rather than shared despite similar shape).
 //
 
-#ifndef NED_EDITOR_MCP_MCPSOCKETPATH_H
-#define NED_EDITOR_MCP_MCPSOCKETPATH_H
+#ifndef NED_EDITOR_MCP_SOCKETPATH_H
+#define NED_EDITOR_MCP_SOCKETPATH_H
 
 #include <filesystem>
 
@@ -39,4 +39,4 @@ void EnsureRuntimeDirectory();
 
 } // namespace ned::editor::mcp
 
-#endif // NED_EDITOR_MCP_MCPSOCKETPATH_H
+#endif // NED_EDITOR_MCP_SOCKETPATH_H

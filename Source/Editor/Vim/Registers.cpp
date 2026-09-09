@@ -1,4 +1,4 @@
-#include "VimRegisters.h"
+#include "Registers.h"
 
 #include "Editor/Clipboard.h"
 
@@ -26,11 +26,11 @@ std::string RegisterEntry::Joined() const {
     return joined;
 }
 
-void VimRegisters::SetUnnamed(const RegisterEntry& entry) {
+void Registers::SetUnnamed(const RegisterEntry& entry) {
     registers_[kUnnamed] = entry;
 }
 
-void VimRegisters::RouteNamed(char32_t name, RegisterEntry entry) {
+void Registers::RouteNamed(char32_t name, RegisterEntry entry) {
     const bool     isUppercase = name >= U'A' && name <= U'Z';
     const char32_t lower       = isUppercase ? name - U'A' + U'a' : name;
 
@@ -58,7 +58,7 @@ void VimRegisters::RouteNamed(char32_t name, RegisterEntry entry) {
     SetUnnamed(entry);
 }
 
-void VimRegisters::RouteUnnamed(RegisterEntry entry, bool isDelete) {
+void Registers::RouteUnnamed(RegisterEntry entry, bool isDelete) {
     if (!isDelete) {
         registers_[U'0'] = entry;
         SetUnnamed(entry);
@@ -81,7 +81,7 @@ void VimRegisters::RouteUnnamed(RegisterEntry entry, bool isDelete) {
     SetUnnamed(entry);
 }
 
-void VimRegisters::Store(char32_t name, RegisterEntry entry, bool isDelete) {
+void Registers::Store(char32_t name, RegisterEntry entry, bool isDelete) {
     if (name == U'_') {
         return; // blackhole: discarded entirely, unnamed untouched
     }
@@ -97,11 +97,11 @@ void VimRegisters::Store(char32_t name, RegisterEntry entry, bool isDelete) {
     RouteNamed(name, std::move(entry));
 }
 
-void VimRegisters::SetRaw(char32_t name, RegisterEntry entry) {
+void Registers::SetRaw(char32_t name, RegisterEntry entry) {
     registers_[name] = std::move(entry);
 }
 
-std::optional<RegisterEntry> VimRegisters::Get(char32_t name) const {
+std::optional<RegisterEntry> Registers::Get(char32_t name) const {
     if (name == U'+' || name == U'*') {
         const std::optional<std::string> clip = PasteFromSystemClipboard();
         if (!clip) {

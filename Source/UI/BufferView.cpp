@@ -528,7 +528,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
     if (HandleConflictQuickKey(*chord)) {
         return true;
     }
-    if (editor::vim::VimModeEnabled()) {
+    if (editor::vim::ModeEnabled()) {
         return HandleVimKey(*chord);
     }
     return DispatchChordNormally(*chord);
@@ -544,7 +544,7 @@ void BufferView::HandleBulkPastedText(std::string_view text) {
     }
 
     const bool vimInsertOrOff =
-        !editor::vim::VimModeEnabled() || vimEngine_.CurrentMode() == editor::vim::Mode::Insert;
+        !editor::vim::ModeEnabled() || vimEngine_.CurrentMode() == editor::vim::Mode::Insert;
     if (inputMode_ == InputMode::Normal && vimInsertOrOff) {
         // Fast path: the actual fix -- one atomic InsertAtPoint call, one
         // ContentGeneration() bump, one undo step, regardless of text's
@@ -562,7 +562,7 @@ void BufferView::HandleBulkPastedText(std::string_view text) {
             // exactly what RecordInsertKey sees for an actual keypress),
             // not as plain codepoints -- same reasoning as the slow path's
             // own NCKEY_ENTER re-encoding just below.
-            if (editor::vim::VimModeEnabled()) {
+            if (editor::vim::ModeEnabled()) {
                 std::size_t offset = 0;
                 while (offset < text.size()) {
                     const std::size_t next      = text::NextCodepointBoundary(text, offset);

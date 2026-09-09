@@ -18,8 +18,8 @@
 // argv-spawning constructor exists only for symmetry/tests.
 //
 
-#ifndef NED_EDITOR_MCP_MCPTRANSPORT_H
-#define NED_EDITOR_MCP_MCPTRANSPORT_H
+#ifndef NED_EDITOR_MCP_TRANSPORT_H
+#define NED_EDITOR_MCP_TRANSPORT_H
 
 #include <chrono>
 #include <optional>
@@ -83,4 +83,4 @@ class Transport {
 
 } // namespace ned::editor::mcp
 
-#endif // NED_EDITOR_MCP_MCPTRANSPORT_H
+#endif // NED_EDITOR_MCP_TRANSPORT_H

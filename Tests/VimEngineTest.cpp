@@ -4,8 +4,8 @@
 #include <fstream>
 
 #include "Editor/TabWidth.h"
-#include "Editor/Vim/VimEngine.h"
-#include "Editor/Vim/VimGlobalMarks.h"
+#include "Editor/Vim/Engine.h"
+#include "Editor/Vim/GlobalMarks.h"
 #include "Text/Buffer.h"
 
 using ned::editor::KeyChord;
@@ -13,7 +13,7 @@ using ned::editor::SpecialKey;
 using ned::editor::vim::ClearGlobalMarksForTesting;
 using ned::editor::vim::Mode;
 using ned::editor::vim::PendingIntent;
-using ned::editor::vim::VimEngine;
+using ned::editor::vim::Engine;
 using ned::text::Buffer;
 
 namespace {
@@ -59,7 +59,7 @@ KeyChord CtrlV() {
     return Ctrl(U'v');
 }
 
-void Feed(VimEngine& engine, Buffer& buffer, const std::string& keys) {
+void Feed(Engine& engine, Buffer& buffer, const std::string& keys) {
     for (char c : keys) {
         if (c == '\x1b') {
             engine.HandleKey(buffer, Special(SpecialKey::Escape));
@@ -68,7 +68,7 @@ void Feed(VimEngine& engine, Buffer& buffer, const std::string& keys) {
             engine.HandleKey(buffer, Special(SpecialKey::Enter));
         }
         else if (engine.CurrentMode() == Mode::Insert) {
-            // Live typing bypasses VimEngine::HandleKey in real BufferView usage;
+            // Live typing bypasses Engine::HandleKey in real BufferView usage;
             // simulate that bypass directly here.
             if (c == '\n') {
                 buffer.InsertAtPoint("\n");
@@ -86,9 +86,9 @@ void Feed(VimEngine& engine, Buffer& buffer, const std::string& keys) {
 
 } // namespace
 
-TEST_CASE("h/j/k/l move point through the engine", "[VimEngine]") {
+TEST_CASE("h/j/k/l move point through the engine", "[Engine]") {
     Buffer    buffer = MakeBuffer("abc\ndef\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "ll");
     REQUIRE(buffer.Point() == 2);
@@ -96,34 +96,34 @@ TEST_CASE("h/j/k/l move point through the engine", "[VimEngine]") {
     REQUIRE(buffer.Point() == buffer.ByteOffsetForLineAndColumn(1, 2, 1));
 }
 
-TEST_CASE("dw deletes a word and stores it in the unnamed register", "[VimEngine]") {
+TEST_CASE("dw deletes a word and stores it in the unnamed register", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar baz");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "dw");
     REQUIRE(buffer.Text() == "bar baz");
     REQUIRE(buffer.Point() == 0);
 }
 
-TEST_CASE("dd deletes the whole current line, linewise", "[VimEngine]") {
+TEST_CASE("dd deletes the whole current line, linewise", "[Engine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "jdd");
     REQUIRE(buffer.Text() == "one\nthree\n");
 }
 
-TEST_CASE("3dd deletes three lines", "[VimEngine]") {
+TEST_CASE("3dd deletes three lines", "[Engine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\nthree\nfour\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "3dd");
     REQUIRE(buffer.Text() == "four\n");
 }
 
-TEST_CASE("ciw changes the word under point and enters Insert mode", "[VimEngine]") {
+TEST_CASE("ciw changes the word under point and enters Insert mode", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar baz");
-    VimEngine engine;
+    Engine engine;
 
     buffer.SetPoint(5); // inside "bar"
     Feed(engine, buffer, "ciw");
@@ -134,18 +134,18 @@ TEST_CASE("ciw changes the word under point and enters Insert mode", "[VimEngine
     REQUIRE(engine.CurrentMode() == Mode::Normal);
 }
 
-TEST_CASE("di( deletes inside parens", "[VimEngine]") {
+TEST_CASE("di( deletes inside parens", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo(bar(baz)qux)end");
-    VimEngine engine;
+    Engine engine;
 
     buffer.SetPoint(9); // inside "baz"
     Feed(engine, buffer, "di(");
     REQUIRE(buffer.Text() == "foo(bar()qux)end");
 }
 
-TEST_CASE("ds strips an enclosing delimiter pair", "[VimEngine]") {
+TEST_CASE("ds strips an enclosing delimiter pair", "[Engine]") {
     Buffer    buffer = MakeBuffer("x = \"hello\" + 1");
-    VimEngine engine;
+    Engine engine;
 
     buffer.SetPoint(6); // inside "hello"
     Feed(engine, buffer, "ds\"");
@@ -153,18 +153,18 @@ TEST_CASE("ds strips an enclosing delimiter pair", "[VimEngine]") {
     REQUIRE(engine.CurrentMode() == Mode::Normal);
 }
 
-TEST_CASE("cs changes an enclosing delimiter pair and pads an opening-bracket target", "[VimEngine]") {
+TEST_CASE("cs changes an enclosing delimiter pair and pads an opening-bracket target", "[Engine]") {
     Buffer    buffer = MakeBuffer("say \"hi\" now");
-    VimEngine engine;
+    Engine engine;
 
     buffer.SetPoint(6);
     Feed(engine, buffer, "cs\"(");
     REQUIRE(buffer.Text() == "say ( hi ) now");
 }
 
-TEST_CASE("ysiw surrounds the word under point with the given delimiter", "[VimEngine]") {
+TEST_CASE("ysiw surrounds the word under point with the given delimiter", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar baz");
-    VimEngine engine;
+    Engine engine;
 
     buffer.SetPoint(5); // inside "bar"
     Feed(engine, buffer, "ysiw)");
@@ -172,35 +172,35 @@ TEST_CASE("ysiw surrounds the word under point with the given delimiter", "[VimE
     REQUIRE(engine.CurrentMode() == Mode::Normal);
 }
 
-TEST_CASE("yss surrounds the current line's content, skipping only leading indentation", "[VimEngine]") {
+TEST_CASE("yss surrounds the current line's content, skipping only leading indentation", "[Engine]") {
     Buffer    buffer = MakeBuffer("  hello world  \n");
-    VimEngine engine;
+    Engine engine;
 
     buffer.SetPoint(2);
     Feed(engine, buffer, "yss\"");
     REQUIRE(buffer.Text() == "  \"hello world  \"\n");
 }
 
-TEST_CASE("Visual S surrounds the selected charwise range, padding an opening-bracket target", "[VimEngine]") {
+TEST_CASE("Visual S surrounds the selected charwise range, padding an opening-bracket target", "[Engine]") {
     Buffer    buffer = MakeBuffer("abcdef");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "vllS(");
     REQUIRE(buffer.Text() == "( abc )def");
     REQUIRE(engine.CurrentMode() == Mode::Normal);
 }
 
-TEST_CASE("yy then p yanks and pastes a whole line below", "[VimEngine]") {
+TEST_CASE("yy then p yanks and pastes a whole line below", "[Engine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "yyp");
     REQUIRE(buffer.Text() == "one\none\ntwo\n");
 }
 
-TEST_CASE("yw then P pastes charwise text before point", "[VimEngine]") {
+TEST_CASE("yw then P pastes charwise text before point", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "yw");
     Feed(engine, buffer, "$"); // go to end of line
@@ -208,9 +208,9 @@ TEST_CASE("yw then P pastes charwise text before point", "[VimEngine]") {
     REQUIRE(buffer.Text() == "foo bafoo r");
 }
 
-TEST_CASE("x deletes a character forward and u undoes it", "[VimEngine]") {
+TEST_CASE("x deletes a character forward and u undoes it", "[Engine]") {
     Buffer    buffer = MakeBuffer("abc");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "x");
     REQUIRE(buffer.Text() == "bc");
@@ -218,9 +218,9 @@ TEST_CASE("x deletes a character forward and u undoes it", "[VimEngine]") {
     REQUIRE(buffer.Text() == "abc");
 }
 
-TEST_CASE("A appends at end of line and o opens a new line below", "[VimEngine]") {
+TEST_CASE("A appends at end of line and o opens a new line below", "[Engine]") {
     Buffer    buffer = MakeBuffer("abc");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "A123\x1b");
     REQUIRE(buffer.Text() == "abc123");
@@ -229,17 +229,17 @@ TEST_CASE("A appends at end of line and o opens a new line below", "[VimEngine]"
     REQUIRE(buffer.Text() == "abc123\nnew");
 }
 
-TEST_CASE("O opens a new line above", "[VimEngine]") {
+TEST_CASE("O opens a new line above", "[Engine]") {
     Buffer    buffer = MakeBuffer("abc");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "Onew\x1b");
     REQUIRE(buffer.Text() == "new\nabc");
 }
 
-TEST_CASE("Dot repeats the last change", "[VimEngine]") {
+TEST_CASE("Dot repeats the last change", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar baz qux");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "dw");
     REQUIRE(buffer.Text() == "bar baz qux");
@@ -247,9 +247,9 @@ TEST_CASE("Dot repeats the last change", "[VimEngine]") {
     REQUIRE(buffer.Text() == "baz qux");
 }
 
-TEST_CASE("A count typed before dot overrides the recorded change's own count", "[VimEngine]") {
+TEST_CASE("A count typed before dot overrides the recorded change's own count", "[Engine]") {
     Buffer    buffer = MakeBuffer("aaaa bbbb cccc dddd eeee ffff");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "dw"); // deletes one word ("aaaa ")
     REQUIRE(buffer.Text() == "bbbb cccc dddd eeee ffff");
@@ -257,9 +257,9 @@ TEST_CASE("A count typed before dot overrides the recorded change's own count", 
     REQUIRE(buffer.Text() == "eeee ffff");
 }
 
-TEST_CASE("An override count typed before dot becomes the new recorded count for a later bare dot", "[VimEngine]") {
+TEST_CASE("An override count typed before dot becomes the new recorded count for a later bare dot", "[Engine]") {
     Buffer    buffer = MakeBuffer("a b c d e f g h i j");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "dw"); // deletes "a "
     Feed(engine, buffer, "2."); // overridden: delete 2 words ("b c ")
@@ -268,9 +268,9 @@ TEST_CASE("An override count typed before dot becomes the new recorded count for
     REQUIRE(buffer.Text() == "f g h i j");
 }
 
-TEST_CASE("Dot repeats an insert-causing change verbatim", "[VimEngine]") {
+TEST_CASE("Dot repeats an insert-causing change verbatim", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo\nbar\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "AX\x1b");
     REQUIRE(buffer.Text() == "fooX\nbar\n");
@@ -278,26 +278,26 @@ TEST_CASE("Dot repeats an insert-causing change verbatim", "[VimEngine]") {
     REQUIRE(buffer.Text() == "fooX\nbarX\n");
 }
 
-TEST_CASE("Visual mode d deletes the selected inclusive range", "[VimEngine]") {
+TEST_CASE("Visual mode d deletes the selected inclusive range", "[Engine]") {
     Buffer    buffer = MakeBuffer("abcdef");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "vlld"); // select 'a','b','c' then delete
     REQUIRE(buffer.Text() == "def");
     REQUIRE(engine.CurrentMode() == Mode::Normal);
 }
 
-TEST_CASE("Visual line mode d deletes whole lines", "[VimEngine]") {
+TEST_CASE("Visual line mode d deletes whole lines", "[Engine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "Vjd");
     REQUIRE(buffer.Text() == "three\n");
 }
 
-TEST_CASE("Named register a stores and pastes independently of unnamed", "[VimEngine]") {
+TEST_CASE("Named register a stores and pastes independently of unnamed", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "\"ayw"); // yank "foo " into register a
     Feed(engine, buffer, "dw");    // delete "foo " via unnamed (now unnamed holds "foo ")
@@ -306,9 +306,9 @@ TEST_CASE("Named register a stores and pastes independently of unnamed", "[VimEn
     REQUIRE(buffer.Text() == "bfoo ar");
 }
 
-TEST_CASE("Search with / finds the next match and n repeats", "[VimEngine]") {
+TEST_CASE("Search with / finds the next match and n repeats", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar foo baz foo");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "/foo\n");
     // First "/foo" search from point 0 should wrap and land on the second occurrence
@@ -320,9 +320,9 @@ TEST_CASE("Search with / finds the next match and n repeats", "[VimEngine]") {
     REQUIRE(buffer.Point() == 0);
 }
 
-TEST_CASE("Search with / accepts vim's own default-magic escaping for grouping/quantifiers", "[VimEngine]") {
+TEST_CASE("Search with / accepts vim's own default-magic escaping for grouping/quantifiers", "[Engine]") {
     Buffer    buffer = MakeBuffer("xx foobar yy foobarbar zz");
-    VimEngine engine;
+    Engine engine;
 
     // \(foo\|baz\)\(bar\)\+ -- vim-magic source; real PCRE2 spelling would be
     // (foo|baz)(bar)+.
@@ -332,65 +332,65 @@ TEST_CASE("Search with / accepts vim's own default-magic escaping for grouping/q
     REQUIRE(buffer.Point() == 13); // "foobarbar", which \(bar\)\+ also matches
 }
 
-TEST_CASE(":s accepts vim's own default-magic escaping for grouping/quantifiers", "[VimEngine]") {
+TEST_CASE(":s accepts vim's own default-magic escaping for grouping/quantifiers", "[Engine]") {
     Buffer    buffer = MakeBuffer("foobar\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":s/\\(foo\\)\\(bar\\)/\\2\\1/\n");
     REQUIRE(buffer.Text() == "barfoo\n");
 }
 
-TEST_CASE(":g accepts vim's own default-magic escaping for grouping/quantifiers", "[VimEngine]") {
+TEST_CASE(":g accepts vim's own default-magic escaping for grouping/quantifiers", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo\nbar\nfoobar\nbaz\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":g/foo\\|baz/d\n");
     REQUIRE(buffer.Text() == "bar\n");
 }
 
-TEST_CASE(":s accepts vim's own \\{n,m} interval quantifier", "[VimEngine]") {
+TEST_CASE(":s accepts vim's own \\{n,m} interval quantifier", "[Engine]") {
     Buffer    buffer = MakeBuffer("aaaa\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":s/a\\{2,3}/X/\n");
     REQUIRE(buffer.Text() == "Xa\n"); // greedy -- consumes 3 of the 4 a's
 }
 
-TEST_CASE(":d deletes the addressed range", "[VimEngine]") {
+TEST_CASE(":d deletes the addressed range", "[Engine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\nthree\nfour\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":2,3d\n");
     REQUIRE(buffer.Text() == "one\nfour\n");
 }
 
-TEST_CASE(":s substitutes the first match per line without /g", "[VimEngine]") {
+TEST_CASE(":s substitutes the first match per line without /g", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo foo\nfoo foo\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":%s/foo/bar/\n");
     REQUIRE(buffer.Text() == "bar foo\nbar foo\n");
 }
 
-TEST_CASE(":%s with /g substitutes every match", "[VimEngine]") {
+TEST_CASE(":%s with /g substitutes every match", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo foo\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":%s/foo/bar/g\n");
     REQUIRE(buffer.Text() == "bar bar\n");
 }
 
-TEST_CASE("A bare :42 jumps to that line", "[VimEngine]") {
+TEST_CASE("A bare :42 jumps to that line", "[Engine]") {
     Buffer    buffer = MakeBuffer("a\nb\nc\nd\ne\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":3\n");
     REQUIRE(buffer.Point() == buffer.Content().LineToByteOffset(2));
 }
 
-TEST_CASE("Macro recording and playback via qX ... q and @X", "[VimEngine]") {
+TEST_CASE("Macro recording and playback via qX ... q and @X", "[Engine]") {
     Buffer    buffer = MakeBuffer("a\na\na\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "qaA!\x1bjq"); // record: append "!" to line, move down
     REQUIRE(buffer.Text() == "a!\na\na\n");
@@ -400,9 +400,9 @@ TEST_CASE("Macro recording and playback via qX ... q and @X", "[VimEngine]") {
     REQUIRE(buffer.Text() == "a!\na!\na!\n");
 }
 
-TEST_CASE("Hand-edited register text drives @ playback, not just qX...q's own recording", "[VimEngine]") {
+TEST_CASE("Hand-edited register text drives @ playback, not just qX...q's own recording", "[Engine]") {
     Buffer    buffer = MakeBuffer("a\nA ? ESC\n");
-    VimEngine engine;
+    Engine engine;
 
     // Yanks the second line's own literal text ("A ? ESC", valid Emacs kbd notation for
     // append-'?'-then-escape) into register 'a', the way a user could hand-craft or
@@ -413,9 +413,9 @@ TEST_CASE("Hand-edited register text drives @ playback, not just qX...q's own re
     REQUIRE(buffer.Text() == "a?\nA ? ESC\n");
 }
 
-TEST_CASE("Uppercase-name recording appends onto the register's existing text", "[VimEngine]") {
+TEST_CASE("Uppercase-name recording appends onto the register's existing text", "[Engine]") {
     Buffer    buffer = MakeBuffer("a\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "qaA1\x1bq"); // record 'a': append "1"
     Feed(engine, buffer, "qAA2\x1bq"); // append-record 'A' onto 'a': append "2"
@@ -426,9 +426,9 @@ TEST_CASE("Uppercase-name recording appends onto the register's existing text", 
     REQUIRE(fresh.Text() == "b12\n");
 }
 
-TEST_CASE("Playing a register that isn't valid kbd notation reports an error instead of crashing", "[VimEngine]") {
+TEST_CASE("Playing a register that isn't valid kbd notation reports an error instead of crashing", "[Engine]") {
     Buffer    buffer = MakeBuffer("<not valid!\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "\"ayy"); // yank a line that can't parse as a chord sequence
     Feed(engine, buffer, "@a");
@@ -436,17 +436,17 @@ TEST_CASE("Playing a register that isn't valid kbd notation reports an error ins
     REQUIRE(buffer.Text() == "<not valid!\n"); // untouched
 }
 
-TEST_CASE("gUU uppercases the current line", "[VimEngine]") {
+TEST_CASE("gUU uppercases the current line", "[Engine]") {
     Buffer    buffer = MakeBuffer("hello world");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "gUU");
     REQUIRE(buffer.Text() == "HELLO WORLD");
 }
 
-TEST_CASE("Marks: ma ... `a jumps back", "[VimEngine]") {
+TEST_CASE("Marks: ma ... `a jumps back", "[Engine]") {
     Buffer    buffer = MakeBuffer("abcdefghij");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "llma");
     Feed(engine, buffer, "$");
@@ -455,9 +455,9 @@ TEST_CASE("Marks: ma ... `a jumps back", "[VimEngine]") {
     REQUIRE(buffer.Point() == 2);
 }
 
-TEST_CASE("`` toggles between the last two jump positions", "[VimEngine]") {
+TEST_CASE("`` toggles between the last two jump positions", "[Engine]") {
     Buffer    buffer = MakeBuffer("a\nb\nc\nd\ne\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "G"); // jump to the last line, recording the jump-back mark at 0
     const std::size_t afterG = buffer.Point();
@@ -468,13 +468,13 @@ TEST_CASE("`` toggles between the last two jump positions", "[VimEngine]") {
     REQUIRE(buffer.Point() == afterG);
 }
 
-TEST_CASE("An uppercase mark resolves locally when the target file is already the open buffer", "[VimEngine]") {
+TEST_CASE("An uppercase mark resolves locally when the target file is already the open buffer", "[Engine]") {
     ClearGlobalMarksForTesting();
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_vim_global_mark_local.txt";
     Buffer                      buffer = Buffer::NewFile(path);
     buffer.InsertAtPoint("abcdefghij");
     buffer.SetPoint(0);
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "llmA"); // mark 'A' at point 2
     Feed(engine, buffer, "$");
@@ -484,7 +484,7 @@ TEST_CASE("An uppercase mark resolves locally when the target file is already th
     REQUIRE_FALSE(engine.TakePendingBufferJump().has_value()); // resolved locally, no cross-file signal
 }
 
-TEST_CASE("An uppercase mark set in one file signals a pending buffer jump when read from another", "[VimEngine]") {
+TEST_CASE("An uppercase mark set in one file signals a pending buffer jump when read from another", "[Engine]") {
     ClearGlobalMarksForTesting();
     const std::filesystem::path pathA = std::filesystem::temp_directory_path() / "ned_vim_global_mark_a.txt";
     const std::filesystem::path pathB = std::filesystem::temp_directory_path() / "ned_vim_global_mark_b.txt";
@@ -492,7 +492,7 @@ TEST_CASE("An uppercase mark set in one file signals a pending buffer jump when 
     Buffer bufferA = Buffer::NewFile(pathA);
     bufferA.InsertAtPoint("hello world");
     bufferA.SetPoint(6); // start of "world"
-    VimEngine engine;
+    Engine engine;
     Feed(engine, bufferA, "mB");
     REQUIRE_FALSE(engine.TakePendingBufferJump().has_value()); // setting a mark never itself jumps
 
@@ -511,10 +511,10 @@ TEST_CASE("An uppercase mark set in one file signals a pending buffer jump when 
     REQUIRE_FALSE(engine.TakePendingBufferJump().has_value()); // one-shot -- already consumed
 }
 
-TEST_CASE("An unset uppercase mark reports E20 like any other unset mark", "[VimEngine]") {
+TEST_CASE("An unset uppercase mark reports E20 like any other unset mark", "[Engine]") {
     ClearGlobalMarksForTesting();
     Buffer    buffer = MakeBuffer("abcdefghij");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "`Z");
     REQUIRE(engine.StatusText() == "E20: Mark not set");
@@ -522,9 +522,9 @@ TEST_CASE("An unset uppercase mark reports E20 like any other unset mark", "[Vim
     REQUIRE_FALSE(engine.TakePendingBufferJump().has_value());
 }
 
-TEST_CASE("Lowercase marks don't leak across a buffer switch in the same pane", "[VimEngine]") {
+TEST_CASE("Lowercase marks don't leak across a buffer switch in the same pane", "[Engine]") {
     Buffer    bufferA = MakeBuffer("abcdefghij");
-    VimEngine engine;
+    Engine engine;
     Feed(engine, bufferA, "llma"); // mark 'a' at point 2 in bufferA
 
     Buffer bufferB = MakeBuffer("0123456789012345");
@@ -535,9 +535,9 @@ TEST_CASE("Lowercase marks don't leak across a buffer switch in the same pane", 
     REQUIRE(bufferB.Point() == 0); // the stale mark from bufferA must not silently apply here
 }
 
-TEST_CASE("g; and g, walk the changelist back and forward through edit positions", "[VimEngine]") {
+TEST_CASE("g; and g, walk the changelist back and forward through edit positions", "[Engine]") {
     Buffer    buffer = MakeBuffer("aaaa\nbbbb\ncccc\ndddd\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "x");  // edit on line 0
     Feed(engine, buffer, "jx"); // edit on line 1
@@ -561,9 +561,9 @@ TEST_CASE("g; and g, walk the changelist back and forward through edit positions
     REQUIRE(buffer.Point() == line2Point);
 }
 
-TEST_CASE("Consecutive edits on the same line collapse into one changelist entry", "[VimEngine]") {
+TEST_CASE("Consecutive edits on the same line collapse into one changelist entry", "[Engine]") {
     Buffer    buffer = MakeBuffer("abcabc\ndef\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "x");   // edit on line 0 at byte 0
     Feed(engine, buffer, "llx"); // a second edit, still on line 0, at byte 2 -- collapses
@@ -575,9 +575,9 @@ TEST_CASE("Consecutive edits on the same line collapse into one changelist entry
     REQUIRE(buffer.Point() == 2);
 }
 
-TEST_CASE("C-o/C-i walk the jumplist back and forward through G/gg jumps", "[VimEngine]") {
+TEST_CASE("C-o/C-i walk the jumplist back and forward through G/gg jumps", "[Engine]") {
     Buffer    buffer = MakeBuffer("a\nb\nc\nd\ne\n");
-    VimEngine engine;
+    Engine engine;
 
     const std::size_t start = buffer.Point();
     Feed(engine, buffer, "G"); // jump to the last line
@@ -601,9 +601,9 @@ TEST_CASE("C-o/C-i walk the jumplist back and forward through G/gg jumps", "[Vim
     REQUIRE(buffer.Point() == start);
 }
 
-TEST_CASE("C-o records the live position on first use, like ``'s own toggle", "[VimEngine]") {
+TEST_CASE("C-o records the live position on first use, like ``'s own toggle", "[Engine]") {
     Buffer    buffer = MakeBuffer("a\nb\nc\nd\ne\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "G");
     const std::size_t afterG = buffer.Point();
@@ -617,9 +617,9 @@ TEST_CASE("C-o records the live position on first use, like ``'s own toggle", "[
     REQUIRE(buffer.Point() == liveBeforeJump);
 }
 
-TEST_CASE("A new jump after C-o truncates the jumplist's forward history", "[VimEngine]") {
+TEST_CASE("A new jump after C-o truncates the jumplist's forward history", "[Engine]") {
     Buffer    buffer = MakeBuffer("abcdefghij");
-    VimEngine engine;
+    Engine engine;
 
     // marks a=1, b=2, c=3, d=4; back to point 0 to jump from.
     Feed(engine, buffer, "lmalmblmclmd0");
@@ -642,9 +642,9 @@ TEST_CASE("A new jump after C-o truncates the jumplist's forward history", "[Vim
     REQUIRE(buffer.Point() == 0);
 }
 
-TEST_CASE("ge moves to the end of the previous word", "[VimEngine]") {
+TEST_CASE("ge moves to the end of the previous word", "[Engine]") {
     Buffer    buffer = MakeBuffer("abc def");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "$"); // land on 'f', end of "def"
     REQUIRE(buffer.Point() == 6);
@@ -652,17 +652,17 @@ TEST_CASE("ge moves to the end of the previous word", "[VimEngine]") {
     REQUIRE(buffer.Point() == 2); // 'c', end of "abc"
 }
 
-TEST_CASE("dge deletes back to the end of the previous word", "[VimEngine]") {
+TEST_CASE("dge deletes back to the end of the previous word", "[Engine]") {
     Buffer    buffer = MakeBuffer("abc def");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "$dge");
     REQUIRE(buffer.Text() == "ab");
 }
 
-TEST_CASE("gv reselects the last visual selection", "[VimEngine]") {
+TEST_CASE("gv reselects the last visual selection", "[Engine]") {
     Buffer    buffer = MakeBuffer("abcdef");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "vll\x1b"); // select 'a','b','c' then leave Visual via Escape
     REQUIRE(engine.CurrentMode() == Mode::Normal);
@@ -673,33 +673,33 @@ TEST_CASE("gv reselects the last visual selection", "[VimEngine]") {
     REQUIRE(buffer.Text() == "def");
 }
 
-TEST_CASE(":g/pat/d deletes every matching line", "[VimEngine]") {
+TEST_CASE(":g/pat/d deletes every matching line", "[Engine]") {
     Buffer    buffer = MakeBuffer("keep\nDROP\nkeep\nDROP\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":g/DROP/d\n");
     REQUIRE(buffer.Text() == "keep\nkeep\n");
 }
 
-TEST_CASE(":g!/pat/d deletes every non-matching line", "[VimEngine]") {
+TEST_CASE(":g!/pat/d deletes every non-matching line", "[Engine]") {
     Buffer    buffer = MakeBuffer("keep\nDROP\nkeep\nDROP\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":g!/DROP/d\n");
     REQUIRE(buffer.Text() == "DROP\nDROP\n");
 }
 
-TEST_CASE(":g/pat/s applies a substitute on every matching line", "[VimEngine]") {
+TEST_CASE(":g/pat/s applies a substitute on every matching line", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo one\nbar two\nfoo three\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":g/foo/s/foo/baz/\n");
     REQUIRE(buffer.Text() == "baz one\nbar two\nbaz three\n");
 }
 
-TEST_CASE("Visual block > shifts every touched line", "[VimEngine]") {
+TEST_CASE("Visual block > shifts every touched line", "[Engine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
-    VimEngine engine;
+    Engine engine;
 
     engine.HandleKey(buffer, CtrlV()); // enter Visual Block at line 0
     Feed(engine, buffer, "j>");        // extend down one line, shift right
@@ -707,9 +707,9 @@ TEST_CASE("Visual block > shifts every touched line", "[VimEngine]") {
     REQUIRE(buffer.Text() == indent + "one\n" + indent + "two\nthree\n"); // third line untouched
 }
 
-TEST_CASE("Visual block U uppercases the selected columns only", "[VimEngine]") {
+TEST_CASE("Visual block U uppercases the selected columns only", "[Engine]") {
     Buffer    buffer = MakeBuffer("abcdef\nghijkl\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "l");         // col 1
     engine.HandleKey(buffer, CtrlV()); // enter Visual Block at (line 0, col 1)
@@ -717,9 +717,9 @@ TEST_CASE("Visual block U uppercases the selected columns only", "[VimEngine]") 
     REQUIRE(buffer.Text() == "aBCdef\ngHIjkl\n");
 }
 
-TEST_CASE("tilde toggles case of count characters and advances", "[VimEngine]") {
+TEST_CASE("tilde toggles case of count characters and advances", "[Engine]") {
     Buffer    buffer = MakeBuffer("abcDEF");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "~");
     REQUIRE(buffer.Text() == "AbcDEF");
@@ -729,18 +729,18 @@ TEST_CASE("tilde toggles case of count characters and advances", "[VimEngine]") 
     REQUIRE(buffer.Point() == 4);
 }
 
-TEST_CASE("tilde at end of line does not advance past the last character", "[VimEngine]") {
+TEST_CASE("tilde at end of line does not advance past the last character", "[Engine]") {
     Buffer    buffer = MakeBuffer("ab");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "$~");
     REQUIRE(buffer.Text() == "aB");
     REQUIRE(buffer.Point() == 1); // stays on 'B', doesn't rest past line end
 }
 
-TEST_CASE("R enters Replace mode and overtypes characters", "[VimEngine]") {
+TEST_CASE("R enters Replace mode and overtypes characters", "[Engine]") {
     Buffer    buffer = MakeBuffer("abcdef");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "RXY");
     REQUIRE(engine.CurrentMode() == Mode::Replace);
@@ -750,9 +750,9 @@ TEST_CASE("R enters Replace mode and overtypes characters", "[VimEngine]") {
     REQUIRE(buffer.Point() == 1); // Escape moves back one grapheme, matching Insert's own rule
 }
 
-TEST_CASE("Insert-mode C-w deletes the word before point", "[VimEngine]") {
+TEST_CASE("Insert-mode C-w deletes the word before point", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "A"); // point at end of line, Insert mode
     REQUIRE(engine.CurrentMode() == Mode::Insert);
@@ -760,18 +760,18 @@ TEST_CASE("Insert-mode C-w deletes the word before point", "[VimEngine]") {
     REQUIRE(buffer.Text() == "foo ");
 }
 
-TEST_CASE("Insert-mode C-u deletes back to the start of the line", "[VimEngine]") {
+TEST_CASE("Insert-mode C-u deletes back to the start of the line", "[Engine]") {
     Buffer    buffer = MakeBuffer("  indented text");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "A");
     REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U'u')));
     REQUIRE(buffer.Text().empty());
 }
 
-TEST_CASE("Insert-mode C-t/C-d indent and outdent the current line", "[VimEngine]") {
+TEST_CASE("Insert-mode C-t/C-d indent and outdent the current line", "[Engine]") {
     Buffer    buffer = MakeBuffer("line");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "i"); // point at 0, Insert mode
     REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U't')));
@@ -784,9 +784,9 @@ TEST_CASE("Insert-mode C-t/C-d indent and outdent the current line", "[VimEngine
     REQUIRE(buffer.Point() == 0);
 }
 
-TEST_CASE("Insert-mode C-r inserts a register's contents and stays in Insert mode", "[VimEngine]") {
+TEST_CASE("Insert-mode C-r inserts a register's contents and stays in Insert mode", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "\"ayw"); // yank "foo " into register a
     Feed(engine, buffer, "$a");    // enter Insert at end of line
@@ -797,14 +797,14 @@ TEST_CASE("Insert-mode C-r inserts a register's contents and stays in Insert mod
     REQUIRE(buffer.Text() == "foo barfoo ");
 }
 
-TEST_CASE("Insert-mode Ctrl-chords don't leak into ordinary typing/replay", "[VimEngine]") {
+TEST_CASE("Insert-mode Ctrl-chords don't leak into ordinary typing/replay", "[Engine]") {
     // A chord this codebase's own Emacs bindings would otherwise claim (C-a is
     // beginning-of-line) must never reach the ordinary Dispatcher while a vim Insert
     // session is live -- HandleInsertModeChord returning false is the caller's (real
     // BufferView's) cue to fall through, but a chord with no vim-insert binding at all
     // (like C-a) should still just return false here, unconsumed and unmutating.
     Buffer    buffer = MakeBuffer("text");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "A");
     REQUIRE_FALSE(engine.HandleInsertModeChord(buffer, Ctrl(U'a')));
@@ -827,9 +827,9 @@ std::size_t PointLine(Buffer& buffer) {
 
 } // namespace
 
-TEST_CASE("C-d/C-u scroll point by a half page", "[VimEngine]") {
+TEST_CASE("C-d/C-u scroll point by a half page", "[Engine]") {
     Buffer    buffer = MakeNumberedLineBuffer(40);
-    VimEngine engine;
+    Engine engine;
     engine.SetViewport(0, 10); // half page == 5 lines
 
     engine.HandleKey(buffer, Ctrl(U'd'));
@@ -842,9 +842,9 @@ TEST_CASE("C-d/C-u scroll point by a half page", "[VimEngine]") {
     REQUIRE(PointLine(buffer) == 5);
 }
 
-TEST_CASE("C-f/C-b scroll point by a full page", "[VimEngine]") {
+TEST_CASE("C-f/C-b scroll point by a full page", "[Engine]") {
     Buffer    buffer = MakeNumberedLineBuffer(40);
-    VimEngine engine;
+    Engine engine;
     engine.SetViewport(0, 10);
 
     engine.HandleKey(buffer, Ctrl(U'f'));
@@ -854,9 +854,9 @@ TEST_CASE("C-f/C-b scroll point by a full page", "[VimEngine]") {
     REQUIRE(PointLine(buffer) == 0);
 }
 
-TEST_CASE("zz/zt/zb request an explicit topLine_ recenter", "[VimEngine]") {
+TEST_CASE("zz/zt/zb request an explicit topLine_ recenter", "[Engine]") {
     Buffer    buffer = MakeNumberedLineBuffer(40);
-    VimEngine engine;
+    Engine engine;
     engine.SetViewport(0, 10);
     buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(20, 0, 1));
 
@@ -871,9 +871,9 @@ TEST_CASE("zz/zt/zb request an explicit topLine_ recenter", "[VimEngine]") {
     REQUIRE(engine.TakePendingTopLine() == std::optional<std::size_t>(11)); // 20 - height + 1
 }
 
-TEST_CASE("C-e/C-y scroll the viewport without moving point", "[VimEngine]") {
+TEST_CASE("C-e/C-y scroll the viewport without moving point", "[Engine]") {
     Buffer    buffer = MakeNumberedLineBuffer(40);
-    VimEngine engine;
+    Engine engine;
     engine.SetViewport(5, 10);
     buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(7, 0, 1));
 
@@ -887,9 +887,9 @@ TEST_CASE("C-e/C-y scroll the viewport without moving point", "[VimEngine]") {
     REQUIRE(PointLine(buffer) == 7);
 }
 
-TEST_CASE("ZZ saves and requests CloseBuffer", "[VimEngine]") {
+TEST_CASE("ZZ saves and requests CloseBuffer", "[Engine]") {
     Buffer    buffer = MakeBuffer("content\n");
-    VimEngine engine;
+    Engine engine;
     buffer.SetPath(std::filesystem::temp_directory_path() / "ned_vimengine_test_zz.txt");
 
     Feed(engine, buffer, "ZZ");
@@ -898,26 +898,26 @@ TEST_CASE("ZZ saves and requests CloseBuffer", "[VimEngine]") {
     std::filesystem::remove(*buffer.Path());
 }
 
-TEST_CASE("ZQ requests CloseBuffer without saving", "[VimEngine]") {
+TEST_CASE("ZQ requests CloseBuffer without saving", "[Engine]") {
     Buffer    buffer = MakeBuffer("content\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "ZQ");
     REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseBuffer);
 }
 
-TEST_CASE("gJ joins without inserting a space", "[VimEngine]") {
+TEST_CASE("gJ joins without inserting a space", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo\nbar\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "g");
     engine.HandleKey(buffer, Ch(U'J'));
     REQUIRE(buffer.Text() == "foobar\n");
 }
 
-TEST_CASE("gi resumes Insert where it was last exited", "[VimEngine]") {
+TEST_CASE("gi resumes Insert where it was last exited", "[Engine]") {
     Buffer    buffer = MakeBuffer("abcdef");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "llli"); // point at 3, enter Insert
     REQUIRE(engine.CurrentMode() == Mode::Insert);
@@ -932,69 +932,69 @@ TEST_CASE("gi resumes Insert where it was last exited", "[VimEngine]") {
     REQUIRE(buffer.Point() == 6); // right after "XYZ", where Insert was left
 }
 
-TEST_CASE("C-a increments the number under/after point", "[VimEngine]") {
+TEST_CASE("C-a increments the number under/after point", "[Engine]") {
     Buffer    buffer = MakeBuffer("count: 41");
-    VimEngine engine;
+    Engine engine;
 
     engine.HandleKey(buffer, Ctrl(U'a'));
     REQUIRE(buffer.Text() == "count: 42");
 }
 
-TEST_CASE("C-x decrements the number under/after point", "[VimEngine]") {
+TEST_CASE("C-x decrements the number under/after point", "[Engine]") {
     Buffer    buffer = MakeBuffer("count: 41");
-    VimEngine engine;
+    Engine engine;
 
     engine.HandleKey(buffer, Ctrl(U'x'));
     REQUIRE(buffer.Text() == "count: 40");
 }
 
-TEST_CASE("C-a/C-x preserve zero-padded width and handle sign crossing", "[VimEngine]") {
+TEST_CASE("C-a/C-x preserve zero-padded width and handle sign crossing", "[Engine]") {
     Buffer    buffer1 = MakeBuffer("id 007");
-    VimEngine engine1;
+    Engine engine1;
     engine1.HandleKey(buffer1, Ctrl(U'a'));
     REQUIRE(buffer1.Text() == "id 008");
 
     Buffer    buffer2 = MakeBuffer("x = -3");
-    VimEngine engine2;
+    Engine engine2;
     engine2.HandleKey(buffer2, Ctrl(U'a'));
     REQUIRE(buffer2.Text() == "x = -2");
 
     Buffer    buffer3 = MakeBuffer("y = 2");
-    VimEngine engine3;
+    Engine engine3;
     Feed(engine3, buffer3, "5"); // count = 5
     engine3.HandleKey(buffer3, Ctrl(U'x'));
     REQUIRE(buffer3.Text() == "y = -3"); // crosses zero, sign gets added
 }
 
-TEST_CASE("count applies to C-a/C-x", "[VimEngine]") {
+TEST_CASE("count applies to C-a/C-x", "[Engine]") {
     Buffer    buffer = MakeBuffer("n=10");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "5");
     engine.HandleKey(buffer, Ctrl(U'a'));
     REQUIRE(buffer.Text() == "n=15");
 }
 
-TEST_CASE(":j joins a range of lines", "[VimEngine]") {
+TEST_CASE(":j joins a range of lines", "[Engine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":1,2j\n");
     REQUIRE(buffer.Text() == "one two\nthree\n");
 }
 
-TEST_CASE(":y yanks a range into a named register", "[VimEngine]") {
+TEST_CASE(":y yanks a range into a named register", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo\nbar\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":y a\n");
     Feed(engine, buffer, "\"ap");
     REQUIRE(buffer.Text() == "foo\nfoo\nbar\n");
 }
 
-TEST_CASE(":pu pastes the unnamed register as lines after the target", "[VimEngine]") {
+TEST_CASE(":pu pastes the unnamed register as lines after the target", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo\nbar\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "yy"); // yank "foo" into the unnamed register
     Feed(engine, buffer, "j");  // move to "bar"
@@ -1002,9 +1002,9 @@ TEST_CASE(":pu pastes the unnamed register as lines after the target", "[VimEngi
     REQUIRE(buffer.Text() == "foo\nbar\nfoo\n");
 }
 
-TEST_CASE(":put! pastes before the target line", "[VimEngine]") {
+TEST_CASE(":put! pastes before the target line", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo\nbar\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "yy");
     Feed(engine, buffer, "j");
@@ -1012,9 +1012,9 @@ TEST_CASE(":put! pastes before the target line", "[VimEngine]") {
     REQUIRE(buffer.Text() == "foo\nfoo\nbar\n");
 }
 
-TEST_CASE(":> and :< shift a range of lines", "[VimEngine]") {
+TEST_CASE(":> and :< shift a range of lines", "[Engine]") {
     Buffer            buffer = MakeBuffer("a\nb\nc\n");
-    VimEngine         engine;
+    Engine         engine;
     const std::string indent = std::string(static_cast<std::size_t>(ned::editor::TabWidth()), ' ');
 
     Feed(engine, buffer, ":2>\n");
@@ -1024,25 +1024,25 @@ TEST_CASE(":> and :< shift a range of lines", "[VimEngine]") {
     REQUIRE(buffer.Text() == "a\nb\nc\n");
 }
 
-TEST_CASE(":m moves a line to after the destination address", "[VimEngine]") {
+TEST_CASE(":m moves a line to after the destination address", "[Engine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":1m$\n");
     REQUIRE(buffer.Text() == "two\nthree\none\n");
 }
 
-TEST_CASE(":t/:copy duplicates a line after the destination address", "[VimEngine]") {
+TEST_CASE(":t/:copy duplicates a line after the destination address", "[Engine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":1t$\n");
     REQUIRE(buffer.Text() == "one\ntwo\nthree\none\n");
 }
 
-TEST_CASE(":sort sorts lines lexicographically, :sort! reverses", "[VimEngine]") {
+TEST_CASE(":sort sorts lines lexicographically, :sort! reverses", "[Engine]") {
     Buffer    buffer = MakeBuffer("banana\napple\ncherry\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":sort\n");
     REQUIRE(buffer.Text() == "apple\nbanana\ncherry\n");
@@ -1051,23 +1051,23 @@ TEST_CASE(":sort sorts lines lexicographically, :sort! reverses", "[VimEngine]")
     REQUIRE(buffer.Text() == "cherry\nbanana\napple\n");
 }
 
-TEST_CASE(":r reads a file's contents in after the target line", "[VimEngine]") {
+TEST_CASE(":r reads a file's contents in after the target line", "[Engine]") {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_vimengine_test_read.txt";
     {
         std::ofstream out(path, std::ios::binary);
         out << "inserted\n";
     }
     Buffer    buffer = MakeBuffer("one\ntwo\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":r " + path.string() + "\n");
     REQUIRE(buffer.Text() == "one\ninserted\ntwo\n");
     std::filesystem::remove(path);
 }
 
-TEST_CASE("& repeats the last :s on the current line only", "[VimEngine]") {
+TEST_CASE("& repeats the last :s on the current line only", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo\nfoo\nfoo\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":s/foo/bar/\n");
     REQUIRE(buffer.Text() == "bar\nfoo\nfoo\n");
@@ -1079,18 +1079,18 @@ TEST_CASE("& repeats the last :s on the current line only", "[VimEngine]") {
     REQUIRE(buffer.Text() == "bar\nbar\nbar\n");
 }
 
-TEST_CASE("dis deletes just the sentence, leaving surrounding whitespace intact", "[VimEngine]") {
+TEST_CASE("dis deletes just the sentence, leaving surrounding whitespace intact", "[Engine]") {
     Buffer    buffer = MakeBuffer("One. Two. Three.");
-    VimEngine engine;
+    Engine engine;
 
     buffer.SetPoint(6); // inside "Two."
     Feed(engine, buffer, "dis");
     REQUIRE(buffer.Text() == "One.  Three."); // both the space before and the one after remain
 }
 
-TEST_CASE("das also deletes the sentence's own trailing whitespace", "[VimEngine]") {
+TEST_CASE("das also deletes the sentence's own trailing whitespace", "[Engine]") {
     Buffer    buffer = MakeBuffer("One. Two. Three.");
-    VimEngine engine;
+    Engine engine;
 
     buffer.SetPoint(6);
     Feed(engine, buffer, "das");
@@ -1100,9 +1100,9 @@ TEST_CASE("das also deletes the sentence's own trailing whitespace", "[VimEngine
     REQUIRE(buffer.Text().find("  ") == std::string::npos);
 }
 
-TEST_CASE("dit/dat delete tag content, with/without the tags themselves", "[VimEngine]") {
+TEST_CASE("dit/dat delete tag content, with/without the tags themselves", "[Engine]") {
     Buffer    buffer = MakeBuffer("<div>hello</div>");
-    VimEngine engine;
+    Engine engine;
 
     buffer.SetPoint(7); // inside "hello"
     Feed(engine, buffer, "dit");
@@ -1115,34 +1115,34 @@ TEST_CASE("dit/dat delete tag content, with/without the tags themselves", "[VimE
     REQUIRE(buffer.Text().empty());
 }
 
-TEST_CASE("2diw deletes two words (a word plus the whitespace/word run after it)", "[VimEngine]") {
+TEST_CASE("2diw deletes two words (a word plus the whitespace/word run after it)", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar baz");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "2diw");
     REQUIRE(buffer.Text() == "bar baz");
 }
 
-TEST_CASE("d2iw behaves the same as 2diw", "[VimEngine]") {
+TEST_CASE("d2iw behaves the same as 2diw", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar baz");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "d2iw");
     REQUIRE(buffer.Text() == "bar baz");
 }
 
-TEST_CASE("The / register holds the last search pattern", "[VimEngine]") {
+TEST_CASE("The / register holds the last search pattern", "[Engine]") {
     Buffer    buffer = MakeBuffer("hello world");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "/world\n");
     Feed(engine, buffer, "0\"/p");
     REQUIRE(buffer.Text() == "hworldello world");
 }
 
-TEST_CASE("The : register holds the last ex command's raw text", "[VimEngine]") {
+TEST_CASE("The : register holds the last ex command's raw text", "[Engine]") {
     Buffer    buffer = MakeBuffer("hello");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, ":s/hello/hi/\n");
     REQUIRE(buffer.Text() == "hi");
@@ -1150,9 +1150,9 @@ TEST_CASE("The : register holds the last ex command's raw text", "[VimEngine]") 
     REQUIRE(buffer.Text() == "hs/hello/hi/i");
 }
 
-TEST_CASE("The . register holds the last inserted text", "[VimEngine]") {
+TEST_CASE("The . register holds the last inserted text", "[Engine]") {
     Buffer    buffer = MakeBuffer("world");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "iHello\x1b");
     REQUIRE(buffer.Text() == "Helloworld");
@@ -1160,27 +1160,27 @@ TEST_CASE("The . register holds the last inserted text", "[VimEngine]") {
     REQUIRE(buffer.Text() == "HelloworldHello");
 }
 
-TEST_CASE("The % register holds the buffer's own file path", "[VimEngine]") {
+TEST_CASE("The % register holds the buffer's own file path", "[Engine]") {
     Buffer    buffer = MakeBuffer("x");
-    VimEngine engine;
+    Engine engine;
     buffer.SetPath("/tmp/ned_vimengine_test_percent.txt");
 
     Feed(engine, buffer, "\"%p");
     REQUIRE(buffer.Text() == "x/tmp/ned_vimengine_test_percent.txt");
 }
 
-TEST_CASE("Special registers fall through to ordinary named storage for other names", "[VimEngine]") {
+TEST_CASE("Special registers fall through to ordinary named storage for other names", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "\"ayw"); // yank "foo " into register a
     Feed(engine, buffer, "$\"ap");
     REQUIRE(buffer.Text() == "foo barfoo ");
 }
 
-TEST_CASE("Insert-mode C-o executes one Normal command then resumes Insert", "[VimEngine]") {
+TEST_CASE("Insert-mode C-o executes one Normal command then resumes Insert", "[Engine]") {
     Buffer    buffer = MakeBuffer("abc");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "A"); // point at end (3), Insert mode
     engine.RecordInsertKey(Ctrl(U'o'));
@@ -1192,9 +1192,9 @@ TEST_CASE("Insert-mode C-o executes one Normal command then resumes Insert", "[V
     REQUIRE(buffer.Point() == 0);
 }
 
-TEST_CASE("Insert-mode C-o supports a full operator+motion before resuming", "[VimEngine]") {
+TEST_CASE("Insert-mode C-o supports a full operator+motion before resuming", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "i"); // Insert mode at point 0
     engine.RecordInsertKey(Ctrl(U'o'));
@@ -1208,9 +1208,9 @@ TEST_CASE("Insert-mode C-o supports a full operator+motion before resuming", "[V
     REQUIRE(buffer.Text() == "bar");
 }
 
-TEST_CASE("Insert-mode C-o followed by a mode-entering command doesn't corrupt later commands", "[VimEngine]") {
+TEST_CASE("Insert-mode C-o followed by a mode-entering command doesn't corrupt later commands", "[Engine]") {
     Buffer    buffer = MakeBuffer("ab\ncd\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "i"); // Insert at point 0 on line "ab"
     engine.RecordInsertKey(Ctrl(U'o'));
@@ -1227,9 +1227,9 @@ TEST_CASE("Insert-mode C-o followed by a mode-entering command doesn't corrupt l
     REQUIRE(engine.CurrentMode() == Mode::Normal);
 }
 
-TEST_CASE("Dot-repeat replays an Insert session that used C-o", "[VimEngine]") {
+TEST_CASE("Dot-repeat replays an Insert session that used C-o", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo bar\nfoo bar\n");
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "i");
     engine.RecordInsertKey(Ctrl(U'o'));
@@ -1249,11 +1249,11 @@ TEST_CASE("Dot-repeat replays an Insert session that used C-o", "[VimEngine]") {
 // and n repeats" above (same expected offsets) to prove the two paths agree, plus
 // backward search and multi-window cases the in-memory path has no equivalent for.
 
-TEST_CASE("Search with / finds the next match and n repeats on a huge buffer", "[VimEngine][HugeFile]") {
+TEST_CASE("Search with / finds the next match and n repeats on a huge buffer", "[Engine][HugeFile]") {
     const std::filesystem::path path   = WriteTempFile("ned_vim_huge_search_fwd.txt", "foo bar foo baz foo");
     Buffer                      buffer = Buffer::FromHugeFile(path);
     REQUIRE(buffer.Content().IsHuge());
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "/foo\n");
     REQUIRE(buffer.Point() == 8);
@@ -1266,11 +1266,11 @@ TEST_CASE("Search with / finds the next match and n repeats on a huge buffer", "
 }
 
 TEST_CASE("Backward search with ? finds the previous match on a huge buffer, wrapping past the start",
-          "[VimEngine][HugeFile]") {
+          "[Engine][HugeFile]") {
     const std::filesystem::path path   = WriteTempFile("ned_vim_huge_search_back.txt", "foo bar foo baz foo");
     Buffer                      buffer = Buffer::FromHugeFile(path);
     buffer.SetPoint(10); // just after the second "foo"
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "?foo\n");
     REQUIRE(buffer.Point() == 8); // the second "foo", nearest before point
@@ -1285,7 +1285,7 @@ TEST_CASE("Backward search with ? finds the previous match on a huge buffer, wra
 }
 
 TEST_CASE("Search with / finds a match past the first internal scan window on a huge buffer",
-          "[VimEngine][HugeFile]") {
+          "[Engine][HugeFile]") {
     constexpr std::size_t kWindowBody = 4 * 1024 * 1024; // mirrors HugeRegexScan.cpp's own constant
     const std::size_t     matchOffset = kWindowBody + 1000;
 
@@ -1295,7 +1295,7 @@ TEST_CASE("Search with / finds a match past the first internal scan window on a 
 
     Buffer buffer = Buffer::FromHugeFile(path);
     buffer.SetPoint(0);
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "/TARGET\n");
     REQUIRE(buffer.Point() == matchOffset); // point lands at the start of the match
@@ -1304,7 +1304,7 @@ TEST_CASE("Search with / finds a match past the first internal scan window on a 
 }
 
 TEST_CASE("Backward search with ? finds a match by widening the scan window on a huge buffer",
-          "[VimEngine][HugeFile]") {
+          "[Engine][HugeFile]") {
     constexpr std::size_t kWindowBody = 4 * 1024 * 1024;
     const std::size_t     matchOffset = 1000; // near the real document start
 
@@ -1314,7 +1314,7 @@ TEST_CASE("Backward search with ? finds a match by widening the scan window on a
 
     Buffer buffer = Buffer::FromHugeFile(path);
     buffer.SetPoint(2 * kWindowBody - 500); // deep into the document, far from the only match
-    VimEngine engine;
+    Engine engine;
 
     Feed(engine, buffer, "?TARGET\n");
     REQUIRE(buffer.Point() == matchOffset);

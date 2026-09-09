@@ -27,8 +27,8 @@
 // simply waits for the next connection once the current one disconnects.
 //
 
-#ifndef NED_EDITOR_MCP_MCPBRIDGESERVER_H
-#define NED_EDITOR_MCP_MCPBRIDGESERVER_H
+#ifndef NED_EDITOR_MCP_BRIDGESERVER_H
+#define NED_EDITOR_MCP_BRIDGESERVER_H
 
 #include <atomic>
 #include <filesystem>
@@ -98,4 +98,4 @@ class BridgeServer {
 
 } // namespace ned::editor::mcp
 
-#endif // NED_EDITOR_MCP_MCPBRIDGESERVER_H
+#endif // NED_EDITOR_MCP_BRIDGESERVER_H

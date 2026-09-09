@@ -1,4 +1,4 @@
-#include "VimGlobalMarks.h"
+#include "GlobalMarks.h"
 
 #include <array>
 #include <mutex>

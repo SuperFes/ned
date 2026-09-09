@@ -1,9 +1,9 @@
-#include "VimMotion.h"
+#include "Motion.h"
 
 #include <algorithm>
 
 #include "Text/Grapheme.h"
-#include "VimLineUtil.h"
+#include "LineUtil.h"
 
 namespace ned::editor::vim {
 

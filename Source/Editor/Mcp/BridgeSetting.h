@@ -5,8 +5,8 @@
 // Configured from Janet via ned/set-acp-mcp-bridge.
 //
 
-#ifndef NED_EDITOR_MCP_MCPBRIDGESETTING_H
-#define NED_EDITOR_MCP_MCPBRIDGESETTING_H
+#ifndef NED_EDITOR_MCP_BRIDGESETTING_H
+#define NED_EDITOR_MCP_BRIDGESETTING_H
 
 namespace ned::editor::mcp {
 
@@ -15,4 +15,4 @@ void               SetAcpMcpBridgeEnabled(bool enabled);
 
 } // namespace ned::editor::mcp
 
-#endif // NED_EDITOR_MCP_MCPBRIDGESETTING_H
+#endif // NED_EDITOR_MCP_BRIDGESETTING_H

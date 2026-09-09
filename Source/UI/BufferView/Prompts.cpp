@@ -79,7 +79,7 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
             // Vim's own Insert-mode Ctrl-chords (C-w/C-u/C-t/C-d/C-r) get first look --
             // otherwise they'd fall through to ned's ordinary Emacs bindings for the same
             // chords (kill-region, universal-argument, isearch-backward, ...), which is
-            // not what a vim user typing C-w expects. See VimEngine::HandleInsertModeChord's
+            // not what a vim user typing C-w expects. See Engine::HandleInsertModeChord's
             // own doc comment for why this isn't just another KeymapStack layer.
             if (!vimEngine_.HandleInsertModeChord(activeBuffer_.Get(), chord)) {
                 DispatchChordNormally(chord);
@@ -104,7 +104,7 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
     }
 
     // vim-global-marks follow-up: an uppercase-mark jump into a different file than the
-    // one currently open -- VimEngine can't switch buffers itself (deliberately
+    // one currently open -- Engine can't switch buffers itself (deliberately
     // UI-free), so it hands the target back here. Same open-then-jump shape
     // HandleBookmarkJumpKey already uses for its own (path, line, column) targets.
     if (const auto jump = vimEngine_.TakePendingBufferJump()) {
