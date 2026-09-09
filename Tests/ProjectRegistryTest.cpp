@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <string>
 
-#include "Editor/ProjectRegistry.h"
+#include "Editor/Project/Registry.h"
 
 using ned::editor::ProjectRegistryEntry;
 using ned::editor::ProjectRegistryStore;

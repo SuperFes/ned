@@ -14,8 +14,8 @@
 // in this codebase is, so scripting one is already possible.
 //
 
-#ifndef NED_EDITOR_PROJECTROOT_H
-#define NED_EDITOR_PROJECTROOT_H
+#ifndef NED_EDITOR_PROJECT_ROOT_H
+#define NED_EDITOR_PROJECT_ROOT_H
 
 #include <filesystem>
 
@@ -50,4 +50,4 @@ void               SetAutoDetectProjectRoot(bool enabled);
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTROOT_H
+#endif // NED_EDITOR_PROJECT_ROOT_H

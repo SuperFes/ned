@@ -1,10 +1,10 @@
-#include "ProjectReplace.h"
+#include "Replace.h"
 
 #include <algorithm>
 #include <fstream>
 #include <sstream>
 
-#include "RegexPattern.h"
+#include "Editor/RegexPattern.h"
 #include "Text/FilePreservation.h"
 #include "Text/Utf8.h"
 

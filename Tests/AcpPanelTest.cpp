@@ -25,7 +25,7 @@
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Lsp/Transport.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/AcpPanel.h"

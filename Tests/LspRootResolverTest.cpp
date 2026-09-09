@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "Editor/Lsp/RootResolver.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 
 using ned::editor::AutoDetectProjectRoot;
 using ned::editor::ProjectRoot;

@@ -1,8 +1,8 @@
-#include "ProjectTree.h"
+#include "Tree.h"
 
 #include <algorithm>
 
-#include "GitIgnore.h"
+#include "Editor/GitIgnore.h"
 
 namespace ned::editor {
 

@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 
 using ned::editor::AutoDetectProjectRoot;
 using ned::editor::DetectProjectRoot;

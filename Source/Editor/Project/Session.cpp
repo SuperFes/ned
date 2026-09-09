@@ -1,4 +1,4 @@
-#include "ProjectSession.h"
+#include "Session.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -11,7 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "Session.h"
+#include "Editor/Session.h"
 
 namespace ned::editor {
 

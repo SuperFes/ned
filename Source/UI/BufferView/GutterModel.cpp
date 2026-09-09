@@ -10,7 +10,7 @@
 #include "Editor/Coverage/Config.h"
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/InlineDiagnostics.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Editor/TestRun/Config.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Text/ITextStorage.h"

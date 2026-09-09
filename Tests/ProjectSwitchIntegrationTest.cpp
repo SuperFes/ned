@@ -12,7 +12,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Editor/PendingReExec.h"
-#include "Editor/ProjectSwitch.h"
+#include "Editor/Project/Switch.h"
 
 using ned::editor::ActivateProjectRoot;
 using ned::editor::ProjectActivationOutcome;

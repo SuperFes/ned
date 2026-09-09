@@ -4,7 +4,7 @@
 #include <fstream>
 #include <string>
 
-#include "Editor/ProjectTrust.h"
+#include "Editor/Project/Trust.h"
 
 using ned::editor::HashFileContent;
 using ned::editor::ProjectTrustEntry;

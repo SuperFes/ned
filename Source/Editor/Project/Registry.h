@@ -26,8 +26,8 @@
 // actually tries to switch to it.
 //
 
-#ifndef NED_EDITOR_PROJECTREGISTRY_H
-#define NED_EDITOR_PROJECTREGISTRY_H
+#ifndef NED_EDITOR_PROJECT_REGISTRY_H
+#define NED_EDITOR_PROJECT_REGISTRY_H
 
 #include <cstdint>
 #include <filesystem>
@@ -105,4 +105,4 @@ void ResetProjectRegistryForTesting();
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTREGISTRY_H
+#endif // NED_EDITOR_PROJECT_REGISTRY_H

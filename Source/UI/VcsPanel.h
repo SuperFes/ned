@@ -35,7 +35,7 @@
 #include <vector>
 
 #include "ActiveBuffer.h"
-#include "Editor/ProjectTree.h"
+#include "Editor/Project/Tree.h"
 #include "Editor/Vcs/RowStatus.h"
 #include "Editor/Vcs/Runner.h"
 #include "Text/BufferList.h"

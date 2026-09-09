@@ -16,15 +16,15 @@
 // clear about exactly what's about to change, not a terse one-line count).
 //
 
-#ifndef NED_EDITOR_PROJECTREPLACE_H
-#define NED_EDITOR_PROJECTREPLACE_H
+#ifndef NED_EDITOR_PROJECT_REPLACE_H
+#define NED_EDITOR_PROJECT_REPLACE_H
 
 #include <cstddef>
 #include <filesystem>
 #include <string>
 #include <vector>
 
-#include "ProjectSearch.h"
+#include "Search.h"
 
 namespace ned::editor {
 
@@ -103,4 +103,4 @@ class ProjectReplace {
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTREPLACE_H
+#endif // NED_EDITOR_PROJECT_REPLACE_H

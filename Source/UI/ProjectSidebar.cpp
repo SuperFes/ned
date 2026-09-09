@@ -9,8 +9,8 @@
 
 #include "Border.h"
 #include "Editor/Key.h"
-#include "Editor/ProjectRoot.h"
-#include "Editor/ProjectTree.h"
+#include "Editor/Project/Root.h"
+#include "Editor/Project/Tree.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Utf8.h"

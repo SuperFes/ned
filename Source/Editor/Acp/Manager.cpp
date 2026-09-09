@@ -12,7 +12,7 @@
 #include "Editor/Backup.h"
 #include "Editor/Mcp/BridgeServer.h"
 #include "Editor/Mcp/BridgeSetting.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"

@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"

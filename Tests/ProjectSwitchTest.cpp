@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "Editor/PendingReExec.h"
-#include "Editor/ProjectSwitch.h"
+#include "Editor/Project/Switch.h"
 
 using ned::editor::ActivateProjectRoot;
 using ned::editor::ProjectActivationOutcome;

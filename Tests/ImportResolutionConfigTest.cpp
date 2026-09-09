@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Editor/ImportResolutionConfig.h"
-#include "Editor/ProjectSettings.h"
+#include "Editor/Project/Settings.h"
 
 using ned::editor::DefaultImportResolutionConfig;
 using ned::editor::ImportResolutionOverride;

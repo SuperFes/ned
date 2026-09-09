@@ -1,4 +1,4 @@
-#include "ProjectTrust.h"
+#include "Trust.h"
 
 #include <chrono>
 #include <cstdio>
@@ -11,7 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "Session.h"
+#include "Editor/Session.h"
 
 namespace ned::editor {
 
