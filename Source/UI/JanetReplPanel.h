@@ -7,7 +7,7 @@
 // commands, Janet-defined variables, ...), not a fresh subprocess. This is
 // the "built-in" half of the REPL engine; PHP/Python/Perl/... REPLs are the
 // other half -- see UI/TerminalPanel.h's argv/label generalization and
-// Editor/Repl/ReplConfig.h, which spawn the language's own real interactive
+// Editor/Repl/Config.h, which spawn the language's own real interactive
 // CLI REPL on a pty instead, since those have no in-process equivalent to
 // evaluate against.
 //

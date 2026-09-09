@@ -1,12 +1,12 @@
 //
 // Code-coverage gutter (ROADMAP.md's Maybelist entry): the framework-neutral
-// data model a coverage report parser (CoverageOutputParser.h) produces and
+// data model a coverage report parser (OutputParser.h) produces and
 // BufferView's coverage gutter consumes, TestResult.h's own split from
 // TestOutputParser.h.
 //
 
-#ifndef NED_EDITOR_COVERAGE_COVERAGEREPORT_H
-#define NED_EDITOR_COVERAGE_COVERAGEREPORT_H
+#ifndef NED_EDITOR_COVERAGE_REPORT_H
+#define NED_EDITOR_COVERAGE_REPORT_H
 
 #include <cstddef>
 #include <filesystem>
@@ -54,7 +54,7 @@ struct FileCoverage {
     [[nodiscard]] bool operator==(const FileCoverage&) const = default;
 };
 
-using CoverageReport = std::vector<FileCoverage>;
+using Report = std::vector<FileCoverage>;
 
 // Best-effort match of an open buffer's own path against the report's own
 // SF: path spellings -- an lcov .info's SF: value is whatever path the
@@ -70,9 +70,9 @@ using CoverageReport = std::vector<FileCoverage>;
 // filename. Returns nullptr when nothing matches -- including an ambiguous
 // filename shared by more than one entry, where silently picking the wrong
 // file's coverage would be worse than showing none.
-[[nodiscard]] const FileCoverage* FindFileCoverage(const CoverageReport& report, const std::filesystem::path& bufferPath,
+[[nodiscard]] const FileCoverage* FindFileCoverage(const Report& report, const std::filesystem::path& bufferPath,
                                                    const std::filesystem::path& projectRoot);
 
 } // namespace ned::editor::coverage
 
-#endif // NED_EDITOR_COVERAGE_COVERAGEREPORT_H
+#endif // NED_EDITOR_COVERAGE_REPORT_H

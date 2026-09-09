@@ -38,7 +38,7 @@
 #include "Editor/BundledSnippets.h"
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/BrokerSocketPath.h"
 #include "Editor/Lsp/LspBrokerMain.h"
@@ -61,7 +61,7 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/Register.h"
-#include "Editor/Repl/ReplConfig.h"
+#include "Editor/Repl/Config.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
@@ -1179,21 +1179,21 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // SetDapManager also wires the session's async callbacks (breakpoint
     // hits jumping the focused pane, session-end status text) -- see its
     // own doc comment in WindowManager.h.
-    ned::editor::dap::DapManager dapManager(eventLoop);
+    ned::editor::dap::Manager dapManager(eventLoop);
     windowManager->SetDapManager(&dapManager);
 
     // session-persistence slice 2: the restored session's breakpoints,
     // applied as soon as the store they live in exists -- long before any
     // debug session could, so this never races an adapter. Round 2:
     // condition/logMessage/hitCondition now round-trip too -- converts
-    // editor::BreakpointState back to DapManager::PersistedBreakpoint (same
+    // editor::BreakpointState back to Manager::PersistedBreakpoint (same
     // shape, different namespace, see BreakpointState's own doc comment).
     if (restoredSession && !restoredSession->breakpoints.empty()) {
-        std::map<std::string, std::vector<ned::editor::dap::DapManager::PersistedBreakpoint>> converted;
+        std::map<std::string, std::vector<ned::editor::dap::Manager::PersistedBreakpoint>> converted;
         for (const auto& [key, entries] : restoredSession->breakpoints) {
-            std::vector<ned::editor::dap::DapManager::PersistedBreakpoint>& out = converted[key];
+            std::vector<ned::editor::dap::Manager::PersistedBreakpoint>& out = converted[key];
             for (const auto& bp : entries) {
-                out.push_back(ned::editor::dap::DapManager::PersistedBreakpoint{
+                out.push_back(ned::editor::dap::Manager::PersistedBreakpoint{
                     .line         = bp.line,
                     .condition    = bp.condition,
                     .logMessage   = bp.logMessage,
@@ -1823,7 +1823,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                           wm = windowManager.get()](const std::string& name) {
         auto existing = replPanels.find(name);
         if (existing == replPanels.end()) {
-            const std::optional<std::vector<std::string>> argv = ned::editor::repl::ReplCommand(name);
+            const std::optional<std::vector<std::string>> argv = ned::editor::repl::Command(name);
             if (!argv) {
                 return; // BufferView already validated this before calling -- defensive only
             }
@@ -2510,7 +2510,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // Debugging wishlist follow-up (pointer/linked-list graph view):
     // hierarchyTreeView's own mirror, for dap-show-pointer-graph -- a
     // second, independent TreeView overlay rather than a reuse of the one
-    // above, since DapManager is a single global session rather than
+    // above, since Manager is a single global session rather than
     // per-buffer/per-pane the way LSP is (WindowManager::
     // SetOnPointerGraphChanged's own doc comment). Same sizing/focus-taking
     // shape as hierarchyTreeView.

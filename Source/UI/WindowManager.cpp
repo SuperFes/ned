@@ -12,7 +12,7 @@
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
 #include "Editor/Bookmark.h"
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Lsp/LspBackgroundSync.h"
 #include "Editor/MinimapSettings.h"
@@ -183,7 +183,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
            const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
            std::string& statusMessage, const Theme& theme, ProjectSidebar* projectSidebar,
            editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
-           editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
+           editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::Manager* dapManager,
            editor::acp::AcpManager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
            std::function<void(editor::InteractiveRequest)> onWindowRequest,
            std::function<void(text::Buffer&)>              onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
@@ -855,7 +855,7 @@ void WindowManager::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
     }
 }
 
-void WindowManager::SetDapManager(editor::dap::DapManager* dapManager) {
+void WindowManager::SetDapManager(editor::dap::Manager* dapManager) {
     dapManager_ = dapManager;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetDapManager(dapManager);
@@ -867,10 +867,10 @@ void WindowManager::SetDapManager(editor::dap::DapManager* dapManager) {
     // WindowManager is the one owner that can resolve "the focused pane"
     // fresh at fire time -- a specific BufferView captured at wiring time
     // could be a pane that's since been split away or closed). Both run on
-    // the main thread via DapClient's own Post-marshaling, after which
+    // the main thread via Client's own Post-marshaling, after which
     // EventLoop::Run repaints unconditionally -- same as every other async
     // completion in this codebase.
-    dapManager->SetOnStopped([this](const editor::dap::DapManager::StoppedInfo& info) {
+    dapManager->SetOnStopped([this](const editor::dap::Manager::StoppedInfo& info) {
         if (info.path) {
             // Status first, jump second: JumpToPathLine reports its own
             // failure via statusMessage_, and that error must survive, not
@@ -1304,7 +1304,7 @@ void WindowManager::SaveProjectSessionNow() {
     }
 
     if (dapManager_ != nullptr) {
-        // session-persistence round 2: DapManager::PersistedBreakpoint ->
+        // session-persistence round 2: Manager::PersistedBreakpoint ->
         // editor::BreakpointState per entry -- same shape, different
         // namespace (ProjectSession.h stays Dap-header-free, see
         // BreakpointState's own doc comment).

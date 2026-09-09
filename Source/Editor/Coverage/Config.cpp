@@ -1,4 +1,4 @@
-#include "CoverageConfig.h"
+#include "Config.h"
 
 #include <fstream>
 #include <mutex>
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include "CoverageOutputParser.h"
+#include "OutputParser.h"
 
 namespace ned::editor::coverage {
 
@@ -14,12 +14,12 @@ namespace {
 
     std::mutex                 g_mutex;
     std::optional<std::string> g_file;
-    CoverageReport             g_report;
+    Report             g_report;
     std::size_t                g_generation = 0;
 
 } // namespace
 
-void SetCoverageFile(std::string path) {
+void SetFile(std::string path) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     if (path.empty()) {
         g_file.reset();
@@ -29,7 +29,7 @@ void SetCoverageFile(std::string path) {
     }
 }
 
-std::optional<std::string> CoverageFile() {
+std::optional<std::string> File() {
     const std::lock_guard<std::mutex> lock(g_mutex);
     return g_file;
 }
@@ -50,7 +50,7 @@ void LoadCoverageReport() {
     }
     std::ostringstream contents;
     contents << in.rdbuf();
-    CoverageReport report = ParseLcovInfo(contents.str());
+    Report report = ParseLcovInfo(contents.str());
 
     const std::lock_guard<std::mutex> lock(g_mutex);
     g_report = std::move(report);
@@ -63,12 +63,12 @@ void ClearCoverageReport() {
     ++g_generation;
 }
 
-CoverageReport CurrentCoverageReport() {
+Report CurrentCoverageReport() {
     const std::lock_guard<std::mutex> lock(g_mutex);
     return g_report;
 }
 
-std::size_t CoverageReportGeneration() {
+std::size_t ReportGeneration() {
     const std::lock_guard<std::mutex> lock(g_mutex);
     return g_generation;
 }

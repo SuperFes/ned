@@ -5,7 +5,7 @@
 
 namespace ned::ui {
 
-DapThreadsPanel::DapThreadsPanel(const Theme& theme, editor::dap::DapManager& dapManager) : dapManager_(dapManager), popup_(theme) {
+DapThreadsPanel::DapThreadsPanel(const Theme& theme, editor::dap::Manager& dapManager) : dapManager_(dapManager), popup_(theme) {
     popup_.SetFocusable(true);
     popup_.SetOnHighlightChange([this](std::size_t index) { selectedIndex_ = index; });
     popup_.SetOnActivate([this](std::size_t index) { HandleActivate(index); });
@@ -35,7 +35,7 @@ void DapThreadsPanel::Show() {
 }
 
 void DapThreadsPanel::Refresh() {
-    dapManager_.RequestThreads([this](std::vector<editor::dap::DapManager::Thread> threads) {
+    dapManager_.RequestThreads([this](std::vector<editor::dap::Manager::Thread> threads) {
         rows_          = std::move(threads);
         selectedIndex_ = rows_.empty() ? 0 : std::min(selectedIndex_, rows_.size() - 1);
         // Land on the thread the debuggee is actually stopped/inspecting on
@@ -60,7 +60,7 @@ void DapThreadsPanel::RefreshDisplay() {
     model.title = "Threads";
     model.rows.reserve(rows_.size());
     const int current = dapManager_.FocusedThreadId();
-    for (const editor::dap::DapManager::Thread& thread : rows_) {
+    for (const editor::dap::Manager::Thread& thread : rows_) {
         const bool isCurrent = thread.id == current;
         model.rows.push_back({.left     = isCurrent ? "→" : "",
                               .main     = thread.name,
@@ -77,7 +77,7 @@ void DapThreadsPanel::HandleActivate(std::size_t index) {
     if (index >= rows_.size()) {
         return;
     }
-    const editor::dap::DapManager::Thread thread = rows_[index];
+    const editor::dap::Manager::Thread thread = rows_[index];
     dapManager_.SelectThread(thread.id, [this, name = thread.name](bool success) {
         if (onMessage_) {
             onMessage_(success ? ("Selected thread: " + name) : "Failed to select thread.");

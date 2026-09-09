@@ -50,7 +50,7 @@ namespace acp {
     class AcpManager;
 }
 namespace dap {
-    class DapManager;
+    class Manager;
 }
 namespace lsp {
     class LspManager;
@@ -92,7 +92,7 @@ struct EditorContext {
 
     // Wired later, and any of them may be null -- check before use.
     editor::lsp::LspManager*&     lspManager;
-    editor::dap::DapManager*&     dapManager;
+    editor::dap::Manager*&     dapManager;
     editor::acp::AcpManager*&     acpManager;
     editor::vcs::VcsRunner*&      vcsRunner;
     editor::tasks::TaskRunner*&   taskRunner;

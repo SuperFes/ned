@@ -1,7 +1,7 @@
 //
 // DAP round 2: the debug console (REPL) panel. Where AcpPanel renders
 // AcpManager's structured transcript, this panel keeps its own small
-// transcript (input echo / result / error) -- DapManager has no transcript
+// transcript (input echo / result / error) -- Manager has no transcript
 // concept of its own, unlike AcpManager, since a debug session is a
 // request/response protocol with no persistent conversational log.
 //
@@ -11,7 +11,7 @@
 // shared tab strip, close, maximize, and resize-drag. TitleText() is this
 // tab's dynamic label.
 //
-// Enter sends the typed expression through DapManager::Evaluate with DAP's
+// Enter sends the typed expression through Manager::Evaluate with DAP's
 // default "repl" context (distinct from ShowDebugInfo's watch-expression
 // fan-out, which passes "watch") -- this panel is the actual manual-
 // evaluation console dap-evaluate's one-shot echo-area prompt was always a
@@ -48,7 +48,7 @@
 #include <string>
 #include <vector>
 
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/Key.h"
 #include "Editor/LineListSearch.h"
 #include "Editor/MinibufferPrompt.h"
@@ -64,7 +64,7 @@ class DebugConsolePanel : public Widget {
 
     // Connect-after-construction, unset is a safe no-op -- this class's
     // usual convention. Must outlive this DebugConsolePanel.
-    void SetDapManager(editor::dap::DapManager* dapManager);
+    void SetDapManager(editor::dap::Manager* dapManager);
 
     // DAP round 4: same Set*-after-construction, nullable-pointer convention
     // as SetDapManager -- main.cpp passes the same process-wide
@@ -120,7 +120,7 @@ class DebugConsolePanel : public Widget {
     bool HandleSearchKey(const editor::KeyChord& chord);
 
     const Theme&             theme_;
-    editor::dap::DapManager* dapManager_    = nullptr;
+    editor::dap::Manager* dapManager_    = nullptr;
     editor::PromptHistory*   promptHistory_ = nullptr;
     editor::MinibufferPrompt prompt_;
     std::vector<DisplayLine> history_;

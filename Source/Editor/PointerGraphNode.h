@@ -3,9 +3,9 @@
 // a DAP variable's field graph, as browsed by BufferView's pointer-graph
 // session (Editor/ExpandableTree.h<PointerGraphNode>, mirroring the call/
 // type-hierarchy browser's own ExpandableTree<ResolvedHierarchyItem> shape).
-// Deliberately not DapManager::Variable itself -- variablesReference is
+// Deliberately not Manager::Variable itself -- variablesReference is
 // overwritten to 0 on a detected cycle (see cyclic below), which would be
-// the wrong thing to do to a real DapManager::Variable if one were ever
+// the wrong thing to do to a real Manager::Variable if one were ever
 // reused elsewhere, and BufferView's own mapping step is what's responsible
 // for that overwrite.
 //
@@ -23,9 +23,9 @@ namespace ned::editor {
 
 struct PointerGraphNode {
     std::string name;
-    std::string type; // empty if the adapter sent none, same convention as DapManager::Variable::type
+    std::string type; // empty if the adapter sent none, same convention as Manager::Variable::type
     std::string value;
-    std::string memoryReference;        // empty when the adapter didn't send one -- see DapManager::Variable's own doc comment
+    std::string memoryReference;        // empty when the adapter didn't send one -- see Manager::Variable's own doc comment
     int         variablesReference = 0; // > 0 means expandable; forced to 0 once cyclic is set (see below)
 
     // Set by BufferView::ExpandPointerGraphNode when this node's own

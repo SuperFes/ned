@@ -50,7 +50,7 @@ namespace ned::editor {
 // (Editor/Tasks/TaskRunner.h). One instance is meant to live for the whole
 // process, constructed once bufferList/eventLoop both exist; bufferList_/
 // eventLoop_ are stored by reference on that assumption, the same one
-// LspManager/DapManager/TaskRunner already make about both.
+// LspManager/Manager/TaskRunner already make about both.
 class ModePrewarmer {
   public:
     ModePrewarmer(text::BufferList& bufferList, ui::EventLoop& eventLoop);

@@ -630,7 +630,7 @@ void BufferView::BeginVcsCreateBranchPrompt() {
 }
 
 void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>)> onComplete) {
-    dapManager_->RequestStackTrace([this, onComplete = std::move(onComplete)](std::vector<editor::dap::DapManager::StackFrame> frames) {
+    dapManager_->RequestStackTrace([this, onComplete = std::move(onComplete)](std::vector<editor::dap::Manager::StackFrame> frames) {
         if (frames.empty()) {
             onComplete({});
             return;
@@ -638,7 +638,7 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
         auto lines = std::make_shared<std::vector<std::string>>();
         lines->push_back("== Stack ==");
         for (std::size_t i = 0; i < frames.size(); ++i) {
-            const editor::dap::DapManager::StackFrame& frame = frames[i];
+            const editor::dap::Manager::StackFrame& frame = frames[i];
             // DAP round 4: "[frame:N]" is dap-restart-frame's own target
             // marker, RestartFrameAtPoint's counterpart to
             // FormatDebugVariableLine's "[ref:N]"/"[owner:M]".
@@ -654,7 +654,7 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
                 lines->push_back("#" + std::to_string(i) + " " + frame.name + " (no source)" + frameMarker);
             }
         }
-        dapManager_->RequestScopes(frames[0].id, [this, lines, onComplete](std::vector<editor::dap::DapManager::Scope> scopes) {
+        dapManager_->RequestScopes(frames[0].id, [this, lines, onComplete](std::vector<editor::dap::Manager::Scope> scopes) {
             const std::vector<std::string>& watches = dapManager_->Watches();
             if (scopes.empty() && watches.empty()) {
                 onComplete(*lines);
@@ -663,7 +663,7 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
             // One variables request per scope plus one evaluate per watch,
             // all in flight at once -- chunks keep each section's own
             // output in a fixed slot regardless of response interleaving,
-            // and every callback runs on the main thread (see DapClient.h),
+            // and every callback runs on the main thread (see Client.h),
             // so a plain shared counter covering both fan-outs is
             // race-free. Slot 0 is reserved for watches (built even when
             // empty -- skipped below), slots [1, 1+scopes.size()) for scopes.
@@ -695,11 +695,11 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
                 dapManager_->RequestVariables(
                     scopes[s].variablesReference,
                     [this, lines, remaining, chunks, onComplete, s, scopeVariablesReference = scopes[s].variablesReference,
-                     scopeName = scopes[s].name](std::vector<editor::dap::DapManager::Variable> variables) {
+                     scopeName = scopes[s].name](std::vector<editor::dap::Manager::Variable> variables) {
                         std::vector<std::string>& chunk = (*chunks)[1 + s];
                         chunk.push_back("");
                         chunk.push_back("== " + scopeName + " ==");
-                        for (const editor::dap::DapManager::Variable& variable : variables) {
+                        for (const editor::dap::Manager::Variable& variable : variables) {
                             chunk.push_back(FormatDebugVariableLine(variable, 2, scopeVariablesReference));
                         }
                         if (--*remaining == 0) {
@@ -776,7 +776,7 @@ void BufferView::ExpandVariableAtPoint() {
     statusMessage_                = "Expanding...";
     dapManager_->RequestVariables(
         reference,
-        [this, bufferPtr, line, lineText, markerPos, indent, reference](std::vector<editor::dap::DapManager::Variable> variables) {
+        [this, bufferPtr, line, lineText, markerPos, indent, reference](std::vector<editor::dap::Manager::Variable> variables) {
             if (bufferPtr != &activeBuffer_.Get()) {
                 return; // switched away while the request was in flight
             }
@@ -812,7 +812,7 @@ void BufferView::ExpandVariableAtPoint() {
                 replacement.pop_back();
             }
             replacement += ownerSuffix;
-            for (const editor::dap::DapManager::Variable& variable : variables) {
+            for (const editor::dap::Manager::Variable& variable : variables) {
                 replacement += "\n" + FormatDebugVariableLine(variable, indent + 2, reference);
             }
 
@@ -839,7 +839,7 @@ void BufferView::ExpandVariableAtPoint() {
 // FormatDebugVariableLine, both file-local to this translation unit.
 
 void BufferView::RequestPointerGraphAtPoint() {
-    if (!dapManager_ || dapManager_->State() != editor::dap::DapManager::SessionState::Stopped) {
+    if (!dapManager_ || dapManager_->State() != editor::dap::Manager::SessionState::Stopped) {
         statusMessage_ = "Not stopped (nothing to inspect).";
         return;
     }
@@ -899,14 +899,14 @@ void BufferView::ExpandPointerGraphNode(std::size_t index) {
     const std::size_t generation         = pointerGraphRequest_.Begin();
     dapManager_->RequestVariables(
         variablesReference,
-        [this, index, generation](std::vector<editor::dap::DapManager::Variable> variables) {
+        [this, index, generation](std::vector<editor::dap::Manager::Variable> variables) {
             if (!pointerGraphSession_ || pointerGraphRequest_.IsStale(generation)) {
                 return; // superseded by a newer request, or the session ended -- ExpandHierarchyNode's own guard
             }
             PointerGraphSession&                  session = *pointerGraphSession_;
             std::vector<editor::PointerGraphNode> children;
             children.reserve(variables.size());
-            for (editor::dap::DapManager::Variable& variable : variables) {
+            for (editor::dap::Manager::Variable& variable : variables) {
                 editor::PointerGraphNode child{.name               = std::move(variable.name),
                                                .type               = std::move(variable.type),
                                                .value              = std::move(variable.value),
@@ -1075,14 +1075,14 @@ void BufferView::ShowDisassemblyAtPoint() {
     }
 
     statusMessage_ = "Fetching instructions...";
-    dapManager_->RequestStackTrace([this, requestedFrameId](std::vector<editor::dap::DapManager::StackFrame> frames) {
+    dapManager_->RequestStackTrace([this, requestedFrameId](std::vector<editor::dap::Manager::StackFrame> frames) {
         if (frames.empty()) {
             statusMessage_ = "No stack to disassemble (is the session stopped?).";
             return;
         }
-        const editor::dap::DapManager::StackFrame* target = &frames[0];
+        const editor::dap::Manager::StackFrame* target = &frames[0];
         if (requestedFrameId != 0) {
-            for (const editor::dap::DapManager::StackFrame& frame : frames) {
+            for (const editor::dap::Manager::StackFrame& frame : frames) {
                 if (frame.id == requestedFrameId) {
                     target = &frame;
                     break;
@@ -1098,7 +1098,7 @@ void BufferView::ShowDisassemblyAtPoint() {
         // "one shot, re-invoke to refresh" model; no incremental paging.
         dapManager_->RequestDisassembly(
             pcAddress, -32, 64,
-            [this, pcAddress](std::vector<editor::dap::DapManager::DisassembledInstruction> instructions) {
+            [this, pcAddress](std::vector<editor::dap::Manager::DisassembledInstruction> instructions) {
                 if (instructions.empty()) {
                     statusMessage_ = "No instructions returned (adapter may not support disassembly).";
                     return;
@@ -1108,10 +1108,10 @@ void BufferView::ShowDisassemblyAtPoint() {
     });
 }
 
-void BufferView::BuildDisassemblyBuffer(const std::vector<editor::dap::DapManager::DisassembledInstruction>& instructions,
+void BufferView::BuildDisassemblyBuffer(const std::vector<editor::dap::Manager::DisassembledInstruction>& instructions,
                                         const std::string&                                                   pcAddress) {
     std::string text;
-    for (const editor::dap::DapManager::DisassembledInstruction& instruction : instructions) {
+    for (const editor::dap::Manager::DisassembledInstruction& instruction : instructions) {
         std::string line;
         if (instruction.path) {
             // The established "path:line: text" results convention, so
@@ -1270,12 +1270,12 @@ void BufferView::ToggleHexFormatAtPoint() {
     statusMessage_ = "Formatting...";
     dapManager_->RequestVariables(
         ownerRef,
-        [this, bufferPtr, spliceIfUnchanged, name, ownerRef, indent, wantHex](std::vector<editor::dap::DapManager::Variable> variables) {
+        [this, bufferPtr, spliceIfUnchanged, name, ownerRef, indent, wantHex](std::vector<editor::dap::Manager::Variable> variables) {
             if (bufferPtr != &activeBuffer_.Get()) {
                 return; // switched away while the request was in flight
             }
             const auto it = std::find_if(variables.begin(), variables.end(),
-                                         [&name](const editor::dap::DapManager::Variable& v) { return v.name == name; });
+                                         [&name](const editor::dap::Manager::Variable& v) { return v.name == name; });
             if (it == variables.end()) {
                 statusMessage_ = "Variable no longer available (or the session already resumed).";
                 return;
@@ -1360,7 +1360,7 @@ void BufferView::ToggleWatchGraphAtPoint() {
     statusMessage_ = "Graphing...";
     dapManager_->EvaluateWithReference(
         expression,
-        [this, bufferPtr, spliceIfUnchanged, lineText](editor::dap::DapManager::EvaluateResult result) {
+        [this, bufferPtr, spliceIfUnchanged, lineText](editor::dap::Manager::EvaluateResult result) {
             if (bufferPtr != &activeBuffer_.Get()) {
                 return; // switched away while the request was in flight
             }
@@ -1370,7 +1370,7 @@ void BufferView::ToggleWatchGraphAtPoint() {
             }
             dapManager_->RequestVariables(
                 result.variablesReference,
-                [this, spliceIfUnchanged, lineText](std::vector<editor::dap::DapManager::Variable> variables) {
+                [this, spliceIfUnchanged, lineText](std::vector<editor::dap::Manager::Variable> variables) {
                     if (variables.empty()) {
                         statusMessage_ = "No elements to graph.";
                         return;
@@ -1392,7 +1392,7 @@ void BufferView::ToggleWatchGraphAtPoint() {
 }
 
 void BufferView::LineInspectAtPoint() {
-    if (dapManager_->State() != editor::dap::DapManager::SessionState::Stopped) {
+    if (dapManager_->State() != editor::dap::Manager::SessionState::Stopped) {
         statusMessage_ = "Not stopped (nothing to inspect).";
         return;
     }
@@ -1420,7 +1420,7 @@ void BufferView::LineInspectAtPoint() {
     statusMessage_ = "Inspecting...";
     // Same shared-counter fan-out-then-assemble shape ShowDebugInfo's own
     // watch/scope evaluation uses -- every callback runs on the main thread
-    // (DapClient's own threading contract), so a plain shared counter
+    // (Client's own threading contract), so a plain shared counter
     // covering every candidate is race-free; results land in a fixed slot
     // per candidate so the final message reads left-to-right regardless of
     // response interleaving. A failed evaluation is wrapped in "<...>",
@@ -1505,7 +1505,7 @@ void BufferView::ShowMemoryImageAtPoint() {
     statusMessage_ = prompt_->StatusText();
 }
 
-void BufferView::BuildMemoryBuffer(const std::string& memoryReference, const editor::dap::DapManager::MemoryBlock& block) {
+void BufferView::BuildMemoryBuffer(const std::string& memoryReference, const editor::dap::Manager::MemoryBlock& block) {
     constexpr std::size_t kBytesPerRow = 16;
 
     std::string text = "Memory at " + memoryReference;
@@ -1542,7 +1542,7 @@ void BufferView::BuildMemoryBuffer(const std::string& memoryReference, const edi
     statusMessage_.clear();
 }
 
-void BufferView::PushMemoryImageModel(const std::string& memoryReference, const editor::dap::DapManager::MemoryBlock& block) {
+void BufferView::PushMemoryImageModel(const std::string& memoryReference, const editor::dap::Manager::MemoryBlock& block) {
     ui::MemoryImageModel model;
     model.title = "Memory image: " + memoryReference + " (" + std::to_string(block.data.size()) + " bytes)";
     if (!block.address.empty() && block.address != memoryReference) {
@@ -1557,12 +1557,12 @@ void BufferView::PushMemoryImageModel(const std::string& memoryReference, const 
 }
 
 void BufferView::BeginDapThreadSelect() {
-    if (dapManager_->State() != editor::dap::DapManager::SessionState::Stopped) {
+    if (dapManager_->State() != editor::dap::Manager::SessionState::Stopped) {
         statusMessage_ = "Not stopped (nothing to pick a thread in).";
         return;
     }
     statusMessage_ = "Fetching threads...";
-    dapManager_->RequestThreads([this](std::vector<editor::dap::DapManager::Thread> threads) {
+    dapManager_->RequestThreads([this](std::vector<editor::dap::Manager::Thread> threads) {
         if (threads.empty()) {
             statusMessage_ = "No threads reported (or the session already resumed).";
             return;
@@ -1593,7 +1593,7 @@ void BufferView::HandleDapThreadSelectKey(const editor::KeyChord& chord) {
                            .refresh       = [this] { RefreshDapThreadSelectStatus(); },
                            .commit =
                                [this, threads = pendingDapThreads_](std::size_t index) {
-                                   const editor::dap::DapManager::Thread thread = threads[index];
+                                   const editor::dap::Manager::Thread thread = threads[index];
                                    if (dapManager_ == nullptr) {
                                        return;
                                    }
@@ -1607,10 +1607,10 @@ void BufferView::HandleDapThreadSelectKey(const editor::KeyChord& chord) {
 // DAP round 3: BeginDapThreadSelect's own shape, but a live/local toggle set
 // (pendingDapEnabledExceptionFilters_) rather than a single pick -- nothing
 // reaches the adapter until Enter commits it via
-// DapManager::SetExceptionBreakpointFilters.
+// Manager::SetExceptionBreakpointFilters.
 
 void BufferView::BeginDapExceptionFilterSelect() {
-    const std::vector<editor::dap::DapManager::ExceptionFilter>& filters = dapManager_->AvailableExceptionFilters();
+    const std::vector<editor::dap::Manager::ExceptionFilter>& filters = dapManager_->AvailableExceptionFilters();
     if (filters.empty()) {
         statusMessage_ = "No exception breakpoint filters available (no session, or the adapter doesn't advertise any).";
         return;
@@ -1628,7 +1628,7 @@ void BufferView::RefreshDapExceptionFilterStatus() {
         if (i > 0) {
             status += "  ";
         }
-        const editor::dap::DapManager::ExceptionFilter& filter   = pendingDapExceptionFilters_[i];
+        const editor::dap::Manager::ExceptionFilter& filter   = pendingDapExceptionFilters_[i];
         const bool                                      checked  = pendingDapEnabledExceptionFilters_.contains(filter.id);
         const bool                                      selected = (i == dapExceptionFilterSelection_);
         status += (selected ? "[" : "") + std::string(checked ? "✓" : " ") + std::to_string(i + 1) + ") " + filter.label +
@@ -1747,7 +1747,7 @@ void BufferView::RequestVcsAction(VcsPanelAction action) {
     }
 }
 
-void BufferView::SetDapManager(editor::dap::DapManager* dapManager) {
+void BufferView::SetDapManager(editor::dap::Manager* dapManager) {
     dapManager_ = dapManager;
 }
 

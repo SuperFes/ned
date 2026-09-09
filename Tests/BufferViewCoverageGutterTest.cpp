@@ -4,7 +4,7 @@
 #include <string>
 
 #include "Editor/Commands.h"
-#include "Editor/Coverage/CoverageConfig.h"
+#include "Editor/Coverage/Config.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
 #include "Editor/Mode.h"
@@ -20,7 +20,7 @@
 
 using ned::editor::coverage::ClearCoverageReport;
 using ned::editor::coverage::LoadCoverageReport;
-using ned::editor::coverage::SetCoverageFile;
+using ned::editor::coverage::SetFile;
 using ned::editor::vcs::VcsDiffHunk;
 using ned::ui::BufferView;
 using ned::ui::Color;
@@ -73,7 +73,7 @@ struct Fixture {
 
 struct ConfigResetGuard {
     ~ConfigResetGuard() {
-        SetCoverageFile("");
+        SetFile("");
         ClearCoverageReport();
     }
 };
@@ -104,7 +104,7 @@ TEST_CASE("Coverage gutter reserves nothing without a loaded report", "[BufferVi
 
     const std::string path = "/tmp/coverage-gutter-test-unmatched.info";
     WriteInfoFile(path, "SF:/tmp/some-other-file.py\nDA:1,1\nend_of_record\n");
-    SetCoverageFile(path);
+    SetFile(path);
     LoadCoverageReport(); // a real report, but for a different file -- still nothing to show here
     REQUIRE(view.CursorPosition()->x == withoutCoverageColumn);
 }
@@ -127,7 +127,7 @@ TEST_CASE("Coverage gutter marks covered/partial/uncovered lines after a loaded 
                                 "BRDA:3,0,0,5\n"
                                 "BRDA:3,0,1,0\n"
                                 "end_of_record\n");
-    SetCoverageFile(infoPath);
+    SetFile(infoPath);
     LoadCoverageReport();
 
     BufferView      view = fixture.View();
@@ -150,7 +150,7 @@ TEST_CASE("Coverage gutter flags an uncovered line that's also newly changed", "
 
     const std::string infoPath = "/tmp/coverage-gutter-test-changed.info";
     WriteInfoFile(infoPath, "SF:" + bufferPath + "\nDA:1,5\nDA:2,0\nend_of_record\n");
-    SetCoverageFile(infoPath);
+    SetFile(infoPath);
     LoadCoverageReport();
 
     BufferView view = fixture.View();
@@ -174,7 +174,7 @@ TEST_CASE("Coverage gutter cache refreshes when the report is reloaded", "[Buffe
 
     const std::string infoPath = "/tmp/coverage-gutter-test-reload.info";
     WriteInfoFile(infoPath, "SF:" + bufferPath + "\nDA:1,0\nend_of_record\n");
-    SetCoverageFile(infoPath);
+    SetFile(infoPath);
     LoadCoverageReport();
 
     BufferView      view = fixture.View();

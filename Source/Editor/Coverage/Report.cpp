@@ -1,4 +1,4 @@
-#include "CoverageReport.h"
+#include "Report.h"
 
 #include <system_error>
 
@@ -18,7 +18,7 @@ namespace {
 
 } // namespace
 
-const FileCoverage* FindFileCoverage(const CoverageReport& report, const std::filesystem::path& bufferPath,
+const FileCoverage* FindFileCoverage(const Report& report, const std::filesystem::path& bufferPath,
                                      const std::filesystem::path& projectRoot) {
     const std::filesystem::path bufferKey = NormalizedPathKey(bufferPath);
 

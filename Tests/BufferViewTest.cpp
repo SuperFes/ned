@@ -22,9 +22,9 @@
 #include "Editor/Backup.h"
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
-#include "Editor/Dap/DapClient.h"
-#include "Editor/Dap/DapConfig.h"
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Client.h"
+#include "Editor/Dap/Config.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
@@ -113,10 +113,10 @@ struct TabWidthGuard {
 class VimModeGuard {
   public:
     VimModeGuard() : previous_(ned::editor::vim::ModeEnabled()) {
-        ned::editor::vim::SetVimModeEnabled(true);
+        ned::editor::vim::SetModeEnabled(true);
     }
     ~VimModeGuard() {
-        ned::editor::vim::SetVimModeEnabled(previous_);
+        ned::editor::vim::SetModeEnabled(previous_);
     }
     VimModeGuard(const VimModeGuard&)            = delete;
     VimModeGuard& operator=(const VimModeGuard&) = delete;
@@ -630,7 +630,7 @@ ned::editor::lsp::Json ReadLspFrameWithMethod(int fd, std::string_view method) {
 }
 
 // DAP client slice 2: the pipe-backed fake-adapter counterpart of
-// FakeLspServer above, injected via DapManager::SetClientForTesting. The
+// FakeLspServer above, injected via Manager::SetClientForTesting. The
 // tests below only ever have one adapter-bound frame in flight at a time,
 // so ReadRawLspFrame (DAP shares LSP's exact framing) suffices -- no
 // buffered multi-frame reader needed here, unlike DapManagerTest's own.
@@ -656,13 +656,13 @@ struct FakeDapAdapter {
     FakeDapAdapter& operator=(const FakeDapAdapter&) = delete;
     FakeDapAdapter(FakeDapAdapter&&)                 = default;
 
-    static FakeDapAdapter Create(ned::editor::dap::DapManager& manager, ned::ui::EventLoop& eventLoop,
-                                 ned::editor::dap::DapClient*& outClient) {
+    static FakeDapAdapter Create(ned::editor::dap::Manager& manager, ned::ui::EventLoop& eventLoop,
+                                 ned::editor::dap::Client*& outClient) {
         int clientWritesHere[2];
         int clientReadsHere[2];
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
-        auto client = std::make_unique<ned::editor::dap::DapClient>(
+        auto client = std::make_unique<ned::editor::dap::Client>(
             ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
         outClient = &manager.SetClientForTesting(std::move(client));
         return FakeDapAdapter(clientWritesHere[0], clientReadsHere[1]);
@@ -2080,7 +2080,7 @@ TEST_CASE("Right-click in the gutter offers fold/breakpoint/blame rows once all 
     fixture.buffer.SetPath("/tmp/ned-context-menu-gutter-test.c");
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::Manager manager(eventLoop);
     manager.ToggleBreakpoint("/tmp/ned-context-menu-gutter-test.c", 2); // 1-based, DAP's own convention -- buffer line 1 ("two")
 
     ned::ui::BufferView view = fixture.View();
@@ -2437,7 +2437,7 @@ TEST_CASE("The debug gutter column shows a breakpoint dot and widens the gutter"
     fixture.buffer.SetPoint(0);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::Manager manager(eventLoop);
     manager.ToggleBreakpoint("/tmp/ned-dap-view-test.c", 2);
 
     ned::ui::BufferView view = fixture.View();
@@ -2462,13 +2462,13 @@ TEST_CASE("The stopped line gets an execution arrow and a background wash", "[Bu
     fixture.buffer.SetPoint(0);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
     // Minimal real handshake against the fake adapter, then a stop on
     // line 2 of this buffer's own file.
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-exec", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-exec", "{}");
     manager.StartOrContinue("bufferview-dap-exec");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -2480,7 +2480,7 @@ TEST_CASE("The stopped line gets an execution arrow and a background wash", "[Bu
         stackTrace["seq"].get<int>(), "stackTrace",
         {{"stackFrames", ned::editor::dap::Json::array(
                              {{{"id", 1}, {"name", "main"}, {"line", 2}, {"source", {{"path", "/tmp/ned-dap-exec-test.c"}}}}})}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-exec", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-exec", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -2509,7 +2509,7 @@ TEST_CASE("The stopped line gets an execution arrow and a background wash", "[Bu
 TEST_CASE("dap-evaluate's prompt captures keystrokes instead of falling through to normal editing", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::Manager manager(eventLoop);
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -2534,7 +2534,7 @@ TEST_CASE("The debug gutter distinguishes conditional and logpoint breakpoints b
     fixture.buffer.SetPoint(0);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::Manager manager(eventLoop);
     manager.ToggleBreakpoint("/tmp/ned-dap-kind-test.c", 2);                    // plain
     manager.SetBreakpointCondition("/tmp/ned-dap-kind-test.c", 3, "x > 1");     // conditional
     manager.SetBreakpointLogMessage("/tmp/ned-dap-kind-test.c", 4, "hit: {x}"); // logpoint
@@ -2562,17 +2562,17 @@ TEST_CASE("An unverified breakpoint renders in the dimmed marker color", "[Buffe
     fixture.buffer.SetPoint(0);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-unverified", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-unverified", "{}");
     manager.StartOrContinue("bufferview-dap-unverified");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
     const auto launch = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-unverified", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-unverified", "");
 
     // Toggled mid-session (not via the "initialized" event, which would
     // also fire a configurationDone request right behind setBreakpoints --
@@ -2606,17 +2606,17 @@ TEST_CASE("A breakpoint's gutter glyph follows the adapter's snapped line, not t
     fixture.buffer.SetPoint(0);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-remap", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-remap", "{}");
     manager.StartOrContinue("bufferview-dap-remap");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
     const auto launch = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-remap", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-remap", "");
 
     // Toggled on line 2 (a comment/blank line, say); the adapter snaps it to
     // line 4, the next real statement.
@@ -2646,7 +2646,7 @@ TEST_CASE("dap-set-breakpoint-condition's prompt sets a condition on point's own
     fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(1)); // line 2
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::Manager manager(eventLoop);
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -2660,7 +2660,7 @@ TEST_CASE("dap-set-breakpoint-condition's prompt sets a condition on point's own
     TypeText(view, "x > 1");
     view.OnEvent(ned::ui::test::Return());
 
-    const auto breakpoints = manager.BreakpointsForKey(ned::editor::dap::DapManager::NormalizePathKey("/tmp/ned-dap-condition-test.c"));
+    const auto breakpoints = manager.BreakpointsForKey(ned::editor::dap::Manager::NormalizePathKey("/tmp/ned-dap-condition-test.c"));
     REQUIRE(breakpoints.size() == 1);
     REQUIRE(breakpoints[0].line == 2);
     REQUIRE(breakpoints[0].condition == "x > 1");
@@ -2669,11 +2669,11 @@ TEST_CASE("dap-set-breakpoint-condition's prompt sets a condition on point's own
 TEST_CASE("dap-add-watch and dap-remove-watch round-trip through the *debug* buffer", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-watch", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-watch", "{}");
     manager.StartOrContinue("bufferview-dap-watch");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -2684,7 +2684,7 @@ TEST_CASE("dap-add-watch and dap-remove-watch round-trip through the *debug* buf
     const auto autoStackTrace = adapter.NextRequest(); // HandleStoppedEvent's own internal fetch
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-watch", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-watch", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -2753,11 +2753,11 @@ TEST_CASE("dap-add-watch and dap-remove-watch round-trip through the *debug* buf
 TEST_CASE("dap-select-thread's numbered prompt refocuses subsequent stack-trace requests", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-threads", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-threads", "{}");
     manager.StartOrContinue("bufferview-dap-threads");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -2768,7 +2768,7 @@ TEST_CASE("dap-select-thread's numbered prompt refocuses subsequent stack-trace 
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-threads", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-threads", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -2795,18 +2795,18 @@ TEST_CASE("dap-select-thread's numbered prompt refocuses subsequent stack-trace 
         {{"stackFrames", ned::editor::dap::Json::array({{{"id", 5}, {"name", "worker"}}})}}));
     REQUIRE(fixture.statusMessage.find("Selected thread: worker") != std::string::npos);
 
-    manager.RequestStackTrace([](std::vector<ned::editor::dap::DapManager::StackFrame>) {});
+    manager.RequestStackTrace([](std::vector<ned::editor::dap::Manager::StackFrame>) {});
     REQUIRE(adapter.NextRequest()["arguments"]["threadId"] == 2);
 }
 
 TEST_CASE("dap-set-variable edits a *debug* buffer variable line via the right owner reference", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-set-var", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-set-var", "{}");
     manager.StartOrContinue("bufferview-dap-set-var");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -2817,7 +2817,7 @@ TEST_CASE("dap-set-variable edits a *debug* buffer variable line via the right o
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-set-var", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-set-var", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -2870,11 +2870,11 @@ TEST_CASE("dap-show-pointer-graph seeds a session and pushes a TreeViewModel wit
           "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ptr-graph", "{}");
     manager.StartOrContinue("bufferview-dap-ptr-graph");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -2884,7 +2884,7 @@ TEST_CASE("dap-show-pointer-graph seeds a session and pushes a TreeViewModel wit
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ptr-graph", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -2945,11 +2945,11 @@ TEST_CASE("dap-show-pointer-graph expands a nested composite field via a second 
           "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-nested", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ptr-graph-nested", "{}");
     manager.StartOrContinue("bufferview-dap-ptr-graph-nested");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -2959,7 +2959,7 @@ TEST_CASE("dap-show-pointer-graph expands a nested composite field via a second 
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-nested", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ptr-graph-nested", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -3026,11 +3026,11 @@ TEST_CASE("dap-show-pointer-graph marks a field whose memoryReference repeats an
           "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-cycle", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ptr-graph-cycle", "{}");
     manager.StartOrContinue("bufferview-dap-ptr-graph-cycle");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -3040,7 +3040,7 @@ TEST_CASE("dap-show-pointer-graph marks a field whose memoryReference repeats an
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-cycle", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ptr-graph-cycle", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -3102,11 +3102,11 @@ TEST_CASE("dap-show-pointer-graph marks a field whose memoryReference repeats an
 TEST_CASE("dap-show-pointer-graph refuses when point isn't on an expandable *debug* buffer line", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-refuse", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ptr-graph-refuse", "{}");
     manager.StartOrContinue("bufferview-dap-ptr-graph-refuse");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -3116,7 +3116,7 @@ TEST_CASE("dap-show-pointer-graph refuses when point isn't on an expandable *deb
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-refuse", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ptr-graph-refuse", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -3143,7 +3143,7 @@ TEST_CASE("dap-show-pointer-graph refuses when point isn't on an expandable *deb
     REQUIRE(fixture.statusMessage == "No expandable variable on this line.");
 }
 
-TEST_CASE("dap-ask-agent reports no debugger available with no DapManager wired", "[BufferView]") {
+TEST_CASE("dap-ask-agent reports no debugger available with no Manager wired", "[BufferView]") {
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
@@ -3157,7 +3157,7 @@ TEST_CASE("dap-ask-agent reports no debugger available with no DapManager wired"
 TEST_CASE("dap-ask-agent reports not stopped when the debug session isn't paused", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::Manager manager(eventLoop);
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -3172,11 +3172,11 @@ TEST_CASE("dap-ask-agent reports not stopped when the debug session isn't paused
 TEST_CASE("dap-ask-agent reports no active ACP session when the debugger is stopped but no agent is running", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ask-agent-no-acp", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ask-agent-no-acp", "{}");
     manager.StartOrContinue("bufferview-dap-ask-agent-no-acp");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -3186,7 +3186,7 @@ TEST_CASE("dap-ask-agent reports no active ACP session when the debugger is stop
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ask-agent-no-acp", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ask-agent-no-acp", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -3201,11 +3201,11 @@ TEST_CASE("dap-ask-agent reports no active ACP session when the debugger is stop
 TEST_CASE("dap-ask-agent sends the stopped session's stack and variables to the active ACP agent", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager dapManager(eventLoop);
-    ned::editor::dap::DapClient* dapClient  = nullptr;
+    ned::editor::dap::Manager dapManager(eventLoop);
+    ned::editor::dap::Client* dapClient  = nullptr;
     FakeDapAdapter               dapAdapter = FakeDapAdapter::Create(dapManager, eventLoop, dapClient);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ask-agent", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ask-agent", "{}");
     dapManager.StartOrContinue("bufferview-dap-ask-agent");
     const auto initialize = dapAdapter.NextRequest();
     dapClient->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -3216,7 +3216,7 @@ TEST_CASE("dap-ask-agent sends the stopped session's stack and variables to the 
     dapClient->DispatchFrame(DapResponseFrame(
         autoStackTrace["seq"].get<int>(), "stackTrace",
         {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ask-agent", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-ask-agent", "");
 
     ned::editor::acp::AcpManager acpManager(fixture.bufferList, eventLoop);
     ned::editor::acp::AcpClient* acpClient = nullptr;
@@ -3373,11 +3373,11 @@ TEST_CASE("ask-agent-about-line is a no-op outside *Messages*/*test results*", "
 TEST_CASE("dap-toggle-hex-format toggles a variable line's display format and back", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-hex-var", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-hex-var", "{}");
     manager.StartOrContinue("bufferview-dap-hex-var");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -3388,7 +3388,7 @@ TEST_CASE("dap-toggle-hex-format toggles a variable line's display format and ba
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-hex-var", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-hex-var", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -3454,11 +3454,11 @@ TEST_CASE("dap-toggle-hex-format toggles a variable line's display format and ba
 TEST_CASE("dap-toggle-hex-format toggles a watch line's display format and back", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-hex-watch", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-hex-watch", "{}");
     manager.StartOrContinue("bufferview-dap-hex-watch");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -3469,7 +3469,7 @@ TEST_CASE("dap-toggle-hex-format toggles a watch line's display format and back"
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-hex-watch", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-hex-watch", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -3537,7 +3537,7 @@ TEST_CASE("dap-line-inspect refuses when the session is not stopped", "[BufferVi
     fixture.buffer.SetPoint(0);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::Manager manager(eventLoop);
     ned::ui::BufferView          view = fixture.View();
     view.SetDapManager(&manager);
 
@@ -3560,11 +3560,11 @@ TEST_CASE("dap-line-inspect evaluates every identifier on the line, highlights t
     fixture.buffer.SetPoint(0);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-line-inspect", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-line-inspect", "{}");
     manager.StartOrContinue("bufferview-dap-line-inspect");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -3575,7 +3575,7 @@ TEST_CASE("dap-line-inspect evaluates every identifier on the line, highlights t
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-line-inspect", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-line-inspect", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -3628,11 +3628,11 @@ TEST_CASE("dap-line-inspect evaluates every identifier on the line, highlights t
 TEST_CASE("dap-show-disassembly builds a *disassembly* buffer around the stopped frame's PC", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-disassemble", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-disassemble", "{}");
     manager.StartOrContinue("bufferview-dap-disassemble");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -3643,7 +3643,7 @@ TEST_CASE("dap-show-disassembly builds a *disassembly* buffer around the stopped
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-disassemble", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-disassemble", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -3678,11 +3678,11 @@ TEST_CASE("dap-show-disassembly builds a *disassembly* buffer around the stopped
 TEST_CASE("dap-show-memory-at-point reads the [mem:] marker, prompts for a count, and builds a hex dump", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-memory", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-memory", "{}");
     manager.StartOrContinue("bufferview-dap-memory");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -3693,7 +3693,7 @@ TEST_CASE("dap-show-memory-at-point reads the [mem:] marker, prompts for a count
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-memory", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-memory", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);
@@ -3750,11 +3750,11 @@ TEST_CASE("dap-show-memory-image-at-point reads the [mem:] marker, prompts for a
           "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
-    ned::editor::dap::DapClient* client  = nullptr;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
     FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-memory-image", "{}");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-memory-image", "{}");
     manager.StartOrContinue("bufferview-dap-memory-image");
     const auto initialize = adapter.NextRequest();
     client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
@@ -3765,7 +3765,7 @@ TEST_CASE("dap-show-memory-image-at-point reads the [mem:] marker, prompts for a
     const auto autoStackTrace = adapter.NextRequest();
     client->DispatchFrame(
         DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
-    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-memory-image", "");
+    ned::editor::dap::SetLaunchConfig("bufferview-dap-memory-image", "");
 
     ned::ui::BufferView view = fixture.View();
     view.SetDapManager(&manager);

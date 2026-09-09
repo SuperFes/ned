@@ -59,7 +59,7 @@ class Transport {
     //
     // lsp-stderr-capture follow-up: captureStderr defaults to false,
     // preserving every existing caller's behavior unchanged (most notably
-    // DapClient, which reuses this exact constructor and has no reader for
+    // Client, which reuses this exact constructor and has no reader for
     // a captured stderr pipe -- see StderrFd()'s own doc comment on what an
     // undrained Capture pipe risks). LspClient's real-subprocess constructor
     // is the one caller that passes true.

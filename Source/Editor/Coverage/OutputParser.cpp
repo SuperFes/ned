@@ -1,4 +1,4 @@
-#include "CoverageOutputParser.h"
+#include "OutputParser.h"
 
 #include <charconv>
 #include <map>
@@ -60,7 +60,7 @@ namespace {
     // into an already-present FileCoverage entry for the same path rather
     // than pushing a duplicate -- see this file's own doc comment on why.
     void FinishRecord(std::optional<std::string>& currentPath, std::map<std::size_t, std::size_t>& hits,
-                      std::map<std::size_t, PendingBranch>& branches, CoverageReport& report) {
+                      std::map<std::size_t, PendingBranch>& branches, Report& report) {
         if (!currentPath || hits.empty()) {
             currentPath.reset();
             hits.clear();
@@ -107,8 +107,8 @@ namespace {
 
 } // namespace
 
-CoverageReport ParseLcovInfo(std::string_view output) {
-    CoverageReport report;
+Report ParseLcovInfo(std::string_view output) {
+    Report report;
 
     std::optional<std::string>           currentPath;
     std::map<std::size_t, std::size_t>   hits;

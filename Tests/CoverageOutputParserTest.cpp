@@ -2,9 +2,9 @@
 
 #include <string>
 
-#include "Editor/Coverage/CoverageOutputParser.h"
+#include "Editor/Coverage/OutputParser.h"
 
-using ned::editor::coverage::CoverageReport;
+using ned::editor::coverage::Report;
 using ned::editor::coverage::FileCoverage;
 using ned::editor::coverage::LineStatus;
 using ned::editor::coverage::ParseLcovInfo;
@@ -31,7 +31,7 @@ TEST_CASE("ParseLcovInfo parses a single SF/DA record", "[Coverage]") {
                                   "LF:2\n"
                                   "LH:1\n"
                                   "end_of_record\n";
-    const CoverageReport report = ParseLcovInfo(info);
+    const Report report = ParseLcovInfo(info);
     REQUIRE(report.size() == 1);
     REQUIRE(report[0].path == "/home/user/project/src/foo.cpp");
     REQUIRE(report[0].lines.size() == 2);
@@ -49,7 +49,7 @@ TEST_CASE("ParseLcovInfo derives Partial from BRDA branch data", "[Coverage]") {
                                   "BRDA:5,0,0,5\n"
                                   "BRDA:5,0,1,0\n"
                                   "end_of_record\n";
-    const CoverageReport report = ParseLcovInfo(info);
+    const Report report = ParseLcovInfo(info);
     REQUIRE(report.size() == 1);
     LineStatus status{};
     REQUIRE(StatusForLine(report[0], 4, status));
@@ -62,7 +62,7 @@ TEST_CASE("ParseLcovInfo treats BRDA '-' taken as not-taken, not covered", "[Cov
                                   "BRDA:1,0,0,-\n"
                                   "BRDA:1,0,1,3\n"
                                   "end_of_record\n";
-    const CoverageReport report = ParseLcovInfo(info);
+    const Report report = ParseLcovInfo(info);
     LineStatus           status{};
     REQUIRE(StatusForLine(report[0], 0, status));
     REQUIRE(status == LineStatus::Partial); // one of two branches never reached
@@ -76,7 +76,7 @@ TEST_CASE("ParseLcovInfo merges multiple SF: blocks for the same path", "[Covera
                                   "DA:1,3\n"
                                   "DA:2,0\n"
                                   "end_of_record\n";
-    const CoverageReport report = ParseLcovInfo(info);
+    const Report report = ParseLcovInfo(info);
     REQUIRE(report.size() == 1);
     REQUIRE(report[0].lines.size() == 2);
     LineStatus status{};
@@ -92,7 +92,7 @@ TEST_CASE("ParseLcovInfo merges multiple SF: blocks for the same path", "[Covera
 TEST_CASE("ParseLcovInfo flushes a record with no trailing end_of_record", "[Coverage]") {
     const std::string    info   = "SF:src/foo.cpp\n"
                                   "DA:1,1\n";
-    const CoverageReport report = ParseLcovInfo(info);
+    const Report report = ParseLcovInfo(info);
     REQUIRE(report.size() == 1);
     REQUIRE(report[0].lines.size() == 1);
 }

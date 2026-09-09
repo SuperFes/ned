@@ -42,7 +42,7 @@
 #include "Editor/BufferSave.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
-#include "Editor/Coverage/CoverageConfig.h"
+#include "Editor/Coverage/Config.h"
 #include "Editor/DabbrevComplete.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/FuzzyMatch.h"
@@ -78,7 +78,7 @@
 #include "Editor/RecentFiles.h"
 #include "Editor/Rectangle.h"
 #include "Editor/RelativeLineNumberSettings.h"
-#include "Editor/Repl/ReplConfig.h"
+#include "Editor/Repl/Config.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/Sparkline.h"
@@ -1182,7 +1182,7 @@ inline editor::SnippetVariables BuildSnippetVariables(text::Buffer& buffer) {
 // Debugging wishlist: hex appends a trailing "[hex]" marker -- both the
 // display hint the value itself was fetched with, and (ToggleHexFormatAtPoint's
 // own read of it back) the toggle's persisted state.
-inline std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent, int ownerRef = 0,
+inline std::string FormatDebugVariableLine(const ned::editor::dap::Manager::Variable& variable, std::size_t indent, int ownerRef = 0,
                                            bool hex = false);
 
 // Right-aligns number into a fixed kDiffLineNumberWidth-wide field, or a
@@ -1424,8 +1424,8 @@ inline text::Buffer& RefillSingletonBuffer(text::BufferList& bufferList, const c
 // an optional [ref:N]. "[mem:<ref>]" (DAP round 5) whenever the adapter
 // sent a memoryReference for this variable -- ShowMemoryAtPoint's own
 // target marker, an opaque string rather than a small int like the other
-// two (see DapManager::Variable::memoryReference's own doc comment).
-inline std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent, int ownerRef,
+// two (see Manager::Variable::memoryReference's own doc comment).
+inline std::string FormatDebugVariableLine(const ned::editor::dap::Manager::Variable& variable, std::size_t indent, int ownerRef,
                                            bool hex) {
     std::string line(indent, ' ');
     line += variable.name;

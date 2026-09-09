@@ -3,33 +3,33 @@
 #include <fstream>
 #include <string>
 
-#include "Editor/Coverage/CoverageConfig.h"
+#include "Editor/Coverage/Config.h"
 
 using ned::editor::coverage::ClearCoverageReport;
-using ned::editor::coverage::CoverageFile;
-using ned::editor::coverage::CoverageReportGeneration;
+using ned::editor::coverage::File;
+using ned::editor::coverage::ReportGeneration;
 using ned::editor::coverage::CurrentCoverageReport;
 using ned::editor::coverage::LoadCoverageReport;
-using ned::editor::coverage::SetCoverageFile;
+using ned::editor::coverage::SetFile;
 
-TEST_CASE("CoverageFile round-trips and clears on empty", "[Coverage]") {
-    SetCoverageFile("");
-    REQUIRE_FALSE(CoverageFile().has_value());
+TEST_CASE("File round-trips and clears on empty", "[Coverage]") {
+    SetFile("");
+    REQUIRE_FALSE(File().has_value());
 
-    SetCoverageFile("/tmp/coverage-config-test.info");
-    REQUIRE(CoverageFile() == "/tmp/coverage-config-test.info");
+    SetFile("/tmp/coverage-config-test.info");
+    REQUIRE(File() == "/tmp/coverage-config-test.info");
 
-    SetCoverageFile("");
-    REQUIRE_FALSE(CoverageFile().has_value());
+    SetFile("");
+    REQUIRE_FALSE(File().has_value());
 }
 
 TEST_CASE("LoadCoverageReport throws when no file is configured", "[Coverage]") {
-    SetCoverageFile("");
+    SetFile("");
     REQUIRE_THROWS_AS(LoadCoverageReport(), std::runtime_error);
 }
 
 TEST_CASE("LoadCoverageReport throws when the configured file can't be opened", "[Coverage]") {
-    SetCoverageFile("/nonexistent/path/coverage-config-test-missing.info");
+    SetFile("/nonexistent/path/coverage-config-test-missing.info");
     REQUIRE_THROWS_AS(LoadCoverageReport(), std::runtime_error);
 }
 
@@ -39,11 +39,11 @@ TEST_CASE("LoadCoverageReport parses the configured file and bumps the generatio
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
         out << "SF:src/foo.cpp\nDA:1,2\nend_of_record\n";
     }
-    SetCoverageFile(path);
+    SetFile(path);
 
-    const std::size_t before = CoverageReportGeneration();
+    const std::size_t before = ReportGeneration();
     LoadCoverageReport();
-    REQUIRE(CoverageReportGeneration() > before);
+    REQUIRE(ReportGeneration() > before);
     const auto report = CurrentCoverageReport();
     REQUIRE(report.size() == 1);
     REQUIRE(report[0].path == "src/foo.cpp");
@@ -55,12 +55,12 @@ TEST_CASE("ClearCoverageReport empties the report and bumps the generation", "[C
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
         out << "SF:src/foo.cpp\nDA:1,2\nend_of_record\n";
     }
-    SetCoverageFile(path);
+    SetFile(path);
     LoadCoverageReport();
     REQUIRE_FALSE(CurrentCoverageReport().empty());
 
-    const std::size_t before = CoverageReportGeneration();
+    const std::size_t before = ReportGeneration();
     ClearCoverageReport();
-    REQUIRE(CoverageReportGeneration() > before);
+    REQUIRE(ReportGeneration() > before);
     REQUIRE(CurrentCoverageReport().empty());
 }

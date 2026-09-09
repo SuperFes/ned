@@ -1,6 +1,6 @@
 //
 // DapThreadsPanel (Source/UI/DapThreadsPanel.h) -- headless coverage over a
-// real DapManager wired to a pipe-backed DapClient, mirroring
+// real Manager wired to a pipe-backed Client, mirroring
 // DebugConsolePanelTest.cpp's own Fixture/FrameReader pattern (DAP shares
 // LSP's Content-Length framing, so the frame reader matches DapManagerTest's
 // own).
@@ -12,9 +12,9 @@
 
 #include <unistd.h>
 
-#include "Editor/Dap/DapClient.h"
-#include "Editor/Dap/DapConfig.h"
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Client.h"
+#include "Editor/Dap/Config.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/Lsp/Transport.h"
 #include "TestEvents.h"
 #include "UI/DapThreadsPanel.h"
@@ -23,10 +23,10 @@
 
 namespace {
 
-using ned::editor::dap::DapClient;
-using ned::editor::dap::DapManager;
+using ned::editor::dap::Client;
+using ned::editor::dap::Manager;
 using ned::editor::dap::Json;
-using ned::editor::dap::SetDapLaunchConfig;
+using ned::editor::dap::SetLaunchConfig;
 using ned::editor::lsp::Transport;
 using ned::ui::Box;
 using ned::ui::Canvas;
@@ -81,14 +81,14 @@ std::string EventFrame(const std::string& event, Json body = Json::object()) {
 
 struct Fixture {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager{eventLoop};
+    Manager         manager{eventLoop};
     Theme              theme = ned::ui::DarkTheme();
     DapThreadsPanel    panel{theme, manager};
     Screen             screen{kWidth, kHeight};
 
     int         adapterStdinRead   = -1;
     int         adapterStdoutWrite = -1;
-    DapClient*  client             = nullptr;
+    Client*  client             = nullptr;
     FrameReader reader{-1};
 
     Fixture() {
@@ -104,18 +104,18 @@ struct Fixture {
         adapterStdoutWrite = clientReadsHere[1];
         reader.fd          = adapterStdinRead;
         client             = &manager.SetClientForTesting(
-            std::make_unique<DapClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
+            std::make_unique<Client>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
     }
 
     void StartRunningSession(const std::string& language) {
-        SetDapLaunchConfig(language, R"({"program": "./fake-program"})");
+        SetLaunchConfig(language, R"({"program": "./fake-program"})");
         manager.StartOrContinue(language);
         const Json initialize = reader.Next();
         client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true));
         const Json launch = reader.Next();
         client->DispatchFrame(ResponseFrame(launch["seq"].get<int>(), "launch", true));
-        REQUIRE(manager.State() == DapManager::SessionState::Running);
-        SetDapLaunchConfig(language, "");
+        REQUIRE(manager.State() == Manager::SessionState::Running);
+        SetLaunchConfig(language, "");
     }
 
     // Stops at threadId, answering the stackTrace request HandleStoppedEvent
@@ -124,7 +124,7 @@ struct Fixture {
         client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", threadId}}));
         const Json stackTrace = reader.Next();
         client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
-        REQUIRE(manager.State() == DapManager::SessionState::Stopped);
+        REQUIRE(manager.State() == Manager::SessionState::Stopped);
     }
 
     // Answers panel.Show()/Refresh()'s own "threads" request with a fixed
@@ -181,7 +181,7 @@ TEST_CASE("DapThreadsPanel Show lists every thread and marks the current one", "
     REQUIRE(fixture.RowText(2).find("#2") != std::string::npos);
     REQUIRE(fixture.RowText(2).find("\xe2\x86\x92") == std::string::npos);
 
-    SetDapLaunchConfig("dap-threads-panel-test-list", "");
+    SetLaunchConfig("dap-threads-panel-test-list", "");
 }
 
 TEST_CASE("DapThreadsPanel Enter selects the highlighted row's thread", "[DapThreadsPanel]") {
@@ -211,7 +211,7 @@ TEST_CASE("DapThreadsPanel Enter selects the highlighted row's thread", "[DapThr
     fixture.Paint();
     REQUIRE(fixture.RowText(2).find("\xe2\x86\x92") != std::string::npos); // -> moved to thread 2's row
 
-    SetDapLaunchConfig("dap-threads-panel-test-select", "");
+    SetLaunchConfig("dap-threads-panel-test-select", "");
 }
 
 TEST_CASE("DapThreadsPanel 'g' re-fetches threads", "[DapThreadsPanel]") {

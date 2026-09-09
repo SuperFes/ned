@@ -97,7 +97,7 @@ class Pane {
          const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
          std::string& statusMessage, const Theme& theme,
          ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
-         editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
+         editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::Manager* dapManager,
          editor::acp::AcpManager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
          std::function<void(editor::InteractiveRequest)> onWindowRequest, std::function<void(text::Buffer&)> onBufferClosed);
 
@@ -322,7 +322,7 @@ class WindowManager {
 
     // REPL-engine follow-up: run-repl's own forwarding hook -- unlike the
     // toggles here, this carries the REPL name BufferView already validated
-    // against Editor/Repl/ReplConfig.h. main.cpp's registrant finds-or-
+    // against Editor/Repl/Config.h. main.cpp's registrant finds-or-
     // creates that REPL's own PanelDock tab (a TerminalPanel instance
     // spawning the configured argv on a real pty).
     void SetOnRunReplRequest(std::function<void(const std::string&)> onRunRepl);
@@ -338,8 +338,8 @@ class WindowManager {
     // handler finishes its status/jump-to-source work on every stop event --
     // lets main.cpp's DapThreadsPanel re-fetch its row list live, without
     // this class needing to know the panel exists (same "single real owner
-    // of the DapManager callback fans out internally" reasoning as
-    // SetAcpPanelFocusChecker's own comment above; DapManager::SetOnStopped
+    // of the Manager callback fans out internally" reasoning as
+    // SetAcpPanelFocusChecker's own comment above; Manager::SetOnStopped
     // itself is single-slot, so a second caller registering directly would
     // silently clobber SetDapManager's own handler instead of composing with
     // it). Unset is a safe no-op. Call after SetDapManager (this handler is
@@ -417,7 +417,7 @@ class WindowManager {
     // SetOnHierarchyChanged's own mirror, for the pointer-graph session's own
     // shared TreeView overlay -- a second, independent overlay from the
     // hierarchy browser's (see main.cpp), not a reuse of the same one, since
-    // DapManager is a single global session rather than per-buffer/per-pane
+    // Manager is a single global session rather than per-buffer/per-pane
     // the way LSP is; still needs the same owner-pane bookkeeping
     // (pointerGraphOwnerPane_) for the same reason SetOnHierarchyChanged
     // does -- see that method's own doc comment above.
@@ -473,7 +473,7 @@ class WindowManager {
     // get wired, since WindowManager is the one owner that can resolve
     // "the focused pane" fresh when a breakpoint actually fires, rather
     // than capturing some pane that may have been closed by then.
-    void SetDapManager(editor::dap::DapManager* dapManager);
+    void SetDapManager(editor::dap::Manager* dapManager);
 
     // ACP client slice 2: same "forwarded to every pane, present and
     // future" shape as SetDapManager above -- plus this is where
@@ -869,7 +869,7 @@ class WindowManager {
     editor::tasks::TaskRunner*                         taskRunner_     = nullptr;
     editor::testrun::TestRunner*                       testRunner_     = nullptr; // see SetTestRunner
     editor::vcs::VcsRunner*                            vcsRunner_      = nullptr;
-    editor::dap::DapManager*                           dapManager_     = nullptr;  // see SetDapManager
+    editor::dap::Manager*                           dapManager_     = nullptr;  // see SetDapManager
     editor::acp::AcpManager*                           acpManager_     = nullptr;  // see SetAcpManager
     std::optional<std::string>                         lastAcpAgentSeed_;          // see SetLastKnownAcpAgent
     editor::ProjectUndoManager*                        projectUndo_ = nullptr;     // see SetProjectUndo

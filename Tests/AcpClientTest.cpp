@@ -341,7 +341,7 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
 // teardown, and used to park forever in poll() on the resulting -1 fd, so
 // the join never returned. Hammering construct-then-immediately-destroy is
 // what makes the scheduler land in that window; the loop simply has to
-// finish. LspClient/DapClient share this exact shape (see AcpClient.h's own
+// finish. LspClient/Client share this exact shape (see AcpClient.h's own
 // header comment) and are fixed by the same shared ChildProcess guard.
 TEST_CASE("Destroying an AcpClient before its read thread has started doesn't deadlock", "[Acp]") {
     ned::ui::EventLoop eventLoop;

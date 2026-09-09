@@ -18,15 +18,15 @@ namespace {
 
     constexpr std::size_t kMaxHistoryLines = 500; // TerminalPanel's own scrollback-cap precedent, applied here too
 
-    std::string StateLabel(editor::dap::DapManager::SessionState state) {
+    std::string StateLabel(editor::dap::Manager::SessionState state) {
         switch (state) {
-            case editor::dap::DapManager::SessionState::Starting:
+            case editor::dap::Manager::SessionState::Starting:
                 return "starting";
-            case editor::dap::DapManager::SessionState::Running:
+            case editor::dap::Manager::SessionState::Running:
                 return "running";
-            case editor::dap::DapManager::SessionState::Stopped:
+            case editor::dap::Manager::SessionState::Stopped:
                 return "stopped";
-            case editor::dap::DapManager::SessionState::Inactive:
+            case editor::dap::Manager::SessionState::Inactive:
                 return "inactive";
         }
         return "inactive";
@@ -37,7 +37,7 @@ namespace {
 DebugConsolePanel::DebugConsolePanel(const Theme& theme) : theme_(theme), prompt_("debug> ") {
 }
 
-void DebugConsolePanel::SetDapManager(editor::dap::DapManager* dapManager) {
+void DebugConsolePanel::SetDapManager(editor::dap::Manager* dapManager) {
     dapManager_ = dapManager;
 }
 
@@ -63,7 +63,7 @@ Brush DebugConsolePanel::BrushForStyle(DisplayStyle style) const {
 
 std::string DebugConsolePanel::TitleText() const {
     std::string title =
-        "Debug console [" + StateLabel(dapManager_ ? dapManager_->State() : editor::dap::DapManager::SessionState::Inactive) + "]";
+        "Debug console [" + StateLabel(dapManager_ ? dapManager_->State() : editor::dap::Manager::SessionState::Inactive) + "]";
     if (search_) {
         title += "  " + search_->StatusText();
     }

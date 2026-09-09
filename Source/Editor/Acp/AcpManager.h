@@ -4,7 +4,7 @@
 // buffer ("*acp: <agent>*") -- the same TaskRunner::RunTask/
 // TaskOutputBufferName convention, deliberately reused instead of a new
 // widget for v1 (see ROADMAP.md's AI-assisted-editing entry). Analogous to
-// Dap/DapManager.h: one session at a time, not a per-agent map -- chatting
+// Dap/Manager.h: one session at a time, not a per-agent map -- chatting
 // with an agent is a modal activity the same way debugging is, and nothing
 // in v1's scope needs two agents live at once.
 //
@@ -188,7 +188,7 @@ class AcpManager {
     std::string SendPrompt(const std::string& text, const std::vector<PromptAttachment>& attachments = {});
 
     // Best-effort session/close, then tears the session down regardless
-    // (DapManager::StopSession's own "must not depend on the agent
+    // (Manager::StopSession's own "must not depend on the agent
     // answering" shape) -- returns a short status string.
     std::string StopSession();
 
@@ -289,7 +289,7 @@ class AcpManager {
     // numbered-choice prompt (LspCodeActionSelect's own shape) -- Editor/
     // stays UI-free, so this hands out the data and a resolution entry
     // point rather than driving any UI itself, the same boundary
-    // DapManager's CurrentStopKeyAndLine()/pending-state exposure already
+    // Manager's CurrentStopKeyAndLine()/pending-state exposure already
     // establishes.
     struct PermissionOption {
         std::string optionId;
@@ -319,7 +319,7 @@ class AcpManager {
     // CancelPermissionPrompt, both of which WindowManager's wiring is
     // expected to reach from a real keystroke). WindowManager is the
     // intended wirer, forwarding to whichever pane currently has focus,
-    // mirroring its own SetOnStopped wiring for DapManager.
+    // mirroring its own SetOnStopped wiring for Manager.
     void SetOnPermissionRequest(std::function<void(const PermissionPrompt&)> handler);
 
     // Answers the pending permission request (if any -- a safe no-op
@@ -329,7 +329,7 @@ class AcpManager {
     // Answers the pending permission request (if any) with
     // {"outcome": "cancelled"} -- Escape/C-g's own resolution.
     void CancelPermissionPrompt();
-    // Test/introspection seam, mirrors DapManager's own small state
+    // Test/introspection seam, mirrors Manager's own small state
     // queries -- nullopt when nothing is currently pending.
     [[nodiscard]] const std::optional<PermissionPrompt>& PendingPermissionPrompt() const;
 
@@ -337,7 +337,7 @@ class AcpManager {
     // handshake step, or StopSession. reason is short, user-facing text
     // (also appended to the output buffer, so this is purely for a status
     // line elsewhere, e.g. WindowManager forwarding to the shared echo
-    // area the same way it does for DapManager::SetOnSessionEnded).
+    // area the same way it does for Manager::SetOnSessionEnded).
     void SetOnSessionEnded(std::function<void(std::string reason)> handler);
 
     // ACP MCP tool-server bridge, slice 1. Connect-after-construction,
@@ -349,7 +349,7 @@ class AcpManager {
     // instead of sending an empty mcpServers list.
     void SetMcpBridgeServer(mcp::BridgeServer* server);
 
-    // Public primarily for tests -- mirrors DapManager::SetClientForTesting
+    // Public primarily for tests -- mirrors Manager::SetClientForTesting
     // exactly: registers an already-constructed AcpClient (typically
     // pipe-backed, no real subprocess) as the session's client without
     // starting the handshake; the next StartSession(name) then runs the

@@ -15,7 +15,7 @@
 #include "Clipboard.h"
 #include "CodeFold.h"
 #include "ConflictResolution.h"
-#include "Coverage/CoverageConfig.h"
+#include "Coverage/Config.h"
 #include "EmbeddedDocuments.h"
 #include "Fill.h"
 #include "FillColumn.h"
@@ -2722,7 +2722,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // lives above this class" shape as dap-toggle-console/toggle-terminal)
     // and run-repl (a configurable subprocess REPL by name, e.g. "python" --
     // run-task's own prompt-shaped precedent for TaskName/RunTask). See
-    // UI/JanetReplPanel.h and Editor/Repl/ReplConfig.h.
+    // UI/JanetReplPanel.h and Editor/Repl/Config.h.
     registry.Register("toggle-janet-repl", "Show or hide the built-in Janet REPL panel.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::ToggleJanetRepl;
     });
@@ -2763,10 +2763,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     // code-coverage-gutter follow-up: direct actions, no InteractiveRequest
     // needed -- unlike run-tests above, loading a coverage report is a
-    // plain file read + parse (Editor/Coverage/CoverageConfig.h), not
+    // plain file read + parse (Editor/Coverage/Config.h), not
     // something BufferView needs to hold a live subprocess/runner object
     // for. The gutter itself picks up the new report on its own next
-    // Paint() via CoverageReportGeneration(), the same "no explicit
+    // Paint() via ReportGeneration(), the same "no explicit
     // buffer-by-buffer refresh call" shape TestRunner's OutcomeGeneration()
     // already established.
     registry.Register(
@@ -2784,7 +2784,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 return;
             }
             if (context.message) {
-                const editor::coverage::CoverageReport report    = editor::coverage::CurrentCoverageReport();
+                const editor::coverage::Report report    = editor::coverage::CurrentCoverageReport();
                 std::size_t                            lineCount = 0;
                 for (const editor::coverage::FileCoverage& file : report) {
                     lineCount += file.lines.size();
@@ -2804,10 +2804,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     // DAP client slice 1: four one-shot direct actions, same "just set
     // interactiveRequest" shape as run-task/cancel-task above --
-    // BufferView holds the shared DapManager and does the actual work (see
+    // BufferView holds the shared Manager and does the actual work (see
     // its StartInteractiveSession Dap* cases). Adapter and launch
     // configuration both come from init.janet (ned/set-dap-adapter,
-    // ned/set-dap-launch) -- see Editor/Dap/DapConfig.h.
+    // ned/set-dap-launch) -- see Editor/Dap/Config.h.
     registry.Register("dap-continue", "Start a debug session for the active language, or continue a stopped one.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::DapContinue;

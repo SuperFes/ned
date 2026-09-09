@@ -9,14 +9,14 @@
 // Constructed once, alongside lspManager/taskRunner, and passed by
 // reference the same way. Threading matches the rest of this subsystem:
 // every public method runs on the main thread (called from BufferView's
-// key handling), and every DapClient callback is already Post-marshaled
+// key handling), and every Client callback is already Post-marshaled
 // onto the main thread — no mutexes needed, same reasoning LspClient.h
 // documents.
 //
 // Session shape (the DAP handshake, for whoever touches this next):
 //   1. spawn adapter, send `initialize` (capabilities exchange);
 //   2. on its response, send `launch` with the user's configured,
-//      adapter-specific arguments (DapConfig.h);
+//      adapter-specific arguments (Config.h);
 //   3. the adapter fires the `initialized` EVENT (distinct from the
 //      initialize RESPONSE — the protocol's naming, not ours) once it's
 //      ready for breakpoints: send `setBreakpoints` per file, then
@@ -30,8 +30,8 @@
 // through SetOnStopped/SetOnSessionEnded, wired once by WindowManager.
 //
 
-#ifndef NED_EDITOR_DAP_DAPMANAGER_H
-#define NED_EDITOR_DAP_DAPMANAGER_H
+#ifndef NED_EDITOR_DAP_MANAGER_H
+#define NED_EDITOR_DAP_MANAGER_H
 
 #include <chrono>
 #include <cstddef>
@@ -50,17 +50,17 @@
 #include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
-#include "DapClient.h"
+#include "Client.h"
 
 namespace ned::editor::dap {
 
-class DapManager {
+class Manager {
   public:
-    explicit DapManager(ned::ui::EventLoop& eventLoop);
-    ~DapManager() = default;
+    explicit Manager(ned::ui::EventLoop& eventLoop);
+    ~Manager() = default;
 
-    DapManager(const DapManager&)            = delete;
-    DapManager& operator=(const DapManager&) = delete;
+    Manager(const Manager&)            = delete;
+    Manager& operator=(const Manager&) = delete;
 
     // Starting: initialize/launch/configurationDone still in flight.
     // Running: the debuggee is executing. Stopped: paused at a breakpoint/
@@ -176,7 +176,7 @@ class DapManager {
     void SetExceptionBreakpointFilters(std::set<std::string> ids);
 
     // F5. No session: starts one for language (adapter + launch config both
-    // required, see DapConfig.h). Stopped: sends `continue` for the stopped
+    // required, see Config.h). Stopped: sends `continue` for the stopped
     // thread. Starting/Running: reports that, changes nothing.
     std::string StartOrContinue(const std::string& language);
 
@@ -249,7 +249,7 @@ class DapManager {
     // target -- the adapter answers with whatever it can actually land on,
     // typically the nearest statement), then `goto` jumps the thread to the
     // first one. Stopped-only, same gating as StepOver/Into/Out. Unlike
-    // those, no DapManager state changes here even on success -- the new
+    // those, no Manager state changes here even on success -- the new
     // position arrives the same way a step's does, via the following
     // `stopped` event (reason "goto") flowing through HandleStoppedEvent.
     // callback(success, message) once the whole exchange lands (or fails at
@@ -487,12 +487,12 @@ class DapManager {
 
     // Public primarily for tests — mirrors LspManager::SetClientForTesting
     // exactly (see that method's doc comment): registers an already-
-    // constructed DapClient (typically pipe-backed, no real subprocess) as
+    // constructed Client (typically pipe-backed, no real subprocess) as
     // the session's client without starting the handshake; the next
     // StartOrContinue(language) then runs the real handshake against it
     // instead of spawning. Returns the client for the test to keep driving
     // via DispatchFrame.
-    DapClient& SetClientForTesting(std::unique_ptr<DapClient> client);
+    Client& SetClientForTesting(std::unique_ptr<Client> client);
 
   private:
     // DAP round 3: the shared body of StartOrContinue's "no session yet"
@@ -502,7 +502,7 @@ class DapManager {
     // same short status string both public entry points hand back.
     std::string BeginSession(const std::string& language, bool attach);
     // Renamed from the original slice-1 SendLaunch: reads isAttach_ to send
-    // `launch` (DapLaunchConfig) or `attach` (DapAttachConfig).
+    // `launch` (LaunchConfig) or `attach` (AttachConfig).
     void SendLaunchOrAttach();
     void SendBreakpointsForFile(const std::string& pathKey);
     // DAP round 3: setFunctionBreakpoints/setExceptionBreakpoints --
@@ -533,9 +533,9 @@ class DapManager {
     // lsp-use-after-free follow-up: destroys client_ directly now -- see
     // this method's own .cpp comment for why an earlier "move into a
     // retired_ vector instead, drain later" version of this comment no
-    // longer applies (the real fix lives in DapClient itself now).
+    // longer applies (the real fix lives in Client itself now).
     void EndSession(std::string reason);
-    void WireClient(DapClient& client);
+    void WireClient(Client& client);
     // Slice 4: the thread every inspection/step/continue request targets --
     // the explicitly focused one (SelectThread) if set, else whichever
     // thread the last `stopped` event named.
@@ -543,7 +543,7 @@ class DapManager {
 
     ned::ui::EventLoop& eventLoop_;
 
-    std::unique_ptr<DapClient> client_;
+    std::unique_ptr<Client> client_;
     std::string                language_;
     SessionState               state_           = SessionState::Inactive;
     int                        stoppedThreadId_ = 0;
@@ -622,4 +622,4 @@ class DapManager {
 
 } // namespace ned::editor::dap
 
-#endif // NED_EDITOR_DAP_DAPMANAGER_H
+#endif // NED_EDITOR_DAP_MANAGER_H

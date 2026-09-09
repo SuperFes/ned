@@ -56,7 +56,7 @@
 // StopSession sends a best-effort "session/close" request immediately
 // before EndSession destroys the client (mirroring LspManager::Shutdown's
 // own "shutdown"+"exit" courtesy pair) -- confirmed live by a real
-// DapManagerTest.cpp test failure during this transplant (DapClient hit the
+// DapManagerTest.cpp test failure during this transplant (Client hit the
 // identical race first): without PrepareForGracefulShutdown, that
 // SendRequest-then-immediately-destroy sequence races the destructor's
 // implicit request_stop() against writeThread_ actually writing the queued
