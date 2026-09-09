@@ -47,6 +47,7 @@
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Editor/Mode.h"
+#include "Editor/Multibuffer.h"
 #include "Editor/Org.h"
 #include "Editor/PointerGraphNode.h"
 #include "Editor/PrefixArgument.h"
@@ -83,6 +84,7 @@
 #include "UI/BufferView/FuzzyPrompt.h"
 #include "UI/BufferView/GutterLayout.h"
 #include "UI/BufferView/GutterModel.h"
+#include "UI/BufferView/RenderTypes.h"
 #include "UI/BufferView/RequestSlot.h"
 #include "UI/BufferView/TextEntryPrompt.h"
 #include "UI/BufferView/Viewport.h"
@@ -2627,6 +2629,36 @@ class BufferView : public Widget {
         const std::vector<std::pair<std::size_t, std::size_t>>&                        unsavedChangeLineRanges;
         const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& diagnosticLineSeverities;
     };
+
+    // Everything about one buffer line the row painting needs. Recomputed when a
+    // new line starts, not per visual row: a wrapped line occupies several rows
+    // and they all draw from the same spans, links, hints and tints.
+    //
+    // Filled in place rather than returned by value, so the vectors keep the
+    // capacity they had for the previous line instead of reallocating once per
+    // line of the viewport on every frame.
+    struct LineRenderState {
+        std::vector<editor::HighlightSpan>               spans;
+        std::vector<bufferview::RenderedLink>            links;
+        std::vector<bufferview::RenderedInlayHint>       inlayHints;
+        std::vector<bufferview::WrapSegment>             segments;
+        std::vector<std::pair<std::size_t, std::size_t>> diagnosticSpans;
+        std::vector<std::pair<std::size_t, std::size_t>> documentHighlightSpans;
+        // Byte offsets, not lengths: where the line's trailing whitespace run
+        // begins and where its leading indent ends. Both collapse to an empty
+        // run unless whitespace highlighting or indent guides are on.
+        std::size_t                                  trailingWhitespaceStart = 0;
+        std::size_t                                  indentEnd               = 0;
+        bool                                         isExecutionLine         = false;
+        std::optional<DiffLineKind>                  diffTint;
+        std::optional<editor::multibuffer::LineTint> multibufferTint;
+    };
+
+    // Recompute `line` into `state`. Called on a line's first visual row only.
+    void BeginLineRender(LineRenderState& state, std::size_t line, std::size_t lineStart, std::size_t lineEnd,
+                         const FramePaint& frame, const std::vector<editor::HighlightSpan>& highlightSpans,
+                         const std::optional<std::pair<std::string, std::size_t>>& dapStop, bool wrapActive,
+                         int contentWidth);
 
     // Draws every gutter column for `line` on `row`. Called only for a line's
     // first visual row -- a wrapped continuation row has no gutter of its own.

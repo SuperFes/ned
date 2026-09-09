@@ -672,6 +672,87 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     }
 }
 
+void BufferView::BeginLineRender(LineRenderState& state, std::size_t line, std::size_t lineStart,
+                                 std::size_t lineEnd, const FramePaint& frame,
+                                 const std::vector<editor::HighlightSpan>&                 highlightSpans,
+                                 const std::optional<std::pair<std::string, std::size_t>>& dapStop,
+                                 bool wrapActive, int contentWidth) {
+    state.spans = SpansForLine(highlightSpans, lineStart, lineEnd);
+    state.links = LinksForLine(viewport_.Links(), lineStart, lineEnd, frame.point);
+    // inlayHint follow-up: empty when lspManager_ is unset,
+    // disabled, or no response has landed for this line's range
+    // yet -- InlayHintSpans itself is O(1) (no cache to poll a
+    // generation counter for), so no extra staleness bookkeeping
+    // is needed here unlike the tree-sitter highlight cache.
+    state.inlayHints =
+        InlayHintsForLine(lspManager_ ? lspManager_->InlayHintSpans(frame.buffer) : std::vector<editor::lsp::LspManager::ResolvedInlayHint>{},
+                          lineStart, lineEnd);
+    // Whitespace-visualization follow-up: skipped (both fields
+    // left at their "empty run" default) unless at least one of
+    // the two features is on, so a default-off installation pays
+    // no extra Substring-per-line cost here.
+    state.trailingWhitespaceStart = lineEnd;
+    state.indentEnd               = lineStart;
+    if (editor::TrailingWhitespaceHighlightEnabled() || editor::IndentGuidesEnabled()) {
+        const std::string lineText      = frame.content.Substring(lineStart, lineEnd - lineStart);
+        std::size_t       trailingStart = lineText.size();
+        while (trailingStart > 0 &&
+               (lineText[trailingStart - 1] == ' ' || lineText[trailingStart - 1] == '\t')) {
+            --trailingStart;
+        }
+        state.trailingWhitespaceStart = lineStart + trailingStart;
+
+        std::size_t indentEnd = 0;
+        while (indentEnd < lineText.size() && (lineText[indentEnd] == ' ' || lineText[indentEnd] == '\t')) {
+            ++indentEnd;
+        }
+        state.indentEnd = lineStart + indentEnd;
+    }
+    state.diagnosticSpans.clear();
+    for (const text::Buffer::Diagnostic& diagnostic : frame.buffer.Diagnostics()) {
+        // prose-diagnostic-callout follow-up: no code-style
+        // underline for the prose/grammar checker's own
+        // diagnostics -- see PaintProseDiagnosticCallouts.
+        if (diagnostic.origin != text::Buffer::Diagnostic::Origin::Code) {
+            continue;
+        }
+        const std::size_t spanEnd = std::max(diagnostic.endByte, diagnostic.startByte + 1);
+        if (diagnostic.startByte < lineEnd && spanEnd > lineStart) {
+            state.diagnosticSpans.emplace_back(diagnostic.startByte, spanEnd);
+        }
+    }
+    state.documentHighlightSpans.clear();
+    if (documentHighlight_ && documentHighlight_->buffer == &frame.buffer &&
+        documentHighlight_->contentGeneration == frame.buffer.ContentGeneration()) {
+        for (const auto& [start, end] : documentHighlight_->ranges) {
+            if (start < lineEnd && end > lineStart) {
+                state.documentHighlightSpans.emplace_back(start, end);
+            }
+        }
+    }
+    state.isExecutionLine = dapStop && dapStop->second == line + 1; // dapStop already file-filtered above
+    state.diffTint.reset();
+    if (frame.gutter.diffWidth > 0) {
+        const auto diffIt = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
+                                             [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
+        if (diffIt != diffLineKinds_.end() && diffIt->first == line && diffIt->second != DiffLineKind::Removed) {
+            state.diffTint = diffIt->second;
+        }
+    }
+    state.multibufferTint.reset();
+    if (const auto* multibufferIndex = editor::multibuffer::MultibufferIndexFor(frame.buffer)) {
+        if (const auto tint = multibufferIndex->TintForLine(line); tint != editor::multibuffer::LineTint::None) {
+            state.multibufferTint = tint;
+        }
+    }
+    if (wrapActive) {
+        state.segments = ComputeWrappedLineSegments(frame.content, lineStart, lineEnd, contentWidth, state.links);
+    }
+    else {
+        state.segments = {WrapSegment{.startByte = lineStart, .endByte = lineEnd}};
+    }
+}
+
 void BufferView::Paint(Canvas paneCanvas) {
     viewport_.EnsureTopLineValidForActiveBuffer();
     EnsureStatusMessageFreshness();
@@ -1048,56 +1129,15 @@ void BufferView::Paint(Canvas paneCanvas) {
     std::size_t line = viewport_.TopLine();
     // line-wrap follow-up: segmentIndex is which wrap segment (row) of
     // `line` is currently being drawn -- 0 for a non-wrapped line, always.
-    // lineSegments/currentLineSpans/currentLineLinks are recomputed only
+    // lineState.segments/lineState.spans/lineState.links are recomputed only
     // when segmentIndex == 0 (i.e. this row starts a new buffer line), then
     // read on every row -- including continuation rows -- of that same
     // line, the same "compute once per line, not once per row" shape this
     // function already used for lineSpans/lineLinks before wrap existed.
     const bool                         wrapActive   = viewport_.EffectiveWrapLines();
     std::size_t                        segmentIndex = 0;
-    std::vector<WrapSegment>           lineSegments;
-    std::vector<editor::HighlightSpan> currentLineSpans;
-    std::vector<RenderedLink>          currentLineLinks;
-    std::vector<RenderedInlayHint>     currentLineInlayHints;
-    // Whitespace-visualization follow-up: same "compute once per line, not
-    // once per row/character" shape as currentLineSpans/currentLineLinks
-    // above. currentLineTrailingWhitespaceStart is the byte offset of the
-    // first byte in the line's own trailing run of spaces/tabs (lineEnd
-    // itself if the line has no trailing whitespace, so the `offset >=`
-    // check below is trivially false); currentLineIndentEnd is the byte
-    // offset one past the line's own leading run of spaces/tabs (lineStart
-    // itself if the line has no leading whitespace at all).
-    std::size_t currentLineTrailingWhitespaceStart = 0;
-    std::size_t currentLineIndentEnd               = 0;
-    // Diff gutter markers follow-up: same "compute once per line, not once
-    // per row/character" shape as currentLineSpans/currentLineLinks above --
-    // feeds the subtle background tint applied per character below
-    // (Removed has no line to tint, only Added/Modified ever populate this).
-    std::optional<DiffLineKind> currentLineDiffTint;
-    // Multibuffers follow-up: same "compute once per line" shape as
-    // currentLineDiffTint above, but for the *vcs diff* multibuffer's own
-    // stitched added/removed lines (a static property of that buffer's
-    // content, not a live comparison against disk the way the source-file
-    // diff gutter is) -- see the per-character brush selection below for
-    // why a content-area wash is safe here specifically.
-    std::optional<editor::multibuffer::LineTint> currentMultibufferTint;
-    // diagnostics-UX follow-up: the diagnostic byte spans overlapping the
-    // current line, feeding the per-character underline below -- same
-    // "compute once per line" shape as everything above. A zero-length
-    // diagnostic span (some servers report those) is widened to one byte so
-    // it still underlines the cell it points at instead of vanishing.
-    std::vector<std::pair<std::size_t, std::size_t>> currentLineDiagnosticSpans;
-    // documentHighlight follow-up: the LSP-reported occurrence-of-symbol-at-
-    // point byte spans overlapping the current line -- same "compute once
-    // per line, from BufferView-owned ephemeral state" shape as
-    // currentLineDiagnosticSpans above, but sourced from documentHighlight_
-    // (a point-triggered request/response, not Buffer::Diagnostics()'
-    // server-pushed set).
-    std::vector<std::pair<std::size_t, std::size_t>> currentLineDocumentHighlightSpans;
-    // DAP client slice 2: whether the debuggee is stopped exactly on this
-    // line -- feeds both the whole-line background wash below and the
-    // gutter arrow, so the two can never disagree.
-    bool currentLineIsExecutionLine = false;
+    // Per-line render state, reused across lines so its vectors keep capacity.
+    LineRenderState lineState;
     // inline-diagnostics follow-up: set when the just-finished line carries
     // an annotation -- the NEXT loop iteration renders that annotation row
     // instead of a buffer line, mirroring how RowsForLine already counts it.
@@ -1180,89 +1220,16 @@ void BufferView::Paint(Canvas paneCanvas) {
             // new buffer line (segmentIndex == 0), then read on every row
             // of that same line, including continuation rows -- the same
             // "compute once per line" shape lineSpans/lineLinks already
-            // used before wrap existed, now also covering lineSegments
+            // used before wrap existed, now also covering lineState.segments
             // itself. A non-wrapped line always gets exactly one segment
             // spanning its whole content, so every call site below that
-            // reads lineSegments[segmentIndex] behaves identically to the
+            // reads lineState.segments[segmentIndex] behaves identically to the
             // pre-wrap code when wrapActive is false.
             if (segmentIndex == 0) {
-                currentLineSpans = SpansForLine(highlightSpans, lineStart, lineEnd);
-                currentLineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, point);
-                // inlayHint follow-up: empty when lspManager_ is unset,
-                // disabled, or no response has landed for this line's range
-                // yet -- InlayHintSpans itself is O(1) (no cache to poll a
-                // generation counter for), so no extra staleness bookkeeping
-                // is needed here unlike the tree-sitter highlight cache.
-                currentLineInlayHints =
-                    InlayHintsForLine(lspManager_ ? lspManager_->InlayHintSpans(buffer) : std::vector<editor::lsp::LspManager::ResolvedInlayHint>{},
-                                      lineStart, lineEnd);
-                // Whitespace-visualization follow-up: skipped (both fields
-                // left at their "empty run" default) unless at least one of
-                // the two features is on, so a default-off installation pays
-                // no extra Substring-per-line cost here.
-                currentLineTrailingWhitespaceStart = lineEnd;
-                currentLineIndentEnd               = lineStart;
-                if (editor::TrailingWhitespaceHighlightEnabled() || editor::IndentGuidesEnabled()) {
-                    const std::string lineText      = content.Substring(lineStart, lineEnd - lineStart);
-                    std::size_t       trailingStart = lineText.size();
-                    while (trailingStart > 0 &&
-                           (lineText[trailingStart - 1] == ' ' || lineText[trailingStart - 1] == '\t')) {
-                        --trailingStart;
-                    }
-                    currentLineTrailingWhitespaceStart = lineStart + trailingStart;
-
-                    std::size_t indentEnd = 0;
-                    while (indentEnd < lineText.size() && (lineText[indentEnd] == ' ' || lineText[indentEnd] == '\t')) {
-                        ++indentEnd;
-                    }
-                    currentLineIndentEnd = lineStart + indentEnd;
-                }
-                currentLineDiagnosticSpans.clear();
-                for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
-                    // prose-diagnostic-callout follow-up: no code-style
-                    // underline for the prose/grammar checker's own
-                    // diagnostics -- see PaintProseDiagnosticCallouts.
-                    if (diagnostic.origin != text::Buffer::Diagnostic::Origin::Code) {
-                        continue;
-                    }
-                    const std::size_t spanEnd = std::max(diagnostic.endByte, diagnostic.startByte + 1);
-                    if (diagnostic.startByte < lineEnd && spanEnd > lineStart) {
-                        currentLineDiagnosticSpans.emplace_back(diagnostic.startByte, spanEnd);
-                    }
-                }
-                currentLineDocumentHighlightSpans.clear();
-                if (documentHighlight_ && documentHighlight_->buffer == &buffer &&
-                    documentHighlight_->contentGeneration == buffer.ContentGeneration()) {
-                    for (const auto& [start, end] : documentHighlight_->ranges) {
-                        if (start < lineEnd && end > lineStart) {
-                            currentLineDocumentHighlightSpans.emplace_back(start, end);
-                        }
-                    }
-                }
-                currentLineIsExecutionLine = dapStop && dapStop->second == line + 1; // dapStop already file-filtered above
-                currentLineDiffTint.reset();
-                if (gutter.diffWidth > 0) {
-                    const auto diffIt = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
-                                                         [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
-                    if (diffIt != diffLineKinds_.end() && diffIt->first == line && diffIt->second != DiffLineKind::Removed) {
-                        currentLineDiffTint = diffIt->second;
-                    }
-                }
-                currentMultibufferTint.reset();
-                if (const auto* multibufferIndex = editor::multibuffer::MultibufferIndexFor(buffer)) {
-                    if (const auto tint = multibufferIndex->TintForLine(line); tint != editor::multibuffer::LineTint::None) {
-                        currentMultibufferTint = tint;
-                    }
-                }
-                if (wrapActive) {
-                    const int fullWidth = std::max(1, c.size().width - static_cast<int>(gutter.totalWidth));
-                    lineSegments        = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, currentLineLinks);
-                }
-                else {
-                    lineSegments = {WrapSegment{.startByte = lineStart, .endByte = lineEnd}};
-                }
+                BeginLineRender(lineState, line, lineStart, lineEnd, frame, highlightSpans, dapStop, wrapActive,
+                                std::max(1, c.size().width - static_cast<int>(gutter.totalWidth)));
             }
-            const WrapSegment& currentSegment = lineSegments[segmentIndex];
+            const WrapSegment& currentSegment = lineState.segments[segmentIndex];
 
             // line-wrap follow-up: everything in this block is per-REAL-LINE,
             // not per-row (a line number/fold glyph only ever belongs on a
@@ -1270,12 +1237,12 @@ void BufferView::Paint(Canvas paneCanvas) {
             // row of a wrapped line; the top-of-row blanking pass already
             // washed this row's gutter columns blank.
             if (segmentIndex == 0) {
-                PaintLineGutter(c, row, line, lineStart, lineEnd, frame, currentLineDiffTint,
-                                currentLineIsExecutionLine, folds);
+                PaintLineGutter(c, row, line, lineStart, lineEnd, frame, lineState.diffTint,
+                                lineState.isExecutionLine, folds);
             }
 
-            const std::vector<editor::HighlightSpan>& lineSpans = currentLineSpans;
-            const std::vector<RenderedLink>&          lineLinks = currentLineLinks;
+            const std::vector<editor::HighlightSpan>& lineSpans = lineState.spans;
+            const std::vector<RenderedLink>&          lineLinks = lineState.links;
 
             std::size_t offset = currentSegment.startByte;
             // line-wrap follow-up: horizontal-scroll-follow's own
@@ -1365,7 +1332,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // virtual text, not a real SyntaxClass). Never emits a
                 // raw control byte, matching every other glyph-writing loop
                 // in this function.
-                if (const RenderedInlayHint* hint = InlayHintStartingAt(currentLineInlayHints, offset)) {
+                if (const RenderedInlayHint* hint = InlayHintStartingAt(lineState.inlayHints, offset)) {
                     const Brush      hintBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
                     std::size_t      hintTextOffset = 0;
                     const text::Rope hintRope(hint->label);
@@ -1397,7 +1364,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // cue on top of whatever syntax color the cell already has
                 // (foreground deliberately untouched: recoloring would fight
                 // the highlighting the way the first diff-tint attempt did).
-                for (const auto& [spanStart, spanEnd] : currentLineDiagnosticSpans) {
+                for (const auto& [spanStart, spanEnd] : lineState.diagnosticSpans) {
                     if (offset >= spanStart && offset < spanEnd) {
                         brush.underlined = true;
                         break;
@@ -1426,7 +1393,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 else if (InConflictBase(offset)) {
                     brush.background = theme_.conflictBaseBackground;
                 }
-                else if (std::any_of(currentLineDocumentHighlightSpans.begin(), currentLineDocumentHighlightSpans.end(),
+                else if (std::any_of(lineState.documentHighlightSpans.begin(), lineState.documentHighlightSpans.end(),
                                      [offset](const auto& span) { return offset >= span.first && offset < span.second; })) {
                     // documentHighlight follow-up: a read-only cue on the
                     // symbol under point's other occurrences -- loses to
@@ -1446,18 +1413,18 @@ void BufferView::Paint(Canvas paneCanvas) {
                     // washes below.
                     brush.background = theme_.lineInspectBackground;
                 }
-                else if (currentLineIsExecutionLine) {
+                else if (lineState.isExecutionLine) {
                     // DAP client slice 2: the stopped line's own wash --
                     // loses to isearch/selection above (both are explicit
                     // user actions). A changed line's content area gets no
                     // tint of its own anymore (the two-column gradient that
                     // used to live here was removed per user feedback) --
                     // the diff gutter glyph plus the accent-colored line
-                    // number carry the whole signal; currentLineDiffTint
+                    // number carry the whole signal; lineState.diffTint
                     // survives only for the latter.
                     brush.background = theme_.executionLineBackground;
                 }
-                else if (currentMultibufferTint) {
+                else if (lineState.multibufferTint) {
                     // Multibuffers follow-up: unlike the live diff gutter's
                     // content area (deliberately left untinted after user
                     // feedback that a whole-line wash fights syntax-
@@ -1470,7 +1437,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     // glyphs are already visually distinct on their own
                     // (an "ASCII outline" follow-up ask), a wash would just
                     // fight the rule glyph's own default color.
-                    switch (*currentMultibufferTint) {
+                    switch (*lineState.multibufferTint) {
                         case editor::multibuffer::LineTint::Added:
                             brush.background = theme_.diffAddedBackground;
                             break;
@@ -1485,12 +1452,12 @@ void BufferView::Paint(Canvas paneCanvas) {
                             break;
                     }
                 }
-                else if (editor::TrailingWhitespaceHighlightEnabled() && offset >= currentLineTrailingWhitespaceStart) {
+                else if (editor::TrailingWhitespaceHighlightEnabled() && offset >= lineState.trailingWhitespaceStart) {
                     // Whitespace-visualization follow-up: lowest priority of
                     // this chain, same reasoning as every case above it --
                     // an active isearch/selection/execution/multibuffer
                     // overlay always wins over this purely cosmetic wash.
-                    // offset >= currentLineTrailingWhitespaceStart already
+                    // offset >= lineState.trailingWhitespaceStart already
                     // guarantees this cell is a space/tab (see that field's
                     // own doc comment), so no codepoint check is needed here.
                     brush.background = theme_.trailingWhitespaceBackground;
@@ -1509,7 +1476,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     // editor::TabWidth() is a *display* setting only; the
                     // buffer's real tab byte is untouched.
                     const int  tabWidth = editor::TabWidth();
-                    const bool inIndent = editor::IndentGuidesEnabled() && offset < currentLineIndentEnd;
+                    const bool inIndent = editor::IndentGuidesEnabled() && offset < lineState.indentEnd;
                     for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
                         Cell&     cell          = c[{.x = col, .y = row}];
                         const int displayColumn = col - static_cast<int>(gutter.totalWidth);
@@ -1517,7 +1484,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                             // Whitespace-visualization follow-up: a guide
                             // glyph in place of one of the expanded tab's
                             // space cells, at each indent-width column --
-                            // see currentLineIndentEnd's own doc comment.
+                            // see lineState.indentEnd's own doc comment.
                             cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
                             Brush guideBrush      = brush;
                             guideBrush.foreground = IndentGuideColor(theme_, displayColumn, tabWidth);
@@ -1565,12 +1532,12 @@ void BufferView::Paint(Canvas paneCanvas) {
                 else {
                     Cell&     cell          = c[{.x = col, .y = row}];
                     const int displayColumn = col - static_cast<int>(gutter.totalWidth);
-                    // offset < currentLineIndentEnd here only ever holds for
+                    // offset < lineState.indentEnd here only ever holds for
                     // a space cell (see that field's own doc comment: the
                     // scan that computes it stops at the first non-space/tab
                     // byte), so decoded.codepoint is guaranteed U' ' whenever
                     // this substitutes a guide glyph.
-                    if (editor::IndentGuidesEnabled() && offset < currentLineIndentEnd && displayColumn > 0 &&
+                    if (editor::IndentGuidesEnabled() && offset < lineState.indentEnd && displayColumn > 0 &&
                         displayColumn % editor::TabWidth() == 0) {
                         cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
                         Brush guideBrush      = brush;
@@ -1598,7 +1565,7 @@ void BufferView::Paint(Canvas paneCanvas) {
             // wrap segment routinely ends well short of the edge, and the
             // point is a clearly-positioned "this continues" cue, not a
             // caret glued to the last rendered word.
-            if (segmentIndex + 1 < lineSegments.size()) {
+            if (segmentIndex + 1 < lineState.segments.size()) {
                 const Brush wrapContinuationBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
                 Cell&       cell = c[{.x = c.size().width - 1, .y = row}];
                 cell.character   = text::EncodeCodepointUtf8(kWrapContinuationIndicator);
@@ -1621,7 +1588,7 @@ void BufferView::Paint(Canvas paneCanvas) {
             // own above; invert the first padding cell instead. Last
             // segment only: a mid-wrap segment's endByte is the next
             // segment's startByte, which the content loop already covers.
-            if (segmentIndex + 1 == lineSegments.size() && col < c.size().width &&
+            if (segmentIndex + 1 == lineState.segments.size() && col < c.size().width &&
                 IsSecondaryCursorAt(currentSegment.endByte)) {
                 c[{.x = col, .y = row}].inverted = true;
             }
@@ -1636,7 +1603,7 @@ void BufferView::Paint(Canvas paneCanvas) {
             // line-wrap follow-up: this ellipsis represents "content AFTER
             // this line is hidden" -- belongs on the line's own last visual
             // row, not every wrap continuation row.
-            if (segmentIndex + 1 == lineSegments.size()) {
+            if (segmentIndex + 1 == lineState.segments.size()) {
                 // Org-mode fold/unfold follow-up: any marked headline (Collapsed or
                 // ChildrenVisible -- either way, something below this line is
                 // currently hidden) gets a short ellipsis painted right after its
@@ -1711,7 +1678,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     }
                     break;
                 }
-            } // if (segmentIndex + 1 == lineSegments.size()) -- fold ellipsis/preview
+            } // if (segmentIndex + 1 == lineState.segments.size()) -- fold ellipsis/preview
 
             // trailing-blank-line-gutter follow-up: the buffer's own true
             // last line (line + 1 == totalLines) never gets a phantom empty
@@ -1730,7 +1697,7 @@ void BufferView::Paint(Canvas paneCanvas) {
             // already-viewport-filling last line with wrap off) rather than
             // clobbering real content the way the truncation indicator does
             // -- this is a much rarer case and not worth the same trade-off.
-            if (line + 1 == totalLines && lineEnd > lineStart && segmentIndex + 1 == lineSegments.size() &&
+            if (line + 1 == totalLines && lineEnd > lineStart && segmentIndex + 1 == lineState.segments.size() &&
                 col < c.size().width) {
                 const Brush noNewlineBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
                 Cell&       cell = c[{.x = col, .y = row}];
@@ -1757,9 +1724,9 @@ void BufferView::Paint(Canvas paneCanvas) {
             // of the same buffer line if there is one, otherwise advance to
             // the next visible buffer line -- was an unconditional
             // `line = viewport_.NextVisibleLine(line + 1, renderEndLine)` before wrap
-            // existed, which segmentIndex staying 0 (lineSegments always
+            // existed, which segmentIndex staying 0 (lineState.segments always
             // exactly one entry) reduces to exactly.
-            if (segmentIndex + 1 < lineSegments.size()) {
+            if (segmentIndex + 1 < lineState.segments.size()) {
                 ++segmentIndex;
             }
             else {
