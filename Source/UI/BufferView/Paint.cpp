@@ -1001,6 +1001,222 @@ void BufferView::SyncBufferSwitch() {
     }
 }
 
+// The brush one cell renders with: the syntax highlighting underneath, an
+// underline where a diagnostic covers it, and then at most one background
+// overlay. The overlays are a strict precedence chain, highest first --
+// isearch match, snippet field, selection, the three conflict regions,
+// document highlight, line inspect, execution line, multibuffer tint, and
+// finally trailing whitespace, which is purely cosmetic and always loses to
+// an overlay that means something.
+Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineState) const {
+    const editor::HighlightSpan span  = SpanAtOffset(lineState.spans, offset);
+    Brush                       brush = ResolvedBrush(span.syntaxClass, span.captureId);
+    // diagnostics-UX follow-up: underline exactly the span the
+    // server flagged -- a non-disruptive "the problem is HERE"
+    // cue on top of whatever syntax color the cell already has
+    // (foreground deliberately untouched: recoloring would fight
+    // the highlighting the way the first diff-tint attempt did).
+    for (const auto& [spanStart, spanEnd] : lineState.diagnosticSpans) {
+        if (offset >= spanStart && offset < spanEnd) {
+            brush.underlined = true;
+            break;
+        }
+    }
+    if (InIsearchMatch(offset)) {
+        brush.background = theme_.isearchMatchBackground;
+    }
+    else if (InActiveSnippetField(offset)) {
+        brush.background = theme_.snippetFieldBackground;
+    }
+    else if (InSelection(offset)) {
+        brush.background = theme_.selectionBackground;
+    }
+    else if (InConflictOurs(offset)) {
+        // Merge Conflict Resolution Mode: a persistent,
+        // must-not-miss "this is unresolved" state -- loses only
+        // to isearch/snippet-field/selection above (explicit
+        // user actions), but wins over documentHighlight/
+        // execution-line/multibuffer/trailing-whitespace below.
+        brush.background = theme_.conflictOursBackground;
+    }
+    else if (InConflictTheirs(offset)) {
+        brush.background = theme_.conflictTheirsBackground;
+    }
+    else if (InConflictBase(offset)) {
+        brush.background = theme_.conflictBaseBackground;
+    }
+    else if (std::any_of(lineState.documentHighlightSpans.begin(), lineState.documentHighlightSpans.end(),
+                         [offset](const auto& span) { return offset >= span.first && offset < span.second; })) {
+        // documentHighlight follow-up: a read-only cue on the
+        // symbol under point's other occurrences -- loses to
+        // isearch/snippet-field/selection above (all explicit
+        // user actions), but wins over the execution-line/
+        // multibuffer/trailing-whitespace washes below (this is
+        // still a direct answer to "what does point currently
+        // mean", a stronger signal than those cosmetic washes).
+        brush.background = theme_.documentHighlightBackground;
+    }
+    else if (InLineInspectHighlight(offset)) {
+        // Debugging wishlist (line-inspect follow-up): same
+        // read-only-cue priority tier as documentHighlight above
+        // -- the direct, explicit result of a dap-line-inspect
+        // the user just ran, so it still wins over the more
+        // ambient execution-line/multibuffer/trailing-whitespace
+        // washes below.
+        brush.background = theme_.lineInspectBackground;
+    }
+    else if (lineState.isExecutionLine) {
+        // DAP client slice 2: the stopped line's own wash --
+        // loses to isearch/selection above (both are explicit
+        // user actions). A changed line's content area gets no
+        // tint of its own anymore (the two-column gradient that
+        // used to live here was removed per user feedback) --
+        // the diff gutter glyph plus the accent-colored line
+        // number carry the whole signal; lineState.diffTint
+        // survives only for the latter.
+        brush.background = theme_.executionLineBackground;
+    }
+    else if (lineState.multibufferTint) {
+        // Multibuffers follow-up: unlike the live diff gutter's
+        // content area (deliberately left untinted after user
+        // feedback that a whole-line wash fights syntax-
+        // highlighted text -- see the comment two cases above),
+        // this buffer's excerpt lines carry no syntax
+        // highlighting to fight in the first place, so a real
+        // background wash is safe and is the whole point of
+        // this dedicated diff view. Header/Rule get no
+        // background at all -- bold text and box-drawing
+        // glyphs are already visually distinct on their own
+        // (an "ASCII outline" follow-up ask), a wash would just
+        // fight the rule glyph's own default color.
+        switch (*lineState.multibufferTint) {
+            case editor::multibuffer::LineTint::Added:
+                brush.background = theme_.diffAddedBackground;
+                break;
+            case editor::multibuffer::LineTint::Removed:
+                brush.background = theme_.diffRemovedBackground;
+                break;
+            case editor::multibuffer::LineTint::Header:
+                brush.bold = true;
+                break;
+            case editor::multibuffer::LineTint::Rule:
+            case editor::multibuffer::LineTint::None:
+                break;
+        }
+    }
+    else if (editor::TrailingWhitespaceHighlightEnabled() && offset >= lineState.trailingWhitespaceStart) {
+        // Whitespace-visualization follow-up: lowest priority of
+        // this chain, same reasoning as every case above it --
+        // an active isearch/selection/execution/multibuffer
+        // overlay always wins over this purely cosmetic wash.
+        // offset >= lineState.trailingWhitespaceStart already
+        // guarantees this cell is a space/tab (see that field's
+        // own doc comment), so no codepoint check is needed here.
+        brush.background = theme_.trailingWhitespaceBackground;
+    }
+    return brush;
+}
+
+// Emits the cells one codepoint occupies, advancing col past them. A tab
+// expands to the next tab stop, a C0/DEL byte renders as a hex placeholder,
+// and anything else is a single cell. Only the first cell of a multi-column
+// glyph carries a secondary caret's inversion.
+void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const bufferview::GutterLayout& gutter,
+                                    const text::ITextStorage::DecodedCodepoint& decoded, const Brush& brush,
+                                    bool secondaryCaretHere, const LineRenderState& lineState,
+                                    std::size_t offset) const {
+    if (decoded.codepoint == U'\t') {
+        // A real terminal treats a raw tab byte as "jump to the next
+        // tab stop" (consuming several columns), not "print one
+        // glyph and advance by one" -- sending it through unexpanded
+        // desyncs the terminal's actual cursor position from what
+        // the terminal library's own per-cell diff bookkeeping
+        // believes was written, which then corrupts unrelated cells
+        // on later frames. Expanding to literal space glyphs keeps
+        // this widget's one-codepoint-per-column model -- and the
+        // real terminal's actual column count -- in agreement.
+        // editor::TabWidth() is a *display* setting only; the
+        // buffer's real tab byte is untouched.
+        const int  tabWidth = editor::TabWidth();
+        const bool inIndent = editor::IndentGuidesEnabled() && offset < lineState.indentEnd;
+        for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
+            Cell&     cell          = c[{.x = col, .y = row}];
+            const int displayColumn = col - static_cast<int>(gutter.totalWidth);
+            if (inIndent && displayColumn > 0 && displayColumn % tabWidth == 0) {
+                // Whitespace-visualization follow-up: a guide
+                // glyph in place of one of the expanded tab's
+                // space cells, at each indent-width column --
+                // see lineState.indentEnd's own doc comment.
+                cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
+                Brush guideBrush      = brush;
+                guideBrush.foreground = IndentGuideColor(theme_, displayColumn, tabWidth);
+                guideBrush.ApplyTo(cell);
+            }
+            else {
+                cell.character = " ";
+                brush.ApplyTo(cell);
+            }
+            if (i == 0 && secondaryCaretHere) {
+                cell.inverted = true;
+            }
+            ++col;
+        }
+    }
+    else if (IsUnprintableControl(decoded.codepoint)) {
+        // Same reasoning as the tab case above: a raw control byte
+        // (some of them genuine terminal control codes -- a bare ESC
+        // is the sharpest example) must never reach the terminal as
+        // itself. Rendered as a 4-column "◁XX▷" hex placeholder
+        // instead -- entirely safe, printable characters -- with a
+        // dedicated foreground so it reads as "this is escaped data",
+        // not literal text; whatever background isearch/selection
+        // already chose above is kept so an active highlight still
+        // shows through it.
+        Brush binaryBrush             = brush;
+        binaryBrush.foreground        = theme_.binaryForeground;
+        const char32_t glyphs[4]      = {kBinaryOpen, HexDigit((decoded.codepoint >> 4) & 0xF),
+                                         HexDigit(decoded.codepoint & 0xF), kBinaryClose};
+        bool           firstGlyphCell = true;
+        for (const char32_t glyph : glyphs) {
+            if (col >= c.size().width) {
+                break;
+            }
+            Cell& cell     = c[{.x = col, .y = row}];
+            cell.character = text::EncodeCodepointUtf8(glyph);
+            binaryBrush.ApplyTo(cell);
+            if (firstGlyphCell && secondaryCaretHere) {
+                cell.inverted  = true;
+                firstGlyphCell = false;
+            }
+            ++col;
+        }
+    }
+    else {
+        Cell&     cell          = c[{.x = col, .y = row}];
+        const int displayColumn = col - static_cast<int>(gutter.totalWidth);
+        // offset < lineState.indentEnd here only ever holds for
+        // a space cell (see that field's own doc comment: the
+        // scan that computes it stops at the first non-space/tab
+        // byte), so decoded.codepoint is guaranteed U' ' whenever
+        // this substitutes a guide glyph.
+        if (editor::IndentGuidesEnabled() && offset < lineState.indentEnd && displayColumn > 0 &&
+            displayColumn % editor::TabWidth() == 0) {
+            cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
+            Brush guideBrush      = brush;
+            guideBrush.foreground = IndentGuideColor(theme_, displayColumn, editor::TabWidth());
+            guideBrush.ApplyTo(cell);
+        }
+        else {
+            cell.character = text::EncodeCodepointUtf8(decoded.codepoint);
+            brush.ApplyTo(cell);
+        }
+        if (secondaryCaretHere) {
+            cell.inverted = true;
+        }
+        ++col;
+    }
+}
+
 void BufferView::Paint(Canvas paneCanvas) {
     viewport_.EnsureTopLineValidForActiveBuffer();
     EnsureStatusMessageFreshness();
@@ -1391,203 +1607,9 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // glyph (tab expansion, control placeholder) inverts.
                 const bool secondaryCaretHere = IsSecondaryCursorAt(offset);
 
-                const editor::HighlightSpan span  = SpanAtOffset(lineSpans, offset);
-                Brush                       brush = ResolvedBrush(span.syntaxClass, span.captureId);
-                // diagnostics-UX follow-up: underline exactly the span the
-                // server flagged -- a non-disruptive "the problem is HERE"
-                // cue on top of whatever syntax color the cell already has
-                // (foreground deliberately untouched: recoloring would fight
-                // the highlighting the way the first diff-tint attempt did).
-                for (const auto& [spanStart, spanEnd] : lineState.diagnosticSpans) {
-                    if (offset >= spanStart && offset < spanEnd) {
-                        brush.underlined = true;
-                        break;
-                    }
-                }
-                if (InIsearchMatch(offset)) {
-                    brush.background = theme_.isearchMatchBackground;
-                }
-                else if (InActiveSnippetField(offset)) {
-                    brush.background = theme_.snippetFieldBackground;
-                }
-                else if (InSelection(offset)) {
-                    brush.background = theme_.selectionBackground;
-                }
-                else if (InConflictOurs(offset)) {
-                    // Merge Conflict Resolution Mode: a persistent,
-                    // must-not-miss "this is unresolved" state -- loses only
-                    // to isearch/snippet-field/selection above (explicit
-                    // user actions), but wins over documentHighlight/
-                    // execution-line/multibuffer/trailing-whitespace below.
-                    brush.background = theme_.conflictOursBackground;
-                }
-                else if (InConflictTheirs(offset)) {
-                    brush.background = theme_.conflictTheirsBackground;
-                }
-                else if (InConflictBase(offset)) {
-                    brush.background = theme_.conflictBaseBackground;
-                }
-                else if (std::any_of(lineState.documentHighlightSpans.begin(), lineState.documentHighlightSpans.end(),
-                                     [offset](const auto& span) { return offset >= span.first && offset < span.second; })) {
-                    // documentHighlight follow-up: a read-only cue on the
-                    // symbol under point's other occurrences -- loses to
-                    // isearch/snippet-field/selection above (all explicit
-                    // user actions), but wins over the execution-line/
-                    // multibuffer/trailing-whitespace washes below (this is
-                    // still a direct answer to "what does point currently
-                    // mean", a stronger signal than those cosmetic washes).
-                    brush.background = theme_.documentHighlightBackground;
-                }
-                else if (InLineInspectHighlight(offset)) {
-                    // Debugging wishlist (line-inspect follow-up): same
-                    // read-only-cue priority tier as documentHighlight above
-                    // -- the direct, explicit result of a dap-line-inspect
-                    // the user just ran, so it still wins over the more
-                    // ambient execution-line/multibuffer/trailing-whitespace
-                    // washes below.
-                    brush.background = theme_.lineInspectBackground;
-                }
-                else if (lineState.isExecutionLine) {
-                    // DAP client slice 2: the stopped line's own wash --
-                    // loses to isearch/selection above (both are explicit
-                    // user actions). A changed line's content area gets no
-                    // tint of its own anymore (the two-column gradient that
-                    // used to live here was removed per user feedback) --
-                    // the diff gutter glyph plus the accent-colored line
-                    // number carry the whole signal; lineState.diffTint
-                    // survives only for the latter.
-                    brush.background = theme_.executionLineBackground;
-                }
-                else if (lineState.multibufferTint) {
-                    // Multibuffers follow-up: unlike the live diff gutter's
-                    // content area (deliberately left untinted after user
-                    // feedback that a whole-line wash fights syntax-
-                    // highlighted text -- see the comment two cases above),
-                    // this buffer's excerpt lines carry no syntax
-                    // highlighting to fight in the first place, so a real
-                    // background wash is safe and is the whole point of
-                    // this dedicated diff view. Header/Rule get no
-                    // background at all -- bold text and box-drawing
-                    // glyphs are already visually distinct on their own
-                    // (an "ASCII outline" follow-up ask), a wash would just
-                    // fight the rule glyph's own default color.
-                    switch (*lineState.multibufferTint) {
-                        case editor::multibuffer::LineTint::Added:
-                            brush.background = theme_.diffAddedBackground;
-                            break;
-                        case editor::multibuffer::LineTint::Removed:
-                            brush.background = theme_.diffRemovedBackground;
-                            break;
-                        case editor::multibuffer::LineTint::Header:
-                            brush.bold = true;
-                            break;
-                        case editor::multibuffer::LineTint::Rule:
-                        case editor::multibuffer::LineTint::None:
-                            break;
-                    }
-                }
-                else if (editor::TrailingWhitespaceHighlightEnabled() && offset >= lineState.trailingWhitespaceStart) {
-                    // Whitespace-visualization follow-up: lowest priority of
-                    // this chain, same reasoning as every case above it --
-                    // an active isearch/selection/execution/multibuffer
-                    // overlay always wins over this purely cosmetic wash.
-                    // offset >= lineState.trailingWhitespaceStart already
-                    // guarantees this cell is a space/tab (see that field's
-                    // own doc comment), so no codepoint check is needed here.
-                    brush.background = theme_.trailingWhitespaceBackground;
-                }
+                Brush brush = BrushForCell(offset, lineState);
 
-                if (decoded.codepoint == U'\t') {
-                    // A real terminal treats a raw tab byte as "jump to the next
-                    // tab stop" (consuming several columns), not "print one
-                    // glyph and advance by one" -- sending it through unexpanded
-                    // desyncs the terminal's actual cursor position from what
-                    // the terminal library's own per-cell diff bookkeeping
-                    // believes was written, which then corrupts unrelated cells
-                    // on later frames. Expanding to literal space glyphs keeps
-                    // this widget's one-codepoint-per-column model -- and the
-                    // real terminal's actual column count -- in agreement.
-                    // editor::TabWidth() is a *display* setting only; the
-                    // buffer's real tab byte is untouched.
-                    const int  tabWidth = editor::TabWidth();
-                    const bool inIndent = editor::IndentGuidesEnabled() && offset < lineState.indentEnd;
-                    for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
-                        Cell&     cell          = c[{.x = col, .y = row}];
-                        const int displayColumn = col - static_cast<int>(gutter.totalWidth);
-                        if (inIndent && displayColumn > 0 && displayColumn % tabWidth == 0) {
-                            // Whitespace-visualization follow-up: a guide
-                            // glyph in place of one of the expanded tab's
-                            // space cells, at each indent-width column --
-                            // see lineState.indentEnd's own doc comment.
-                            cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
-                            Brush guideBrush      = brush;
-                            guideBrush.foreground = IndentGuideColor(theme_, displayColumn, tabWidth);
-                            guideBrush.ApplyTo(cell);
-                        }
-                        else {
-                            cell.character = " ";
-                            brush.ApplyTo(cell);
-                        }
-                        if (i == 0 && secondaryCaretHere) {
-                            cell.inverted = true;
-                        }
-                        ++col;
-                    }
-                }
-                else if (IsUnprintableControl(decoded.codepoint)) {
-                    // Same reasoning as the tab case above: a raw control byte
-                    // (some of them genuine terminal control codes -- a bare ESC
-                    // is the sharpest example) must never reach the terminal as
-                    // itself. Rendered as a 4-column "◁XX▷" hex placeholder
-                    // instead -- entirely safe, printable characters -- with a
-                    // dedicated foreground so it reads as "this is escaped data",
-                    // not literal text; whatever background isearch/selection
-                    // already chose above is kept so an active highlight still
-                    // shows through it.
-                    Brush binaryBrush             = brush;
-                    binaryBrush.foreground        = theme_.binaryForeground;
-                    const char32_t glyphs[4]      = {kBinaryOpen, HexDigit((decoded.codepoint >> 4) & 0xF),
-                                                     HexDigit(decoded.codepoint & 0xF), kBinaryClose};
-                    bool           firstGlyphCell = true;
-                    for (const char32_t glyph : glyphs) {
-                        if (col >= c.size().width) {
-                            break;
-                        }
-                        Cell& cell     = c[{.x = col, .y = row}];
-                        cell.character = text::EncodeCodepointUtf8(glyph);
-                        binaryBrush.ApplyTo(cell);
-                        if (firstGlyphCell && secondaryCaretHere) {
-                            cell.inverted  = true;
-                            firstGlyphCell = false;
-                        }
-                        ++col;
-                    }
-                }
-                else {
-                    Cell&     cell          = c[{.x = col, .y = row}];
-                    const int displayColumn = col - static_cast<int>(gutter.totalWidth);
-                    // offset < lineState.indentEnd here only ever holds for
-                    // a space cell (see that field's own doc comment: the
-                    // scan that computes it stops at the first non-space/tab
-                    // byte), so decoded.codepoint is guaranteed U' ' whenever
-                    // this substitutes a guide glyph.
-                    if (editor::IndentGuidesEnabled() && offset < lineState.indentEnd && displayColumn > 0 &&
-                        displayColumn % editor::TabWidth() == 0) {
-                        cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
-                        Brush guideBrush      = brush;
-                        guideBrush.foreground = IndentGuideColor(theme_, displayColumn, editor::TabWidth());
-                        guideBrush.ApplyTo(cell);
-                    }
-                    else {
-                        cell.character = text::EncodeCodepointUtf8(decoded.codepoint);
-                        brush.ApplyTo(cell);
-                    }
-                    if (secondaryCaretHere) {
-                        cell.inverted = true;
-                    }
-                    ++col;
-                }
-
+                EmitCodepointCells(c, row, col, gutter, decoded, brush, secondaryCaretHere, lineState, offset);
                 offset += decoded.byteLength;
             }
 

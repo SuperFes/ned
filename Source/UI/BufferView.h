@@ -2680,6 +2680,18 @@ class BufferView : public Widget {
                          const std::optional<std::pair<std::string, std::size_t>>& dapStop, bool wrapActive,
                          int contentWidth);
 
+    // The brush one cell renders with -- syntax highlighting, a diagnostic
+    // underline, and at most one background overlay chosen by precedence. See
+    // the definition for the order.
+    [[nodiscard]] Brush BrushForCell(std::size_t offset, const LineRenderState& lineState) const;
+
+    // Emits the cells one codepoint occupies, advancing col past them: a tab
+    // expands to the next tab stop, a C0/DEL byte becomes a hex placeholder,
+    // anything else is one cell.
+    void EmitCodepointCells(Canvas& c, int row, int& col, const bufferview::GutterLayout& gutter,
+                            const text::ITextStorage::DecodedCodepoint& decoded, const Brush& brush,
+                            bool secondaryCaretHere, const LineRenderState& lineState, std::size_t offset) const;
+
     // Draws every gutter column for `line` on `row`. Called only for a line's
     // first visual row -- a wrapped continuation row has no gutter of its own.
     void PaintLineGutter(Canvas& c, int row, std::size_t line, std::size_t lineStart, std::size_t lineEnd,
