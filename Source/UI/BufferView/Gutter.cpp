@@ -76,34 +76,41 @@ void BufferView::ClampPointToNarrowing() {
     }
 }
 
+bufferview::GutterLayout BufferView::ComputeGutterLayout(std::size_t totalLines) const {
+    bufferview::GutterLayout layout;
+
+    // The fold region is a fixed kMaxFoldDepthColumns-wide reservation rather
+    // than one that grows with how deep the visible content nests, so the
+    // gutter's width never shifts while scrolling past a deeply nested region.
+    // The symbol column, unlike fold, is data-driven -- see
+    // GutterModel::SymbolGutterActive.
+    layout.dapWidth      = DapGutterActive() ? kDapWidth : 0;
+    layout.diffWidth     = DiffGutterActive() ? kDiffWidth : 0;
+    layout.testWidth     = gutters_.TestGutterActive() ? kTestWidth : 0;
+    layout.coverageWidth = gutters_.CoverageGutterActive() ? kCoverageWidth : 0;
+    layout.symbolWidth   = gutters_.SymbolGutterActive() ? kSymbolWidth : 0;
+    layout.foldWidth     = gutters_.FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+    layout.blameWidth    = BlameGutterActive() ? kBlameWidth : 0;
+    // The digits and both surrounding gaps collapse to nothing together.
+    layout.lineNumberGap = LineNumberGutterActive() ? kLineNumberGap : 0;
+    layout.digits        = LineNumberGutterActive() ? std::to_string(totalLines).size() : 0;
+
+    // Left to right; status and diagnostic are the two always-reserved columns.
+    layout.diffStart       = layout.dapWidth;
+    layout.statusStart     = layout.diffStart + layout.diffWidth;
+    layout.diagnosticStart = layout.statusStart + kStatusWidth;
+    layout.digitsStart     = layout.diagnosticStart + kDiagnosticWidth + layout.lineNumberGap;
+    layout.testStart       = layout.digitsStart + layout.digits + layout.lineNumberGap;
+    layout.coverageStart   = layout.testStart + layout.testWidth;
+    layout.symbolStart     = layout.coverageStart + layout.coverageWidth;
+    layout.foldStart       = layout.symbolStart + layout.symbolWidth;
+    layout.blameStart      = layout.foldStart + layout.foldWidth;
+    layout.totalWidth      = layout.blameStart + layout.blameWidth;
+    return layout;
+}
+
 std::size_t BufferView::GutterWidth() const {
-    const std::size_t totalLines = activeBuffer_.Get().Content().LineCount();
-    // status/line-number-spacing follow-up (LSP client follow-up: gained a
-    // second, dedicated diagnostic column -- see kDiagnosticWidth's own doc
-    // comment): [status][diagnostic][gap][digits][gap][symbol][fold], left
-    // to right -- status and diagnostic are always reserved; the fold region
-    // (generic-code-folding / depth-aware-fold-gutter follow-ups) only when
-    // a mode has a real fold query and the feature is enabled, a fixed
-    // kMaxFoldDepthColumns-wide reservation (not one that grows with how
-    // deep the currently-visible content happens to nest -- an explicit
-    // user choice, so the gutter's own width never jumps around while
-    // scrolling past a deeply nested region). symbol (gutter-symbol-kind
-    // follow-up), unlike fold, IS data-driven -- see SymbolGutterActive's
-    // own doc comment for why.
-    const std::size_t foldColumn     = gutters_.FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-    const std::size_t blameColumn    = BlameGutterActive() ? kBlameWidth : 0;
-    const std::size_t diffColumn     = DiffGutterActive() ? kDiffWidth : 0;
-    const std::size_t dapColumn      = DapGutterActive() ? kDapWidth : 0;
-    const std::size_t symbolColumn   = gutters_.SymbolGutterActive() ? kSymbolWidth : 0;
-    const std::size_t testColumn     = gutters_.TestGutterActive() ? kTestWidth : 0;
-    const std::size_t coverageColumn = gutters_.CoverageGutterActive() ? kCoverageWidth : 0;
-    // Multibuffers follow-up: the line-number digits + both surrounding
-    // gaps collapse to zero width together when LineNumberGutterActive()
-    // is false -- see its own doc comment.
-    const std::size_t lineNumberColumn =
-        LineNumberGutterActive() ? (kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap) : 0;
-    return dapColumn + diffColumn + kStatusWidth + kDiagnosticWidth + lineNumberColumn + testColumn + coverageColumn +
-           symbolColumn + foldColumn + blameColumn;
+    return ComputeGutterLayout(activeBuffer_.Get().Content().LineCount()).totalWidth;
 }
 
 std::size_t BufferView::TestGutterColumnStart() const {
