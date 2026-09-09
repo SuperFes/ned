@@ -381,67 +381,63 @@ are already owned by a named class rather than a loose member.
 Extract mouse handling and `ContextMenuSession`, then trim `BufferView.h` to its final
 shape and update this document with what the split actually cost.
 
-### Phase 8 — Naming and directory layout (project-wide, not just `BufferView`)
+### Phase 8 — Naming and directory layout — **done, with one part deferred**
 
-A different axis from everything above: this one is about finding files, not about
-untangling a class. It is listed here because the same "the project is big enough that
-being organised matters more than it did" argument drives both, but it touches all of
-`Source/`, so it should land on its own rather than inside a `BufferView` phase.
+Every directory whose files repeated its name now drops that prefix from both the
+filenames and the symbols, and `Editor/`'s thirteen top-level `Project*` headers move
+into `Editor/Project/`.
 
-**Stuttering names.** A file whose name repeats its directory says the same word twice at
-every use. Measured across `Source/`:
-
-| Directory | Stuttering | Total |
+| Directory | Files | Symbols |
 |---|---:|---:|
-| `Editor/Vim` | 20 | 20 |
-| `Editor/Mcp` | 10 | 10 |
-| `Editor/Coverage` | 6 | 6 |
-| `Editor/Dap` | 6 | 6 |
-| `Editor/Repl` | 2 | 2 |
-| `Editor/Lsp` | 24 | 30 |
-| `Editor/Acp` | 8 | 10 |
-| `Editor/Vcs` | 7 | 9 |
-| `Editor/TestRun` | 4 | 12 |
+| `Editor/Mcp` | 5 | `McpBridgeServer` → `mcp::BridgeServer`, … |
+| `Editor/Vim` | 11 | `VimEngine` → `vim::Engine`, … |
+| `Editor/Coverage` | 3 | `CoverageReport` → `coverage::Report`, … |
+| `Editor/Dap` | 3 | `DapManager` → `dap::Manager`, … |
+| `Editor/Repl` | 1 | `ReplConfig` → `repl::Config` |
+| `Editor/Lsp` | 12 | `LspManager` → `lsp::Manager`, 34 in all |
+| `Editor/Acp` | 4 | `AcpManager` → `acp::Manager`, … |
+| `Editor/Vcs` | 4 | `VcsRunner` → `vcs::Runner`, … |
+| `Editor/TestRun` | 1 | `TestRunConfig` → `testrun::Config` |
+| `Editor/Project` | 13 | *deferred, see below* |
 
-`Editor/Mcp/McpBridgeServer.h` becomes `Editor/Mcp/BridgeServer.h`;
-`Editor/Vim/VimMotion.h` becomes `Editor/Vim/Motion.h`.
+**The collision question resolved itself.** The concern that dropping prefixes would
+give six directories a `Config.h` and three a `Manager.h` turned out to be moot:
+`Lsp/Transport.h` and `Acp/Transport.h` already shared a basename before any of this, so
+it was the accepted status quo. Includes are always fully qualified by directory. Two
+tests that imported both `lsp::Manager` and `dap::Manager` (or `acp::`) with
+using-declarations now qualify at the point of use, which reads better there anyway.
 
-**One real trade-off to settle before doing it, not after.** The prefix is not pure noise
-today — it is what makes a bare filename unique. Six directories would each gain a
-`Config.h`, and several would gain a `Manager.h`. "Open `Manager.h`" and a grep for
-`ManagerTest` both get worse, and this codebase leans on grep. Three options, and the
-choice should be explicit:
+**What a blind prefix strip gets wrong**, all caught in this sweep:
 
-- Rename files only, keep class names (`Editor/Lsp/Manager.h` still declaring
-  `lsp::LspManager`). Cheapest, but leaves a new mismatch between file and class.
-- Rename both, so `lsp::Manager` is spelled `lsp::Manager` at every use site. Reads best
-  in code — the namespace already carries the qualifier — but it is a large mechanical
-  sweep over every call site, and `using namespace` anywhere would make it ambiguous.
-- Leave the directories whose short name would collide (`Config`, `Manager`, `Client`)
-  and fix only the ones with a genuinely distinctive tail (`McpBridgeServer` →
-  `BridgeServer`, `VimSurround` → `Surround`). Smallest diff, keeps grep working, but
-  the rule is then "sometimes".
+- **Symbols in a different namespace.** `DapThreadsPanel`, `AcpPanel` and `VcsPanel` are
+  `ned::ui` widgets. There the domain prefix is what distinguishes them from the other
+  panels, not a stutter — and stripping `AcpPanel` and `VcsPanel` collapsed two classes
+  onto one name, which cannot be untangled afterwards by name alone.
+- **Names that merely start with the prefix.** `TestRunner` is not `TestRun` plus a
+  suffix; a blind strip produced `ner.h`.
+- **Getters without their setters.** A word boundary cannot see the prefix inside
+  `SetReplCommand`, so dropping it from `ReplCommand` alone left the pair mismatched.
+- **Enumerators that share a name.** `InteractiveRequest::ProjectSearch` and
+  `InputMode::ProjectReplace` are not the `Project*` functions, and inside an enum
+  definition they are written bare, so qualifying-based exclusions do not catch them.
+- **Test filenames.** `Tests/` is flat, so a test's domain prefix is what keeps its name
+  unique; stripping it pointed `CMakeLists.txt` at files that do not exist.
 
-My read: the second, done per directory rather than all at once, with the namespace
-already earning its keep at use sites. But it is a stated preference, not an obvious call,
-and it is worth deciding before any of it moves.
+**Deferred: the `Project` family's symbols.** The directory move is done; the names are
+not. Every other directory here already had a sub-namespace, so dropping a file's prefix
+left the meaning intact. This family lives in bare `ned::editor`, so `ProjectRoot()` →
+`Root()` would read as `editor::Root()`. Doing it properly means introducing
+`ned::editor::project` and deciding what seventy-one identifiers — `ListProjects`,
+`RegisterProject`, `HasProjectMarker`, `BuildProjectTree` — should be called inside it.
+That is a naming exercise rather than a mechanical sweep, and worth doing deliberately
+or not at all.
 
-**Flat families that want a directory.** `Editor/` has thirteen `Project*` headers sitting
-at top level — `ProjectAgenda`, `ProjectFileOps`, `ProjectPlugins`, `ProjectRegistry`,
-`ProjectReplace`, `ProjectRoot`, `ProjectSearch`, `ProjectSession`, `ProjectSettings`,
-`ProjectSwitch`, `ProjectTree`, `ProjectTrust`, `ProjectUndo` — which is the
-root-plus-children shape that reads as a subsystem already. `Editor/Project/` with the
-prefix dropped is the same move as above and has the same collision question (`Root.h`,
-`Tree.h`, `Search.h` are all plausible names elsewhere). `Editor/Auto*` is a smaller
-three-file version of the same thing. `Source/UI/` has 38 headers at top level and wants
-looking at once `BufferView/` has drained some of them.
-
-**Sequencing.** After the `BufferView` phases, not during: this phase is a very large
-`git mv` plus include sweep, and interleaving it with the extractions would make every
-extraction diff unreadable. Each directory should move on its own commit, with the
-include rewrite and the `CMakeLists.txt` edit in the same commit so no commit is
-mid-rename. Renames must be pure — no content edits riding along — so `git log --follow`
-keeps working, which is the same discipline Phase 0's split used.
+**A note on verifying a rename sweep.** `ctest` reported a full green suite three separate
+times in this phase while the build was actually broken, because it ran the previous
+binary. Twice the failure was a CMake-level error (`Cannot find source file`) that a
+case-sensitive grep for `error` missed entirely. Check the build result, case-insensitively,
+before believing a test run — and reconfigure, since a stale cache will happily build a
+source list that no longer matches the tree.
 
 ## 4. Risks and constraints
 
