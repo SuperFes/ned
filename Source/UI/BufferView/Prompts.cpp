@@ -2823,6 +2823,39 @@ void BufferView::ForceSaveBuffer() {
     }
 }
 
+bufferview::ConfirmPrompt BufferView::ConfirmDeleteFilePrompt() {
+    // Captured now: ending the session clears deleteTarget_.
+    return {.cancelMessage = "Delete cancelled.", .onConfirm = [this, target = deleteTarget_] {
+                try {
+                    editor::DeleteProjectPath(target);
+                    statusMessage_ = "Deleted " + target.string();
+                    if (projectSidebar_) {
+                        projectSidebar_->InvalidateTree();
+                    }
+                }
+                catch (const std::exception& e) {
+                    ReportError(e.what());
+                }
+            }};
+}
+
+bufferview::ConfirmPrompt BufferView::ConfirmRecoverFilePrompt() {
+    // The chosen version is captured by value rather than re-read through
+    // recoverVersions_[recoverChoice_], which belongs to the session.
+    const editor::BackupVersion chosen =
+        recoverChoice_ < recoverVersions_.size() ? recoverVersions_[recoverChoice_] : editor::BackupVersion{};
+    return {.cancelMessage = "Recover cancelled.", .onConfirm = [this, chosen] {
+                try {
+                    const std::string content = editor::ReadBackupVersion(chosen.path);
+                    activeBuffer_.Get().RestoreContent(content);
+                    statusMessage_ = "Recovered " + chosen.label + " -- buffer is modified; save to keep it";
+                }
+                catch (const std::exception& e) {
+                    ReportError(e.what());
+                }
+            }};
+}
+
 bufferview::ConfirmPrompt BufferView::ConfirmQuitPrompt() {
     return {.cancelMessage = "Quit cancelled.", .onConfirm = [this] {
                 statusMessage_ = "Shutting down...";
@@ -3005,27 +3038,8 @@ void BufferView::HandleDeleteFileKey(const editor::KeyChord& chord) {
         return;
     }
 
-    // Confirming
-    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
-        try {
-            editor::DeleteProjectPath(deleteTarget_);
-            statusMessage_ = "Deleted " + deleteTarget_.string();
-            if (projectSidebar_) {
-                projectSidebar_->InvalidateTree();
-            }
-        }
-        catch (const std::exception& e) {
-            ReportError(e.what());
-        }
-        EndInteractiveSession();
-        return;
-    }
-    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
-        statusMessage_ = "Delete cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    // Confirming: an ordinary y/n confirmation now the target is chosen.
+    HandleConfirmPromptKey(ConfirmDeleteFilePrompt(), chord);
 }
 
 void BufferView::HandleSetPropertyKey(const editor::KeyChord& chord) {
@@ -3134,25 +3148,8 @@ void BufferView::HandleRecoverFileKey(const editor::KeyChord& chord) {
         return;
     }
 
-    // Confirming
-    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
-        try {
-            const std::string content = editor::ReadBackupVersion(recoverVersions_[recoverChoice_].path);
-            activeBuffer_.Get().RestoreContent(content);
-            statusMessage_ = "Recovered " + recoverVersions_[recoverChoice_].label + " -- buffer is modified; save to keep it";
-        }
-        catch (const std::exception& e) {
-            ReportError(e.what());
-        }
-        EndInteractiveSession();
-        return;
-    }
-    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
-        statusMessage_ = "Recover cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    // Confirming: an ordinary y/n confirmation now the version is chosen.
+    HandleConfirmPromptKey(ConfirmRecoverFilePrompt(), chord);
 }
 
 void BufferView::HandleRegisterKey(const editor::KeyChord& chord) {
