@@ -5,8 +5,8 @@
 #include <string>
 
 #include "Editor/ProjectRoot.h"
-#include "Editor/Vcs/VcsProviderRegistry.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/ProviderRegistry.h"
+#include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"
 #include "UI/EventLoop.h"
 
@@ -15,21 +15,21 @@ using ned::editor::vcs::ClearRegistry;
 using ned::editor::vcs::ExtractCommitMessage;
 using ned::editor::vcs::kVcsCommitMessageFilename;
 using ned::editor::vcs::RegisterProvider;
-using ned::editor::vcs::VcsBlameLine;
-using ned::editor::vcs::VcsCommandSpec;
-using ned::editor::vcs::VcsCommitMessagePath;
-using ned::editor::vcs::VcsDiffHunk;
-using ned::editor::vcs::VcsLogEntry;
-using ned::editor::vcs::VcsProvider;
-using ned::editor::vcs::VcsRunner;
+using ned::editor::vcs::BlameLine;
+using ned::editor::vcs::CommandSpec;
+using ned::editor::vcs::CommitMessagePath;
+using ned::editor::vcs::DiffHunk;
+using ned::editor::vcs::LogEntry;
+using ned::editor::vcs::Provider;
+using ned::editor::vcs::Runner;
 using ned::text::Buffer;
 
 // Same rationale as TaskProcessTest.cpp/TaskRunnerTest.cpp's own header
-// comments: a real ned::ui::EventLoop is constructed (VcsRunner needs a
+// comments: a real ned::ui::EventLoop is constructed (Runner needs a
 // real EventLoop& to hand each TaskProcess it spawns), but its Run() loop
 // is never started here, so a real spawned process's streamed
 // completion/parse callback never actually fires within these tests --
-// only VcsRunner's own synchronous behavior (no-path/no-provider/
+// only Runner's own synchronous behavior (no-path/no-provider/
 // already-running guards, and a provider callback throwing before any
 // process is even spawned) is under test, matching this codebase's
 // established "never run a real EventLoop::Run() loop in a unit test"
@@ -37,7 +37,7 @@ using ned::text::Buffer;
 
 namespace {
 
-class FakeProvider : public VcsProvider {
+class FakeProvider : public Provider {
   public:
     explicit FakeProvider(bool blameArgvThrows = false) : blameArgvThrows_(blameArgvThrows) {
     }
@@ -46,25 +46,25 @@ class FakeProvider : public VcsProvider {
         return true;
     }
 
-    [[nodiscard]] VcsCommandSpec BlameArgv(const std::filesystem::path&) const override {
+    [[nodiscard]] CommandSpec BlameArgv(const std::filesystem::path&) const override {
         if (blameArgvThrows_) {
             throw std::runtime_error("fake blame-argv failure");
         }
-        return VcsCommandSpec{{"sleep", "5"}}; // long-running -- never actually completes within a test
+        return CommandSpec{{"sleep", "5"}}; // long-running -- never actually completes within a test
     }
-    [[nodiscard]] std::vector<VcsBlameLine> ParseBlame(const std::string&) const override {
+    [[nodiscard]] std::vector<BlameLine> ParseBlame(const std::string&) const override {
         return {};
     }
-    [[nodiscard]] VcsCommandSpec LogArgv(const std::filesystem::path&) const override {
-        return VcsCommandSpec{{"sleep", "5"}};
+    [[nodiscard]] CommandSpec LogArgv(const std::filesystem::path&) const override {
+        return CommandSpec{{"sleep", "5"}};
     }
-    [[nodiscard]] std::vector<VcsLogEntry> ParseLog(const std::string&) const override {
+    [[nodiscard]] std::vector<LogEntry> ParseLog(const std::string&) const override {
         return {};
     }
-    [[nodiscard]] VcsCommandSpec DiffArgv(const std::filesystem::path&) const override {
-        return VcsCommandSpec{{"sleep", "5"}};
+    [[nodiscard]] CommandSpec DiffArgv(const std::filesystem::path&) const override {
+        return CommandSpec{{"sleep", "5"}};
     }
-    [[nodiscard]] std::vector<VcsDiffHunk> ParseDiff(const std::string&) const override {
+    [[nodiscard]] std::vector<DiffHunk> ParseDiff(const std::string&) const override {
         return {};
     }
 
@@ -83,69 +83,69 @@ struct RegistryResetGuard {
 
 } // namespace
 
-TEST_CASE("VcsRunner::RequestBlame reports an error for a buffer with no associated path", "[VcsRunner]") {
+TEST_CASE("Runner::RequestBlame reports an error for a buffer with no associated path", "[Runner]") {
     RegistryResetGuard guard;
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     Buffer      buffer("scratch");
     std::string error;
     runner.RequestBlame(
-        buffer, [](std::vector<VcsBlameLine>) { FAIL("onComplete should not be called"); },
+        buffer, [](std::vector<BlameLine>) { FAIL("onComplete should not be called"); },
         [&error](std::string message) { error = message; });
 
     REQUIRE_FALSE(error.empty());
 }
 
-TEST_CASE("VcsRunner::RequestBlame reports an error when no provider is registered", "[VcsRunner]") {
+TEST_CASE("Runner::RequestBlame reports an error when no provider is registered", "[Runner]") {
     RegistryResetGuard guard;
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     Buffer buffer = Buffer::NewFile("/tmp/ned-vcs-runner-test-file.txt");
 
     std::string error;
     runner.RequestBlame(
-        buffer, [](std::vector<VcsBlameLine>) { FAIL("onComplete should not be called"); },
+        buffer, [](std::vector<BlameLine>) { FAIL("onComplete should not be called"); },
         [&error](std::string message) { error = message; });
 
     REQUIRE_FALSE(error.empty());
 }
 
-TEST_CASE("VcsRunner::RequestBlame reports an error if BlameArgv throws", "[VcsRunner]") {
+TEST_CASE("Runner::RequestBlame reports an error if BlameArgv throws", "[Runner]") {
     RegistryResetGuard guard;
     RegisterProvider("fake", std::make_unique<FakeProvider>(/*blameArgvThrows=*/true));
 
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     Buffer buffer = Buffer::NewFile("/tmp/ned-vcs-runner-test-file.txt");
 
     std::string error;
     runner.RequestBlame(
-        buffer, [](std::vector<VcsBlameLine>) { FAIL("onComplete should not be called"); },
+        buffer, [](std::vector<BlameLine>) { FAIL("onComplete should not be called"); },
         [&error](std::string message) { error = message; });
 
     REQUIRE(error == "fake blame-argv failure");
 }
 
-TEST_CASE("VcsRunner::RequestBlame refuses a second concurrent request for the same buffer", "[VcsRunner]") {
+TEST_CASE("Runner::RequestBlame refuses a second concurrent request for the same buffer", "[Runner]") {
     RegistryResetGuard guard;
     RegisterProvider("fake", std::make_unique<FakeProvider>());
 
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     Buffer buffer = Buffer::NewFile("/tmp/ned-vcs-runner-test-file.txt");
 
     bool firstErrored = false;
     runner.RequestBlame(
-        buffer, [](std::vector<VcsBlameLine>) {}, [&firstErrored](std::string) { firstErrored = true; });
+        buffer, [](std::vector<BlameLine>) {}, [&firstErrored](std::string) { firstErrored = true; });
     REQUIRE_FALSE(firstErrored); // first request spawned successfully (sleep 5, still running)
 
     std::string secondError;
     runner.RequestBlame(
-        buffer, [](std::vector<VcsBlameLine>) { FAIL("onComplete should not be called"); },
+        buffer, [](std::vector<BlameLine>) { FAIL("onComplete should not be called"); },
         [&secondError](std::string message) { secondError = message; });
 
     REQUIRE_FALSE(secondError.empty());
@@ -158,13 +158,13 @@ TEST_CASE("VcsRunner::RequestBlame refuses a second concurrent request for the s
 // whole runner path into onError -- exactly what a partial provider's
 // user would see on the status line.
 
-TEST_CASE("VcsRunner root-scoped requests report an error when no provider is registered", "[VcsRunner]") {
+TEST_CASE("Runner root-scoped requests report an error when no provider is registered", "[Runner]") {
     RegistryResetGuard guard;
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     std::string error;
-    runner.RequestStatus([](std::vector<ned::editor::vcs::VcsStatusEntry>) { FAIL("onComplete should not be called"); },
+    runner.RequestStatus([](std::vector<ned::editor::vcs::StatusEntry>) { FAIL("onComplete should not be called"); },
                          [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
@@ -176,7 +176,7 @@ TEST_CASE("VcsRunner root-scoped requests report an error when no provider is re
 
     error.clear();
     runner.RequestBranchList(
-        [](std::vector<ned::editor::vcs::VcsBranchEntry>) { FAIL("onComplete should not be called"); },
+        [](std::vector<ned::editor::vcs::BranchEntry>) { FAIL("onComplete should not be called"); },
         [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
@@ -188,7 +188,7 @@ TEST_CASE("VcsRunner root-scoped requests report an error when no provider is re
     // VCS side panel follow-up: revert/stash/push-pull-fetch/ahead-behind.
     error.clear();
     runner.RequestStashList(
-        [](std::vector<ned::editor::vcs::VcsStashEntry>) { FAIL("onComplete should not be called"); },
+        [](std::vector<ned::editor::vcs::StashEntry>) { FAIL("onComplete should not be called"); },
         [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
@@ -210,20 +210,20 @@ TEST_CASE("VcsRunner root-scoped requests report an error when no provider is re
     REQUIRE_FALSE(error.empty());
 
     error.clear();
-    runner.RequestAheadBehind([](ned::editor::vcs::VcsAheadBehind) { FAIL("onComplete should not be called"); },
+    runner.RequestAheadBehind([](ned::editor::vcs::AheadBehind) { FAIL("onComplete should not be called"); },
                               [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 }
 
-TEST_CASE("VcsRunner surfaces the provider's own 'not supported' answer for unimplemented operations", "[VcsRunner]") {
+TEST_CASE("Runner surfaces the provider's own 'not supported' answer for unimplemented operations", "[Runner]") {
     RegistryResetGuard guard;
     RegisterProvider("fake", std::make_unique<FakeProvider>()); // blame/log/diff only -- no vocabulary-completion overrides
 
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     std::string error;
-    runner.RequestStatus([](std::vector<ned::editor::vcs::VcsStatusEntry>) { FAIL("onComplete should not be called"); },
+    runner.RequestStatus([](std::vector<ned::editor::vcs::StatusEntry>) { FAIL("onComplete should not be called"); },
                          [&error](std::string message) { error = message; });
     REQUIRE(error == "status not supported by this provider");
 
@@ -247,7 +247,7 @@ TEST_CASE("VcsRunner surfaces the provider's own 'not supported' answer for unim
 
     error.clear();
     runner.RequestBranchList(
-        [](std::vector<ned::editor::vcs::VcsBranchEntry>) { FAIL("onComplete should not be called"); },
+        [](std::vector<ned::editor::vcs::BranchEntry>) { FAIL("onComplete should not be called"); },
         [&error](std::string message) { error = message; });
     REQUIRE(error == "branch listing not supported by this provider");
 
@@ -281,7 +281,7 @@ TEST_CASE("VcsRunner surfaces the provider's own 'not supported' answer for unim
 
     error.clear();
     runner.RequestStashList(
-        [](std::vector<ned::editor::vcs::VcsStashEntry>) { FAIL("onComplete should not be called"); },
+        [](std::vector<ned::editor::vcs::StashEntry>) { FAIL("onComplete should not be called"); },
         [&error](std::string message) { error = message; });
     REQUIRE(error == "stash listing not supported by this provider");
 
@@ -313,7 +313,7 @@ TEST_CASE("VcsRunner surfaces the provider's own 'not supported' answer for unim
     REQUIRE(error == "fetch not supported by this provider");
 
     error.clear();
-    runner.RequestAheadBehind([](ned::editor::vcs::VcsAheadBehind) { FAIL("onComplete should not be called"); },
+    runner.RequestAheadBehind([](ned::editor::vcs::AheadBehind) { FAIL("onComplete should not be called"); },
                               [&error](std::string message) { error = message; });
     REQUIRE(error == "ahead/behind not supported by this provider");
 
@@ -337,31 +337,31 @@ namespace {
 // duplicate-concurrent-request guard below.
 class FakeVocabProvider : public FakeProvider {
   public:
-    [[nodiscard]] VcsCommandSpec StatusArgv(const std::filesystem::path&) const override {
-        return VcsCommandSpec{{"sleep", "5"}};
+    [[nodiscard]] CommandSpec StatusArgv(const std::filesystem::path&) const override {
+        return CommandSpec{{"sleep", "5"}};
     }
-    [[nodiscard]] VcsCommandSpec CommitArgv(const std::filesystem::path&, const std::string&) const override {
-        return VcsCommandSpec{{"sleep", "5"}};
+    [[nodiscard]] CommandSpec CommitArgv(const std::filesystem::path&, const std::string&) const override {
+        return CommandSpec{{"sleep", "5"}};
     }
 };
 
 } // namespace
 
-TEST_CASE("VcsRunner refuses a second concurrent status/commit for the same root", "[VcsRunner]") {
+TEST_CASE("Runner refuses a second concurrent status/commit for the same root", "[Runner]") {
     RegistryResetGuard guard;
     RegisterProvider("fake", std::make_unique<FakeVocabProvider>());
 
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     bool firstErrored = false;
-    runner.RequestStatus([](std::vector<ned::editor::vcs::VcsStatusEntry>) {},
+    runner.RequestStatus([](std::vector<ned::editor::vcs::StatusEntry>) {},
                          [&firstErrored](std::string) { firstErrored = true; });
     REQUIRE_FALSE(firstErrored); // first request spawned successfully (sleep 5, still running)
 
     std::string secondError;
     runner.RequestStatus(
-        [](std::vector<ned::editor::vcs::VcsStatusEntry>) { FAIL("onComplete should not be called"); },
+        [](std::vector<ned::editor::vcs::StatusEntry>) { FAIL("onComplete should not be called"); },
         [&secondError](std::string message) { secondError = message; });
     REQUIRE_FALSE(secondError.empty());
 
@@ -378,10 +378,10 @@ TEST_CASE("VcsRunner refuses a second concurrent status/commit for the same root
 // GitVcsPluginTest's real-repo hunk test and DiffPatchTest's own unit
 // tests instead, per the no-live-EventLoop convention above.
 
-TEST_CASE("VcsRunner::RequestHunkApply reports an error for a pathless buffer", "[VcsRunner]") {
+TEST_CASE("Runner::RequestHunkApply reports an error for a pathless buffer", "[Runner]") {
     RegistryResetGuard guard;
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     Buffer      buffer("scratch");
     std::string error;
@@ -391,12 +391,12 @@ TEST_CASE("VcsRunner::RequestHunkApply reports an error for a pathless buffer", 
     REQUIRE_FALSE(error.empty());
 }
 
-TEST_CASE("VcsRunner::RequestHunkApply surfaces a provider without the staged-diff vocabulary", "[VcsRunner]") {
+TEST_CASE("Runner::RequestHunkApply surfaces a provider without the staged-diff vocabulary", "[Runner]") {
     RegistryResetGuard guard;
     RegisterProvider("fake", std::make_unique<FakeProvider>()); // no StagedDiffArgv override
 
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     Buffer buffer = Buffer::NewFile("/tmp/ned-vcs-runner-test-file.txt");
 
@@ -427,12 +427,12 @@ TEST_CASE("VcsRunner::RequestHunkApply surfaces a provider without the staged-di
 // with the Buffer-taking overload above -- same "surfaces a provider
 // without the staged-diff vocabulary" behavior confirms both really do
 // share one core rather than having silently diverged.
-TEST_CASE("VcsRunner::RequestHunkApply's path-based overload surfaces the same provider errors", "[VcsRunner]") {
+TEST_CASE("Runner::RequestHunkApply's path-based overload surfaces the same provider errors", "[Runner]") {
     RegistryResetGuard guard;
     RegisterProvider("fake", std::make_unique<FakeProvider>()); // no StagedDiffArgv override
 
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     std::string error;
     runner.RequestHunkApply(
@@ -445,10 +445,10 @@ TEST_CASE("VcsRunner::RequestHunkApply's path-based overload surfaces the same p
 // paths, same "async tail covered by GitVcsPluginTest's real-repo test"
 // convention RequestHunkApply's own tests above document.
 
-TEST_CASE("VcsRunner::RequestHunkRevert reports an error for a pathless buffer", "[VcsRunner]") {
+TEST_CASE("Runner::RequestHunkRevert reports an error for a pathless buffer", "[Runner]") {
     RegistryResetGuard guard;
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     Buffer      buffer("scratch");
     std::string error;
@@ -458,12 +458,12 @@ TEST_CASE("VcsRunner::RequestHunkRevert reports an error for a pathless buffer",
     REQUIRE_FALSE(error.empty());
 }
 
-TEST_CASE("VcsRunner::RequestHunkRevert guards against a duplicate concurrent request", "[VcsRunner]") {
+TEST_CASE("Runner::RequestHunkRevert guards against a duplicate concurrent request", "[Runner]") {
     RegistryResetGuard guard;
     RegisterProvider("fake", std::make_unique<FakeProvider>());
 
     ned::ui::EventLoop eventLoop;
-    VcsRunner          runner(eventLoop);
+    Runner          runner(eventLoop);
 
     Buffer buffer = Buffer::NewFile("/tmp/ned-vcs-runner-test-file.txt");
 
@@ -483,8 +483,8 @@ TEST_CASE("VcsRunner::RequestHunkRevert guards against a duplicate concurrent re
     REQUIRE_FALSE(secondError.empty());
 }
 
-TEST_CASE("VcsCommitMessagePath is the temp dir plus kVcsCommitMessageFilename", "[Vcs]") {
-    REQUIRE(VcsCommitMessagePath() == std::filesystem::temp_directory_path() / std::string(kVcsCommitMessageFilename));
+TEST_CASE("CommitMessagePath is the temp dir plus kVcsCommitMessageFilename", "[Vcs]") {
+    REQUIRE(CommitMessagePath() == std::filesystem::temp_directory_path() / std::string(kVcsCommitMessageFilename));
 }
 
 TEST_CASE("ExtractCommitMessage strips '#'-prefixed lines and trims trailing whitespace", "[Vcs]") {

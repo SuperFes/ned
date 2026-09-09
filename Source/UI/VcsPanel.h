@@ -11,12 +11,12 @@
 // cross-widget "collapse the other one" coordination BufferView::
 // SetVcsPanel used to document is gone -- see LeftDock::ActivateOrToggle.
 //
-// Each of the three sections (staged/unstaged/untracked -- VcsRowStatus's
+// Each of the three sections (staged/unstaged/untracked -- RowStatus's
 // own vocabulary doesn't distinguish these, this panel adds that on top via
-// Editor/Vcs/VcsRowStatus.h's PartitionVcsStatus) groups its files into a
+// Editor/Vcs/RowStatus.h's PartitionVcsStatus) groups its files into a
 // directory tree, not a flat list, mirroring ProjectSidebar's own
 // BuildProjectTree-backed rendering -- built here from a known path list
-// (VcsStatusEntry paths) rather than a disk walk, via VcsPanel.cpp's own
+// (StatusEntry paths) rather than a disk walk, via VcsPanel.cpp's own
 // BuildStatusTree. Rows carry ProjectSidebar's own box-drawing tree
 // connectors (`├─└─│`), computed the same way (VcsPanel.cpp's own
 // TreePrefix, over each section's own collapse-filtered entry list).
@@ -36,8 +36,8 @@
 
 #include "ActiveBuffer.h"
 #include "Editor/ProjectTree.h"
-#include "Editor/Vcs/VcsRowStatus.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/RowStatus.h"
+#include "Editor/Vcs/Runner.h"
 #include "Text/BufferList.h"
 #include "Theme.h"
 #include "Widget.h"
@@ -77,7 +77,7 @@ struct VcsPanelContextMenuTarget {
     bool                       isDirectory = false;                   // Entry only
     VcsPanelSection            section     = VcsPanelSection::Staged; // Entry only
     bool                       conflicted  = false;                   // Entry only
-    editor::vcs::VcsStashEntry stash;                                 // StashEntry only
+    editor::vcs::StashEntry stash;                                 // StashEntry only
 };
 
 class VcsPanel : public Widget {
@@ -122,7 +122,7 @@ class VcsPanel : public Widget {
     // moves onto (or off of) a staged/unstaged file row -- std::nullopt for
     // every other row kind (a section header, a directory, an untracked
     // file with no meaningful `git diff`, or a stash entry). staged mirrors
-    // VcsRunner::RequestFileDiffText's own parameter (which section the row
+    // Runner::RequestFileDiffText's own parameter (which section the row
     // is in). main.cpp wires this to request the file's diff text and feed
     // VcsDiffPreview, showing/hiding its overlay on Some/nullopt. Unset
     // (the default) is a safe no-op, matching every other Set* hook here.
@@ -168,15 +168,15 @@ class VcsPanel : public Widget {
     // changed-files-highlight/VCS-side-panel: unset (the default) leaves
     // the panel showing "no VCS provider configured" -- main.cpp wires this
     // the same place it wires WindowManager::SetVcsRunner.
-    void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
+    void SetVcsRunner(editor::vcs::Runner* vcsRunner);
 
     // Testing-only entry point, ProjectSidebar::DispatchVcsStatusForTesting's
     // own precedent -- builds the section trees directly from pre-parsed
-    // entries, bypassing VcsRunner/a real subprocess entirely.
-    void DispatchVcsStatusForTesting(const std::vector<editor::vcs::VcsStatusEntry>& entries);
+    // entries, bypassing Runner/a real subprocess entirely.
+    void DispatchVcsStatusForTesting(const std::vector<editor::vcs::StatusEntry>& entries);
 
     // Conflict-file affordance: DispatchVcsStatusForTesting bypasses
-    // VcsRunner entirely (ProjectSidebar's own precedent), so it never
+    // Runner entirely (ProjectSidebar's own precedent), so it never
     // drives the real-disk-read conflict scan RefreshStatus's success
     // callback normally triggers -- this exposes that scan directly for a
     // test to call after seeding sections_ via DispatchVcsStatusForTesting.
@@ -184,9 +184,9 @@ class VcsPanel : public Widget {
         RefreshConflictedPaths();
     }
 
-    // Stash support: same bypass-VcsRunner-entirely testing precedent as
+    // Stash support: same bypass-Runner-entirely testing precedent as
     // DispatchVcsStatusForTesting above.
-    void DispatchStashesForTesting(std::vector<editor::vcs::VcsStashEntry> entries) {
+    void DispatchStashesForTesting(std::vector<editor::vcs::StashEntry> entries) {
         stashes_ = std::move(entries);
     }
 
@@ -239,8 +239,8 @@ class VcsPanel : public Widget {
     // doc comment.
     std::function<void(const VcsPanelContextMenuTarget&, Point)> onContextMenuRequest_;
 
-    editor::vcs::VcsRunner*        vcsRunner_ = nullptr;
-    editor::vcs::VcsStatusSections sections_;
+    editor::vcs::Runner*        vcsRunner_ = nullptr;
+    editor::vcs::StatusSections sections_;
     bool                           haveStatus_ = false;
 
     // Conflict-file affordance: absolute paths (of the staged/unstaged
@@ -255,7 +255,7 @@ class VcsPanel : public Widget {
 
     // Stash support: refreshed on the same throttled cadence as sections_.
     // PopStash/DropStash are declared public above (context-menu reuse).
-    std::vector<editor::vcs::VcsStashEntry> stashes_;
+    std::vector<editor::vcs::StashEntry> stashes_;
     void                                    PushStash();
 
     // Branch switcher/creator inline: the checked-out branch, shown in the
@@ -271,7 +271,7 @@ class VcsPanel : public Widget {
     // title shows nothing extra in that case rather than "0 0", which
     // would misleadingly claim "up to date" when the fact is actually
     // unknown.
-    std::optional<editor::vcs::VcsAheadBehind> aheadBehind_;
+    std::optional<editor::vcs::AheadBehind> aheadBehind_;
 
     enum class RemoteAction { Fetch,
                               Pull,
@@ -312,9 +312,9 @@ class VcsPanel : public Widget {
         std::size_t                fileCount = 0;                                // SectionHeader only
         editor::ProjectTreeEntry   entry{};                                      // Entry only
         std::u32string             treePrefix;                                   // Entry only -- ProjectSidebar's own box-drawing tree connectors
-        editor::vcs::VcsRowStatus  status     = editor::vcs::VcsRowStatus::None; // Entry (file rows) only
+        editor::vcs::RowStatus  status     = editor::vcs::RowStatus::None; // Entry (file rows) only
         bool                       conflicted = false;                           // Entry (file rows) only -- see conflictedPaths_
-        editor::vcs::VcsStashEntry stash{};                                      // StashEntry only
+        editor::vcs::StashEntry stash{};                                      // StashEntry only
     };
     [[nodiscard]] std::vector<Row> BuildRows() const;
 

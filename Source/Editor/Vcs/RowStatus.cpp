@@ -1,26 +1,26 @@
-#include "VcsRowStatus.h"
+#include "RowStatus.h"
 
 namespace ned::editor::vcs {
 
-VcsRowStatus ClassifyPorcelainStatus(const std::string& state) {
+RowStatus ClassifyPorcelainStatus(const std::string& state) {
     if (state == "??") {
-        return VcsRowStatus::Untracked;
+        return RowStatus::Untracked;
     }
     if (state.find('D') != std::string::npos) {
-        return VcsRowStatus::Deleted;
+        return RowStatus::Deleted;
     }
     if (state.find('M') != std::string::npos) {
-        return VcsRowStatus::Modified;
+        return RowStatus::Modified;
     }
     if (state.find('A') != std::string::npos) {
-        return VcsRowStatus::Added;
+        return RowStatus::Added;
     }
-    return VcsRowStatus::Modified;
+    return RowStatus::Modified;
 }
 
-VcsStatusSections PartitionVcsStatus(const std::vector<VcsStatusEntry>& entries) {
-    VcsStatusSections sections;
-    for (const VcsStatusEntry& entry : entries) {
+StatusSections PartitionVcsStatus(const std::vector<StatusEntry>& entries) {
+    StatusSections sections;
+    for (const StatusEntry& entry : entries) {
         if (entry.state == "??") {
             sections.untracked.push_back(entry);
             continue;

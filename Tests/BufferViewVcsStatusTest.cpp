@@ -20,9 +20,9 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
-#include "Editor/Vcs/VcsProvider.h"
-#include "Editor/Vcs/VcsProviderRegistry.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/Provider.h"
+#include "Editor/Vcs/ProviderRegistry.h"
+#include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -31,8 +31,8 @@
 #include "UI/EventLoop.h"
 #include "UI/Theme.h"
 
-using ned::editor::vcs::VcsBranchEntry;
-using ned::editor::vcs::VcsStatusEntry;
+using ned::editor::vcs::BranchEntry;
+using ned::editor::vcs::StatusEntry;
 using ned::ui::BufferView;
 
 namespace {
@@ -87,7 +87,7 @@ TEST_CASE("status entries build a read-only *vcs status* buffer in the visitable
     ProjectRootGuard rootGuard("/repo");
     BufferView       view = fixture.View();
 
-    view.DispatchStatusForTesting({VcsStatusEntry{" M", "src/main.cpp"}, VcsStatusEntry{"??", "new.txt"}});
+    view.DispatchStatusForTesting({StatusEntry{" M", "src/main.cpp"}, StatusEntry{"??", "new.txt"}});
 
     ned::text::Buffer* status = fixture.bufferList.Find("*vcs status*");
     REQUIRE(status != nullptr);
@@ -116,7 +116,7 @@ TEST_CASE("a second status dispatch refills the same buffer in place, preserving
     ProjectRootGuard rootGuard("/repo");
     BufferView       view = fixture.View();
 
-    view.DispatchStatusForTesting({VcsStatusEntry{" M", "a.txt"}, VcsStatusEntry{" M", "b.txt"}});
+    view.DispatchStatusForTesting({StatusEntry{" M", "a.txt"}, StatusEntry{" M", "b.txt"}});
 
     ned::text::Buffer* status = fixture.bufferList.Find("*vcs status*");
     REQUIRE(status != nullptr);
@@ -124,7 +124,7 @@ TEST_CASE("a second status dispatch refills the same buffer in place, preserving
     const std::size_t secondLineStart = status->Content().LineToByteOffset(1);
     status->SetPoint(secondLineStart);
 
-    view.DispatchStatusForTesting({VcsStatusEntry{"M ", "a.txt"}, VcsStatusEntry{"M ", "b.txt"}});
+    view.DispatchStatusForTesting({StatusEntry{"M ", "a.txt"}, StatusEntry{"M ", "b.txt"}});
 
     // Refilled in place -- no uniquified "*vcs status*<2>" copy.
     REQUIRE(fixture.bufferList.Find("*vcs status*<2>") == nullptr);
@@ -145,7 +145,7 @@ TEST_CASE("stage/unstage target resolution: status line at point, else the buffe
     BufferView       view = fixture.View();
 
     SECTION("in the *vcs status* buffer, the line at point wins") {
-        view.DispatchStatusForTesting({VcsStatusEntry{" M", "src/main.cpp"}, VcsStatusEntry{"??", "new file.txt"}});
+        view.DispatchStatusForTesting({StatusEntry{" M", "src/main.cpp"}, StatusEntry{"??", "new file.txt"}});
         ned::text::Buffer* status = fixture.bufferList.Find("*vcs status*");
         REQUIRE(status != nullptr);
 
@@ -174,14 +174,14 @@ TEST_CASE("hunk staging gates: unsaved changes and pathless buffers are refused 
     ProjectRootGuard rootGuard("/repo");
     BufferView       view = fixture.View();
 
-    // A real (never Run) EventLoop + VcsRunner, so the guards under test
+    // A real (never Run) EventLoop + Runner, so the guards under test
     // are BufferView's own rather than the "no vcs runner configured"
     // fallback -- VcsRunnerTest.cpp's own headless convention. The
     // registry is cleared so the final section's "no provider" outcome
     // can't depend on what other test files registered.
     ned::editor::vcs::ClearRegistry();
     ned::ui::EventLoop          eventLoop;
-    ned::editor::vcs::VcsRunner runner(eventLoop);
+    ned::editor::vcs::Runner runner(eventLoop);
     view.SetVcsRunner(&runner);
 
     SECTION("no runner wired refuses first") {
@@ -228,7 +228,7 @@ TEST_CASE("hunk revert gates: unsaved changes and pathless buffers are refused u
 
     ned::editor::vcs::ClearRegistry();
     ned::ui::EventLoop          eventLoop;
-    ned::editor::vcs::VcsRunner runner(eventLoop);
+    ned::editor::vcs::Runner runner(eventLoop);
     view.SetVcsRunner(&runner);
 
     SECTION("no runner wired refuses first") {
@@ -267,7 +267,7 @@ TEST_CASE("branch entries build a read-only *vcs branches* buffer marking the cu
     ProjectRootGuard rootGuard("/repo");
     BufferView       view = fixture.View();
 
-    view.DispatchBranchesForTesting({VcsBranchEntry{"dev", false}, VcsBranchEntry{"main", true}});
+    view.DispatchBranchesForTesting({BranchEntry{"dev", false}, BranchEntry{"main", true}});
 
     ned::text::Buffer* branches = fixture.bufferList.Find("*vcs branches*");
     REQUIRE(branches != nullptr);
@@ -277,7 +277,7 @@ TEST_CASE("branch entries build a read-only *vcs branches* buffer marking the cu
                                      "* main\n");
 
     // Re-dispatch refills in place, same singleton convention as status.
-    view.DispatchBranchesForTesting({VcsBranchEntry{"main", true}});
+    view.DispatchBranchesForTesting({BranchEntry{"main", true}});
     REQUIRE(fixture.bufferList.Find("*vcs branches*<2>") == nullptr);
     REQUIRE(BufferText(*branches) == "* main\n");
 }

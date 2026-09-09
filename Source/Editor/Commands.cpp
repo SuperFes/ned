@@ -40,7 +40,7 @@
 #include "Text/ThreeWayMerge.h"
 #include "Text/Utf8.h"
 #include "ToolchainIncludePaths.h"
-#include "Vcs/VcsRunner.h"
+#include "Vcs/Runner.h"
 
 namespace ned::editor {
 
@@ -2733,7 +2733,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         });
 
     // test-runner integration: one-shot direct actions (no prompt -- one
-    // project-wide test command, see Editor/TestRun/TestRunConfig.h), same
+    // project-wide test command, see Editor/TestRun/Config.h), same
     // "just signal intent" shape as run-task/cancel-task above --
     // BufferView holds the shared TestRunner and does the actual work.
     registry.Register("run-tests",
@@ -3021,8 +3021,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       });
 
     // ACP client slice 2: same "just set interactiveRequest" shape as
-    // run-task/dap-continue above -- BufferView holds the shared AcpManager
-    // and does the actual work (see Editor/Acp/AcpManager.h). Agent and
+    // run-task/dap-continue above -- BufferView holds the shared Manager
+    // and does the actual work (see Editor/Acp/Manager.h). Agent and
     // launch command both come from init.janet (ned/set-acp-agent).
     registry.Register("acp-start-session", "Start an Agent Client Protocol (ACP) session with a configured agent, streaming into a buffer.",
                       [](CommandContext& context) {
@@ -3050,7 +3050,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     // VCS blame gutter follow-up: same "just set interactiveRequest" shape
     // as lsp-show-log/run-task above -- BufferView owns the actual
-    // VcsRunner request. vcs-show-blame stays on the current buffer,
+    // Runner request. vcs-show-blame stays on the current buffer,
     // populating only the gutter -- the primary, "inline where you're
     // already reading" action.
     registry.Register("vcs-show-blame", "Show per-line commit attribution for the current file, inline in the gutter.",
@@ -3110,7 +3110,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // never appear on M-x or the global keymap.
     registry.Register("vcs-commit-finish", "Finish composing and commit (bound C-c C-c in *vcs commit message*).",
                       [](CommandContext& context) {
-                          context.interactiveRequest = InteractiveRequest::VcsCommitFinish;
+                          context.interactiveRequest = InteractiveRequest::CommitFinish;
                       });
     registry.Register("vcs-commit-abort", "Discard the in-progress commit message (bound C-c C-k in *vcs commit message*).",
                       [](CommandContext& context) {
@@ -3122,7 +3122,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // ModeForBuffer/ModeForPath the instant BeginVcsCommitMessage switches
     // to the commit-message buffer, since that buffer's real (if
     // disposable) path is exactly kVcsCommitMessageFilename (see
-    // Editor/Vcs/VcsRunner.h's own doc comment on why a real path is
+    // Editor/Vcs/Runner.h's own doc comment on why a real path is
     // required for this to resolve at all). wrapLines/lineCommentPrefix
     // mirror MarkdownMode's own prose-buffer defaults -- a commit message
     // is prose, and '#' is git's own comment convention.

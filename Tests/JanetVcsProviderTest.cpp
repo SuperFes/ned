@@ -3,7 +3,7 @@
 
 #include <string>
 
-#include "Editor/Vcs/VcsProviderRegistry.h"
+#include "Editor/Vcs/ProviderRegistry.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "JanetTestSupport.h"
@@ -193,8 +193,8 @@ TEST_CASE("a provider registered without an operation's callbacks reports it as 
     InstallEditorBindings(env);
 
     // Only :detect and one operation -- everything else must throw the
-    // VcsProvider-default "not supported by this provider" error rather
-    // than crash or silently succeed, which is what VcsRunner's onError
+    // Provider-default "not supported by this provider" error rather
+    // than crash or silently succeed, which is what Runner's onError
     // path turns into a status-line message.
     env.DoString(R"(
       (ned/vcs-register-provider "blame-only"

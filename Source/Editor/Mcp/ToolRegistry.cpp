@@ -18,8 +18,8 @@
 #include "Editor/ProjectSearch.h"
 #include "Editor/TestRun/TestResult.h"
 #include "Editor/TestRun/TestRunner.h"
-#include "Editor/Vcs/VcsProvider.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/Provider.h"
+#include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 
@@ -138,7 +138,7 @@ Json MakeTextToolResult(std::string text, bool isError) {
     };
 }
 
-ToolRegistry::ToolRegistry(text::BufferList& bufferList, lsp::Manager& lspManager, vcs::VcsRunner& vcsRunner, testrun::TestRunner& testRunner,
+ToolRegistry::ToolRegistry(text::BufferList& bufferList, lsp::Manager& lspManager, vcs::Runner& vcsRunner, testrun::TestRunner& testRunner,
                            dap::Manager& dapManager) : bufferList_(bufferList), lspManager_(lspManager), vcsRunner_(vcsRunner), testRunner_(testRunner), dapManager_(dapManager) {
     RegisterBuiltinTools();
 }
@@ -292,9 +292,9 @@ void ToolRegistry::RegisterBuiltinTools() {
         "git_status", "Get the current git working-tree status (changed/staged/untracked files) for the project.", Json{{"type", "object"}, {"properties", Json::object()}},
         [this](const Json&, const ResultCallback& callback) {
             vcsRunner_.RequestStatus(
-                [callback](std::vector<vcs::VcsStatusEntry> entries) {
+                [callback](std::vector<vcs::StatusEntry> entries) {
                     Json results = Json::array();
-                    for (const vcs::VcsStatusEntry& entry : entries) {
+                    for (const vcs::StatusEntry& entry : entries) {
                         results.push_back(Json{{"state", entry.state}, {"path", entry.path}});
                     }
                     callback(MakeTextToolResult(results.dump()));
@@ -367,7 +367,7 @@ void ToolRegistry::RegisterBuiltinTools() {
     RegisterTool(
         "get_test_results", "Get the outcome of the most recent test run started via run_tests (or ned's own run-tests command).", Json{{"type", "object"}, {"properties", Json::object()}},
         [this](const Json&, const ResultCallback& callback) {
-            const std::optional<testrun::TestRunOutcome>& outcome = testRunner_.LatestOutcome();
+            const std::optional<testrun::Outcome>& outcome = testRunner_.LatestOutcome();
             if (!outcome) {
                 callback(MakeTextToolResult("No test results yet -- call run_tests first."));
                 return;
@@ -479,9 +479,9 @@ void ToolRegistry::RegisterBuiltinTools() {
         "git_branch_list", "List every local branch, marking the currently checked-out one.", Json{{"type", "object"}, {"properties", Json::object()}},
         [this](const Json&, const ResultCallback& callback) {
             vcsRunner_.RequestBranchList(
-                [callback](std::vector<vcs::VcsBranchEntry> branches) {
+                [callback](std::vector<vcs::BranchEntry> branches) {
                     Json results = Json::array();
-                    for (const vcs::VcsBranchEntry& branch : branches) {
+                    for (const vcs::BranchEntry& branch : branches) {
                         results.push_back(Json{{"name", branch.name}, {"current", branch.current}});
                     }
                     callback(MakeTextToolResult(results.dump()));
@@ -531,12 +531,12 @@ void ToolRegistry::RegisterBuiltinTools() {
             const std::size_t lineIndex = static_cast<std::size_t>(*line - 1);
             vcsRunner_.RequestBlame(
                 *buffer,
-                [callback, lineIndex](std::vector<vcs::VcsBlameLine> lines) {
+                [callback, lineIndex](std::vector<vcs::BlameLine> lines) {
                     if (lineIndex >= lines.size()) {
                         callback(MakeTextToolResult("Line out of range for this file's blame.", true));
                         return;
                     }
-                    const vcs::VcsBlameLine& blameLine = lines[lineIndex];
+                    const vcs::BlameLine& blameLine = lines[lineIndex];
                     callback(MakeTextToolResult(Json{
                         {"commitHash", blameLine.commitHash},
                         {"author", blameLine.author},

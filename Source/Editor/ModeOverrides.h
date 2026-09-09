@@ -64,7 +64,7 @@ void RegisterDynamicMode(const std::string& name, const std::filesystem::path& l
 // RegisterDynamicMode populates (ModeByName checks it first) -- for a Mode
 // whose only job is a keymap/comment-prefix with no grammar of its own
 // (e.g. the VCS commit-message buffer's finish/abort bindings, see
-// Editor/Vcs/VcsRunner.h). Overwrites any previous registration under name,
+// Editor/Vcs/Runner.h). Overwrites any previous registration under name,
 // same "re-registering is expected use" convention RegisterDynamicMode
 // itself already follows.
 void RegisterMode(const std::string& name, Mode mode);

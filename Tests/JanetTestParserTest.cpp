@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "Editor/TestRun/TestRunConfig.h"
+#include "Editor/TestRun/Config.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "JanetTestSupport.h"

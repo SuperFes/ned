@@ -15,8 +15,8 @@
 // a built-in mis-parses their tool's output).
 //
 
-#ifndef NED_EDITOR_TESTRUN_TESTRUNCONFIG_H
-#define NED_EDITOR_TESTRUN_TESTRUNCONFIG_H
+#ifndef NED_EDITOR_TESTRUN_CONFIG_H
+#define NED_EDITOR_TESTRUN_CONFIG_H
 
 #include <functional>
 #include <optional>
@@ -64,10 +64,10 @@ void                                     SetTestResultsFile(std::string path);
 // (TaskProcess already marshals its exit callback there) -- what makes a
 // Janet-backed fn legal here at all; see JanetVcsProvider.h for the
 // threading rule this inherits. An empty fn clears the name.
-using TestParserFn = std::function<TestRunOutcome(const std::string& output)>;
+using TestParserFn = std::function<Outcome(const std::string& output)>;
 void                                      RegisterTestParser(const std::string& name, TestParserFn fn);
 [[nodiscard]] std::optional<TestParserFn> RegisteredTestParser(const std::string& name);
 
 } // namespace ned::editor::testrun
 
-#endif // NED_EDITOR_TESTRUN_TESTRUNCONFIG_H
+#endif // NED_EDITOR_TESTRUN_CONFIG_H

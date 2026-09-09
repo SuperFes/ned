@@ -8,7 +8,7 @@
 #include <string>
 
 #include "Editor/DiagnosticsLog.h"
-#include "Editor/TestRun/TestRunConfig.h"
+#include "Editor/TestRun/Config.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -35,7 +35,7 @@ using ned::text::BufferList;
 
 namespace {
 
-// Every test that configures the process-wide TestRunConfig statics cleans
+// Every test that configures the process-wide Config statics cleans
 // up through this guard so a failure can't leak state into later tests.
 struct ConfigResetGuard {
     ~ConfigResetGuard() {
@@ -268,7 +268,7 @@ TEST_CASE("A registered parser wins over the built-in format of the same name", 
     TestRunner         runner(bufferList, eventLoop);
     SetTestCommand({"true"}, "ctest");
     ned::editor::testrun::RegisterTestParser("ctest", [](const std::string&) {
-        ned::editor::testrun::TestRunOutcome outcome;
+        ned::editor::testrun::Outcome outcome;
         outcome.format   = "shadowed";
         outcome.parsedOk = true;
         outcome.results.push_back(TestResult{.name = "FromCustomParser", .status = TestResult::Status::Passed});
@@ -292,7 +292,7 @@ TEST_CASE("A throwing registered parser degrades to a reported parse failure", "
     TestRunner         runner(bufferList, eventLoop);
     SetTestCommand({"true"}, "exploding");
     ned::editor::testrun::RegisterTestParser("exploding",
-                                             [](const std::string&) -> ned::editor::testrun::TestRunOutcome {
+                                             [](const std::string&) -> ned::editor::testrun::Outcome {
                                                  throw std::runtime_error("parser blew up");
                                              });
 

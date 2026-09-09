@@ -1,6 +1,6 @@
 //
 // AcpPanel (Source/UI/AcpPanel.h) -- headless coverage over a real
-// AcpManager wired to a pipe-backed AcpClient, the same ManagerFixture/
+// Manager wired to a pipe-backed Client, the same ManagerFixture/
 // DispatchFrame pattern AcpManagerTest.cpp uses, plus TerminalPanelTest's
 // own per-cell Screen::PixelAt painting convention.
 //
@@ -17,9 +17,9 @@
 #include <poll.h>
 #include <unistd.h>
 
-#include "Editor/Acp/AcpClient.h"
-#include "Editor/Acp/AcpManager.h"
-#include "Editor/Acp/AcpPanelConfig.h"
+#include "Editor/Acp/Client.h"
+#include "Editor/Acp/Manager.h"
+#include "Editor/Acp/PanelConfig.h"
 #include "Editor/Acp/Transport.h"
 #include "Editor/Lsp/Client.h"
 #include "Editor/Lsp/Manager.h"
@@ -34,12 +34,9 @@
 
 namespace {
 
-using ned::editor::acp::AcpClient;
-using ned::editor::acp::AcpManager;
 using ned::editor::acp::Json;
 using ned::editor::acp::Transport;
 using ned::editor::lsp::kProseLanguageKey;
-using ned::editor::lsp::Manager;
 using ned::ui::AcpPanel;
 using ned::ui::Box;
 using ned::ui::Canvas;
@@ -84,15 +81,15 @@ std::string ResultFrame(const Json& id, const Json& result) {
 struct Fixture {
     ned::ui::EventLoop    eventLoop;
     ned::text::BufferList bufferList;
-    AcpManager            manager{bufferList, eventLoop};
-    Manager            lspManager{bufferList, eventLoop};
+    ned::editor::acp::Manager manager{bufferList, eventLoop};
+    ned::editor::lsp::Manager lspManager{bufferList, eventLoop};
     Theme                 theme = ned::ui::DarkTheme();
     AcpPanel              panel{theme};
     Screen                screen{kWidth, kHeight};
 
     int           agentStdinRead   = -1;
     int           agentStdoutWrite = -1;
-    AcpClient*    client           = nullptr;
+    ned::editor::acp::Client* client           = nullptr;
     MessageReader reader{-1};
 
     Fixture() {
@@ -110,7 +107,7 @@ struct Fixture {
         agentStdoutWrite = clientReadsHere[1];
         reader.fd        = agentStdinRead;
         client           = &manager.SetClientForTesting(
-            std::make_unique<AcpClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
+            std::make_unique<ned::editor::acp::Client>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
     }
 
     void StartActiveSession(const std::string& agentName) {
@@ -119,7 +116,7 @@ struct Fixture {
         client->DispatchFrame(ResultFrame(initializeRequest["id"], Json::object()));
         const Json sessionNewRequest = reader.Next();
         client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
-        REQUIRE(manager.State() == AcpManager::SessionState::Active);
+        REQUIRE(manager.State() == ned::editor::acp::Manager::SessionState::Active);
     }
 
     void Paint() {
@@ -355,7 +352,7 @@ TEST_CASE("AcpPanel's Backspace deletes the last typed character", "[AcpPanel]")
     REQUIRE(fixture.RowText(kHeight - 1).find("Prompt: hi") == std::string::npos);
 }
 
-TEST_CASE("AcpPanel's Enter sends the typed prompt through AcpManager and clears the input row", "[AcpPanel]") {
+TEST_CASE("AcpPanel's Enter sends the typed prompt through Manager and clears the input row", "[AcpPanel]") {
     Fixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("claude-code");
@@ -824,12 +821,12 @@ TEST_CASE("A real drag on the AcpPanel resize divider never counts as the first 
           "[AcpPanel]") {
     Fixture fixture;
     fixture.panel.SetTerminalSize(ned::ui::Size{.width = 100, .height = 100});
-    const int original = ned::editor::acp::AcpPanelSizePercent();
+    const int original = ned::editor::acp::PanelSizePercent();
 
     fixture.panel.OnEvent(ned::ui::test::Mouse(5, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
     fixture.panel.OnEvent(
         ned::ui::test::Mouse(5, 10, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Moved)); // a genuine drag
-    REQUIRE(ned::editor::acp::AcpPanelSizePercent() != original);
+    REQUIRE(ned::editor::acp::PanelSizePercent() != original);
     fixture.panel.OnEvent(
         ned::ui::test::Mouse(5, 10, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
 
@@ -870,17 +867,17 @@ TEST_CASE("AcpPanel::SetOnCollapseChanged fires only on an actual state change",
     REQUIRE_FALSE(fixture.panel.Collapsed());
 }
 
-TEST_CASE("AcpPanel's Control-Up/Down grow/shrink AcpPanelSizePercent", "[AcpPanel]") {
-    const int original = ned::editor::acp::AcpPanelSizePercent();
+TEST_CASE("AcpPanel's Control-Up/Down grow/shrink PanelSizePercent", "[AcpPanel]") {
+    const int original = ned::editor::acp::PanelSizePercent();
     ned::editor::acp::SetAcpPanelSizePercent(30);
 
     Fixture fixture;
     REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowUpCtrl()));
-    REQUIRE(ned::editor::acp::AcpPanelSizePercent() == 35);
+    REQUIRE(ned::editor::acp::PanelSizePercent() == 35);
 
     REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowDownCtrl()));
     REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowDownCtrl()));
-    REQUIRE(ned::editor::acp::AcpPanelSizePercent() == 25);
+    REQUIRE(ned::editor::acp::PanelSizePercent() == 25);
 
     ned::editor::acp::SetAcpPanelSizePercent(original); // cleanup -- process-wide state
 }
@@ -1036,11 +1033,11 @@ TEST_CASE("AcpPanel dock-hosted mode ignores the standalone close/minimize/resiz
     // The row-0/left-edge resize-divider carve-out is gone too -- a press at
     // (0, 0) is just an ordinary content click, not BeginResize: resizing_
     // never becomes true, so the drag-follow Moved event below is simply
-    // unhandled rather than adjusting AcpPanelSizePercent().
-    const int before = ned::editor::acp::AcpPanelSizePercent();
+    // unhandled rather than adjusting PanelSizePercent().
+    const int before = ned::editor::acp::PanelSizePercent();
     REQUIRE(fixture.panel.OnEvent(ned::ui::test::Mouse(0, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
     REQUIRE_FALSE(fixture.panel.OnEvent(ned::ui::test::Mouse(0, 3, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Moved)));
-    REQUIRE(ned::editor::acp::AcpPanelSizePercent() == before);
+    REQUIRE(ned::editor::acp::PanelSizePercent() == before);
 }
 
 TEST_CASE("AcpPanel dock-hosted mode ignores M-m and never collapses", "[AcpPanel]") {

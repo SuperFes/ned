@@ -1,4 +1,4 @@
-#include "AcpConfig.h"
+#include "Config.h"
 
 #include <algorithm>
 #include <mutex>
@@ -24,7 +24,7 @@ void SetAcpAgentCommand(const std::string& name, std::vector<std::string> argv) 
     }
 }
 
-std::optional<std::vector<std::string>> AcpAgentCommand(const std::string& name) {
+std::optional<std::vector<std::string>> AgentCommand(const std::string& name) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     const auto                        it = g_commands.find(name);
     if (it == g_commands.end()) {
@@ -33,7 +33,7 @@ std::optional<std::vector<std::string>> AcpAgentCommand(const std::string& name)
     return it->second;
 }
 
-std::vector<std::string> AcpAgentNames() {
+std::vector<std::string> AgentNames() {
     const std::lock_guard<std::mutex> lock(g_mutex);
     std::vector<std::string>          names;
     names.reserve(g_commands.size());

@@ -8,7 +8,7 @@
 #include "Editor/Mode.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
-#include "Editor/TestRun/TestRunConfig.h"
+#include "Editor/TestRun/Config.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"

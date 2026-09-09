@@ -23,7 +23,7 @@ ned::ui::Event MousePress(int x, int y) {
     return ned::ui::test::Mouse(x, y, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed);
 }
 
-// -U0 output (VcsProvider::DiffArgv/StagedDiffArgv's own convention) --
+// -U0 output (Provider::DiffArgv/StagedDiffArgv's own convention) --
 // body text is just the +/- lines, no context.
 std::vector<DiffHunkText> TwoHunks() {
     return {

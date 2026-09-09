@@ -327,7 +327,7 @@ using SymbolKindFunction = std::function<std::vector<SymbolMarker>(std::string_v
 // needs the body; the gutter only ever reads startByte's line); name is
 // the test's own name as the framework would report it (string-literal
 // delimiters already stripped), what the gutter matches against a
-// TestRunOutcome's result names.
+// Outcome's result names.
 struct TestMarker {
     std::size_t startByte;
     std::size_t endByte;

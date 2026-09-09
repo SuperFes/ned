@@ -37,7 +37,7 @@
 #include <utility>
 #include <vector>
 
-#include "Editor/Acp/AcpConfig.h"
+#include "Editor/Acp/Config.h"
 #include "Editor/Bookmark.h"
 #include "Editor/BufferSave.h"
 #include "Editor/Clipboard.h"
@@ -87,7 +87,7 @@
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Editor/TestRun/TestResultsBuffer.h"
-#include "Editor/TestRun/TestRunConfig.h"
+#include "Editor/TestRun/Config.h"
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/DiffPatch.h"

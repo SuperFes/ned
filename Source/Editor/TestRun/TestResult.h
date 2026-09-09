@@ -1,7 +1,7 @@
 //
 // Structured test-runner integration (ROADMAP.md): the common vocabulary a
 // test framework's output is parsed into, shared by every built-in parser
-// (TestOutputParser.h), Janet-registered parsers (TestRunConfig.h), the
+// (TestOutputParser.h), Janet-registered parsers (Config.h), the
 // "*test results*" failures buffer, and BufferView's per-test gutter marks.
 // Deliberately framework-neutral: `name` is kept exactly as the framework
 // itself reported it ("tests::it_fails", "Class::testMethod", "TestFoo/sub",
@@ -45,7 +45,7 @@ struct TestResult {
     [[nodiscard]] bool operator==(const TestResult&) const = default;
 };
 
-struct TestRunOutcome {
+struct Outcome {
     std::vector<TestResult> results;
     // Counts come from the tool's own summary where the per-test list can't
     // supply them (a failures-only format knows how many passed but not

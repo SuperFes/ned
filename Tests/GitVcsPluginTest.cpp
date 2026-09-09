@@ -13,7 +13,7 @@
 
 #include "Editor/Process/ChildProcess.h"
 #include "Editor/Vcs/DiffPatch.h"
-#include "Editor/Vcs/VcsProviderRegistry.h"
+#include "Editor/Vcs/ProviderRegistry.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "Janet/PluginLoader.h"
@@ -380,7 +380,7 @@ TEST_CASE("bundled git plugin stages and unstages a single hunk end to end", "[G
     auto* provider = ned::editor::vcs::ActiveProviderFor(repoRoot);
     REQUIRE(provider != nullptr);
 
-    // Stage only the line-2 hunk, exactly the chain VcsRunner::RequestHunkApply runs.
+    // Stage only the line-2 hunk, exactly the chain Runner::RequestHunkApply runs.
     const std::string rawDiff = RunToCompletion(provider->DiffArgv(filePath).argv);
     const auto        patch   = ned::editor::vcs::ExtractHunkPatch(rawDiff, 2);
     REQUIRE(patch.has_value());
@@ -466,7 +466,7 @@ TEST_CASE("bundled git plugin reverts a single hunk from the working tree end to
     auto* provider = ned::editor::vcs::ActiveProviderFor(repoRoot);
     REQUIRE(provider != nullptr);
 
-    // Revert only the line-2 hunk -- the exact chain VcsRunner::RequestHunkRevert runs.
+    // Revert only the line-2 hunk -- the exact chain Runner::RequestHunkRevert runs.
     const std::string rawDiff = RunToCompletion(provider->DiffArgv(filePath).argv);
     const auto        patch   = ned::editor::vcs::ExtractHunkPatch(rawDiff, 2);
     REQUIRE(patch.has_value());

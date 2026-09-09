@@ -36,7 +36,7 @@ void                           SetLineEndingPolicy(LineEndingPolicy policy);
 
 // ned/set-line-ending-policy's own binding: "preserve" (the default) /
 // "lf" / "crlf" / "cr" -- an unrecognized value leaves the current policy
-// unchanged, matching AcpPanelConfig.cpp's SetAcpPanelDock precedent.
+// unchanged, matching PanelConfig.cpp's SetAcpPanelDock precedent.
 void SetLineEndingPolicyFromString(const std::string& value);
 
 // Resolves what a buffer whose detected/overridden ending is

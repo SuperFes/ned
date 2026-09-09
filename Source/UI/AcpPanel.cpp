@@ -7,7 +7,7 @@
 #include <filesystem>
 
 #include "Border.h"
-#include "Editor/Acp/AcpPanelConfig.h"
+#include "Editor/Acp/PanelConfig.h"
 #include "Editor/FuzzyMatch.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectTree.h"
@@ -160,13 +160,13 @@ namespace {
         return rows;
     }
 
-    std::string StateLabel(editor::acp::AcpManager::SessionState state) {
+    std::string StateLabel(editor::acp::Manager::SessionState state) {
         switch (state) {
-            case editor::acp::AcpManager::SessionState::Starting:
+            case editor::acp::Manager::SessionState::Starting:
                 return "starting";
-            case editor::acp::AcpManager::SessionState::Active:
+            case editor::acp::Manager::SessionState::Active:
                 return "active";
-            case editor::acp::AcpManager::SessionState::Inactive:
+            case editor::acp::Manager::SessionState::Inactive:
                 return "inactive";
         }
         return "inactive";
@@ -177,7 +177,7 @@ namespace {
 AcpPanel::AcpPanel(const Theme& theme) : theme_(theme), prompt_("Prompt: ") {
 }
 
-void AcpPanel::SetAcpManager(editor::acp::AcpManager* acpManager) {
+void AcpPanel::SetAcpManager(editor::acp::Manager* acpManager) {
     acpManager_ = acpManager;
 }
 
@@ -199,7 +199,7 @@ void AcpPanel::SetDockHosted(bool dockHosted) {
 
 std::string AcpPanel::TitleText() const {
     const std::string agentName = acpManager_ && !acpManager_->AgentName().empty() ? acpManager_->AgentName() : std::string("ACP agent");
-    return agentName + " [" + StateLabel(acpManager_ ? acpManager_->State() : editor::acp::AcpManager::SessionState::Inactive) + "]";
+    return agentName + " [" + StateLabel(acpManager_ ? acpManager_->State() : editor::acp::Manager::SessionState::Inactive) + "]";
 }
 
 void AcpPanel::OpenRewindPicker() {
@@ -244,7 +244,7 @@ void AcpPanel::HistoryPrevious() {
     }
     std::vector<std::string> history;
     for (const auto& entry : acpManager_->Transcript()) {
-        if (entry.kind == editor::acp::AcpManager::TranscriptEntry::Kind::UserMessage) {
+        if (entry.kind == editor::acp::Manager::TranscriptEntry::Kind::UserMessage) {
             history.push_back(entry.text);
         }
     }
@@ -268,7 +268,7 @@ void AcpPanel::HistoryNext() {
     std::vector<std::string> history;
     if (acpManager_) {
         for (const auto& entry : acpManager_->Transcript()) {
-            if (entry.kind == editor::acp::AcpManager::TranscriptEntry::Kind::UserMessage) {
+            if (entry.kind == editor::acp::Manager::TranscriptEntry::Kind::UserMessage) {
                 history.push_back(entry.text);
             }
         }
@@ -338,7 +338,7 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript(int width) const {
 
     const auto& pending    = acpManager_->PendingPermissionPrompt();
     const auto& transcript = acpManager_->Transcript();
-    using Kind             = editor::acp::AcpManager::TranscriptEntry::Kind;
+    using Kind             = editor::acp::Manager::TranscriptEntry::Kind;
 
     // ACP chat-feel round 2: which ToolCall entry is the most recent one --
     // that one alone stays fully expanded (title + status + diff-line-count
@@ -469,7 +469,7 @@ AcpPanel::InlineMarkdownResult AcpPanel::ApplyInlineMarkdown(std::string_view ra
     // Markdown's own unordered-list convention -- indentation is preserved
     // verbatim (nested lists stay nested), only the marker byte itself
     // becomes a bullet glyph. Never matches Kind::Plan's own "[x] "/"[~] "/
-    // "[ ] " checkbox prefix (PushOrReplacePlan, AcpManager.cpp), so this
+    // "[ ] " checkbox prefix (PushOrReplacePlan, Manager.cpp), so this
     // doesn't collide with that convention.
     std::size_t bodyStart = 0;
     {
@@ -600,7 +600,7 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatRewindPicker(int /*width*/) c
     const std::size_t shown = std::min(count, kMaxRewindChoices);
     for (std::size_t offset = 0; offset < shown; ++offset) {
         const std::size_t                          index      = count - 1 - offset;
-        const editor::acp::AcpManager::Checkpoint& checkpoint = acpManager_->CheckpointAt(index);
+        const editor::acp::Manager::Checkpoint& checkpoint = acpManager_->CheckpointAt(index);
         lines.push_back({"  [" + std::to_string(offset + 1) + "] " + checkpoint.promptPreview + "  (" +
                              LocalTimeLabel(checkpoint.timestamp) + ")",
                          DisplayStyle::Plain});
@@ -745,8 +745,8 @@ namespace {
 
 } // namespace
 
-std::vector<editor::acp::AcpManager::PromptAttachment> AcpPanel::ResolveMentionAttachments(std::string& text) const {
-    std::vector<editor::acp::AcpManager::PromptAttachment> attachments;
+std::vector<editor::acp::Manager::PromptAttachment> AcpPanel::ResolveMentionAttachments(std::string& text) const {
+    std::vector<editor::acp::Manager::PromptAttachment> attachments;
     if (!activeBufferProvider_) {
         return attachments; // nothing to resolve against -- any "@buffer"/"@selection" token stays as literal text
     }
@@ -813,7 +813,7 @@ bool AcpPanel::MinimizeButtonAt(Point local) const {
 // convention), not just a small button, since there's very little to aim at
 // on a genuinely thin strip.
 void AcpPanel::PaintCollapsedStrip(Canvas& canvas, int width, int height) const {
-    if (editor::acp::GetAcpPanelDock() == editor::acp::AcpPanelDock::Right) {
+    if (editor::acp::GetAcpPanelDock() == editor::acp::PanelDock::Right) {
         // A right-docked strip is narrow but tall, carrying no readable text
         // -- just a single expand glyph, so the border brush (tuned for thin
         // decorative lines, not text legibility) is fine here.
@@ -855,18 +855,18 @@ void AcpPanel::PaintCollapsedStrip(Canvas& canvas, int width, int height) const 
     }
     const std::string agentName = acpManager_ && !acpManager_->AgentName().empty() ? acpManager_->AgentName() : std::string("ACP agent");
     const std::string title =
-        agentName + " [" + StateLabel(acpManager_ ? acpManager_->State() : editor::acp::AcpManager::SessionState::Inactive) + "] (minimized)";
+        agentName + " [" + StateLabel(acpManager_ ? acpManager_->State() : editor::acp::Manager::SessionState::Inactive) + "] (minimized)";
     DrawBorderTitle(canvas, title, stripBrush);
 }
 
 void AcpPanel::BeginResize(Point globalMouse) {
     resizing_           = true;
     resizeAnchorGlobal_ = globalMouse;
-    resizeStartPercent_ = editor::acp::AcpPanelSizePercent();
+    resizeStartPercent_ = editor::acp::PanelSizePercent();
 }
 
 void AcpPanel::UpdateResize(Point globalMouse) {
-    const bool rightDock = editor::acp::GetAcpPanelDock() == editor::acp::AcpPanelDock::Right;
+    const bool rightDock = editor::acp::GetAcpPanelDock() == editor::acp::PanelDock::Right;
     // Dragging the resize edge away from the composer grows it in both
     // docks: leftward for a right-docked panel (its own left edge is the
     // handle), upward for a bottom-docked one (its own top border is the
@@ -1162,7 +1162,7 @@ bool AcpPanel::OnEvent(const Event& event) {
                 // panel's own left edge column for a right dock (the
                 // boundary shared with BufferView beneath it --
                 // ProjectSidebar's own right-edge divider, mirrored).
-                const bool rightDock = editor::acp::GetAcpPanelDock() == editor::acp::AcpPanelDock::Right;
+                const bool rightDock = editor::acp::GetAcpPanelDock() == editor::acp::PanelDock::Right;
                 if (rightDock ? mouse->at.x == 0 : mouse->at.y == 0) {
                     // A second press within the double-click window
                     // collapses instead of starting a resize -- ProjectSidebar/
@@ -1210,7 +1210,7 @@ bool AcpPanel::OnEvent(const Event& event) {
     // the way BufferView's own flow has, so Enter is deliberately left alone
     // (no obvious default option to pick without one).
     if (acpManager_ && acpManager_->PendingPermissionPrompt()) {
-        const editor::acp::AcpManager::PermissionPrompt& pending = *acpManager_->PendingPermissionPrompt();
+        const editor::acp::Manager::PermissionPrompt& pending = *acpManager_->PendingPermissionPrompt();
         if (chord->Special == editor::SpecialKey::Escape) {
             acpManager_->CancelPermissionPrompt();
             return true;
@@ -1337,11 +1337,11 @@ bool AcpPanel::OnEvent(const Event& event) {
     // history recall below the same way Control-Left/Right is checked ahead
     // of plain Left/Right above.
     if (chord->Special == editor::SpecialKey::Up && chord->Control) {
-        editor::acp::SetAcpPanelSizePercent(editor::acp::AcpPanelSizePercent() + 5);
+        editor::acp::SetAcpPanelSizePercent(editor::acp::PanelSizePercent() + 5);
         return true;
     }
     if (chord->Special == editor::SpecialKey::Down && chord->Control) {
-        editor::acp::SetAcpPanelSizePercent(editor::acp::AcpPanelSizePercent() - 5);
+        editor::acp::SetAcpPanelSizePercent(editor::acp::PanelSizePercent() - 5);
         return true;
     }
     // Keyboard minimize toggle, alongside the [-] title-bar button above --

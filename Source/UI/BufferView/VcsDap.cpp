@@ -23,11 +23,11 @@ void BufferView::SetOnDapThreadsToggle(std::function<void()> handler) {
     onDapThreadsToggle_ = std::move(handler);
 }
 
-void BufferView::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
+void BufferView::SetVcsRunner(editor::vcs::Runner* vcsRunner) {
     vcsRunner_ = vcsRunner;
 }
 
-void BufferView::DispatchBlameForTesting(std::vector<editor::vcs::VcsBlameLine> lines) {
+void BufferView::DispatchBlameForTesting(std::vector<editor::vcs::BlameLine> lines) {
     text::Buffer& buffer = activeBuffer_.Get();
     blameLineInfo_.clear();
     blameLineInfo_.reserve(lines.size());
@@ -62,7 +62,7 @@ void BufferView::RequestBlameForCurrentBuffer() {
     text::Buffer* buffer = &activeBuffer_.Get();
     vcsRunner_->RequestBlame(
         *buffer,
-        [this, buffer](std::vector<editor::vcs::VcsBlameLine> lines) {
+        [this, buffer](std::vector<editor::vcs::BlameLine> lines) {
             if (&activeBuffer_.Get() != buffer) {
                 return; // active buffer changed while the request was in flight -- discard, it's stale
             }
@@ -90,13 +90,13 @@ void BufferView::ShowBlameDetailAtPoint() {
         return;
     }
 
-    const editor::vcs::VcsBlameLine& blame = it->second;
+    const editor::vcs::BlameLine& blame = it->second;
     statusMessage_                         = blame.commitHash + " " + blame.author + " (" + blame.date + "): " + blame.summary;
 }
 
 void BufferView::ScheduleDiffRefresh() {
     if (!eventLoop_ || !vcsRunner_) {
-        return; // headless test, or no VcsRunner wired in -- see this method's own header comment
+        return; // headless test, or no Runner wired in -- see this method's own header comment
     }
     // Same "Arm re-cancels any still-pending previous fire" debounce shape
     // completionDebounceTimer_ already established for LSP completion --
@@ -105,7 +105,7 @@ void BufferView::ScheduleDiffRefresh() {
     diffRefreshTimer_.Arm(*eventLoop_, editor::DiffRefreshDebounce(), [this] { RequestDiffForCurrentBuffer(); });
 }
 
-void BufferView::DispatchDiffForTesting(std::vector<editor::vcs::VcsDiffHunk> hunks) {
+void BufferView::DispatchDiffForTesting(std::vector<editor::vcs::DiffHunk> hunks) {
     // initial-buffer-diff fix: mark the active buffer's diff as synced. In
     // production this is a no-op (the only real caller is the request
     // completion, which only runs after Paint's diffSyncBuffer_ branch
@@ -115,7 +115,7 @@ void BufferView::DispatchDiffForTesting(std::vector<editor::vcs::VcsDiffHunk> hu
     diffSyncBuffer_ = &activeBuffer_.Get();
     std::vector<std::pair<std::size_t, DiffLineKind>> kinds;
     std::vector<std::size_t>                          hunkStartLines;
-    for (const editor::vcs::VcsDiffHunk& hunk : hunks) {
+    for (const editor::vcs::DiffHunk& hunk : hunks) {
         if (hunk.newCount == 0) {
             // Pure deletion -- a boundary, not a covered range. git's
             // newStart is already the 0-indexed line the deletion sits
@@ -180,7 +180,7 @@ void BufferView::RequestDiffForCurrentBuffer() {
     text::Buffer* buffer = &activeBuffer_.Get();
     vcsRunner_->RequestDiff(
         *buffer,
-        [this, buffer](std::vector<editor::vcs::VcsDiffHunk> hunks) {
+        [this, buffer](std::vector<editor::vcs::DiffHunk> hunks) {
             if (&activeBuffer_.Get() != buffer) {
                 return; // active buffer changed while the request was in flight -- discard, it's stale
             }
@@ -210,7 +210,7 @@ void BufferView::RequestVcsBlameBuffer() {
     const std::filesystem::path path = *buffer->Path();
     vcsRunner_->RequestBlame(
         *buffer,
-        [this, buffer, path](std::vector<editor::vcs::VcsBlameLine> lines) {
+        [this, buffer, path](std::vector<editor::vcs::BlameLine> lines) {
             if (&activeBuffer_.Get() == buffer) {
                 // Populates the gutter for the still-active source buffer
                 // before BuildVcsBlameBuffer switches activeBuffer_ away
@@ -234,14 +234,14 @@ void BufferView::RequestVcsLogBuffer() {
     }
     const std::filesystem::path path = *buffer.Path();
     vcsRunner_->RequestLog(
-        buffer, [this, path](std::vector<editor::vcs::VcsLogEntry> entries) { BuildVcsLogBuffer(path, entries); },
+        buffer, [this, path](std::vector<editor::vcs::LogEntry> entries) { BuildVcsLogBuffer(path, entries); },
         [this](std::string error) { statusMessage_ = "vcs log: " + error; });
 }
 
-void BufferView::BuildVcsBlameBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsBlameLine>& lines) {
+void BufferView::BuildVcsBlameBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::BlameLine>& lines) {
     std::string resultsText;
     for (std::size_t i = 0; i < lines.size(); ++i) {
-        const editor::vcs::VcsBlameLine& line      = lines[i];
+        const editor::vcs::BlameLine& line      = lines[i];
         const std::string                shortHash = line.commitHash.substr(0, std::min<std::size_t>(8, line.commitHash.size()));
         resultsText += path.string() + ":" + std::to_string(i + 1) + ": " + shortHash + " " + line.author + " " + line.date +
                        " | " + line.summary + "\n";
@@ -256,9 +256,9 @@ void BufferView::BuildVcsBlameBuffer(const std::filesystem::path& path, const st
     activeBuffer_.Set(results);
 }
 
-void BufferView::BuildVcsLogBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsLogEntry>& entries) {
+void BufferView::BuildVcsLogBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::LogEntry>& entries) {
     std::string resultsText;
-    for (const editor::vcs::VcsLogEntry& entry : entries) {
+    for (const editor::vcs::LogEntry& entry : entries) {
         const std::string shortHash = entry.commitHash.substr(0, std::min<std::size_t>(8, entry.commitHash.size()));
         resultsText += shortHash + " " + entry.date + " " + entry.author + ": " + entry.summary + "\n";
     }
@@ -347,15 +347,15 @@ void BufferView::RequestVcsStatusBuffer() {
         return;
     }
     vcsRunner_->RequestStatus(
-        [this](std::vector<editor::vcs::VcsStatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/true); },
+        [this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/true); },
         [this](std::string error) { statusMessage_ = "vcs status: " + error; });
 }
 
-void BufferView::BuildVcsStatusBuffer(const std::vector<editor::vcs::VcsStatusEntry>& entries, bool announce) {
+void BufferView::BuildVcsStatusBuffer(const std::vector<editor::vcs::StatusEntry>& entries, bool announce) {
     const std::filesystem::path root = editor::ProjectRoot();
 
     std::string text;
-    for (const editor::vcs::VcsStatusEntry& entry : entries) {
+    for (const editor::vcs::StatusEntry& entry : entries) {
         text += (root / entry.path).string() + ":1: " + entry.state + " " + entry.path + "\n";
     }
 
@@ -375,7 +375,7 @@ void BufferView::RefreshVcsStatusBuffer() {
         return;
     }
     vcsRunner_->RequestStatus(
-        [this](std::vector<editor::vcs::VcsStatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false); });
+        [this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false); });
 }
 
 void BufferView::BeginVcsCommitMessage() {
@@ -383,7 +383,7 @@ void BufferView::BeginVcsCommitMessage() {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    const std::filesystem::path path = editor::vcs::VcsCommitMessagePath();
+    const std::filesystem::path path = editor::vcs::CommitMessagePath();
     // FindByPath, not the OpenOrCreateFile call below, decides whether this
     // is a genuinely fresh commit (seed the template) or the user re-running
     // vcs-commit while one is already mid-composition (switch to it as-is,
@@ -434,7 +434,7 @@ void BufferView::AbortVcsCommitMessage() {
 void BufferView::CloseVcsCommitMessageBuffer(text::Buffer& commitBuffer) {
     CloseBufferNow(commitBuffer);
     std::error_code ec;
-    std::filesystem::remove(editor::vcs::VcsCommitMessagePath(), ec); // best-effort -- a leftover temp file is harmless
+    std::filesystem::remove(editor::vcs::CommitMessagePath(), ec); // best-effort -- a leftover temp file is harmless
 }
 
 std::optional<std::filesystem::path> BufferView::ResolveVcsFileTarget() {
@@ -567,13 +567,13 @@ void BufferView::RequestVcsBranchesBuffer() {
         return;
     }
     vcsRunner_->RequestBranchList(
-        [this](std::vector<editor::vcs::VcsBranchEntry> entries) { BuildVcsBranchesBuffer(entries); },
+        [this](std::vector<editor::vcs::BranchEntry> entries) { BuildVcsBranchesBuffer(entries); },
         [this](std::string error) { statusMessage_ = "vcs branches: " + error; });
 }
 
-void BufferView::BuildVcsBranchesBuffer(const std::vector<editor::vcs::VcsBranchEntry>& entries) {
+void BufferView::BuildVcsBranchesBuffer(const std::vector<editor::vcs::BranchEntry>& entries) {
     std::string text;
-    for (const editor::vcs::VcsBranchEntry& entry : entries) {
+    for (const editor::vcs::BranchEntry& entry : entries) {
         text += (entry.current ? "* " : "  ") + entry.name + "\n";
     }
 
@@ -593,7 +593,7 @@ void BufferView::BeginVcsSwitchBranchPrompt() {
     }
     statusMessage_ = "Fetching branches...";
     vcsRunner_->RequestBranchList(
-        [this](std::vector<editor::vcs::VcsBranchEntry> entries) {
+        [this](std::vector<editor::vcs::BranchEntry> entries) {
             if (inputMode_ != InputMode::Normal) {
                 // Another prompt began while the fetch was in flight --
                 // don't hijack it (same in-progress guard RequestCloseBuffer
@@ -601,7 +601,7 @@ void BufferView::BeginVcsSwitchBranchPrompt() {
                 return;
             }
             std::vector<std::string> branchNames;
-            for (const editor::vcs::VcsBranchEntry& entry : entries) {
+            for (const editor::vcs::BranchEntry& entry : entries) {
                 if (!entry.current) {
                     branchNames.push_back(entry.name);
                 }
@@ -1726,7 +1726,7 @@ void BufferView::HandleVcsSwitchBranchKey(const editor::KeyChord& chord) {
 }
 
 // dropdown-path-completion follow-up: RefreshSwitchToBufferStatus's own
-// shape, over editor::acp::AcpAgentNames() (a static configured list --
+// shape, over editor::acp::AgentNames() (a static configured list --
 // same "no create-new case" reasoning as switch-to-buffer above).
 
 void BufferView::SetVcsPanel(VcsPanel* panel) {

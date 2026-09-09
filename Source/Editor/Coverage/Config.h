@@ -1,11 +1,11 @@
 //
 // Code-coverage gutter (ROADMAP.md's Maybelist entry): mutex-guarded static
-// state, mirroring TestRun/TestRunConfig.h's exact shape -- the project's
+// state, mirroring TestRun/Config.h's exact shape -- the project's
 // configured coverage-report file plus the currently-loaded, parsed report
 // BufferView's coverage gutter reads. Unlike TestRunner (a live subprocess
 // runner), there is no process to run here at all: load-coverage-report is
 // a plain file read + parse, so config and loaded state live together in
-// one small module rather than TestRunConfig/TestRunner's two-file split.
+// one small module rather than Config/TestRunner's two-file split.
 //
 
 #ifndef NED_EDITOR_COVERAGE_CONFIG_H
@@ -37,7 +37,7 @@ void LoadCoverageReport();
 // way) without touching the configured file path -- clear-coverage-report.
 void ClearCoverageReport();
 
-// By-value returns, TestRunConfig.h's own convention for a mutex-guarded
+// By-value returns, Config.h's own convention for a mutex-guarded
 // static -- never a reference held past the lock.
 [[nodiscard]] Report CurrentCoverageReport();
 [[nodiscard]] std::size_t    ReportGeneration();

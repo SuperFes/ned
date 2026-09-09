@@ -12,9 +12,9 @@
 #include "Editor/ProjectSession.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
-#include "Editor/Vcs/VcsProvider.h"
-#include "Editor/Vcs/VcsProviderRegistry.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/Provider.h"
+#include "Editor/Vcs/ProviderRegistry.h"
+#include "Editor/Vcs/Runner.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -98,10 +98,10 @@ void RenderFullScreen(ned::ui::Widget& root, ned::ui::Screen& screen) {
 // own RecordingProvider (a distinct anonymous-namespace class -- can't share
 // across translation units), counting instead of just recording so a
 // multi-pane test can confirm every pane, not just one, requested a diff.
-// Detect below is VcsProvider's only pure-virtual method; every other
+// Detect below is Provider's only pure-virtual method; every other
 // operation not overridden here already default-throws "not supported by
 // this provider," which is fine -- nothing but DiffArgv is ever called.
-class CountingDiffProvider : public ned::editor::vcs::VcsProvider {
+class CountingDiffProvider : public ned::editor::vcs::Provider {
   public:
     explicit CountingDiffProvider(int& count) : count_(count) {
     }
@@ -109,7 +109,7 @@ class CountingDiffProvider : public ned::editor::vcs::VcsProvider {
     [[nodiscard]] bool Detect(const std::filesystem::path&) const override {
         return true;
     }
-    [[nodiscard]] ned::editor::vcs::VcsCommandSpec DiffArgv(const std::filesystem::path&) const override {
+    [[nodiscard]] ned::editor::vcs::CommandSpec DiffArgv(const std::filesystem::path&) const override {
         ++count_;
         throw std::runtime_error("recorded -- no real spawn wanted");
     }
@@ -544,7 +544,7 @@ TEST_CASE("RefreshVcsDiffGutters requests a fresh diff for every live pane, not 
         manager.TakeFocus();
 
         ned::ui::EventLoop          eventLoop;
-        ned::editor::vcs::VcsRunner runner(eventLoop);
+        ned::editor::vcs::Runner runner(eventLoop);
         manager.SetVcsRunner(&runner);
 
         manager.RefreshVcsDiffGutters();

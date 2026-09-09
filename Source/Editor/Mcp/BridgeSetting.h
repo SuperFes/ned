@@ -1,6 +1,6 @@
 //
 // ACP MCP tool-server bridge, slice 1. Process-wide opt-out toggle for
-// AcpManager::StartSession's mcpServers payload -- default on, mirroring
+// Manager::StartSession's mcpServers payload -- default on, mirroring
 // AutoRevert.h/TabWidth.h's own mutex-guarded static state pattern.
 // Configured from Janet via ned/set-acp-mcp-bridge.
 //
@@ -11,7 +11,7 @@
 namespace ned::editor::mcp {
 
 void               SetAcpMcpBridgeEnabled(bool enabled);
-[[nodiscard]] bool AcpMcpBridgeEnabled();
+[[nodiscard]] bool McpBridgeEnabled();
 
 } // namespace ned::editor::mcp
 

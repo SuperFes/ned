@@ -16,8 +16,8 @@
 #include <poll.h>
 #include <unistd.h>
 
-#include "Editor/Acp/AcpClient.h"
-#include "Editor/Acp/AcpManager.h"
+#include "Editor/Acp/Client.h"
+#include "Editor/Acp/Manager.h"
 #include "Editor/Acp/Transport.h"
 #include "Editor/Backup.h"
 #include "Editor/Clipboard.h"
@@ -45,7 +45,7 @@
 #include "Editor/TabWidth.h"
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/Variables.h"
-#include "Editor/Vcs/VcsProvider.h"
+#include "Editor/Vcs/Provider.h"
 #include "Editor/Vim/GlobalMarks.h"
 #include "Editor/Vim/Settings.h"
 #include "Editor/WhichKeySettings.h"
@@ -709,7 +709,7 @@ std::string DapEventFrame(const std::string& event, ned::editor::dap::Json body)
 // DAP<->ACP debugging bridge: FakeDapAdapter's newline-delimited-JSON
 // counterpart for ACP (AcpManagerTest.cpp's own MessageReader/ManagerFixture
 // shape, adapted for use alongside a BufferView here rather than a bare
-// AcpManager), injected via AcpManager::SetClientForTesting.
+// Manager), injected via Manager::SetClientForTesting.
 struct FakeAcpAgent {
     int         agentStdinRead;
     int         agentStdoutWrite;
@@ -725,12 +725,12 @@ struct FakeAcpAgent {
     FakeAcpAgent& operator=(const FakeAcpAgent&) = delete;
     FakeAcpAgent(FakeAcpAgent&&)                 = default;
 
-    static FakeAcpAgent Create(ned::editor::acp::AcpManager& manager, ned::ui::EventLoop& eventLoop, ned::editor::acp::AcpClient*& outClient) {
+    static FakeAcpAgent Create(ned::editor::acp::Manager& manager, ned::ui::EventLoop& eventLoop, ned::editor::acp::Client*& outClient) {
         int clientWritesHere[2];
         int clientReadsHere[2];
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
-        auto client = std::make_unique<ned::editor::acp::AcpClient>(
+        auto client = std::make_unique<ned::editor::acp::Client>(
             ned::editor::acp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
         outClient = &manager.SetClientForTesting(std::move(client));
         return FakeAcpAgent(clientWritesHere[0], clientReadsHere[1]);
@@ -765,8 +765,8 @@ std::string AcpResultFrame(const ned::editor::acp::Json& id, ned::editor::acp::J
 // Drives StartSession through the initialize/session-new handshake against
 // a FakeAcpAgent, leaving the session Active -- AcpManagerTest.cpp's own
 // ManagerFixture::StartActiveSession, free-standing here since this file's
-// tests don't otherwise wrap AcpManager in its own fixture type.
-void StartActiveAcpSession(ned::editor::acp::AcpManager& manager, ned::editor::acp::AcpClient& client, FakeAcpAgent& agent, const std::string& agentName) {
+// tests don't otherwise wrap Manager in its own fixture type.
+void StartActiveAcpSession(ned::editor::acp::Manager& manager, ned::editor::acp::Client& client, FakeAcpAgent& agent, const std::string& agentName) {
     ned::text::Buffer* outputBuffer = manager.StartSession(agentName);
     REQUIRE(outputBuffer != nullptr);
 
@@ -778,7 +778,7 @@ void StartActiveAcpSession(ned::editor::acp::AcpManager& manager, ned::editor::a
     REQUIRE(sessionNewRequest["method"] == "session/new");
     client.DispatchFrame(AcpResultFrame(sessionNewRequest["id"], ned::editor::acp::Json{{"sessionId", "s1"}}));
 
-    REQUIRE(manager.State() == ned::editor::acp::AcpManager::SessionState::Active);
+    REQUIRE(manager.State() == ned::editor::acp::Manager::SessionState::Active);
 }
 
 } // namespace
@@ -2087,7 +2087,7 @@ TEST_CASE("Right-click in the gutter offers fold/breakpoint/blame rows once all 
     CaptureContextMenu(view, fixture.contextMenu);
     view.SetDapManager(&manager);
     view.DispatchBlameForTesting(
-        {ned::editor::vcs::VcsBlameLine{"abcdef1234567890abcdef1234567890abcdef12", "Ada", "2026-01-01", "did a thing"}});
+        {ned::editor::vcs::BlameLine{"abcdef1234567890abcdef1234567890abcdef12", "Ada", "2026-01-01", "did a thing"}});
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
     view.OnEvent(MousePress(0, 1, ned::ui::MouseEvent::Button::Right)); // gutter, screen row 1 ("body", line 1)
@@ -3218,8 +3218,8 @@ TEST_CASE("dap-ask-agent sends the stopped session's stack and variables to the 
         {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
     ned::editor::dap::SetLaunchConfig("bufferview-dap-ask-agent", "");
 
-    ned::editor::acp::AcpManager acpManager(fixture.bufferList, eventLoop);
-    ned::editor::acp::AcpClient* acpClient = nullptr;
+    ned::editor::acp::Manager acpManager(fixture.bufferList, eventLoop);
+    ned::editor::acp::Client* acpClient = nullptr;
     FakeAcpAgent                 acpAgent  = FakeAcpAgent::Create(acpManager, eventLoop, acpClient);
     StartActiveAcpSession(acpManager, *acpClient, acpAgent, "test-agent");
 
@@ -3284,8 +3284,8 @@ TEST_CASE("ask-agent-about-line sends the diagnostic line and a source excerpt t
     fixture.activeBuffer.Set(messages);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::acp::AcpManager acpManager(fixture.bufferList, eventLoop);
-    ned::editor::acp::AcpClient* acpClient = nullptr;
+    ned::editor::acp::Manager acpManager(fixture.bufferList, eventLoop);
+    ned::editor::acp::Client* acpClient = nullptr;
     FakeAcpAgent                 acpAgent  = FakeAcpAgent::Create(acpManager, eventLoop, acpClient);
     StartActiveAcpSession(acpManager, *acpClient, acpAgent, "test-agent");
 
@@ -3327,8 +3327,8 @@ TEST_CASE("ask-agent-about-line also works from *test results*", "[BufferView]")
     fixture.activeBuffer.Set(results);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::acp::AcpManager acpManager(fixture.bufferList, eventLoop);
-    ned::editor::acp::AcpClient* acpClient = nullptr;
+    ned::editor::acp::Manager acpManager(fixture.bufferList, eventLoop);
+    ned::editor::acp::Client* acpClient = nullptr;
     FakeAcpAgent                 acpAgent  = FakeAcpAgent::Create(acpManager, eventLoop, acpClient);
     StartActiveAcpSession(acpManager, *acpClient, acpAgent, "test-agent");
 
@@ -3354,8 +3354,8 @@ TEST_CASE("ask-agent-about-line is a no-op outside *Messages*/*test results*", "
     fixture.buffer.SetPoint(0);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::acp::AcpManager acpManager(fixture.bufferList, eventLoop);
-    ned::editor::acp::AcpClient* acpClient = nullptr;
+    ned::editor::acp::Manager acpManager(fixture.bufferList, eventLoop);
+    ned::editor::acp::Client* acpClient = nullptr;
     FakeAcpAgent                 acpAgent  = FakeAcpAgent::Create(acpManager, eventLoop, acpClient);
     StartActiveAcpSession(acpManager, *acpClient, acpAgent, "test-agent");
 
@@ -12899,7 +12899,7 @@ TEST_CASE("Vim: jumping to an uppercase mark set in a different file opens it an
 // (BuildVcsLogBuffer writes "<hash> <date> <author>: <summary>" instead) --
 // vcs-visit-result/VisitResultUnderPoint special-cases this buffer shape,
 // parsing the leading hash token and routing it to
-// RequestVcsCommitDiffBuffer. No VcsRunner is wired in this fixture, so its
+// RequestVcsCommitDiffBuffer. No Runner is wired in this fixture, so its
 // own "no vcs runner configured" message is what proves the hash was
 // actually parsed and routed there rather than the line silently matching
 // nothing (see RequestVcsFullDiffBuffer's own identical guard).

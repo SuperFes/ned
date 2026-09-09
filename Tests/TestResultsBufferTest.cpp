@@ -12,14 +12,14 @@
 using ned::editor::testrun::RebuildTestResultsBuffer;
 using ned::editor::testrun::TestResult;
 using ned::editor::testrun::TestResultsBufferName;
-using ned::editor::testrun::TestRunOutcome;
+using ned::editor::testrun::Outcome;
 using ned::text::Buffer;
 using ned::text::BufferList;
 
 namespace {
 
-TestRunOutcome MixedOutcome() {
-    TestRunOutcome outcome;
+Outcome MixedOutcome() {
+    Outcome outcome;
     outcome.format   = "pytest";
     outcome.parsedOk = true;
     outcome.passed   = 2;
@@ -125,7 +125,7 @@ TEST_CASE("RebuildTestResultsBuffer refreshes the same buffer in place", "[TestR
     BufferList                  bufferList;
     Buffer&                     first = RebuildTestResultsBuffer(bufferList, MixedOutcome());
 
-    TestRunOutcome clean;
+    Outcome clean;
     clean.format   = "pytest";
     clean.parsedOk = true;
     clean.passed   = 5;
@@ -142,7 +142,7 @@ TEST_CASE("RebuildTestResultsBuffer refreshes the same buffer in place", "[TestR
 TEST_CASE("RebuildTestResultsBuffer marks an unparsed outcome in the summary", "[TestRun]") {
     const EmptyProjectRootGuard rootGuard;
     BufferList                  bufferList;
-    TestRunOutcome              unparsed;
+    Outcome              unparsed;
     unparsed.format = "ctest";
     Buffer& buffer  = RebuildTestResultsBuffer(bufferList, unparsed);
 
@@ -156,7 +156,7 @@ TEST_CASE("RebuildTestResultsBuffer explains a failures-only run in the summary"
     // tests, so per-test pass marks silently don't happen -- say why,
     // rather than rewriting the user's own configured argv.
     BufferList     bufferList;
-    TestRunOutcome outcome;
+    Outcome outcome;
     outcome.format       = "pytest";
     outcome.parsedOk     = true;
     outcome.failuresOnly = true;
@@ -166,7 +166,7 @@ TEST_CASE("RebuildTestResultsBuffer explains a failures-only run in the summary"
     REQUIRE(buffer.Text().find("failures only; add -v for per-test pass marks") != std::string::npos);
 
     // A format that does name passing tests says nothing extra.
-    TestRunOutcome full;
+    Outcome full;
     full.format    = "pytest";
     full.parsedOk  = true;
     full.passed    = 3;
@@ -186,7 +186,7 @@ TEST_CASE("RebuildTestResultsBuffer resolves a basename-only path to a real file
     const ProjectRootGuard rootGuard(root);
 
     BufferList     bufferList;
-    TestRunOutcome outcome;
+    Outcome outcome;
     outcome.format   = "go-json";
     outcome.parsedOk = true;
     outcome.failed   = 1;
@@ -211,7 +211,7 @@ TEST_CASE("RebuildTestResultsBuffer leaves an unresolvable path exactly as repor
     const ProjectRootGuard rootGuard(root);
 
     BufferList     bufferList;
-    TestRunOutcome outcome;
+    Outcome outcome;
     outcome.format   = "go-json";
     outcome.parsedOk = true;
     outcome.failed   = 1;

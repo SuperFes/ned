@@ -3,7 +3,7 @@
 // vocabulary-completion follow-up's named next slice) -- no provider, no
 // subprocess, no VCS knowledge beyond the standard unified diff format
 // itself, which is exactly why this lives as its own helper instead of
-// inside VcsRunner: the patch handed to a provider's apply-patch argv is a
+// inside Runner: the patch handed to a provider's apply-patch argv is a
 // *verbatim slice* of raw diff output (file header block + one hunk), so
 // none of the fiddly content details (`\ No newline at end of file`
 // markers, escaped/quoted paths in the header, mode-change lines) ever

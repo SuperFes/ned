@@ -101,11 +101,11 @@ struct ProjectSessionData {
     std::vector<std::string> watches;
 
     // ACP auto-reconnect follow-up: the agent name passed to this project's
-    // most recent AcpManager::StartSession, if any -- lets opening the chat
+    // most recent Manager::StartSession, if any -- lets opening the chat
     // panel reconnect to whatever agent this project was last using instead
     // of requiring the "ACP agent:" prompt every time. nullopt until a
     // session has ever been started in this project. Not cleared by
-    // StopSession -- deliberately sticky, mirroring AcpManager::AgentName()'s
+    // StopSession -- deliberately sticky, mirroring Manager::AgentName()'s
     // own "empty before the first StartSession, never reset after" contract.
     std::optional<std::string> lastAcpAgent;
 

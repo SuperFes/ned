@@ -23,7 +23,7 @@ void SetAcpMcpBridgeEnabled(bool enabled) {
     SettingStorage() = enabled;
 }
 
-bool AcpMcpBridgeEnabled() {
+bool McpBridgeEnabled() {
     const std::lock_guard lock(SettingMutex());
     return SettingStorage();
 }

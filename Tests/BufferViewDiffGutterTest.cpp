@@ -13,9 +13,9 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
-#include "Editor/Vcs/VcsProvider.h"
-#include "Editor/Vcs/VcsProviderRegistry.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/Provider.h"
+#include "Editor/Vcs/ProviderRegistry.h"
+#include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -24,7 +24,7 @@
 #include "UI/EventLoop.h"
 #include "UI/Theme.h"
 
-using ned::editor::vcs::VcsDiffHunk;
+using ned::editor::vcs::DiffHunk;
 using ned::ui::BufferView;
 
 namespace {
@@ -87,7 +87,7 @@ namespace {
 // prove a BufferView's very first Paint() actually requests the diff for
 // the buffer it was constructed with (it didn't, while the request shared
 // modeSyncBuffer_'s constructor-seeded branch).
-class RecordingProvider : public ned::editor::vcs::VcsProvider {
+class RecordingProvider : public ned::editor::vcs::Provider {
   public:
     explicit RecordingProvider(bool& diffRequested) : diffRequested_(diffRequested) {
     }
@@ -95,23 +95,23 @@ class RecordingProvider : public ned::editor::vcs::VcsProvider {
     [[nodiscard]] bool Detect(const std::filesystem::path&) const override {
         return true;
     }
-    [[nodiscard]] ned::editor::vcs::VcsCommandSpec BlameArgv(const std::filesystem::path&) const override {
+    [[nodiscard]] ned::editor::vcs::CommandSpec BlameArgv(const std::filesystem::path&) const override {
         throw std::runtime_error("not under test");
     }
-    [[nodiscard]] std::vector<ned::editor::vcs::VcsBlameLine> ParseBlame(const std::string&) const override {
+    [[nodiscard]] std::vector<ned::editor::vcs::BlameLine> ParseBlame(const std::string&) const override {
         return {};
     }
-    [[nodiscard]] ned::editor::vcs::VcsCommandSpec LogArgv(const std::filesystem::path&) const override {
+    [[nodiscard]] ned::editor::vcs::CommandSpec LogArgv(const std::filesystem::path&) const override {
         throw std::runtime_error("not under test");
     }
-    [[nodiscard]] std::vector<ned::editor::vcs::VcsLogEntry> ParseLog(const std::string&) const override {
+    [[nodiscard]] std::vector<ned::editor::vcs::LogEntry> ParseLog(const std::string&) const override {
         return {};
     }
-    [[nodiscard]] ned::editor::vcs::VcsCommandSpec DiffArgv(const std::filesystem::path&) const override {
+    [[nodiscard]] ned::editor::vcs::CommandSpec DiffArgv(const std::filesystem::path&) const override {
         diffRequested_ = true;
         throw std::runtime_error("recorded -- no real spawn wanted");
     }
-    [[nodiscard]] std::vector<ned::editor::vcs::VcsDiffHunk> ParseDiff(const std::string&) const override {
+    [[nodiscard]] std::vector<ned::editor::vcs::DiffHunk> ParseDiff(const std::string&) const override {
         return {};
     }
 
@@ -138,7 +138,7 @@ TEST_CASE("A pane's very first Paint requests the diff for its initial buffer", 
         fixture.buffer.InsertAtPoint("hello");
 
         ned::ui::EventLoop          eventLoop;
-        ned::editor::vcs::VcsRunner runner(eventLoop);
+        ned::editor::vcs::Runner runner(eventLoop);
 
         BufferView view = fixture.View();
         view.SetVcsRunner(&runner);
@@ -173,7 +173,7 @@ TEST_CASE("RefreshVcsDiff requests a fresh diff for the active buffer on demand"
         fixture.buffer.InsertAtPoint("hello");
 
         ned::ui::EventLoop          eventLoop;
-        ned::editor::vcs::VcsRunner runner(eventLoop);
+        ned::editor::vcs::Runner runner(eventLoop);
 
         BufferView view = fixture.View();
         view.SetVcsRunner(&runner);
@@ -187,7 +187,7 @@ TEST_CASE("RefreshVcsDiff requests a fresh diff for the active buffer on demand"
     ned::editor::vcs::ClearRegistry();
 }
 
-TEST_CASE("RefreshVcsDiff is a silent no-op with no VcsRunner wired", "[BufferView][Vcs]") {
+TEST_CASE("RefreshVcsDiff is a silent no-op with no Runner wired", "[BufferView][Vcs]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("hello");
     BufferView view = fixture.View();
@@ -206,7 +206,7 @@ TEST_CASE("Diff markers render in the diff column itself, not under the status s
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
 
     // Added at 0-indexed line 1, Modified at line 2, Removed boundary at 3.
-    view.DispatchDiffForTesting({VcsDiffHunk{1, 0, 2, 1}, VcsDiffHunk{3, 1, 3, 1}, VcsDiffHunk{5, 1, 3, 0}});
+    view.DispatchDiffForTesting({DiffHunk{1, 0, 2, 1}, DiffHunk{3, 1, 3, 1}, DiffHunk{5, 1, 3, 0}});
 
     ned::ui::Screen screen = ned::ui::Screen(20, 5);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
@@ -236,7 +236,7 @@ TEST_CASE("DispatchDiffForTesting classifies a pure addition hunk as Added lines
 
     // "@@ -1,0 +2,2 @@" shape: two brand-new lines starting at new-file
     // line 2 (1-indexed) -> 0-indexed lines 1,2.
-    view.DispatchDiffForTesting({VcsDiffHunk{1, 0, 2, 2}});
+    view.DispatchDiffForTesting({DiffHunk{1, 0, 2, 2}});
 
     // Gutter column now reserved -- verified indirectly via cursor shift,
     // same convention BufferViewBlameGutterTest.cpp's own tests use since
@@ -255,7 +255,7 @@ TEST_CASE("DispatchDiffForTesting classifies a pure deletion hunk as a single Re
 
     // "@@ -3,2 +2,0 @@": old lines 3-4 deleted, nothing added -- boundary
     // sits at 0-indexed new-file line 2.
-    view.DispatchDiffForTesting({VcsDiffHunk{3, 2, 2, 0}});
+    view.DispatchDiffForTesting({DiffHunk{3, 2, 2, 0}});
 
     // A Removed-only hunk still reserves the gutter column (there's
     // something to show, just not a covered-line swatch) -- confirmed via
@@ -269,7 +269,7 @@ TEST_CASE("DispatchDiffForTesting classifies a hunk with both old and new lines 
     BufferView view = fixture.View();
 
     // "@@ -2 +2 @@": a single-line modification at 0-indexed line 1.
-    view.DispatchDiffForTesting({VcsDiffHunk{2, 1, 2, 1}});
+    view.DispatchDiffForTesting({DiffHunk{2, 1, 2, 1}});
 
     REQUIRE(view.CursorPosition().has_value()); // reserves the column, doesn't crash
 }
@@ -280,7 +280,7 @@ TEST_CASE("Diff markers are cleared (not resynthesized) when the active buffer c
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
 
-    view.DispatchDiffForTesting({VcsDiffHunk{1, 0, 1, 1}});
+    view.DispatchDiffForTesting({DiffHunk{1, 0, 1, 1}});
 
     ned::ui::Screen screen = ned::ui::Screen(20, 3);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});

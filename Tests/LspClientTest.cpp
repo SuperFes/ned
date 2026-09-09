@@ -659,7 +659,7 @@ TEST_CASE("Ordinary destruction (no PrepareForGracefulShutdown) does not hang", 
 }
 
 // closed-connection-never-parks follow-up. The Client twin of
-// Tests/AcpClientTest.cpp's own "Destroying an AcpClient before its read
+// Tests/AcpClientTest.cpp's own "Destroying an Client before its read
 // thread has started doesn't deadlock" -- all three clients share this exact
 // threading/lifetime shape (see Client.h's own header comment), and all three
 // shared the deadlock: ~Client destroys transport_ before joining

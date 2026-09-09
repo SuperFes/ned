@@ -110,7 +110,7 @@ namespace {
         return std::nullopt;
     }
 
-    void CountFromResults(TestRunOutcome& outcome) {
+    void CountFromResults(Outcome& outcome) {
         for (const TestResult& result : outcome.results) {
             switch (result.status) {
                 case TestResult::Status::Passed:
@@ -128,8 +128,8 @@ namespace {
 
 } // namespace
 
-TestRunOutcome ParseCtest(std::string_view output) {
-    TestRunOutcome                               outcome{.format = "ctest"};
+Outcome ParseCtest(std::string_view output) {
+    Outcome                               outcome{.format = "ctest"};
     std::unordered_map<std::string, std::size_t> resultIndexByName;
     bool                                         inFailedTrailer = false;
 
@@ -224,8 +224,8 @@ TestRunOutcome ParseCtest(std::string_view output) {
     return outcome;
 }
 
-TestRunOutcome ParseCatch2(std::string_view output) {
-    TestRunOutcome                      outcome{.format = "catch2", .failuresOnly = true};
+Outcome ParseCatch2(std::string_view output) {
+    Outcome                      outcome{.format = "catch2", .failuresOnly = true};
     const std::vector<std::string_view> lines = SplitLines(output);
     std::unordered_set<std::string>     seenNames; // SECTION variants re-print the same test case name
 
@@ -392,8 +392,8 @@ namespace {
 
 } // namespace
 
-TestRunOutcome ParsePytest(std::string_view output) {
-    TestRunOutcome outcome{.format = "pytest"};
+Outcome ParsePytest(std::string_view output) {
+    Outcome outcome{.format = "pytest"};
 
     struct FailureDetail {
         std::string file;
@@ -598,8 +598,8 @@ TestRunOutcome ParsePytest(std::string_view output) {
     return outcome;
 }
 
-TestRunOutcome ParseGoTestJson(std::string_view output) {
-    TestRunOutcome outcome{.format = "go-json"};
+Outcome ParseGoTestJson(std::string_view output) {
+    Outcome outcome{.format = "go-json"};
 
     struct PendingOutput {
         std::string accumulated;
@@ -687,8 +687,8 @@ TestRunOutcome ParseGoTestJson(std::string_view output) {
     return outcome;
 }
 
-TestRunOutcome ParseCargoTest(std::string_view output) {
-    TestRunOutcome                               outcome{.format = "cargo"};
+Outcome ParseCargoTest(std::string_view output) {
+    Outcome                               outcome{.format = "cargo"};
     std::unordered_map<std::string, std::size_t> resultIndexByName;
 
     const std::vector<std::string_view> lines = SplitLines(output);
@@ -957,8 +957,8 @@ namespace {
 
 } // namespace
 
-TestRunOutcome ParseJUnitXml(std::string_view output) {
-    TestRunOutcome outcome{.format = "junit-xml"};
+Outcome ParseJUnitXml(std::string_view output) {
+    Outcome outcome{.format = "junit-xml"};
 
     std::size_t i = 0;
     while ((i = output.find("<testcase", i)) != std::string_view::npos) {
@@ -1074,8 +1074,8 @@ TestRunOutcome ParseJUnitXml(std::string_view output) {
     return outcome;
 }
 
-TestRunOutcome ParsePhpUnit(std::string_view output) {
-    TestRunOutcome outcome{.format = "phpunit", .failuresOnly = true};
+Outcome ParsePhpUnit(std::string_view output) {
+    Outcome outcome{.format = "phpunit", .failuresOnly = true};
 
     enum class BlockKind { None,
                            Failed,
@@ -1230,7 +1230,7 @@ TestRunOutcome ParsePhpUnit(std::string_view output) {
     return outcome;
 }
 
-std::optional<TestRunOutcome> ParseTestOutput(std::string_view format, std::string_view output) {
+std::optional<Outcome> ParseTestOutput(std::string_view format, std::string_view output) {
     if (format == "ctest") {
         return ParseCtest(output);
     }

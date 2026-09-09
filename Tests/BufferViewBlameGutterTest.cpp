@@ -11,7 +11,7 @@
 #include "Editor/Mode.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
-#include "Editor/Vcs/VcsProvider.h"
+#include "Editor/Vcs/Provider.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -20,7 +20,7 @@
 #include "UI/BufferView.h"
 #include "UI/Theme.h"
 
-using ned::editor::vcs::VcsBlameLine;
+using ned::editor::vcs::BlameLine;
 using ned::ui::BufferView;
 
 namespace {
@@ -63,8 +63,8 @@ struct Fixture {
     }
 };
 
-std::vector<VcsBlameLine> OneLineOfBlame() {
-    return {VcsBlameLine{"abcdef1234567890abcdef1234567890abcdef12", "Ada", "2026-01-01", "did a thing"}};
+std::vector<BlameLine> OneLineOfBlame() {
+    return {BlameLine{"abcdef1234567890abcdef1234567890abcdef12", "Ada", "2026-01-01", "did a thing"}};
 }
 
 } // namespace
@@ -150,7 +150,7 @@ TEST_CASE("vcs-blame-detail-at-point reports a clear message when no blame is lo
     REQUIRE(fixture.statusMessage == "no blame data loaded -- run vcs-show-blame (C-c v b) first");
 }
 
-TEST_CASE("RequestBlameForCurrentBuffer with no VcsRunner configured reports a status message, not a crash",
+TEST_CASE("RequestBlameForCurrentBuffer with no Runner configured reports a status message, not a crash",
           "[BufferView][Vcs]") {
     Fixture    fixture;
     BufferView view = fixture.View();
@@ -173,7 +173,7 @@ TEST_CASE("vcs-show-blame (C-c v b) stays on the current buffer rather than swit
     view.OnEvent(ned::ui::test::Character("v"));
     view.OnEvent(ned::ui::test::Character("b"));
 
-    // No VcsRunner configured in this fixture -- reports the error inline,
+    // No Runner configured in this fixture -- reports the error inline,
     // via RequestBlameForCurrentBuffer, and (unlike the old default) never
     // touches which buffer is active.
     REQUIRE(fixture.statusMessage == "no vcs runner configured");
@@ -196,7 +196,7 @@ TEST_CASE("vcs-show-blame (C-c v b) toggles off when blame is already showing fo
 
     REQUIRE_FALSE(view.BlameGutterActive());
     REQUIRE(fixture.statusMessage == "blame hidden");
-    // No VcsRunner configured -- if this had fallen through to a fresh
+    // No Runner configured -- if this had fallen through to a fresh
     // fetch instead of toggling off, it would have overwritten the status
     // message with "no vcs runner configured" instead.
 }
@@ -214,7 +214,7 @@ TEST_CASE("vcs-visit-result (C-c v v) jumps from a synthesized *vcs blame*-shape
     Fixture fixture;
     // Same shape BuildVcsBlameBuffer itself writes: "<path>:<line>: <hash>
     // <author> <date> | <summary>" -- built by hand here rather than via
-    // RequestVcsBlameBuffer/VcsRunner, which need a real, running EventLoop
+    // RequestVcsBlameBuffer/Runner, which need a real, running EventLoop
     // to ever complete (this codebase's established "never run one in a
     // unit test" convention -- see TaskProcessTest.cpp/TaskRunnerTest.cpp).
     // This exercises the actual jump-back parsing/logic exhaustively

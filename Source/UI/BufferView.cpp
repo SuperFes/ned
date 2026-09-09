@@ -1371,11 +1371,11 @@ void BufferView::RequestDiagnosticsBufferForTesting() {
     RequestDiagnosticsBuffer();
 }
 
-void BufferView::DispatchStatusForTesting(std::vector<editor::vcs::VcsStatusEntry> entries) {
+void BufferView::DispatchStatusForTesting(std::vector<editor::vcs::StatusEntry> entries) {
     BuildVcsStatusBuffer(entries, /*announce=*/true);
 }
 
-void BufferView::DispatchBranchesForTesting(std::vector<editor::vcs::VcsBranchEntry> entries) {
+void BufferView::DispatchBranchesForTesting(std::vector<editor::vcs::BranchEntry> entries) {
     BuildVcsBranchesBuffer(entries);
 }
 
@@ -1418,7 +1418,7 @@ void BufferView::SendResultLineToAgent() {
         excerpt = ReadFileLines(loc->path, startLine, endLine);
     }
 
-    const editor::acp::AcpManager::PromptAttachment attachment{
+    const editor::acp::Manager::PromptAttachment attachment{
         .uri      = "file://" + std::filesystem::absolute(loc->path).string(),
         .name     = loc->path.string() + ":" + std::to_string(loc->lineNumber),
         .mimeType = "",

@@ -168,7 +168,7 @@ void                                                           ClearMultibufferI
 // WindowManager, the only real caller of ClearMultibufferIndexFor) leaves a
 // stale entry behind when its Buffers are destroyed, and a later test's
 // freshly allocated Buffer can land at the same address, spuriously
-// "inheriting" it. Mirrors VcsProviderRegistry::ClearRegistry's own
+// "inheriting" it. Mirrors ProviderRegistry::ClearRegistry's own
 // test-only reset convention for the same reason (a mutex-free/hook-free
 // static registry that only real app code cleans up incrementally).
 void ClearRegistryForTesting();

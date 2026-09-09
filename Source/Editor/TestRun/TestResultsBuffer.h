@@ -3,7 +3,7 @@
 // buffer -- a flat, read-only worklist of the last run's failed (then
 // skipped) tests as "path:line: [FAILED] name -- message" lines under a
 // summary header. A free function rather than a TestRunner method so it's
-// unit-testable from a bare TestRunOutcome with no runner/process at all.
+// unit-testable from a bare Outcome with no runner/process at all.
 //
 // Two existing mechanisms do all the UI work: each failure line carries a
 // synthetic text::Buffer::Diagnostic (DiagnosticsLog.cpp's
@@ -36,7 +36,7 @@ namespace ned::editor::testrun {
 // shape, not BuildMultibuffer's fresh-buffer-per-build one -- test results
 // supersede each other the way "*vcs status*" refreshes do). Point lands on
 // the first failure line.
-text::Buffer& RebuildTestResultsBuffer(text::BufferList& bufferList, const TestRunOutcome& outcome);
+text::Buffer& RebuildTestResultsBuffer(text::BufferList& bufferList, const Outcome& outcome);
 
 } // namespace ned::editor::testrun
 
