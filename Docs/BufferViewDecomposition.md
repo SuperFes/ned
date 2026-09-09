@@ -360,6 +360,68 @@ are already owned by a named class rather than a loose member.
 Extract mouse handling and `ContextMenuSession`, then trim `BufferView.h` to its final
 shape and update this document with what the split actually cost.
 
+### Phase 8 — Naming and directory layout (project-wide, not just `BufferView`)
+
+A different axis from everything above: this one is about finding files, not about
+untangling a class. It is listed here because the same "the project is big enough that
+being organised matters more than it did" argument drives both, but it touches all of
+`Source/`, so it should land on its own rather than inside a `BufferView` phase.
+
+**Stuttering names.** A file whose name repeats its directory says the same word twice at
+every use. Measured across `Source/`:
+
+| Directory | Stuttering | Total |
+|---|---:|---:|
+| `Editor/Vim` | 20 | 20 |
+| `Editor/Mcp` | 10 | 10 |
+| `Editor/Coverage` | 6 | 6 |
+| `Editor/Dap` | 6 | 6 |
+| `Editor/Repl` | 2 | 2 |
+| `Editor/Lsp` | 24 | 30 |
+| `Editor/Acp` | 8 | 10 |
+| `Editor/Vcs` | 7 | 9 |
+| `Editor/TestRun` | 4 | 12 |
+
+`Editor/Mcp/McpBridgeServer.h` becomes `Editor/Mcp/BridgeServer.h`;
+`Editor/Vim/VimMotion.h` becomes `Editor/Vim/Motion.h`.
+
+**One real trade-off to settle before doing it, not after.** The prefix is not pure noise
+today — it is what makes a bare filename unique. Six directories would each gain a
+`Config.h`, and several would gain a `Manager.h`. "Open `Manager.h`" and a grep for
+`ManagerTest` both get worse, and this codebase leans on grep. Three options, and the
+choice should be explicit:
+
+- Rename files only, keep class names (`Editor/Lsp/Manager.h` still declaring
+  `lsp::LspManager`). Cheapest, but leaves a new mismatch between file and class.
+- Rename both, so `lsp::Manager` is spelled `lsp::Manager` at every use site. Reads best
+  in code — the namespace already carries the qualifier — but it is a large mechanical
+  sweep over every call site, and `using namespace` anywhere would make it ambiguous.
+- Leave the directories whose short name would collide (`Config`, `Manager`, `Client`)
+  and fix only the ones with a genuinely distinctive tail (`McpBridgeServer` →
+  `BridgeServer`, `VimSurround` → `Surround`). Smallest diff, keeps grep working, but
+  the rule is then "sometimes".
+
+My read: the second, done per directory rather than all at once, with the namespace
+already earning its keep at use sites. But it is a stated preference, not an obvious call,
+and it is worth deciding before any of it moves.
+
+**Flat families that want a directory.** `Editor/` has thirteen `Project*` headers sitting
+at top level — `ProjectAgenda`, `ProjectFileOps`, `ProjectPlugins`, `ProjectRegistry`,
+`ProjectReplace`, `ProjectRoot`, `ProjectSearch`, `ProjectSession`, `ProjectSettings`,
+`ProjectSwitch`, `ProjectTree`, `ProjectTrust`, `ProjectUndo` — which is the
+root-plus-children shape that reads as a subsystem already. `Editor/Project/` with the
+prefix dropped is the same move as above and has the same collision question (`Root.h`,
+`Tree.h`, `Search.h` are all plausible names elsewhere). `Editor/Auto*` is a smaller
+three-file version of the same thing. `Source/UI/` has 38 headers at top level and wants
+looking at once `BufferView/` has drained some of them.
+
+**Sequencing.** After the `BufferView` phases, not during: this phase is a very large
+`git mv` plus include sweep, and interleaving it with the extractions would make every
+extraction diff unreadable. Each directory should move on its own commit, with the
+include rewrite and the `CMakeLists.txt` edit in the same commit so no commit is
+mid-rename. Renames must be pure — no content edits riding along — so `git log --follow`
+keeps working, which is the same discipline Phase 0's split used.
+
 ## 4. Risks and constraints
 
 - **Test surface.** 17,358 lines across 20 test files depend on the current public API,
