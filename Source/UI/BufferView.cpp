@@ -284,6 +284,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
         case InputMode::OrgSchedule:
         case InputMode::ProjectSearch:
         case InputMode::ReplName:
+        case InputMode::SearchInResults:
         case InputMode::SetHeadlineTags:
         case InputMode::ShowMassifGraphPath:
         case InputMode::StringRectangle:

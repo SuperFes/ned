@@ -1991,6 +1991,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             context.interactiveRequest = InteractiveRequest::ProjectSearch;
         });
 
+    registry.Register(
+        "search-in-results",
+        "Search only the files the current results/multibuffer references, in a new results buffer.",
+        [](CommandContext& context) {
+            context.interactiveRequest = InteractiveRequest::SearchInResults;
+        });
+
     // A no-op everywhere except a project-search results buffer -- safe to
     // bind globally. See BufferView::StartInteractiveSession's
     // VisitSearchResult case for the actual line-parsing/jump logic; this
@@ -4130,6 +4137,14 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-x b"), "switch-to-buffer");
     keymap.Bind(ParseKeySequence("C-x C-b"), "list-buffers");
     keymap.Bind(ParseKeySequence("C-c C-s"), "project-search");
+    // multibuffer-search-in-results follow-up: sits beside project-search
+    // rather than in a results-buffer-scoped key layer, because the two
+    // buffer shapes it works on (a multibuffer, and a flat "path:line:"
+    // results buffer) have no single such layer between them -- and the
+    // command reports "no results in this buffer" itself, so a global
+    // binding is harmless everywhere else. "C-c s" confirmed free (grepped
+    // the full bind list in this function), and a leaf, not a prefix.
+    keymap.Bind(ParseKeySequence("C-c s"), "search-in-results");
     keymap.Bind(ParseKeySequence("C-c C-f"), "project-find-file");
     keymap.Bind(ParseKeySequence("C-c C-e"), "lsp-show-diagnostic");
     keymap.Bind(ParseKeySequence("C-c C-j"), "lsp-hover");

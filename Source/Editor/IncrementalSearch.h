@@ -24,6 +24,8 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "Text/Buffer.h"
 
@@ -35,6 +37,20 @@ class IncrementalSearch {
                            Backward };
 
     IncrementalSearch(text::Buffer& buffer, Direction direction);
+
+    // multibuffer-scoped-search follow-up: confines every subsequent search
+    // to these byte ranges -- a match is accepted only when it lies wholly
+    // inside one of them. Sorted-by-start, non-overlapping, half-open
+    // [start, end); an empty vector (the default) means "the whole buffer,"
+    // i.e. every pre-existing session is byte-for-byte unchanged.
+    //
+    // Meant to be called immediately after construction, before the first
+    // query character: the snapshot this class searches is taken at
+    // construction and never re-read, so the ranges can't go stale during a
+    // session either. Ignored outright for a huge buffer (see SearchHuge()'s
+    // own comment -- the reduced-feature-set precedent this follows), which
+    // no multibuffer ever is.
+    void SetSearchScope(std::vector<std::pair<std::size_t, std::size_t>> ranges);
 
     void AppendChar(char32_t codepoint);
     void DeleteChar(); // removes the last character of the query, if any
@@ -88,6 +104,15 @@ class IncrementalSearch {
     [[nodiscard]] std::size_t MatchedPrefixLength() const;
 
   private:
+    // Whether [start, end) lies wholly inside one scope range -- always true
+    // when scope_ is empty (the unscoped default).
+    [[nodiscard]] bool InScope(std::size_t start, std::size_t end) const;
+    // haystack.find/rfind's scope-aware equivalents: the nearest match at or
+    // after (resp. before) `from` that InScope accepts, npos if there is
+    // none. Plain find/rfind when scope_ is empty.
+    [[nodiscard]] std::size_t FindForward(const std::string& haystack, const std::string& needle, std::size_t from) const;
+    [[nodiscard]] std::size_t FindBackward(const std::string& haystack, const std::string& needle, std::size_t before) const;
+
     void Search(std::size_t from);
     // huge-file-search-and-save follow-up: SearchHuge is the huge_ branch
     // of Search -- windowed scanning via Content().Substring instead of
@@ -111,6 +136,8 @@ class IncrementalSearch {
     std::size_t   originalPoint_;
     bool          found_               = true;
     std::size_t   matchedPrefixLength_ = 0; // see MatchedPrefixLength()'s own doc comment
+    // Empty == unscoped, the default -- see SetSearchScope's doc comment.
+    std::vector<std::pair<std::size_t, std::size_t>> scope_;
 };
 
 } // namespace ned::editor

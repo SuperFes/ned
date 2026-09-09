@@ -4,6 +4,8 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "Editor/QueryReplace.h"
 #include "Editor/RegexPattern.h"
@@ -488,4 +490,79 @@ TEST_CASE("ReplaceAll on a huge buffer correctly shifts offsets across multiple 
     REQUIRE(buffer.Content().Substring(offset3 + 2 * drift, replacement.size()) == replacement);
 
     std::filesystem::remove(path);
+}
+
+namespace {
+
+// multibuffer-scoped-search follow-up: the excerpt ranges a real multibuffer
+// would have registered, set by hand so this file stays independent of
+// Editor/Multibuffer.h -- QueryReplace only ever reads Buffer::ExcerptRanges,
+// never who wrote them.
+void MarkExcerptBodies(Buffer& buffer, const std::vector<std::pair<std::size_t, std::size_t>>& ranges) {
+    std::vector<Buffer::ExcerptRange> excerpts;
+    for (const std::pair<std::size_t, std::size_t>& range : ranges) {
+        excerpts.push_back(Buffer::ExcerptRange{range.first, range.second, "/repo/a.cpp", 0, 0, /*editable=*/true,
+                                                buffer.Content().Substring(range.first, range.second - range.first)});
+    }
+    buffer.SetExcerptRanges(std::move(excerpts));
+}
+
+} // namespace
+
+TEST_CASE("Excerpt-scoped query-replace never offers a match in an excerpt's chrome", "[QueryReplace]") {
+    const std::string text = "a.cpp:1 foo\nfoo body\na.cpp:9 foo\nfoo body\n";
+    Buffer            buffer("*review*", Rope(text));
+
+    const std::size_t firstBody  = text.find("foo body");
+    const std::size_t secondBody = text.find("foo body", firstBody + 1);
+    MarkExcerptBodies(buffer, {{firstBody, firstBody + 9}, {secondBody, secondBody + 9}});
+    buffer.SetPoint(0);
+
+    QueryReplace qr(buffer);
+    qr.SetScopeToExcerptBodies(true);
+    Type(qr, "foo");
+    qr.ConfirmPattern();
+    Type(qr, "bar");
+    qr.ConfirmReplacement();
+    qr.ReplaceAll();
+
+    // Both header "foo"s are untouched, and the count reports only real
+    // edits -- unscoped, the two chrome matches are counted and silently
+    // refused by CanDeleteExcerptRange, which is exactly the mismatch this
+    // scoping exists to prevent.
+    REQUIRE(qr.ReplacementCount() == 2);
+    REQUIRE(buffer.Text() == "a.cpp:1 foo\nbar body\na.cpp:9 foo\nbar body\n");
+}
+
+TEST_CASE("Excerpt-scoped query-replace skips a match overrunning an excerpt's end", "[QueryReplace]") {
+    const std::string text = "aaa\nbbb\n";
+    Buffer            buffer("*review*", Rope(text));
+    MarkExcerptBodies(buffer, {{0, 4}}); // "aaa\n" only
+    buffer.SetPoint(0);
+
+    QueryReplace qr(buffer);
+    qr.SetScopeToExcerptBodies(true);
+    Type(qr, "a+\\nb");
+    qr.ConfirmPattern();
+    Type(qr, "X");
+    qr.ConfirmReplacement();
+
+    REQUIRE(qr.CurrentStage() == QueryReplace::Stage::Done); // no in-scope match at all
+    REQUIRE(buffer.Text() == text);
+}
+
+TEST_CASE("Excerpt scoping is inert on a buffer with no excerpt ranges", "[QueryReplace]") {
+    Buffer buffer("scratch", Rope("foo foo\n"));
+    buffer.SetPoint(0);
+
+    QueryReplace qr(buffer);
+    qr.SetScopeToExcerptBodies(true);
+    Type(qr, "foo");
+    qr.ConfirmPattern();
+    Type(qr, "bar");
+    qr.ConfirmReplacement();
+    qr.ReplaceAll();
+
+    REQUIRE(qr.ReplacementCount() == 2);
+    REQUIRE(buffer.Text() == "bar bar\n");
 }

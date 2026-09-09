@@ -40,6 +40,7 @@
 #include "Editor/ModeOverrides.h"
 #include "Editor/MultibufferFoldSettings.h"
 #include "Editor/MultibufferLimits.h"
+#include "Editor/MultibufferSearchSettings.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/PageScroll.h"
 #include "Editor/PersistentUndo.h"
@@ -482,6 +483,10 @@ namespace {
 
     void NedSetMultibufferMaxExcerpts(std::int64_t count) {
         editor::SetMultibufferMaxExcerpts(count > 0 ? static_cast<std::size_t>(count) : 0);
+    }
+
+    void NedSetMultibufferScopedSearch(bool enabled) {
+        editor::SetMultibufferScopedSearch(enabled);
     }
 
     void NedSetMultibufferAutoCollapseExcerptCap(std::int64_t count) {
@@ -1400,6 +1405,13 @@ void InstallEditorBindings(Environment& env) {
         "set-multibuffer-auto-collapse-excerpt-cap, which only collapses excerpts that were all still built, this "
         "stops the work. Anything past the cap is dropped and named in a trailing \"N more not shown\" line of the "
         "buffer itself; project-find-references also stops reading source lines off disk at this point.");
+    env.Register<&NedSetMultibufferScopedSearch>(
+        "ned", "set-multibuffer-scoped-search",
+        "Enable/disable confining isearch and query-replace to a multibuffer's excerpt bodies (default true) -- "
+        "header paths, rule lines and the blanks between excerpts stop matching, and query-replace stops offering a "
+        "replacement inside chrome the buffer would then silently refuse. Turn it off to search a review buffer's "
+        "whole composite text, e.g. to find the excerpt whose header names a particular file. No effect on an "
+        "ordinary buffer.");
     env.Register<&NedSetStickyScrollEnabled>(
         "ned", "set-sticky-scroll-enabled",
         "Enable/disable pinned namespace/class/method breadcrumb rows at the top of a pane while scrolled into "

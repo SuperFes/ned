@@ -964,6 +964,12 @@ class BufferView : public Widget {
                            FindFile,
                            SwitchToBuffer,
                            ProjectSearch,
+                           // multibuffer-search-in-results follow-up: the
+                           // same plain text-entry prompt ProjectSearch is,
+                           // differing only in which files the confirmed
+                           // pattern is run against (see
+                           // ResultFilesInActiveBuffer).
+                           SearchInResults,
                            ProjectReplace,
                            ConfirmCloseBuffer,
                            CreateDirectory,
@@ -2375,6 +2381,24 @@ class BufferView : public Widget {
         std::string           fullLineText;
     };
     [[nodiscard]] std::optional<ResultLineLocation> ResultLineAtPoint() const;
+
+    // multibuffer-search-in-results follow-up: the distinct source files the
+    // active buffer refers to -- an excerpt's own source path for a
+    // multibuffer (Editor/Multibuffer.h's ExcerptSourcePaths), else every
+    // "path:line:" line's path for a flat results buffer, each run through
+    // ResolveResultPath so a relative results line narrows to the same file a
+    // jump would open. Empty for an ordinary buffer, which the caller reports
+    // rather than treating as "search everything."
+    [[nodiscard]] std::vector<std::filesystem::path> ResultFilesInActiveBuffer() const;
+
+    // multibuffer-scoped-search follow-up: confines a freshly built isearch
+    // session to the active buffer's excerpt bodies, when it has any and the
+    // setting is on (Editor/MultibufferSearchSettings.h). A no-op for every
+    // ordinary buffer, so the isearch start sites need no condition of their
+    // own. QueryReplace has its own flag-shaped equivalent set inline --
+    // see that class' SetScopeToExcerptBodies doc comment for why the two
+    // differ.
+    void ApplyMultibufferSearchScope(editor::IncrementalSearch& search) const;
 
     // vcs-blame-buffer/vcs-show-log's actual entry points (see
     // StartInteractiveSession's VcsBlameBuffer/VcsShowLog cases) -- resolve

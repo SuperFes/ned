@@ -1,9 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "Editor/Multibuffer.h"
 #include "Editor/MultibufferFoldSettings.h"
@@ -15,7 +18,9 @@ using ned::editor::multibuffer::ClearMultibufferIndexFor;
 using ned::editor::multibuffer::ClearRegistryForTesting;
 using ned::editor::multibuffer::CommitExcerptChanges;
 using ned::editor::multibuffer::CommitResult;
+using ned::editor::multibuffer::ExcerptBodyRanges;
 using ned::editor::multibuffer::ExcerptSource;
+using ned::editor::multibuffer::ExcerptSourcePaths;
 using ned::editor::multibuffer::FoldableExcerptBlocks;
 using ned::editor::multibuffer::MultibufferIndexFor;
 using ned::editor::multibuffer::NextExcerptBodyStart;
@@ -969,4 +974,69 @@ TEST_CASE("NextExcerptBodyStart / PreviousExcerptBodyStart step between excerpt 
 
     REQUIRE(PreviousExcerptBodyStart(composite, secondBody) == firstBody);
     REQUIRE_FALSE(PreviousExcerptBodyStart(composite, firstBody).has_value());
+}
+
+TEST_CASE("ExcerptBodyRanges covers bodies only, never an excerpt's header or the rules between them", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            composite = BuildMultibuffer(bufferList, "*review*",
+                                                    {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "one\n"},
+                                                     ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "two\n"}});
+
+    const std::string                                      text   = composite.Text();
+    const std::vector<std::pair<std::size_t, std::size_t>> ranges = ExcerptBodyRanges(composite);
+    REQUIRE(ranges.size() == 2);
+
+    // Every body byte is in scope; the header line naming the file is not --
+    // which is the whole point (searching for "a.cpp" must not stop on it).
+    REQUIRE(ranges[0].first == text.find("one\n"));
+    REQUIRE(text.find("a.cpp:1") < ranges[0].first);
+    REQUIRE(ranges[1].first == text.find("two\n"));
+    REQUIRE(ranges[0].second <= ranges[1].first);
+    REQUIRE(std::is_sorted(ranges.begin(), ranges.end()));
+}
+
+TEST_CASE("ExcerptBodyRanges follows the relocated ExcerptRanges once a buffer is editable", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            a = bufferList.CreateBuffer("a.cpp");
+    a.SetPath("/repo/a.cpp");
+    a.InsertAtPoint("one\n");
+
+    Buffer& composite = BuildMultibuffer(bufferList, "*review*",
+                                         {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "one\n", {}, /*editable=*/true},
+                                          ExcerptSource{"/repo/a.cpp", 2, 2, "a.cpp:2", "two\n", {}, /*editable=*/true}});
+
+    const std::size_t firstBody = composite.Text().find("one\n");
+    composite.InsertAt(firstBody, "XXXX"); // grows the first body, shifting the second
+
+    const std::vector<std::pair<std::size_t, std::size_t>> ranges = ExcerptBodyRanges(composite);
+    REQUIRE(ranges.size() == 2);
+    REQUIRE(ranges[0].first == firstBody);
+    REQUIRE(ranges[0].second == firstBody + std::string("XXXXone\n").size());
+    REQUIRE(ranges[1].first == composite.Text().find("two\n"));
+}
+
+TEST_CASE("ExcerptSourcePaths reports each source once, in first-appearance order", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            composite = BuildMultibuffer(bufferList, "*review*",
+                                                    {ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "one\n"},
+                                                     ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "two\n"},
+                                                     ExcerptSource{"/repo/b.cpp", 9, 9, "b.cpp:9", "three\n"}});
+
+    const std::vector<std::filesystem::path> paths = ExcerptSourcePaths(composite);
+    REQUIRE(paths.size() == 2);
+    REQUIRE(paths[0] == std::filesystem::path("/repo/b.cpp"));
+    REQUIRE(paths[1] == std::filesystem::path("/repo/a.cpp"));
+}
+
+TEST_CASE("ExcerptBodyRanges and ExcerptSourcePaths are empty for an ordinary buffer", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            plain = bufferList.CreateBuffer("plain.txt");
+    plain.InsertAtPoint("nothing to see\n");
+
+    REQUIRE(ExcerptBodyRanges(plain).empty());
+    REQUIRE(ExcerptSourcePaths(plain).empty());
 }

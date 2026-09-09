@@ -33,6 +33,8 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "RegexPattern.h"
 #include "Text/Buffer.h"
@@ -47,6 +49,23 @@ class QueryReplace {
                        Done };
 
     explicit QueryReplace(text::Buffer& buffer);
+
+    // multibuffer-scoped-search follow-up: confines matching to the buffer's
+    // own editable excerpt bodies (text::Buffer::ExcerptRange, editable
+    // ones only) -- a match overlapping an excerpt's header/rule chrome is
+    // skipped rather than offered. Off by default: every non-multibuffer
+    // session is byte-for-byte unchanged, and a buffer with no editable
+    // excerpt ranges is unscoped whichever way this is set (there is nothing
+    // to scope to, and a read-only multibuffer refuses the replacement one
+    // level down regardless).
+    //
+    // Deliberately a flag rather than a range list handed in the way
+    // IncrementalSearch::SetSearchScope takes one: replacements shift every
+    // offset after them, and ExcerptRanges are relocated across exactly
+    // those edits, so re-reading them per match is what keeps the scope
+    // correct mid-session. Ignored on the huge-buffer path, which no
+    // multibuffer ever takes.
+    void SetScopeToExcerptBodies(bool enabled);
 
     // Valid during EnteringPattern/EnteringReplacement; a no-op otherwise.
     void AppendChar(char32_t codepoint);
@@ -80,6 +99,15 @@ class QueryReplace {
 
   private:
     void FindNextMatch();
+    // The scope ranges as of right now -- empty when scoping is off or the
+    // buffer has no editable excerpts. Re-read per call, see
+    // SetScopeToExcerptBodies' own doc comment.
+    [[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> ScopeRanges() const;
+    // Where to resume searching after scope rejected a match starting at
+    // matchStart -- the next scope range's own start when the match began
+    // before it, one codepoint on when it began inside one but overran its
+    // end, and nullopt when no range remains at all (the session is done).
+    [[nodiscard]] std::optional<std::size_t> ResumeAfterRejectedMatch(std::size_t matchStart) const;
     // huge-file-regex-replace follow-up: FindNextMatchHuge is the huge_
     // branch of FindNextMatch -- windowed scanning via Content().Substring
     // instead of content_ (left empty for a huge buffer). See the .cpp for
@@ -106,6 +134,9 @@ class QueryReplace {
     // StatusText()'s Stage::Done wording from the ordinary replacement-count
     // summary to a refusal message.
     bool binaryRefused_ = false;
+
+    // See SetScopeToExcerptBodies' own doc comment.
+    bool scopeToExcerptBodies_ = false;
 };
 
 } // namespace ned::editor

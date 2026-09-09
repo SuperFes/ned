@@ -1,6 +1,7 @@
 #include "IncrementalSearch.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "Text/Utf8.h"
 
@@ -42,6 +43,50 @@ namespace {
 IncrementalSearch::IncrementalSearch(text::Buffer& buffer, Direction direction) : buffer_(buffer), direction_(direction), huge_(buffer.Content().IsHuge()),
                                                                                   content_(huge_ ? std::string() : buffer.Text()), contentLower_(huge_ ? std::string() : ToAsciiLower(content_)),
                                                                                   originalPoint_(buffer.Point()) {
+}
+
+void IncrementalSearch::SetSearchScope(std::vector<std::pair<std::size_t, std::size_t>> ranges) {
+    scope_ = std::move(ranges);
+    if (!query_.empty()) {
+        Search(originalPoint_); // a scope set mid-session still re-searches rather than leaving a now-out-of-scope match standing
+    }
+}
+
+bool IncrementalSearch::InScope(std::size_t start, std::size_t end) const {
+    if (scope_.empty()) {
+        return true;
+    }
+    for (const std::pair<std::size_t, std::size_t>& range : scope_) {
+        if (range.first > start) {
+            break; // sorted by start -- nothing further can contain this match
+        }
+        if (end <= range.second) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::size_t IncrementalSearch::FindForward(const std::string& haystack, const std::string& needle, std::size_t from) const {
+    std::size_t pos = haystack.find(needle, from);
+    while (pos != std::string::npos && !InScope(pos, pos + needle.size())) {
+        pos = haystack.find(needle, pos + 1);
+    }
+    return pos;
+}
+
+std::size_t IncrementalSearch::FindBackward(const std::string& haystack, const std::string& needle, std::size_t before) const {
+    if (before == 0) {
+        return std::string::npos;
+    }
+    std::size_t pos = haystack.rfind(needle, before - 1);
+    while (pos != std::string::npos && !InScope(pos, pos + needle.size())) {
+        if (pos == 0) {
+            return std::string::npos;
+        }
+        pos = haystack.rfind(needle, pos - 1);
+    }
+    return pos;
 }
 
 void IncrementalSearch::AppendChar(char32_t codepoint) {
@@ -151,7 +196,13 @@ std::string IncrementalSearch::StatusLabel() const {
     if (direction_ == Direction::Backward) {
         label += "Backward ";
     }
-    label += "I-search: ";
+    label += "I-search";
+    if (!scope_.empty()) {
+        // multibuffer-scoped-search follow-up: says why a string plainly
+        // visible on screen (an excerpt header's own path) isn't matching.
+        label += " (excerpts)";
+    }
+    label += ": ";
     return label;
 }
 
@@ -170,7 +221,7 @@ std::size_t IncrementalSearch::ComputeMatchedPrefixLength() const {
 
     std::size_t len = text::PreviousCodepointBoundary(query_, query_.size());
     while (len > 0) {
-        if (haystack.find(needleOwner.substr(0, len)) != std::string::npos) {
+        if (FindForward(haystack, needleOwner.substr(0, len), 0) != std::string::npos) {
             return len;
         }
         len = text::PreviousCodepointBoundary(query_, len);
@@ -200,15 +251,15 @@ void IncrementalSearch::Search(std::size_t from) {
 
     std::size_t pos;
     if (direction_ == Direction::Forward) {
-        pos = haystack.find(needle, from);
+        pos = FindForward(haystack, needle, from);
         if (pos == std::string::npos) {
-            pos = haystack.find(needle); // wrap around to the top of the document
+            pos = FindForward(haystack, needle, 0); // wrap around to the top of the document
         }
     }
     else {
-        pos = (from == 0) ? std::string::npos : haystack.rfind(needle, from - 1);
+        pos = FindBackward(haystack, needle, from);
         if (pos == std::string::npos) {
-            pos = haystack.rfind(needle); // wrap around to the bottom of the document
+            pos = FindBackward(haystack, needle, haystack.size()); // wrap around to the bottom of the document
         }
     }
 

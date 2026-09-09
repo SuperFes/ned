@@ -353,22 +353,19 @@ real `Buffer::ExcerptRange` relocation bug it surfaced — undoing an edit insid
 excerpt body left the range one byte long, which `CommitExcerptChanges` would have
 written back into the user's source file as a spurious blank line; and every excerpt
 body now reads an open buffer's live content first, so what an excerpt shows and the
-source range it names can't disagree over unsaved edits).
+source range it names can't disagree over unsaved edits), `multibuffer-scoped-search`
+(isearch and query-replace confine themselves to excerpt bodies inside a multibuffer, so
+neither stops on an excerpt's own header path nor offers a replacement the buffer would
+then silently refuse — `ned/set-multibuffer-scoped-search` turns it off) and
+`multibuffer-search-in-results` (`search-in-results` on `C-c s`: a fresh search over just
+the files the current results buffer already names, resolved from a multibuffer's own
+excerpt sources or from a flat `path:line:` buffer's own lines).
 
-- [ ] **Searching *within* a multibuffer** — nothing exists for this today (checked
-      2026-09-09). Ordinary isearch/query-replace work on a multibuffer because it's an
-      ordinary buffer of text, but they see the whole composite: header lines, rule
-      lines and blank separators included. Two distinct shapes, neither built:
-      **(a) excerpt-scoped search** — isearch/query-replace confined to excerpt
-      *bodies*, skipping chrome. Chrome is already protected from being *written*
-      (`Buffer::CanInsertAtExcerpt`/`CanDeleteExcerptRange`), so this is about not
-      stopping on a match inside a header path and not offering a replace that will
-      only be refused. **(b) search within these results** — re-run a project search
-      restricted to the set of files an existing multibuffer references, the natural
-      "narrow the result set" follow-up to a broad find-references. Note (a)/(b) do
-      *not* address the live-vs-disk staleness item below: a multibuffer's excerpts are
-      already built from live buffer content (`multibuffer-gaps`), so searching one only
-      ever re-searches what a stale scan already found.
+- [ ] Excerpt-scoped search covers isearch and query-replace only. A multibuffer's
+      chrome is also visible to `next-error`, dabbrev completion and Vim-mode `/`
+      search, none of which consult `multibuffer::ExcerptBodyRanges`
+      (`multibuffer-scoped-search`) — none has been annoying enough in practice to
+      chase, and each would need its own scope plumbing rather than sharing one.
 - [ ] A real visual side-by-side 3-way merge/diff view. `AutoMerge` auto-resolves the
       common case and drops real `<<<<<<<`/`=======`/`>>>>>>>` conflict markers into the
       buffer for a genuine divergence, but a real conflict is still hand-edited text,

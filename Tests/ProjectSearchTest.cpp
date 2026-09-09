@@ -12,6 +12,7 @@
 #include "Text/BufferList.h"
 
 using ned::editor::SearchDirectory;
+using ned::editor::SearchFiles;
 using ned::editor::SearchMatch;
 using ned::editor::SearchPatternError;
 
@@ -422,4 +423,92 @@ TEST_CASE("A huge modified buffer is searched through its own storage, not skipp
     REQUIRE(matches.front().lineText == "typed but unsaved");
 
     std::filesystem::remove_all(dir);
+}
+
+// multibuffer-search-in-results follow-up: SearchFiles is SearchDirectory
+// without the walk -- the caller hands over exactly which files to look at.
+
+TEST_CASE("SearchFiles searches only the listed files, in the caller's order", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_search_files_test_basic";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "needle here\n";
+        std::ofstream(dir / "b.txt") << "needle there\n";
+        std::ofstream(dir / "c.txt") << "needle everywhere\n";
+    }
+
+    ned::text::BufferList bufferList;
+
+    const std::vector<SearchMatch> matches = SearchFiles({dir / "b.txt", dir / "a.txt"}, "needle", bufferList);
+    REQUIRE(matches.size() == 2);
+    REQUIRE(matches[0].file == dir / "b.txt"); // caller's order, not alphabetical
+    REQUIRE(matches[1].file == dir / "a.txt");
+    REQUIRE(matches[0].lineNumber == 1);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SearchFiles ignores .gitignore and dot-directories the caller listed anyway", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_search_files_test_ignored";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "build");
+    {
+        std::ofstream(dir / ".gitignore") << "build/\n";
+        std::ofstream(dir / "build" / "generated.txt") << "needle\n";
+    }
+
+    ned::text::BufferList bufferList;
+
+    // The walk would skip this file; an explicit list is the caller saying
+    // they are already looking at it.
+    REQUIRE(SearchDirectory(dir, "needle").empty());
+    REQUIRE(SearchFiles({dir / "build" / "generated.txt"}, "needle", bufferList).size() == 1);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SearchFiles drops duplicate and nonexistent paths", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_search_files_test_dedupe";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "needle\n";
+    }
+
+    ned::text::BufferList bufferList;
+
+    const std::vector<SearchMatch> matches =
+        SearchFiles({dir / "a.txt", dir / "a.txt", dir / "gone.txt"}, "needle", bufferList);
+    REQUIRE(matches.size() == 1);
+
+    REQUIRE(SearchFiles({}, "needle", bufferList).empty());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SearchFiles searches an open modified buffer's content instead of its file", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_search_files_test_live";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "on disk only\n";
+    }
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    buffer = bufferList.OpenOrCreateFile(dir / "a.txt");
+    buffer.SetPoint(buffer.Content().ByteLength());
+    buffer.InsertAtPoint("typed but unsaved\n");
+
+    const std::vector<SearchMatch> matches = SearchFiles({dir / "a.txt"}, "unsaved", bufferList);
+    REQUIRE(matches.size() == 1);
+    REQUIRE(matches.front().lineNumber == 2);
+    REQUIRE(matches.front().lineText == "typed but unsaved");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SearchFiles reports an invalid pattern the same way SearchDirectory does", "[ProjectSearch]") {
+    ned::text::BufferList bufferList;
+    REQUIRE_THROWS_AS(SearchFiles({}, "(unclosed", bufferList), SearchPatternError);
 }

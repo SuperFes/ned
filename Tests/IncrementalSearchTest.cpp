@@ -479,3 +479,98 @@ TEST_CASE("isearch on a huge buffer finds a match straddling an internal scan-wi
 
     std::filesystem::remove(path);
 }
+
+// multibuffer-scoped-search follow-up. The scope ranges below stand in for a
+// multibuffer's excerpt bodies -- IncrementalSearch itself has no idea what
+// they are, which is the point of taking them as plain byte ranges.
+TEST_CASE("A scoped search skips matches outside its ranges", "[IncrementalSearch]") {
+    // 0123456789...
+    // "a.cpp:1\nfox\n\nb.cpp:1\nfox\n" -- the two headers each contain a
+    // decoy, the bodies hold the real matches.
+    const std::string text = "fox a.cpp\nfox body\nfox b.cpp\nfox body\n";
+    Buffer            buffer("scratch", Rope(text));
+    buffer.SetPoint(0);
+
+    const std::size_t firstBody  = text.find("fox body");
+    const std::size_t secondBody = text.find("fox body", firstBody + 1);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.SetSearchScope({{firstBody, firstBody + 8}, {secondBody, secondBody + 8}});
+    search.AppendChar(U'f');
+    search.AppendChar(U'o');
+    search.AppendChar(U'x');
+
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == firstBody + 3); // the header's own "fox" at 0 was skipped
+
+    search.RepeatSearch();
+    REQUIRE(buffer.Point() == secondBody + 3);
+
+    search.RepeatSearch(); // wraps back to the first in-scope match, never to the headers
+    REQUIRE(buffer.Point() == firstBody + 3);
+}
+
+TEST_CASE("A scoped backward search skips matches outside its ranges", "[IncrementalSearch]") {
+    const std::string text = "fox a.cpp\nfox body\nfox b.cpp\n";
+    Buffer            buffer("scratch", Rope(text));
+
+    const std::size_t body = text.find("fox body");
+    buffer.SetPoint(text.size());
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Backward);
+    search.SetSearchScope({{body, body + 8}});
+    search.AppendChar(U'f');
+    search.AppendChar(U'o');
+    search.AppendChar(U'x');
+
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == body); // not the later "fox b.cpp" header match
+}
+
+TEST_CASE("A query matching only outside the scope fails rather than jumping to it", "[IncrementalSearch]") {
+    const std::string text = "header a.cpp\nbody\n";
+    Buffer            buffer("scratch", Rope(text));
+    buffer.SetPoint(0);
+
+    const std::size_t body = text.find("body");
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.SetSearchScope({{body, body + 4}});
+    search.AppendChar(U'h');
+    search.AppendChar(U'e');
+
+    REQUIRE_FALSE(search.Found());
+    REQUIRE(search.StatusText().starts_with("Failing I-search (excerpts): "));
+    REQUIRE(buffer.Point() == 0); // point stays where it was, same as any failing search
+}
+
+TEST_CASE("A match straddling a scope boundary is rejected", "[IncrementalSearch]") {
+    const std::string text = "abcdef";
+    Buffer            buffer("scratch", Rope(text));
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.SetSearchScope({{0, 3}}); // "abc" only
+    search.AppendChar(U'c');
+    REQUIRE(search.Found());
+
+    search.DeleteChar();
+    search.AppendChar(U'c');
+    search.AppendChar(U'd'); // "cd" runs past the range's own end
+    REQUIRE_FALSE(search.Found());
+}
+
+TEST_CASE("An empty scope leaves a session unscoped", "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope(kText));
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.SetSearchScope({});
+    search.AppendChar(U'f');
+    search.AppendChar(U'o');
+    search.AppendChar(U'x');
+
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == 19);
+    REQUIRE(search.StatusText() == "I-search: fox"); // no "(excerpts)" marker
+}

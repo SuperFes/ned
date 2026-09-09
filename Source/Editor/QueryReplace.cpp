@@ -27,6 +27,41 @@ namespace {
 QueryReplace::QueryReplace(text::Buffer& buffer) : buffer_(buffer) {
 }
 
+void QueryReplace::SetScopeToExcerptBodies(bool enabled) {
+    scopeToExcerptBodies_ = enabled;
+}
+
+std::vector<std::pair<std::size_t, std::size_t>> QueryReplace::ScopeRanges() const {
+    std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    if (!scopeToExcerptBodies_ || huge_) {
+        return ranges;
+    }
+    for (const text::Buffer::ExcerptRange& range : buffer_.ExcerptRanges()) {
+        if (range.editable && range.start < range.end) { // a degenerate range holds no bytes to match against
+            ranges.emplace_back(range.start, range.end);
+        }
+    }
+    std::sort(ranges.begin(), ranges.end());
+    return ranges;
+}
+
+std::optional<std::size_t> QueryReplace::ResumeAfterRejectedMatch(std::size_t matchStart) const {
+    for (const std::pair<std::size_t, std::size_t>& range : ScopeRanges()) { // sorted by start
+        if (matchStart < range.first) {
+            return range.first; // the match began in chrome -- skip straight past it
+        }
+        if (matchStart < range.second) {
+            // It began inside this excerpt but ran past its end. A later
+            // match in the same excerpt may still be short enough to fit, so
+            // this can only step, not skip -- one codepoint, the same
+            // forward-progress guarantee the zero-width-match paths make.
+            return (matchStart + 1 >= content_.size()) ? std::nullopt
+                                                       : std::optional<std::size_t>(text::NextCodepointBoundary(content_, matchStart));
+        }
+    }
+    return std::nullopt; // past the last excerpt -- nothing left in scope
+}
+
 void QueryReplace::AppendChar(char32_t codepoint) {
     if (stage_ == Stage::EnteringPattern) {
         patternText_ += text::EncodeCodepointUtf8(codepoint);
@@ -87,14 +122,48 @@ void QueryReplace::FindNextMatch() {
     // Searches the whole content from an offset (not a trimmed subrange), so
     // ^/\b/lookbehind correctly see what precedes the cursor -- see
     // RegexPattern.h.
+    const std::vector<std::pair<std::size_t, std::size_t>> scope   = ScopeRanges();
+    auto                                                   inScope = [&scope](std::size_t start, std::size_t end) {
+        if (scope.empty()) {
+            return true;
+        }
+        for (const std::pair<std::size_t, std::size_t>& range : scope) {
+            if (range.first > start) {
+                break; // sorted by start -- nothing further can contain this match
+            }
+            if (end <= range.second) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     std::optional<RegexMatch> match;
-    if (searchCursor_ <= content_.size()) {
-        match = pattern_->Search(content_, searchCursor_);
-    }
-    if (!match.has_value()) {
-        hasMatch_ = false;
-        stage_    = Stage::Done;
-        return;
+    for (;;) {
+        match.reset();
+        if (searchCursor_ <= content_.size()) {
+            match = pattern_->Search(content_, searchCursor_);
+        }
+        if (!match.has_value()) {
+            hasMatch_ = false;
+            stage_    = Stage::Done;
+            return;
+        }
+        if (inScope(match->start, match->end)) {
+            break;
+        }
+        // multibuffer-scoped-search follow-up: a match landing on an
+        // excerpt's protected header/rule chrome is never offered -- the
+        // replacement would be silently refused by
+        // Buffer::CanDeleteExcerptRange anyway, leaving the count claiming
+        // an edit that never happened.
+        const std::optional<std::size_t> resume = ResumeAfterRejectedMatch(match->start);
+        if (!resume.has_value()) {
+            hasMatch_ = false;
+            stage_    = Stage::Done;
+            return;
+        }
+        searchCursor_ = *resume;
     }
 
     hasMatch_                  = true;

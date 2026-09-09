@@ -63,6 +63,7 @@
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/MultibufferLimits.h"
+#include "Editor/MultibufferSearchSettings.h"
 #include "Editor/NextError.h"
 #include "Editor/NodeModules.h"
 #include "Editor/Org.h"
