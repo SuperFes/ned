@@ -37,6 +37,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ned::text {
@@ -312,6 +313,27 @@ std::size_t RevertExcerptsForFileAtOffset(text::Buffer& composite, std::size_t c
                                                               std::size_t         compositeByteOffset);
 [[nodiscard]] std::optional<std::size_t> PreviousExcerptBodyStart(const text::Buffer& composite,
                                                                   std::size_t         compositeByteOffset);
+
+// multibuffer-scoped-search follow-up: the composite byte ranges an
+// excerpt's *body* occupies, sorted by start and non-overlapping -- the
+// scope excerpt-scoped isearch confines itself to, so a match inside a
+// header path or a rule line is never stopped on. Empty when composite
+// isn't a multibuffer at all, which every caller reads as "no scoping,"
+// not as "nothing is searchable."
+//
+// Reads text::Buffer::ExcerptRanges() when that set is non-empty and falls
+// back to the MultibufferIndex's own spans otherwise -- not a preference,
+// a correctness rule: only an editable multibuffer's ranges are relocated
+// across edits, so on a buffer the user can type into the index's spans are
+// exactly the stale ones. A read-only multibuffer has no ranges and can't
+// shift, so its spans are always current.
+[[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> ExcerptBodyRanges(const text::Buffer& composite);
+
+// The distinct source files composite's excerpts came from, in
+// first-appearance order -- what "search within these results" narrows a
+// fresh project search down to. Same two sources, same rule, as
+// ExcerptBodyRanges above. Empty when composite isn't a multibuffer.
+[[nodiscard]] std::vector<std::filesystem::path> ExcerptSourcePaths(const text::Buffer& composite);
 
 } // namespace ned::editor::multibuffer
 

@@ -724,6 +724,7 @@ add_library(ned_lib STATIC
         Source/Editor/Multibuffer.cpp
         Source/Editor/MultibufferFoldSettings.cpp
         Source/Editor/MultibufferLimits.cpp
+        Source/Editor/MultibufferSearchSettings.cpp
         Source/Editor/NextError.cpp
         Source/Editor/WrapOverrides.cpp
         Source/Editor/CodeFold.cpp
@@ -1282,6 +1283,7 @@ if (NED_BUILD_TESTS)
             Tests/DynamicGrammarTest.cpp
             Tests/ModeOverridesTest.cpp
             Tests/ModePrewarmTest.cpp
+            Tests/BufferViewSearchInResultsTest.cpp
             Tests/MultibufferTest.cpp
             Tests/NextErrorTest.cpp
             Tests/BufferViewNextErrorTest.cpp
