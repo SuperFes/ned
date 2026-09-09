@@ -15,15 +15,76 @@ namespace ned::ui {
 // what let the split leave every call site untouched.
 using namespace detail;
 
+namespace {
+
+    std::size_t CountUniqueMatchFiles(const std::vector<editor::SearchMatch>& matches) {
+        std::vector<std::filesystem::path> seen;
+        for (const editor::SearchMatch& match : matches) {
+            if (std::find(seen.begin(), seen.end(), match.file) == seen.end()) {
+                seen.push_back(match.file);
+            }
+        }
+        return seen.size();
+    }
+
+} // namespace
+
 void BufferView::VisitSearchResult() {
     VisitResultUnderPoint();
 }
 
+std::optional<std::filesystem::path> BufferView::ResolveResultPath(const std::filesystem::path& path) const {
+    if (path.empty()) {
+        return std::nullopt;
+    }
+    std::error_code ec;
+    if (bufferList_.FindByPath(path) != nullptr || std::filesystem::exists(path, ec)) {
+        return path;
+    }
+    if (path.is_relative()) {
+        const std::filesystem::path rooted = editor::ProjectRoot() / path;
+        if (bufferList_.FindByPath(rooted) != nullptr || std::filesystem::exists(rooted, ec)) {
+            return rooted;
+        }
+    }
+    return std::nullopt;
+}
+
 void BufferView::JumpToPathLine(const std::filesystem::path& path, std::size_t line) {
+    // Multibuffer-gaps follow-up: a path that resolves to nothing is
+    // reported, not opened. OpenOrCreateFile creates on miss by design (what
+    // find-file on a new path needs), which used to make a stale/unresolvable
+    // results line silently produce an empty scratch buffer named after it --
+    // indistinguishable, at a glance, from a real file that happens to be
+    // empty.
+    const std::optional<std::filesystem::path> resolved = ResolveResultPath(path);
+    if (!resolved) {
+        statusMessage_ = "No such file: " + path.string();
+        return;
+    }
     try {
-        text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
+        text::Buffer& opened = bufferList_.OpenOrCreateFile(*resolved);
         activeBuffer_.Set(opened);
         opened.SetPoint(opened.ByteOffsetForLineAndColumn(line - 1, 0)); // 1-indexed -> 0-indexed
+        statusMessage_.clear();
+        viewport_.ScrollToShowPoint();
+    }
+    catch (const std::exception& e) {
+        ReportError(e.what());
+    }
+}
+
+void BufferView::JumpToPathByte(const std::filesystem::path& path, std::size_t byteOffset) {
+    const std::optional<std::filesystem::path> resolved = ResolveResultPath(path);
+    if (!resolved) {
+        statusMessage_ = "No such file: " + path.string();
+        return;
+    }
+    try {
+        text::Buffer& opened = bufferList_.OpenOrCreateFile(*resolved);
+        activeBuffer_.Set(opened);
+        const std::size_t clamped = std::min(byteOffset, opened.Content().ByteLength());
+        opened.SetPoint(text::SnapToGraphemeBoundary(opened.Content(), clamped));
         statusMessage_.clear();
         viewport_.ScrollToShowPoint();
     }
@@ -45,7 +106,7 @@ void BufferView::VisitResultUnderPoint() {
     if (editor::multibuffer::MultibufferIndex* index = editor::multibuffer::MultibufferIndexFor(buffer)) {
         if (const editor::multibuffer::ExcerptSpan* span = index->SpanAtOffset(buffer.Point());
             span && span->sourceStartLine > 0) {
-            JumpToPathLine(span->sourcePath, span->sourceStartLine);
+            JumpToExcerptSource(*span);
         }
         return;
     }
@@ -74,6 +135,70 @@ void BufferView::VisitResultUnderPoint() {
         JumpToPathLine(loc->path, loc->lineNumber);
     }
     // else: not a results-shaped line -- silent no-op, see this method's own header comment
+}
+
+namespace {
+
+    // A composite excerpt body always ends in a newline (BuildMultibuffer
+    // appends one if the caller's bodyText lacked it); the source slice it
+    // was resolved against ends in one too -- except when the excerpt covers
+    // the source's own final line and that file has no trailing newline.
+    // Comparing with one trailing newline dropped from each side is what
+    // keeps that single case on the byte-exact path instead of silently
+    // demoting it to a line jump.
+    std::string_view WithoutTrailingNewline(std::string_view text) {
+        return (!text.empty() && text.back() == '\n') ? text.substr(0, text.size() - 1) : text;
+    }
+
+} // namespace
+
+void BufferView::JumpToExcerptSource(const editor::multibuffer::ExcerptSpan& span) {
+    const text::Buffer& composite = activeBuffer_.Get();
+    const std::size_t   point     = composite.Point();
+
+    // Only an editable range's body is verbatim source bytes -- see this
+    // method's own doc comment in BufferView.h for what the other excerpt
+    // kinds look like and why they can't be mapped this way.
+    const text::Buffer::ExcerptRange* covering = nullptr;
+    for (const text::Buffer::ExcerptRange& range : composite.ExcerptRanges()) {
+        if (range.editable && range.sourcePath == span.sourcePath && point >= range.start && point < range.end) {
+            covering = &range;
+            break;
+        }
+    }
+
+    if (covering != nullptr && covering->sourceEndByte >= covering->sourceStartByte) {
+        const std::string bodyText = composite.Content().Substring(covering->start, covering->end - covering->start);
+        // An uncommitted wgrep-style edit invalidates the offset arithmetic
+        // outright (every byte typed shifts everything after it in the
+        // composite but nothing in the source) -- the CommitExcerptChanges
+        // "has this excerpt changed" test, reused verbatim.
+        if (bodyText == covering->originalText) {
+            const std::optional<std::filesystem::path> resolved = ResolveResultPath(span.sourcePath);
+            const text::Buffer* const                  source   = resolved ? bufferList_.FindByPath(*resolved) : nullptr;
+            // Validated against the *live* source only when it's already
+            // open. An unopened source is trusted: it was read at build time
+            // and reading it again here just to check would cost the whole
+            // file on every jump, for a mismatch that JumpToPathByte's own
+            // clamp already keeps harmless.
+            bool mapped = true;
+            if (source != nullptr) {
+                const std::size_t sourceLength = source->Content().ByteLength();
+                const std::size_t sourceEnd    = std::min(covering->sourceEndByte, sourceLength);
+                mapped                         = covering->sourceStartByte <= sourceEnd &&
+                                                 WithoutTrailingNewline(source->Content().Substring(covering->sourceStartByte,
+                                                                                                    sourceEnd - covering->sourceStartByte)) ==
+                                                     WithoutTrailingNewline(bodyText);
+            }
+            if (mapped) {
+                JumpToPathByte(span.sourcePath,
+                               std::min(covering->sourceStartByte + (point - covering->start), covering->sourceEndByte));
+                return;
+            }
+        }
+    }
+
+    JumpToPathLine(span.sourcePath, span.sourceStartLine);
 }
 
 std::optional<BufferView::ResultLineLocation> BufferView::ResultLineAtPoint() const {
@@ -105,6 +230,91 @@ std::optional<BufferView::ResultLineLocation> BufferView::ResultLineAtPoint() co
         .lineNumber   = std::stoul(match[2].str()),
         .fullLineText = lineText,
     };
+}
+
+void BufferView::BuildProjectReplaceReview(const std::vector<editor::SearchMatch>& matches, const std::string& pattern,
+                                           const std::string& replacement) {
+    // in-file-regex follow-up's own note applies here: the *search* ran on
+    // RE2, the rewrite runs on PCRE2, which accepts essentially everything
+    // RE2 does but can still throw at match time.
+    const editor::RegexPattern regex(pattern);
+
+    const std::filesystem::path root = editor::ProjectRoot();
+    // Same cap, and the same honest note about what it dropped, as every
+    // other multibuffer consumer -- see Editor/MultibufferLimits.h.
+    const std::size_t maxExcerpts = editor::MultibufferMaxExcerpts();
+    const std::size_t keptCount   = (maxExcerpts == 0) ? matches.size() : std::min(matches.size(), maxExcerpts);
+
+    std::vector<editor::multibuffer::ExcerptSource> excerpts;
+    excerpts.reserve(keptCount);
+    for (std::size_t i = 0; i < keptCount; ++i) {
+        const editor::SearchMatch&  match = matches[i];
+        std::error_code             ec;
+        const std::filesystem::path relative    = std::filesystem::relative(match.file, root, ec);
+        const std::string           displayPath = (!ec && !relative.empty()) ? relative.string() : match.file.string();
+        const std::string           hugeMarker  = LooksHugeSource(bufferList_, match.file) ? "  [huge]" : "";
+        excerpts.push_back(editor::multibuffer::ExcerptSource{
+            match.file, match.lineNumber, match.lineNumber, "▸ " + displayPath + ":" + std::to_string(match.lineNumber) + hugeMarker, match.lineText, {},
+            /*editable=*/true});
+    }
+
+    // The flat preview built at ConfirmPattern time (so the match list is
+    // visible while the replacement is still being typed) already carries
+    // this name, as would a review left over from an earlier replace -- so
+    // the new one lands beside it as "*project replace*<2>" and takes the
+    // real name once the old one is gone. Built and made active *before* the
+    // close so activeBuffer_ never points at a buffer being erased, and
+    // closed through CloseBufferNow so any other pane showing it is
+    // retargeted too.
+    text::Buffer* const stale = bufferList_.Find("*project replace*");
+
+    text::Buffer& review = editor::multibuffer::BuildMultibuffer(bufferList_, "*project replace*", excerpts, matches.size());
+
+    // The rewrite itself, applied into the review buffer rather than into any
+    // file -- which is what makes every excerpt read as "changed" against the
+    // originalText snapshot BuildMultibuffer just captured, and therefore what
+    // multibuffer-commit-changes will later write back. Reverse order so an
+    // earlier excerpt's own offsets can't be disturbed by a later one's
+    // rewrite; the range fields are copied out first because editing
+    // relocates the vector they live in.
+    std::size_t replacementCount = 0;
+    std::size_t excerptsChanged  = 0;
+    review.BeginUndoGroup();
+    for (std::size_t i = review.ExcerptRanges().size(); i-- > 0;) {
+        const std::size_t start = review.ExcerptRanges()[i].start;
+        const std::size_t end   = review.ExcerptRanges()[i].end;
+        const std::string body  = review.Content().Substring(start, end - start);
+
+        const editor::RegexPattern::ReplaceAllResult rewritten = regex.ReplaceAll(body, replacement);
+        if (rewritten.count == 0 || rewritten.text == body) {
+            continue; // RE2 matched this line, PCRE2 doesn't -- left exactly as it was
+        }
+        review.DeleteRange(start, end - start);
+        review.InsertAt(start, rewritten.text);
+        replacementCount += rewritten.count;
+        ++excerptsChanged;
+    }
+    review.EndUndoGroup();
+    review.SetPoint(0);
+
+    activeBuffer_.Set(review);
+    if (stale != nullptr) {
+        // Registry entry cleared explicitly: an earlier review *is* a
+        // multibuffer, and a stale index keyed by a freed Buffer* is
+        // inherited by whatever lands at that address next (see
+        // Multibuffer.h's ClearRegistryForTesting note). Harmless for the
+        // flat preview, which never had one.
+        editor::multibuffer::ClearMultibufferIndexFor(*stale);
+        CloseBufferNow(*stale);
+        review.Rename("*project replace*");
+    }
+    editor::SetLastResultsBuffer("*project replace*");
+
+    const std::size_t fileCount = CountUniqueMatchFiles(matches);
+    statusMessage_              = std::to_string(replacementCount) + " replacement" + (replacementCount == 1 ? "" : "s") +
+                                  " in " + std::to_string(excerptsChanged) + " line" + (excerptsChanged == 1 ? "" : "s") + " across " +
+                                  std::to_string(fileCount) + " file" + (fileCount == 1 ? "" : "s") +
+                                  " -- C-c C-c apply, M-c this file, M-r/M-R revert, M-n/M-p move";
 }
 
 void BufferView::ShowMessagesBuffer() {

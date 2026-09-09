@@ -236,6 +236,11 @@ enum class InteractiveRequest { None,
                                 // wants a y/n confirmation before writing them to disk --
                                 // same shape as ConfirmOverwriteSave, "y" saves anyway.
                                 ConfirmSaveWithConflicts,
+                                // multibuffer-review follow-up: C-c C-c in a review buffer asks
+                                // where the reviewed text should land (open buffers, or the files
+                                // directly) rather than silently picking one -- see UI/BufferView.h's
+                                // StartMultibufferApply.
+                                MultibufferApply,
                                 // mouse-ergonomics follow-up: vcs-revert-hunk wants a y/n
                                 // confirmation before discarding a hunk's uncommitted change
                                 // from the working tree -- same shape as ConfirmOverwriteSave,

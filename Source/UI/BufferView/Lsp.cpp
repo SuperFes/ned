@@ -2354,27 +2354,44 @@ void BufferView::RequestProjectFindReferences() {
                     return;
                 }
 
-                const std::filesystem::path                     root = editor::ProjectRoot();
+                const std::filesystem::path root = editor::ProjectRoot();
+                // Multibuffer-gaps follow-up: every excerpt past the cap
+                // costs a real file read here (ReadFileLine per resolved
+                // location), so the cap is applied *before* the loop rather
+                // than left to BuildMultibuffer to discard afterwards --
+                // BuildMultibuffer still hears the true total and writes the
+                // "N more not shown" note itself, so the two can't disagree
+                // about what was dropped. See Editor/MultibufferLimits.h.
+                const std::size_t maxExcerpts = editor::MultibufferMaxExcerpts();
+                const std::size_t keptCount   = (maxExcerpts == 0) ? locations.size() : std::min(locations.size(), maxExcerpts);
+
                 std::vector<editor::multibuffer::ExcerptSource> excerpts;
-                excerpts.reserve(locations.size());
-                for (const editor::lsp::Manager::ResolvedLocation& location : locations) {
+                excerpts.reserve(keptCount);
+                // Live buffer content first, one read per *file* otherwise -- see its own doc comment.
+                FileLineReader lineReader(bufferList_);
+                for (std::size_t i = 0; i < keptCount; ++i) {
+                    const editor::lsp::Manager::ResolvedLocation& location   = locations[i];
                     const std::size_t           lineNumber = location.position.line + 1; // LSP is 0-indexed, excerpts/SearchMatch are 1-indexed
                     std::error_code             ec;
                     const std::filesystem::path relative    = std::filesystem::relative(location.path, root, ec);
                     const std::string           displayPath = (!ec && !relative.empty()) ? relative.string() : location.path.string();
+                    const std::string                             hugeMarker  = LooksHugeSource(bufferList_, location.path) ? "  [huge]" : "";
                     excerpts.push_back(editor::multibuffer::ExcerptSource{
                         location.path, lineNumber, lineNumber,
-                        "▸ " + displayPath + ":" + std::to_string(lineNumber), // same disclosure-triangle convention as the text-search path below
-                        ReadFileLine(location.path, lineNumber),
+                        // same disclosure-triangle convention as the text-search path below
+                        "▸ " + displayPath + ":" + std::to_string(lineNumber) + hugeMarker,
+                        lineReader.Line(location.path, lineNumber),
                         {},
                         /*editable=*/true});
                 }
 
-                text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*references: " + word + "*", excerpts);
+                text::Buffer& results =
+                    editor::multibuffer::BuildMultibuffer(bufferList_, "*references: " + word + "*", excerpts, locations.size());
                 editor::SetLastResultsBuffer("*references: " + word + "*");
                 activeBuffer_.Set(results);
                 statusMessage_ = std::to_string(locations.size()) + " reference" + (locations.size() == 1 ? "" : "s") + " to \"" +
-                                 word + "\" -- C-c v v to visit";
+                                 word + "\"" + (keptCount < locations.size() ? " (showing " + std::to_string(keptCount) + ")" : "") +
+                                 " -- C-c v v to visit";
             },
             serverKey);
         return;
@@ -2384,7 +2401,7 @@ void BufferView::RequestProjectFindReferences() {
     try {
         // "\bword\b" -- safe to embed the word unescaped: WordRegionAtPoint
         // only ever admits [A-Za-z0-9_], none of them RE2 metacharacters.
-        matches = editor::SearchDirectory(editor::ProjectRoot(), "\\b" + word + "\\b");
+        matches = editor::SearchDirectory(editor::ProjectRoot(), "\\b" + word + "\\b", bufferList_);
     }
     catch (const editor::SearchPatternError& e) {
         ReportError(std::string("Invalid regex: ") + e.what());
@@ -2396,27 +2413,40 @@ void BufferView::RequestProjectFindReferences() {
         return;
     }
 
-    const std::filesystem::path                     root = editor::ProjectRoot();
+    const std::filesystem::path root = editor::ProjectRoot();
+    // Same cap as the LSP path above. A SearchMatch already carries its own
+    // line text (SearchDirectory had every line in hand while matching), so
+    // there's no per-excerpt I/O to skip here -- but the composite string
+    // build and the excerpt index still scale with the count, and both paths
+    // reporting the same way matters more than saving the loop.
+    const std::size_t maxExcerpts = editor::MultibufferMaxExcerpts();
+    const std::size_t keptCount   = (maxExcerpts == 0) ? matches.size() : std::min(matches.size(), maxExcerpts);
+
     std::vector<editor::multibuffer::ExcerptSource> excerpts;
-    excerpts.reserve(matches.size());
-    for (const editor::SearchMatch& match : matches) {
+    excerpts.reserve(keptCount);
+    for (std::size_t i = 0; i < keptCount; ++i) {
+        const editor::SearchMatch&  match = matches[i];
         std::error_code             ec;
         const std::filesystem::path relative    = std::filesystem::relative(match.file, root, ec);
         const std::string           displayPath = (!ec && !relative.empty()) ? relative.string() : match.file.string();
 
+        const std::string hugeMarker = LooksHugeSource(bufferList_, match.file) ? "  [huge]" : "";
         excerpts.push_back(editor::multibuffer::ExcerptSource{
             match.file, match.lineNumber, match.lineNumber,
-            "▸ " + displayPath + ":" + std::to_string(match.lineNumber), // U+25B8, same disclosure triangle vcs-full-diff-buffer's headers use
+            // U+25B8, same disclosure triangle vcs-full-diff-buffer's headers use
+            "▸ " + displayPath + ":" + std::to_string(match.lineNumber) + hugeMarker,
             match.lineText,
             {},
             /*editable=*/true});
     }
 
-    text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*references: " + word + "*", excerpts);
+    text::Buffer& results =
+        editor::multibuffer::BuildMultibuffer(bufferList_, "*references: " + word + "*", excerpts, matches.size());
     editor::SetLastResultsBuffer("*references: " + word + "*");
     activeBuffer_.Set(results);
     statusMessage_ = std::to_string(matches.size()) + " reference" + (matches.size() == 1 ? "" : "s") + " to \"" + word +
-                     "\" -- C-c v v to visit";
+                     "\"" + (keptCount < matches.size() ? " (showing " + std::to_string(keptCount) + ")" : "") +
+                     " -- C-c v v to visit";
 }
 
 void BufferView::RequestProjectFindReferencesForTesting() {

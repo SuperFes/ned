@@ -990,6 +990,10 @@ class BufferView : public Widget {
                            // the buffer -- y/n before writing them to disk, same
                            // shape as ConfirmOverwriteSave.
                            ConfirmSaveWithConflicts,
+                           // multibuffer-review follow-up: a three-way choice, not a
+                           // y/n, so it gets its own handler rather than reusing
+                           // ConfirmPrompt like the two above.
+                           MultibufferApplyTarget,
                            // mouse-ergonomics follow-up: vcs-revert-hunk found a hunk to
                            // revert -- y/n before discarding uncommitted work, same shape
                            // as ConfirmOverwriteSave/ConfirmSaveWithConflicts above.
@@ -1300,6 +1304,18 @@ class BufferView : public Widget {
     // ordinary dispatch) for every other chord and whenever there's nothing
     // to resolve; consumes and returns true only for a real quick-key hit.
     bool HandleConflictQuickKey(const editor::KeyChord& chord);
+    // multibuffer-review follow-up: the same content-scoped minor-mode shape
+    // HandleConflictQuickKey above establishes, for a buffer that currently
+    // carries editable excerpts (a *project replace* review, an editable
+    // *references*/*diagnostics* multibuffer) -- M-n/M-p step excerpts,
+    // M-r/M-R revert one excerpt or every excerpt of its file, M-c commits
+    // just that file (C-c C-c still commits everything). Scoped to
+    // ExcerptRanges() being non-empty rather than a mode flag, so it stops
+    // shadowing the global M-n/M-c (select-next-occurrence, capitalize-word)
+    // the instant the active buffer isn't a review. Returns false for every
+    // other chord.
+    bool HandleMultibufferQuickKey(const editor::KeyChord& chord);
+    bool applyTargetFileOnly_ = false; // see HandleMultibufferApplyTargetKey
     // Vim-mode follow-up: called instead of DispatchChordNormally from the tail of
     // Normal-mode key handling whenever editor::vim::ModeEnabled() is true.
     // vimEngine_'s own Mode::Insert is the one case that still falls through to
@@ -1420,6 +1436,12 @@ class BufferView : public Widget {
     void               HandleConfirmCloseBufferKey(const editor::KeyChord& chord);       // see RequestCloseBuffer/pendingClose_
     void               HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord);     // external-modification-safety: y -> save-buffer-force
     void               HandleConfirmSaveWithConflictsKey(const editor::KeyChord& chord); // external-modification-round-2: y -> save-buffer-force
+    // multibuffer-review follow-up: b -> open buffers, d -> the files
+    // themselves, anything else -> cancel. applyTargetFileOnly_ carries
+    // which scope asked (C-c C-c for the whole review, M-c for just the
+    // file under point), so one prompt serves both.
+    void               HandleMultibufferApplyTargetKey(const editor::KeyChord& chord);
+    void               StartMultibufferApply(bool fileOnly);
     void               HandleConfirmRevertHunkKey(const editor::KeyChord& chord);        // mouse-ergonomics follow-up: y -> RevertHunkAtPoint
     void               HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);        // see pendingBinaryOpenPath_
     void               HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord);  // see pendingTrustInitPath_
@@ -2283,6 +2305,60 @@ class BufferView : public Widget {
     // active.
     void VisitResultUnderPoint();
 
+    // Multibuffer-gaps follow-up: VisitResultUnderPoint's multibuffer branch,
+    // split out because it now has a byte-exact path as well as the original
+    // line-granularity one. An excerpt that carries a matching editable
+    // text::Buffer::ExcerptRange (find-references/diagnostics -- the ones
+    // whose body text *is* verbatim source bytes, which is exactly what
+    // "editable" already means here) maps point's own offset inside the body
+    // straight through to a source byte offset, so a jump preserves the
+    // column, not just the line. Falls back to the excerpt's start line
+    // whenever that mapping can't be trusted: no covering editable range at
+    // all (a synthesized body -- the agenda/clock report, or a VCS diff's
+    // +/- prefixed lines), the body edited since the multibuffer was built
+    // (uncommitted wgrep-style edits), or the source's own bytes no longer
+    // matching the snapshot the range was resolved against.
+    void JumpToExcerptSource(const editor::multibuffer::ExcerptSpan& span);
+
+    // project-replace-review follow-up: project-wide replace's own view.
+    // Replaces the old flat, read-only "*project replace*" preview plus its
+    // one-shot y/n confirmation with a real editable multibuffer: one excerpt
+    // per match, bodies pre-rewritten with the replacement (as a single undo
+    // step, so the whole rewrite backs out with one C-_), reviewed and edited
+    // in place, then applied with the multibuffer-commit-changes the wgrep
+    // flow already binds to C-c C-c -- which writes into the *live* source
+    // buffers (opening any that aren't already open) as one
+    // ProjectUndoManager transaction, and never touches disk. Nothing is
+    // written behind the user's back and nothing is unrecoverable: abandoning
+    // the review is killing the buffer.
+    //
+    // Excerpt bodies are the matches' own text, which SearchDirectory read
+    // from the live buffer wherever one was open -- so the review shows, and
+    // commits against, exactly what the user is looking at.
+    //
+    // Throws editor::RegexPatternError if the replacement can't be applied
+    // (see RegexPattern.h's match-limit safety net); the caller reports it.
+    void BuildProjectReplaceReview(const std::vector<editor::SearchMatch>& matches, const std::string& pattern,
+                                   const std::string& replacement);
+
+    // Multibuffer-gaps follow-up: JumpToPathLine's byte-offset sibling --
+    // same open/report-a-miss/scroll contract, positioning point at an exact
+    // byte (snapped to a grapheme boundary, clamped to the buffer's length)
+    // instead of a line start.
+    void JumpToPathByte(const std::filesystem::path& path, std::size_t byteOffset);
+
+    // Multibuffer-gaps follow-up: what a results-buffer path actually
+    // resolves to, or nullopt if nothing does. Tries the path as written
+    // (an already-open buffer first, so an unsaved new-file buffer still
+    // resolves, then the filesystem), then -- for a relative path, which
+    // several producers write -- the same path under ProjectRoot(), since a
+    // results buffer's paths are relative to the project, not to whatever
+    // cwd ned was launched from. Nullopt is what lets JumpToPathLine report
+    // a miss rather than silently creating an empty scratch buffer named
+    // after a path that doesn't exist (BufferList::OpenOrCreateFile creates
+    // on miss by design -- that's what find-file on a new path needs).
+    [[nodiscard]] std::optional<std::filesystem::path> ResolveResultPath(const std::filesystem::path& path) const;
+
     // ACP context auto-attach follow-up: VisitResultUnderPoint's own final
     // regex-match step (the "path:line:" convention every flat results
     // buffer writes -- project-search/-replace/agenda, vcs-blame, and
@@ -2440,8 +2516,12 @@ class BufferView : public Widget {
     // for this buffer (StatusForLanguage == Running, the same "is one
     // currently usable" check RequestCompletionAtPoint's dabbrev-fallback
     // uses), sends a real, async textDocument/references and builds one
-    // excerpt per ResolvedLocation (reading the target line straight off
-    // disk -- ReadFileLine -- since a reference's file need not be open).
+    // excerpt per ResolvedLocation (reading the target line through
+    // FileLineReader: an open buffer's own live content when there is one,
+    // so an excerpt shows the unsaved edits the user is actually looking at
+    // and agrees with the byte range BuildMultibuffer resolves against that
+    // same live buffer; a cached disk read otherwise, since most references
+    // live in files nobody has opened).
     // Otherwise (nothing configured, still spawning, crashed) falls back to
     // the original synchronous path: a whole-word RE2 pattern
     // ("\\bword\\b" -- safe to embed unescaped, the word-scan only ever

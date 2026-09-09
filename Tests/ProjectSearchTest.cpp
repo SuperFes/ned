@@ -8,6 +8,8 @@
 #include "Editor/Project/Search.h"
 #include "Editor/SearchSettings.h"
 #include "EnvOverride.h"
+#include "Text/Buffer.h"
+#include "Text/BufferList.h"
 
 using ned::editor::SearchDirectory;
 using ned::editor::SearchMatch;
@@ -291,6 +293,133 @@ TEST_CASE("SearchDirectory finds every match across more files than the worker-t
         REQUIRE(matches[i].file == matchesAgain[i].file);
         REQUIRE(matches[i].lineNumber == matchesAgain[i].lineNumber);
     }
+
+    std::filesystem::remove_all(dir);
+}
+
+// live-buffer-search follow-up: an open, modified buffer is the truth the
+// user is working against -- searching its file instead makes the editor lie
+// about its own state.
+
+TEST_CASE("SearchDirectory searches an open modified buffer's content instead of its file", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_live";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "on disk only\n";
+    }
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    buffer = bufferList.OpenOrCreateFile(dir / "a.txt");
+    buffer.SetPoint(buffer.Content().ByteLength());
+    buffer.InsertAtPoint("typed but unsaved\n");
+
+    // The unsaved line is found...
+    const std::vector<SearchMatch> live = SearchDirectory(dir, "unsaved", bufferList);
+    REQUIRE(live.size() == 1);
+    REQUIRE(live.front().lineNumber == 2);
+    REQUIRE(live.front().lineText == "typed but unsaved");
+
+    // ...and the file is searched exactly once, not once per source.
+    const std::vector<SearchMatch> both = SearchDirectory(dir, "disk|unsaved", bufferList);
+    REQUIRE(both.size() == 2);
+
+    // The plain overload still reads disk, unchanged.
+    REQUIRE(SearchDirectory(dir, "unsaved").empty());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SearchDirectory sees a modified buffer that has no file on disk yet", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_live_newfile";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "existing.txt") << "needle on disk\n";
+    }
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    fresh = bufferList.OpenOrCreateFile(dir / "never-saved.txt"); // creates, no disk file
+    fresh.InsertAtPoint("needle in a never-saved buffer\n");
+
+    const std::vector<SearchMatch> matches = SearchDirectory(dir, "needle", bufferList);
+
+    REQUIRE(matches.size() == 2);
+    // The walk's own files first, then anything only a buffer knows about --
+    // deterministic regardless of buffer-list order.
+    REQUIRE(matches.front().file.filename() == "existing.txt");
+    REQUIRE(matches.back().file.filename() == "never-saved.txt");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("An unmodified open buffer is left to the disk read", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_live_unmodified";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "needle\n";
+    }
+
+    ned::text::BufferList bufferList;
+    bufferList.OpenOrCreateFile(dir / "a.txt"); // opened, never edited
+
+    const std::vector<SearchMatch> matches = SearchDirectory(dir, "needle", bufferList);
+    REQUIRE(matches.size() == 1); // exactly once -- not once as disk and again as live
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A modified buffer under an ignored path stays ignored", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_live_ignored";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "build");
+    const HermeticGitEnv gitEnv(dir);
+    {
+        std::ofstream(dir / ".gitignore") << "build/\n";
+    }
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    ignored = bufferList.OpenOrCreateFile(dir / "build" / "generated.txt");
+    ignored.InsertAtPoint("needle in a generated file\n");
+
+    const std::vector<SearchMatch> matches = SearchDirectory(dir, "needle", bufferList);
+    REQUIRE(matches.empty());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A huge modified buffer is searched through its own storage, not skipped", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_live_huge";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "big.txt") << "on disk only\n";
+    }
+
+    // Pin the huge threshold low enough that this ordinary file opens as a
+    // piece-table-backed (IsHuge) buffer -- process-wide state, restored below.
+    struct HugeThresholdGuard {
+        std::uintmax_t saved = ned::text::HugeFileThreshold();
+        ~HugeThresholdGuard() {
+            ned::text::SetHugeFileThreshold(saved);
+        }
+    } thresholdGuard;
+    ned::text::SetHugeFileThreshold(1);
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    buffer = bufferList.OpenOrCreateFile(dir / "big.txt");
+    REQUIRE(buffer.Content().IsHuge());
+    buffer.SetPoint(buffer.Content().ByteLength());
+    buffer.InsertAtPoint("typed but unsaved\n");
+
+    REQUIRE(buffer.Modified());
+    REQUIRE(buffer.Content().LineCount() >= 2);
+    REQUIRE(buffer.Path().has_value());
+    const std::vector<SearchMatch> matches = SearchDirectory(dir, "unsaved", bufferList);
+    REQUIRE(matches.size() == 1);
+    REQUIRE(matches.front().lineNumber == 2);
+    REQUIRE(matches.front().lineText == "typed but unsaved");
 
     std::filesystem::remove_all(dir);
 }
