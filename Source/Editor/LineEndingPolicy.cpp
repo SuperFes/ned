@@ -6,15 +6,15 @@ namespace ned::editor {
 
 namespace {
 
-std::mutex& LineEndingPolicyMutex() {
-    static std::mutex mutex;
-    return mutex;
-}
+    std::mutex& LineEndingPolicyMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
 
-LineEndingPolicy& LineEndingPolicyStorage() {
-    static LineEndingPolicy policy;
-    return policy;
-}
+    LineEndingPolicy& LineEndingPolicyStorage() {
+        static LineEndingPolicy policy;
+        return policy;
+    }
 
 } // namespace
 

@@ -467,7 +467,7 @@ class DapManager {
         std::string errorMessage;
     };
     void SetVariable(int variablesReference, const std::string& name, const std::string& value,
-                      std::function<void(SetVariableResult)> callback);
+                     std::function<void(SetVariableResult)> callback);
 
     // Where the debuggee stopped. path/line are set when the adapter's own
     // top stack frame had a real source location (fetched via a stackTrace

@@ -146,7 +146,7 @@ class ProjectSidebar : public Widget {
     // until the next drag start overwrites it; a documented, harmless v1
     // edge case, since nothing else ever reads it.
     [[nodiscard]] std::optional<std::filesystem::path> DraggingFilePath() const;
-    void                                                EndFileDrag();
+    void                                               EndFileDrag();
 
     // Expands every ancestor directory (project-root-detection follow-up)
     // between the current ProjectRoot() and targetPath's own containing
@@ -223,13 +223,13 @@ class ProjectSidebar : public Widget {
     void SetOnContextMenuRequest(std::function<void(const std::filesystem::path&, bool isDirectory, Point anchor)> handler);
 
   private:
-    std::function<ActiveBuffer&()>                    activeBufferProvider_;
-    text::BufferList&                                 bufferList_;
-    std::string&                                      statusMessage_;
-    const Theme&                                      theme_;
-    std::function<void(text::Buffer&)>                onBufferClosed_;
-    std::function<void(const std::filesystem::path&)> onBinaryFileOpenRequest_; // see SetOnBinaryFileOpenRequest()
-    std::function<void(const std::filesystem::path&, bool, Point)> onContextMenuRequest_; // see SetOnContextMenuRequest
+    std::function<ActiveBuffer&()>                                 activeBufferProvider_;
+    text::BufferList&                                              bufferList_;
+    std::string&                                                   statusMessage_;
+    const Theme&                                                   theme_;
+    std::function<void(text::Buffer&)>                             onBufferClosed_;
+    std::function<void(const std::filesystem::path&)>              onBinaryFileOpenRequest_; // see SetOnBinaryFileOpenRequest()
+    std::function<void(const std::filesystem::path&, bool, Point)> onContextMenuRequest_;    // see SetOnContextMenuRequest
 
     int scrollOffset_ = 0; // first visible row (post-sticky-headers), in *visible* (post-collapse) tree-entry units
 
@@ -322,7 +322,7 @@ class ProjectSidebar : public Widget {
     // accepted trade-off here, not a correctness requirement.
     std::unordered_map<std::filesystem::path, VcsRowStatus> vcsStatus_;
     editor::vcs::VcsRunner*                                 vcsRunner_ = nullptr;
-    void RefreshVcsStatus(const std::filesystem::path& root);
+    void                                                    RefreshVcsStatus(const std::filesystem::path& root);
 };
 
 } // namespace ned::ui

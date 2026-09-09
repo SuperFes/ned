@@ -12,7 +12,9 @@ namespace {
 // test, guaranteed via RAII. Mirrors TabWidthTest.cpp's own TabWidthGuard
 // exactly.
 struct FinalNewlineGuard {
-    ~FinalNewlineGuard() { SetEnsureFinalNewline(true); }
+    ~FinalNewlineGuard() {
+        SetEnsureFinalNewline(true);
+    }
 };
 
 } // namespace

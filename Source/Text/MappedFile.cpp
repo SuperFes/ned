@@ -117,8 +117,8 @@ void MappedFile::ReleasePages(std::size_t offset, std::size_t length) const {
     // here (Linux tolerates an unaligned one via internal rounding, macOS
     // does not) -- round outward rather than relying on that, so a caller
     // never has to think about page size itself.
-    const std::size_t pageSize = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
-    const std::size_t end      = offset + length;
+    const std::size_t pageSize     = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+    const std::size_t end          = offset + length;
     const std::size_t alignedStart = offset - (offset % pageSize);
     const std::size_t alignedEnd   = std::min(size_, end + (pageSize - (end % pageSize)) % pageSize);
 

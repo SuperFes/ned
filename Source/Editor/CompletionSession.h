@@ -79,9 +79,9 @@ class CompletionSession {
   public:
     // What a keystroke means for a live session.
     enum class Outcome {
-        Keep,       // narrowed locally; the popup stays up, no request needed
-        Rerequest,  // the server has to answer again (incomplete list, or a new trigger context)
-        Dismiss,    // nothing matches any more, or point left the region this session covers
+        Keep,      // narrowed locally; the popup stays up, no request needed
+        Rerequest, // the server has to answer again (incomplete list, or a new trigger context)
+        Dismiss,   // nothing matches any more, or point left the region this session covers
     };
 
     // items are taken in server order. isIncomplete is the CompletionList's
@@ -101,9 +101,15 @@ class CompletionSession {
     // The current, ranked candidate set -- empty only if the caller built a
     // session from an empty item list (Refilter never leaves a session empty
     // and Keep at the same time; it reports Dismiss instead).
-    [[nodiscard]] const std::vector<CompletionCandidate>& Candidates() const { return candidates_; }
-    [[nodiscard]] bool                                    Empty() const { return candidates_.empty(); }
-    [[nodiscard]] std::size_t                             SelectedIndex() const { return selectedIndex_; }
+    [[nodiscard]] const std::vector<CompletionCandidate>& Candidates() const {
+        return candidates_;
+    }
+    [[nodiscard]] bool Empty() const {
+        return candidates_.empty();
+    }
+    [[nodiscard]] std::size_t SelectedIndex() const {
+        return selectedIndex_;
+    }
 
     // Out-of-range indices are ignored rather than clamped -- a click racing
     // a just-narrowed list is the real case, and silently selecting a

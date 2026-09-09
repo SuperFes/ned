@@ -16,8 +16,8 @@ ned::ui::Canvas CanvasFor(ned::ui::Screen& screen) {
 } // namespace
 
 TEST_CASE("DrawBorder paints rounded corners and line edges", "[Border]") {
-    ned::ui::Screen screen(6, 4);
-    ned::ui::Canvas canvas = CanvasFor(screen);
+    ned::ui::Screen      screen(6, 4);
+    ned::ui::Canvas      canvas = CanvasFor(screen);
     const ned::ui::Brush brush{.foreground = ned::ui::Color::BrightBlack};
 
     ned::ui::DrawBorder(canvas, brush);
@@ -58,8 +58,8 @@ TEST_CASE("DrawBorder on a single row or column degrades to a plain line", "[Bor
 }
 
 TEST_CASE("DrawBorderTitle embeds a padded title into the top edge", "[Border]") {
-    ned::ui::Screen screen(12, 3);
-    ned::ui::Canvas canvas = CanvasFor(screen);
+    ned::ui::Screen      screen(12, 3);
+    ned::ui::Canvas      canvas = CanvasFor(screen);
     const ned::ui::Brush border{.foreground = ned::ui::Color::BrightBlack};
     const ned::ui::Brush title{.foreground = ned::ui::Color::BrightMagenta, .bold = true};
 
@@ -107,8 +107,8 @@ TEST_CASE("DrawBorderTitle renders a multi-byte codepoint as one intact cell and
     // space is what gets dropped -- proving truncation counts columns, not
     // bytes (the old code would have cut a byte into "Caf" plus a stray
     // 0xC3, not stopped cleanly after a whole "é").
-    ned::ui::Screen screen(9, 3);
-    ned::ui::Canvas canvas = CanvasFor(screen);
+    ned::ui::Screen      screen(9, 3);
+    ned::ui::Canvas      canvas = CanvasFor(screen);
     const ned::ui::Brush border{};
     const ned::ui::Brush title{};
 
@@ -120,13 +120,13 @@ TEST_CASE("DrawBorderTitle renders a multi-byte codepoint as one intact cell and
     REQUIRE(screen.PixelAt(4, 0).character == "a");
     REQUIRE(screen.PixelAt(5, 0).character == "f");
     REQUIRE(screen.PixelAt(6, 0).character == "é"); // one whole 2-byte codepoint in one Cell
-    REQUIRE(screen.PixelAt(7, 0).character == "─");  // border untouched -- stopped at 5 columns, not 5 bytes
+    REQUIRE(screen.PixelAt(7, 0).character == "─"); // border untouched -- stopped at 5 columns, not 5 bytes
     REQUIRE(screen.PixelAt(8, 0).character == "╮");
 }
 
 TEST_CASE("DrawBorderTitle on a too-narrow canvas is a no-op", "[Border]") {
-    ned::ui::Screen screen(4, 2);
-    ned::ui::Canvas canvas = CanvasFor(screen);
+    ned::ui::Screen      screen(4, 2);
+    ned::ui::Canvas      canvas = CanvasFor(screen);
     const ned::ui::Brush border{};
 
     ned::ui::DrawBorder(canvas, border);

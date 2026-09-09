@@ -668,9 +668,9 @@ struct ClockEntry {
 // each byte field is for. entries is in file order.
 struct LogbookDrawer {
     std::vector<ClockEntry> entries;
-    std::size_t              startByte;
-    std::size_t              endLineStartByte; // where a new CLOCK: line is inserted
-    std::size_t              endByte;
+    std::size_t             startByte;
+    std::size_t             endLineStartByte; // where a new CLOCK: line is inserted
+    std::size_t             endByte;
 };
 
 // headline's own LOGBOOK drawer, if it has one -- the drawer must be the
@@ -726,8 +726,8 @@ struct RunningClock {
     Headline     headline;
     OrgTimestamp start;
 };
-[[nodiscard]] std::optional<RunningClock> CurrentlyRunningClock(std::string_view bufferText,
-                                                                 const std::vector<std::string>& todoKeywords = TodoKeywords());
+[[nodiscard]] std::optional<RunningClock> CurrentlyRunningClock(std::string_view                bufferText,
+                                                                const std::vector<std::string>& todoKeywords = TodoKeywords());
 
 // now - start, the same minute-resolution sys_days+hours+minutes
 // arithmetic ClockOut's own end-of-clock duration uses -- the live
@@ -735,8 +735,8 @@ struct RunningClock {
 // fresh on every call rather than ticked/cached anywhere (a UI caller
 // re-reads this once per repaint, the same direct now()-read ModeLine's
 // own spinner frame already is).
-[[nodiscard]] std::chrono::minutes ElapsedMinutes(const OrgTimestamp& start,
-                                                   std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
+[[nodiscard]] std::chrono::minutes ElapsedMinutes(const OrgTimestamp&                   start,
+                                                  std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
 
 // TotalClockedMinutes(*tree.headline) plus the same sum recursively over
 // every node in tree.children -- a parent headline's total includes all

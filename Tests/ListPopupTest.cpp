@@ -8,7 +8,7 @@
 #include "UI/Theme.h"
 
 TEST_CASE("ListPopup fills its entire interior with the theme background, leaving no stale cells", "[ListPopup]") {
-    ned::ui::Theme theme = ned::ui::DarkTheme();
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
     ned::ui::ListPopup popup(theme);
     popup.SetModel(ned::ui::ListPopupModel{.title = "C-x-", .rows = {{.left = "o", .main = "other-window", .accented = true}}});
 
@@ -39,7 +39,7 @@ TEST_CASE("ListPopup renders a multi-byte UTF-8 glyph as one cell, not split acr
     // multi-byte glyph like U+2191 (an up arrow, marking scrolled-off
     // candidates above the visible window) across several cells as garbage
     // -- confirmed live.
-    ned::ui::Theme theme = ned::ui::DarkTheme();
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
     ned::ui::ListPopup popup(theme);
     popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "↑ 3 more above"}}});
 
@@ -57,7 +57,7 @@ TEST_CASE("ListPopup renders a multi-byte UTF-8 glyph as one cell, not split acr
 }
 
 TEST_CASE("ListPopup degrades sanely for a zero-area canvas", "[ListPopup]") {
-    ned::ui::Theme theme = ned::ui::DarkTheme();
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
     ned::ui::ListPopup popup(theme);
     popup.SetModel(ned::ui::ListPopupModel{.title = "C-x-", .rows = {}});
 
@@ -67,7 +67,7 @@ TEST_CASE("ListPopup degrades sanely for a zero-area canvas", "[ListPopup]") {
 }
 
 TEST_CASE("ListPopup paints a selection bar across the selected row only", "[ListPopup]") {
-    ned::ui::Theme theme = ned::ui::DarkTheme();
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
     ned::ui::ListPopup popup(theme);
     popup.SetModel(ned::ui::ListPopupModel{
         .title         = "Buffers",
@@ -87,7 +87,7 @@ TEST_CASE("ListPopup paints a selection bar across the selected row only", "[Lis
 }
 
 TEST_CASE("ListPopup non-focusable mode never handles keys, even if focused", "[ListPopup]") {
-    ned::ui::Theme theme = ned::ui::DarkTheme();
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
     ned::ui::ListPopup popup(theme);
     popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "a"}, {.main = "b"}}});
 
@@ -99,7 +99,7 @@ TEST_CASE("ListPopup non-focusable mode never handles keys, even if focused", "[
 }
 
 TEST_CASE("ListPopup focus mode navigates, digit-selects, activates, and cancels", "[ListPopup]") {
-    ned::ui::Theme theme = ned::ui::DarkTheme();
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
     ned::ui::ListPopup popup(theme);
     popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "one"}, {.main = "two"}, {.main = "three"}}, .selectedIndex = 0});
     popup.SetFocusable(true);

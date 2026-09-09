@@ -84,10 +84,10 @@ std::string DapManager::NormalizePathKey(const std::filesystem::path& path) {
 }
 
 bool DapManager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t line) {
-    const std::string          key         = NormalizePathKey(path);
-    std::vector<Breakpoint>&   breakpoints = breakpoints_[key];
-    const auto it = std::find_if(breakpoints.begin(), breakpoints.end(), [line](const Breakpoint& bp) { return bp.line == line; });
-    bool        nowSet;
+    const std::string        key         = NormalizePathKey(path);
+    std::vector<Breakpoint>& breakpoints = breakpoints_[key];
+    const auto               it          = std::find_if(breakpoints.begin(), breakpoints.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    bool                     nowSet;
     if (it != breakpoints.end()) {
         breakpoints.erase(it);
         nowSet = false;
@@ -117,7 +117,7 @@ bool DapManager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t
 std::string DapManager::SetBreakpointCondition(const std::filesystem::path& path, std::size_t line, std::string condition) {
     const std::string        key   = NormalizePathKey(path);
     std::vector<Breakpoint>& lines = breakpoints_[key];
-    auto it = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (it == lines.end()) {
         lines.push_back(Breakpoint{.line = line});
         std::sort(lines.begin(), lines.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
@@ -128,7 +128,7 @@ std::string DapManager::SetBreakpointCondition(const std::filesystem::path& path
         SendBreakpointsForFile(key);
     }
     std::string status = (condition.empty() ? "Condition cleared at " : "Condition set at ") + path.filename().string() + ":" +
-                          std::to_string(line);
+                         std::to_string(line);
     if (!condition.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.conditionalBreakpoints) {
         status += " (adapter did not advertise conditional-breakpoint support -- may be ignored)";
     }
@@ -138,7 +138,7 @@ std::string DapManager::SetBreakpointCondition(const std::filesystem::path& path
 std::string DapManager::SetBreakpointLogMessage(const std::filesystem::path& path, std::size_t line, std::string logMessage) {
     const std::string        key   = NormalizePathKey(path);
     std::vector<Breakpoint>& lines = breakpoints_[key];
-    auto it = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (it == lines.end()) {
         lines.push_back(Breakpoint{.line = line});
         std::sort(lines.begin(), lines.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
@@ -149,7 +149,7 @@ std::string DapManager::SetBreakpointLogMessage(const std::filesystem::path& pat
         SendBreakpointsForFile(key);
     }
     std::string status = (logMessage.empty() ? "Log message cleared at " : "Log message set at ") + path.filename().string() + ":" +
-                          std::to_string(line);
+                         std::to_string(line);
     if (!logMessage.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.logPoints) {
         status += " (adapter did not advertise logpoint support -- may be ignored)";
     }
@@ -215,8 +215,8 @@ void DapManager::SetExceptionBreakpointFilters(std::set<std::string> ids) {
 }
 
 std::vector<std::size_t> DapManager::BreakpointsForFile(const std::filesystem::path& path) const {
-    const auto                it = breakpoints_.find(NormalizePathKey(path));
-    std::vector<std::size_t>  lines;
+    const auto               it = breakpoints_.find(NormalizePathKey(path));
+    std::vector<std::size_t> lines;
     if (it != breakpoints_.end()) {
         for (const Breakpoint& bp : it->second) {
             lines.push_back(bp.line);
@@ -555,8 +555,8 @@ void DapManager::HandleStoppedEvent(const Json& body) {
     // Run-to-cursor's temporary breakpoint (if any) is cleared on the very
     // next stop for any reason -- only one continue was ever issued for it.
     ClearPendingRunToCursor(/*pushToAdapter=*/true);
-    state_                   = SessionState::Stopped;
-    stoppedThreadId_         = body.value("threadId", 1);
+    state_           = SessionState::Stopped;
+    stoppedThreadId_ = body.value("threadId", 1);
     focusedThreadId_.reset(); // re-seeded from stoppedThreadId_ via CurrentThreadId() until SelectThread overrides it
     const std::string reason = body.value("reason", "stopped");
 
@@ -707,10 +707,10 @@ std::string DapManager::RunToCursor(const std::filesystem::path& path, std::size
     if (state_ != SessionState::Stopped) {
         return "Not stopped (nothing to run to cursor from).";
     }
-    const std::string key = NormalizePathKey(path);
-    const auto         it = breakpoints_.find(key);
-    const bool alreadySet = it != breakpoints_.end() &&
-                            std::any_of(it->second.begin(), it->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    const std::string key        = NormalizePathKey(path);
+    const auto        it         = breakpoints_.find(key);
+    const bool        alreadySet = it != breakpoints_.end() &&
+                                   std::any_of(it->second.begin(), it->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (!alreadySet) {
         ToggleBreakpoint(path, line); // pushes setBreakpoints immediately (state_ != Inactive)
         pendingRunToCursor_ = std::make_pair(key, line);
@@ -817,7 +817,7 @@ std::optional<std::pair<std::string, std::size_t>> DapManager::CurrentStopKeyAnd
 
 std::vector<std::size_t> DapManager::BreakpointLinesForKey(const std::string& key) const {
     std::vector<std::size_t> lines;
-    const auto                it = breakpoints_.find(key);
+    const auto               it = breakpoints_.find(key);
     if (it != breakpoints_.end()) {
         for (const Breakpoint& bp : it->second) {
             lines.push_back(bp.line);
@@ -1081,7 +1081,7 @@ void DapManager::SelectThread(int threadId, std::function<void(bool)> callback) 
 }
 
 void DapManager::SetVariable(int variablesReference, const std::string& name, const std::string& value,
-                              std::function<void(SetVariableResult)> callback) {
+                             std::function<void(SetVariableResult)> callback) {
     if (!client_ || state_ != SessionState::Stopped) {
         callback(SetVariableResult{.success = false, .errorMessage = "No debug session."});
         return;
@@ -1092,7 +1092,7 @@ void DapManager::SetVariable(int variablesReference, const std::string& name, co
                              result.success = success;
                              if (success) {
                                  result.value              = body.value("value", "");
-                                 result.type                = body.value("type", "");
+                                 result.type               = body.value("type", "");
                                  result.variablesReference = body.value("variablesReference", 0);
                              }
                              else {

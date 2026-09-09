@@ -75,7 +75,7 @@ TEST_CASE("An unrecognized backslash escape passes through unchanged", "[VimMagi
 
 TEST_CASE("A translated vim pattern actually compiles and matches via RegexPattern", "[VimMagic]") {
     const RegexPattern re(TranslateVimMagicPattern("\\(foo\\|bar\\)\\+"));
-    const auto          match = re.Search("xx foobar yy", 0);
+    const auto         match = re.Search("xx foobar yy", 0);
     REQUIRE(match.has_value());
     REQUIRE(match->start == 3);
     REQUIRE(match->end == 9);
@@ -83,7 +83,7 @@ TEST_CASE("A translated vim pattern actually compiles and matches via RegexPatte
 
 TEST_CASE("A translated interval pattern actually compiles and matches via RegexPattern", "[VimMagic]") {
     const RegexPattern re(TranslateVimMagicPattern("a\\{2,3}"));
-    const auto          match = re.Search("baaaab", 0);
+    const auto         match = re.Search("baaaab", 0);
     REQUIRE(match.has_value());
     REQUIRE(match->end - match->start == 3); // greedy -- takes all 3 available
 }

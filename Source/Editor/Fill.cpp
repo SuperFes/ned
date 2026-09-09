@@ -81,7 +81,7 @@ std::vector<std::string> WrapWords(const std::vector<std::string>& words, std::s
 }
 
 std::optional<std::pair<std::size_t, std::size_t>> FindParagraphRange(const text::ITextStorage& content,
-                                                                        std::size_t                point) {
+                                                                      std::size_t               point) {
     const std::size_t lineCount = content.LineCount();
     if (lineCount == 0) {
         return std::nullopt;
@@ -137,9 +137,9 @@ void FillParagraph(text::Buffer& buffer, std::size_t fillColumn, std::string_vie
     for (std::size_t line = firstLine; line <= lastLine; ++line) {
         const std::size_t lineStart = content.LineToByteOffset(line);
         const std::size_t lineEnd   = LineContentEnd(content, lineStart);
-        std::string        text     = content.Substring(lineStart, lineEnd - lineStart);
-        const std::size_t  wsEnd    = text.find_first_not_of(" \t");
-        const std::size_t  bodyStart = (wsEnd == std::string::npos) ? text.size() : wsEnd;
+        std::string       text      = content.Substring(lineStart, lineEnd - lineStart);
+        const std::size_t wsEnd     = text.find_first_not_of(" \t");
+        const std::size_t bodyStart = (wsEnd == std::string::npos) ? text.size() : wsEnd;
 
         if (line == firstLine) {
             indent = text.substr(0, bodyStart);

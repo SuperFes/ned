@@ -5,25 +5,25 @@
 namespace ned::text {
 
 namespace {
-constexpr std::size_t kChunkSize = 512;
+    constexpr std::size_t kChunkSize = 512;
 
-bool IsContinuationByte(char c) {
-    return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
-}
-
-std::size_t CountCodepoints(std::string_view text) {
-    std::size_t count = 0;
-    for (unsigned char c : text) {
-        if (!IsContinuationByte(static_cast<char>(c))) {
-            ++count;
-        }
+    bool IsContinuationByte(char c) {
+        return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
     }
-    return count;
-}
 
-std::size_t CountNewlines(std::string_view text) {
-    return static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n'));
-}
+    std::size_t CountCodepoints(std::string_view text) {
+        std::size_t count = 0;
+        for (unsigned char c : text) {
+            if (!IsContinuationByte(static_cast<char>(c))) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    std::size_t CountNewlines(std::string_view text) {
+        return static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n'));
+    }
 } // namespace
 
 struct Rope::Node {
@@ -41,11 +41,14 @@ struct Rope::Node {
     }
 };
 
-Rope::Rope() : root_(nullptr) {}
+Rope::Rope() : root_(nullptr) {
+}
 
-Rope::Rope(std::string_view text) : root_(BuildBalanced(text)) {}
+Rope::Rope(std::string_view text) : root_(BuildBalanced(text)) {
+}
 
-Rope::Rope(std::shared_ptr<const Node> root) : root_(std::move(root)) {}
+Rope::Rope(std::shared_ptr<const Node> root) : root_(std::move(root)) {
+}
 
 bool Rope::Empty() const {
     return root_ == nullptr;
@@ -169,7 +172,8 @@ std::shared_ptr<const Rope::Node> Rope::BuildBalanced(std::vector<std::shared_pt
         for (std::size_t i = 0; i < leaves.size(); i += 2) {
             if (i + 1 < leaves.size()) {
                 next.push_back(MakeInternal(leaves[i], leaves[i + 1]));
-            } else {
+            }
+            else {
                 next.push_back(leaves[i]);
             }
         }
@@ -238,7 +242,7 @@ Rope Rope::Inserted(std::size_t byteOffset, std::string_view text) const {
     byteOffset = std::min(byteOffset, ByteLength());
 
     auto [left, right] = Split(root_, byteOffset);
-    auto middle         = BuildBalanced(text);
+    auto middle        = BuildBalanced(text);
 
     return Rope(Concat(Concat(left, middle), right));
 }
@@ -281,8 +285,8 @@ std::string Rope::Substring(std::size_t byteOffset, std::size_t byteLength) cons
     byteOffset = std::min(byteOffset, ByteLength());
     byteLength = std::min(byteLength, ByteLength() - byteOffset);
 
-    auto [_, rest]        = Split(root_, byteOffset);
-    auto [middle, right]  = Split(rest, byteLength);
+    auto [_, rest]       = Split(root_, byteOffset);
+    auto [middle, right] = Split(rest, byteLength);
     (void)right;
 
     std::string out;
@@ -433,13 +437,16 @@ Rope::DecodedCodepoint Rope::CodepointAt(std::size_t byteOffset) const {
     if ((b0 & 0xE0) == 0xC0) {
         len = 2;
         cp  = b0 & 0x1F;
-    } else if ((b0 & 0xF0) == 0xE0) {
+    }
+    else if ((b0 & 0xF0) == 0xE0) {
         len = 3;
         cp  = b0 & 0x0F;
-    } else if ((b0 & 0xF8) == 0xF0) {
+    }
+    else if ((b0 & 0xF8) == 0xF0) {
         len = 4;
         cp  = b0 & 0x07;
-    } else {
+    }
+    else {
         return {0xFFFD, 1};
     }
 

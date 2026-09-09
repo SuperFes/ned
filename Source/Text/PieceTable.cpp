@@ -7,40 +7,40 @@
 namespace ned::text {
 
 namespace {
-// Added text (Inserted) mirrors Rope.cpp's own kChunkSize: these leaves
-// hold copied bytes the same way Rope's do, and inserted-text volume is
-// naturally small (proportional to what the user has actually typed/pasted
-// this session, not file size), so fine granularity here costs nothing
-// meaningful.
-constexpr std::size_t kAddedChunkSize = 512;
+    // Added text (Inserted) mirrors Rope.cpp's own kChunkSize: these leaves
+    // hold copied bytes the same way Rope's do, and inserted-text volume is
+    // naturally small (proportional to what the user has actually typed/pasted
+    // this session, not file size), so fine granularity here costs nothing
+    // meaningful.
+    constexpr std::size_t kAddedChunkSize = 512;
 
-// The original file's span, by contrast, can be many GB, and its leaves
-// hold no bytes of their own -- just a {start, length} descriptor -- so
-// node *count* is pure overhead with nothing to do with the file's actual
-// content residency. 512-byte chunks over a 3 GiB file cost roughly 1.3 GB
-// in Node objects alone (measured, not estimated) -- more than the file
-// itself is ever resident as mmap pages. 256 KiB keeps that under 3 MB
-// while still bounding a single split's rescan cost (see BuildBalancedSpan's
-// own comment) to something sub-millisecond.
-constexpr std::size_t kOriginalChunkSize = 256 * 1024;
+    // The original file's span, by contrast, can be many GB, and its leaves
+    // hold no bytes of their own -- just a {start, length} descriptor -- so
+    // node *count* is pure overhead with nothing to do with the file's actual
+    // content residency. 512-byte chunks over a 3 GiB file cost roughly 1.3 GB
+    // in Node objects alone (measured, not estimated) -- more than the file
+    // itself is ever resident as mmap pages. 256 KiB keeps that under 3 MB
+    // while still bounding a single split's rescan cost (see BuildBalancedSpan's
+    // own comment) to something sub-millisecond.
+    constexpr std::size_t kOriginalChunkSize = 256 * 1024;
 
-bool IsContinuationByte(char c) {
-    return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
-}
-
-std::size_t CountCodepoints(std::string_view text) {
-    std::size_t count = 0;
-    for (unsigned char c : text) {
-        if (!IsContinuationByte(static_cast<char>(c))) {
-            ++count;
-        }
+    bool IsContinuationByte(char c) {
+        return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
     }
-    return count;
-}
 
-std::size_t CountNewlines(std::string_view text) {
-    return static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n'));
-}
+    std::size_t CountCodepoints(std::string_view text) {
+        std::size_t count = 0;
+        for (unsigned char c : text) {
+            if (!IsContinuationByte(static_cast<char>(c))) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    std::size_t CountNewlines(std::string_view text) {
+        return static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n'));
+    }
 } // namespace
 
 struct PieceTable::Node {
@@ -60,9 +60,11 @@ struct PieceTable::Node {
     }
 };
 
-PieceTable::PieceTable() : root_(nullptr), backing_{} {}
+PieceTable::PieceTable() : root_(nullptr), backing_{} {
+}
 
-PieceTable::PieceTable(std::shared_ptr<const Node> root, Backing backing) : root_(std::move(root)), backing_(std::move(backing)) {}
+PieceTable::PieceTable(std::shared_ptr<const Node> root, Backing backing) : root_(std::move(root)), backing_(std::move(backing)) {
+}
 
 PieceTable PieceTable::FromFile(const std::filesystem::path& path) {
     auto    mappedFile = std::make_shared<MappedFile>(MappedFile::Open(path));
@@ -171,7 +173,8 @@ std::shared_ptr<const PieceTable::Node> PieceTable::BuildBalanced(std::vector<st
         for (std::size_t i = 0; i < leaves.size(); i += 2) {
             if (i + 1 < leaves.size()) {
                 next.push_back(MakeInternal(leaves[i], leaves[i + 1]));
-            } else {
+            }
+            else {
                 next.push_back(leaves[i]);
             }
         }
@@ -305,7 +308,7 @@ PieceTable PieceTable::Inserted(std::size_t byteOffset, std::string_view text) c
     newBacking.added->append(text);
 
     auto [left, right] = Split(root_, byteOffset, backing_);
-    auto middle         = BuildBalancedSpan(SpanSource::kAdded, insertStart, text.size(), kAddedChunkSize, newBacking);
+    auto middle        = BuildBalancedSpan(SpanSource::kAdded, insertStart, text.size(), kAddedChunkSize, newBacking);
 
     return PieceTable(Concat(Concat(left, middle), right), newBacking);
 }
@@ -437,7 +440,7 @@ std::size_t PieceTable::CountCodepointsBefore(const std::shared_ptr<const Node>&
     if (node->IsLeaf()) {
         const std::size_t      limit = std::min(offset, node->byteLength);
         const std::string_view text  = SpanView(*node, backing);
-        std::size_t             count = 0;
+        std::size_t            count = 0;
         for (std::size_t i = 0; i < limit; ++i) {
             if (!IsContinuationByte(text[i])) {
                 ++count;
@@ -463,7 +466,7 @@ std::size_t PieceTable::FindCodepointStart(const std::shared_ptr<const Node>& no
     }
     if (node->IsLeaf()) {
         const std::string_view text = SpanView(*node, backing);
-        std::size_t             seen = 0;
+        std::size_t            seen = 0;
         for (std::size_t i = 0; i < text.size(); ++i) {
             if (!IsContinuationByte(text[i])) {
                 if (seen == codepointOffset) {
@@ -521,13 +524,16 @@ PieceTable::DecodedCodepoint PieceTable::CodepointAt(std::size_t byteOffset) con
     if ((b0 & 0xE0) == 0xC0) {
         len = 2;
         cp  = b0 & 0x1F;
-    } else if ((b0 & 0xF0) == 0xE0) {
+    }
+    else if ((b0 & 0xF0) == 0xE0) {
         len = 3;
         cp  = b0 & 0x0F;
-    } else if ((b0 & 0xF8) == 0xF0) {
+    }
+    else if ((b0 & 0xF8) == 0xF0) {
         len = 4;
         cp  = b0 & 0x07;
-    } else {
+    }
+    else {
         return {0xFFFD, 1};
     }
 

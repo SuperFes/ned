@@ -137,7 +137,8 @@ class PieceTable {
   private:
     struct Node;
 
-    enum class SpanSource : std::uint8_t { kOriginal, kAdded };
+    enum class SpanSource : std::uint8_t { kOriginal,
+                                           kAdded };
 
     // Bundles the two pieces of storage a leaf's span may resolve against,
     // threaded explicitly through every static helper below rather than
@@ -174,16 +175,16 @@ class PieceTable {
     // for a multi-GB file that's real, avoidable resident memory having
     // nothing to do with the file's own content. See the two call sites
     // (FromFile, Inserted) for why they intentionally pass different sizes.
-    static std::shared_ptr<const Node> BuildBalancedSpan(SpanSource source, std::size_t start, std::size_t length, std::size_t chunkSize, const Backing& backing);
-    static std::shared_ptr<const Node> BuildBalanced(std::vector<std::shared_ptr<const Node>> leaves);
-    static std::shared_ptr<const Node> MakeInternal(std::shared_ptr<const Node> left, std::shared_ptr<const Node> right);
-    static std::shared_ptr<const Node> RotateLeft(const std::shared_ptr<const Node>& node);
-    static std::shared_ptr<const Node> RotateRight(const std::shared_ptr<const Node>& node);
-    static std::shared_ptr<const Node> Rebalance(std::shared_ptr<const Node> node);
-    static std::shared_ptr<const Node> Concat(std::shared_ptr<const Node> left, std::shared_ptr<const Node> right);
+    static std::shared_ptr<const Node>                                         BuildBalancedSpan(SpanSource source, std::size_t start, std::size_t length, std::size_t chunkSize, const Backing& backing);
+    static std::shared_ptr<const Node>                                         BuildBalanced(std::vector<std::shared_ptr<const Node>> leaves);
+    static std::shared_ptr<const Node>                                         MakeInternal(std::shared_ptr<const Node> left, std::shared_ptr<const Node> right);
+    static std::shared_ptr<const Node>                                         RotateLeft(const std::shared_ptr<const Node>& node);
+    static std::shared_ptr<const Node>                                         RotateRight(const std::shared_ptr<const Node>& node);
+    static std::shared_ptr<const Node>                                         Rebalance(std::shared_ptr<const Node> node);
+    static std::shared_ptr<const Node>                                         Concat(std::shared_ptr<const Node> left, std::shared_ptr<const Node> right);
     static std::pair<std::shared_ptr<const Node>, std::shared_ptr<const Node>> Split(const std::shared_ptr<const Node>& node, std::size_t byteOffset, const Backing& backing);
-    static void AppendToString(const std::shared_ptr<const Node>& node, std::string& out, const Backing& backing);
-    static void ForEachChunkImpl(const std::shared_ptr<const Node>& node, const Backing& backing, const std::function<void(std::string_view)>& sink);
+    static void                                                                AppendToString(const std::shared_ptr<const Node>& node, std::string& out, const Backing& backing);
+    static void                                                                ForEachChunkImpl(const std::shared_ptr<const Node>& node, const Backing& backing, const std::function<void(std::string_view)>& sink);
 
     static std::size_t  CountNewlinesBefore(const std::shared_ptr<const Node>& node, std::size_t byteOffset, const Backing& backing);
     static std::size_t  FindLineStart(const std::shared_ptr<const Node>& node, std::size_t line, const Backing& backing);

@@ -62,8 +62,8 @@ void BufferView::VisitResultUnderPoint() {
         const std::size_t         logLineStart = logContent.LineToByteOffset(logLine);
         const std::size_t         logLineEnd =
             (logLine + 1 < logContent.LineCount()) ? logContent.LineToByteOffset(logLine + 1) - 1 : logContent.ByteLength();
-        const std::string  logLineText = logContent.Substring(logLineStart, logLineEnd - logLineStart);
-        const std::size_t  hashEnd     = logLineText.find(' ');
+        const std::string logLineText = logContent.Substring(logLineStart, logLineEnd - logLineStart);
+        const std::size_t hashEnd     = logLineText.find(' ');
         if (hashEnd != std::string::npos && hashEnd > 0) {
             RequestVcsCommitDiffBuffer(logLineText.substr(0, hashEnd));
         }

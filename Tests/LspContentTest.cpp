@@ -117,14 +117,14 @@ TEST_CASE("ExtractCompletionItems skips an item with no label", "[Lsp]") {
 }
 
 TEST_CASE("ExtractCompletionItems parses a plain textEdit and mirrors its newText into insertText", "[Lsp]") {
-    const Json result = Json::array({{
+    const Json                        result = Json::array({{
         {"label", "foobar"},
         {"insertText", "ignored-when-textEdit-present"},
         {"textEdit",
          {{"range", {{"start", {{"line", 3}, {"character", 4}}}, {"end", {{"line", 3}, {"character", 7}}}}},
           {"newText", "foobar"}}},
     }});
-    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
     REQUIRE(items.size() == 1);
     REQUIRE(items[0].textEdit.has_value());
     REQUIRE(items[0].textEdit->start == ned::editor::lsp::LspPosition{.line = 3, .character = 4});
@@ -138,25 +138,25 @@ TEST_CASE("ExtractCompletionItems takes an InsertReplaceEdit's insert range, not
     // insert ends at the cursor; replace spans the whole token under it.
     // Taking insert is what keeps accepting a completion from deleting text
     // to the right of point -- see kUseInsertRangeForInsertReplace.
-    const Json result = Json::array({{
+    const Json                        result = Json::array({{
         {"label", "foobar"},
         {"textEdit",
          {{"insert", {{"start", {{"line", 1}, {"character", 2}}}, {"end", {{"line", 1}, {"character", 5}}}}},
           {"replace", {{"start", {{"line", 1}, {"character", 2}}}, {"end", {{"line", 1}, {"character", 9}}}}},
           {"newText", "foobar"}}},
     }});
-    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
     REQUIRE(items.size() == 1);
     REQUIRE(items[0].textEdit.has_value());
     REQUIRE(items[0].textEdit->end == ned::editor::lsp::LspPosition{.line = 1, .character = 5});
 }
 
 TEST_CASE("ExtractCompletionItems leaves textEdit unset for a malformed one", "[Lsp]") {
-    const Json result = Json::array({
+    const Json                        result = Json::array({
         {{"label", "no-range"}, {"textEdit", {{"newText", "x"}}}},
         {{"label", "not-an-object"}, {"textEdit", "garbage"}},
     });
-    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
     REQUIRE(items.size() == 2);
     REQUIRE_FALSE(items[0].textEdit.has_value());
     REQUIRE_FALSE(items[1].textEdit.has_value());
@@ -210,11 +210,11 @@ TEST_CASE("ExtractCompletionItems applies itemDefaults.insertTextFormat, an item
 }
 
 TEST_CASE("ExtractCompletionItems defaults sortText and filterText to label", "[Lsp]") {
-    const Json result = Json::array({
+    const Json                        result = Json::array({
         {{"label", "plain"}},
         {{"label", "foo (from bar)"}, {"sortText", "0001"}, {"filterText", "foo"}},
     });
-    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
     REQUIRE(items.size() == 2);
     REQUIRE(items[0].sortText == "plain");
     REQUIRE(items[0].filterText == "plain");
@@ -469,7 +469,7 @@ TEST_CASE("ExtractSingleCodeAction parses an item carrying both an edit and a co
     // The roadmap's own "Replace with X" case: a real CodeAction that
     // applies an edit AND separately asks the client to execute a command.
     const Json textEdit = {{"range", MakeRange(0, 0, 0, 3)}, {"newText", "the"}};
-    const Json item      = {
+    const Json item     = {
         {"title", "Replace with \"the\""},
         {"kind", "quickfix"},
         {"edit", {{"changes", {{"file:///a.c", Json::array({textEdit})}}}}},
@@ -591,7 +591,7 @@ TEST_CASE("ExtractRenameEdits returns no edits for a non-object result", "[Lsp]"
 }
 
 TEST_CASE("ExtractDocumentHighlights parses a well-formed array with an explicit kind", "[Lsp]") {
-    const Json result = Json::array({
+    const Json                           result     = Json::array({
         {{"range", MakeRange(0, 0, 0, 3)}, {"kind", 2}},
         {{"range", MakeRange(1, 4, 1, 7)}, {"kind", 3}},
     });
@@ -604,7 +604,7 @@ TEST_CASE("ExtractDocumentHighlights parses a well-formed array with an explicit
 }
 
 TEST_CASE("ExtractDocumentHighlights defaults a missing kind to 1 (Text)", "[Lsp]") {
-    const Json result = Json::array({{{"range", MakeRange(0, 0, 0, 3)}}});
+    const Json                           result     = Json::array({{{"range", MakeRange(0, 0, 0, 3)}}});
     const std::vector<DocumentHighlight> highlights = ExtractDocumentHighlights(result);
     REQUIRE(highlights.size() == 1);
     REQUIRE(highlights[0].kind == 1);
@@ -624,11 +624,11 @@ TEST_CASE("ExtractDocumentHighlights returns empty for a non-array result", "[Ls
 }
 
 TEST_CASE("ExtractFormattingEdits parses a bare TextEdit[] response", "[Lsp]") {
-    const Json result = Json::array({
+    const Json                                             result = Json::array({
         {{"range", MakeRange(0, 0, 0, 3)}, {"newText", "int"}},
         {{"range", MakeRange(1, 0, 1, 4)}, {"newText", "    "}},
     });
-    const std::vector<ned::editor::lsp::WorkspaceTextEdit> edits = ExtractFormattingEdits(result);
+    const std::vector<ned::editor::lsp::WorkspaceTextEdit> edits  = ExtractFormattingEdits(result);
     REQUIRE(edits.size() == 2);
     REQUIRE(edits[0].newText == "int");
     REQUIRE(edits[1].start.line == 1);
@@ -1083,7 +1083,7 @@ TEST_CASE("ExtractSemanticTokens decodes deltaLine/deltaStartChar per the spec's
     //               (line 0, char 4, len 1, type 8, mods 1) -- "x", same line as the first (deltaStartChar relative)
     //               (line 1, char 2, len 6, type 5, mods 0) -- "return" on the next line (deltaStartChar absolute)
     const Json result = {{"data", Json::array({0, 0, 3, 5, 0, 0, 4, 1, 8, 1, 1, 2, 6, 5, 0})}};
-    const auto tokens  = ExtractSemanticTokens(result);
+    const auto tokens = ExtractSemanticTokens(result);
     REQUIRE(tokens.size() == 3);
     REQUIRE(tokens[0].start.line == 0);
     REQUIRE(tokens[0].start.character == 0);
@@ -1221,7 +1221,7 @@ TEST_CASE("ApplySemanticTokensDeltaEdits clamps an out-of-range edit rather than
 
 TEST_CASE("ExtractInlayHints parses a bare-string label", "[Lsp]") {
     const Json result = Json::array({{{"position", {{"line", 2}, {"character", 5}}}, {"label", ": int"}}});
-    const auto hints   = ExtractInlayHints(result);
+    const auto hints  = ExtractInlayHints(result);
     REQUIRE(hints.size() == 1);
     REQUIRE(hints[0].position.line == 2);
     REQUIRE(hints[0].position.character == 5);
@@ -1245,7 +1245,7 @@ TEST_CASE("ExtractInlayHints skips an entry missing position/label, an empty-str
         {{"position", {{"line", 0}, {"character", 0}}}, {"label", ""}},
         {{"position", {{"line", 1}, {"character", 1}}}, {"label", "kept"}},
     });
-    const auto hints = ExtractInlayHints(result);
+    const auto hints  = ExtractInlayHints(result);
     REQUIRE(hints.size() == 1);
     REQUIRE(hints[0].label == "kept");
 
@@ -1268,7 +1268,7 @@ TEST_CASE("ExtractSingleCodeLens parses range and a resolved command", "[Lsp]") 
 }
 
 TEST_CASE("ExtractSingleCodeLens leaves hasCommand false for an unresolved lens (no \"command\" at all)", "[Lsp]") {
-    const Json item = {{"range", MakeRange(0, 0, 0, 5)}};
+    const Json     item = {{"range", MakeRange(0, 0, 0, 5)}};
     const CodeLens lens = ExtractSingleCodeLens(item);
     REQUIRE_FALSE(lens.hasCommand);
     REQUIRE(lens.title.empty());
@@ -1334,12 +1334,12 @@ TEST_CASE("ExtractHierarchyItems skips an entry missing name/uri/selectionRange 
           "result",
           "[Lsp]") {
     const Json result = Json::array({
-        Json{{"uri", "file:///a.cpp"}, {"selectionRange", MakeRange(0, 0, 0, 1)}},        // missing name
-        Json{{"name", "x"}, {"selectionRange", MakeRange(0, 0, 0, 1)}},                    // missing uri
-        Json{{"name", "x"}, {"uri", "file:///a.cpp"}},                                     // missing selectionRange
+        Json{{"uri", "file:///a.cpp"}, {"selectionRange", MakeRange(0, 0, 0, 1)}}, // missing name
+        Json{{"name", "x"}, {"selectionRange", MakeRange(0, 0, 0, 1)}},            // missing uri
+        Json{{"name", "x"}, {"uri", "file:///a.cpp"}},                             // missing selectionRange
         MakeHierarchyItem("kept", "file:///b.cpp"),
     });
-    const auto items = ExtractHierarchyItems(result);
+    const auto items  = ExtractHierarchyItems(result);
     REQUIRE(items.size() == 1);
     REQUIRE(items[0].name == "kept");
 
@@ -1352,7 +1352,7 @@ TEST_CASE("ExtractIncomingCalls parses \"from\"/\"fromRanges\" and keeps every c
         {"from", MakeHierarchyItem("caller", "file:///a.cpp")},
         {"fromRanges", Json::array({MakeRange(5, 2, 5, 8), MakeRange(9, 2, 9, 8)})},
     }});
-    const auto calls = ExtractIncomingCalls(result);
+    const auto calls  = ExtractIncomingCalls(result);
     REQUIRE(calls.size() == 1);
     REQUIRE(calls[0].item.name == "caller");
     REQUIRE(calls[0].callSites.size() == 2);
@@ -1380,8 +1380,8 @@ TEST_CASE("ExtractIncomingCalls/ExtractOutgoingCalls skip an entry with a malfor
 }
 
 TEST_CASE("ExtractPrepareRenameResult parses the bare Range form", "[Lsp]") {
-    const Json          result = MakeRange(2, 4, 2, 7);
-    const auto          parsed = ExtractPrepareRenameResult(result);
+    const Json result = MakeRange(2, 4, 2, 7);
+    const auto parsed = ExtractPrepareRenameResult(result);
     REQUIRE(parsed.valid);
     REQUIRE(parsed.hasRange);
     REQUIRE(parsed.start.line == 2);

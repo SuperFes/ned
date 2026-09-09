@@ -305,10 +305,10 @@ void PanelDock::Paint(Canvas canvas) {
         // tab-glyph-redesign follow-up: TabBar.cpp's own colored-block tab
         // convention -- which tab is active is a brush distinction, not a
         // bracket in the text.
-        const std::string text    = entry->titleText ? entry->titleText() : entry->label;
+        const std::string text      = entry->titleText ? entry->titleText() : entry->label;
         const std::string label     = " " + text + " ";
         const Brush&      brush     = (span.id == active_) ? theme_.activeTab : theme_.tabBar;
-        const int         screenX = 1 + span.startColumn - tabScrollOffset_;
+        const int         screenX   = 1 + span.startColumn - tabScrollOffset_;
         const int         labelCols = span.endColumn - span.startColumn - 1; // -1: the end-cap column
         const int         maxCols   = std::min(labelCols, buttonClusterStart - screenX);
         if (maxCols > 0) {

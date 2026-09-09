@@ -234,7 +234,10 @@ struct RenameEdit {
 // apply these in sequence, not as an unordered per-URI map the way "changes"
 // entries are.
 struct DocumentChangeOp {
-    enum class Kind { EditFile, CreateFile, RenameFile, DeleteFile };
+    enum class Kind { EditFile,
+                      CreateFile,
+                      RenameFile,
+                      DeleteFile };
 
     Kind        kind = Kind::EditFile;
     std::string uri;    // EditFile/CreateFile/DeleteFile target, or RenameFile's newUri
@@ -848,7 +851,7 @@ struct HierarchyCall {
 // itself); placeholder is set only by the {range, placeholder} form, empty
 // otherwise.
 struct PrepareRenameResult {
-    bool        valid = false;
+    bool        valid    = false;
     bool        hasRange = false;
     LspPosition start{};
     LspPosition end{};

@@ -110,7 +110,7 @@ namespace {
     // follow-up, see PasteFromSystemClipboard's own doc comment), and
     // returns the accumulated output only on a clean (exit code 0) exit.
     std::optional<std::string> RunPasteCommand(const std::vector<std::string>& argv, std::chrono::milliseconds readTimeout,
-                                                std::string_view toolLabel) {
+                                               std::string_view toolLabel) {
         try {
             process::ChildProcess child(argv);
             std::string           output;

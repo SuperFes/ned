@@ -14,7 +14,6 @@
 
 #include <array>
 #include <atomic>
-#include <type_traits>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -24,23 +23,17 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "ActiveBuffer.h"
-#include "UI/BufferView/CacheStamp.h"
-#include "UI/BufferView/CandidateList.h"
-#include "UI/BufferView/FuzzyPrompt.h"
-#include "UI/BufferView/EditorContext.h"
-#include "UI/BufferView/GutterModel.h"
-#include "UI/BufferView/Viewport.h"
-#include "UI/BufferView/RequestSlot.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Backup.h"
 #include "Editor/CodeFold.h"
-#include "Editor/CompletionSession.h"
 #include "Editor/Command.h"
+#include "Editor/CompletionSession.h"
 #include "Editor/Coverage/CoverageReport.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/DiagnosticsLog.h"
@@ -83,6 +76,13 @@
 #include "Text/KillRing.h"
 #include "Theme.h"
 #include "TreeView.h"
+#include "UI/BufferView/CacheStamp.h"
+#include "UI/BufferView/CandidateList.h"
+#include "UI/BufferView/EditorContext.h"
+#include "UI/BufferView/FuzzyPrompt.h"
+#include "UI/BufferView/GutterModel.h"
+#include "UI/BufferView/RequestSlot.h"
+#include "UI/BufferView/Viewport.h"
 #include "VcsPanel.h"
 #include "WhichKeyHint.h"
 
@@ -1505,7 +1505,7 @@ class BufferView : public Widget {
         std::string                            label;
         std::string                            commandName; // empty if codeAction is set or isDivider
         std::optional<editor::lsp::CodeAction> codeAction;
-        bool                                    isDivider = false;
+        bool                                   isDivider = false;
     };
 
     // right-click-context-menu follow-up: builds contextMenuEntries_ for
@@ -1709,10 +1709,10 @@ class BufferView : public Widget {
     // entirely, once keyboard focus has moved to the TreeView overlay).
     struct HierarchySession {
         editor::ExpandableTree<editor::lsp::LspManager::ResolvedHierarchyItem> tree;
-        HierarchyDirection                                                    direction;
-        text::Buffer*                                                         buffer;
-        std::string                                                           serverKey;
-        std::string                                                           rootName; // for the TreeView's own border title
+        HierarchyDirection                                                     direction;
+        text::Buffer*                                                          buffer;
+        std::string                                                            serverKey;
+        std::string                                                            rootName; // for the TreeView's own border title
     };
 
     // Sent for lsp-call-hierarchy-incoming/-outgoing/lsp-type-hierarchy-
@@ -1956,7 +1956,7 @@ class BufferView : public Widget {
     // (for a multi-buffer edit) the transaction's own label surfaced later
     // by undo/redo.
     void ApplyProjectEdit(const std::vector<std::pair<text::Buffer*, std::vector<editor::lsp::WorkspaceTextEdit>>>& perBufferEdits,
-                          std::string description);
+                          std::string                                                                               description);
 
     // point-to-register/jump-to-register/copy-to-register/insert-register
     // follow-up: one shared method for all four (mirrors HandlePromptKey's
@@ -2083,7 +2083,7 @@ class BufferView : public Widget {
     // a valid "create new" action), so there is no HandleXKey of their own --
     // just Up/Down/Tab handling inline in HandlePromptKey.
     [[nodiscard]] std::vector<std::string> GatherPathCompletionCandidates() const;
-    void RefreshPathCompletionPopup();
+    void                                   RefreshPathCompletionPopup();
 
     // named-projects follow-up: the shared tail of switch-project/
     // open-project once a target root is known -- runs
@@ -2546,8 +2546,6 @@ class BufferView : public Widget {
     // activeBuffer_.Set).
     void OpenDetectedLink(const editor::link::DetectedLink& detected);
 
-
-
     // line-wrap follow-up: horizontal counterpart to ScrollToShowPoint(),
     // called alongside it -- a no-op whenever the active buffer's
     // EffectiveWrapLines() is true, since a wrapped line never extends past
@@ -2557,24 +2555,16 @@ class BufferView : public Widget {
     // ScrollToShowPoint() adjusts topLine_.
     void ScrollToShowPointHorizontally();
 
-
-
-
-
     // Width in columns of the line-number gutter (digits needed for the
     // buffer's last line number, plus one separating column). Always
     // present -- there's no toggle to hide it yet.
     [[nodiscard]] std::size_t GutterWidth() const;
-
 
     // Diff gutter markers follow-up: same "only reserve the column when
     // there's something to show" gate BlameGutterActive() established --
     // true once diffLineKinds_ has any entries at all (a clean file
     // against HEAD reserves no column).
     [[nodiscard]] bool DiffGutterActive() const;
-
-
-
 
     // DAP client slice 2: whether the leftmost debug-marker column
     // (breakpoint dot / execution arrow) is reserved this frame -- true
@@ -2777,7 +2767,7 @@ class BufferView : public Widget {
     // edited or the active buffer changes) rather than trying to
     // resynthesize it -- showing a blank column is the honest answer, not
     // silently-wrong attribution against since-edited line numbers.
-    void               EnsureBlameGutterCache() const;
+    void EnsureBlameGutterCache() const;
 
     // Highlight-overlay predicates used by Paint(); byteOffset is a byte
     // offset into the buffer's current content.
@@ -2846,7 +2836,6 @@ class BufferView : public Widget {
     // enough to pin anything yet.
     int stickyRowCount_ = 0;
 
-
     // per-buffer-mode follow-up: mirrors topLineValidatedBuffer_'s own
     // "seed at construction so the first Paint() is never mistaken for a
     // switch" precedent exactly -- avoids firing onActiveBufferChanged_
@@ -2864,33 +2853,33 @@ class BufferView : public Widget {
     // the use site.
     text::Buffer* diffSyncBuffer_ = nullptr;
 
-    std::size_t                  dragAnchor_ = 0;            // point position at the last mouse press, for drag-selection
+    std::size_t dragAnchor_ = 0; // point position at the last mouse press, for drag-selection
     // Double/triple-click word/line selection: mirrors ProjectSidebar's own
     // lastFileClickPath_/lastFileClickTime_ double-click detection, extended
     // with a click count so a third click within the window selects the
     // whole line rather than re-selecting the word.
-    std::optional<std::size_t>   lastClickOffset_;
+    std::optional<std::size_t>            lastClickOffset_;
     std::chrono::steady_clock::time_point lastClickTime_{};
-    int                           clickCount_ = 0;
-    std::optional<std::string>   debugMouseLogPath_;         // see LogMouseEvent
-    ScrollBar*                   scrollBar_       = nullptr; // see SetScrollBar
-    ScrollArrowButton*           scrollUpArrow_   = nullptr; // see SetScrollArrows
-    ScrollArrowButton*           scrollDownArrow_ = nullptr;
-    ProjectSidebar*              projectSidebar_  = nullptr;     // see SetProjectSidebar
-    LeftDock*                    leftDock_        = nullptr;     // see SetLeftDock
-    VcsPanel*                    vcsPanel_        = nullptr;     // see SetVcsPanel
-    std::function<bool()>        splitResizeQuery_;              // see SetSplitResizeQuery
-    Minimap*                     minimap_             = nullptr; // see SetMinimap
-    Widget*                      minimapScrollColumn_ = nullptr; // see SetMinimap
-    editor::lsp::LspManager*     lspManager_          = nullptr; // see SetLspManager
-    editor::tasks::TaskRunner*   taskRunner_          = nullptr; // see SetTaskRunner
-    editor::ProjectUndoManager*  projectUndo_         = nullptr; // see SetProjectUndo
-    editor::testrun::TestRunner* testRunner_          = nullptr; // see SetTestRunner
-    editor::vcs::VcsRunner*      vcsRunner_           = nullptr; // see SetVcsRunner
-    editor::dap::DapManager*     dapManager_          = nullptr; // see SetDapManager
-    editor::acp::AcpManager*     acpManager_          = nullptr; // see SetAcpManager
-    const janet::Environment*    janetEnv_            = nullptr; // see SetJanetEnvironment
-    bool                         surfaceUnseenLogEntries_ = false; // see SetSurfaceUnseenLogEntries
+    int                                   clickCount_ = 0;
+    std::optional<std::string>            debugMouseLogPath_;         // see LogMouseEvent
+    ScrollBar*                            scrollBar_       = nullptr; // see SetScrollBar
+    ScrollArrowButton*                    scrollUpArrow_   = nullptr; // see SetScrollArrows
+    ScrollArrowButton*                    scrollDownArrow_ = nullptr;
+    ProjectSidebar*                       projectSidebar_  = nullptr;         // see SetProjectSidebar
+    LeftDock*                             leftDock_        = nullptr;         // see SetLeftDock
+    VcsPanel*                             vcsPanel_        = nullptr;         // see SetVcsPanel
+    std::function<bool()>                 splitResizeQuery_;                  // see SetSplitResizeQuery
+    Minimap*                              minimap_                 = nullptr; // see SetMinimap
+    Widget*                               minimapScrollColumn_     = nullptr; // see SetMinimap
+    editor::lsp::LspManager*              lspManager_              = nullptr; // see SetLspManager
+    editor::tasks::TaskRunner*            taskRunner_              = nullptr; // see SetTaskRunner
+    editor::ProjectUndoManager*           projectUndo_             = nullptr; // see SetProjectUndo
+    editor::testrun::TestRunner*          testRunner_              = nullptr; // see SetTestRunner
+    editor::vcs::VcsRunner*               vcsRunner_               = nullptr; // see SetVcsRunner
+    editor::dap::DapManager*              dapManager_              = nullptr; // see SetDapManager
+    editor::acp::AcpManager*              acpManager_              = nullptr; // see SetAcpManager
+    const janet::Environment*             janetEnv_                = nullptr; // see SetJanetEnvironment
+    bool                                  surfaceUnseenLogEntries_ = false;   // see SetSurfaceUnseenLogEntries
 
     // ACP client slice 2: valid only while inputMode_ ==
     // InputMode::AcpPermissionPrompt (populated by ShowAcpPermissionPrompt,
@@ -2933,7 +2922,7 @@ class BufferView : public Widget {
     // DapBreakpointHitCondition joins the same two modes/same struct.
     struct PendingDapBreakpointTarget {
         std::filesystem::path path;
-        std::size_t            line = 0;
+        std::size_t           line = 0;
     };
     std::optional<PendingDapBreakpointTarget> pendingDapBreakpointTarget_;
 
@@ -2943,10 +2932,10 @@ class BufferView : public Widget {
     // name. Valid only while inputMode_ == DapSetVariableValue.
     struct PendingDapSetVariable {
         text::Buffer* buffer = nullptr;
-        std::size_t    line  = 0;
-        std::string    lineText;
-        int            ownerRef = 0;
-        std::string    name;
+        std::size_t   line   = 0;
+        std::string   lineText;
+        int           ownerRef = 0;
+        std::string   name;
     };
     std::optional<PendingDapSetVariable> pendingDapSetVariable_;
 
@@ -3074,9 +3063,6 @@ class BufferView : public Widget {
     std::vector<editor::BackupVersion> recoverVersions_;
     std::size_t                        recoverChoice_ = 0;
 
-
-
-
     // named-projects follow-up: switch-project's own pair, populated from
     // editor::ListProjects() when the session starts -- entries, not
     // pre-formatted strings, since Enter needs the underlying root back,
@@ -3095,7 +3081,7 @@ class BufferView : public Widget {
     // same session" shape above.
     std::filesystem::path pendingOpenProjectRoot_;
 
-    BookmarkPromptAction     bookmarkPromptAction_ = BookmarkPromptAction::Jump;
+    BookmarkPromptAction bookmarkPromptAction_ = BookmarkPromptAction::Jump;
 
     std::optional<Theme>              themeBeforePreview_;
     std::function<void(const Theme&)> themeApplier_;
@@ -3108,24 +3094,24 @@ class BufferView : public Widget {
     bool replayingMacro_ = false;
 
     // Window-splitting follow-up: see SetOnWindowRequest/SetOnBufferClosed.
-    std::function<void(editor::InteractiveRequest)> onWindowRequest_;
+    std::function<void(editor::InteractiveRequest)>    onWindowRequest_;
     std::function<void(text::Buffer&)>                 onBufferClosed_;
     std::function<void()>                              onTerminalToggle_;      // see SetOnTerminalToggle
     std::function<void()>                              onNewTerminalRequest_;  // see SetOnNewTerminalRequest
     std::function<void()>                              onAcpPanelToggle_;      // see SetOnAcpPanelToggle
     std::function<void()>                              onAcpRewindRequest_;    // see SetOnAcpRewindRequest
-    std::function<void()>                           onDapConsoleToggle_;    // see SetOnDapConsoleToggle
-    std::function<void()>                           onJanetReplToggle_;     // see SetOnJanetReplToggle
-    std::function<void(const std::string&)>         onRunReplRequest_;      // see SetOnRunReplRequest
-    std::function<void()>                           onDapThreadsToggle_;    // see SetOnDapThreadsToggle
-    std::function<void()>                           onBufferListToggle_;    // see SetOnBufferListToggle
-    std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged
-    std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_;  // see SetOnPrefixHintChanged
-    std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
-    std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
-    std::function<void(std::optional<ListPopupModel>)> onHoverChanged_; // see SetOnHoverChanged
-    std::function<void(std::optional<ListPopupModel>)> onPeekChanged_; // see SetOnPeekChanged
-    std::function<void(std::optional<ListPopupModel>)> onContextMenuChanged_; // see SetOnContextMenuChanged
+    std::function<void()>                              onDapConsoleToggle_;    // see SetOnDapConsoleToggle
+    std::function<void()>                              onJanetReplToggle_;     // see SetOnJanetReplToggle
+    std::function<void(const std::string&)>            onRunReplRequest_;      // see SetOnRunReplRequest
+    std::function<void()>                              onDapThreadsToggle_;    // see SetOnDapThreadsToggle
+    std::function<void()>                              onBufferListToggle_;    // see SetOnBufferListToggle
+    std::function<void(text::Buffer&)>                 onActiveBufferChanged_; // see SetOnActiveBufferChanged
+    std::function<void(std::optional<WhichKeyHint>)>   onPrefixHintChanged_;   // see SetOnPrefixHintChanged
+    std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_;   // see SetOnCandidatesChanged
+    std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_;   // see SetOnCompletionChanged
+    std::function<void(std::optional<ListPopupModel>)> onHoverChanged_;        // see SetOnHoverChanged
+    std::function<void(std::optional<ListPopupModel>)> onPeekChanged_;         // see SetOnPeekChanged
+    std::function<void(std::optional<ListPopupModel>)> onContextMenuChanged_;  // see SetOnContextMenuChanged
 
     // call/type-hierarchy follow-up: onHierarchyChanged_ mirrors
     // onCandidatesChanged_'s own role, for the shared TreeView overlay
@@ -3144,16 +3130,16 @@ class BufferView : public Widget {
     // meaningfully in flight at a time regardless of which node it's for).
     std::function<void(std::optional<ui::TreeViewModel>)> onHierarchyChanged_;
     std::optional<HierarchySession>                       hierarchySession_;
-    std::size_t                                           hierarchySelectedIndex_    = 0;
-    bufferview::RequestSlot                                           hierarchyRequest_;
+    std::size_t                                           hierarchySelectedIndex_ = 0;
+    bufferview::RequestSlot                               hierarchyRequest_;
 
     // Debugging wishlist follow-up (pointer/linked-list graph view): the
     // above five fields' own mirror for PointerGraphSession -- see that
     // struct's own doc comment.
     std::function<void(std::optional<ui::TreeViewModel>)> onPointerGraphChanged_;
     std::optional<PointerGraphSession>                    pointerGraphSession_;
-    std::size_t                                           pointerGraphSelectedIndex_     = 0;
-    bufferview::RequestSlot                                           pointerGraphRequest_;
+    std::size_t                                           pointerGraphSelectedIndex_ = 0;
+    bufferview::RequestSlot                               pointerGraphRequest_;
 
     // Memory-as-image viewer follow-up: onPointerGraphChanged_'s own mirror
     // for the read-only MemoryImageView overlay -- no session struct needed
@@ -3268,7 +3254,6 @@ class BufferView : public Widget {
     std::size_t                                      expansionHistoryGeneration_ = 0;
     std::vector<std::pair<std::size_t, std::size_t>> expansionHistory_;
 
-
     // status/line-number-spacing follow-up: the gutter's own left-to-right
     // layout, left to right -- [status][gap][digits][gap][fold]. kStatusWidth
     // is always reserved (every buffer gets a status column regardless of
@@ -3334,12 +3319,7 @@ class BufferView : public Widget {
     // [gap][digits][gap][test][coverage][symbol][fold][blame].
     static constexpr std::size_t kCoverageWidth = 1;
 
-
-    void                                       EnsureSymbolMarkersCache() const;
-
-
-
-
+    void EnsureSymbolMarkersCache() const;
 
     // VCS blame gutter: populated only by RequestBlameForCurrentBuffer's
     // async completion (never recomputed from Paint() -- see
@@ -3382,8 +3362,6 @@ class BufferView : public Widget {
     // (see RunCommandAndHandleOutcome's own save-detection check).
     DeadlineTimer diffRefreshTimer_;
 
-
-
     // line-wrap follow-up: see EnsureRowCountCache/RowsForLine's own doc
     // comments above. rowCountPerLine_[line] holds only the segment
     // *count* (not the segments themselves) for a line ONCE it's actually
@@ -3394,10 +3372,7 @@ class BufferView : public Widget {
     // CursorPosition()/ByteOffsetForPoint(), each of which needs the real
     // segment byte ranges anyway, not just a count) -- never eagerly for
     // the whole buffer, per this cache's own perf history.
-    static constexpr std::size_t     kRowCountUnknown                = static_cast<std::size_t>(-1);
-
-
-
+    static constexpr std::size_t kRowCountUnknown = static_cast<std::size_t>(-1);
 
     // inline-diagnostics follow-up. Jank-compiler-style annotation rows: a
     // line carrying a diagnostic gets one extra virtual row directly below
@@ -3521,7 +3496,8 @@ class BufferView : public Widget {
     // Recorded here rather than inside CompletionSession because it's this
     // class's own source-selection policy (LSP/dabbrev vs. Janet bindings),
     // not something a pure session should know about.
-    enum class CompletionPrefixRule { Word, JanetSymbol };
+    enum class CompletionPrefixRule { Word,
+                                      JanetSymbol };
     CompletionPrefixRule completionPrefixRule_ = CompletionPrefixRule::Word;
 
     // completionPrefixRule_ applied at an arbitrary point.
@@ -3569,8 +3545,8 @@ class BufferView : public Widget {
     // staleness-guard shape, kept separate because a resolve response
     // arriving after a *narrowing* keystroke would otherwise be indexed
     // against a list it no longer describes.
-    DeadlineTimer completionResolveDebounceTimer_;
-    bufferview::RequestSlot   completionResolveRequest_;
+    DeadlineTimer           completionResolveDebounceTimer_;
+    bufferview::RequestSlot completionResolveRequest_;
 
     // documentHighlight follow-up. BufferView-owned, ephemeral point-
     // triggered UI state -- same lifecycle class as ActiveCompletion above,
@@ -3581,9 +3557,9 @@ class BufferView : public Widget {
     // resolved against the buffer's content at the moment the response
     // arrived.
     struct DocumentHighlightState {
-        text::Buffer* buffer            = nullptr;
-        std::size_t   contentGeneration = 0;
-        std::size_t   requestPoint      = 0;
+        text::Buffer*                                    buffer            = nullptr;
+        std::size_t                                      contentGeneration = 0;
+        std::size_t                                      requestPoint      = 0;
         std::vector<std::pair<std::size_t, std::size_t>> ranges;
     };
     std::optional<DocumentHighlightState> documentHighlight_;
@@ -3631,9 +3607,9 @@ class BufferView : public Widget {
     // of that request's own success/failure -- the highlight shows what was
     // inspected, not what resolved.
     struct LineInspectState {
-        text::Buffer* buffer            = nullptr;
-        std::size_t   contentGeneration = 0;
-        std::size_t   line              = 0;
+        text::Buffer*                                    buffer            = nullptr;
+        std::size_t                                      contentGeneration = 0;
+        std::size_t                                      line              = 0;
         std::vector<std::pair<std::size_t, std::size_t>> ranges;
     };
     std::optional<LineInspectState> lineInspect_;
@@ -3673,7 +3649,7 @@ class BufferView : public Widget {
     // conflict-marker checks (or save-buffer-force's deliberate absence of
     // them) already ran in Commands.cpp -- there is nothing left here for
     // that distinction to gate.
-    void        RequestLspFormatThenSaveBuffer();
+    void                    RequestLspFormatThenSaveBuffer();
     bufferview::RequestSlot lspFormatOnSaveRequest_;
 
     // completion-trigger-characters follow-up: triggerCharacter is the
@@ -3701,11 +3677,11 @@ class BufferView : public Widget {
     // untouched) when there's no janetEnv_ wired, the prefix is empty, or
     // nothing fuzzy-matches, so the caller falls through to plain
     // dabbrev-expand instead of showing an empty suggestion.
-    [[nodiscard]] bool        ApplyJanetBindingCompletion(text::Buffer& buffer, std::size_t point);
-    [[nodiscard]] bool        ShouldSuppressAutoCompletion() const;
-    void                      MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
-    void                      AcceptActiveCompletion();
-    void                      CycleActiveCompletion(int direction);
+    [[nodiscard]] bool ApplyJanetBindingCompletion(text::Buffer& buffer, std::size_t point);
+    [[nodiscard]] bool ShouldSuppressAutoCompletion() const;
+    void               MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
+    void               AcceptActiveCompletion();
+    void               CycleActiveCompletion(int direction);
 
     // completion-resolve follow-up. Arms completionResolveDebounceTimer_ for
     // the currently selected candidate, unless it's already resolved, the
@@ -3756,8 +3732,8 @@ class BufferView : public Widget {
     // codeActionRequest_ mirrors completionRequest_'s
     // exact staleness-guard shape.
     std::vector<editor::lsp::CodeAction> pendingCodeActions_;
-    std::size_t                          codeActionSelection_         = 0;
-    bufferview::RequestSlot                          codeActionRequest_;
+    std::size_t                          codeActionSelection_ = 0;
+    bufferview::RequestSlot              codeActionRequest_;
 
     // right-click-context-menu follow-up: contextMenuEntries_/
     // contextMenuSelection_ are valid only while inputMode_ is ContextMenu
@@ -3809,8 +3785,8 @@ class BufferView : public Widget {
     // as pendingCodeActions_/codeActionSelection_/codeActionRequest_
     // just above, valid only while inputMode_ == LspGotoDefinitionSelect.
     std::vector<editor::lsp::LspManager::ResolvedLocation> pendingDefinitions_;
-    std::size_t                                            definitionSelection_         = 0;
-    bufferview::RequestSlot                                            definitionRequest_;
+    std::size_t                                            definitionSelection_ = 0;
+    bufferview::RequestSlot                                definitionRequest_;
 
     // declaration/typeDefinition/implementation follow-up: the lowercase
     // human-facing word for whichever LspLocationKind pendingDefinitions_
@@ -3828,8 +3804,8 @@ class BufferView : public Widget {
     // goto-definition select session are never simultaneously live but do use
     // independently-generationed async requests.
     std::vector<editor::lsp::LspManager::ResolvedLocation> pendingPeekDefinitions_;
-    std::size_t                                            peekDefinitionSelection_         = 0;
-    bufferview::RequestSlot                                            peekDefinitionRequest_;
+    std::size_t                                            peekDefinitionSelection_ = 0;
+    bufferview::RequestSlot                                peekDefinitionRequest_;
 
     // find-references follow-up: same staleness-guard shape as
     // definitionRequest_, kept separate (rather than sharing that
@@ -3849,8 +3825,8 @@ class BufferView : public Widget {
     // mirror definitionSelection_/definitionRequest_'s own shape.
     std::vector<editor::lsp::LspManager::SymbolResult> documentSymbolCandidates_;
     std::vector<std::string>                           documentSymbolLabels_;
-    std::size_t                                        documentSymbolSelection_         = 0;
-    bufferview::RequestSlot                                        documentSymbolRequest_;
+    std::size_t                                        documentSymbolSelection_ = 0;
+    bufferview::RequestSlot                            documentSymbolRequest_;
 
     // symbol-search follow-up: workspace/symbol's own live-requery
     // counterpart -- pendingWorkspaceSymbols_/workspaceSymbolLabels_ hold
@@ -3860,8 +3836,8 @@ class BufferView : public Widget {
     // all -- HandleWorkspaceSymbolKey's Up/Down navigate this list directly.
     std::vector<editor::lsp::LspManager::SymbolResult> pendingWorkspaceSymbols_;
     std::vector<std::string>                           workspaceSymbolLabels_;
-    std::size_t                                        workspaceSymbolSelection_         = 0;
-    bufferview::RequestSlot                                        workspaceSymbolRequest_;
+    std::size_t                                        workspaceSymbolSelection_ = 0;
+    bufferview::RequestSlot                            workspaceSymbolRequest_;
     // See completionDebounceTimer_'s own comment -- same DeadlineTimer-based
     // debounce shape, reusing LspCompletionDebounceMs() rather than adding a
     // second, parallel Janet setting for what's the same underlying need.
@@ -3883,8 +3859,8 @@ class BufferView : public Widget {
     // is the human-readable "N edits across M files" summary shown in the
     // final "Renamed (...)" status message -- set right before ApplyRename
     // runs, applied with no separate confirmation step.
-    std::string   renameTitle_;
-    bufferview::RequestSlot   renameRequest_;
+    std::string             renameTitle_;
+    bufferview::RequestSlot renameRequest_;
     // prepareRename follow-up: same staleness-guard shape once more, for the
     // request RequestPrepareRenameAtPoint sends before lsp-rename opens its
     // prompt.
@@ -3958,9 +3934,9 @@ class BufferView : public Widget {
     // Aliases for the types and the depth cap that moved into GutterModel with
     // the caches. The painting and mouse code still names them unqualified;
     // they follow it out of this class when the renderer is extracted.
-    using FoldGutterEntry  = bufferview::GutterModel::FoldGutterEntry;
-    using TestGutterEntry  = bufferview::GutterModel::TestGutterEntry;
-    using InlineDiagnostic = bufferview::GutterModel::InlineDiagnostic;
+    using FoldGutterEntry                     = bufferview::GutterModel::FoldGutterEntry;
+    using TestGutterEntry                     = bufferview::GutterModel::TestGutterEntry;
+    using InlineDiagnostic                    = bufferview::GutterModel::InlineDiagnostic;
     static constexpr int kMaxFoldDepthColumns = bufferview::GutterModel::kMaxFoldDepthColumns;
 };
 

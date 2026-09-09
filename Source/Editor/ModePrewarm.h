@@ -84,7 +84,7 @@ class ModePrewarmer {
 
   private:
     text::BufferList&                             bufferList_;
-    ui::EventLoop&                                 eventLoop_;
+    ui::EventLoop&                                eventLoop_;
     std::unordered_map<std::string, std::jthread> inFlight_;
 };
 

@@ -1397,12 +1397,12 @@ TEST_CASE("Excerpt ranges relocate when an insert lands inside a different, earl
     Buffer buffer("scratch", ned::text::Rope("for (i; i < n; ++i)"));
     buffer.SetExcerptRanges({ExcRange(5, 6), ExcRange(8, 9), ExcRange(17, 18)});
 
-    buffer.InsertAt(5, "XX"); // at the first range's own start -- grows it
+    buffer.InsertAt(5, "XX");                               // at the first range's own start -- grows it
     REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(5, 8));   // grew by 2
     REQUIRE(buffer.ExcerptRanges()[1] == ExcRange(10, 11)); // shifted by 2, entirely after
     REQUIRE(buffer.ExcerptRanges()[2] == ExcRange(19, 20)); // shifted by 2, entirely after
 
-    buffer.InsertAt(20, "YY"); // at the last range's own end -- grows it
+    buffer.InsertAt(20, "YY");                              // at the last range's own end -- grows it
     REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(5, 8));   // untouched, entirely before
     REQUIRE(buffer.ExcerptRanges()[1] == ExcRange(10, 11)); // untouched, entirely before
     REQUIRE(buffer.ExcerptRanges()[2] == ExcRange(19, 22)); // grew by 2
@@ -1433,7 +1433,7 @@ TEST_CASE("Excerpt ranges relocate through a delete inside an earlier excerpt, k
 }
 
 TEST_CASE("Undo and redo relocate excerpt ranges against the restored content rather than clearing them",
-         "[Buffer]") {
+          "[Buffer]") {
     Buffer buffer("scratch", ned::text::Rope("0123456789"));
     buffer.SetExcerptRanges({ExcRange(2, 5)});
 

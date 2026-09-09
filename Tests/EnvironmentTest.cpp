@@ -50,8 +50,8 @@ TEST_CASE("Environment DoString captures a real path:line location, not just the
     // sibling coverage of the message itself) actually comes through.
     Environment& env = ned_tests::TestEnvironment();
     REQUIRE_THROWS_WITH(env.DoString("\n(this-is-not-defined)", "envtest-location.janet"),
-                         Catch::Matchers::ContainsSubstring("envtest-location.janet") &&
-                             Catch::Matchers::ContainsSubstring("2"));
+                        Catch::Matchers::ContainsSubstring("envtest-location.janet") &&
+                            Catch::Matchers::ContainsSubstring("2"));
 }
 
 TEST_CASE("Register wires a free function into the environment", "[Environment]") {

@@ -26,7 +26,7 @@ void WriteBufferToDisk(text::Buffer& buffer) {
     }
     buffer.Save(EnsureFinalNewline() && !binarySafeguards, TrimTrailingWhitespaceOnSave() && !binarySafeguards,
                 binarySafeguards ? std::optional<text::LineEnding>{}
-                                  : std::optional<text::LineEnding>(ResolveLineEndingForSave(buffer.LineEndingKind())));
+                                 : std::optional<text::LineEnding>(ResolveLineEndingForSave(buffer.LineEndingKind())));
     if (buffer.Path()) {
         RemoveAutoSave(*buffer.Path());
     }

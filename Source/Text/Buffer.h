@@ -869,19 +869,19 @@ class Buffer {
     // silently drop chrome-protection editability on a buffer whose text is
     // still sitting there mid-edit), not just a missed simplification.
     struct ExcerptRange {
-        std::size_t            start; // invariant: start <= end
-        std::size_t            end;
-        std::filesystem::path  sourcePath;
-        std::size_t            sourceStartByte = 0;
-        std::size_t            sourceEndByte   = 0;
-        bool                   editable        = false;
-        std::string            originalText; // commit-time diff baseline, see doc comment above
+        std::size_t           start; // invariant: start <= end
+        std::size_t           end;
+        std::filesystem::path sourcePath;
+        std::size_t           sourceStartByte = 0;
+        std::size_t           sourceEndByte   = 0;
+        bool                  editable        = false;
+        std::string           originalText; // commit-time diff baseline, see doc comment above
 
         bool operator==(const ExcerptRange&) const = default;
     };
-    void                                            SetExcerptRanges(std::vector<ExcerptRange> ranges);
-    [[nodiscard]] const std::vector<ExcerptRange>&  ExcerptRanges() const;
-    void                                            ClearExcerptRanges();
+    void                                           SetExcerptRanges(std::vector<ExcerptRange> ranges);
+    [[nodiscard]] const std::vector<ExcerptRange>& ExcerptRanges() const;
+    void                                           ClearExcerptRanges();
     // Repoints one range's originalText to its current committed text and
     // resets sourceStartByte/sourceEndByte to newSourceStart/newSourceEnd --
     // the commit path's own "this excerpt is now in sync" step, so a
@@ -890,7 +890,7 @@ class Buffer {
     // a commit since committing doesn't touch the composite buffer's own
     // text). Unknown start/end is a no-op.
     void MarkExcerptRangeCommitted(std::size_t start, std::size_t end, std::string newOriginalText,
-                                    std::size_t newSourceStart, std::size_t newSourceEnd);
+                                   std::size_t newSourceStart, std::size_t newSourceEnd);
 
     // status-gutter unsaved-change-indicator follow-up: byte ranges touched
     // by an edit since this buffer was last loaded/saved -- sorted, merged,
@@ -1126,10 +1126,10 @@ class Buffer {
     // The file's last_write_time as of the last load/save/revert -- what
     // ExternallyModified() compares against. nullopt for a pathless or
     // NewFile() buffer (no on-disk content has ever been seen).
-    std::optional<std::filesystem::file_time_type>     DiskTimestamp_;
+    std::optional<std::filesystem::file_time_type> DiskTimestamp_;
     // See LineEndingKind()/SetLineEndingOverride's own doc comments above.
     // Defaults to LF, matching a NewFile() buffer's own implicit ending.
-    ned::text::LineEnding                              LineEnding_ = ned::text::LineEnding::LF;
+    ned::text::LineEnding LineEnding_ = ned::text::LineEnding::LF;
     // See Content()'s own doc comment above -- Rope-backed for every
     // ordinary buffer, piece-table-backed only for a huge one. Every
     // internal mutator/query below goes through this, never a bare Rope
@@ -1147,11 +1147,11 @@ class Buffer {
     bool                                               CanAmend_              = false;
     bool                                               CanAmendLoadAppend_    = false; // see AppendHugeLoadChunk's own doc comment above
     bool                                               ReadOnly_              = false; // see ReadOnly()/SetReadOnly()'s own doc comment above
-    std::optional<std::string>                        ReadOnlyReason_;                // see SetReadOnly()/ReadOnlyReason()'s own doc comment above
-    bool                                               Loading_               = false; // see IsLoading()'s own doc comment above
+    std::optional<std::string>                         ReadOnlyReason_;                // see SetReadOnly()/ReadOnlyReason()'s own doc comment above
+    bool                                               Loading_ = false;               // see IsLoading()'s own doc comment above
     std::shared_ptr<LoadProgress>                      LoadProgress_;                  // see SetLoadProgress
-    bool                                               LikelyBinary_          = false; // see LikelyBinary()'s own doc comment above
-    bool                                               BinarySafetyOverride_  = false; // see BinarySafetyOverride()'s own doc comment above
+    bool                                               LikelyBinary_         = false;  // see LikelyBinary()'s own doc comment above
+    bool                                               BinarySafetyOverride_ = false;  // see BinarySafetyOverride()'s own doc comment above
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t>        GoalColumn_;

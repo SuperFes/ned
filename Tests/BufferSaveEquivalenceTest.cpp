@@ -25,7 +25,7 @@ using ned::text::LineEnding;
 namespace {
 std::filesystem::path WriteTempFile(const std::string& name, std::string_view content) {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
-    std::ofstream                file(path, std::ios::binary);
+    std::ofstream               file(path, std::ios::binary);
     file << content;
     return path;
 }
@@ -41,16 +41,16 @@ std::string ReadFile(const std::filesystem::path& path) {
 // source/output paths per call (suffixed by `tag`) so parallel-ish reuse
 // within one TEST_CASE never collides.
 std::pair<std::string, std::string> SaveBothWays(const std::string& tag, const std::string& content, bool ensureFinalNewline,
-                                                  bool trimTrailingWhitespace, std::optional<LineEnding> lineEndingOverride) {
+                                                 bool trimTrailingWhitespace, std::optional<LineEnding> lineEndingOverride) {
     const std::filesystem::path sourcePath = WriteTempFile("ned_save_equiv_src_" + tag + ".txt", content);
 
     Buffer normalBuffer = Buffer::FromFile(sourcePath);
-    Buffer hugeBuffer    = Buffer::FromHugeFile(sourcePath);
+    Buffer hugeBuffer   = Buffer::FromHugeFile(sourcePath);
     REQUIRE_FALSE(normalBuffer.Content().IsHuge());
     REQUIRE(hugeBuffer.Content().IsHuge());
 
     const std::filesystem::path normalOut = std::filesystem::temp_directory_path() / ("ned_save_equiv_normal_" + tag + ".txt");
-    const std::filesystem::path hugeOut    = std::filesystem::temp_directory_path() / ("ned_save_equiv_huge_" + tag + ".txt");
+    const std::filesystem::path hugeOut   = std::filesystem::temp_directory_path() / ("ned_save_equiv_huge_" + tag + ".txt");
 
     normalBuffer.SaveToFile(normalOut, ensureFinalNewline, trimTrailingWhitespace, lineEndingOverride);
     hugeBuffer.SaveToFile(hugeOut, ensureFinalNewline, trimTrailingWhitespace, lineEndingOverride);
@@ -105,7 +105,7 @@ TEST_CASE("Streaming save matches non-streaming save: line-ending override expan
 }
 
 TEST_CASE("Streaming save matches non-streaming save: a trailing-whitespace run straddles a chunk boundary",
-         "[Buffer][HugeFile][SaveEquivalence]") {
+          "[Buffer][HugeFile][SaveEquivalence]") {
     // PieceTable's original-file leaves are 256 KiB (kOriginalChunkSize,
     // Text/PieceTable.cpp) -- place a long trailing-whitespace run (and the
     // real content the state machine must flush once it ends) straddling
@@ -121,7 +121,7 @@ TEST_CASE("Streaming save matches non-streaming save: a trailing-whitespace run 
 }
 
 TEST_CASE("Streaming save matches non-streaming save: a trailing-blank-line run straddles a chunk boundary",
-         "[Buffer][HugeFile][SaveEquivalence]") {
+          "[Buffer][HugeFile][SaveEquivalence]") {
     constexpr std::size_t kChunkSize = 256 * 1024;
     std::string           content(kChunkSize - 20, 'b');
     content += "\nreal last line\n";
@@ -163,14 +163,22 @@ TEST_CASE("Streaming save matches non-streaming save: randomized content/flag co
             content.push_back('\n');
         }
 
-        const bool ensureFinalNewline    = boolDist(rng) == 1;
-        const bool trimTrailingWhitespace = boolDist(rng) == 1;
+        const bool                ensureFinalNewline     = boolDist(rng) == 1;
+        const bool                trimTrailingWhitespace = boolDist(rng) == 1;
         std::optional<LineEnding> ending;
         switch (endingDist(rng)) {
-            case 0: ending = std::nullopt; break;
-            case 1: ending = LineEnding::LF; break;
-            case 2: ending = LineEnding::CRLF; break;
-            default: ending = LineEnding::CR; break;
+            case 0:
+                ending = std::nullopt;
+                break;
+            case 1:
+                ending = LineEnding::LF;
+                break;
+            case 2:
+                ending = LineEnding::CRLF;
+                break;
+            default:
+                ending = LineEnding::CR;
+                break;
         }
 
         RequireBothWaysMatch("rand_" + std::to_string(iteration), content, ensureFinalNewline, trimTrailingWhitespace, ending);

@@ -1810,8 +1810,8 @@ void VimEngine::BeginReplaceSession(text::Buffer& /*buffer*/) {
 }
 
 void VimEngine::EnterVisual(text::Buffer& buffer, Mode kind) {
-    mode_         = kind;
-    visualAnchor_ = buffer.Point();
+    mode_                 = kind;
+    visualAnchor_         = buffer.Point();
     oneShotNormalPending_ = false; // see BeginInsertSession's own comment on this
 }
 
@@ -2004,10 +2004,10 @@ void VimEngine::RepeatLastChange(text::Buffer& buffer) {
     // vim's own rule. Captured before clearing hasCount_/countBuffer_ below, which must
     // still happen unconditionally (a bare "." with no fresh count must start the replay
     // itself with none pending, exactly as before this follow-up).
-    const bool overridden     = hasCount_;
-    const long overrideCount  = countBuffer_;
-    hasCount_    = false;
-    countBuffer_ = 0;
+    const bool overridden    = hasCount_;
+    const long overrideCount = countBuffer_;
+    hasCount_                = false;
+    countBuffer_             = 0;
     if (lastChange_.empty()) {
         return;
     }
@@ -2058,7 +2058,7 @@ void VimEngine::SetMarkAt(text::Buffer& buffer, char32_t name) {
         std::error_code             ec;
         const std::filesystem::path normalized = std::filesystem::weakly_canonical(*buffer.Path(), ec);
         const std::size_t           line       = LineOf(buffer, buffer.Point());
-        const std::size_t           column = buffer.VisualColumnForByteOffset(LineStart(buffer, line), buffer.Point(), TabWidth());
+        const std::size_t           column     = buffer.VisualColumnForByteOffset(LineStart(buffer, line), buffer.Point(), TabWidth());
         SetGlobalMark(name, GlobalMark{.path = ec ? *buffer.Path() : normalized, .line = line, .column = column});
         return;
     }
@@ -2066,8 +2066,8 @@ void VimEngine::SetMarkAt(text::Buffer& buffer, char32_t name) {
 }
 
 namespace {
-// real vim's own 'jumps' option default.
-constexpr std::size_t kMaxJumpList = 100;
+    // real vim's own 'jumps' option default.
+    constexpr std::size_t kMaxJumpList = 100;
 } // namespace
 
 void VimEngine::PushJumpListEntry(const text::Buffer& buffer) {
@@ -2658,8 +2658,8 @@ void VimEngine::ExecuteSubstitute(text::Buffer& buffer, const ExCommand& cmd) {
     // command-line text -- lastSubstitute_ (below) and every downstream consumer
     // (SubstituteLineRange, the "&" repeat-last-substitute command) then always see an
     // already-PCRE2-ready pattern and an already-FormatReplacement-ready replacement.
-    args->pattern     = TranslateVimMagicPattern(args->pattern);
-    args->replacement = TranslateVimMagicReplacement(args->replacement);
+    args->pattern               = TranslateVimMagicPattern(args->pattern);
+    args->replacement           = TranslateVimMagicReplacement(args->replacement);
     const std::size_t startLine = cmd.range.present ? cmd.range.startLine : LineOf(buffer, buffer.Point());
     const std::size_t endLine   = cmd.range.present ? cmd.range.endLine : startLine;
     try {

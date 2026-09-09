@@ -47,7 +47,7 @@ TEST_CASE("Invoke runs the command against the given context", "[Command]") {
         context.buffer.InsertAtPoint("hello");
     });
 
-    Fixture fixture;
+    Fixture        fixture;
     CommandContext context = fixture.Context();
     registry.Invoke("insert-hello", context);
 
@@ -69,7 +69,7 @@ TEST_CASE("Re-registering a name overwrites the previous command", "[Command]") 
 
     REQUIRE(registry.Find("cmd")->Docstring() == "second");
 
-    Fixture fixture;
+    Fixture        fixture;
     CommandContext context = fixture.Context();
     registry.Invoke("cmd", context);
     REQUIRE(fixture.buffer.Text() == "B");

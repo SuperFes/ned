@@ -27,7 +27,7 @@ struct IndentStyleGuard {
 
 TEST_CASE("DefaultIndentStyle defaults to spaces, width 4", "[IndentStyle]") {
     const IndentStyleGuard guard;
-    const IndentStyle       style = DefaultIndentStyle();
+    const IndentStyle      style = DefaultIndentStyle();
     REQUIRE_FALSE(style.useTabs);
     REQUIRE(style.width == 4);
 }

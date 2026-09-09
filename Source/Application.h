@@ -5,9 +5,9 @@
 #ifndef APPLICATION_H
 #define APPLICATION_H
 
+#include <iostream>
 #include <mutex>
 #include <string>
-#include <iostream>
 
 namespace Ned {
 class Application {

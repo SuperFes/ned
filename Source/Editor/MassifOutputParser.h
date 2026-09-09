@@ -46,23 +46,25 @@
 namespace ned::editor {
 
 struct MassifSnapshot {
-    int         index          = -1; // Massif's own `snapshot=N` index, in file order.
-    std::size_t time           = 0;  // Unit depends on the profile's timeUnit (bytes/ms/instructions).
-    std::size_t heapBytes      = 0;  // mem_heap_B
-    std::size_t heapExtraBytes = 0;  // mem_heap_extra_B -- allocator bookkeeping overhead
-    std::size_t stacksBytes    = 0;  // mem_stacks_B -- 0 unless the profiled run used --stacks=yes
+    int         index          = -1;    // Massif's own `snapshot=N` index, in file order.
+    std::size_t time           = 0;     // Unit depends on the profile's timeUnit (bytes/ms/instructions).
+    std::size_t heapBytes      = 0;     // mem_heap_B
+    std::size_t heapExtraBytes = 0;     // mem_heap_extra_B -- allocator bookkeeping overhead
+    std::size_t stacksBytes    = 0;     // mem_stacks_B -- 0 unless the profiled run used --stacks=yes
     bool        isDetailed     = false; // heap_tree was "detailed" or "peak" (a full tree follows in the file)
     bool        isPeak         = false; // heap_tree was "peak" -- the run's single global memory peak
 
-    [[nodiscard]] std::size_t TotalBytes() const { return heapBytes + heapExtraBytes + stacksBytes; }
+    [[nodiscard]] std::size_t TotalBytes() const {
+        return heapBytes + heapExtraBytes + stacksBytes;
+    }
 
     [[nodiscard]] bool operator==(const MassifSnapshot&) const = default;
 };
 
 struct MassifProfile {
-    std::string desc;     // Verbatim `desc:` header line (massif's own invocation options), empty if absent.
-    std::string cmd;      // Verbatim `cmd:` header line (the profiled command), empty if absent.
-    std::string timeUnit; // "B" (bytes allocated), "ms", or "i" (instructions) -- empty if absent.
+    std::string                 desc;      // Verbatim `desc:` header line (massif's own invocation options), empty if absent.
+    std::string                 cmd;       // Verbatim `cmd:` header line (the profiled command), empty if absent.
+    std::string                 timeUnit;  // "B" (bytes allocated), "ms", or "i" (instructions) -- empty if absent.
     std::vector<MassifSnapshot> snapshots; // In file order, matching massif's own snapshot numbering.
 };
 

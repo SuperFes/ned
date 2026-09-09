@@ -6,7 +6,7 @@ using ned::editor::CollectDabbrevCandidates;
 
 TEST_CASE("Finds a longer word sharing the prefix", "[DabbrevComplete]") {
     const std::string content = "let counter = 0;\ncounter += 1;";
-    const auto         result  = CollectDabbrevCandidates(content, /*point=*/4, "coun");
+    const auto        result  = CollectDabbrevCandidates(content, /*point=*/4, "coun");
     REQUIRE(result.size() == 1);
     CHECK(result[0] == "counter");
 }
@@ -39,21 +39,21 @@ TEST_CASE("Exact-length matches (nothing left to suggest) are excluded", "[Dabbr
 
 TEST_CASE("Matching is case-sensitive and ASCII-word-boundary aware", "[DabbrevComplete]") {
     const std::string content = "Counter counter_value CounterExtra";
-    const auto         result  = CollectDabbrevCandidates(content, content.size(), "counter");
+    const auto        result  = CollectDabbrevCandidates(content, content.size(), "counter");
     REQUIRE(result.size() == 1);
     CHECK(result[0] == "counter_value"); // "Counter"/"CounterExtra" don't match the lowercase prefix
 }
 
 TEST_CASE("Duplicate matches are deduplicated", "[DabbrevComplete]") {
     const std::string content = "counter1 counter1 counter1";
-    const auto         result  = CollectDabbrevCandidates(content, content.size(), "counter");
+    const auto        result  = CollectDabbrevCandidates(content, content.size(), "counter");
     REQUIRE(result.size() == 1);
     CHECK(result[0] == "counter1");
 }
 
 TEST_CASE("Result count is capped at maxCandidates", "[DabbrevComplete]") {
     const std::string content = "counter1 counter2 counter3 counter4";
-    const auto         result  = CollectDabbrevCandidates(content, content.size(), "counter", /*maxCandidates=*/2);
+    const auto        result  = CollectDabbrevCandidates(content, content.size(), "counter", /*maxCandidates=*/2);
     CHECK(result.size() == 2);
 }
 

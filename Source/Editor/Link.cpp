@@ -118,7 +118,7 @@ namespace {
     std::vector<DelimitedRun> FindDelimitedRuns(std::string_view bufferText, std::size_t segStart, std::size_t segEnd,
                                                 bool includeAngle) {
         std::vector<DelimitedRun> runs;
-        std::size_t                i = segStart;
+        std::size_t               i = segStart;
         while (i < segEnd) {
             const char c       = bufferText[i];
             char       closing = 0;
@@ -203,9 +203,9 @@ std::optional<DetectedLink> DetectLinkAtPoint(std::string_view bufferText, std::
         // plain word like "TODO" from resolving, which doesn't apply here
         // (a delimited, extensionless case like <vector> is exactly what
         // this is meant to catch).
-        const std::string_view rawToken   = bufferText.substr(tokenStart, tokenEnd - tokenStart);
-        const std::string_view stripped   = StripDelimiters(rawToken);
-        const bool              wasDelimited = stripped.size() != rawToken.size();
+        const std::string_view rawToken     = bufferText.substr(tokenStart, tokenEnd - tokenStart);
+        const std::string_view stripped     = StripDelimiters(rawToken);
+        const bool             wasDelimited = stripped.size() != rawToken.size();
         if (wasDelimited) {
             tokenStart = static_cast<std::size_t>(stripped.data() - bufferText.data());
             tokenEnd   = tokenStart + stripped.size();
@@ -229,7 +229,7 @@ std::optional<DetectedLink> DetectLinkAtPoint(std::string_view bufferText, std::
     // full reasoning (why point doesn't need to land on the target's own
     // bytes here, and why angle brackets are gated on "#include").
     {
-        const auto [segStart, segEnd] = StatementSegmentBounds(bufferText, lineStart, lineEnd, point);
+        const auto [segStart, segEnd]        = StatementSegmentBounds(bufferText, lineStart, lineEnd, point);
         const std::vector<DelimitedRun> runs = FindDelimitedRuns(bufferText, segStart, segEnd, LineIsPreprocessorInclude(line));
 
         const DelimitedRun* best         = nullptr;
@@ -280,8 +280,8 @@ namespace {
     // buffer can open, so "foo" resolving to a real directory "foo/" is only
     // useful once it's actually resolved on down to "foo/index.js".
     std::optional<std::filesystem::path> TryVariants(const std::filesystem::path&    candidate,
-                                                      const std::vector<std::string>& candidateExtensions,
-                                                      const std::vector<std::string>& indexBasenames) {
+                                                     const std::vector<std::string>& candidateExtensions,
+                                                     const std::vector<std::string>& indexBasenames) {
         const bool isDirectory              = std::filesystem::is_directory(candidate);
         const bool preferIndexOverDirectory = !indexBasenames.empty() && isDirectory;
         if (!preferIndexOverDirectory && std::filesystem::exists(candidate)) {

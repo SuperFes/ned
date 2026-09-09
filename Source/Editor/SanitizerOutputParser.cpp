@@ -125,12 +125,12 @@ namespace {
         if (toolColon == std::string_view::npos) {
             return false;
         }
-        out.tool                  = std::string(rest.substr(0, toolColon));
+        out.tool                     = std::string(rest.substr(0, toolColon));
         const std::string_view rest2 = rest.substr(toolColon + 2);
 
         const std::size_t inPos = rest2.rfind(" in ");
         if (inPos != std::string_view::npos) {
-            const std::string_view beforeIn = rest2.substr(0, inPos);
+            const std::string_view beforeIn  = rest2.substr(0, inPos);
             const std::size_t      lastSpace = beforeIn.find_last_of(" \t");
             const std::string_view lastToken = lastSpace == std::string_view::npos ? beforeIn : beforeIn.substr(lastSpace + 1);
             if (const std::optional<Location> loc = ParseLocationToken(lastToken)) {

@@ -11,7 +11,9 @@ namespace {
 // that sets it must restore the default for the next test, guaranteed via
 // RAII. Mirrors FinalNewlineTest.cpp's own FinalNewlineGuard exactly.
 struct LineEndingPolicyGuard {
-    ~LineEndingPolicyGuard() { SetLineEndingPolicy({LineEndingPolicyMode::Preserve, LineEnding::LF}); }
+    ~LineEndingPolicyGuard() {
+        SetLineEndingPolicy({LineEndingPolicyMode::Preserve, LineEnding::LF});
+    }
 };
 
 } // namespace

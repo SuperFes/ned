@@ -1921,9 +1921,9 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
     const std::size_t requestId           = ++inlayHintsRequestCounter_[&buffer];
     const std::size_t requestedGeneration = buffer.ContentGeneration();
 
-    const text::ITextStorage& content   = buffer.Content();
-    const LspPosition         start     = BytePositionToLsp(content, viewportStartByte);
-    const LspPosition         end       = BytePositionToLsp(content, viewportEndByte);
+    const text::ITextStorage& content       = buffer.Content();
+    const LspPosition         start         = BytePositionToLsp(content, viewportStartByte);
+    const LspPosition         end           = BytePositionToLsp(content, viewportEndByte);
     text::Buffer* const       bufferPtr     = &buffer;
     const std::string         connectionKey = state->connectionKey; // per-connection latch, see RequestSemanticTokens
     const Json                params        = {
@@ -2402,8 +2402,8 @@ void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStart
     }
 
     const text::ITextStorage& content = buffer.Content();
-    const LspPosition start   = BytePositionToLsp(content, rangeStartByte);
-    const LspPosition end     = BytePositionToLsp(content, rangeEndByte);
+    const LspPosition         start   = BytePositionToLsp(content, rangeStartByte);
+    const LspPosition         end     = BytePositionToLsp(content, rangeEndByte);
 
     Json diagnostics = Json::array();
     for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
@@ -2826,8 +2826,8 @@ void LspManager::RequestWillRenameFiles(const std::vector<FileRenameEntry>& file
         ResolvedRename merged;
         bool           anyEdit = false;
     };
-    auto pending          = std::make_shared<PendingWillRename>();
-    pending->outstanding  = static_cast<int>(targets.size());
+    auto pending         = std::make_shared<PendingWillRename>();
+    pending->outstanding = static_cast<int>(targets.size());
     for (auto& [serverKey, client] : targets) {
         client->SendRequest(
             "workspace/willRenameFiles", params,
@@ -2839,7 +2839,7 @@ void LspManager::RequestWillRenameFiles(const std::vector<FileRenameEntry>& file
                     const RenameResult parsed = ExtractRenameEdits(*result);
                     if (!parsed.touchesUnsupportedForm) {
                         std::vector<ResolvedRenameEdit> edits;
-                        bool                             ok = true;
+                        bool                            ok = true;
                         for (const RenameEdit& edit : parsed.edits) {
                             const std::optional<std::filesystem::path> path = UriToPath(edit.uri);
                             if (!path) {
@@ -3002,10 +3002,10 @@ void LspManager::RequestRangeFormatting(text::Buffer& buffer, std::size_t rangeS
     }
 
     const text::ITextStorage& content  = buffer.Content();
-    const LspPosition start    = BytePositionToLsp(content, rangeStartByte);
-    const LspPosition end      = BytePositionToLsp(content, rangeEndByte);
+    const LspPosition         start    = BytePositionToLsp(content, rangeStartByte);
+    const LspPosition         end      = BytePositionToLsp(content, rangeEndByte);
     const std::string         language = state->connectionKey;
-    const Json        params   = {
+    const Json                params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
         {"options", FormattingOptionsJson()},

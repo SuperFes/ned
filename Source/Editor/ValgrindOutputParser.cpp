@@ -1,7 +1,7 @@
 #include "ValgrindOutputParser.h"
 
-#include <charconv>
 #include <cctype>
+#include <charconv>
 #include <optional>
 
 namespace ned::editor {
@@ -78,7 +78,7 @@ namespace {
     // given, it's set to the byte offset just past the closing tag, so a
     // caller can resume scanning for siblings rather than re-finding from 0.
     std::optional<std::string_view> ExtractTag(std::string_view text, std::string_view tagName, std::size_t from = 0,
-                                                std::size_t* outEnd = nullptr) {
+                                               std::size_t* outEnd = nullptr) {
         const std::string openTag  = "<" + std::string(tagName) + ">";
         const std::string closeTag = "</" + std::string(tagName) + ">";
         const std::size_t openPos  = text.find(openTag, from);
@@ -103,7 +103,7 @@ namespace {
     void LocateFirstDebuggableFrame(std::string_view stackBody, std::string& outFile, std::size_t& outLine) {
         std::size_t frameFrom = 0;
         while (true) {
-            std::size_t frameEnd = 0;
+            std::size_t                           frameEnd  = 0;
             const std::optional<std::string_view> frameBody = ExtractTag(stackBody, "frame", frameFrom, &frameEnd);
             if (!frameBody) {
                 return;
@@ -145,7 +145,7 @@ std::vector<ValgrindFinding> ParseValgrindXml(std::string_view output) {
 
     std::size_t searchFrom = 0;
     while (true) {
-        std::size_t                           errorEnd = 0;
+        std::size_t                           errorEnd  = 0;
         const std::optional<std::string_view> errorBody = ExtractTag(output, "error", searchFrom, &errorEnd);
         if (!errorBody) {
             break;

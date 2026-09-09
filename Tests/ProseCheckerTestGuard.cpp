@@ -25,12 +25,12 @@
 
 namespace {
 
-    struct DisableProseCheckingForTests {
-        DisableProseCheckingForTests() {
-            ned::editor::lsp::SetProseCheckingEnabled(false);
-        }
-    };
+struct DisableProseCheckingForTests {
+    DisableProseCheckingForTests() {
+        ned::editor::lsp::SetProseCheckingEnabled(false);
+    }
+};
 
-    const DisableProseCheckingForTests kDisableProseCheckingForTests;
+const DisableProseCheckingForTests kDisableProseCheckingForTests;
 
 } // namespace

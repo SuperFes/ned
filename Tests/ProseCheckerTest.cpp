@@ -12,20 +12,20 @@ using ned::editor::lsp::SetProseCheckingEnabled;
 
 namespace {
 
-    // ProseCheckerTestGuard.cpp forces ProseCheckingEnabled() false for the
-    // whole ned_tests binary (so no test anywhere accidentally spawns a real
-    // harper-ls just because it happens to be on the machine's $PATH) --
-    // every test here that flips it back on must restore that steady state
-    // before returning, even on an assertion failure. RAII rather than a
-    // manual cleanup line at the end of each TEST_CASE, matching the same
-    // reasoning REQUIRE-throws-on-failure gives everywhere else in this
-    // codebase's tests.
-    struct RestoreProseCheckingDisabled {
-        ~RestoreProseCheckingDisabled() {
-            SetProseCheckerCommand({});
-            SetProseCheckingEnabled(false);
-        }
-    };
+// ProseCheckerTestGuard.cpp forces ProseCheckingEnabled() false for the
+// whole ned_tests binary (so no test anywhere accidentally spawns a real
+// harper-ls just because it happens to be on the machine's $PATH) --
+// every test here that flips it back on must restore that steady state
+// before returning, even on an assertion failure. RAII rather than a
+// manual cleanup line at the end of each TEST_CASE, matching the same
+// reasoning REQUIRE-throws-on-failure gives everywhere else in this
+// codebase's tests.
+struct RestoreProseCheckingDisabled {
+    ~RestoreProseCheckingDisabled() {
+        SetProseCheckerCommand({});
+        SetProseCheckingEnabled(false);
+    }
+};
 
 } // namespace
 

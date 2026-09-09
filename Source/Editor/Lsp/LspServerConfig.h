@@ -46,13 +46,13 @@ void SetLspServerCommand(const std::string& language, std::vector<std::string> a
 // Editor/TabWidth.h's exact shape -- unlike the per-language map above,
 // automatic-completion behavior is a single, editor-wide preference, not a
 // per-language one.
-void              SetLspAutoCompleteEnabled(bool enabled); // default true
+void               SetLspAutoCompleteEnabled(bool enabled); // default true
 [[nodiscard]] bool LspAutoCompleteEnabled();
 
 // Non-positive values are clamped to 1ms rather than rejected -- same
 // "don't throw over a config value, just make it sane" convention
 // TabWidth::SetTabWidth already established.
-void             SetLspCompletionDebounceMs(int milliseconds); // default 500
+void              SetLspCompletionDebounceMs(int milliseconds); // default 500
 [[nodiscard]] int LspCompletionDebounceMs();
 
 // diagnostics-debounce follow-up: how long LspManager waits, after the most
@@ -64,7 +64,7 @@ void             SetLspCompletionDebounceMs(int milliseconds); // default 500
 // every character typed rather than settling in once typing actually
 // pauses. Same non-positive-clamped-to-1ms convention as the completion
 // debounce above.
-void             SetLspDiagnosticsDebounceMs(int milliseconds); // default 500
+void              SetLspDiagnosticsDebounceMs(int milliseconds); // default 500
 [[nodiscard]] int LspDiagnosticsDebounceMs();
 
 // sync-debounce follow-up: how long LspManager::SyncTextToServer waits, after
@@ -91,7 +91,7 @@ void              SetLspSyncDebounceMs(int milliseconds); // default 150
 // editor-wide toggle, not per-language. Reuses LspCompletionDebounceMs()
 // rather than a separate debounce value: both fire off the same
 // "typing/motion just settled" heuristic.
-void              SetLspSignatureHelpAutoTriggerEnabled(bool enabled); // default true
+void               SetLspSignatureHelpAutoTriggerEnabled(bool enabled); // default true
 [[nodiscard]] bool LspSignatureHelpAutoTriggerEnabled();
 
 // completion-trigger-characters follow-up. Whether typing a character a
@@ -117,7 +117,7 @@ void               SetLspCommitCharactersEnabled(bool enabled); // default true
 // timer, so turning it off is a true no-op, not just a hidden popup (no
 // wasted textDocument/hover requests either). Keyboard-triggered lsp-hover
 // (C-c C-j) is unaffected either way -- this only gates the mouse-move path.
-void              SetLspHoverOnMouseMoveEnabled(bool enabled); // default true
+void               SetLspHoverOnMouseMoveEnabled(bool enabled); // default true
 [[nodiscard]] bool LspHoverOnMouseMoveEnabled();
 
 // lsp-format-on-save follow-up. Opt-in (default false): turning this on
@@ -127,14 +127,14 @@ void              SetLspHoverOnMouseMoveEnabled(bool enabled); // default true
 // configured, the external command wins unconditionally -- it's the more
 // specific, deliberately hand-configured choice; see save-buffer's own
 // shouldDeferToLspFormat helper in Commands.cpp.
-void              SetLspFormatOnSaveEnabled(bool enabled); // default false
+void               SetLspFormatOnSaveEnabled(bool enabled); // default false
 [[nodiscard]] bool LspFormatOnSaveEnabled();
 
 // on-type-formatting follow-up. Same shape/reasoning as
 // SetLspFormatOnSaveEnabled above -- opt-in (default false), since this
 // mutates buffer content as you type, not just a passive UI cue. Gated
 // separately from format-on-save: a user may want one without the other.
-void              SetLspOnTypeFormattingEnabled(bool enabled); // default false
+void               SetLspOnTypeFormattingEnabled(bool enabled); // default false
 [[nodiscard]] bool LspOnTypeFormattingEnabled();
 
 // pull-diagnostics follow-up. Opt-in (default false), same reasoning as
@@ -145,7 +145,7 @@ void              SetLspOnTypeFormattingEnabled(bool enabled); // default false
 // not passive UI, even though a supporting server would otherwise get no
 // diagnostics at all without it (see RequestPullDiagnostics' own doc
 // comment in LspManager.h).
-void              SetLspPullDiagnosticsEnabled(bool enabled); // default false
+void               SetLspPullDiagnosticsEnabled(bool enabled); // default false
 [[nodiscard]] bool LspPullDiagnosticsEnabled();
 
 // semanticTokens follow-up. Same shape as SetLspSignatureHelpAutoTriggerEnabled
@@ -153,7 +153,7 @@ void              SetLspPullDiagnosticsEnabled(bool enabled); // default false
 // highlighting layered on top of tree-sitter's own, never replacing it) with
 // no editing-flow risk, the same reasoning documentHighlight's own toggle
 // already established.
-void              SetLspSemanticHighlightingEnabled(bool enabled); // default true
+void               SetLspSemanticHighlightingEnabled(bool enabled); // default true
 [[nodiscard]] bool LspSemanticHighlightingEnabled();
 
 // lsp-workspace-folders follow-up. Whether a buffer whose resolved LSP root
@@ -175,13 +175,13 @@ void               SetLspWorkspaceFoldersEnabled(bool enabled); // default true
 
 // inlayHint follow-up. Same reasoning as SetLspSemanticHighlightingEnabled
 // above -- default true, read-only decoration, no editing-flow risk.
-void              SetLspInlayHintsEnabled(bool enabled); // default true
+void               SetLspInlayHintsEnabled(bool enabled); // default true
 [[nodiscard]] bool LspInlayHintsEnabled();
 
 // codeLens follow-up. Same reasoning as SetLspInlayHintsEnabled above --
 // default true, read-only annotation until explicitly invoked
 // (lsp-run-code-lens-at-point), no editing-flow risk.
-void              SetLspCodeLensEnabled(bool enabled); // default true
+void               SetLspCodeLensEnabled(bool enabled); // default true
 [[nodiscard]] bool LspCodeLensEnabled();
 
 } // namespace ned::editor::lsp

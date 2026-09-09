@@ -97,13 +97,13 @@ struct ProjectSettings {
 // Convenience accessor: settings.includePathsByMode[modeName], or an empty list if
 // modeName has no entry. modeName is typically the active buffer's Mode::name.
 [[nodiscard]] const std::vector<std::filesystem::path>& IncludePathsForMode(const ProjectSettings& settings,
-                                                                            const std::string&      modeName);
+                                                                            const std::string&     modeName);
 
 // Convenience accessor: settings.lspInitializationOptionsByLanguage[language], or an
 // empty JSON object if language has no entry. language is typically
 // Editor/Mode.h's LanguageKeyForMode(mode).
 [[nodiscard]] const nlohmann::json& LspInitializationOptionsForLanguage(const ProjectSettings& settings,
-                                                                        const std::string&      language);
+                                                                        const std::string&     language);
 
 // Convenience accessor: settings.importResolutionByLanguage[language], or a
 // default-constructed (empty) ImportResolutionOverride if language has no
@@ -112,7 +112,7 @@ struct ProjectSettings {
 // mirrors the other two above, a plain lookup over ProjectSettings' own
 // storage.
 [[nodiscard]] const ImportResolutionOverride& ImportResolutionOverrideForLanguage(const ProjectSettings& settings,
-                                                                                  const std::string&      language);
+                                                                                  const std::string&     language);
 
 // Reads root/".ned/settings.json" if it exists and parses as valid JSON; a missing
 // file, an unreadable one, or one missing/misshaping a recognized key all just

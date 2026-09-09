@@ -24,10 +24,10 @@ TEST_CASE("ClassifyPorcelainStatus buckets git's own two-letter status codes", "
 
 TEST_CASE("PartitionVcsStatus splits staged/unstaged/untracked by porcelain column", "[VcsRowStatus]") {
     const auto sections = PartitionVcsStatus({
-        {"M ", "staged_only.txt"    },
-        {" M", "unstaged_only.txt"  },
+        {"M ", "staged_only.txt"},
+        {" M", "unstaged_only.txt"},
         {"AM", "staged_and_edited.txt"},
-        {"??", "untracked.txt"      },
+        {"??", "untracked.txt"},
     });
 
     REQUIRE(sections.staged.size() == 2);

@@ -12,12 +12,12 @@
 
 namespace {
 
-    struct IgnoreSigpipeForTests {
-        IgnoreSigpipeForTests() {
-            std::signal(SIGPIPE, SIG_IGN);
-        }
-    };
+struct IgnoreSigpipeForTests {
+    IgnoreSigpipeForTests() {
+        std::signal(SIGPIPE, SIG_IGN);
+    }
+};
 
-    const IgnoreSigpipeForTests kIgnoreSigpipeForTests;
+const IgnoreSigpipeForTests kIgnoreSigpipeForTests;
 
 } // namespace

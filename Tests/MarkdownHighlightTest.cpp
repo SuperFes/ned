@@ -38,9 +38,9 @@ TEST_CASE("MarkdownMode ATX headings cycle HeadlineLevel1/2/3 by level, whole li
     // text + trailing newline) gets the cyclic heading span appended after,
     // so it wins per the "later capture wins" overlap rule -- matching
     // Org's own whole-headline-line convention.
-    REQUIRE(HasSpan(spans, 0, 1, SyntaxClass::MarkupMarker));   // "#"
-    REQUIRE(HasSpan(spans, 0, 5, SyntaxClass::HeadlineLevel1)); // "# H1\n"
-    REQUIRE(HasSpan(spans, 5, 11, SyntaxClass::HeadlineLevel2)); // "## H2\n"
+    REQUIRE(HasSpan(spans, 0, 1, SyntaxClass::MarkupMarker));     // "#"
+    REQUIRE(HasSpan(spans, 0, 5, SyntaxClass::HeadlineLevel1));   // "# H1\n"
+    REQUIRE(HasSpan(spans, 5, 11, SyntaxClass::HeadlineLevel2));  // "## H2\n"
     REQUIRE(HasSpan(spans, 11, 18, SyntaxClass::HeadlineLevel3)); // "### H3\n"
     REQUIRE(HasSpan(spans, 18, 26, SyntaxClass::HeadlineLevel1)); // "#### H4\n" -- cycles back
     REQUIRE(HasSpan(spans, 26, 35, SyntaxClass::HeadlineLevel2)); // "##### H5\n"
@@ -52,7 +52,7 @@ TEST_CASE("MarkdownMode setext headings resolve level from the underline style",
     const std::string text  = "Title1\n======\n\nTitle2\n------\n";
     const auto        spans = mode.highlight(text);
 
-    REQUIRE(HasSpan(spans, 0, 14, SyntaxClass::HeadlineLevel1)); // "Title1\n======\n"
+    REQUIRE(HasSpan(spans, 0, 14, SyntaxClass::HeadlineLevel1));  // "Title1\n======\n"
     REQUIRE(HasSpan(spans, 15, 29, SyntaxClass::HeadlineLevel2)); // "Title2\n------\n"
 }
 
@@ -61,9 +61,9 @@ TEST_CASE("MarkdownMode inline formatting: bold/italic/code span/strikethrough",
     const std::string text  = "a **bold** b *italic* c `code` d ~~strike~~ e\n";
     const auto        spans = mode.highlight(text);
 
-    REQUIRE(HasSpan(spans, 2, 10, SyntaxClass::Strong));       // "**bold**"
-    REQUIRE(HasSpan(spans, 13, 21, SyntaxClass::Emphasis));    // "*italic*"
-    REQUIRE(HasSpan(spans, 24, 30, SyntaxClass::String));      // "`code`" -- reuses String, see CaptureTable
+    REQUIRE(HasSpan(spans, 2, 10, SyntaxClass::Strong));         // "**bold**"
+    REQUIRE(HasSpan(spans, 13, 21, SyntaxClass::Emphasis));      // "*italic*"
+    REQUIRE(HasSpan(spans, 24, 30, SyntaxClass::String));        // "`code`" -- reuses String, see CaptureTable
     REQUIRE(HasSpan(spans, 33, 43, SyntaxClass::Strikethrough)); // "~~strike~~" -- Ned's own addition, see Mode.cpp
     // Emphasis delimiters are dimmed via Punctuation, not swallowed into
     // the Strong/Emphasis span -- e.g. the opening "**".
@@ -81,7 +81,7 @@ TEST_CASE("MarkdownMode links and images resolve to Link", "[Markdown]") {
     REQUIRE(HasSpan(spans, 33, 36, SyntaxClass::Link)); // image alt text
     REQUIRE(HasSpan(spans, 38, 45, SyntaxClass::Link)); // image destination
     // The brackets/parens/bang are dimmed via Punctuation, not left Default.
-    REQUIRE(HasSpan(spans, 0, 1, SyntaxClass::Punctuation)); // "["
+    REQUIRE(HasSpan(spans, 0, 1, SyntaxClass::Punctuation));   // "["
     REQUIRE(HasSpan(spans, 31, 32, SyntaxClass::Punctuation)); // "!"
 }
 
@@ -90,8 +90,8 @@ TEST_CASE("MarkdownMode list/blockquote/thematic-break markers are dimmed via Ma
     const std::string text  = "- item\n> quote\n---\n";
     const auto        spans = mode.highlight(text);
 
-    REQUIRE(HasSpan(spans, 0, 2, SyntaxClass::MarkupMarker));  // "- "
-    REQUIRE(HasSpan(spans, 7, 9, SyntaxClass::MarkupMarker));  // "> "
+    REQUIRE(HasSpan(spans, 0, 2, SyntaxClass::MarkupMarker));   // "- "
+    REQUIRE(HasSpan(spans, 7, 9, SyntaxClass::MarkupMarker));   // "> "
     REQUIRE(HasSpan(spans, 15, 19, SyntaxClass::MarkupMarker)); // "---\n"
 }
 
@@ -100,7 +100,7 @@ TEST_CASE("MarkdownMode GFM task-list checkboxes resolve to Checkbox", "[Markdow
     const std::string text  = "- [ ] todo\n- [x] done\n";
     const auto        spans = mode.highlight(text);
 
-    REQUIRE(HasSpan(spans, 2, 5, SyntaxClass::Checkbox));  // "[ ]"
+    REQUIRE(HasSpan(spans, 2, 5, SyntaxClass::Checkbox));   // "[ ]"
     REQUIRE(HasSpan(spans, 13, 16, SyntaxClass::Checkbox)); // "[x]"
 }
 

@@ -21,7 +21,7 @@ std::filesystem::path McpRuntimeDirectory() {
 
 void EnsureMcpRuntimeDirectory() {
     const std::filesystem::path dir = McpRuntimeDirectory();
-    std::error_code              ec;
+    std::error_code             ec;
     std::filesystem::create_directories(dir, ec);
     if (ec) {
         throw std::runtime_error("ned: failed to create MCP bridge runtime directory " + dir.string() + ": " + ec.message());

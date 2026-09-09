@@ -14,7 +14,7 @@ namespace ned::editor {
 // Default true -- WindowManager::Pane reads this once, at construction, to
 // seed which of scrollColumn_/minimap_ starts active; toggle-minimap
 // (C-c m) flips the running state afterward, independent of this default.
-void              SetMinimapEnabled(bool enabled);
+void               SetMinimapEnabled(bool enabled);
 [[nodiscard]] bool MinimapEnabled();
 
 // Columns wide (not sub-dot columns -- each column packs 2 braille

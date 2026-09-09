@@ -9,11 +9,11 @@
 namespace ned::editor {
 
 namespace {
-std::optional<std::string> gLastResultsBuffer;
-// nullopt = "haven't stepped through the current results buffer yet" --
-// StepResultLocation's own doc comment explains why this can't just be
-// derived from the results buffer's Point().
-std::optional<std::size_t> gCursorIndex;
+    std::optional<std::string> gLastResultsBuffer;
+    // nullopt = "haven't stepped through the current results buffer yet" --
+    // StepResultLocation's own doc comment explains why this can't just be
+    // derived from the results buffer's Point().
+    std::optional<std::size_t> gCursorIndex;
 } // namespace
 
 void SetLastResultsBuffer(const std::string& bufferName) {

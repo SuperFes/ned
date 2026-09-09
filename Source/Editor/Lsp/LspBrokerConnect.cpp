@@ -231,7 +231,7 @@ namespace {
             }
             std::strncpy(exePathBuf, exePath.c_str(), sizeof(exePathBuf) - 1);
             exePathBuf[sizeof(exePathBuf) - 1] = '\0';
-            char* childArgv[] = {exePathBuf, const_cast<char*>("--lsp-broker"), nullptr};
+            char* childArgv[]                  = {exePathBuf, const_cast<char*>("--lsp-broker"), nullptr};
             ::execve(exePathBuf, childArgv, environ);
             ::_exit(127); // exec failed
         }
@@ -263,8 +263,8 @@ namespace {
 } // namespace
 
 std::unique_ptr<LspClient> TryConnectToBroker(const std::filesystem::path& projectRoot, const std::string& language,
-                                               const std::vector<std::string>& argv, ned::ui::EventLoop& eventLoop,
-                                               std::optional<std::filesystem::path> socketPathOverride) {
+                                              const std::vector<std::string>& argv, ned::ui::EventLoop& eventLoop,
+                                              std::optional<std::filesystem::path> socketPathOverride) {
     std::string socketPathStr;
     try {
         socketPathStr = socketPathOverride ? socketPathOverride->string() : BrokerSocketPath().string();
@@ -312,9 +312,9 @@ std::unique_ptr<LspClient> TryConnectToBroker(const std::filesystem::path& proje
             argvJson.push_back(arg);
         }
         transport.WriteFrame(Json{{"jsonrpc", "2.0"},
-                                   {"method", "ned/broker-attach"},
-                                   {"params", Json{{"projectRoot", projectRoot.string()}, {"language", language}, {"argv", argvJson}}}}
-                                  .dump());
+                                  {"method", "ned/broker-attach"},
+                                  {"params", Json{{"projectRoot", projectRoot.string()}, {"language", language}, {"argv", argvJson}}}}
+                                 .dump());
 
         return std::make_unique<LspClient>(std::move(transport), eventLoop, /*startHandshakeComplete=*/false);
     }

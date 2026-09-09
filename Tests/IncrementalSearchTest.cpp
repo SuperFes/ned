@@ -22,11 +22,11 @@ const char* kText = "the quick brown fox jumps over the lazy dog";
 // own first test relies on).
 std::filesystem::path WriteTempFile(const std::string& name, std::string_view content) {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
-    std::ofstream                file(path, std::ios::binary);
+    std::ofstream               file(path, std::ios::binary);
     file << content;
     return path;
 }
-}
+} // namespace
 
 TEST_CASE("Forward search finds a substring and leaves point after the match", "[IncrementalSearch]") {
     Buffer buffer("scratch", Rope(kText));
@@ -321,7 +321,7 @@ TEST_CASE("StatusText reflects direction and failing state", "[IncrementalSearch
 // boundary) that the in-memory path has no equivalent for.
 
 TEST_CASE("Forward isearch on a huge buffer finds a match and leaves point after it", "[IncrementalSearch][HugeFile]") {
-    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_forward.txt", kText);
+    const std::filesystem::path path   = WriteTempFile("ned_isearch_huge_forward.txt", kText);
     Buffer                      buffer = Buffer::FromHugeFile(path);
     REQUIRE(buffer.Content().IsHuge());
     buffer.SetPoint(0);
@@ -338,7 +338,7 @@ TEST_CASE("Forward isearch on a huge buffer finds a match and leaves point after
 }
 
 TEST_CASE("Backward isearch on a huge buffer leaves point at the start of the match", "[IncrementalSearch][HugeFile]") {
-    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_backward.txt", kText);
+    const std::filesystem::path path   = WriteTempFile("ned_isearch_huge_backward.txt", kText);
     Buffer                      buffer = Buffer::FromHugeFile(path);
     buffer.SetPoint(buffer.Size());
 
@@ -354,7 +354,7 @@ TEST_CASE("Backward isearch on a huge buffer leaves point at the start of the ma
 }
 
 TEST_CASE("isearch on a huge buffer is smart-case, same as the in-memory path", "[IncrementalSearch][HugeFile]") {
-    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_case.txt", "the quick brown FOX jumps over the lazy dog");
+    const std::filesystem::path path   = WriteTempFile("ned_isearch_huge_case.txt", "the quick brown FOX jumps over the lazy dog");
     Buffer                      buffer = Buffer::FromHugeFile(path);
     buffer.SetPoint(0);
 
@@ -371,7 +371,7 @@ TEST_CASE("isearch on a huge buffer is smart-case, same as the in-memory path", 
 
 TEST_CASE("A query with no match in a huge buffer reports Found() == false and leaves point unmoved",
           "[IncrementalSearch][HugeFile]") {
-    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_nomatch.txt", kText);
+    const std::filesystem::path path   = WriteTempFile("ned_isearch_huge_nomatch.txt", kText);
     Buffer                      buffer = Buffer::FromHugeFile(path);
     buffer.SetPoint(0);
 
@@ -388,7 +388,7 @@ TEST_CASE("A query with no match in a huge buffer reports Found() == false and l
 
 TEST_CASE("RepeatSearch wraps around to the top of a huge document when it runs off the end",
           "[IncrementalSearch][HugeFile]") {
-    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_wrap_fwd.txt", kText);
+    const std::filesystem::path path   = WriteTempFile("ned_isearch_huge_wrap_fwd.txt", kText);
     Buffer                      buffer = Buffer::FromHugeFile(path);
     buffer.SetPoint(0);
 
@@ -410,7 +410,7 @@ TEST_CASE("RepeatSearch wraps around to the top of a huge document when it runs 
 
 TEST_CASE("Backward isearch on a huge buffer wraps around to the bottom of the document",
           "[IncrementalSearch][HugeFile]") {
-    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_wrap_back.txt", kText);
+    const std::filesystem::path path   = WriteTempFile("ned_isearch_huge_wrap_back.txt", kText);
     Buffer                      buffer = Buffer::FromHugeFile(path);
     buffer.SetPoint(0); // start searching from the very top
 
@@ -424,7 +424,7 @@ TEST_CASE("Backward isearch on a huge buffer wraps around to the bottom of the d
 }
 
 TEST_CASE("AppendWordAtPoint pulls the word at point in a huge buffer", "[IncrementalSearch][HugeFile]") {
-    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_word.txt", kText);
+    const std::filesystem::path path   = WriteTempFile("ned_isearch_huge_word.txt", kText);
     Buffer                      buffer = Buffer::FromHugeFile(path);
     buffer.SetPoint(16); // start of "fox"
 
@@ -438,8 +438,8 @@ TEST_CASE("AppendWordAtPoint pulls the word at point in a huge buffer", "[Increm
 
 TEST_CASE("Forward isearch on a huge buffer finds a match past the first internal scan window",
           "[IncrementalSearch][HugeFile]") {
-    constexpr std::size_t kWindow = 4 * 1024 * 1024; // mirrors SearchHuge's own kWindow constant (IncrementalSearch.cpp)
-    const std::string     needle  = "unique-token-past-first-window";
+    constexpr std::size_t kWindow      = 4 * 1024 * 1024; // mirrors SearchHuge's own kWindow constant (IncrementalSearch.cpp)
+    const std::string     needle       = "unique-token-past-first-window";
     const std::size_t     needleOffset = kWindow + 1000;
 
     std::string content(kWindow + 4096, 'a');

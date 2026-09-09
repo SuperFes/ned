@@ -7,7 +7,9 @@ using ned::text::ConflictHunk;
 using ned::text::ParseConflictHunks;
 
 namespace {
-    std::string Slice(const std::string& text, ConflictHunk::Range range) { return text.substr(range.start, range.end - range.start); }
+std::string Slice(const std::string& text, ConflictHunk::Range range) {
+    return text.substr(range.start, range.end - range.start);
+}
 } // namespace
 
 TEST_CASE("No markers at all parses to an empty hunk list", "[ConflictHunk]") {
@@ -16,8 +18,8 @@ TEST_CASE("No markers at all parses to an empty hunk list", "[ConflictHunk]") {
 }
 
 TEST_CASE("A single ours/theirs hunk parses with no base range", "[ConflictHunk]") {
-    const std::string text = "before\n<<<<<<< buffer\nours line\n=======\ntheirs line\n>>>>>>> disk\nafter\n";
-    const auto         hunks = ParseConflictHunks(text);
+    const std::string text  = "before\n<<<<<<< buffer\nours line\n=======\ntheirs line\n>>>>>>> disk\nafter\n";
+    const auto        hunks = ParseConflictHunks(text);
     REQUIRE(hunks.size() == 1);
     const ConflictHunk& hunk = hunks[0];
     REQUIRE(hunk.startByte == text.find("<<<<<<<"));
@@ -40,10 +42,10 @@ TEST_CASE("A diff3 hunk with a base section parses all three ranges", "[Conflict
 }
 
 TEST_CASE("Multiple hunks in one buffer parse independently, in document order", "[ConflictHunk]") {
-    const std::string text = "<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n"
+    const std::string text  = "<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n"
                               "middle\n"
                               "<<<<<<< a\np\n=======\nq\n>>>>>>> b\n";
-    const auto hunks = ParseConflictHunks(text);
+    const auto        hunks = ParseConflictHunks(text);
     REQUIRE(hunks.size() == 2);
     REQUIRE(Slice(text, hunks[0].oursRange) == "x\n");
     REQUIRE(Slice(text, hunks[1].oursRange) == "p\n");
@@ -56,15 +58,15 @@ TEST_CASE("An unterminated start marker is dropped, not thrown", "[ConflictHunk]
 }
 
 TEST_CASE("A nested start marker abandons the outer one and resumes at the fresh marker", "[ConflictHunk]") {
-    const std::string text = "<<<<<<< outer\nstuff\n<<<<<<< inner\nx\n=======\ny\n>>>>>>> z\n";
-    const auto         hunks = ParseConflictHunks(text);
+    const std::string text  = "<<<<<<< outer\nstuff\n<<<<<<< inner\nx\n=======\ny\n>>>>>>> z\n";
+    const auto        hunks = ParseConflictHunks(text);
     REQUIRE(hunks.size() == 1);
     REQUIRE(hunks[0].startByte == text.find("<<<<<<< inner"));
 }
 
 TEST_CASE("An empty ours or theirs side parses as a zero-length range", "[ConflictHunk]") {
-    const std::string text = "<<<<<<< a\n=======\nonly theirs\n>>>>>>> b\n";
-    const auto         hunks = ParseConflictHunks(text);
+    const std::string text  = "<<<<<<< a\n=======\nonly theirs\n>>>>>>> b\n";
+    const auto        hunks = ParseConflictHunks(text);
     REQUIRE(hunks.size() == 1);
     REQUIRE(Slice(text, hunks[0].oursRange).empty());
     REQUIRE(Slice(text, hunks[0].theirsRange) == "only theirs\n");

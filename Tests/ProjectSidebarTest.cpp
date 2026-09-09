@@ -742,7 +742,6 @@ TEST_CASE("Clicking a binary file reports a message when no open-request handler
     std::filesystem::remove_all(dir);
 }
 
-
 TEST_CASE("While focused, arrow keys move the selection and Enter opens the file permanently, returning focus",
           "[ProjectSidebar]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_kbd";
@@ -945,8 +944,8 @@ TEST_CASE("changed-files-highlight: rows are tinted by VCS status, directories b
 
     sidebar.OnEvent(MousePress(0, 1)); // expand "sub/" (row 1 -- row 0 is the header)
     sidebar.DispatchVcsStatusForTesting({
-        {" M", "a.txt"    },
-        {"??", "b.txt"    },
+        {" M", "a.txt"},
+        {"??", "b.txt"},
         {"A ", "sub/d.txt"},
         {" M", "sub/e.txt"},
     });
@@ -967,11 +966,11 @@ TEST_CASE("changed-files-highlight: rows are tinted by VCS status, directories b
     // sub/ has no status of its own but two changed descendants -- it's
     // colored by the more severe one (Modified beats Added).
     REQUIRE(screen.PixelAt(1, 1).foreground_color == ned::ui::Color::BrightBlue);
-    REQUIRE(screen.PixelAt(1, 2).foreground_color == ned::ui::Color::BrightGreen);  // d.txt: Added
-    REQUIRE(screen.PixelAt(1, 3).foreground_color == ned::ui::Color::BrightBlue);   // e.txt: Modified
-    REQUIRE(screen.PixelAt(1, 4).foreground_color == ned::ui::Color::BrightBlue);   // a.txt: Modified
-    REQUIRE(screen.PixelAt(1, 5).foreground_color == ned::ui::Color::BrightCyan);   // b.txt: Untracked
-    REQUIRE(screen.PixelAt(1, 6).foreground_color == theme.defaultForeground);      // c.txt: clean, untouched
+    REQUIRE(screen.PixelAt(1, 2).foreground_color == ned::ui::Color::BrightGreen); // d.txt: Added
+    REQUIRE(screen.PixelAt(1, 3).foreground_color == ned::ui::Color::BrightBlue);  // e.txt: Modified
+    REQUIRE(screen.PixelAt(1, 4).foreground_color == ned::ui::Color::BrightBlue);  // a.txt: Modified
+    REQUIRE(screen.PixelAt(1, 5).foreground_color == ned::ui::Color::BrightCyan);  // b.txt: Untracked
+    REQUIRE(screen.PixelAt(1, 6).foreground_color == theme.defaultForeground);     // c.txt: clean, untouched
 
     std::filesystem::remove_all(dir);
 }

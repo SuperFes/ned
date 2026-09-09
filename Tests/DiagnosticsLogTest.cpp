@@ -72,9 +72,8 @@ class EnvVarGuard {
 // BackupSettingsGuard precedent, merged into one struct since this module
 // has no separate "settings vs. entries" split worth two guards.
 struct LogSandbox {
-    explicit LogSandbox(const std::string& name)
-        : root(std::filesystem::temp_directory_path() / name), state(root / "state"), stateGuard("XDG_STATE_HOME", state.c_str()),
-          homeGuard("HOME", nullptr) {
+    explicit LogSandbox(const std::string& name) : root(std::filesystem::temp_directory_path() / name), state(root / "state"), stateGuard("XDG_STATE_HOME", state.c_str()),
+                                                   homeGuard("HOME", nullptr) {
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(state);
         ResetDiagnosticsLogForTesting();
@@ -88,8 +87,8 @@ struct LogSandbox {
 
     std::filesystem::path root;
     std::filesystem::path state;
-    EnvVarGuard            stateGuard;
-    EnvVarGuard            homeGuard;
+    EnvVarGuard           stateGuard;
+    EnvVarGuard           homeGuard;
 };
 
 std::filesystem::path LogsDir(const LogSandbox& sandbox) {
@@ -100,7 +99,7 @@ std::filesystem::path LogsDir(const LogSandbox& sandbox) {
 
 TEST_CASE("LogCategoryFromString/ToString round-trips every category", "[DiagnosticsLog]") {
     for (const LogCategory category : {LogCategory::General, LogCategory::Janet, LogCategory::Lsp, LogCategory::Dap, LogCategory::Acp,
-                                        LogCategory::Vcs, LogCategory::Task, LogCategory::Subprocess}) {
+                                       LogCategory::Vcs, LogCategory::Task, LogCategory::Subprocess}) {
         const std::string name = std::string(LogCategoryToString(category));
         REQUIRE(LogCategoryFromString(name) == category);
     }
@@ -120,7 +119,7 @@ TEST_CASE("Lsp defaults hidden, every other category defaults visible", "[Diagno
 }
 
 TEST_CASE("SetLogCategoryVisible round-trips and only bumps the generation on real change", "[DiagnosticsLog]") {
-    const LogSandbox sandbox("ned_difflog_test_visibility");
+    const LogSandbox  sandbox("ned_difflog_test_visibility");
     const std::size_t before = LogGeneration();
 
     SetLogCategoryVisible(LogCategory::Lsp, true);
@@ -136,7 +135,7 @@ TEST_CASE("SetLogCategoryVisible round-trips and only bumps the generation on re
 }
 
 TEST_CASE("LogMessage appends, bumps generation, and is visible via LogEntries", "[DiagnosticsLog]") {
-    const LogSandbox sandbox("ned_difflog_test_append");
+    const LogSandbox  sandbox("ned_difflog_test_append");
     const std::size_t before = LogGeneration();
 
     LogMessage(LogCategory::Janet, LogSeverity::Error, "boom", std::string("init.janet"), 12);
@@ -152,7 +151,7 @@ TEST_CASE("LogMessage appends, bumps generation, and is visible via LogEntries",
 }
 
 TEST_CASE("LogMessage coalesces consecutive identical entries into one, incrementing a counter", "[DiagnosticsLog]") {
-    const LogSandbox sandbox("ned_difflog_test_coalesce");
+    const LogSandbox  sandbox("ned_difflog_test_coalesce");
     const std::size_t before = LogGeneration();
 
     LogMessage(LogCategory::Lsp, LogSeverity::Warning, "connection refused");
@@ -211,7 +210,7 @@ TEST_CASE("LogMessage throttles disk writes for a long coalesced streak to expon
 
     std::string content;
     for (const auto& entry : std::filesystem::directory_iterator(LogsDir(sandbox))) {
-        std::ifstream      in(entry.path());
+        std::ifstream in(entry.path());
         content += std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
 
@@ -223,7 +222,7 @@ TEST_CASE("LogMessage throttles disk writes for a long coalesced streak to expon
     REQUIRE(content.find("(x3)") == std::string::npos);
     std::size_t occurrences = 0;
     for (std::size_t pos = content.find("repeating failure"); pos != std::string::npos;
-         pos              = content.find("repeating failure", pos + 1)) {
+         pos             = content.find("repeating failure", pos + 1)) {
         ++occurrences;
     }
     REQUIRE(occurrences == 3);
@@ -278,7 +277,7 @@ TEST_CASE("SetLogMaxEntries caps the ring, evicting oldest first, and trims imme
 }
 
 TEST_CASE("RebuildMessagesBuffer renders only currently-visible categories, oldest first", "[DiagnosticsLog]") {
-    const LogSandbox   sandbox("ned_difflog_test_rebuild");
+    const LogSandbox      sandbox("ned_difflog_test_rebuild");
     ned::text::BufferList bufferList;
 
     SetLogCategoryVisible(LogCategory::Lsp, false); // default, explicit for clarity
@@ -304,7 +303,7 @@ TEST_CASE("RebuildMessagesBuffer renders only currently-visible categories, olde
 }
 
 TEST_CASE("RebuildMessagesBuffer maps severity to the right Diagnostic::Severity", "[DiagnosticsLog]") {
-    const LogSandbox   sandbox("ned_difflog_test_severity_map");
+    const LogSandbox      sandbox("ned_difflog_test_severity_map");
     ned::text::BufferList bufferList;
 
     LogMessage(LogCategory::General, LogSeverity::Error, "e");
@@ -323,7 +322,7 @@ TEST_CASE("RebuildMessagesBuffer maps severity to the right Diagnostic::Severity
 }
 
 TEST_CASE("RebuildMessagesBuffer is idempotent (find-or-create, not duplicate-create)", "[DiagnosticsLog]") {
-    const LogSandbox   sandbox("ned_difflog_test_idempotent");
+    const LogSandbox      sandbox("ned_difflog_test_idempotent");
     ned::text::BufferList bufferList;
 
     LogMessage(LogCategory::General, LogSeverity::Info, "one");
@@ -343,7 +342,7 @@ TEST_CASE("LogMessage appends a matching line to today's on-disk log file", "[Di
 
     bool found = false;
     for (const auto& entry : std::filesystem::directory_iterator(LogsDir(sandbox))) {
-        std::ifstream in(entry.path());
+        std::ifstream     in(entry.path());
         const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         if (content.find("disk-write-check") != std::string::npos) {
             found = true;

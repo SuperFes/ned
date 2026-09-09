@@ -42,7 +42,9 @@ class MappedFileError : public std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
-enum class AccessPattern { kNormal, kRandom, kSequential };
+enum class AccessPattern { kNormal,
+                           kRandom,
+                           kSequential };
 
 // Move-only; the mapping (and the underlying fd, only needed transiently to
 // create it) is released in the destructor. A zero-byte file maps to a

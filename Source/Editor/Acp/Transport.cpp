@@ -80,9 +80,8 @@ namespace {
 
 } // namespace
 
-Transport::Transport(const std::vector<std::string>& argv, bool captureStderr)
-    : child_(argv, captureStderr ? process::StderrMode::Capture : process::StderrMode::Discard),
-      processLabel_(argv.empty() ? std::string() : BaseName(argv[0])) {
+Transport::Transport(const std::vector<std::string>& argv, bool captureStderr) : child_(argv, captureStderr ? process::StderrMode::Capture : process::StderrMode::Discard),
+                                                                                 processLabel_(argv.empty() ? std::string() : BaseName(argv[0])) {
 }
 
 Transport::Transport(int readFd, int writeFd, pid_t pid) noexcept : child_(readFd, writeFd, pid) {

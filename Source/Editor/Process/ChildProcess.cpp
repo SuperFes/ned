@@ -92,9 +92,9 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
         throw std::runtime_error("ned: executable not found (checked $PATH): " + argv[0]);
     }
 
-    int stdinPipe[2]  = {-1, -1};
-    int stdoutPipe[2] = {-1, -1};
-    int stderrPipe[2] = {-1, -1};
+    int        stdinPipe[2]  = {-1, -1};
+    int        stdoutPipe[2] = {-1, -1};
+    int        stderrPipe[2] = {-1, -1};
     const bool captureStderr = (stderrMode == StderrMode::Capture);
     if (::pipe(stdinPipe) != 0 || ::pipe(stdoutPipe) != 0 || (captureStderr && ::pipe(stderrPipe) != 0)) {
         throw std::runtime_error(std::string("ned: ChildProcess: pipe() failed: ") + std::strerror(errno));

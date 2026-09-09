@@ -150,12 +150,12 @@ void McpBridgeServer::HandleFrame(const std::shared_ptr<Transport>& transport, c
         return; // malformed JSON with no reliable id to answer -- nothing sensible to send back
     }
 
-    const Json   id     = frame.value("id", Json());
-    const bool   hasId  = frame.contains("id");
+    const Json        id     = frame.value("id", Json());
+    const bool        hasId  = frame.contains("id");
     const std::string method = frame.value("method", std::string());
 
     if (method == "initialize") {
-        const Json& params          = frame.value("params", Json::object());
+        const Json&       params          = frame.value("params", Json::object());
         const std::string protocolVersion = params.value("protocolVersion", std::string("2025-06-18"));
         SendResult(transport, id,
                    Json{
@@ -177,9 +177,9 @@ void McpBridgeServer::HandleFrame(const std::shared_ptr<Transport>& transport, c
         return;
     }
     if (method == "tools/call") {
-        const Json&        params = frame.value("params", Json::object());
-        const std::string  name   = params.value("name", std::string());
-        const Json         args   = params.value("arguments", Json::object());
+        const Json&       params = frame.value("params", Json::object());
+        const std::string name   = params.value("name", std::string());
+        const Json        args   = params.value("arguments", Json::object());
         if (!registry_.HasTool(name)) {
             SendError(transport, id, -32601, "Unknown tool: " + name);
             return;

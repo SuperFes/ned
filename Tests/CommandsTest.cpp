@@ -890,7 +890,7 @@ TEST_CASE("save-buffer does not touch the buffer when no format command is confi
 TEST_CASE("save-buffer skips format-on-save, ensure-final-newline, and forced line-ending conversion for a "
           "LikelyBinary buffer",
           "[Commands][BinarySafety]") {
-    const FormatCommandGuard     guard;
+    const FormatCommandGuard guard;
     SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));
     const LineEndingPolicyGuard policyGuard;
     SetLineEndingPolicy({LineEndingPolicyMode::Force, ned::text::LineEnding::CRLF});
@@ -1572,7 +1572,7 @@ TEST_CASE("self-insert-command respects the active Mode's autoPairs: Janet mode 
     RegisterBuiltinCommands(registry);
 
     Fixture        fixture;
-    CommandContext context = fixture.Context();
+    CommandContext context   = fixture.Context();
     const Mode     janetMode = JanetMode();
     context.mode             = &janetMode;
 

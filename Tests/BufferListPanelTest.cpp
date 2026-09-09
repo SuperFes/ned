@@ -11,7 +11,7 @@
 namespace {
 
 struct Fixture {
-    ned::ui::Theme       theme = ned::ui::DarkTheme();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::text::BufferList bufferList;
 };
 
@@ -30,7 +30,7 @@ TEST_CASE("BufferListPanel lists every open buffer and takes focus", "[BufferLis
 }
 
 TEST_CASE("BufferListPanel Enter switches to the selected buffer", "[BufferListPanel]") {
-    Fixture fixture;
+    Fixture            fixture;
     ned::text::Buffer& one = fixture.bufferList.CreateBuffer("one");
     fixture.bufferList.CreateBuffer("two");
 
@@ -64,7 +64,7 @@ TEST_CASE("BufferListPanel Escape cancels without a kill confirmation pending", 
     fixture.bufferList.CreateBuffer("one");
 
     ned::ui::BufferListPanel panel(fixture.theme, fixture.bufferList);
-    bool                      cancelled = false;
+    bool                     cancelled = false;
     panel.SetOnCancel([&] { cancelled = true; });
     panel.Show();
     panel.Popup().TakeFocus();
@@ -79,7 +79,7 @@ TEST_CASE("BufferListPanel marks a clean buffer and kills it on x with no confir
     fixture.bufferList.CreateBuffer("two");
 
     ned::ui::BufferListPanel panel(fixture.theme, fixture.bufferList);
-    std::vector<std::string>  closingNames;
+    std::vector<std::string> closingNames;
     panel.SetOnBufferClosing([&](ned::text::Buffer& buffer) { closingNames.push_back(buffer.Name()); });
     panel.Show();
     panel.Popup().TakeFocus();
@@ -94,13 +94,13 @@ TEST_CASE("BufferListPanel marks a clean buffer and kills it on x with no confir
 
 TEST_CASE("BufferListPanel requires y/n confirmation before killing a modified buffer, and n cancels it",
           "[BufferListPanel]") {
-    Fixture             fixture;
+    Fixture            fixture;
     ned::text::Buffer& one = fixture.bufferList.CreateBuffer("one");
     one.InsertAtPoint("hello");
     REQUIRE(one.Modified());
 
     ned::ui::BufferListPanel panel(fixture.theme, fixture.bufferList);
-    bool                      closed = false;
+    bool                     closed = false;
     panel.SetOnBufferClosing([&](ned::text::Buffer&) { closed = true; });
     panel.Show();
     panel.Popup().TakeFocus();
@@ -154,8 +154,8 @@ TEST_CASE("BufferListPanel u clears both a kill and a save mark on the same row"
 
     // Nothing left marked for either kill or save: x is a no-op (no
     // confirmation, no save message) rather than closing/saving "one".
-    bool                      closed = false;
-    bool                      messaged = false;
+    bool closed   = false;
+    bool messaged = false;
     panel.SetOnBufferClosing([&](ned::text::Buffer&) { closed = true; });
     panel.SetOnMessage([&](std::string) { messaged = true; });
     REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('x')));
@@ -165,9 +165,9 @@ TEST_CASE("BufferListPanel u clears both a kill and a save mark on the same row"
 }
 
 TEST_CASE("BufferListPanel s marks a buffer for save and x writes it to disk", "[BufferListPanel]") {
-    Fixture fixture;
+    Fixture                     fixture;
     const std::filesystem::path path = std::filesystem::temp_directory_path() /
-                                        ("ned-bufferlistpanel-save-test-" + std::to_string(::getpid()) + ".txt");
+                                       ("ned-bufferlistpanel-save-test-" + std::to_string(::getpid()) + ".txt");
     std::filesystem::remove(path);
 
     ned::text::Buffer& one = fixture.bufferList.CreateBuffer("one");
@@ -176,7 +176,7 @@ TEST_CASE("BufferListPanel s marks a buffer for save and x writes it to disk", "
     REQUIRE(one.Modified());
 
     ned::ui::BufferListPanel panel(fixture.theme, fixture.bufferList);
-    std::vector<std::string>  messages;
+    std::vector<std::string> messages;
     panel.SetOnMessage([&](std::string message) { messages.push_back(std::move(message)); });
     panel.Show();
     panel.Popup().TakeFocus();

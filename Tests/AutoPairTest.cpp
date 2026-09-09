@@ -127,7 +127,7 @@ TEST_CASE("DecideSelfInsert pairs a quote typed right after an auto-paired brack
 
 TEST_CASE("DecideSelfInsert wraps a selection when the typed character is an opener", "[AutoPair]") {
     AutoPairQuery query;
-    query.typed       = '(';
+    query.typed        = '(';
     query.hasSelection = true;
     query.pairs        = &kPairs;
     REQUIRE(DecideSelfInsert(query) == PairAction::WrapSelection);

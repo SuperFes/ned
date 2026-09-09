@@ -190,11 +190,11 @@ class Minimap : public Widget {
     [[nodiscard]] int PositionForRow(int row) const;
 
     const ActiveBuffer& activeBuffer_;
-    const editor::Mode&  mode_;
-    const Theme&          theme_;
+    const editor::Mode& mode_;
+    const Theme&        theme_;
 
     std::function<void(int)> onScroll_;
-    bool                      dragging_ = false;
+    bool                     dragging_ = false;
 
     EventLoop* eventLoop_ = nullptr; // see SetEventLoop
 
@@ -225,14 +225,14 @@ class Minimap : public Widget {
     };
     mutable std::unordered_map<text::Buffer*, HighlightCacheEntry> highlightCacheByBuffer_;
 
-    mutable text::Buffer* cacheBuffer_              = nullptr;
-    mutable std::size_t   cacheContentGeneration_   = 0;
-    mutable int           cacheHeight_               = -1;
-    mutable int           cacheWidth_                = -1;
-    mutable double        cacheCharsPerDot_          = -1.0;
-    mutable int           cacheScrollableLength_     = -1;
-    mutable int           cachePosition_             = -1;
-    mutable int           cacheItemVisualLength_     = -1;
+    mutable text::Buffer* cacheBuffer_            = nullptr;
+    mutable std::size_t   cacheContentGeneration_ = 0;
+    mutable int           cacheHeight_            = -1;
+    mutable int           cacheWidth_             = -1;
+    mutable double        cacheCharsPerDot_       = -1.0;
+    mutable int           cacheScrollableLength_  = -1;
+    mutable int           cachePosition_          = -1;
+    mutable int           cacheItemVisualLength_  = -1;
     // Only meaningful (and only compared) in real-pixel-graphics mode --
     // NCBLIT_PIXEL's NCSCALE_NONE path needs the source raster built at
     // exactly the terminal's real cell-pixel resolution (see EnsurePlane()'s

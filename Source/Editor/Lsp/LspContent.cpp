@@ -575,7 +575,9 @@ std::optional<std::string> ExtractHoverText(const Json& result) {
     return text;
 }
 
-std::vector<CompletionItem> ExtractCompletionItems(const Json& result) { return ExtractCompletionList(result).items; }
+std::vector<CompletionItem> ExtractCompletionItems(const Json& result) {
+    return ExtractCompletionList(result).items;
+}
 
 CompletionList ExtractCompletionList(const Json& result) {
     CompletionList               list;
@@ -932,34 +934,34 @@ std::optional<TextDocumentSyncKind> ExtractTextDocumentSyncKind(const Json& init
 
 namespace {
 
-// rename-file-notifications follow-up: shared by ExtractFileOperationFilters'
-// willRename/didRename halves -- both read the identical
-// {filters: [{pattern: {glob: "..."}}]} shape.
-[[nodiscard]] std::vector<std::string> FileOperationGlobs(const Json& capabilities, std::string_view operationName) {
-    std::vector<std::string> globs;
-    const auto               opIt = capabilities.find(operationName);
-    if (opIt == capabilities.end() || !opIt->is_object()) {
+    // rename-file-notifications follow-up: shared by ExtractFileOperationFilters'
+    // willRename/didRename halves -- both read the identical
+    // {filters: [{pattern: {glob: "..."}}]} shape.
+    [[nodiscard]] std::vector<std::string> FileOperationGlobs(const Json& capabilities, std::string_view operationName) {
+        std::vector<std::string> globs;
+        const auto               opIt = capabilities.find(operationName);
+        if (opIt == capabilities.end() || !opIt->is_object()) {
+            return globs;
+        }
+        const auto filtersIt = opIt->find("filters");
+        if (filtersIt == opIt->end() || !filtersIt->is_array()) {
+            return globs;
+        }
+        for (const Json& filter : *filtersIt) {
+            if (!filter.is_object()) {
+                continue;
+            }
+            const auto patternIt = filter.find("pattern");
+            if (patternIt == filter.end() || !patternIt->is_object()) {
+                continue;
+            }
+            const auto globIt = patternIt->find("glob");
+            if (globIt != patternIt->end() && globIt->is_string()) {
+                globs.push_back(globIt->get<std::string>());
+            }
+        }
         return globs;
     }
-    const auto filtersIt = opIt->find("filters");
-    if (filtersIt == opIt->end() || !filtersIt->is_array()) {
-        return globs;
-    }
-    for (const Json& filter : *filtersIt) {
-        if (!filter.is_object()) {
-            continue;
-        }
-        const auto patternIt = filter.find("pattern");
-        if (patternIt == filter.end() || !patternIt->is_object()) {
-            continue;
-        }
-        const auto globIt = patternIt->find("glob");
-        if (globIt != patternIt->end() && globIt->is_string()) {
-            globs.push_back(globIt->get<std::string>());
-        }
-    }
-    return globs;
-}
 
 } // namespace
 
@@ -1182,7 +1184,7 @@ std::vector<InlayHint> ExtractInlayHints(const Json& result) {
 
 CodeLens ExtractSingleCodeLens(const Json& item) {
     CodeLens lens;
-    lens.raw = item;
+    lens.raw          = item;
     const Json& range = item.value("range", Json::object());
     if (range.is_object() && range.contains("start") && range.contains("end")) {
         lens.start = PositionFromJson(range["start"]);
