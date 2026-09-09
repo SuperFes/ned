@@ -198,216 +198,253 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
     DismissHover(); // hover-tooltips follow-up: any real keystroke ends a pending/shown tooltip
 
-    if (inputMode_ == InputMode::IsearchForward || inputMode_ == InputMode::IsearchBackward) {
-        HandleSearchKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::QueryReplace) {
-        HandleQueryReplaceKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ProjectReplace) {
-        HandleProjectReplaceKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ConfirmQuit) {
-        HandleConfirmQuitKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ConfirmCloseBuffer) {
-        HandleConfirmCloseBufferKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ConfirmOverwriteSave) {
-        HandleConfirmOverwriteSaveKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ConfirmSaveWithConflicts) {
-        HandleConfirmSaveWithConflictsKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ConfirmRevertHunk) {
-        HandleConfirmRevertHunkKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ConfirmOpenBinary) {
-        HandleConfirmOpenBinaryKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ConfirmTrustProjectInit) {
-        HandleConfirmTrustProjectInitKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    // Every plain text-entry prompt routes here. The set is TextEntryPromptCompletion's
-    // to decide, not a second list kept in agreement with it -- see
-    // BufferView/TextEntryPrompt.h for the two bugs that cost.
-    if (TextEntryPromptFor(inputMode_)) {
-        HandlePromptKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::DeleteFile) {
-        HandleDeleteFileKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::RenameFile) {
-        HandleRenameFileKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::SetProperty) {
-        HandleSetPropertyKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::RecoverFile) {
-        HandleRecoverFileKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ExecuteCommand) {
-        // No ClampPointToNarrowing() here: HandleExecuteCommandKey's own
-        // Enter branch already routes through RunCommandAndHandleOutcome
-        // internally (M-x invoking a command by name), which handles the
-        // clamp itself -- see that method's own doc comment for why it has
-        // to be the one doing it, not a caller after the fact.
-        HandleExecuteCommandKey(*chord);
-        return true;
-    }
-    if (inputMode_ == InputMode::ProjectFindFile) {
-        // Unlike ExecuteCommand, Enter here just opens a file directly
-        // (BufferList::OpenOrCreateFile + activeBuffer_.Set()) rather than
-        // routing through RunCommandAndHandleOutcome, so the ordinary
-        // after-the-fact ClampPointToNarrowing() every other prompt-shaped
-        // mode uses is correct here too.
-        HandleProjectFindFileKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::FindRecentFile) {
-        HandleFindRecentFileKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::SwitchProject) {
-        HandleSwitchProjectKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::SwitchToBuffer) {
-        HandleSwitchToBufferKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::VcsSwitchBranch) {
-        HandleVcsSwitchBranchKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::AcpAgentName) {
-        HandleAcpAgentNameKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::BookmarkJump) {
-        HandleBookmarkJumpKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::SelectTheme) {
-        HandleSelectThemeKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::PointToRegister || inputMode_ == InputMode::JumpToRegister ||
-        inputMode_ == InputMode::CopyToRegister || inputMode_ == InputMode::InsertRegister) {
-        HandleRegisterKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ZapToChar) {
-        HandleZapToCharKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::OrgCaptureSelectTemplate) {
-        HandleOrgCaptureKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::AcpPermissionPrompt) {
-        HandleAcpPermissionPromptKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::DapThreadSelect) {
-        HandleDapThreadSelectKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::DapExceptionFilterSelect) {
-        HandleDapExceptionFilterSelectKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::LspCodeActionSelect) {
-        HandleCodeActionSelectKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::LspGotoDefinitionSelect) {
-        HandleDefinitionSelectKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::LspPeekDefinition) {
-        HandlePeekDefinitionKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::ContextMenu) {
-        HandleContextMenuKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::LspGotoSymbol) {
-        // Same "Enter jumps directly, no RunCommandAndHandleOutcome routing"
-        // shape as ProjectFindFile above.
-        HandleDocumentSymbolKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::LspWorkspaceSymbol) {
-        HandleWorkspaceSymbolKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::PrefixArgument) {
-        // No ClampPointToNarrowing(): reading a prefix argument never moves
-        // point itself -- a Continue outcome does nothing to the buffer, and
-        // a Terminate outcome re-dispatches through DispatchChordNormally,
-        // which already runs the same clamp any other normal dispatch does.
-        HandlePrefixArgumentKey(*chord);
-        return true;
-    }
-    if (inputMode_ == InputMode::Snippet) {
-        // No ClampPointToNarrowing() here for the same PrefixArgument
-        // reason: consumed chords clamp inside HandleSnippetKey themselves,
-        // and a fall-through chord re-dispatches through
-        // DispatchChordNormally, after which *this* may be destroyed.
-        HandleSnippetKey(*chord);
-        return true;
+    // One switch rather than a chain of ifs: with no default label the
+    // compiler reports any InputMode that is not dispatched, which is exactly
+    // the mistake that has twice shipped as a prompt whose keystrokes fell
+    // through to self-insert. Every case returns; Normal is the only one that
+    // falls out to the ordinary key handling below.
+    switch (inputMode_) {
+        case InputMode::Normal:
+            break; // ordinary editing -- handled below
+
+        case InputMode::IsearchForward:
+        case InputMode::IsearchBackward:
+            HandleSearchKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::QueryReplace:
+            HandleQueryReplaceKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ProjectReplace:
+            HandleProjectReplaceKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ConfirmQuit:
+            HandleConfirmQuitKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ConfirmCloseBuffer:
+            HandleConfirmCloseBufferKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ConfirmOverwriteSave:
+            HandleConfirmOverwriteSaveKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ConfirmSaveWithConflicts:
+            HandleConfirmSaveWithConflictsKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ConfirmRevertHunk:
+            HandleConfirmRevertHunkKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ConfirmOpenBinary:
+            HandleConfirmOpenBinaryKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ConfirmTrustProjectInit:
+            HandleConfirmTrustProjectInitKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::FindFile:
+        case InputMode::OpenProjectPath:
+        case InputMode::FindScratch:
+        case InputMode::BookmarkSetName:
+        case InputMode::OpenProjectName:
+        case InputMode::TaskName:
+        case InputMode::AcpPromptText:
+        case InputMode::CreateDirectory:
+        case InputMode::DapAddWatch:
+        case InputMode::DapBreakpointCondition:
+        case InputMode::DapBreakpointHitCondition:
+        case InputMode::DapBreakpointLogMessage:
+        case InputMode::DapEvaluate:
+        case InputMode::DapFunctionBreakpointName:
+        case InputMode::DapMemoryByteCount:
+        case InputMode::DapSetVariableValue:
+        case InputMode::DeleteProperty:
+        case InputMode::GotoLine:
+        case InputMode::LspRenameNewName:
+        case InputMode::OrgDeadline:
+        case InputMode::OrgSchedule:
+        case InputMode::ProjectSearch:
+        case InputMode::ReplName:
+        case InputMode::SetHeadlineTags:
+        case InputMode::ShowMassifGraphPath:
+        case InputMode::StringRectangle:
+        case InputMode::VcsCreateBranch:
+            // Every plain text-entry prompt. What Tab offers in each, and what
+            // it is called when cancelled, is TextEntryPromptFor's business.
+            HandlePromptKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::DeleteFile:
+            HandleDeleteFileKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::RenameFile:
+            HandleRenameFileKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::SetProperty:
+            HandleSetPropertyKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::RecoverFile:
+            HandleRecoverFileKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ExecuteCommand:
+            // No ClampPointToNarrowing() here: HandleExecuteCommandKey's own
+            // Enter branch already routes through RunCommandAndHandleOutcome
+            // internally (M-x invoking a command by name), which handles the
+            // clamp itself -- see that method's own doc comment for why it has
+            // to be the one doing it, not a caller after the fact.
+            HandleExecuteCommandKey(*chord);
+            return true;
+
+        case InputMode::ProjectFindFile:
+            // Unlike ExecuteCommand, Enter here just opens a file directly
+            // (BufferList::OpenOrCreateFile + activeBuffer_.Set()) rather than
+            // routing through RunCommandAndHandleOutcome, so the ordinary
+            // after-the-fact ClampPointToNarrowing() every other prompt-shaped
+            // mode uses is correct here too.
+            HandleProjectFindFileKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::FindRecentFile:
+            HandleFindRecentFileKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::SwitchProject:
+            HandleSwitchProjectKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::SwitchToBuffer:
+            HandleSwitchToBufferKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::VcsSwitchBranch:
+            HandleVcsSwitchBranchKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::AcpAgentName:
+            HandleAcpAgentNameKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::BookmarkJump:
+            HandleBookmarkJumpKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::SelectTheme:
+            HandleSelectThemeKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::PointToRegister:
+        case InputMode::JumpToRegister:
+        case InputMode::CopyToRegister:
+        case InputMode::InsertRegister:
+            HandleRegisterKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ZapToChar:
+            HandleZapToCharKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::OrgCaptureSelectTemplate:
+            HandleOrgCaptureKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::AcpPermissionPrompt:
+            HandleAcpPermissionPromptKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::DapThreadSelect:
+            HandleDapThreadSelectKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::DapExceptionFilterSelect:
+            HandleDapExceptionFilterSelectKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::LspCodeActionSelect:
+            HandleCodeActionSelectKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::LspGotoDefinitionSelect:
+            HandleDefinitionSelectKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::LspPeekDefinition:
+            HandlePeekDefinitionKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ContextMenu:
+            HandleContextMenuKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::LspGotoSymbol:
+            // Same "Enter jumps directly, no RunCommandAndHandleOutcome routing"
+            // shape as ProjectFindFile above.
+            HandleDocumentSymbolKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::LspWorkspaceSymbol:
+            HandleWorkspaceSymbolKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::PrefixArgument:
+            // No ClampPointToNarrowing(): reading a prefix argument never moves
+            // point itself -- a Continue outcome does nothing to the buffer, and
+            // a Terminate outcome re-dispatches through DispatchChordNormally,
+            // which already runs the same clamp any other normal dispatch does.
+            HandlePrefixArgumentKey(*chord);
+            return true;
+
+        case InputMode::Snippet:
+            // No ClampPointToNarrowing() here for the same PrefixArgument
+            // reason: consumed chords clamp inside HandleSnippetKey themselves,
+            // and a fall-through chord re-dispatches through
+            // DispatchChordNormally, after which *this* may be destroyed.
+            HandleSnippetKey(*chord);
+            return true;
     }
 
     // completion-popup follow-up (was hover/completion follow-up): completion
