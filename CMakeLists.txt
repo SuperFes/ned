@@ -835,6 +835,7 @@ add_library(ned_lib STATIC
         Source/UI/BufferView/Lsp.cpp
         Source/UI/BufferView/VcsDap.cpp
         Source/UI/BufferView/Buffers.cpp
+        Source/UI/BufferView/CandidateList.cpp
         Source/UI/BufferView/GutterModel.cpp
         Source/UI/BufferView/Viewport.cpp
         Source/UI/BufferView/Mouse.cpp
@@ -1090,6 +1091,7 @@ if (NED_BUILD_TESTS)
             Tests/DesktopThemeProbeTest.cpp
             Tests/ActiveBufferTest.cpp
             Tests/CacheStampTest.cpp
+            Tests/CandidateListTest.cpp
             Tests/RequestSlotTest.cpp
             Tests/MinibufferPromptTest.cpp
             Tests/PromptHistoryTest.cpp
