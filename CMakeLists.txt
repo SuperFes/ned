@@ -836,6 +836,7 @@ add_library(ned_lib STATIC
         Source/UI/BufferView/VcsDap.cpp
         Source/UI/BufferView/Buffers.cpp
         Source/UI/BufferView/GutterModel.cpp
+        Source/UI/BufferView/Viewport.cpp
         Source/UI/BufferView/Mouse.cpp
         Source/UI/WindowManager.cpp
         Source/UI/AsyncFileLoader.cpp

@@ -34,14 +34,14 @@ void BufferView::ShowContextMenuAt(Point localClick) {
 
     if (inGutter) {
         // Gutter menu: line-resolve the same way the existing fold-gutter
-        // click does (AdvanceVisibleLines(topLine_, y, totalLines)), not
+        // click does (viewport_.AdvanceVisibleLines(viewport_.TopLine(), y, totalLines)), not
         // ByteOffsetForPoint's fancier column-aware walk -- matching that
         // precedent exactly rather than introducing a second,
         // slightly-different line-resolution path for the gutter.
         const text::ITextStorage& content    = buffer.Content();
         const std::size_t         totalLines = content.LineCount();
         const std::size_t         line       = std::min(
-            AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(localClick.y, 0)), totalLines),
+            viewport_.AdvanceVisibleLines(viewport_.TopLine(), static_cast<std::size_t>(std::max(localClick.y, 0)), totalLines),
             totalLines - 1);
         buffer.SetPoint(content.LineToByteOffset(line));
 
@@ -81,7 +81,7 @@ void BufferView::ShowContextMenuAt(Point localClick) {
         }
     }
     else {
-        const std::size_t offset = ByteOffsetForPoint(localClick);
+        const std::size_t offset = viewport_.ByteOffsetForPoint(localClick);
         // Deliberately does NOT ClearMark() the way a plain left click does
         // -- kill-region/kill-ring-save are documented no-ops without an
         // existing mark, and a right-click that silently discarded a
@@ -325,7 +325,7 @@ bool BufferView::HandleTestGutterClick(Point at) {
     const text::ITextStorage& content    = activeBuffer_.Get().Content();
     const std::size_t         totalLines = content.LineCount();
     const std::size_t         line =
-        std::min(AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(at.y, 0)), totalLines), totalLines - 1);
+        std::min(viewport_.AdvanceVisibleLines(viewport_.TopLine(), static_cast<std::size_t>(std::max(at.y, 0)), totalLines), totalLines - 1);
 
     const auto it = std::lower_bound(gutters_.TestEntries().begin(), gutters_.TestEntries().end(), line,
                                      [](const TestGutterEntry& entry, std::size_t target) { return entry.line < target; });
@@ -442,27 +442,27 @@ bool BufferView::OnMouseEvent(const Event& event) {
     if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {
         constexpr std::size_t kWheelScrollLines = 3;
         if (mouse->button == MouseEvent::Button::WheelUp) {
-            SetTopLine((topLine_ > kWheelScrollLines) ? topLine_ - kWheelScrollLines : 0);
+            viewport_.SetTopLine((viewport_.TopLine() > kWheelScrollLines) ? viewport_.TopLine() - kWheelScrollLines : 0);
         }
         else {
-            SetTopLine(topLine_ + kWheelScrollLines);
+            viewport_.SetTopLine(viewport_.TopLine() + kWheelScrollLines);
         }
         return true;
     }
 
     // horizontal-wheel-scroll follow-up: same unconditional-of-InputMode
     // shape as the vertical wheel case above. A no-op (but still consumed)
-    // once EffectiveWrapLines() is true -- a wrapped line never extends past
+    // once viewport_.EffectiveWrapLines() is true -- a wrapped line never extends past
     // the viewport width, matching ScrollToShowPointHorizontally's own
-    // guard, so leftColumn_ has nothing left to scroll.
+    // guard, so viewport_.LeftColumn() has nothing left to scroll.
     if (mouse->button == MouseEvent::Button::WheelLeft || mouse->button == MouseEvent::Button::WheelRight) {
-        if (!EffectiveWrapLines()) {
+        if (!viewport_.EffectiveWrapLines()) {
             constexpr std::size_t kWheelScrollColumns = 3;
             if (mouse->button == MouseEvent::Button::WheelLeft) {
-                SetLeftColumn((leftColumn_ > kWheelScrollColumns) ? leftColumn_ - kWheelScrollColumns : 0);
+                viewport_.SetLeftColumn((viewport_.LeftColumn() > kWheelScrollColumns) ? viewport_.LeftColumn() - kWheelScrollColumns : 0);
             }
             else {
-                SetLeftColumn(leftColumn_ + kWheelScrollColumns);
+                viewport_.SetLeftColumn(viewport_.LeftColumn() + kWheelScrollColumns);
             }
         }
         return true;
@@ -548,7 +548,7 @@ bool BufferView::OnMouseEvent(const Event& event) {
         TakeFocus();
         text::Buffer& buffer = activeBuffer_.Get();
         buffer.ClearMark();
-        buffer.SetPoint(ByteOffsetForPoint(mouse->at));
+        buffer.SetPoint(viewport_.ByteOffsetForPoint(mouse->at));
         if (!buffer.ReadOnly()) {
             if (const std::optional<std::string> pasted = editor::PasteFromPrimarySelection()) {
                 buffer.InsertAtPoint(*pasted);
@@ -582,7 +582,7 @@ bool BufferView::OnMouseEvent(const Event& event) {
                 text::Buffer& buffer = activeBuffer_.Get();
                 buffer.ClearMark();
                 buffer.SetPoint(chain[index].startByte);
-                ScrollToShowPoint();
+                viewport_.ScrollToShowPoint();
             }
             return true;
         }
@@ -626,7 +626,7 @@ bool BufferView::OnMouseEvent(const Event& event) {
             text::Buffer&     buffer        = activeBuffer_.Get();
             const text::ITextStorage& content       = buffer.Content();
             const std::size_t totalLines    = content.LineCount();
-            const std::size_t line          = std::min(AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(mouse->at.y, 0)), totalLines),
+            const std::size_t line          = std::min(viewport_.AdvanceVisibleLines(viewport_.TopLine(), static_cast<std::size_t>(std::max(mouse->at.y, 0)), totalLines),
                                                        totalLines - 1);
             const int         clickedColumn = mouse->at.x - static_cast<int>(foldStart);
             auto it = std::lower_bound(gutters_.FoldEntries().begin(), gutters_.FoldEntries().end(), line,
@@ -643,7 +643,7 @@ bool BufferView::OnMouseEvent(const Event& event) {
         }
 
         text::Buffer&     buffer = activeBuffer_.Get();
-        const std::size_t offset = ByteOffsetForPoint(mouse->at);
+        const std::size_t offset = viewport_.ByteOffsetForPoint(mouse->at);
         buffer.ClearMark();
         buffer.SetPoint(offset);
 
@@ -713,8 +713,8 @@ bool BufferView::OnMouseEvent(const Event& event) {
         if (!buffer.HasMark()) {
             buffer.SetMark(dragAnchor_);
         }
-        buffer.SetPoint(ByteOffsetForPoint(mouse->at));
-        ScrollToShowPoint();
+        buffer.SetPoint(viewport_.ByteOffsetForPoint(mouse->at));
+        viewport_.ScrollToShowPoint();
         return true;
     }
     return false; // Released -- no behavior beyond the resize handoff above
@@ -737,7 +737,7 @@ void BufferView::LogMouseEvent(std::string_view event, const MouseEvent& mouse) 
     // translation.
     log << event << " at=(" << mouse.at.x << ',' << mouse.at.y << ')' << " button=" << static_cast<int>(mouse.button)
         << " inputMode=" << static_cast<int>(inputMode_) << " point=" << buffer.Point()
-        << " mark=" << (buffer.HasMark() ? static_cast<long long>(buffer.Mark()) : -1LL) << " topLine=" << topLine_
+        << " mark=" << (buffer.HasMark() ? static_cast<long long>(buffer.Mark()) : -1LL) << " topLine=" << viewport_.TopLine()
         << " size=" << size().width << 'x' << size().height << '\n';
 }
 

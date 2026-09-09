@@ -103,7 +103,7 @@ std::vector<editor::SymbolMarker> BufferView::StickyScrollChainForCurrentViewpor
 
     const text::Buffer&       buffer          = activeBuffer_.Get();
     const text::ITextStorage& content         = buffer.Content();
-    const std::size_t         viewportTopByte = content.LineToByteOffset(topLine_);
+    const std::size_t         viewportTopByte = content.LineToByteOffset(viewport_.TopLine());
     std::vector<editor::SymbolMarker> chain =
         editor::stickyscroll::StickyChainForViewportTop(gutters_.SymbolMarkers(), viewportTopByte);
     if (static_cast<int>(chain.size()) > maxRows) {
@@ -243,7 +243,7 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
 }
 
 void BufferView::Paint(Canvas paneCanvas) {
-    EnsureTopLineValidForActiveBuffer();
+    viewport_.EnsureTopLineValidForActiveBuffer();
     EnsureStatusMessageFreshness();
 
     text::Buffer& buffer = activeBuffer_.Get();
@@ -304,30 +304,30 @@ void BufferView::Paint(Canvas paneCanvas) {
     // usually not the buffer's real last line at all, just the last one
     // currently visible, and still needs its real next-line boundary looked
     // up correctly.
-    const std::size_t renderEndLine = NarrowedLineRange().second;
+    const std::size_t renderEndLine = viewport_.NarrowedLineRange().second;
 
     if (scrollBar_ != nullptr) {
-        // scrollable_length is fed as MaxTopLine() + 1, not totalLines: the
+        // scrollable_length is fed as viewport_.MaxTopLine() + 1, not totalLines: the
         // scroll bar internally clamps a user-driven drag/click's target
         // position to [0, scrollable_length - 1], so this is what makes its
         // own built-in range match ours exactly -- dragging all the way
         // down actually reaches true end-of-file, not one line short of it.
-        scrollBar_->scrollable_length  = static_cast<int>(MaxTopLine()) + 1;
-        scrollBar_->position           = static_cast<int>(topLine_);
+        scrollBar_->scrollable_length  = static_cast<int>(viewport_.MaxTopLine()) + 1;
+        scrollBar_->position           = static_cast<int>(viewport_.TopLine());
         scrollBar_->item_visual_length = 1; // one buffer line per canvas row
     }
     if (scrollUpArrow_ != nullptr) {
-        scrollUpArrow_->SetEnabled(topLine_ > 0);
+        scrollUpArrow_->SetEnabled(viewport_.TopLine() > 0);
     }
     if (scrollDownArrow_ != nullptr) {
-        scrollDownArrow_->SetEnabled(topLine_ < MaxTopLine());
+        scrollDownArrow_->SetEnabled(viewport_.TopLine() < viewport_.MaxTopLine());
     }
     if (minimap_ != nullptr) {
         // Same fields, same semantics, same values ScrollBar's own sync
         // above uses -- Minimap mirrors ScrollBar's public surface exactly
         // so its viewport-band/click math stays consistent with it.
-        minimap_->scrollable_length  = static_cast<int>(MaxTopLine()) + 1;
-        minimap_->position           = static_cast<int>(topLine_);
+        minimap_->scrollable_length  = static_cast<int>(viewport_.MaxTopLine()) + 1;
+        minimap_->position           = static_cast<int>(viewport_.TopLine());
         minimap_->item_visual_length = 1;
     }
 
@@ -418,7 +418,7 @@ void BufferView::Paint(Canvas paneCanvas) {
         // parse-safety margin (there's no parser to desync here, just a
         // request scope).
         const std::size_t lastLine          = totalLines > 0 ? totalLines - 1 : 0;
-        const std::size_t viewportTop       = std::min(topLine_, lastLine);
+        const std::size_t viewportTop       = std::min(viewport_.TopLine(), lastLine);
         const std::size_t viewportHeight    = size().height > 0 ? static_cast<std::size_t>(size().height) : 1;
         const std::size_t viewportBottom    = std::min(viewportTop + viewportHeight, lastLine);
         const std::size_t viewportStartByte = content.LineToByteOffset(viewportTop);
@@ -647,8 +647,7 @@ void BufferView::Paint(Canvas paneCanvas) {
 
     // Links follow-up: see EnsureLinkCache's own doc comment in BufferView.h
     // for why this is a no-op outside an org-mode buffer.
-    EnsureLinkCache();
-
+    
     // depth-aware-fold-gutter follow-up: streaming state for the per-row
     // gutter rendering below -- one pass over the whole row loop, not
     // rebuilt per row; see that code's own doc comment for why a plain
@@ -659,13 +658,13 @@ void BufferView::Paint(Canvas paneCanvas) {
     std::array<std::size_t, kMaxFoldDepthColumns>              foldColumnCursor{};
     std::array<std::vector<std::size_t>, kMaxFoldDepthColumns> foldColumnOpenEnds;
 
-    // A running buffer-line cursor, seeded at topLine_ (already guaranteed
+    // A running buffer-line cursor, seeded at viewport_.TopLine() (already guaranteed
     // visible by SetTopLine) and advanced by NextVisibleLine each iteration
-    // -- Org-mode fold/unfold follow-up: was a flat `topLine_ + row` 1:1
-    // mapping; a fold can make "the row-th line below topLine_" and "the
-    // row-th buffer line below topLine_" disagree, so this has to walk
+    // -- Org-mode fold/unfold follow-up: was a flat `viewport_.TopLine() + row` 1:1
+    // mapping; a fold can make "the row-th line below viewport_.TopLine()" and "the
+    // row-th buffer line below viewport_.TopLine()" disagree, so this has to walk
     // forward skipping whatever's currently hidden instead.
-    std::size_t line = topLine_;
+    std::size_t line = viewport_.TopLine();
     // line-wrap follow-up: segmentIndex is which wrap segment (row) of
     // `line` is currently being drawn -- 0 for a non-wrapped line, always.
     // lineSegments/currentLineSpans/currentLineLinks are recomputed only
@@ -673,7 +672,7 @@ void BufferView::Paint(Canvas paneCanvas) {
     // read on every row -- including continuation rows -- of that same
     // line, the same "compute once per line, not once per row" shape this
     // function already used for lineSpans/lineLinks before wrap existed.
-    const bool                         wrapActive   = EffectiveWrapLines();
+    const bool                         wrapActive   = viewport_.EffectiveWrapLines();
     std::size_t                        segmentIndex = 0;
     std::vector<WrapSegment>           lineSegments;
     std::vector<editor::HighlightSpan> currentLineSpans;
@@ -754,7 +753,7 @@ void BufferView::Paint(Canvas paneCanvas) {
     // here. A 0-row shift is a true no-op, so this needs no branch for the
     // common "nothing pinned" case. stickyRowCount_ itself is live
     // BufferView state (not Paint()-local) -- CursorPosition()/
-    // ByteOffsetForPoint() read it back so the terminal cursor, popup
+    // viewport_.ByteOffsetForPoint() read it back so the terminal cursor, popup
     // anchors, and mouse-click row resolution all agree with what got drawn
     // this frame.
     stickyRowCount_ = PaintStickyScrollRows(paneCanvas, gutterWidth);
@@ -807,7 +806,7 @@ void BufferView::Paint(Canvas paneCanvas) {
             // pre-wrap code when wrapActive is false.
             if (segmentIndex == 0) {
                 currentLineSpans = SpansForLine(highlightSpans, lineStart, lineEnd);
-                currentLineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
+                currentLineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, point);
                 // inlayHint follow-up: empty when lspManager_ is unset,
                 // disabled, or no response has landed for this line's range
                 // yet -- InlayHintSpans itself is O(1) (no cache to poll a
@@ -1238,12 +1237,12 @@ void BufferView::Paint(Canvas paneCanvas) {
 
                 if (foldColumnWidth > 0) {
                     foldGutterHeaderAtColumn.fill(nullptr);
-                    // <= line, not == line: when topLine_ > 0 (scrolled past
+                    // <= line, not == line: when viewport_.TopLine() > 0 (scrolled past
                     // any blocks whose header sits earlier in the file), those
                     // earlier entries must still be consumed here to advance
                     // the cursor past them -- an exact-match-only condition
                     // left the cursor permanently stuck on the first entry
-                    // whose headerLine falls before topLine_, silently
+                    // whose headerLine falls before viewport_.TopLine(), silently
                     // suppressing every ⊞/⊟ glyph for the rest of the buffer
                     // (a real, reported bug: scrolling past ~line 50 in a file
                     // with earlier foldable blocks stopped drawing them at
@@ -1322,16 +1321,16 @@ void BufferView::Paint(Canvas paneCanvas) {
             std::size_t offset = currentSegment.startByte;
             // line-wrap follow-up: horizontal-scroll-follow's own
             // fast-forward phase -- consumes (but never draws) whatever
-            // falls before leftColumn_, the same width accounting the real
+            // falls before viewport_.LeftColumn(), the same width accounting the real
             // drawing loop below uses, so the two can never disagree about
-            // where a given column actually lands. leftColumn_ stays 0 for
-            // any buffer whose EffectiveWrapLines() is true (see
+            // where a given column actually lands. viewport_.LeftColumn() stays 0 for
+            // any buffer whose viewport_.EffectiveWrapLines() is true (see
             // ScrollToShowPointHorizontally's own doc comment), so this is
             // a no-op loop in that case without needing a separate check
             // here.
-            if (leftColumn_ > 0) {
+            if (viewport_.LeftColumn() > 0) {
                 int skipped = 0;
-                while (offset < currentSegment.endByte && skipped < static_cast<int>(leftColumn_)) {
+                while (offset < currentSegment.endByte && skipped < static_cast<int>(viewport_.LeftColumn())) {
                     if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
                         skipped += DisplayColumns(link->displayText);
                         offset = link->endByte;
@@ -1691,14 +1690,13 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // line's own start byte, but not for a code fold, whose marker
                 // key is a foldable block's own startByte (e.g. a function's
                 // "{"), which sits partway through its header line, not at
-                // column 0. Checking hiddenLineRanges_ for an entry starting
+                // column 0. Checking viewport_.HiddenLineRanges() for an entry starting
                 // right after this line is the one condition both fold sources
                 // agree on (see FoldedLineRanges' own [startLine+1, endLine+1)
                 // convention, shared by org:: and codefold:: alike), so this is
                 // the generic trigger both the ellipsis and the preview below
                 // key off, rather than a marker lookup at all.
-                EnsureHiddenLineRangesCache();
-                for (const auto& [hiddenStart, hiddenEnd] : hiddenLineRanges_) {
+                for (const auto& [hiddenStart, hiddenEnd] : viewport_.HiddenLineRanges()) {
                     if (hiddenStart != line + 1 || hiddenEnd == hiddenStart) {
                         continue;
                     }
@@ -1799,7 +1797,7 @@ void BufferView::Paint(Canvas paneCanvas) {
             // line-wrap follow-up: advance to the next wrap segment (row)
             // of the same buffer line if there is one, otherwise advance to
             // the next visible buffer line -- was an unconditional
-            // `line = NextVisibleLine(line + 1, renderEndLine)` before wrap
+            // `line = viewport_.NextVisibleLine(line + 1, renderEndLine)` before wrap
             // existed, which segmentIndex staying 0 (lineSegments always
             // exactly one entry) reduces to exactly.
             if (segmentIndex + 1 < lineSegments.size()) {
@@ -1812,7 +1810,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     pendingAnnotationLine = line;
                 }
                 segmentIndex = 0;
-                line         = NextVisibleLine(line + 1, renderEndLine);
+                line         = viewport_.NextVisibleLine(line + 1, renderEndLine);
             }
         }
         else {
@@ -1821,7 +1819,7 @@ void BufferView::Paint(Canvas paneCanvas) {
             // empty past the gutter, so a callout brace may use it as
             // padding.
             rowContentEndColumn[row] = static_cast<int>(gutterWidth);
-            line                     = NextVisibleLine(line + 1, renderEndLine);
+            line                     = viewport_.NextVisibleLine(line + 1, renderEndLine);
         }
     }
 
@@ -1865,23 +1863,22 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
     // positions on the row above are trustworthy: wrap off (the annotation
     // sits below the line's LAST wrap row, where first-row column math
     // would lie) and the span's start still on-screen horizontally.
-    if (!EffectiveWrapLines()) {
+    if (!viewport_.EffectiveWrapLines()) {
         const text::Buffer& buffer    = activeBuffer_.Get();
         const text::ITextStorage&   content   = buffer.Content();
         const std::size_t   lineStart = content.LineToByteOffset(line);
         const std::size_t   lineEnd =
             (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
-        EnsureLinkCache();
-        const std::vector<RenderedLink> lineLinks = LinksForLine(linkCache_, lineStart, lineEnd, buffer.Point());
+        const std::vector<RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, buffer.Point());
 
-        // Same leftColumn_-aware bound/offset arithmetic CursorPosition uses.
-        const int                bound = width + static_cast<int>(leftColumn_);
+        // Same viewport_.LeftColumn()-aware bound/offset arithmetic CursorPosition uses.
+        const int                bound = width + static_cast<int>(viewport_.LeftColumn());
         const std::optional<int> startCol =
             VisualColumn(content, lineStart, std::min(diagnostic.startByte, lineEnd), bound, lineLinks);
-        if (startCol && *startCol >= static_cast<int>(leftColumn_)) {
+        if (startCol && *startCol >= static_cast<int>(viewport_.LeftColumn())) {
             const std::optional<int> endCol =
                 VisualColumn(content, lineStart, std::min(diagnostic.endByte, lineEnd), bound, lineLinks);
-            const int screenStart = static_cast<int>(gutterWidth) + *startCol - static_cast<int>(leftColumn_);
+            const int screenStart = static_cast<int>(gutterWidth) + *startCol - static_cast<int>(viewport_.LeftColumn());
             // A span running past the visual-column bound (endCol nullopt)
             // degrades to a single caret at its start rather than flooding
             // the row -- the message is the more useful content to keep.
@@ -2118,7 +2115,7 @@ std::optional<Point> BufferView::CursorPosition() const {
     // org-cycle itself (see CycleFoldAtPoint's own doc comment), but stays
     // a real, harmless "no cursor this frame" rather than an invalid
     // position if some other path ever moves point into a hidden region.
-    if (pointLine < topLine_ || IsLineHidden(pointLine)) {
+    if (pointLine < viewport_.TopLine() || viewport_.IsLineHidden(pointLine)) {
         return std::nullopt;
     }
 
@@ -2139,8 +2136,7 @@ std::optional<Point> BufferView::CursorPosition() const {
     // point's own position (LinksForLine excludes any link containing
     // point), so this always agrees with what Paint() actually drew for
     // this specific row.
-    EnsureLinkCache();
-    const std::vector<RenderedLink> lineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
+    const std::vector<RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, point);
 
     // line-wrap follow-up: which wrap segment (row) of pointLine actually
     // contains point -- 0, and the whole line as one segment, when wrap is
@@ -2154,7 +2150,7 @@ std::optional<Point> BufferView::CursorPosition() const {
     // behaves at a wrapped line break.
     std::size_t rowWithinLine = 0;
     std::size_t segmentStart  = lineStart;
-    if (EffectiveWrapLines() && sizeIsKnown) {
+    if (viewport_.EffectiveWrapLines() && sizeIsKnown) {
         const int                      fullWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
         const std::vector<WrapSegment> segments  = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
         for (std::size_t i = 0; i < segments.size(); ++i) {
@@ -2168,33 +2164,33 @@ std::optional<Point> BufferView::CursorPosition() const {
     }
 
     // main-editor-sticky-scroll follow-up: visibleRow is still relative to
-    // topLine_'s own screen row (row 0) -- stickyRowCount_ is added to the
+    // viewport_.TopLine()'s own screen row (row 0) -- stickyRowCount_ is added to the
     // final Point below, once, rather than threaded through every
     // intermediate row computation above; the bound check here has to widen
     // by the same amount first, or a point that's genuinely still on screen
     // (just pushed down by the pinned rows) would be wrongly reported as
     // off-screen.
-    const std::size_t visibleRow = VisibleRowCountBetween(topLine_, pointLine) + rowWithinLine;
+    const std::size_t visibleRow = viewport_.VisibleRowCountBetween(viewport_.TopLine(), pointLine) + rowWithinLine;
     if (sizeIsKnown && visibleRow + static_cast<std::size_t>(stickyRowCount_) >= static_cast<std::size_t>(sizeNow.height)) {
         return std::nullopt;
     }
 
     // line-wrap follow-up: horizontal-scroll-follow -- the scan has to walk
     // far enough right to still find point even when scrolled, so the bound
-    // grows by leftColumn_ (only meaningful once sizeIsKnown -- an unknown
+    // grows by viewport_.LeftColumn() (only meaningful once sizeIsKnown -- an unknown
     // size already means "don't bound at all"); the true on-screen column
-    // is the raw column minus leftColumn_, subtracted back out below.
-    // leftColumn_ is always 0 once EffectiveWrapLines() is true (see
+    // is the raw column minus viewport_.LeftColumn(), subtracted back out below.
+    // viewport_.LeftColumn() is always 0 once viewport_.EffectiveWrapLines() is true (see
     // ScrollToShowPointHorizontally), so this is a no-op adjustment then.
-    const int maxColumns = sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) + static_cast<int>(leftColumn_)
+    const int maxColumns = sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) + static_cast<int>(viewport_.LeftColumn())
                                        : std::numeric_limits<int>::max();
 
     const std::optional<int> visualCol = VisualColumn(content, segmentStart, point, maxColumns, lineLinks);
-    if (!visualCol || *visualCol < static_cast<int>(leftColumn_)) {
-        return std::nullopt; // scrolled off the left edge -- shouldn't happen once leftColumn_ is correct, but a safe guard
+    if (!visualCol || *visualCol < static_cast<int>(viewport_.LeftColumn())) {
+        return std::nullopt; // scrolled off the left edge -- shouldn't happen once viewport_.LeftColumn() is correct, but a safe guard
     }
 
-    const std::size_t col = gutterWidth + static_cast<std::size_t>(*visualCol) - leftColumn_;
+    const std::size_t col = gutterWidth + static_cast<std::size_t>(*visualCol) - viewport_.LeftColumn();
     if (sizeIsKnown && col >= static_cast<std::size_t>(sizeNow.width)) {
         return std::nullopt; // scrolled off horizontally to the right
     }

@@ -503,7 +503,7 @@ void BufferView::MaybeScheduleHover(Point localMousePoint) {
         DismissHover(); // hovering the gutter, not real text -- nothing meaningful to show
         return;
     }
-    const std::size_t offset = ByteOffsetForPoint(localMousePoint);
+    const std::size_t offset = viewport_.ByteOffsetForPoint(localMousePoint);
     if (hoverOffset_ == offset) {
         return; // already pending/shown for this exact spot -- nothing to do
     }
@@ -1257,7 +1257,7 @@ void BufferView::RequestLspFormatThenSaveBuffer() {
             // this async continuation must do itself, since it returns to
             // that method well before the save actually happens.
             RequestDiffForCurrentBuffer();
-            ScrollToShowPoint();
+            viewport_.ScrollToShowPoint();
         },
         std::string{});
 }
@@ -1456,7 +1456,7 @@ void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocatio
         activeBuffer_.Set(opened);
         opened.SetPoint(editor::lsp::LspPositionToByte(opened.Content(), location.position));
         statusMessage_.clear();
-        ScrollToShowPoint();
+        viewport_.ScrollToShowPoint();
     }
     catch (const std::exception& e) {
         ReportError(e.what());
@@ -1834,7 +1834,7 @@ void BufferView::JumpBack() {
             activeBuffer_.Set(*target);
             target->SetPoint(mark.byteOffset); // Buffer::SetPoint already clamps out-of-range offsets
             statusMessage_.clear();
-            ScrollToShowPoint();
+            viewport_.ScrollToShowPoint();
             return;
         }
         // buffer closed since the mark was pushed -- skip it, try the next one
@@ -1854,7 +1854,7 @@ void BufferView::JumpForward() {
             activeBuffer_.Set(*target);
             target->SetPoint(mark.byteOffset);
             statusMessage_.clear();
-            ScrollToShowPoint();
+            viewport_.ScrollToShowPoint();
             return;
         }
         // buffer closed since the mark was pushed -- skip it, try the next one
@@ -2094,7 +2094,7 @@ void BufferView::OpenHeaderSourceCounterpart(const std::filesystem::path& path) 
         text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
         activeBuffer_.Set(opened);
         statusMessage_.clear();
-        ScrollToShowPoint();
+        viewport_.ScrollToShowPoint();
     }
     catch (const std::exception& e) {
         ReportError(e.what());
@@ -2513,7 +2513,7 @@ void BufferView::OpenLinkAtPointWithoutLsp() {
                     buffer.ClearMark();
                     buffer.SetPoint(*lineStartByte);
                     statusMessage_.clear();
-                    ScrollToShowPoint();
+                    viewport_.ScrollToShowPoint();
                 }
                 else {
                     statusMessage_ = "Link target not found: " + ref;
