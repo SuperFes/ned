@@ -69,6 +69,78 @@ bool BufferView::HandleConflictQuickKey(const editor::KeyChord& chord) {
     return true;
 }
 
+void BufferView::StartMultibufferApply(bool fileOnly) {
+    if (activeBuffer_.Get().ExcerptRanges().empty()) {
+        return;
+    }
+    applyTargetFileOnly_ = fileOnly;
+    inputMode_           = InputMode::MultibufferApplyTarget;
+    statusMessage_       = std::string("Apply ") + (fileOnly ? "this file" : "all changes") +
+                           ": (b) into open buffers  (d) write files directly  (ESC) cancel";
+}
+
+void BufferView::HandleMultibufferApplyTargetKey(const editor::KeyChord& chord) {
+    const bool toBuffers = (chord.Codepoint == U'b' && !chord.Control && !chord.Meta);
+    const bool toDisk    = (chord.Codepoint == U'd' && !chord.Control && !chord.Meta);
+    if (!toBuffers && !toDisk) {
+        EndInteractiveSession();
+        statusMessage_ = "Apply cancelled."; // ESC, or any key that isn't a choice
+        return;
+    }
+
+    const bool fileOnly = applyTargetFileOnly_;
+    EndInteractiveSession();
+
+    const char* commandName = nullptr;
+    if (fileOnly) {
+        commandName = toDisk ? "multibuffer-commit-file-to-disk" : "multibuffer-commit-file";
+    }
+    else {
+        commandName = toDisk ? "multibuffer-commit-to-disk" : "multibuffer-commit-changes";
+    }
+
+    editor::CommandContext context = MakeContext();
+    RunCommandAndHandleOutcome(context, [&] {
+        dispatcher_.Registry().Invoke(commandName, context);
+        return true;
+    });
+}
+
+bool BufferView::HandleMultibufferQuickKey(const editor::KeyChord& chord) {
+    if (!chord.Meta || chord.Control) {
+        return false;
+    }
+    if (activeBuffer_.Get().ExcerptRanges().empty()) {
+        return false; // not a review buffer -- M-n/M-p/M-r/M-c mean whatever they ordinarily do
+    }
+    const char* commandName = nullptr;
+    switch (chord.Codepoint) {
+        case U'n':
+            commandName = "next-excerpt";
+            break;
+        case U'p':
+            commandName = "previous-excerpt";
+            break;
+        case U'r':
+            commandName = "multibuffer-revert-excerpt";
+            break;
+        case U'R': // shifted, a distinct codepoint chord -- the C-c v H trick
+            commandName = "multibuffer-revert-file";
+            break;
+        case U'c':
+            StartMultibufferApply(/*fileOnly=*/true); // same chooser, narrower scope
+            return true;
+        default:
+            return false;
+    }
+    editor::CommandContext context = MakeContext();
+    RunCommandAndHandleOutcome(context, [&] {
+        dispatcher_.Registry().Invoke(commandName, context);
+        return true;
+    });
+    return true;
+}
+
 bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
     if (vimEngine_.CurrentMode() == editor::vim::Mode::Insert) {
         if (IsQuit(chord)) {
@@ -304,7 +376,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::ProjectReplace:
             inputMode_ = InputMode::ProjectReplace;
-            projectReplace_.emplace(editor::ProjectRoot());
+            projectReplace_.emplace(editor::ProjectRoot(), &bufferList_);
             statusMessage_ = projectReplace_->StatusText();
             return;
         case editor::InteractiveRequest::ToggleProjectSidebar:
@@ -525,6 +597,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::ConfirmOverwriteSave:
             inputMode_     = InputMode::ConfirmOverwriteSave;
             statusMessage_ = activeBuffer_.Get().Name() + " changed on disk since it was read; save anyway? (y/n)";
+            return;
+        case editor::InteractiveRequest::MultibufferApply:
+            StartMultibufferApply(/*fileOnly=*/false);
             return;
         case editor::InteractiveRequest::ConfirmSaveWithConflicts:
             inputMode_     = InputMode::ConfirmSaveWithConflicts;
@@ -2172,7 +2247,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
     else if (inputMode_ == InputMode::ProjectSearch) {
         try {
             const std::vector<editor::SearchMatch> matches =
-                editor::SearchDirectory(editor::ProjectRoot(), input);
+                editor::SearchDirectory(editor::ProjectRoot(), input, bufferList_);
 
             if (matches.empty()) {
                 statusMessage_ = "No matches for \"" + input + "\"";
@@ -2753,6 +2828,25 @@ void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
             }
             else {
                 projectReplace_->ConfirmReplacement();
+                // project-replace-review follow-up: Confirming used to be a
+                // one-shot y/n over a flat list that then wrote every file
+                // straight to disk. It's now an editable review multibuffer
+                // the user commits (or abandons) on their own terms -- see
+                // BuildProjectReplaceReview. The session ends here either
+                // way; nothing about the replace is pending in this handler
+                // once the review buffer exists.
+                if (projectReplace_->CurrentStage() == editor::ProjectReplace::Stage::Confirming) {
+                    try {
+                        BuildProjectReplaceReview(projectReplace_->Matches(), projectReplace_->PatternText(),
+                                                  projectReplace_->ReplacementText());
+                    }
+                    catch (const std::exception& e) {
+                        ReportError(std::string("Project replace: ") + e.what());
+                    }
+                    projectReplace_->Cancel(); // -> Done, without ever touching a file itself
+                    EndInteractiveSession();
+                    return;
+                }
             }
         }
         else if (chord.Special == editor::SpecialKey::Backspace) {
@@ -2770,32 +2864,12 @@ void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
         return;
     }
 
-    // Confirming: a single whole-batch y/n, not QueryReplace's per-match y/n/!/q.
-    if (chord.Codepoint == U'y') {
-        // in-file-regex follow-up: ConfirmPattern validated this same
-        // pattern text against RE2 (SearchDirectory's engine) and the
-        // rewrite now runs on PCRE2 (RegexPattern), which accepts
-        // essentially everything RE2 does -- but the rewrite can still
-        // throw at match time if the match-limit safety net trips (see
-        // RegexPattern.h). Caught here rather than left to propagate, same
-        // as every other interactive failure in this file.
-        try {
-            const editor::ReplaceSummary summary = projectReplace_->Confirm();
-            statusMessage_                       = "Replaced " + std::to_string(summary.replacementCount) + " occurrence" +
-                                                   (summary.replacementCount == 1 ? "" : "s") + " in " + std::to_string(summary.filesChanged) +
-                                                   " file" + (summary.filesChanged == 1 ? "" : "s") + ".";
-        }
-        catch (const std::exception& e) {
-            ReportError(std::string("Project replace: ") + e.what());
-        }
-        EndInteractiveSession();
-    }
-    else if (chord.Codepoint == U'n') {
-        projectReplace_->Cancel();
-        statusMessage_ = "Project replace cancelled.";
-        EndInteractiveSession();
-    }
-    // Anything else is ignored -- stay in Confirming.
+    // project-replace-review follow-up: there is no Confirming stage to
+    // handle any more -- the EnteringReplacement branch above builds the
+    // review multibuffer and ends the session, and applying it is
+    // multibuffer-apply-changes' job from inside that buffer. Anything
+    // reaching here is a stale key against an already-finished session.
+    EndInteractiveSession();
 }
 
 void BufferView::HandleChoicePromptKey(const bufferview::ChoicePrompt& prompt, const editor::KeyChord& chord) {

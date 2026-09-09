@@ -1204,6 +1204,7 @@ void Buffer::EndUndoGroup() {
     }
     if (--UndoGroupDepth_ == 0 && UndoGroupDirty_) {
         UndoTree_.Record(Storage_->Clone());
+        SnapshotExcerptRangeOffsets();
         CanAmend_       = false;
         UndoGroupDirty_ = false;
     }
@@ -1217,9 +1218,11 @@ void Buffer::RecordOrAmendUndo(bool canAmend) {
     }
     if (canAmend && CanAmend_) {
         UndoTree_.Amend(Storage_->Clone());
+        SnapshotExcerptRangeOffsets(); // an amend rewrites the current node in place, offsets included
         return;
     }
     UndoTree_.Record(Storage_->Clone());
+    SnapshotExcerptRangeOffsets();
     CanAmend_ = canAmend;
 }
 
@@ -1231,9 +1234,11 @@ void Buffer::RecordOrAmendLoadAppend() {
     }
     if (CanAmendLoadAppend_) {
         UndoTree_.Amend(Storage_->Clone());
+        SnapshotExcerptRangeOffsets();
         return;
     }
     UndoTree_.Record(Storage_->Clone());
+    SnapshotExcerptRangeOffsets();
     CanAmendLoadAppend_ = true;
 }
 
@@ -1508,6 +1513,11 @@ void Buffer::RelocateSnippetRangesForDelete(std::size_t rangeStart, std::size_t 
 
 void Buffer::SetExcerptRanges(std::vector<ExcerptRange> ranges) {
     ExcerptRanges_ = std::move(ranges);
+    // A wholesale replacement invalidates every previously recorded set of
+    // offsets (different count, different meaning) -- start over from the
+    // node this set was actually correct at.
+    ExcerptRangeOffsetSnapshots_.clear();
+    SnapshotExcerptRangeOffsets();
 }
 
 const std::vector<Buffer::ExcerptRange>& Buffer::ExcerptRanges() const {
@@ -1516,6 +1526,7 @@ const std::vector<Buffer::ExcerptRange>& Buffer::ExcerptRanges() const {
 
 void Buffer::ClearExcerptRanges() {
     ExcerptRanges_.clear();
+    ExcerptRangeOffsetSnapshots_.clear();
 }
 
 void Buffer::MarkExcerptRangeCommitted(std::size_t start, std::size_t end, std::string newOriginalText,
@@ -2065,7 +2076,12 @@ void Buffer::ApplyUndoTreeNavigation(const ITextStorage& oldStorage) {
     GoalColumn_.reset();
     ++ContentGeneration_;
     UpdateUnsavedRangesForRestore(oldStorage);
-    UpdateExcerptRangesForRestore(oldStorage); // NOT cleared -- see ExcerptRange's own doc comment
+    // Exact first, diff-relocation only as a fallback -- see
+    // SnapshotExcerptRangeOffsets' own doc comment. NOT cleared either way,
+    // see ExcerptRange's own doc comment.
+    if (!RestoreExcerptRangeOffsets()) {
+        UpdateExcerptRangesForRestore(oldStorage);
+    }
 }
 
 void Buffer::Undo() {
@@ -2165,6 +2181,36 @@ void Buffer::UpdateUnsavedRangesForRestore(const ITextStorage& oldStorage) {
             MarkUnsavedRangeInserted(span->newStart, span->newEnd - span->newStart);
         }
     }
+}
+
+void Buffer::SnapshotExcerptRangeOffsets() {
+    if (ExcerptRanges_.empty()) {
+        return; // every ordinary buffer -- nothing to record, nothing to restore
+    }
+    std::vector<std::pair<std::size_t, std::size_t>> offsets;
+    offsets.reserve(ExcerptRanges_.size());
+    for (const ExcerptRange& range : ExcerptRanges_) {
+        offsets.emplace_back(range.start, range.end);
+    }
+    ExcerptRangeOffsetSnapshots_[UndoTree_.CurrentSequence()] = std::move(offsets);
+}
+
+bool Buffer::RestoreExcerptRangeOffsets() {
+    if (ExcerptRanges_.empty()) {
+        return true; // nothing to restore, and nothing for the diff fallback to do either
+    }
+    const auto it = ExcerptRangeOffsetSnapshots_.find(UndoTree_.CurrentSequence());
+    // A size mismatch means SetExcerptRanges replaced the set after this
+    // snapshot was taken -- applying it by index would be meaningless, so
+    // the caller falls back rather than guessing.
+    if (it == ExcerptRangeOffsetSnapshots_.end() || it->second.size() != ExcerptRanges_.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < ExcerptRanges_.size(); ++i) {
+        ExcerptRanges_[i].start = it->second[i].first;
+        ExcerptRanges_[i].end   = it->second[i].second;
+    }
+    return true;
 }
 
 void Buffer::UpdateExcerptRangesForRestore(const ITextStorage& oldStorage) {

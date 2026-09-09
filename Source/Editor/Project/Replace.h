@@ -26,12 +26,11 @@
 
 #include "Search.h"
 
-namespace ned::editor {
+namespace ned::text {
+class BufferList;
+} // namespace ned::text
 
-struct ReplaceSummary {
-    std::size_t filesChanged     = 0;
-    std::size_t replacementCount = 0;
-};
+namespace ned::editor {
 
 class ProjectReplace {
   public:
@@ -40,7 +39,11 @@ class ProjectReplace {
                        Confirming,
                        Done };
 
-    explicit ProjectReplace(std::filesystem::path root);
+    // live-buffer-search follow-up: liveBuffers (optional -- nullptr keeps
+    // the pre-existing disk-only search verbatim, which is what every test
+    // constructing this bare relies on) is handed to SearchDirectory so the
+    // previewed match list reflects unsaved edits, not just what's on disk.
+    explicit ProjectReplace(std::filesystem::path root, text::BufferList* liveBuffers = nullptr);
 
     // Valid during EnteringPattern/EnteringReplacement; a no-op otherwise.
     void AppendChar(char32_t codepoint);
@@ -60,46 +63,35 @@ class ProjectReplace {
     // A no-op if the stage isn't EnteringReplacement.
     void ConfirmReplacement();
 
-    // Valid during Confirming only. Confirm() performs the actual rewrite
-    // (see ReplaceMatches below) and moves to Done; Cancel() moves to Done
-    // without touching any file.
-    [[nodiscard]] ReplaceSummary Confirm();
-    void                         Cancel();
+    // Valid during Confirming only. Cancel() moves to Done.
+    //
+    // project-replace-review follow-up: there is no Confirm() here any more.
+    // Applying the replacement is not this class's job at all now -- the
+    // caller turns Matches()/PatternText()/ReplacementText() into an editable
+    // review multibuffer (BufferView::BuildProjectReplaceReview) and the
+    // review is applied through multibuffer-apply-changes, which is also
+    // where the "into open buffers or straight to the files" choice lives.
+    // That kept one replace path instead of two that could disagree about
+    // what a match means.
+    void Cancel();
 
     [[nodiscard]] Stage                           CurrentStage() const;
     [[nodiscard]] std::string                     StatusText() const;
     [[nodiscard]] const std::vector<SearchMatch>& Matches() const;
+    // project-replace-review follow-up: the caller builds the review
+    // multibuffer from these two plus Matches(), so it needs them back out
+    // rather than only embedded in StatusText().
+    [[nodiscard]] const std::string& PatternText() const;
+    [[nodiscard]] const std::string& ReplacementText() const;
 
   private:
     std::filesystem::path    root_;
-    Stage                    stage_ = Stage::EnteringPattern;
+    text::BufferList*        liveBuffers_ = nullptr; // see the constructor's own doc comment
+    Stage                    stage_       = Stage::EnteringPattern;
     std::string              patternText_;
     std::string              replacementText_;
     std::vector<SearchMatch> matches_;
 };
-
-// Rewrites every unique file referenced in matches, replacing every
-// occurrence of pattern with replacement -- RegexPattern::ReplaceAll (PCRE2,
-// in-file-regex follow-up; formerly std::regex) over each file's *full*
-// content (not line-by-line), so multiple occurrences on one line are all
-// counted and replaced, not just the single SearchMatch recorded per
-// matching line -- and, with PCRE2_MULTILINE, ^/$ anchor at every line
-// boundary of that full content, matching what the per-line search preview
-// showed. Writes via a sibling "<path>.ned-tmp" file then
-// std::filesystem::rename, mirroring Buffer::SaveToFile's own safety
-// pattern, so a failure partway through a given file can't leave it
-// truncated. Skips (without counting) any file that can't be read or
-// written. Throws RegexPatternError if pattern is invalid. The old
-// split-engine caveat (RE2-validated pattern failing here) is practically
-// closed -- PCRE2 accepts essentially everything ConfirmPattern's RE2
-// preview does -- but the reverse constraint remains: PCRE2-only syntax
-// (lookaround, backreferences) is rejected up front by the RE2-backed
-// preview, so it can't be used in a *project* replace, only in the
-// single-buffer query-replace-regexp. ProjectReplace::Confirm's caller
-// (BufferView::HandleProjectReplaceKey) still catches exceptions here --
-// the match-limit safety net can trip at rewrite time (see RegexPattern.h).
-[[nodiscard]] ReplaceSummary ReplaceMatches(const std::vector<SearchMatch>& matches, const std::string& pattern,
-                                            const std::string& replacement);
 
 } // namespace ned::editor
 
