@@ -314,19 +314,36 @@ void BufferView::TriggerSwitchProject() {
     StartInteractiveSession(editor::InteractiveRequest::SwitchProject);
 }
 
+void BufferView::ApplyMultibufferSearchScope(editor::IncrementalSearch& search) const {
+    if (!editor::MultibufferScopedSearch()) {
+        return;
+    }
+    std::vector<std::pair<std::size_t, std::size_t>> ranges = editor::multibuffer::ExcerptBodyRanges(activeBuffer_.Get());
+    if (ranges.empty()) {
+        return; // not a multibuffer -- leave the session exactly as unscoped as it was built
+    }
+    search.SetSearchScope(std::move(ranges));
+}
+
 void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
     switch (request) {
         case editor::InteractiveRequest::IsearchForward:
             inputMode_ = InputMode::IsearchForward;
             search_.emplace(activeBuffer_.Get(), editor::IncrementalSearch::Direction::Forward);
+            ApplyMultibufferSearchScope(*search_);
             break;
         case editor::InteractiveRequest::IsearchBackward:
             inputMode_ = InputMode::IsearchBackward;
             search_.emplace(activeBuffer_.Get(), editor::IncrementalSearch::Direction::Backward);
+            ApplyMultibufferSearchScope(*search_);
             break;
         case editor::InteractiveRequest::QueryReplace:
             inputMode_ = InputMode::QueryReplace;
             queryReplace_.emplace(activeBuffer_.Get());
+            // multibuffer-scoped-search follow-up: a flag, not a range list --
+            // see QueryReplace::SetScopeToExcerptBodies for why the two
+            // sessions take scope differently.
+            queryReplace_->SetScopeToExcerptBodies(editor::MultibufferScopedSearch());
             break;
         case editor::InteractiveRequest::UniversalArgument:
             inputMode_ = InputMode::PrefixArgument;
@@ -371,6 +388,22 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Project search: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        case editor::InteractiveRequest::SearchInResults: {
+            // Resolved up front rather than at confirm time: the prompt says
+            // how many files are about to be searched, and a buffer that
+            // narrows nothing should say so instead of opening a prompt whose
+            // only possible outcome is "no matches."
+            const std::vector<std::filesystem::path> files = ResultFilesInActiveBuffer();
+            if (files.empty()) {
+                statusMessage_ = "No results in this buffer to search within.";
+                return;
+            }
+            inputMode_ = InputMode::SearchInResults;
+            prompt_.emplace("Search in " + std::to_string(files.size()) + " result file" +
+                            (files.size() == 1 ? "" : "s") + ": ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        }
         case editor::InteractiveRequest::VisitSearchResult:
             VisitSearchResult();
             return;
@@ -1998,6 +2031,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "find-file";
         case InputMode::ProjectSearch:
             return "project-search";
+        case InputMode::SearchInResults:
+            return "search-in-results";
         case InputMode::CreateDirectory:
             return "create-directory";
         case InputMode::FindScratch:
@@ -2170,6 +2205,8 @@ std::optional<bufferview::TextEntryPrompt> BufferView::TextEntryPromptFor(InputM
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Schedule"};
         case InputMode::ProjectSearch:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Project search"};
+        case InputMode::SearchInResults:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Search in results"};
         case InputMode::ReplName:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Run REPL"};
         case InputMode::SetHeadlineTags:
@@ -2256,6 +2293,28 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
                 BuildResultsBuffer(matches, "*search results*");
                 statusMessage_ = std::to_string(matches.size()) + " match" + (matches.size() == 1 ? "" : "es") +
                                  " for \"" + input + "\" -- C-c C-v to visit";
+            }
+        }
+        catch (const editor::SearchPatternError& e) {
+            ReportError(std::string("Invalid regex: ") + e.what());
+        }
+    }
+    else if (inputMode_ == InputMode::SearchInResults) {
+        // Re-resolved rather than captured when the prompt opened, matching
+        // SetHeadlineTags' own branch: the results buffer is still the active
+        // one (a plain text-entry prompt can't switch buffers), so this finds
+        // the same set the prompt counted.
+        const std::vector<std::filesystem::path> files = ResultFilesInActiveBuffer();
+        try {
+            const std::vector<editor::SearchMatch> matches = editor::SearchFiles(files, input, bufferList_);
+            if (matches.empty()) {
+                statusMessage_ = "No matches for \"" + input + "\" in these results";
+            }
+            else {
+                BuildResultsBuffer(matches, "*search results*");
+                statusMessage_ = std::to_string(matches.size()) + " match" + (matches.size() == 1 ? "" : "es") +
+                                 " for \"" + input + "\" in " + std::to_string(files.size()) + " result file" +
+                                 (files.size() == 1 ? "" : "s") + " -- C-c C-v to visit";
             }
         }
         catch (const editor::SearchPatternError& e) {

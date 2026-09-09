@@ -345,6 +345,63 @@ std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, cons
                                std::vector<const std::vector<SearchMatch>*>(files.size(), nullptr), regex);
 }
 
+std::vector<SearchMatch> SearchFiles(const std::vector<std::filesystem::path>& files, const std::string& pattern,
+                                     text::BufferList& liveBuffers) {
+    re2::RE2::Options options;
+    options.set_log_errors(false); // see the two-argument SearchDirectory overload
+    re2::RE2 regex(pattern, options);
+    if (!regex.ok()) {
+        throw SearchPatternError(regex.error());
+    }
+
+    std::vector<std::filesystem::path> resolved;
+    for (const std::filesystem::path& file : files) {
+        std::error_code             ec;
+        const std::filesystem::path absolutePath = std::filesystem::absolute(file, ec).lexically_normal();
+        if (ec) {
+            continue;
+        }
+        if (std::find(resolved.begin(), resolved.end(), absolutePath) != resolved.end()) {
+            continue;
+        }
+        // A never-saved buffer has no file to stat, so existence alone isn't
+        // the test -- an open buffer for the path is just as good a source.
+        std::error_code existsEc;
+        if (liveBuffers.FindByPath(absolutePath) == nullptr && !std::filesystem::exists(absolutePath, existsEc)) {
+            continue;
+        }
+        resolved.push_back(absolutePath);
+    }
+    if (resolved.empty()) {
+        return {};
+    }
+
+    // Sized up front and never grown, so the pointers handed to
+    // SearchFilesParallel below stay valid for the whole fan-out.
+    std::vector<std::string>                     liveOwned(resolved.size());
+    std::vector<std::vector<SearchMatch>>        preScannedOwned(resolved.size());
+    std::vector<const std::string*>              liveText(resolved.size(), nullptr);
+    std::vector<const std::vector<SearchMatch>*> preScanned(resolved.size(), nullptr);
+
+    for (std::size_t i = 0; i < resolved.size(); ++i) {
+        const text::Buffer* buffer = liveBuffers.FindByPath(resolved[i]);
+        if (buffer == nullptr || !buffer->Modified()) {
+            continue; // unmodified matches its file byte-for-byte; read it from disk
+        }
+        if (buffer->Content().IsHuge()) {
+            // Scanned here, on the calling thread, before any worker exists
+            // -- SearchDirectory's own huge-live-buffer rule.
+            preScannedOwned[i] = SearchHugeStorage(resolved[i], buffer->Content(), regex);
+            preScanned[i]      = &preScannedOwned[i];
+            continue;
+        }
+        liveOwned[i] = buffer->Text();
+        liveText[i]  = &liveOwned[i];
+    }
+
+    return SearchFilesParallel(resolved, liveText, preScanned, regex);
+}
+
 std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const std::string& pattern,
                                          text::BufferList& liveBuffers) {
     re2::RE2::Options options;

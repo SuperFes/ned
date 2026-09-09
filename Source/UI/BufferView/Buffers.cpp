@@ -17,6 +17,32 @@ using namespace detail;
 
 namespace {
 
+    // Matches every flat "path:line:" results-buffer format written here --
+    // project-search/project-replace/agenda's HandlePromptKey/BuildResultsBuffer
+    // path and BuildVcsBlameBuffer's own format both write this shape, plus
+    // DiagnosticsLog::RebuildMessagesBuffer/TestResultsBuffer's own
+    // "path:line: message" lines. Greedy .* correctly handles the rare case
+    // of a ':' inside the path itself, by backing off to find the *last*
+    // plausible ":<digits>:" split.
+    //
+    // multibuffer-search-in-results follow-up: factored out of
+    // ResultLineAtPoint so ResultFilesInActiveBuffer can run the identical
+    // parse over every line rather than only the one under point.
+    struct ParsedResultLine {
+        std::filesystem::path path;
+        std::size_t           lineNumber; // 1-indexed
+    };
+
+    std::optional<ParsedResultLine> ParseResultLine(const std::string& lineText) {
+        static const std::regex resultLinePattern(R"(^(.*):(\d+):)");
+
+        std::smatch match;
+        if (!std::regex_search(lineText, match, resultLinePattern)) {
+            return std::nullopt;
+        }
+        return ParsedResultLine{.path = match[1].str(), .lineNumber = std::stoul(match[2].str())};
+    }
+
     std::size_t CountUniqueMatchFiles(const std::vector<editor::SearchMatch>& matches) {
         std::vector<std::filesystem::path> seen;
         for (const editor::SearchMatch& match : matches) {
@@ -211,25 +237,45 @@ std::optional<BufferView::ResultLineLocation> BufferView::ResultLineAtPoint() co
         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
 
-    // Matches every flat "path:line:" results-buffer format written here --
-    // project-search/project-replace/agenda's HandlePromptKey/BuildResultsBuffer
-    // path and BuildVcsBlameBuffer's own format both write this shape, plus
-    // DiagnosticsLog::RebuildMessagesBuffer/TestResultsBuffer's own
-    // "path:line: message" lines. Greedy .* correctly handles the rare case
-    // of a ':' inside the path itself, by backing off to find the *last*
-    // plausible ":<digits>:" split.
-    static const std::regex resultLinePattern(R"(^(.*):(\d+):)");
-
-    std::smatch match;
-    if (!std::regex_search(lineText, match, resultLinePattern)) {
+    const std::optional<ParsedResultLine> parsed = ParseResultLine(lineText);
+    if (!parsed) {
         return std::nullopt;
     }
+    return ResultLineLocation{.path = parsed->path, .lineNumber = parsed->lineNumber, .fullLineText = lineText};
+}
 
-    return ResultLineLocation{
-        .path         = match[1].str(),
-        .lineNumber   = std::stoul(match[2].str()),
-        .fullLineText = lineText,
-    };
+std::vector<std::filesystem::path> BufferView::ResultFilesInActiveBuffer() const {
+    const text::Buffer& buffer = activeBuffer_.Get();
+
+    // A multibuffer knows its sources exactly; only a flat results buffer has
+    // to have them read back out of its own rendered text.
+    if (std::vector<std::filesystem::path> paths = editor::multibuffer::ExcerptSourcePaths(buffer); !paths.empty()) {
+        return paths;
+    }
+
+    std::vector<std::filesystem::path> paths;
+    const text::ITextStorage&          content   = buffer.Content();
+    const std::size_t                  lineCount = content.LineCount();
+    for (std::size_t line = 0; line < lineCount; ++line) {
+        const std::size_t lineStart = content.LineToByteOffset(line);
+        const std::size_t lineEnd =
+            (line + 1 < lineCount) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        if (lineEnd <= lineStart) {
+            continue;
+        }
+        const std::optional<ParsedResultLine> parsed = ParseResultLine(content.Substring(lineStart, lineEnd - lineStart));
+        if (!parsed) {
+            continue;
+        }
+        const std::optional<std::filesystem::path> resolved = ResolveResultPath(parsed->path);
+        if (!resolved) {
+            continue; // a stale line naming a file that no longer exists narrows nothing
+        }
+        if (std::find(paths.begin(), paths.end(), *resolved) == paths.end()) {
+            paths.push_back(*resolved);
+        }
+    }
+    return paths;
 }
 
 void BufferView::BuildProjectReplaceReview(const std::vector<editor::SearchMatch>& matches, const std::string& pattern,

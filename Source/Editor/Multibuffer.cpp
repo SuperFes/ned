@@ -473,6 +473,64 @@ std::optional<std::size_t> NextExcerptBodyStart(const text::Buffer& composite, s
     return std::nullopt;
 }
 
+namespace {
+
+    // ExcerptBodyRanges/ExcerptSourcePaths' shared "which set describes this
+    // buffer's excerpts right now" step -- see ExcerptBodyRanges' own doc
+    // comment for the rule.
+    std::vector<std::pair<std::size_t, std::size_t>> BodyRangesFromExcerptRanges(const text::Buffer& composite) {
+        std::vector<std::pair<std::size_t, std::size_t>> ranges;
+        for (const text::Buffer::ExcerptRange& range : composite.ExcerptRanges()) {
+            ranges.emplace_back(range.start, range.end);
+        }
+        return ranges;
+    }
+
+} // namespace
+
+std::vector<std::pair<std::size_t, std::size_t>> ExcerptBodyRanges(const text::Buffer& composite) {
+    std::vector<std::pair<std::size_t, std::size_t>> ranges = BodyRangesFromExcerptRanges(composite);
+    if (ranges.empty()) {
+        if (const MultibufferIndex* index = MultibufferIndexFor(composite)) {
+            for (const ExcerptSpan& span : index->Spans()) {
+                ranges.emplace_back(span.bodyStartByte, span.compositeEndByte);
+            }
+        }
+    }
+
+    // A degenerate range (an excerpt deleted back to nothing, which
+    // ExcerptRange deliberately keeps rather than drops) contains no bytes to
+    // search, so it isn't a scope -- dropping it here keeps every caller's
+    // containment test a plain start <= x && y <= end with no empty-range
+    // special case of its own.
+    std::erase_if(ranges, [](const std::pair<std::size_t, std::size_t>& range) { return range.first >= range.second; });
+    std::sort(ranges.begin(), ranges.end());
+    return ranges;
+}
+
+std::vector<std::filesystem::path> ExcerptSourcePaths(const text::Buffer& composite) {
+    std::vector<std::filesystem::path> paths;
+    auto                               append = [&paths](const std::filesystem::path& path) {
+        if (path.empty() || std::find(paths.begin(), paths.end(), path) != paths.end()) {
+            return;
+        }
+        paths.push_back(path);
+    };
+
+    if (!composite.ExcerptRanges().empty()) {
+        for (const text::Buffer::ExcerptRange& range : composite.ExcerptRanges()) {
+            append(range.sourcePath);
+        }
+        return paths;
+    }
+    if (const MultibufferIndex* index = MultibufferIndexFor(composite)) {
+        for (const ExcerptSpan& span : index->Spans()) {
+            append(span.sourcePath);
+        }
+    }
+    return paths;
+}
+
 std::optional<std::size_t> PreviousExcerptBodyStart(const text::Buffer& composite, std::size_t compositeByteOffset) {
     const MultibufferIndex* index = MultibufferIndexFor(composite);
     if (index == nullptr) {

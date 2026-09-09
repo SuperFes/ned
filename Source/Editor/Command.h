@@ -56,6 +56,14 @@ enum class InteractiveRequest { None,
                                 FindFile,
                                 SwitchToBuffer,
                                 ProjectSearch,
+                                // multibuffer-search-in-results follow-up: a project search
+                                // narrowed to the files the *current* results/multibuffer
+                                // already references -- the "now search within these results"
+                                // step after a broad find-references or project search. Prompts
+                                // for a pattern exactly as ProjectSearch does; a buffer that
+                                // references no files at all reports that instead of silently
+                                // searching everything.
+                                SearchInResults,
                                 VisitSearchResult,
                                 ProjectReplace,
                                 // find-all-references follow-up: one-shot direct action, same

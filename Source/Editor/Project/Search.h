@@ -86,6 +86,22 @@ class SearchPatternError : public std::runtime_error {
 [[nodiscard]] std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const std::string& pattern,
                                                        text::BufferList& liveBuffers);
 
+// multibuffer-search-in-results follow-up: the same per-file scan, over an
+// explicit file list instead of a directory walk -- what "search within
+// these results" narrows a fresh search down to (the set of files an
+// existing multibuffer/results buffer references). No .gitignore or
+// dot-directory filtering and no binary sniff: the caller already decided
+// which files are interesting, and second-guessing that here would silently
+// drop results from a file the user is plainly looking at.
+//
+// Live-buffer semantics are the SearchDirectory(root, pattern, liveBuffers)
+// overload's, verbatim: a modified open buffer is searched in place of its
+// file (line-chunked through its own storage when huge), an unmodified one
+// is byte-identical to its file and read from disk. Duplicate and
+// nonexistent paths are dropped; order follows the caller's list.
+[[nodiscard]] std::vector<SearchMatch> SearchFiles(const std::vector<std::filesystem::path>& files,
+                                                   const std::string& pattern, text::BufferList& liveBuffers);
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_PROJECT_SEARCH_H
