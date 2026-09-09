@@ -5,7 +5,7 @@
 // and Lsp/LspClient.h's header comments for the full threading/lifetime
 // reasoning; none of it is repeated here because almost none of it differs),
 // the same "mirror exactly, differ only where it must" convention
-// Dap/DapClient.h already established. The differences that must exist:
+// Dap/Client.h already established. The differences that must exist:
 //
 // - Spawn is forkpty + execve, not ChildProcess's posix_spawn + pipes: a
 //   terminal application needs a controlling tty and session leadership,

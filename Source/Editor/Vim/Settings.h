@@ -11,7 +11,7 @@
 
 namespace ned::editor::vim {
 
-void               SetVimModeEnabled(bool enabled);
+void               SetModeEnabled(bool enabled);
 [[nodiscard]] bool ModeEnabled();
 
 } // namespace ned::editor::vim

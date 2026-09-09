@@ -7,7 +7,7 @@
 
 #include "Editor/CodeFold.h"
 #include "Editor/CodeFoldSettings.h"
-#include "Editor/Coverage/CoverageConfig.h"
+#include "Editor/Coverage/Config.h"
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/ProjectRoot.h"
@@ -502,7 +502,7 @@ void GutterModel::EnsureTestEntries() const {
 
 void GutterModel::EnsureCoverageStatuses() const {
     text::Buffer&     buffer           = context_.activeBuffer.Get();
-    const std::size_t reportGeneration = editor::coverage::CoverageReportGeneration();
+    const std::size_t reportGeneration = editor::coverage::ReportGeneration();
     const CacheStamp  stamp            = CacheStamp::For(&buffer, {reportGeneration});
     if (coverageStamp_.Matches(stamp)) {
         return;
@@ -515,7 +515,7 @@ void GutterModel::EnsureCoverageStatuses() const {
         return; // unsaved/scratch buffer -- nothing to match a coverage report's SF: path against
     }
 
-    const editor::coverage::CoverageReport report = editor::coverage::CurrentCoverageReport();
+    const editor::coverage::Report report = editor::coverage::CurrentCoverageReport();
     const editor::coverage::FileCoverage*  file =
         editor::coverage::FindFileCoverage(report, *buffer.Path(), editor::ProjectRoot());
     if (file == nullptr) {
@@ -527,7 +527,7 @@ void GutterModel::EnsureCoverageStatuses() const {
         coverageLineStatuses_.emplace_back(line.line, line.Status());
     }
     // file->lines is already sorted-by-line/unique-per-line by construction
-    // (CoverageOutputParser.h's own merge step keeps it that way), so no
+    // (OutputParser.h's own merge step keeps it that way), so no
     // sort/dedupe pass is needed here the way testEntries_ above
     // needs one (multiple test markers can share a line; coverage lines
     // can't).

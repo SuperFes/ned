@@ -8,11 +8,11 @@
 
 #include <unistd.h>
 
-#include "Editor/Dap/DapClient.h"
+#include "Editor/Dap/Client.h"
 #include "Editor/Lsp/Transport.h"
 #include "UI/EventLoop.h"
 
-using ned::editor::dap::DapClient;
+using ned::editor::dap::Client;
 using ned::editor::dap::Json;
 using ned::editor::lsp::Transport;
 
@@ -27,7 +27,7 @@ struct ClientFixture {
     ned::ui::EventLoop eventLoop;
     int                adapterStdinRead;
     int                adapterStdoutWrite;
-    DapClient          client;
+    Client          client;
 
     ClientFixture(int readFd, int writeFd, Transport transport) : adapterStdinRead(readFd), adapterStdoutWrite(writeFd), client(std::move(transport), eventLoop) {
     }
@@ -104,7 +104,7 @@ std::string ResponseFrame(int requestSeq, const std::string& command, bool succe
 
 } // namespace
 
-TEST_CASE("DapClient::SendRequest writes a well-formed DAP request frame", "[Dap]") {
+TEST_CASE("Client::SendRequest writes a well-formed DAP request frame", "[Dap]") {
     ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.SendRequest("initialize", Json{{"adapterID", "test"}}, [](bool, Json, std::string) {});
@@ -120,7 +120,7 @@ TEST_CASE("DapClient::SendRequest writes a well-formed DAP request frame", "[Dap
     REQUIRE_FALSE(message.contains("method"));
 }
 
-TEST_CASE("DapClient correlates a success response to its request callback by request_seq", "[Dap]") {
+TEST_CASE("Client correlates a success response to its request callback by request_seq", "[Dap]") {
     ClientFixture fixture = ClientFixture::Create();
 
     bool called = false;
@@ -141,7 +141,7 @@ TEST_CASE("DapClient correlates a success response to its request callback by re
     REQUIRE(body["supportsConfigurationDoneRequest"] == true);
 }
 
-TEST_CASE("DapClient::ExpireStaleRequests resolves a stuck request with success=false", "[Dap]") {
+TEST_CASE("Client::ExpireStaleRequests resolves a stuck request with success=false", "[Dap]") {
     // subprocess-hang-protection follow-up.
     ClientFixture fixture = ClientFixture::Create();
 
@@ -163,7 +163,7 @@ TEST_CASE("DapClient::ExpireStaleRequests resolves a stuck request with success=
     REQUIRE_FALSE(message.empty());
 }
 
-TEST_CASE("DapClient::ExpireStaleRequests leaves a request younger than maxAge untouched", "[Dap]") {
+TEST_CASE("Client::ExpireStaleRequests leaves a request younger than maxAge untouched", "[Dap]") {
     // subprocess-hang-protection follow-up.
     ClientFixture fixture = ClientFixture::Create();
 
@@ -175,7 +175,7 @@ TEST_CASE("DapClient::ExpireStaleRequests leaves a request younger than maxAge u
     REQUIRE_FALSE(invoked);
 }
 
-TEST_CASE("DapClient reports a failed response's own message", "[Dap]") {
+TEST_CASE("Client reports a failed response's own message", "[Dap]") {
     ClientFixture fixture = ClientFixture::Create();
 
     std::string message;
@@ -193,7 +193,7 @@ TEST_CASE("DapClient reports a failed response's own message", "[Dap]") {
     REQUIRE(message == "program not found");
 }
 
-TEST_CASE("DapClient invokes each response callback at most once and ignores unknown request_seqs", "[Dap]") {
+TEST_CASE("Client invokes each response callback at most once and ignores unknown request_seqs", "[Dap]") {
     ClientFixture fixture = ClientFixture::Create();
 
     int calls = 0;
@@ -208,7 +208,7 @@ TEST_CASE("DapClient invokes each response callback at most once and ignores unk
     REQUIRE(calls == 1);
 }
 
-TEST_CASE("DapClient dispatches events to their registered handler with the event body", "[Dap]") {
+TEST_CASE("Client dispatches events to their registered handler with the event body", "[Dap]") {
     ClientFixture fixture = ClientFixture::Create();
 
     std::string reason;
@@ -228,7 +228,7 @@ TEST_CASE("DapClient dispatches events to their registered handler with the even
     fixture.client.DispatchFrame(Json{{"seq", 6}, {"type", "event"}, {"event", "unheard-of"}}.dump());
 }
 
-TEST_CASE("DapClient ignores malformed frames rather than crashing", "[Dap]") {
+TEST_CASE("Client ignores malformed frames rather than crashing", "[Dap]") {
     ClientFixture fixture = ClientFixture::Create();
     fixture.client.DispatchFrame("this is not json");
     fixture.client.DispatchFrame(R"({"type": "response"})");                       // no request_seq
@@ -237,15 +237,15 @@ TEST_CASE("DapClient ignores malformed frames rather than crashing", "[Dap]") {
 
 // lsp-use-after-free follow-up. Mirrors LspClientTest.cpp's "A stray
 // Post()ed callback safely no-ops instead of touching an already-destroyed
-// LspClient" exactly -- DapClient's threading/lifetime contract is an
+// LspClient" exactly -- Client's threading/lifetime contract is an
 // intentional mirror of LspClient's (see this class's own header comment),
 // so it shares the identical hazard: a background thread's own already-
 // Post()ed callback (the EOF/"adapter exited" disconnect notification here)
-// must not touch `this` once the DapClient has been destroyed. Not built
-// from ClientFixture -- that owns its DapClient by value with no way to
+// must not touch `this` once the Client has been destroyed. Not built
+// from ClientFixture -- that owns its Client by value with no way to
 // destroy it independently of the fixture's own scope, which this test
 // needs to do explicitly.
-TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an already-destroyed DapClient", "[Dap]") {
+TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an already-destroyed Client", "[Dap]") {
     ned::ui::EventLoop eventLoop;
     int                clientWritesHere[2];
     int                clientReadsHere[2];
@@ -254,14 +254,14 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
     const int adapterStdinRead   = clientWritesHere[0];
     const int adapterStdoutWrite = clientReadsHere[1];
 
-    std::optional<DapClient> client;
+    std::optional<Client> client;
     client.emplace(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
     client->SetOnDisconnected([](std::string) {});
 
     ::close(adapterStdoutWrite);                                // EOF -- the read thread Post()s its disconnect notification, then exits
     std::this_thread::sleep_for(std::chrono::milliseconds(50)); // let the background thread actually post before destroying
 
-    client.reset(); // ~DapClient() flips alive_ to false as its first statement
+    client.reset(); // ~Client() flips alive_ to false as its first statement
 
     eventLoop.DrainPosted_(); // must not crash or touch freed memory
     SUCCEED();
@@ -269,18 +269,18 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
     ::close(adapterStdinRead);
 }
 
-// closed-connection-never-parks follow-up. The DapClient twin of
+// closed-connection-never-parks follow-up. The Client twin of
 // Tests/AcpClientTest.cpp's own "Destroying an AcpClient before its read
 // thread has started doesn't deadlock" -- all three clients share this exact
-// threading/lifetime shape (see DapClient.h's own header comment), and all three
-// shared the deadlock: ~DapClient destroys transport_ before joining
+// threading/lifetime shape (see Client.h's own header comment), and all three
+// shared the deadlock: ~Client destroys transport_ before joining
 // readThread_ by design, since that fd close is what unblocks an in-flight
 // read, but a read thread the scheduler hasn't run *at all* yet reaches its
 // first read only after that teardown and used to park forever in poll() on
 // the resulting -1 fd, so the join never returned. Hammering
 // construct-then-immediately-destroy is what makes the scheduler land in
 // that window; the loop simply has to finish.
-TEST_CASE("Destroying a DapClient before its read thread has started doesn't deadlock", "[Dap]") {
+TEST_CASE("Destroying a Client before its read thread has started doesn't deadlock", "[Dap]") {
     ned::ui::EventLoop eventLoop;
 
     for (int iteration = 0; iteration < 200; ++iteration) {
@@ -290,7 +290,7 @@ TEST_CASE("Destroying a DapClient before its read thread has started doesn't dea
         REQUIRE(::pipe(clientReadsHere) == 0);
 
         {
-            DapClient client(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+            Client client(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
             // No I/O in between -- ClientFixture's own teardown order (peer
             // write end closed first, so a read thread already parked in
             // poll() wakes on EOF), but with nothing at all happening first.

@@ -13,12 +13,12 @@
 // insufficient in practice.
 //
 
-#ifndef NED_EDITOR_COVERAGE_COVERAGEOUTPUTPARSER_H
-#define NED_EDITOR_COVERAGE_COVERAGEOUTPUTPARSER_H
+#ifndef NED_EDITOR_COVERAGE_OUTPUTPARSER_H
+#define NED_EDITOR_COVERAGE_OUTPUTPARSER_H
 
 #include <string_view>
 
-#include "CoverageReport.h"
+#include "Report.h"
 
 namespace ned::editor::coverage {
 
@@ -32,8 +32,8 @@ namespace ned::editor::coverage {
 // the later block replacing the earlier one. A record missing its own
 // trailing end_of_record (a truncated capture) is still flushed at
 // end-of-input rather than silently dropped.
-[[nodiscard]] CoverageReport ParseLcovInfo(std::string_view output);
+[[nodiscard]] Report ParseLcovInfo(std::string_view output);
 
 } // namespace ned::editor::coverage
 
-#endif // NED_EDITOR_COVERAGE_COVERAGEOUTPUTPARSER_H
+#endif // NED_EDITOR_COVERAGE_OUTPUTPARSER_H

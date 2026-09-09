@@ -1,4 +1,4 @@
-#include "ReplConfig.h"
+#include "Config.h"
 
 #include <mutex>
 #include <unordered_map>
@@ -13,7 +13,7 @@ namespace {
 
 } // namespace
 
-void SetReplCommand(const std::string& name, std::vector<std::string> argv) {
+void SetCommand(const std::string& name, std::vector<std::string> argv) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     if (argv.empty()) {
         g_commands.erase(name);
@@ -23,7 +23,7 @@ void SetReplCommand(const std::string& name, std::vector<std::string> argv) {
     }
 }
 
-std::optional<std::vector<std::string>> ReplCommand(const std::string& name) {
+std::optional<std::vector<std::string>> Command(const std::string& name) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     const auto                        it = g_commands.find(name);
     if (it == g_commands.end()) {

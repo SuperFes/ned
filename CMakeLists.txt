@@ -778,19 +778,19 @@ add_library(ned_lib STATIC
         Source/Editor/Tasks/TaskConfig.cpp
         Source/Editor/Tasks/TaskProcess.cpp
         Source/Editor/Tasks/TaskRunner.cpp
-        Source/Editor/Repl/ReplConfig.cpp
+        Source/Editor/Repl/Config.cpp
         Source/Editor/TestRun/TestOutputParser.cpp
         Source/Editor/TestRun/TestResult.cpp
         Source/Editor/TestRun/TestResultsBuffer.cpp
         Source/Editor/TestRun/TestRunConfig.cpp
         Source/Editor/TestRun/TestRunner.cpp
         Source/Editor/TestRun/TestSourceResolver.cpp
-        Source/Editor/Coverage/CoverageReport.cpp
-        Source/Editor/Coverage/CoverageOutputParser.cpp
-        Source/Editor/Coverage/CoverageConfig.cpp
-        Source/Editor/Dap/DapConfig.cpp
-        Source/Editor/Dap/DapClient.cpp
-        Source/Editor/Dap/DapManager.cpp
+        Source/Editor/Coverage/Report.cpp
+        Source/Editor/Coverage/OutputParser.cpp
+        Source/Editor/Coverage/Config.cpp
+        Source/Editor/Dap/Config.cpp
+        Source/Editor/Dap/Client.cpp
+        Source/Editor/Dap/Manager.cpp
         Source/Editor/PointerGraphNode.cpp
         Source/Editor/Sparkline.cpp
         Source/Editor/MemoryImage.cpp

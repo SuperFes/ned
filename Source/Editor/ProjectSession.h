@@ -70,11 +70,11 @@ struct WindowLayoutNode {
 };
 
 // session-persistence round 2: one breakpoint's persisted state, mirroring
-// DapManager::PersistedBreakpoint's own shape verbatim (condition/
+// Manager::PersistedBreakpoint's own shape verbatim (condition/
 // logMessage/hitCondition now round-trip across a restart; verified/
 // actualLine deliberately don't -- see that struct's own doc comment for
 // why). Kept as ProjectSession's own type rather than reusing
-// DapManager::PersistedBreakpoint directly, same "this file stays
+// Manager::PersistedBreakpoint directly, same "this file stays
 // Dap-header-free" boundary the pre-round-2 line-only shape already
 // established -- WindowManager.cpp/main.cpp convert between the two at
 // their respective capture/restore call sites.
@@ -92,10 +92,10 @@ struct ProjectSessionData {
     std::optional<std::filesystem::path> activeFile;
     std::optional<bool>                  sidebarVisible;
     std::optional<int>                   sidebarWidth;
-    // Normalized path key -> sorted-by-line BreakpointStates, DapManager's
-    // own store shape (see DapManager::AllBreakpoints/RestoreBreakpoints).
+    // Normalized path key -> sorted-by-line BreakpointStates, Manager's
+    // own store shape (see Manager::AllBreakpoints/RestoreBreakpoints).
     std::map<std::string, std::vector<BreakpointState>> breakpoints;
-    // session-persistence round 2: DapManager::Watches()/RestoreWatches's
+    // session-persistence round 2: Manager::Watches()/RestoreWatches's
     // plain ordered list -- watch expressions now survive a restart the
     // same way breakpoints do (closes the gap ROADMAP.md recorded).
     std::vector<std::string> watches;

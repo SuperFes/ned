@@ -415,7 +415,7 @@ enum class InteractiveRequest { None,
                                 CancelTask,
                                 // DAP client slice 1: four one-shot direct actions, same shape
                                 // as ToggleProjectSidebar -- BufferView holds the shared
-                                // DapManager (SetDapManager, mirroring SetTaskRunner) and acts
+                                // Manager (SetDapManager, mirroring SetTaskRunner) and acts
                                 // immediately: DapContinue starts a session for the active
                                 // mode's language or resumes a stopped one (F5), DapStop tears
                                 // it down (S-F5), DapPause requests a stop, and
@@ -494,13 +494,13 @@ enum class InteractiveRequest { None,
                                 DapShowMemoryAtPoint,
                                 // Debugging wishlist (gf/GDBFrontend audit): dap-run-to-cursor
                                 // -- one-shot like DapContinue, operating on point's own line
-                                // like DapToggleBreakpoint (DapManager::RunToCursor sets a
+                                // like DapToggleBreakpoint (Manager::RunToCursor sets a
                                 // temporary breakpoint there if none exists yet, continues,
                                 // and clears it again on the next stop).
                                 DapRunToCursor,
                                 // Debugging wishlist: dap-jump-to-line (gf's Shift+Click "skip
                                 // to line") -- operates on point's own line like
-                                // DapRunToCursor, but chains DapManager::JumpToLine's async
+                                // DapRunToCursor, but chains Manager::JumpToLine's async
                                 // gotoTargets/goto exchange instead of returning a status
                                 // string immediately (see BufferView's handling).
                                 DapJumpToLine,
@@ -524,7 +524,7 @@ enum class InteractiveRequest { None,
                                 DapToggleWatchGraph,
                                 // Debugging wishlist: dap-line-inspect (gf's backtick key) --
                                 // one-shot like DapRunToCursor, operating on point's own line,
-                                // but fans out one DapManager::Evaluate per candidate
+                                // but fans out one Manager::Evaluate per candidate
                                 // sub-expression Mode::lineInspect finds on it (see
                                 // BufferView::LineInspectAtPoint) rather than a single value.
                                 DapLineInspect,
@@ -598,7 +598,7 @@ enum class InteractiveRequest { None,
                                 // to it. Prompt-shaped like DapAddWatch, not tied to point or
                                 // a live debug session -- Valgrind's massif tool runs
                                 // standalone, writing its own output file rather than
-                                // streaming through DapManager.
+                                // streaming through Manager.
                                 ShowMassifGraph,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
@@ -854,7 +854,7 @@ enum class InteractiveRequest { None,
                                 // BufferView shows+focuses (or hides) the Janet REPL's PanelDock
                                 // tab. RunRepl resolves to its own InputMode (RunTask/CancelTask's
                                 // own precedent for TaskName): BufferView prompts for a REPL name,
-                                // checks it against Editor/Repl/ReplConfig.h's configured table
+                                // checks it against Editor/Repl/Config.h's configured table
                                 // itself (reporting "not configured" via the shared status
                                 // message when absent), then forwards to the callback main.cpp
                                 // registered (SetOnRunReplRequest) to find-or-create that REPL's

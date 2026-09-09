@@ -1,4 +1,4 @@
-#include "DapClient.h"
+#include "Client.h"
 
 #include <cerrno>
 #include <utility>
@@ -9,24 +9,24 @@
 
 namespace ned::editor::dap {
 
-DapClient::~DapClient() {
+Client::~Client() {
     // lsp-use-after-free follow-up: must be the first statement -- see
     // LspClient.h's own header comment on alive_.
     *alive_ = false;
 }
 
-DapClient::DapClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
+Client::Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
     StartReadLoop();
     StartStderrReadLoop();
 }
 
-DapClient::DapClient(lsp::Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
+Client::Client(lsp::Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
     StartReadLoop();
     StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
     StartWriteLoop();
 }
 
-void DapClient::StartWriteLoop() {
+void Client::StartWriteLoop() {
     // async-write-queue follow-up -- identical to LspClient::StartWriteLoop,
     // including the drain-on-stop policy -- see header comment.
     writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
@@ -54,7 +54,7 @@ void DapClient::StartWriteLoop() {
     });
 }
 
-void DapClient::EnqueueWrite(std::string frame) {
+void Client::EnqueueWrite(std::string frame) {
     {
         std::lock_guard<std::mutex> lock(writeMutex_);
         writeQueue_.push_back(std::move(frame));
@@ -62,11 +62,11 @@ void DapClient::EnqueueWrite(std::string frame) {
     writeCv_.notify_one();
 }
 
-void DapClient::PrepareForGracefulShutdown() {
+void Client::PrepareForGracefulShutdown() {
     drainQueueOnStop_ = true;
 }
 
-void DapClient::StartReadLoop() {
+void Client::StartReadLoop() {
     // Identical loop to LspClient::StartReadLoop — see that function (and
     // LspClient.h's header comment) for the reasoning behind every branch;
     // only the dispatch target differs.
@@ -89,7 +89,7 @@ void DapClient::StartReadLoop() {
                 // a mid-frame stall -- see LspClient.cpp's identical comment.
                 eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
                     if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this DapClient is gone
+                        return; // lsp-use-after-free follow-up -- this Client is gone
                     }
                     LogMessage(LogCategory::Dap, LogSeverity::Warning, reason);
                     if (onDisconnected_) {
@@ -101,7 +101,7 @@ void DapClient::StartReadLoop() {
             if (!frame) {
                 eventLoop_.Post([this, alive = alive_] {
                     if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this DapClient is gone
+                        return; // lsp-use-after-free follow-up -- this Client is gone
                     }
                     LogMessage(LogCategory::Dap, LogSeverity::Warning, "adapter exited (EOF)");
                     if (onDisconnected_) {
@@ -112,7 +112,7 @@ void DapClient::StartReadLoop() {
             }
             eventLoop_.Post([this, alive = alive_, frameText = std::move(*frame)]() mutable {
                 if (!*alive) {
-                    return; // lsp-use-after-free follow-up -- this DapClient is gone
+                    return; // lsp-use-after-free follow-up -- this Client is gone
                 }
                 DispatchFrame(frameText);
             });
@@ -120,7 +120,7 @@ void DapClient::StartReadLoop() {
     });
 }
 
-void DapClient::StartStderrReadLoop() {
+void Client::StartStderrReadLoop() {
     // Identical to LspClient::StartStderrReadLoop -- see that function's own
     // doc comment for the full reasoning; only the log category differs.
     const int fd = transport_.StderrFd();
@@ -141,7 +141,7 @@ void DapClient::StartStderrReadLoop() {
                 return;
             }
             if (result == 0) {
-                return; // EOF -- adapter exited, or this DapClient is being destroyed
+                return; // EOF -- adapter exited, or this Client is being destroyed
             }
             buffered.append(chunk, static_cast<std::size_t>(result));
 
@@ -163,7 +163,7 @@ void DapClient::StartStderrReadLoop() {
     });
 }
 
-void DapClient::DispatchFrame(const std::string& frameText) {
+void Client::DispatchFrame(const std::string& frameText) {
     Json message;
     try {
         message = Json::parse(frameText);
@@ -211,7 +211,7 @@ void DapClient::DispatchFrame(const std::string& frameText) {
     // sends the only reverse request that matters here.
 }
 
-void DapClient::SendRequest(const std::string& command, Json arguments, ResponseCallback callback) {
+void Client::SendRequest(const std::string& command, Json arguments, ResponseCallback callback) {
     const int seq      = nextSeq_++;
     pending_[seq]      = PendingRequest{std::move(callback), std::chrono::steady_clock::now()};
     const Json message = {
@@ -223,7 +223,7 @@ void DapClient::SendRequest(const std::string& command, Json arguments, Response
     EnqueueWrite(message.dump());
 }
 
-void DapClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+void Client::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     // subprocess-hang-protection follow-up -- see LspClient::ExpireStaleRequests's
     // identical reasoning/collect-then-invoke shape.
     const std::chrono::steady_clock::time_point   now = std::chrono::steady_clock::now();
@@ -245,11 +245,11 @@ void DapClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     }
 }
 
-void DapClient::SetEventHandler(std::string event, EventHandler handler) {
+void Client::SetEventHandler(std::string event, EventHandler handler) {
     eventHandlers_[std::move(event)] = std::move(handler);
 }
 
-void DapClient::SetOnDisconnected(std::function<void(std::string reason)> handler) {
+void Client::SetOnDisconnected(std::function<void(std::string reason)> handler) {
     onDisconnected_ = std::move(handler);
 }
 

@@ -89,7 +89,7 @@ class FilePlaceStore {
     void                      ClearDirty();
 
     // Public for the same "callers compare keys, never re-derive paths"
-    // reason DapManager::NormalizePathKey is (weakly_canonical, falling
+    // reason Manager::NormalizePathKey is (weakly_canonical, falling
     // back to absolute() -- deliberately the same normalization, duplicated
     // rather than depended on: Session has no business pulling in Dap).
     [[nodiscard]] static std::string NormalizePathKey(const std::filesystem::path& path);

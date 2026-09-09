@@ -309,7 +309,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
             // can't be reused once the sort key and lookup key
             // diverge like this.
             const auto bpIt = std::find_if(frame.dapBreakpoints.begin(), frame.dapBreakpoints.end(),
-                                           [line](const editor::dap::DapManager::Breakpoint& bp) {
+                                           [line](const editor::dap::Manager::Breakpoint& bp) {
                                                return (bp.actualLine != 0 ? bp.actualLine : bp.line) == line + 1;
                                            });
             if (bpIt != frame.dapBreakpoints.end()) {
@@ -1426,7 +1426,7 @@ void BufferView::Paint(Canvas paneCanvas) {
     // decides how wide the gutter is -- see BufferView/GutterLayout.h.
     const bufferview::GutterLayout gutter = ComputeGutterLayout(totalLines);
 
-    std::vector<editor::dap::DapManager::Breakpoint>   dapBreakpoints;
+    std::vector<editor::dap::Manager::Breakpoint>   dapBreakpoints;
     std::optional<std::pair<std::string, std::size_t>> dapStop;
     if (gutter.dapWidth > 0) {
         dapBreakpoints = dapManager_->BreakpointsForKey(dapPathKey_);

@@ -10,7 +10,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mcp/BridgeServer.h"
 #include "Editor/Mcp/ToolRegistry.h"
@@ -21,7 +21,7 @@
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
 
-using ned::editor::dap::DapManager;
+using ned::editor::dap::Manager;
 using ned::editor::lsp::LspManager;
 using ned::editor::mcp::Json;
 using ned::editor::mcp::BridgeServer;
@@ -41,7 +41,7 @@ struct Fixture {
     LspManager         lspManager{bufferList, eventLoop};
     VcsRunner          vcsRunner{eventLoop};
     TestRunner         testRunner{bufferList, eventLoop};
-    DapManager         dapManager{eventLoop};
+    Manager         dapManager{eventLoop};
     ToolRegistry       registry{bufferList, lspManager, vcsRunner, testRunner, dapManager};
     BridgeServer    server{registry, eventLoop};
 };

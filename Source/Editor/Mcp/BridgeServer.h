@@ -1,8 +1,8 @@
 //
 // ACP MCP tool-server bridge, slice 1. Owns the live `ned` process's own
-// listening Unix domain socket (McpSocketPath.h) and speaks just enough of
+// listening Unix domain socket (SocketPath.h) and speaks just enough of
 // the real MCP protocol (initialize / notifications/initialized / tools/list
-// / tools/call, newline-delimited JSON-RPC via McpTransport) to serve one
+// / tools/call, newline-delimited JSON-RPC via Transport) to serve one
 // connected client at a time -- the `ned --mcp-stdio-relay` subprocess the
 // ACP agent spawns as its configured stdio MCP server (see main.cpp and
 // AcpManager::StartSession's mcpServers payload). Real tool dispatch is
@@ -10,13 +10,13 @@
 // protocol/transport plumbing.
 //
 // Threading shape mirrors every other background-I/O class in this codebase
-// (LspClient/DapClient/AcpClient's own read loops): a background jthread
+// (LspClient/Client/AcpClient's own read loops): a background jthread
 // does blocking accept()/ReadMessage() calls only, marshaling each complete
 // line onto the main thread via EventLoop::Post before touching any real
 // state -- ToolRegistry::CallTool, and therefore every LspManager/VcsRunner/
 // TestRunner call it makes, always runs on the main thread. A tool's
 // eventual response write (SendResult/SendError) also happens on the main
-// thread, synchronously via McpTransport::WriteMessage -- MCP tool results
+// thread, synchronously via Transport::WriteMessage -- MCP tool results
 // here are small single-line JSON blobs, so this deliberately skips the
 // async-write-queue treatment LspClient needed for large payloads (that was
 // a fix for a *measured* freeze on big workspace-wide operations, not a

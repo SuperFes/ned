@@ -5,7 +5,7 @@
 #include <fstream>
 #include <string>
 
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mcp/ToolRegistry.h"
@@ -19,7 +19,7 @@
 
 using ned::editor::ProjectRoot;
 using ned::editor::SetProjectRoot;
-using ned::editor::dap::DapManager;
+using ned::editor::dap::Manager;
 using ned::editor::lsp::LspManager;
 using ned::editor::mcp::ToolRegistry;
 using ned::editor::testrun::TestRunner;
@@ -42,7 +42,7 @@ struct Fixture {
     LspManager         lspManager{bufferList, eventLoop};
     VcsRunner          vcsRunner{eventLoop};
     TestRunner         testRunner{bufferList, eventLoop};
-    DapManager         dapManager{eventLoop};
+    Manager         dapManager{eventLoop};
     ToolRegistry       registry{bufferList, lspManager, vcsRunner, testRunner, dapManager};
 };
 

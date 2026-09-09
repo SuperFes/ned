@@ -34,8 +34,8 @@
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
 #include "Editor/CompletionSession.h"
-#include "Editor/Coverage/CoverageReport.h"
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Coverage/Report.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/Dispatcher.h"
@@ -303,11 +303,11 @@ class BufferView : public Widget {
     // describes two different, narrower existing call sites.
     void RefreshVcsDiff();
 
-    // DAP client slice 1: registers the shared DapManager -- same "unset is
+    // DAP client slice 1: registers the shared Manager -- same "unset is
     // a safe no-op" convention as SetLspManager/SetTaskRunner/SetVcsRunner
     // (the dap-* commands report "No debugger available." via
     // statusMessage_ if this was never called).
-    void SetDapManager(editor::dap::DapManager* dapManager);
+    void SetDapManager(editor::dap::Manager* dapManager);
 
     // ACP client slice 2: registers the shared AcpManager -- same "unset is
     // a safe no-op" convention as SetDapManager (the acp-* commands report
@@ -347,7 +347,7 @@ class BufferView : public Widget {
     // InteractiveRequest/StartInteractiveSession path -- see
     // InteractiveRequest's own doc comment in Command.h) -- same "public so
     // an external async callback can drive this pane" shape JumpToPathLine
-    // establishes for DapManager's stopped event. Enters
+    // establishes for Manager's stopped event. Enters
     // InputMode::AcpPermissionPrompt and renders prompt as a numbered
     // choice list (RefreshAcpPermissionPromptStatus), the same
     // LspCodeActionSelect shape.
@@ -667,7 +667,7 @@ class BufferView : public Widget {
     // typed), since main.cpp's registrant needs it to find-or-create that
     // REPL's own PanelDock tab. Only called once BufferView itself has
     // already confirmed the name resolves to a configured
-    // Editor/Repl/ReplConfig.h command (an unconfigured name is reported via
+    // Editor/Repl/Config.h command (an unconfigured name is reported via
     // statusMessage_ directly, never reaching this callback). Wired via
     // WindowManager::SetOnRunReplRequest fanning out to every pane. Unset is
     // a safe no-op (reported via statusMessage_).
@@ -1104,7 +1104,7 @@ class BufferView : public Widget {
                            // REPL-engine follow-up: TaskName's own precedent, but for
                            // run-repl -- a "REPL name" prompt, routed through
                            // HandlePromptKey the same way. On submit, BufferView itself
-                           // checks the name against Editor/Repl/ReplConfig.h (reporting
+                           // checks the name against Editor/Repl/Config.h (reporting
                            // "not configured" via statusMessage_ if absent) before
                            // forwarding to onRunReplRequest_ -- no separate
                            // *PromptAction enum needed since (unlike TaskName's
@@ -1774,7 +1774,7 @@ class BufferView : public Widget {
     // ExpandableTree-backed, TreeView-rendered browse-session shape as
     // HierarchySession above, over DAP variables instead of LSP hierarchy
     // items -- see Editor/PointerGraphNode.h's own doc comment for why that
-    // type (not DapManager::Variable directly) is the tree's NodeData.
+    // type (not Manager::Variable directly) is the tree's NodeData.
     // visitedMemoryRefs is the one thing this session needs that
     // HierarchySession doesn't: a real linked/circular list can point back
     // into itself, unlike an LSP call/type hierarchy (acyclic by
@@ -1798,12 +1798,12 @@ class BufferView : public Widget {
     // "auto-expand the root" precedent as RequestHierarchyAtPoint.
     void RequestPointerGraphAtPoint();
 
-    // Sends DapManager::RequestVariables against
+    // Sends Manager::RequestVariables against
     // pointerGraphSession_->tree.At(index).data.variablesReference -- a
     // no-op if there's no active session, index is out of range, or the
     // node is already loading. A node whose children were already fetched
     // is expanded without a new request, same as ExpandHierarchyNode. Each
-    // returned DapManager::Variable becomes a PointerGraphNode; one whose
+    // returned Manager::Variable becomes a PointerGraphNode; one whose
     // memoryReference is non-empty and already in visitedMemoryRefs is
     // marked cyclic (and its variablesReference forced to 0, so the tree
     // never offers to expand it again) instead of being added to
@@ -2634,7 +2634,7 @@ class BufferView : public Widget {
         std::size_t                                             totalLines = 0;
         std::size_t                                             point      = 0;
         std::size_t                                             pointLine  = 0;
-        const std::vector<editor::dap::DapManager::Breakpoint>& dapBreakpoints;
+        const std::vector<editor::dap::Manager::Breakpoint>& dapBreakpoints;
         // Resolved once per frame rather than per row; both are stamp-checked
         // accessors, but there is no reason to re-ask for every line.
         const std::vector<std::pair<std::size_t, std::size_t>>&                        unsavedChangeLineRanges;
@@ -2755,7 +2755,7 @@ class BufferView : public Widget {
     // real gutter would just be redundant clutter, not a useful cross-check.
     [[nodiscard]] bool LineNumberGutterActive() const;
 
-    // Recomputes dapPathKey_ (DapManager::NormalizePathKey of the active
+    // Recomputes dapPathKey_ (Manager::NormalizePathKey of the active
     // buffer's path, empty when pathless) only when the active buffer's
     // identity or its associated path actually changed -- weakly_canonical
     // does real filesystem work, so this must not run per frame. const +
@@ -2813,7 +2813,7 @@ class BufferView : public Widget {
     // DAP round 4: dap-restart-frame's body -- parses a "[frame:N]" trailing
     // marker off point's own "*debug*" buffer stack line (ShowDebugInfo's
     // own convention, ExpandVariableAtPoint's "[ref:N]" shape), then calls
-    // DapManager::RestartFrame directly -- synchronous status string, no
+    // Manager::RestartFrame directly -- synchronous status string, no
     // async splice needed (the new position arrives via the next `stopped`
     // event like every other step).
     void RestartFrameAtPoint();
@@ -2844,7 +2844,7 @@ class BufferView : public Widget {
     // convention); unlike ToggleHexFormatAtPoint this only applies to watch
     // lines, not arbitrary variable lines -- "graph this" only makes sense
     // for a user-named watch expression. A watch with recorded scalar
-    // history (DapManager::WatchHistoryAt) gets Editor/Sparkline.h's
+    // history (Manager::WatchHistoryAt) gets Editor/Sparkline.h's
     // block-glyph sparkline of its values across recent stops appended; a
     // watch with no history yet but an expandable current value
     // (variablesReference > 0, via EvaluateWithReference) instead does a
@@ -2865,7 +2865,7 @@ class BufferView : public Widget {
     // window centered on the frame's instructionPointerReference) and
     // builds/switches to a read-only "*disassembly*" buffer.
     void ShowDisassemblyAtPoint();
-    void BuildDisassemblyBuffer(const std::vector<editor::dap::DapManager::DisassembledInstruction>& instructions,
+    void BuildDisassemblyBuffer(const std::vector<editor::dap::Manager::DisassembledInstruction>& instructions,
                                 const std::string&                                                   pcAddress);
 
     // DAP round 5: dap-show-memory-at-point's body -- parses a "[mem:<ref>]"
@@ -2876,14 +2876,14 @@ class BufferView : public Widget {
     // sending the DAP readMemory request and building a read-only
     // "*memory*" hex-dump buffer.
     void ShowMemoryAtPoint();
-    void BuildMemoryBuffer(const std::string& memoryReference, const editor::dap::DapManager::MemoryBlock& block);
+    void BuildMemoryBuffer(const std::string& memoryReference, const editor::dap::Manager::MemoryBlock& block);
 
     // Debugging wishlist follow-up (memory-as-image viewer): ShowMemoryAtPoint's
     // own marker-parse-then-prompt body, but sets pendingDapMemoryAsImage_ so
     // the shared DapMemoryByteCount prompt's completion routes to
     // PushMemoryImageModel instead of BuildMemoryBuffer.
     void ShowMemoryImageAtPoint();
-    void PushMemoryImageModel(const std::string& memoryReference, const editor::dap::DapManager::MemoryBlock& block);
+    void PushMemoryImageModel(const std::string& memoryReference, const editor::dap::Manager::MemoryBlock& block);
 
     // DAP round 2: dap-select-thread's entry point -- fetches the current
     // thread list (RequestThreads) and, when non-empty, enters
@@ -2895,7 +2895,7 @@ class BufferView : public Widget {
 
     // DAP round 3: dap-select-exception-breakpoints's entry point --
     // BeginDapThreadSelect's shape, but multi-select/toggle over
-    // DapManager::AvailableExceptionFilters() rather than a single pick;
+    // Manager::AvailableExceptionFilters() rather than a single pick;
     // pendingDapExceptionFilters_/dapExceptionFilterSelection_/
     // pendingDapEnabledExceptionFilters_ are the driving state (see their
     // own declarations below).
@@ -3045,7 +3045,7 @@ class BufferView : public Widget {
     editor::ProjectUndoManager*           projectUndo_             = nullptr; // see SetProjectUndo
     editor::testrun::TestRunner*          testRunner_              = nullptr; // see SetTestRunner
     editor::vcs::VcsRunner*               vcsRunner_               = nullptr; // see SetVcsRunner
-    editor::dap::DapManager*              dapManager_              = nullptr; // see SetDapManager
+    editor::dap::Manager*              dapManager_              = nullptr; // see SetDapManager
     editor::acp::AcpManager*              acpManager_              = nullptr; // see SetAcpManager
     const janet::Environment*             janetEnv_                = nullptr; // see SetJanetEnvironment
     bool                                  surfaceUnseenLogEntries_ = false;   // see SetSurfaceUnseenLogEntries
@@ -3071,15 +3071,15 @@ class BufferView : public Widget {
     // -- same "populated by the entry point, consumed by
     // Refresh*/Handle*Key" convention pendingAcpPermissionOptions_ above
     // establishes.
-    std::vector<editor::dap::DapManager::Thread> pendingDapThreads_;
+    std::vector<editor::dap::Manager::Thread> pendingDapThreads_;
     std::size_t                                  dapThreadSelection_ = 0;
 
     // DAP round 3: valid only while inputMode_ ==
     // InputMode::DapExceptionFilterSelect -- pendingDapThreads_'s own
     // convention, but the enabled set is a local editable copy (toggled by
-    // Space/digit as the user browses) rather than DapManager's own live
+    // Space/digit as the user browses) rather than Manager's own live
     // state, committed via SetExceptionBreakpointFilters only on Enter.
-    std::vector<editor::dap::DapManager::ExceptionFilter> pendingDapExceptionFilters_;
+    std::vector<editor::dap::Manager::ExceptionFilter> pendingDapExceptionFilters_;
     std::set<std::string>                                 pendingDapEnabledExceptionFilters_;
     std::size_t                                           dapExceptionFilterSelection_ = 0;
 

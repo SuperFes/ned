@@ -7,7 +7,7 @@
 #include <ctime>
 #include <system_error>
 
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Lsp/LspContent.h"
 #include "Editor/Lsp/LspEditApply.h"
@@ -139,7 +139,7 @@ Json MakeTextToolResult(std::string text, bool isError) {
 }
 
 ToolRegistry::ToolRegistry(text::BufferList& bufferList, lsp::LspManager& lspManager, vcs::VcsRunner& vcsRunner, testrun::TestRunner& testRunner,
-                           dap::DapManager& dapManager) : bufferList_(bufferList), lspManager_(lspManager), vcsRunner_(vcsRunner), testRunner_(testRunner), dapManager_(dapManager) {
+                           dap::Manager& dapManager) : bufferList_(bufferList), lspManager_(lspManager), vcsRunner_(vcsRunner), testRunner_(testRunner), dapManager_(dapManager) {
     RegisterBuiltinTools();
 }
 
@@ -783,14 +783,14 @@ void ToolRegistry::RegisterBuiltinTools() {
         });
 
     // DAP<->ACP debugging bridge (ROADMAP.md's "Collaboration & AI" entry).
-    // Every DapManager::Request*/status-string method already runs on the
+    // Every Manager::Request*/status-string method already runs on the
     // main thread and answers gracefully (an empty result, or a short
     // explanatory status string) when there's no session/no adapter
     // response/an out-of-range argument, exactly like LspManager's own
     // Request* methods do -- so these are thin wrappers, the same shape as
-    // every git_*/lsp tool above, not new DapManager capability. Debug
+    // every git_*/lsp tool above, not new Manager capability. Debug
     // session state (breakpoints/stack/variables/watches) is inherently
-    // single-session/single-focus, matching DapManager's own "one session at
+    // single-session/single-focus, matching Manager's own "one session at
     // a time" design, so no buffer/file resolution is needed the way the LSP
     // tools above need FindOpenBuffer -- an agent driving these acts on
     // whichever session/thread/frame the human's own DAP UI would.
@@ -804,7 +804,7 @@ void ToolRegistry::RegisterBuiltinTools() {
             }
             Json results = Json::array();
             for (const auto& [pathKey, breakpoints] : all) {
-                for (const dap::DapManager::PersistedBreakpoint& bp : breakpoints) {
+                for (const dap::Manager::PersistedBreakpoint& bp : breakpoints) {
                     Json entry = Json{{"file", pathKey}, {"line", bp.line}};
                     if (!bp.condition.empty()) {
                         entry["condition"] = bp.condition;
@@ -933,13 +933,13 @@ void ToolRegistry::RegisterBuiltinTools() {
     RegisterTool(
         "dap_get_stack_trace", "Get the call stack of the stopped debug session.", Json{{"type", "object"}, {"properties", Json::object()}},
         [this](const Json&, const ResultCallback& callback) {
-            dapManager_.RequestStackTrace([callback](std::vector<dap::DapManager::StackFrame> frames) {
+            dapManager_.RequestStackTrace([callback](std::vector<dap::Manager::StackFrame> frames) {
                 if (frames.empty()) {
                     callback(MakeTextToolResult("No stack available (is the session stopped?)."));
                     return;
                 }
                 Json results = Json::array();
-                for (const dap::DapManager::StackFrame& frame : frames) {
+                for (const dap::Manager::StackFrame& frame : frames) {
                     Json entry = Json{{"frameId", frame.id}, {"name", frame.name}};
                     if (frame.path) {
                         entry["file"] = frame.path->string();
@@ -964,13 +964,13 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("Missing required argument: frameId", true));
                 return;
             }
-            dapManager_.RequestScopes(static_cast<int>(*frameId), [callback](std::vector<dap::DapManager::Scope> scopes) {
+            dapManager_.RequestScopes(static_cast<int>(*frameId), [callback](std::vector<dap::Manager::Scope> scopes) {
                 if (scopes.empty()) {
                     callback(MakeTextToolResult("No scopes available (is the session stopped?)."));
                     return;
                 }
                 Json results = Json::array();
-                for (const dap::DapManager::Scope& scope : scopes) {
+                for (const dap::Manager::Scope& scope : scopes) {
                     results.push_back(Json{{"name", scope.name}, {"variablesReference", scope.variablesReference}});
                 }
                 callback(MakeTextToolResult(results.dump()));
@@ -996,13 +996,13 @@ void ToolRegistry::RegisterBuiltinTools() {
             const bool hex = args.contains("hex") && args["hex"].is_boolean() && args["hex"].get<bool>();
             dapManager_.RequestVariables(
                 static_cast<int>(*reference),
-                [callback](std::vector<dap::DapManager::Variable> variables) {
+                [callback](std::vector<dap::Manager::Variable> variables) {
                     if (variables.empty()) {
                         callback(MakeTextToolResult("No variables (is the session stopped?)."));
                         return;
                     }
                     Json results = Json::array();
-                    for (const dap::DapManager::Variable& variable : variables) {
+                    for (const dap::Manager::Variable& variable : variables) {
                         Json entry = Json{{"name", variable.name}, {"value", variable.value}};
                         if (!variable.type.empty()) {
                             entry["type"] = variable.type;

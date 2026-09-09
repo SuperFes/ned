@@ -18,7 +18,7 @@ namespace {
 
 } // namespace
 
-void SetVimModeEnabled(bool enabled) {
+void SetModeEnabled(bool enabled) {
     const std::lock_guard<std::mutex> lock(EnabledMutex());
     EnabledStorage() = enabled;
 }

@@ -2,7 +2,7 @@
 // Debugging wishlist follow-up (ROADMAP.md's Maybelist, the Valgrind entry):
 // renders a parsed MassifOutputParser.h MassifProfile into a read-only
 // "*massif report*" buffer -- a heap-usage-over-time sparkline
-// (Editor/Sparkline.h, the same substrate DapManager's watch-history graph
+// (Editor/Sparkline.h, the same substrate Manager's watch-history graph
 // uses) plus a per-snapshot summary table. TestResultsBuffer.h's own
 // find-or-create/wholesale-rewrite shape: a fresh graph command supersedes
 // the prior report rather than accumulating buffers.
