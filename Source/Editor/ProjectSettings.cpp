@@ -80,7 +80,7 @@ const std::vector<std::filesystem::path>& IncludePathsForMode(const ProjectSetti
     return it != settings.includePathsByMode.end() ? it->second : kEmpty;
 }
 
-const nlohmann::json& LspInitializationOptionsForLanguage(const ProjectSettings& settings, const std::string& language) {
+const nlohmann::json& InitializationOptionsForLanguage(const ProjectSettings& settings, const std::string& language) {
     static const nlohmann::json kEmpty = nlohmann::json::object();
     const auto                  it     = settings.lspInitializationOptionsByLanguage.find(language);
     return it != settings.lspInitializationOptionsByLanguage.end() ? it->second : kEmpty;

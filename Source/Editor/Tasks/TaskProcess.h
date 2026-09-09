@@ -2,10 +2,10 @@
 // Task runner follow-up. Owns one running task's subprocess and streams its
 // raw combined stdout+stderr to a caller-supplied callback -- no JSON-RPC,
 // no framing at all (see Process/ChildProcess.h for the raw spawn/pipe layer
-// this sits on top of, and Lsp/LspClient.h for the framed sibling this
+// this sits on top of, and Lsp/Client.h for the framed sibling this
 // deliberately mirrors the shape of).
 //
-// Threading/lifetime notes are identical to LspClient's own -- read that
+// Threading/lifetime notes are identical to Client's own -- read that
 // file's header comment for the full reasoning; the short version:
 // - A background std::jthread runs a blocking read loop (ChildProcess::
 //   ReadSome), marshaling each chunk onto the main thread via
@@ -43,7 +43,7 @@ class TaskProcess {
     // the main thread, once the process has exited (or been Cancel()ed) --
     // exitCode is the process's real exit code, or std::nullopt if it was
     // terminated by a signal (Cancel(), most commonly). eventLoop must
-    // outlive this TaskProcess, same requirement LspClient's own
+    // outlive this TaskProcess, same requirement Client's own
     // constructor documents.
     TaskProcess(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop, std::function<void(std::string_view chunk)> onOutput,
                 std::function<void(std::optional<int> exitCode)> onExit);
@@ -63,9 +63,9 @@ class TaskProcess {
     // learned the process ended.
     void Cancel() noexcept;
 
-    // Public primarily for tests -- mirrors LspClient::DispatchFrame's own
+    // Public primarily for tests -- mirrors Client::DispatchFrame's own
     // "public primarily for tests" precedent (see that method's doc comment
-    // in LspClient.h): the real background read loop always reaches these
+    // in Client.h): the real background read loop always reaches these
     // via eventLoop_.Post, but exercising that requires a real, running
     // EventLoop::Run() loop (no synchronous fallback exists). Calling these
     // directly exercises the exact same onOutput_/onExit_ dispatch without

@@ -1,6 +1,6 @@
 //
 // lsp-broker follow-up. The pure routing/state-machine core of the LSP
-// broker -- a small headless daemon (Source/Editor/Lsp/LspBrokerMain.cpp),
+// broker -- a small headless daemon (Source/Editor/Lsp/BrokerMain.cpp),
 // one per machine (not one per project), that keeps every project's real
 // language-server subprocess alive across `ned` restarts, so a fresh `ned`
 // launch can attach to an already-warm clangd instead of paying its
@@ -16,21 +16,21 @@
 // per-client "fake handshake," crash/disconnect handling, LRU eviction
 // under pressure) is unit-testable without spawning a single real process.
 // It consumes/produces plain nlohmann::json frames and opaque
-// ConnectionIds; LspBrokerMain.cpp is the only place that turns those into
+// ConnectionIds; BrokerMain.cpp is the only place that turns those into
 // real socket reads/writes and real subprocess spawns.
 //
 // Every language-server entry is keyed by (project root, language) rather
 // than language alone -- one daemon now serves every project a `ned`
 // process attaches from, not just one. The composite key is a single
-// string, root + '\x1f' + language, the same convention LspManager.h's own
+// string, root + '\x1f' + language, the same convention Manager.h's own
 // activeProgress_ map already uses for a composite string key.
 //
 // The core protocol problem this solves: LSP forbids re-"initialize"-ing
 // an already-initialized server connection, but every `ned` process that
 // attaches to the daemon needs to go through a real initialize/initialized
-// handshake of its own (its own editor::lsp::LspClient is constructed with
+// handshake of its own (its own editor::lsp::Client is constructed with
 // startHandshakeComplete = false, unchanged from the direct-spawn path --
-// see LspManager.cpp's ClientForLanguage). So BrokerRouter performs exactly
+// see Manager.cpp's ClientForLanguage). So BrokerRouter performs exactly
 // one real handshake with the actual spawned server per (root, language)
 // entry (using whichever attaching client's own "initialize" params happen
 // to arrive first -- the server doesn't care who asked), caches the
@@ -38,7 +38,7 @@
 // locally from that cache without ever forwarding it to the real server a
 // second time. A client's "initialized" notification is swallowed the same
 // way -- it closes that client's own local handshake gate
-// (LspClient::handshakeComplete_) but has no real server-facing meaning
+// (Client::handshakeComplete_) but has no real server-facing meaning
 // here, since the real "initialized" already went out exactly once.
 //
 // Beyond the handshake, ordinary traffic is a straightforward N:1 relay:
@@ -50,7 +50,7 @@
 // server-initiated *notification* (publishDiagnostics, $/progress, ...)
 // broadcasts to every client attached to that same entry -- safe even for
 // a client that never opened the URI in question, since
-// LspManager::HandlePublishDiagnostics already no-ops gracefully for a URI
+// Manager::HandlePublishDiagnostics already no-ops gracefully for a URI
 // it doesn't recognize (BufferList::FindByPath returning null). A
 // server-initiated *request* (e.g. window/workDoneProgress/create) is
 // auto-acknowledged with a null result directly by the broker rather than
@@ -65,8 +65,8 @@
 // simply exceeded rather than refusing the new project.
 //
 
-#ifndef NED_EDITOR_LSP_LSPBROKER_H
-#define NED_EDITOR_LSP_LSPBROKER_H
+#ifndef NED_EDITOR_LSP_BROKER_H
+#define NED_EDITOR_LSP_BROKER_H
 
 #include <chrono>
 #include <cstddef>
@@ -83,7 +83,7 @@ namespace ned::editor::lsp {
 
 using Json = nlohmann::json;
 
-// Opaque per-connection handle -- LspBrokerMain.cpp assigns these (e.g. a
+// Opaque per-connection handle -- BrokerMain.cpp assigns these (e.g. a
 // simple incrementing counter as each socket is accept()ed); this file
 // never interprets the value.
 using ConnectionId = std::uint64_t;
@@ -92,14 +92,14 @@ using ConnectionId = std::uint64_t;
 // NotStarted: nothing spawned, no client has attached yet (or the entry was
 // reset after a crash/disconnect/eviction -- see ServerDisconnected).
 // SpawningProcess: a SpawnServer action was emitted, waiting for
-// LspBrokerMain.cpp to report ServerSpawned/ServerSpawnFailed.
+// BrokerMain.cpp to report ServerSpawned/ServerSpawnFailed.
 // AwaitingRealHandshake: the process is running and the broker's own
 // synthetic "initialize" has been sent to it, waiting for its response.
 // Ready: the real handshake completed successfully -- ordinary traffic
 // relays normally, and this entry is now a valid LRU-eviction candidate
 // once idle. Failed: the process failed to spawn or the real handshake
 // itself errored -- terminal for this entry's lifetime (mirrors
-// LspServerConfig.h's own "no auto-retry beyond that" precedent); the next
+// ServerConfig.h's own "no auto-retry beyond that" precedent); the next
 // successful attach for the same (root, language) only happens once this
 // entry is reset via ServerDisconnected/eviction or the daemon restarts.
 enum class BrokerLanguageStatus { NotStarted,
@@ -108,7 +108,7 @@ enum class BrokerLanguageStatus { NotStarted,
                                   Ready,
                                   Failed };
 
-// One instruction for LspBrokerMain.cpp's imperative layer to carry out --
+// One instruction for BrokerMain.cpp's imperative layer to carry out --
 // BrokerRouter never performs I/O itself, only describes what should
 // happen. Not every field is populated for every Kind; see each Kind's own
 // comment below for which ones matter.
@@ -133,7 +133,7 @@ struct BrokerAction {
 // The pure routing core -- one instance for the whole daemon process (every
 // project/language pair shares it; ordinary map lookups keyed by a
 // composite string are cheap and this avoids one mutex per entry in the
-// real I/O layer). Not thread-safe on its own; LspBrokerMain.cpp is
+// real I/O layer). Not thread-safe on its own; BrokerMain.cpp is
 // expected to serialize every call behind one mutex (see this file's own
 // header comment for why thread-per-connection, not a shared poll() loop,
 // is the right I/O shape here).
@@ -176,13 +176,13 @@ class BrokerRouter {
     // its queued-but-unanswered "initialize" (if any), its entry in the
     // owning (root, language) pair's attached set, and any in-flight
     // pendingByBrokerId entries whose response would have routed to it
-    // (simply dropped, uninvoked -- matches LspClient's own "abandoned at
+    // (simply dropped, uninvoked -- matches Client's own "abandoned at
     // shutdown" convention). Never touches the real server connection --
     // one client leaving doesn't affect anyone else. A no-op if conn was
     // never attached.
     [[nodiscard]] std::vector<BrokerAction> ClientDisconnected(ConnectionId conn);
 
-    // LspBrokerMain.cpp successfully spawned the real subprocess for
+    // BrokerMain.cpp successfully spawned the real subprocess for
     // (root, language). If a client's own "initialize" frame is already
     // queued (the common case -- SyncBuffer sends it immediately after
     // construction, so it typically races ahead of the subprocess actually
@@ -216,7 +216,7 @@ class BrokerRouter {
     // any reason. Every client currently attached (or queued
     // mid-handshake) to this entry is closed outright (CloseClient) rather
     // than transparently reattached to a freshly-respawned server -- this
-    // deliberately reuses LspManager's own already-correct crash-recovery
+    // deliberately reuses Manager's own already-correct crash-recovery
     // path (ClientDisconnected there erases bufferState_ and lets the next
     // SyncBuffer call redo a real spawn-and-didOpen sequence from scratch)
     // instead of duplicating equivalent logic inside the broker. The
@@ -229,7 +229,7 @@ class BrokerRouter {
     // Sweeps every entry with zero attached/queued clients whose
     // last-active timestamp is older than now - idleTimeout, tearing each
     // down the same way ServerDisconnected does (real LSP shutdown/exit
-    // first if Ready). What LspBrokerMain.cpp's periodic timer calls for
+    // first if Ready). What BrokerMain.cpp's periodic timer calls for
     // the per-entry idle tier (see this file's own header comment on the
     // two idle tiers) -- distinct from Shutdown(), which is unconditional
     // and ends the whole daemon.
@@ -237,14 +237,14 @@ class BrokerRouter {
 
     // ned/broker-shutdown control message (from `ned --lsp-broker-stop`)
     // or the whole-daemon safety-net timeout decided it's time to exit.
-    // Called directly by LspBrokerMain.cpp's imperative layer the moment it
+    // Called directly by BrokerMain.cpp's imperative layer the moment it
     // sees ned/broker-shutdown as a connection's very first frame -- that
     // control message never goes through ClientAttached/ClientFrame at
     // all, since a stop request has no project/language of its own to
     // attach as. For every entry currently Ready, sends a real LSP "shutdown" request
     // immediately followed by "exit" (broker-generated ids; v1
     // deliberately doesn't wait for the shutdown response before also
-    // queuing exit -- LspBrokerMain.cpp's own process teardown terminates
+    // queuing exit -- BrokerMain.cpp's own process teardown terminates
     // the subprocess shortly after regardless, so this is strictly better
     // than a bare kill even without a strict two-phase wait). Every
     // attached client, across every entry, is closed. Always ends with a
@@ -252,7 +252,7 @@ class BrokerRouter {
     [[nodiscard]] std::vector<BrokerAction> Shutdown();
 
     // Number of connections currently attached to any entry (post
-    // handshake) or still queued mid-handshake -- what LspBrokerMain.cpp's
+    // handshake) or still queued mid-handshake -- what BrokerMain.cpp's
     // whole-daemon safety-net timeout checks against "any activity at all"
     // before exiting the process on its own.
     [[nodiscard]] std::size_t ConnectionCount() const noexcept;
@@ -328,4 +328,4 @@ class BrokerRouter {
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPBROKER_H
+#endif // NED_EDITOR_LSP_BROKER_H

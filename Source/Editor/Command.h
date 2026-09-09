@@ -26,7 +26,7 @@
 #include "Text/KillRing.h"
 
 namespace ned::editor::lsp {
-class LspManager;
+class Manager;
 } // namespace ned::editor::lsp
 
 namespace ned::editor::tasks {
@@ -948,7 +948,7 @@ struct CommandContext {
     // code-fold-toggle/toggle-line-comment/forward-sexp/backward-sexp read
     // this; everything else ignores it.
     const Mode* mode = nullptr;
-    // hover/completion follow-up: the editor-wide LspManager, set by the
+    // hover/completion follow-up: the editor-wide Manager, set by the
     // host UI before each dispatch (nullptr if unset, e.g. headless tests)
     // -- same "a UI fact/resource a command needs" shape as mode above. Only
     // lsp-hover/lsp-complete read this. A raw, non-owning pointer is fine
@@ -958,7 +958,7 @@ struct CommandContext {
     // owning BufferView outlives the async response" lifetime this
     // subsystem's diagnostics-publish handler and the scratch-autosave
     // thread already rely on, not a new risk class this field introduces.
-    lsp::LspManager* lspManager = nullptr;
+    lsp::Manager* lspManager = nullptr;
     // task-runner follow-up: the editor-wide TaskRunner, set by the host UI
     // before each dispatch (nullptr if unset, e.g. headless tests) -- same
     // "a UI fact/resource a command needs" shape as lspManager above. Only

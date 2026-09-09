@@ -10,7 +10,7 @@
 // applying the accepted edit), this owns every decision that doesn't need a
 // terminal. That split is what makes the interesting logic here -- ranking,
 // the narrow-vs-re-request rule, replace-range resolution -- testable
-// against a plain Buffer with no Screen, LspClient or subprocess involved.
+// against a plain Buffer with no Screen, Client or subprocess involved.
 //
 // Two invariants worth stating up front, because most of this file leans on
 // them:
@@ -18,7 +18,7 @@
 //   1. A candidate's replace region is always [replaceStart, point). The
 //      server hands over an absolute range, but its *end* is only ever the
 //      cursor at request time (see kUseInsertRangeForInsertReplace in
-//      LspContent.cpp), and typing happens at the cursor -- so re-reading
+//      Content.cpp), and typing happens at the cursor -- so re-reading
 //      the end from the live point keeps a range valid across the very
 //      keystrokes this session exists to survive, with no re-resolution and
 //      no stale-position bookkeeping anywhere.
@@ -37,7 +37,7 @@
 #include <string_view>
 #include <vector>
 
-#include "Lsp/LspContent.h"
+#include "Lsp/Content.h"
 
 namespace ned::text {
 class ITextStorage;
@@ -152,7 +152,7 @@ class CompletionSession {
         // completion-resolve follow-up: the item's additionalTextEdits --
         // the "#include <vector>" an accepted std::vector needs. Positions,
         // not byte offsets, because these are resolved against the buffer at
-        // apply time by the caller (Editor/Lsp/LspEditApply.h), which is
+        // apply time by the caller (Editor/Lsp/EditApply.h), which is
         // also what relocates replaceStart/replaceEnd if one of these lands
         // before them. Empty unless a resolve response filled them in.
         std::vector<lsp::WorkspaceTextEdit> additionalEdits;

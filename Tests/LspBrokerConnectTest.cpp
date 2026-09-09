@@ -14,7 +14,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include "Editor/Lsp/LspBrokerConnect.h"
+#include "Editor/Lsp/BrokerConnect.h"
 #include "Editor/Lsp/Transport.h"
 #include "UI/EventLoop.h"
 
@@ -32,7 +32,7 @@ std::filesystem::path UniqueSocketPath() {
 }
 
 // Same "real Notcurses context, scoped tightly to one TEST_CASE, never
-// shared process-wide" reasoning LspClientTest.cpp's own ClientFixture
+// shared process-wide" reasoning ClientTest.cpp's own ClientFixture
 // documents -- see that file's header comment for why.
 struct EventLoopFixture {
     ned::ui::EventLoop eventLoop;
@@ -40,13 +40,13 @@ struct EventLoopFixture {
 
 } // namespace
 
-TEST_CASE("TryConnectToBroker returns nullptr when nothing is listening", "[LspBrokerConnect]") {
+TEST_CASE("TryConnectToBroker returns nullptr when nothing is listening", "[BrokerConnect]") {
     EventLoopFixture fixture;
     const auto       result = TryConnectToBroker("/some/project", "cpp", {"clangd"}, fixture.eventLoop, UniqueSocketPath());
     REQUIRE(result == nullptr);
 }
 
-TEST_CASE("TryConnectToBroker attaches over a real socket and sends a well-formed attach frame", "[LspBrokerConnect]") {
+TEST_CASE("TryConnectToBroker attaches over a real socket and sends a well-formed attach frame", "[BrokerConnect]") {
     const std::filesystem::path socketPath = UniqueSocketPath();
     ::unlink(socketPath.c_str());
 
@@ -100,7 +100,7 @@ TEST_CASE("TryConnectToBroker attaches over a real socket and sends a well-forme
 }
 
 TEST_CASE("TryConnectToBroker gives up within its own timeout instead of hanging when the listener never accepts",
-          "[LspBrokerConnect]") {
+          "[BrokerConnect]") {
     // editor-side-connect-timeout follow-up: confirmed live -- a plain
     // blocking ::connect() froze a real, interactive `ned` process's main
     // UI thread solid (unix_wait_for_peer, unrecoverable short of kill -9)

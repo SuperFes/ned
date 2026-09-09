@@ -23,7 +23,7 @@ std::size_t BufferView::AnnotationRowsForLine(std::size_t line) const {
 }
 
 std::size_t BufferView::LeadingAnnotationRowsForLine(std::size_t line) const {
-    if (!lspManager_ || !editor::lsp::LspCodeLensEnabled()) {
+    if (!lspManager_ || !editor::lsp::CodeLensEnabled()) {
         return 0;
     }
     text::Buffer&             buffer  = activeBuffer_.Get();
@@ -685,7 +685,7 @@ void BufferView::BeginLineRender(LineRenderState& state, std::size_t line, std::
     // generation counter for), so no extra staleness bookkeeping
     // is needed here unlike the tree-sitter highlight cache.
     state.inlayHints =
-        InlayHintsForLine(lspManager_ ? lspManager_->InlayHintSpans(frame.buffer) : std::vector<editor::lsp::LspManager::ResolvedInlayHint>{},
+        InlayHintsForLine(lspManager_ ? lspManager_->InlayHintSpans(frame.buffer) : std::vector<editor::lsp::Manager::ResolvedInlayHint>{},
                           lineStart, lineEnd);
     // Whitespace-visualization follow-up: skipped (both fields
     // left at their "empty run" default) unless at least one of
@@ -860,10 +860,10 @@ void BufferView::SyncLspForFrame() {
     const std::size_t         totalLines = content.LineCount();
 
     // LSP client follow-up: syncs the *active* buffer only, once per frame
-    // -- see LspManager::SyncBuffer's own doc comment for why only the
+    // -- see Manager::SyncBuffer's own doc comment for why only the
     // currently-visible buffer, not every open one. A no-op if lspManager_
     // is unset (ordinary tests) or nothing's configured for this mode's
-    // language (LspServerCommand returns nullopt, checked inside SyncBuffer
+    // language (ServerCommand returns nullopt, checked inside SyncBuffer
     // itself).
     if (lspManager_) {
         lspManager_->SyncBuffer(buffer, editor::LanguageKeyForMode(mode_));
@@ -882,8 +882,8 @@ void BufferView::SyncLspForFrame() {
         // semanticTokens follow-up, extended by the range/delta follow-up:
         // same per-frame, active-buffer-only cadence as SyncBuffer just
         // above, deliberately called from here (BufferView's own per-frame
-        // decision point) rather than from inside LspManager::SyncToServer
-        // -- see RequestSemanticTokens' own doc comment in LspManager.h for
+        // decision point) rather than from inside Manager::SyncToServer
+        // -- see RequestSemanticTokens' own doc comment in Manager.h for
         // why keeping it out of that hot path matters (a real lesson from
         // pull-diagnostics' own test-regression fix), and for how it
         // chooses among range/full-delta/full internally. No-ops
@@ -901,7 +901,7 @@ void BufferView::SyncLspForFrame() {
         // codeLens follow-up: same per-frame cadence as the calls above,
         // whole-document scope (codeLens has no "range" param, unlike
         // inlayHint) -- see RequestCodeLenses' own doc comment in
-        // LspManager.h for the dedup/learn-once gating this no-ops behind.
+        // Manager.h for the dedup/learn-once gating this no-ops behind.
         lspManager_->RequestCodeLenses(buffer, editor::LanguageKeyForMode(mode_));
 
         // embedded-language-documents follow-up: computes/caches this
@@ -913,12 +913,12 @@ void BufferView::SyncLspForFrame() {
         // server's own lastSyncedGeneration, and also what tears down a
         // server whose only region was just edited away (an empty list here
         // when mode_.embeddedRegions is unset or reports nothing).
-        std::vector<editor::lsp::LspManager::EmbeddedDocumentSync> embeddedSync;
+        std::vector<editor::lsp::Manager::EmbeddedDocumentSync> embeddedSync;
         EnsureEmbeddedDocumentCache();
         if (const auto cacheIt = embeddedDocumentCacheByBuffer_.find(&buffer); cacheIt != embeddedDocumentCacheByBuffer_.end()) {
             embeddedSync.reserve(cacheIt->second.documents.size());
             for (const editor::EmbeddedDocument& document : cacheIt->second.documents) {
-                embeddedSync.push_back(editor::lsp::LspManager::EmbeddedDocumentSync{
+                embeddedSync.push_back(editor::lsp::Manager::EmbeddedDocumentSync{
                     .language = document.language, .documentText = document.documentText, .ownedRanges = document.ownedRanges});
             }
         }

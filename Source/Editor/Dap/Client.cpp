@@ -11,7 +11,7 @@ namespace ned::editor::dap {
 
 Client::~Client() {
     // lsp-use-after-free follow-up: must be the first statement -- see
-    // LspClient.h's own header comment on alive_.
+    // Client.h's own header comment on alive_.
     *alive_ = false;
 }
 
@@ -27,7 +27,7 @@ Client::Client(lsp::Transport transport, ned::ui::EventLoop& eventLoop) : transp
 }
 
 void Client::StartWriteLoop() {
-    // async-write-queue follow-up -- identical to LspClient::StartWriteLoop,
+    // async-write-queue follow-up -- identical to Client::StartWriteLoop,
     // including the drain-on-stop policy -- see header comment.
     writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
         while (true) {
@@ -67,8 +67,8 @@ void Client::PrepareForGracefulShutdown() {
 }
 
 void Client::StartReadLoop() {
-    // Identical loop to LspClient::StartReadLoop — see that function (and
-    // LspClient.h's header comment) for the reasoning behind every branch;
+    // Identical loop to Client::StartReadLoop — see that function (and
+    // Client.h's header comment) for the reasoning behind every branch;
     // only the dispatch target differs.
     // closed-connection-never-parks follow-up: the stop token is genuinely
     // consulted rather than ignored. std::jthread's destructor requests a
@@ -86,7 +86,7 @@ void Client::StartReadLoop() {
             }
             catch (const std::exception& e) {
                 // Malformed frame, or (subprocess-hang-protection follow-up)
-                // a mid-frame stall -- see LspClient.cpp's identical comment.
+                // a mid-frame stall -- see Client.cpp's identical comment.
                 eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
                     if (!*alive) {
                         return; // lsp-use-after-free follow-up -- this Client is gone
@@ -121,7 +121,7 @@ void Client::StartReadLoop() {
 }
 
 void Client::StartStderrReadLoop() {
-    // Identical to LspClient::StartStderrReadLoop -- see that function's own
+    // Identical to Client::StartStderrReadLoop -- see that function's own
     // doc comment for the full reasoning; only the log category differs.
     const int fd = transport_.StderrFd();
     if (fd < 0) {
@@ -224,7 +224,7 @@ void Client::SendRequest(const std::string& command, Json arguments, ResponseCal
 }
 
 void Client::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
-    // subprocess-hang-protection follow-up -- see LspClient::ExpireStaleRequests's
+    // subprocess-hang-protection follow-up -- see Client::ExpireStaleRequests's
     // identical reasoning/collect-then-invoke shape.
     const std::chrono::steady_clock::time_point   now = std::chrono::steady_clock::now();
     std::vector<std::pair<int, ResponseCallback>> expired;

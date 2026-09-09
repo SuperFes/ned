@@ -38,7 +38,7 @@
 #include "Editor/Dispatcher.h"
 #include "Editor/FileWatch.h"
 #include "Editor/Keymap.h"
-#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/Manager.h"
 #include "Editor/Mode.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/PromptHistory.h"
@@ -96,7 +96,7 @@ class Pane {
          editor::PromptHistory& promptHistory, text::BufferList& bufferList, const editor::CommandRegistry& registry,
          const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
          std::string& statusMessage, const Theme& theme,
-         ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
+         ProjectSidebar* projectSidebar, editor::lsp::Manager* lspManager, editor::tasks::TaskRunner* taskRunner,
          editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::Manager* dapManager,
          editor::acp::AcpManager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
          std::function<void(editor::InteractiveRequest)> onWindowRequest, std::function<void(text::Buffer&)> onBufferClosed);
@@ -259,7 +259,7 @@ class WindowManager {
     // HandleBufferClosed/NotifyBufferClosing to send textDocument/didClose
     // for a real buffer close, regardless of which pane (or ProjectSidebar's
     // preview-swap, which isn't pane-driven at all) triggered it.
-    void SetLspManager(editor::lsp::LspManager* lspManager);
+    void SetLspManager(editor::lsp::Manager* lspManager);
 
     // rich-theme-set follow-up (Phase 1): same "forwarded to every pane,
     // present and future" shape as SetProjectSidebar/SetLspManager -- the
@@ -570,12 +570,12 @@ class WindowManager {
 
     // edit-application-gaps follow-up: same "route to whichever pane is
     // currently focused" shape as RequestOpenBinaryFile just above -- wired
-    // to LspManager::SetApplyEditHandler (see SetLspManager below) so a
+    // to Manager::SetApplyEditHandler (see SetLspManager below) so a
     // server-pushed workspace/applyEdit request applies against the focused
     // pane's own BufferView. Returns false (never applied) if no pane is
     // focused anywhere, the honest "nowhere to route this" answer the
     // spec's own {applied: bool} response expects.
-    [[nodiscard]] bool ApplyServerPushedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label);
+    [[nodiscard]] bool ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label);
 
     // VCS side panel: same "route to whichever pane is currently focused"
     // shape as RequestOpenBinaryFile just above -- wired to
@@ -865,7 +865,7 @@ class WindowManager {
     ProjectSidebar*                                    projectSidebar_ = nullptr;
     LeftDock*                                          leftDock_       = nullptr;
     VcsPanel*                                          vcsPanel_       = nullptr;
-    editor::lsp::LspManager*                           lspManager_     = nullptr;
+    editor::lsp::Manager*                           lspManager_     = nullptr;
     editor::tasks::TaskRunner*                         taskRunner_     = nullptr;
     editor::testrun::TestRunner*                       testRunner_     = nullptr; // see SetTestRunner
     editor::vcs::VcsRunner*                            vcsRunner_      = nullptr;

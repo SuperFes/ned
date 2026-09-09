@@ -7,7 +7,7 @@
 
 #include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
-#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/Manager.h"
 #include "Editor/Mcp/ToolRegistry.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/ProjectRoot.h"
@@ -19,8 +19,6 @@
 
 using ned::editor::ProjectRoot;
 using ned::editor::SetProjectRoot;
-using ned::editor::dap::Manager;
-using ned::editor::lsp::LspManager;
 using ned::editor::mcp::ToolRegistry;
 using ned::editor::testrun::TestRunner;
 using ned::editor::vcs::VcsRunner;
@@ -30,19 +28,19 @@ using ned::text::BufferList;
 namespace {
 
 // Every ToolRegistry test wires real managers, not fakes -- confirmed via
-// Tests/LspManagerTest.cpp's own precedent ("RequestHover resolves
+// Tests/ManagerTest.cpp's own precedent ("RequestHover resolves
 // synchronously to nullopt when the buffer was never synced") that an
-// LspManager/VcsRunner with nothing configured/no provider registered
+// Manager/VcsRunner with nothing configured/no provider registered
 // resolves every request synchronously with an empty/error result, no real
 // subprocess or background thread ever involved -- exactly the deterministic
 // shape a fast unit test wants.
 struct Fixture {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         lspManager{bufferList, eventLoop};
+    ned::editor::lsp::Manager lspManager{bufferList, eventLoop};
     VcsRunner          vcsRunner{eventLoop};
     TestRunner         testRunner{bufferList, eventLoop};
-    Manager         dapManager{eventLoop};
+    ned::editor::dap::Manager dapManager{eventLoop};
     ToolRegistry       registry{bufferList, lspManager, vcsRunner, testRunner, dapManager};
 };
 

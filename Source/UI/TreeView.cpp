@@ -16,7 +16,7 @@ namespace {
 
     // ListPopup.cpp's own PaintRowText, duplicated rather than shared --
     // small enough, and this codebase's own precedent elsewhere (e.g.
-    // LspManagerTest.cpp/LspClientTest.cpp's ReadRawFrame) is to duplicate a
+    // ManagerTest.cpp/ClientTest.cpp's ReadRawFrame) is to duplicate a
     // helper this size rather than add a new shared dependency for it.
     // Writes one codepoint per cell (not one byte per cell), and returns the
     // column x ended at.

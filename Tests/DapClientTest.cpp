@@ -18,7 +18,7 @@ using ned::editor::lsp::Transport;
 
 namespace {
 
-// Same pipe-pair fixture shape as LspClientTest's ClientFixture -- see that
+// Same pipe-pair fixture shape as ClientTest's ClientFixture -- see that
 // file's own extensive comment for why serverStdoutWrite must be closed
 // before the client (its background read thread's blocking read() only
 // returns on EOF, which needs every write-end reference gone) and why the
@@ -51,7 +51,7 @@ struct ClientFixture {
 
 // Reads exactly one Content-Length frame's body off a plain fd, buffering
 // any bytes belonging to a following frame for the next call -- unlike
-// LspClientTest's simpler ReadRawFrame, DAP flows legitimately write two
+// ClientTest's simpler ReadRawFrame, DAP flows legitimately write two
 // frames back to back (setBreakpoints + configurationDone), so leftover
 // bytes must survive between calls.
 struct FrameReader {
@@ -235,10 +235,10 @@ TEST_CASE("Client ignores malformed frames rather than crashing", "[Dap]") {
     fixture.client.DispatchFrame(R"({"type": "response", "request_seq": "nan"})"); // wrong type
 }
 
-// lsp-use-after-free follow-up. Mirrors LspClientTest.cpp's "A stray
+// lsp-use-after-free follow-up. Mirrors ClientTest.cpp's "A stray
 // Post()ed callback safely no-ops instead of touching an already-destroyed
-// LspClient" exactly -- Client's threading/lifetime contract is an
-// intentional mirror of LspClient's (see this class's own header comment),
+// Client" exactly -- Client's threading/lifetime contract is an
+// intentional mirror of Client's (see this class's own header comment),
 // so it shares the identical hazard: a background thread's own already-
 // Post()ed callback (the EOF/"adapter exited" disconnect notification here)
 // must not touch `this` once the Client has been destroyed. Not built

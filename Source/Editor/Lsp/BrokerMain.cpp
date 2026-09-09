@@ -1,8 +1,8 @@
-#include "LspBrokerMain.h"
+#include "BrokerMain.h"
 
 #include <csignal>
 
-#include "LspBrokerDaemon.h"
+#include "BrokerDaemon.h"
 
 namespace ned::editor::lsp {
 
@@ -22,7 +22,7 @@ int RunLspBrokerDaemon(int maxConcurrentServers) {
     std::signal(SIGPIPE, SIG_IGN);
 
     // broker-reader-deadlock follow-up: the daemon itself now lives in
-    // LspBrokerDaemon.h/.cpp as a real declared type (it was an anonymous-
+    // BrokerDaemon.h/.cpp as a real declared type (it was an anonymous-
     // namespace class in this file), so its threading/lifetime paths are
     // reachable from ned_tests and therefore covered by the ASan/UBSan
     // build. This function is the production entry point and nothing else.

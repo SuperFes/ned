@@ -8,7 +8,7 @@
 using ned::editor::ImportResolutionOverrideForLanguage;
 using ned::editor::IncludePathsForMode;
 using ned::editor::LoadProjectSettings;
-using ned::editor::LspInitializationOptionsForLanguage;
+using ned::editor::InitializationOptionsForLanguage;
 using ned::editor::ProjectSettings;
 
 namespace {
@@ -72,12 +72,12 @@ TEST_CASE("LoadProjectSettings parses lspInitializationOptions per language, pas
 
     const ProjectSettings settings = LoadProjectSettings(root);
 
-    const nlohmann::json& phpOptions = LspInitializationOptionsForLanguage(settings, "php");
+    const nlohmann::json& phpOptions = InitializationOptionsForLanguage(settings, "php");
     REQUIRE(phpOptions.contains("bootstrapFiles"));
     CHECK(phpOptions["bootstrapFiles"] == nlohmann::json::array({"bootstrap.php"}));
 
     // A language with no configured entry gets an empty object, not an error.
-    CHECK(LspInitializationOptionsForLanguage(settings, "cpp").empty());
+    CHECK(InitializationOptionsForLanguage(settings, "cpp").empty());
 
     std::filesystem::remove_all(root);
 }

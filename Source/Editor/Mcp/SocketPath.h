@@ -3,7 +3,7 @@
 // process's own MCP bridge socket -- one per interactive `ned` instance
 // (keyed by pid), not one per machine like Lsp/BrokerSocketPath.h's LSP
 // broker daemon: each running `ned` has its own distinct live state
-// (open buffers, LspManager/VcsRunner/TestRunner connections), so there is
+// (open buffers, Manager/VcsRunner/TestRunner connections), so there is
 // nothing to multiplex across processes here. Deliberately a self-contained
 // duplicate of BrokerSocketPath.h's directory-resolution logic rather than a
 // cross-namespace reuse of it -- this codebase's established precedent for a

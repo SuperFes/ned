@@ -3,7 +3,7 @@
 // (arbitrary, user-chosen, e.g. "build", "test") at the command+arguments
 // run-task should spawn for it.
 //
-// Mutex-guarded static state, mirroring Lsp/LspServerConfig.h's exact shape
+// Mutex-guarded static state, mirroring Lsp/ServerConfig.h's exact shape
 // for its own per-language command map -- same "you install/configure the
 // tool, we shell out to it" trust boundary, same "re-registering overwrites,
 // empty argv clears" convention.

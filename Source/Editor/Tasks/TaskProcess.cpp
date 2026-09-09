@@ -28,7 +28,7 @@ void TaskProcess::StartReadLoop() {
                 // plausibly the fd being torn down out from under this
                 // thread during shutdown. Treat it the same as EOF rather
                 // than letting an uncaught exception escape a jthread body
-                // (which would call std::terminate), mirroring LspClient's
+                // (which would call std::terminate), mirroring Client's
                 // own read-loop error handling.
                 break;
             }

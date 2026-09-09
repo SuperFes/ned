@@ -31,9 +31,9 @@
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/Link.h"
-#include "Editor/Lsp/LspBackgroundSync.h"
-#include "Editor/Lsp/LspRootResolver.h"
-#include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Lsp/BackgroundSync.h"
+#include "Editor/Lsp/RootResolver.h"
+#include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Lsp/ProseChecker.h"
 #include "Editor/Mcp/BridgeSetting.h"
 #include "Editor/MinimapSettings.h"
@@ -533,7 +533,7 @@ namespace {
     }
 
     // LSP multi-root follow-up: overrides language's root-marker list (see
-    // Editor/Lsp/LspRootResolver.h) -- e.g. (ned/set-lsp-root-markers "rust"
+    // Editor/Lsp/RootResolver.h) -- e.g. (ned/set-lsp-root-markers "rust"
     // ["Cargo.toml"]) for a language with no compiled-in default. An empty
     // markers list clears the override, reverting to the compiled-in
     // default (if any) rather than to "walk for nothing," unlike
@@ -793,7 +793,7 @@ namespace {
         editor::acp::SetAcpPanelSizePercent(static_cast<int>(percent));
     }
 
-    // hover/completion follow-up: the only way LspServerConfig.h's own
+    // hover/completion follow-up: the only way ServerConfig.h's own
     // process-wide auto-complete toggle/debounce ever get configured away
     // from their defaults (enabled, 500ms), same "just forward to the
     // process-wide setter" shape NedSetTabWidth already established.
@@ -864,15 +864,15 @@ namespace {
     // diagnostics-debounce follow-up: same "just forward to the process-wide
     // setter" shape as NedSetLspCompletionDebounce, for how long a buffer's
     // inline diagnostics wait after the server's most recent publish before
-    // actually updating (see LspManager::HandlePublishDiagnostics).
+    // actually updating (see Manager::HandlePublishDiagnostics).
     void NedSetLspDiagnosticsDebounce(std::int64_t milliseconds) {
         editor::lsp::SetLspDiagnosticsDebounceMs(static_cast<int>(milliseconds));
     }
 
     // sync-debounce follow-up: same "just forward to the process-wide
     // setter" shape as NedSetLspCompletionDebounce above, for how long
-    // LspManager waits after an edit before actually sending
-    // textDocument/didChange (see LspServerConfig.h's own doc comment for
+    // Manager waits after an edit before actually sending
+    // textDocument/didChange (see ServerConfig.h's own doc comment for
     // why this fix exists and why it must stay shorter than the completion
     // debounce).
     void NedSetLspSyncDebounce(std::int64_t milliseconds) {

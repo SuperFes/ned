@@ -1,5 +1,5 @@
 //
-// lsp-broker follow-up. The imperative I/O shell around LspBroker.h's pure
+// lsp-broker follow-up. The imperative I/O shell around Broker.h's pure
 // BrokerRouter -- real sockets, real subprocesses, real threads. This is
 // `ned --lsp-broker`'s entire body (see main.cpp's own dispatch, mirroring
 // RunDetectTheme's early-return shape: parsed and run before
@@ -7,8 +7,8 @@
 // headless).
 //
 
-#ifndef NED_EDITOR_LSP_LSPBROKERMAIN_H
-#define NED_EDITOR_LSP_LSPBROKERMAIN_H
+#ifndef NED_EDITOR_LSP_BROKERMAIN_H
+#define NED_EDITOR_LSP_BROKERMAIN_H
 
 namespace ned::editor::lsp {
 
@@ -18,10 +18,10 @@ namespace ned::editor::lsp {
 // `ned --lsp-broker-stop`) or the whole-daemon idle safety net ends it.
 // Returns a process exit code: 0 on a clean shutdown, nonzero on a fatal
 // bind/listen failure (reported to stderr before returning).
-// maxConcurrentServers: see LspBroker.h's own header comment on LRU
+// maxConcurrentServers: see Broker.h's own header comment on LRU
 // eviction; forwarded to BrokerRouter unchanged.
 [[nodiscard]] int RunLspBrokerDaemon(int maxConcurrentServers = 8);
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPBROKERMAIN_H
+#endif // NED_EDITOR_LSP_BROKERMAIN_H

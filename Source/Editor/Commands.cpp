@@ -23,8 +23,8 @@
 #include "Indent.h"
 #include "IndentStyle.h"
 #include "InlineDiagnostics.h"
-#include "Lsp/LspManager.h"
-#include "Lsp/LspServerConfig.h"
+#include "Lsp/Manager.h"
+#include "Lsp/ServerConfig.h"
 #include "Markdown.h"
 #include "Mode.h"
 #include "ModeOverrides.h"
@@ -1729,13 +1729,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         // binary-safety-guardrails follow-up: an LSP formatter is exactly
         // as capable of corrupting binary content as the external
         // FormatCommand() this same early-out already skips for.
-        if (FormatCommand() || context.buffer.BinarySafeguardsActive() || !editor::lsp::LspFormatOnSaveEnabled() ||
+        if (FormatCommand() || context.buffer.BinarySafeguardsActive() || !editor::lsp::FormatOnSaveEnabled() ||
             !context.lspManager || !context.mode) {
             return false;
         }
         const std::string languageKey = LanguageKeyForMode(*context.mode);
         return context.lspManager->StatusForLanguage(context.lspManager->ConnectionKeyForBuffer(context.buffer, languageKey)) ==
-               lsp::LspManager::LspStatus::Running;
+               lsp::Manager::Status::Running;
     };
 
     registry.Register("save-buffer", "Save the current buffer to its associated file.",
@@ -2454,7 +2454,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       });
 
     // hover/completion follow-up. Async: the response arrives well after
-    // this command function itself returns, via LspManager::RequestHover's
+    // this command function itself returns, via Manager::RequestHover's
     // callback, so context.message can't be written synchronously the way
     // lsp-show-diagnostic's is -- captures the raw std::string* instead,
     // valid for as long as the owning BufferView is (see CommandContext::
@@ -2490,7 +2490,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       });
 
     // signature-help follow-up: same async-write-into-context.message shape
-    // as lsp-hover just above, since ExtractSignatureHelp (LspContent.h)
+    // as lsp-hover just above, since ExtractSignatureHelp (Content.h)
     // already reduces the response to one plain, already-formatted string --
     // no BufferView-owned session needed, same reasoning lsp-hover's own
     // doc comment gives.

@@ -27,7 +27,7 @@
 //
 // Lifecycle: the shell spawns on first EnsureStarted(), survives hide/show
 // untouched, and is torn down with this widget after EventLoop::Run returns
-// (the same owner-destroys-after-Run ordering every TaskProcess/LspClient
+// (the same owner-destroys-after-Run ordering every TaskProcess/Client
 // owner relies on). A shell that exits leaves the panel in an "exited"
 // state -- output kept visible, `[process exited]` appended, Enter respawns
 // -- rather than closing the drawer out from under the user. The dead

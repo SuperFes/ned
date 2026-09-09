@@ -41,8 +41,8 @@
 #include "Editor/Dap/Manager.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/BrokerSocketPath.h"
-#include "Editor/Lsp/LspBrokerMain.h"
-#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/BrokerMain.h"
+#include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Mcp/BridgeServer.h"
 #include "Editor/Mcp/ToolRegistry.h"
@@ -152,9 +152,9 @@ int RunDetectTheme(bool transparent, const std::optional<std::string>& outputPat
 }
 
 // `ned --lsp-broker-stop`: connects to the running LSP broker daemon (see
-// Editor/Lsp/LspBrokerMain.h) and sends it the ned/broker-shutdown control
+// Editor/Lsp/BrokerMain.h) and sends it the ned/broker-shutdown control
 // message -- every real language-server subprocess gets a genuine LSP
-// shutdown/exit before the daemon exits (Editor/Lsp/LspBroker.h's own
+// shutdown/exit before the daemon exits (Editor/Lsp/Broker.h's own
 // Shutdown()), not a bare kill. Same early-return placement as
 // RunDetectTheme/the --lsp-broker dispatch below -- no EventLoop/Notcurses
 // needed for a one-shot control message. Deliberately idempotent: no
@@ -1125,7 +1125,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // LSP client follow-up: constructed here, not alongside bufferList/
     // killRing/registers above, since it needs a real EventLoop& to marshal
     // its background read-loop threads' work back onto the main thread
-    // (LspClient.h's own header comment has the full lifetime requirement
+    // (Client.h's own header comment has the full lifetime requirement
     // -- must outlive eventLoop.Run() below, which this satisfies for free
     // as a plain local: ordinary reverse-declaration-order destruction at
     // the end of main() runs this after eventLoop.Run() has already
@@ -1133,7 +1133,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // "connect after construction, unset is a safe no-op" way
     // SetProjectSidebar already is -- every pane, present and future
     // (including ones created by a later split), gets it.
-    ned::editor::lsp::LspManager lspManager(bufferList, eventLoop);
+    ned::editor::lsp::Manager lspManager(bufferList, eventLoop);
     windowManager->SetLspManager(&lspManager);
 
     // Self-hosting-completion follow-up: same "connect after construction,
@@ -1451,7 +1451,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // this one vector rather than a single fixed TerminalPanel. Declared
     // after eventLoop so each one's PtyProcess (background read thread +
     // shell) is torn down first on the way out of main, the same
-    // owner-destroys-after-Run ordering every TaskProcess/LspClient owner
+    // owner-destroys-after-Run ordering every TaskProcess/Client owner
     // relies on.
     struct TerminalTab {
         std::shared_ptr<ned::ui::TerminalPanel> panel;
@@ -2743,7 +2743,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     windowManager->SaveProjectSessionNow();
     // graceful-lsp-shutdown follow-up: sends "shutdown"+"exit" to every
     // directly-spawned (non-broker) running LSP client before the local
-    // teardown below destroys lspManager -- see LspManager::Shutdown's own
+    // teardown below destroys lspManager -- see Manager::Shutdown's own
     // doc comment for why this doesn't (and can't) wait for the shutdown
     // response, and why that's fine: ChildProcess::~ChildProcess()'s
     // existing bounded close-stdin/poll/SIGKILL-escalation sequence is what
@@ -2763,10 +2763,10 @@ auto main(int argc, char** argv) -> int {
     // subprocess pipes (LSP/DAP/ACP/task/VCS children) whose peer can exit
     // out from under it at any time -- a write to a pipe with no reader left
     // raises SIGPIPE, whose default disposition terminates the *entire*
-    // process over one bad write. LspBrokerMain.cpp's own RunLspBrokerDaemon
+    // process over one bad write. BrokerMain.cpp's own RunLspBrokerDaemon
     // already does this for exactly this reason; this process needs the
     // same protection, not less of it -- confirmed live (not assumed) via a
-    // real SIGPIPE crash surfaced by LspClient's async write queue racing an
+    // real SIGPIPE crash surfaced by Client's async write queue racing an
     // already-closed test pipe, disproving an earlier, unverified comment
     // that Notcurses' own terminal setup shielded this process from SIGPIPE.
     // write()/send() already return EPIPE instead, which
@@ -2785,7 +2785,7 @@ auto main(int argc, char** argv) -> int {
     // They stay plain flags on this one App rather than becoming CLI11
     // subcommands specifically to keep the exact existing invocations
     // (`ned --lsp-broker`, notably self-exec'd by
-    // Lsp/LspBrokerConnect.cpp, and documented as a systemd ExecStart
+    // Lsp/BrokerConnect.cpp, and documented as a systemd ExecStart
     // line) working unchanged -- a subcommand would mean `ned lsp-broker`
     // instead, a real breaking syntax change for no behavioral gain here.
     // ->excludes() catches the nonsensical case of passing more than one
@@ -2842,7 +2842,7 @@ auto main(int argc, char** argv) -> int {
     }
 
     // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
-    // Editor/Lsp/LspBrokerMain.h) instead of the interactive editor --
+    // Editor/Lsp/BrokerMain.h) instead of the interactive editor --
     // dispatched here, strictly before EventLoop/Notcurses construct, same
     // reasoning as --detect-theme above. This is what a `ned` process
     // auto-forks-and-execve's into when no daemon is already reachable, and

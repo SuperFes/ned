@@ -3,23 +3,23 @@
 #include <string>
 #include <vector>
 
-#include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Lsp/ServerConfig.h"
 
-using ned::editor::lsp::LspFormatOnSaveEnabled;
-using ned::editor::lsp::LspServerCommand;
-using ned::editor::lsp::LspSignatureHelpAutoTriggerEnabled;
+using ned::editor::lsp::FormatOnSaveEnabled;
+using ned::editor::lsp::ServerCommand;
+using ned::editor::lsp::SignatureHelpAutoTriggerEnabled;
 using ned::editor::lsp::SetLspFormatOnSaveEnabled;
 using ned::editor::lsp::SetLspServerCommand;
 using ned::editor::lsp::SetLspSignatureHelpAutoTriggerEnabled;
 
-TEST_CASE("LspServerCommand is nullopt for a language nothing was ever configured for", "[Lsp]") {
-    REQUIRE_FALSE(LspServerCommand("a-language-nobody-configured").has_value());
+TEST_CASE("ServerCommand is nullopt for a language nothing was ever configured for", "[Lsp]") {
+    REQUIRE_FALSE(ServerCommand("a-language-nobody-configured").has_value());
 }
 
 TEST_CASE("SetLspServerCommand registers a command retrievable by language name", "[Lsp]") {
     SetLspServerCommand("lsp-server-config-test-c", {"clangd"});
 
-    const auto command = LspServerCommand("lsp-server-config-test-c");
+    const auto command = ServerCommand("lsp-server-config-test-c");
     REQUIRE(command.has_value());
     REQUIRE(*command == std::vector<std::string>{"clangd"});
 
@@ -29,7 +29,7 @@ TEST_CASE("SetLspServerCommand registers a command retrievable by language name"
 TEST_CASE("SetLspServerCommand stores multi-argument commands in order", "[Lsp]") {
     SetLspServerCommand("lsp-server-config-test-python", {"pyright-langserver", "--stdio"});
 
-    const auto command = LspServerCommand("lsp-server-config-test-python");
+    const auto command = ServerCommand("lsp-server-config-test-python");
     REQUIRE(command.has_value());
     REQUIRE(*command == std::vector<std::string>{"pyright-langserver", "--stdio"});
 
@@ -40,7 +40,7 @@ TEST_CASE("Re-registering a language's command overwrites the previous one", "[L
     SetLspServerCommand("lsp-server-config-test-overwrite", {"first-server"});
     SetLspServerCommand("lsp-server-config-test-overwrite", {"second-server"});
 
-    const auto command = LspServerCommand("lsp-server-config-test-overwrite");
+    const auto command = ServerCommand("lsp-server-config-test-overwrite");
     REQUIRE(command.has_value());
     REQUIRE(*command == std::vector<std::string>{"second-server"});
 
@@ -49,28 +49,28 @@ TEST_CASE("Re-registering a language's command overwrites the previous one", "[L
 
 TEST_CASE("An empty argv clears an existing registration", "[Lsp]") {
     SetLspServerCommand("lsp-server-config-test-clear", {"some-server"});
-    REQUIRE(LspServerCommand("lsp-server-config-test-clear").has_value());
+    REQUIRE(ServerCommand("lsp-server-config-test-clear").has_value());
 
     SetLspServerCommand("lsp-server-config-test-clear", {});
-    REQUIRE_FALSE(LspServerCommand("lsp-server-config-test-clear").has_value());
+    REQUIRE_FALSE(ServerCommand("lsp-server-config-test-clear").has_value());
 }
 
-TEST_CASE("LspSignatureHelpAutoTriggerEnabled defaults to true and round-trips through the setter", "[Lsp]") {
-    REQUIRE(LspSignatureHelpAutoTriggerEnabled()); // default, per LspServerConfig.h's own doc comment
+TEST_CASE("SignatureHelpAutoTriggerEnabled defaults to true and round-trips through the setter", "[Lsp]") {
+    REQUIRE(SignatureHelpAutoTriggerEnabled()); // default, per ServerConfig.h's own doc comment
 
     SetLspSignatureHelpAutoTriggerEnabled(false);
-    REQUIRE_FALSE(LspSignatureHelpAutoTriggerEnabled());
+    REQUIRE_FALSE(SignatureHelpAutoTriggerEnabled());
 
     SetLspSignatureHelpAutoTriggerEnabled(true); // restore -- process-wide state
-    REQUIRE(LspSignatureHelpAutoTriggerEnabled());
+    REQUIRE(SignatureHelpAutoTriggerEnabled());
 }
 
-TEST_CASE("LspFormatOnSaveEnabled defaults to false and round-trips through the setter", "[Lsp]") {
-    REQUIRE_FALSE(LspFormatOnSaveEnabled()); // default, per LspServerConfig.h's own doc comment (opt-in)
+TEST_CASE("FormatOnSaveEnabled defaults to false and round-trips through the setter", "[Lsp]") {
+    REQUIRE_FALSE(FormatOnSaveEnabled()); // default, per ServerConfig.h's own doc comment (opt-in)
 
     SetLspFormatOnSaveEnabled(true);
-    REQUIRE(LspFormatOnSaveEnabled());
+    REQUIRE(FormatOnSaveEnabled());
 
     SetLspFormatOnSaveEnabled(false); // restore -- process-wide state
-    REQUIRE_FALSE(LspFormatOnSaveEnabled());
+    REQUIRE_FALSE(FormatOnSaveEnabled());
 }
