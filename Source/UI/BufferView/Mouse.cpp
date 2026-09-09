@@ -339,30 +339,153 @@ bool BufferView::HandleTestGutterClick(Point at) {
     return true;
 }
 
-bool BufferView::OnMouseEvent(const Event& event) {
-    const MouseEvent rawMouse = event.mouse();
-    LogMouseEvent(MouseEventTag(rawMouse), rawMouse);
+// A left button press in the content area: focus the pane, then let whichever
+// gutter column was clicked claim it (sticky scroll row, test mark, fold
+// affordance) before falling through to placing point. A press in the text
+// also starts a drag selection and counts toward double/triple click.
+bool BufferView::HandleLeftPress(const MouseEvent& mouseEvent) {
+    // Window-splitting follow-up: harmless/no-op today (the sole
+    // focusable widget already), necessary once multiple BufferViews
+    // exist side by side -- a click into a pane is how focus moves
+    // there, mirroring real Emacs' own "clicking a window selects it."
+    TakeFocus();
 
-    // hover-tooltips follow-up: any mouse activity except the bare
-    // no-button hover-move signal itself (see MaybeScheduleHover's own doc
-    // comment for why that specific combination is button=None/
-    // motion=Released rather than Motion::Moved) dismisses a pending/shown
-    // tooltip outright -- a click, a drag, a wheel scroll, a real button
-    // release. Checked once, up front, rather than at every one of the
-    // click/drag branches below, so a new mouse-handling branch added later
-    // can't accidentally forget it. A hover-move that lands outside this
-    // widget's own box dismisses too -- there's no separate "mouse left me"
-    // event in this codebase (every leaf just stops being handed events
-    // whose position falls outside its Box_(), see Widget.h's own
-    // LocalMouseEvent comment), so without this check, moving the mouse
-    // straight off the buffer into the sidebar/tab bar/mode line/another
-    // pane would leave a stale tooltip on screen forever -- confirmed live
-    // (tmux smoke test) before this line was added.
-    const bool isHoverMove = rawMouse.button == MouseEvent::Button::None && rawMouse.motion == MouseEvent::Motion::Released;
-    if (!isHoverMove || !Box_().Contain(rawMouse.at.x, rawMouse.at.y)) {
-        DismissHover();
+    // main-editor-sticky-scroll follow-up: click-to-jump, checked first
+    // (same "one specific region wins over the generic click fallthrough"
+    // shape the fold-gutter click check just below already has) -- a
+    // click inside the pinned band moves point to that ancestor's own
+    // definition start instead of falling through to ByteOffsetForPoint,
+    // which would otherwise resolve it against whatever real buffer line
+    // the pinned rows are currently covering.
+    if (stickyRowCount_ > 0 && mouseEvent.at.y < stickyRowCount_) {
+        const std::vector<editor::SymbolMarker> chain = StickyScrollChainForCurrentViewport();
+        const auto                              index = static_cast<std::size_t>(mouseEvent.at.y);
+        if (index < chain.size()) {
+            text::Buffer& buffer = activeBuffer_.Get();
+            buffer.ClearMark();
+            buffer.SetPoint(chain[index].startByte);
+            viewport_.ScrollToShowPoint();
+        }
+        return true;
     }
 
+    // test-runner-gaps follow-up: a click on a test's own gutter mark
+    // runs that one test, the mouse counterpart to run-test-at-point's
+    // C-c T . -- same "one specific gutter region wins over the generic
+    // point-placement fallthrough" shape the fold-gutter click below
+    // has. Checked first only because the two regions can't overlap;
+    // order between them carries no meaning.
+    if (HandleTestGutterClick(mouseEvent.at)) {
+        return true;
+    }
+
+    // depth-aware-fold-gutter follow-up: a click inside the reserved
+    // fold-depth region (see GutterWidth()/Paint()'s own doc comments)
+    // toggles the fold at that row/column instead of placing point --
+    // checked first, ahead of the generic point-placement path below,
+    // the same "one specific gutter region wins over the generic click
+    // fallthrough" shape a click inside the gutter more broadly already
+    // has in ByteOffsetForPoint. The clicked column names which block
+    // to toggle directly (a click at column 1 toggles only a depth-1
+    // block, not whatever's innermost at that line) -- clicking a plain
+    // guide line ('│'/'└', not a header cell) is a no-op, matching how
+    // indent guides are inert-to-click in every mainstream editor.
+    const bufferview::GutterLayout gutter = ComputeGutterLayout(activeBuffer_.Get().Content().LineCount());
+    if (gutter.foldWidth > 0 && mouseEvent.at.x >= static_cast<int>(gutter.foldStart) &&
+        static_cast<std::size_t>(mouseEvent.at.x) < gutter.foldStart + gutter.foldWidth) {
+        text::Buffer&             buffer        = activeBuffer_.Get();
+        const text::ITextStorage& content       = buffer.Content();
+        const std::size_t         totalLines    = content.LineCount();
+        const std::size_t         line          = std::min(viewport_.AdvanceVisibleLines(viewport_.TopLine(), static_cast<std::size_t>(std::max(mouseEvent.at.y, 0)), totalLines),
+                                                           totalLines - 1);
+        const int                 clickedColumn = mouseEvent.at.x - static_cast<int>(gutter.foldStart);
+        auto                      it            = std::lower_bound(gutters_.FoldEntries().begin(), gutters_.FoldEntries().end(), line,
+                                                                   [](const FoldGutterEntry& entry, std::size_t targetLine) { return entry.headerLine < targetLine; });
+        for (; it != gutters_.FoldEntries().end() && it->headerLine == line; ++it) {
+            if (it->column == clickedColumn) {
+                const bool collapsed = buffer.FoldMarkerAt(it->blockStart).has_value();
+                buffer.SetFoldMarker(it->blockStart,
+                                     collapsed ? std::nullopt : std::optional(text::Buffer::FoldMarker::Collapsed));
+                break;
+            }
+        }
+        return true;
+    }
+
+    text::Buffer&     buffer = activeBuffer_.Get();
+    const std::size_t offset = viewport_.ByteOffsetForPoint(mouseEvent.at);
+    buffer.ClearMark();
+    buffer.SetPoint(offset);
+
+    // Universal-clickable-affordances follow-up: Ctrl+Click opens the
+    // link under the click, the mouse counterpart to open-link-at-
+    // point's own C-c C-l -- same VS Code/browser convention (plain
+    // click still just places point, matching every other mode) and
+    // available in every mode without any per-mode wiring, since
+    // OpenLinkAtPoint() already tries Org's bracket links first and
+    // falls back to the generic bare-URL/file-path scan for everything
+    // else. Takes priority over the read-only visit-result click below
+    // -- an explicit Ctrl+Click is a more specific request than a plain
+    // click, so it shouldn't silently fall back to a visit when the
+    // clicked position isn't on a link.
+    if (mouseEvent.control) {
+        clickCount_      = 0;
+        lastClickOffset_ = std::nullopt;
+        OpenLinkAtPoint();
+        return true;
+    }
+
+    // Double/triple-click word/line selection -- same repeated-click-at-
+    // the-same-spot detection ProjectSidebar's double-click-to-open uses
+    // (kDoubleClickWindow), extended with a click count so a third click
+    // selects the whole line instead of re-selecting the word. Skipped
+    // on a read-only ("tossable") results buffer, where a click's job is
+    // visiting the result under it, not selecting text.
+    const auto now   = std::chrono::steady_clock::now();
+    clickCount_      = (lastClickOffset_.has_value() && *lastClickOffset_ == offset && (now - lastClickTime_) < kDoubleClickWindow)
+                           ? (clickCount_ >= 3 ? 1 : clickCount_ + 1)
+                           : 1;
+    lastClickOffset_ = offset;
+    lastClickTime_   = now;
+
+    if (!buffer.ReadOnly() && clickCount_ >= 2) {
+        const text::ITextStorage& content = buffer.Content();
+        std::size_t               start;
+        std::size_t               end;
+        if (clickCount_ == 2) {
+            const auto [wordStart, wordEnd] = WordBoundsAtOffset(content, offset);
+            start                           = wordStart;
+            end                             = wordEnd;
+        }
+        else {
+            const std::size_t line = content.ByteOffsetToLine(offset);
+            start                  = content.LineToByteOffset(line);
+            end                    = line + 1 < content.LineCount() ? content.LineToByteOffset(line + 1) : content.ByteLength();
+        }
+        buffer.SetMark(start);
+        buffer.SetPoint(end);
+        dragAnchor_ = start;
+        return true;
+    }
+
+    dragAnchor_ = offset;
+    // project-search-visit-result follow-up: a click on a read-only
+    // ("tossable") results buffer visits the result under the click,
+    // the same "just press it" convention Enter now also follows
+    // there -- see this method's own OnKeyEvent counterpart.
+    if (buffer.ReadOnly()) {
+        VisitSearchResult();
+    }
+    return true;
+}
+
+// Notcurses has no mouse capture, so a widget that started a drag keeps
+// receiving events only because every widget sees every event. These three
+// are drags belonging to somebody else -- the left dock being resized, a file
+// being dragged out of the project sidebar, a window split being resized --
+// that this view forwards or completes rather than treating as its own click.
+// Returns true when the event belonged to one of them.
+bool BufferView::ForwardMouseWhileSiblingDrags(const MouseEvent& rawMouse) {
     // A growing sidebar-resize drag (round-2 sidebar follow-up; unified-
     // left-dock follow-up: the resize divider is LeftDock's now, not
     // ProjectSidebar's own) can deliver move/release events while the
@@ -429,6 +552,36 @@ bool BufferView::OnMouseEvent(const Event& event) {
     // (unrelated) dragAnchor_ while some other pane's divider is live.
     if (splitResizeQuery_ && splitResizeQuery_() &&
         (rawMouse.motion == MouseEvent::Motion::Moved || rawMouse.motion == MouseEvent::Motion::Released)) {
+        return true;
+    }
+    return false;
+}
+
+bool BufferView::OnMouseEvent(const Event& event) {
+    const MouseEvent rawMouse = event.mouse();
+    LogMouseEvent(MouseEventTag(rawMouse), rawMouse);
+
+    // hover-tooltips follow-up: any mouse activity except the bare
+    // no-button hover-move signal itself (see MaybeScheduleHover's own doc
+    // comment for why that specific combination is button=None/
+    // motion=Released rather than Motion::Moved) dismisses a pending/shown
+    // tooltip outright -- a click, a drag, a wheel scroll, a real button
+    // release. Checked once, up front, rather than at every one of the
+    // click/drag branches below, so a new mouse-handling branch added later
+    // can't accidentally forget it. A hover-move that lands outside this
+    // widget's own box dismisses too -- there's no separate "mouse left me"
+    // event in this codebase (every leaf just stops being handed events
+    // whose position falls outside its Box_(), see Widget.h's own
+    // LocalMouseEvent comment), so without this check, moving the mouse
+    // straight off the buffer into the sidebar/tab bar/mode line/another
+    // pane would leave a stale tooltip on screen forever -- confirmed live
+    // (tmux smoke test) before this line was added.
+    const bool isHoverMove = rawMouse.button == MouseEvent::Button::None && rawMouse.motion == MouseEvent::Motion::Released;
+    if (!isHoverMove || !Box_().Contain(rawMouse.at.x, rawMouse.at.y)) {
+        DismissHover();
+    }
+
+    if (ForwardMouseWhileSiblingDrags(rawMouse)) {
         return true;
     }
 
@@ -563,151 +716,7 @@ bool BufferView::OnMouseEvent(const Event& event) {
     }
 
     if (mouse->motion == MouseEvent::Motion::Pressed) {
-        // Window-splitting follow-up: harmless/no-op today (the sole
-        // focusable widget already), necessary once multiple BufferViews
-        // exist side by side -- a click into a pane is how focus moves
-        // there, mirroring real Emacs' own "clicking a window selects it."
-        TakeFocus();
-
-        // main-editor-sticky-scroll follow-up: click-to-jump, checked first
-        // (same "one specific region wins over the generic click fallthrough"
-        // shape the fold-gutter click check just below already has) -- a
-        // click inside the pinned band moves point to that ancestor's own
-        // definition start instead of falling through to ByteOffsetForPoint,
-        // which would otherwise resolve it against whatever real buffer line
-        // the pinned rows are currently covering.
-        if (stickyRowCount_ > 0 && mouse->at.y < stickyRowCount_) {
-            const std::vector<editor::SymbolMarker> chain = StickyScrollChainForCurrentViewport();
-            const auto                              index = static_cast<std::size_t>(mouse->at.y);
-            if (index < chain.size()) {
-                text::Buffer& buffer = activeBuffer_.Get();
-                buffer.ClearMark();
-                buffer.SetPoint(chain[index].startByte);
-                viewport_.ScrollToShowPoint();
-            }
-            return true;
-        }
-
-        // test-runner-gaps follow-up: a click on a test's own gutter mark
-        // runs that one test, the mouse counterpart to run-test-at-point's
-        // C-c T . -- same "one specific gutter region wins over the generic
-        // point-placement fallthrough" shape the fold-gutter click below
-        // has. Checked first only because the two regions can't overlap;
-        // order between them carries no meaning.
-        if (HandleTestGutterClick(mouse->at)) {
-            return true;
-        }
-
-        // depth-aware-fold-gutter follow-up: a click inside the reserved
-        // fold-depth region (see GutterWidth()/Paint()'s own doc comments)
-        // toggles the fold at that row/column instead of placing point --
-        // checked first, ahead of the generic point-placement path below,
-        // the same "one specific gutter region wins over the generic click
-        // fallthrough" shape a click inside the gutter more broadly already
-        // has in ByteOffsetForPoint. The clicked column names which block
-        // to toggle directly (a click at column 1 toggles only a depth-1
-        // block, not whatever's innermost at that line) -- clicking a plain
-        // guide line ('│'/'└', not a header cell) is a no-op, matching how
-        // indent guides are inert-to-click in every mainstream editor.
-        const std::size_t foldColumnWidth  = gutters_.FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-        const std::size_t blameColumnWidth = BlameGutterActive() ? kBlameWidth : 0;
-        // Mirrors GutterWidth()/Paint()'s own
-        // [status][gap][digits][gap][symbol][fold][blame] layout -- foldStart
-        // is where the fold region actually starts on screen: GutterWidth()
-        // minus fold's and blame's own widths leaves everything to fold's
-        // *left* (dap/diff/status/diagnostic/line-numbers/symbol, gutter-
-        // symbol-kind follow-up), which is exactly foldStart -- no separate
-        // symbol subtraction needed here, unlike the other three call sites
-        // this check's own doc comment warns about, since this one derives
-        // from the already-symbol-aware GutterWidth() instead of summing
-        // column starts independently.
-        const std::size_t foldStart = GutterWidth() - foldColumnWidth - blameColumnWidth;
-        if (foldColumnWidth > 0 && mouse->at.x >= static_cast<int>(foldStart) &&
-            static_cast<std::size_t>(mouse->at.x) < foldStart + foldColumnWidth) {
-            text::Buffer&             buffer        = activeBuffer_.Get();
-            const text::ITextStorage& content       = buffer.Content();
-            const std::size_t         totalLines    = content.LineCount();
-            const std::size_t         line          = std::min(viewport_.AdvanceVisibleLines(viewport_.TopLine(), static_cast<std::size_t>(std::max(mouse->at.y, 0)), totalLines),
-                                                               totalLines - 1);
-            const int                 clickedColumn = mouse->at.x - static_cast<int>(foldStart);
-            auto                      it            = std::lower_bound(gutters_.FoldEntries().begin(), gutters_.FoldEntries().end(), line,
-                                                                       [](const FoldGutterEntry& entry, std::size_t targetLine) { return entry.headerLine < targetLine; });
-            for (; it != gutters_.FoldEntries().end() && it->headerLine == line; ++it) {
-                if (it->column == clickedColumn) {
-                    const bool collapsed = buffer.FoldMarkerAt(it->blockStart).has_value();
-                    buffer.SetFoldMarker(it->blockStart,
-                                         collapsed ? std::nullopt : std::optional(text::Buffer::FoldMarker::Collapsed));
-                    break;
-                }
-            }
-            return true;
-        }
-
-        text::Buffer&     buffer = activeBuffer_.Get();
-        const std::size_t offset = viewport_.ByteOffsetForPoint(mouse->at);
-        buffer.ClearMark();
-        buffer.SetPoint(offset);
-
-        // Universal-clickable-affordances follow-up: Ctrl+Click opens the
-        // link under the click, the mouse counterpart to open-link-at-
-        // point's own C-c C-l -- same VS Code/browser convention (plain
-        // click still just places point, matching every other mode) and
-        // available in every mode without any per-mode wiring, since
-        // OpenLinkAtPoint() already tries Org's bracket links first and
-        // falls back to the generic bare-URL/file-path scan for everything
-        // else. Takes priority over the read-only visit-result click below
-        // -- an explicit Ctrl+Click is a more specific request than a plain
-        // click, so it shouldn't silently fall back to a visit when the
-        // clicked position isn't on a link.
-        if (mouse->control) {
-            clickCount_      = 0;
-            lastClickOffset_ = std::nullopt;
-            OpenLinkAtPoint();
-            return true;
-        }
-
-        // Double/triple-click word/line selection -- same repeated-click-at-
-        // the-same-spot detection ProjectSidebar's double-click-to-open uses
-        // (kDoubleClickWindow), extended with a click count so a third click
-        // selects the whole line instead of re-selecting the word. Skipped
-        // on a read-only ("tossable") results buffer, where a click's job is
-        // visiting the result under it, not selecting text.
-        const auto now   = std::chrono::steady_clock::now();
-        clickCount_      = (lastClickOffset_.has_value() && *lastClickOffset_ == offset && (now - lastClickTime_) < kDoubleClickWindow)
-                               ? (clickCount_ >= 3 ? 1 : clickCount_ + 1)
-                               : 1;
-        lastClickOffset_ = offset;
-        lastClickTime_   = now;
-
-        if (!buffer.ReadOnly() && clickCount_ >= 2) {
-            const text::ITextStorage& content = buffer.Content();
-            std::size_t               start;
-            std::size_t               end;
-            if (clickCount_ == 2) {
-                const auto [wordStart, wordEnd] = WordBoundsAtOffset(content, offset);
-                start                           = wordStart;
-                end                             = wordEnd;
-            }
-            else {
-                const std::size_t line = content.ByteOffsetToLine(offset);
-                start                  = content.LineToByteOffset(line);
-                end                    = line + 1 < content.LineCount() ? content.LineToByteOffset(line + 1) : content.ByteLength();
-            }
-            buffer.SetMark(start);
-            buffer.SetPoint(end);
-            dragAnchor_ = start;
-            return true;
-        }
-
-        dragAnchor_ = offset;
-        // project-search-visit-result follow-up: a click on a read-only
-        // ("tossable") results buffer visits the result under the click,
-        // the same "just press it" convention Enter now also follows
-        // there -- see this method's own OnKeyEvent counterpart.
-        if (buffer.ReadOnly()) {
-            VisitSearchResult();
-        }
-        return true;
+        return HandleLeftPress(*mouse);
     }
     if (mouse->motion == MouseEvent::Motion::Moved) {
         text::Buffer& buffer = activeBuffer_.Get();
