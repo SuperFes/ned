@@ -49,6 +49,15 @@ TEST_CASE("RootMarkers returns compiled-in defaults for bundled languages", "[Ls
     const auto csharp = RootMarkers("csharp");
     REQUIRE_FALSE(csharp.empty());
     REQUIRE(std::find(csharp.begin(), csharp.end(), "*.csproj") != csharp.end());
+
+    const auto java = RootMarkers("java");
+    REQUIRE_FALSE(java.empty());
+    REQUIRE(std::find(java.begin(), java.end(), "pom.xml") != java.end());
+    REQUIRE(std::find(java.begin(), java.end(), "build.gradle") != java.end());
+
+    const auto kotlin = RootMarkers("kotlin");
+    REQUIRE_FALSE(kotlin.empty());
+    REQUIRE(std::find(kotlin.begin(), kotlin.end(), "build.gradle.kts") != kotlin.end());
 }
 
 TEST_CASE("SetLspRootMarkers overrides the default, and an empty list reverts to it", "[Lsp]") {

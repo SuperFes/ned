@@ -19,9 +19,11 @@ using ned::editor::HighlightSpan;
 using ned::editor::HtmlMode;
 using ned::editor::JanetMode;
 using ned::editor::JankMode;
+using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::JsonMode;
 using ned::editor::Keymap;
+using ned::editor::KotlinMode;
 using ned::editor::LispAutoPairs;
 using ned::editor::MarkdownMode;
 using ned::editor::OrgMode;
@@ -999,6 +1001,82 @@ TEST_CASE("CSharpMode's symbolKind classifies a class, an interface, and each me
                                          "    }\n"
                                          "}\n");
     REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::Callable, SymbolKind::TypeLike,
+                                                 SymbolKind::Callable});
+}
+
+TEST_CASE("JavaMode highlights a keyword, a type name, a number, and a comment via a real tree-sitter parse",
+          "[Mode]") {
+    const auto             mode  = JavaMode();
+    const std::string_view text  = "class Widget {\n    int n = 1; // note\n}\n";
+    const auto             spans = mode.highlight(text);
+
+    REQUIRE(HasSpan(spans, 0, 5, SyntaxClass::Keyword));   // class
+    REQUIRE(HasSpan(spans, 6, 12, SyntaxClass::Type));     // Widget
+    REQUIRE(HasSpan(spans, 27, 28, SyntaxClass::Number));  // 1
+    REQUIRE(HasSpan(spans, 30, 37, SyntaxClass::Comment)); // // note
+}
+
+TEST_CASE("KotlinMode highlights a keyword, a type name, a number, and a comment via a real tree-sitter parse",
+          "[Mode]") {
+    const auto             mode  = KotlinMode();
+    const std::string_view text  = "class Widget {\n    val n: Int = 1 // note\n}\n";
+    const auto             spans = mode.highlight(text);
+
+    REQUIRE(HasSpan(spans, 0, 5, SyntaxClass::Keyword)); // class
+    REQUIRE(HasSpan(spans, 6, 12, SyntaxClass::Type));   // Widget
+    // "Int" resolves through the query's own #any-of? builtin-type list, not
+    // the bare (type_identifier) @type pattern above it -- which is also a
+    // live check that predicate evaluation is running at all.
+    REQUIRE(HasSpan(spans, 26, 29, SyntaxClass::TypeBuiltin)); // Int
+    REQUIRE(HasSpan(spans, 32, 33, SyntaxClass::Number));      // 1
+    REQUIRE(HasSpan(spans, 34, 41, SyntaxClass::Comment));     // // note
+}
+
+TEST_CASE("JavaMode's symbolKind classifies an interface, a class, and each method -- including the interface's "
+          "own abstract, bodyless one",
+          "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = JavaMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    // "int size();" inside the interface is a real method_declaration with
+    // no body, and tree-sitter-java's own tags.scm tags it exactly like a
+    // with-body one -- the same shape CSharpMode's case above documents.
+    // "implements Sized" is a @reference.implementation, never a definition,
+    // so it contributes no marker of its own.
+    const auto markers = mode.symbolKind("interface Sized {\n"
+                                         "    int size();\n"
+                                         "}\n"
+                                         "\n"
+                                         "class Widget implements Sized {\n"
+                                         "    public int size() {\n"
+                                         "        return 1;\n"
+                                         "    }\n"
+                                         "}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::Callable, SymbolKind::TypeLike,
+                                                 SymbolKind::Callable});
+}
+
+TEST_CASE("KotlinMode's symbolKind classifies a class, its property, and its function", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = KotlinMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    // Unlike every other bundled language, this comes from a repo-local
+    // tags query (queries/kotlin-tags.scm) -- fwcd/tree-sitter-kotlin ships
+    // no tags.scm of its own. A supertype named after ":" lives inside a
+    // delegation_specifier, one level below class_declaration's own direct
+    // type_identifier, so it never matches the @name pattern.
+    const auto markers = mode.symbolKind("interface Sized\n"
+                                         "\n"
+                                         "class Widget : Sized {\n"
+                                         "    val size: Int = 1\n"
+                                         "\n"
+                                         "    fun grow(): Int {\n"
+                                         "        return size + 1\n"
+                                         "    }\n"
+                                         "}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::TypeLike, SymbolKind::Data,
                                                  SymbolKind::Callable});
 }
 

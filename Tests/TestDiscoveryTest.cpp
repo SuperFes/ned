@@ -8,7 +8,9 @@
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
 using ned::editor::GoMode;
+using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
+using ned::editor::KotlinMode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::TestMarker;
@@ -112,6 +114,75 @@ TEST_CASE("CSharpMode testDiscovery finds xUnit/NUnit/MSTest attributes, but not
 
     const std::size_t insideBody = text.find("Assert.Equal");
     REQUIRE(markers[0].startByte == text.find("[Fact]"));
+    CHECK(markers[0].startByte < insideBody);
+    CHECK(insideBody < markers[0].endByte);
+}
+
+TEST_CASE("JavaMode testDiscovery finds JUnit's @Test and its variants, but not an unrelated helper method",
+          "[TestRun]") {
+    const auto mode = JavaMode();
+    REQUIRE(static_cast<bool>(mode.testDiscovery));
+
+    // Both annotation node types are covered: a bare "@Test" is a
+    // marker_annotation, "@Test(expected = ...)" an annotation -- see
+    // java-tests.scm's own header comment.
+    const std::string text = "class WidgetTests {\n"
+                             "    @Test\n"
+                             "    public void addWorks() {\n"
+                             "        assertEquals(2, 1 + 1);\n"
+                             "    }\n"
+                             "\n"
+                             "    @Test(expected = IllegalStateException.class)\n"
+                             "    public void addThrows() {\n"
+                             "    }\n"
+                             "\n"
+                             "    @ParameterizedTest\n"
+                             "    @ValueSource(ints = {1, 2})\n"
+                             "    void addWorksParameterized(int a) {\n"
+                             "    }\n"
+                             "\n"
+                             "    void helperSetup() {\n"
+                             "    }\n"
+                             "}\n";
+
+    const auto markers = mode.testDiscovery(text);
+    CHECK(MarkerNames(markers) == std::vector<std::string>{"addWorks", "addThrows", "addWorksParameterized"});
+
+    const std::size_t insideBody = text.find("assertEquals");
+    CHECK(markers[0].startByte < insideBody);
+    CHECK(insideBody < markers[0].endByte);
+}
+
+TEST_CASE("KotlinMode testDiscovery finds kotlin.test/JUnit annotations, but not an unrelated helper function",
+          "[TestRun]") {
+    const auto mode = KotlinMode();
+    REQUIRE(static_cast<bool>(mode.testDiscovery));
+
+    // Both annotation shapes are covered: a bare "@Test" carries a
+    // user_type, "@Test(expected = ...)" a constructor_invocation wrapping
+    // one -- see kotlin-tests.scm's own header comment.
+    const std::string text = "class WidgetTests {\n"
+                             "    @Test\n"
+                             "    fun addWorks() {\n"
+                             "        assertEquals(2, 1 + 1)\n"
+                             "    }\n"
+                             "\n"
+                             "    @Test(expected = IllegalStateException::class)\n"
+                             "    fun addThrows() {\n"
+                             "    }\n"
+                             "\n"
+                             "    @ParameterizedTest\n"
+                             "    fun addWorksParameterized(a: Int) {\n"
+                             "    }\n"
+                             "\n"
+                             "    fun helperSetup() {\n"
+                             "    }\n"
+                             "}\n";
+
+    const auto markers = mode.testDiscovery(text);
+    CHECK(MarkerNames(markers) == std::vector<std::string>{"addWorks", "addThrows", "addWorksParameterized"});
+
+    const std::size_t insideBody = text.find("assertEquals");
     CHECK(markers[0].startByte < insideBody);
     CHECK(insideBody < markers[0].endByte);
 }
