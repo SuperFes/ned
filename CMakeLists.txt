@@ -1017,6 +1017,7 @@ if (NED_BUILD_TESTS)
             Tests/ConflictResolutionTest.cpp
             Tests/BufferViewConflictQuickKeyTest.cpp
             Tests/BufferViewChoicePromptTest.cpp
+            Tests/BufferViewPromptDriverTest.cpp
             Tests/BufferTest.cpp
             Tests/BufferHugeFileTest.cpp
             Tests/DiskSpaceTest.cpp
