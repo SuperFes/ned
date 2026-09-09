@@ -25,45 +25,51 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
                                                                                                             eventLoop_, janetEnv_},
                                                                                                    gutters_(context_,
                                                                                                             [this](const text::ITextStorage& content) {
-                                                                                                                return HugeStructuralWindow(content);
-                                                                                                            }) {
+                                                                                                                return viewport_.HugeStructuralWindow(content);
+                                                                                                            }),
+                                                                                                   viewport_(context_, gutters_,
+                                                                                                             bufferview::Viewport::Host{
+                                                                                                                 [this]() { return size(); },
+                                                                                                                 [this]() { return GutterWidth(); },
+                                                                                                                 [this]() { return stickyRowCount_; },
+                                                                                                                 [this](std::size_t line) { return AnnotationRowsForLine(line); },
+                                                                                                                 [this](std::size_t line) { return LeadingAnnotationRowsForLine(line); },
+                                                                                                                 [this]() { DismissHover(); }}) {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
     }
     // The buffer active at construction time already has a sensible
-    // topLine_ (0, its default) -- seeding this here rather than leaving it
-    // nullptr is what makes EnsureTopLineValidForActiveBuffer() correctly
+    // viewport_.TopLine() (0, its default) -- seeding this here rather than leaving it
+    // nullptr is what makes viewport_.EnsureTopLineValidForActiveBuffer() correctly
     // distinguish "this is a real switch to a different buffer" from "this
     // is just the very first Paint() call," which would otherwise
-    // incorrectly reset topLine_ and discard any scroll adjustment (mouse
-    // wheel, scroll bar) made via an event that fires before that first
-    // Paint() -- a real regression this exact fix introduced and a test
-    // caught before it shipped, not assumed safe.
-    topLineValidatedBuffer_ = &activeBuffer_.Get();
-    // session-persistence slice 1: this seeding is also exactly why the
-    // EnsureTopLineValidForActiveBuffer seam can never restore a stored
-    // viewport for the buffer a pane STARTS on (the seam only fires on a
-    // later switch) -- a real, user-reported gap: relaunching ned on a file
-    // restored point but left the view at the top. So the initial buffer's
-    // stored topLine is applied right here instead. Clamped by pointLine,
-    // not MaxTopLine() (size() is still 0x0 at construction, so MaxTopLine
-    // is meaningless): a consistently recorded place always has
-    // pointLine >= topLine, so the min only ever bites when the file shrank
-    // outside ned and point itself got clamped -- pinning point's own line
-    // to the top row is the sane view for that case. A pre-first-Paint
-    // wheel/scroll-bar event now adjusts from the restored position rather
-    // than from 0, which is the same "don't discard real scroll state"
-    // intent the seeding comment above describes.
-    if (const auto place = editor::StoredFilePlaceFor(activeBuffer_.Get()); place && place->topLine) {
-        const text::Buffer& buffer    = activeBuffer_.Get();
-        const std::size_t   pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
-        topLine_                      = std::min(*place->topLine, pointLine);
-    }
-    // Same reasoning as topLineValidatedBuffer_ just above, for
+    // The buffer this pane starts on gets its remembered viewport applied and
+    // its scroll position seeded -- see Viewport::RestoreInitialPlace.
+    viewport_.RestoreInitialPlace();
+    // Same reasoning as Viewport::RestoreInitialPlace's own seeding, for
     // onActiveBufferChanged_: the buffer active at construction is already
     // reflected in whatever Mode the owning Pane constructed this
     // BufferView with, so the first Paint() must not re-fire the callback.
     modeSyncBuffer_ = &activeBuffer_.Get();
+}
+
+// The scroll position lives in Viewport now; these stay on BufferView because
+// an externally-owned ScrollBar/Minimap is wired to them by the pane that owns
+// both, and has no business reaching past the widget for it.
+std::size_t BufferView::TopLine() const {
+    return viewport_.TopLine();
+}
+
+void BufferView::SetTopLine(std::size_t line) {
+    viewport_.SetTopLine(line);
+}
+
+std::size_t BufferView::LeftColumn() const {
+    return viewport_.LeftColumn();
+}
+
+void BufferView::SetLeftColumn(std::size_t column) {
+    viewport_.SetLeftColumn(column);
 }
 
 editor::CommandContext BufferView::MakeContext() {
@@ -574,7 +580,7 @@ void BufferView::HandleBulkPastedText(std::string_view text) {
                 }
             }
         }
-        return; // ScrollToShowPoint() already runs every Paint() -- no explicit call needed
+        return; // viewport_.ScrollToShowPoint() already runs every Paint() -- no explicit call needed
     }
 
     // Slow path: any other modal InputMode (isearch, M-x, any prompt), or
@@ -960,10 +966,10 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     // new offset here instead of moving point itself -- scroll to show that
     // cursor rather than the ordinary (unmoved) primary point.
     if (context.newlyAddedCursorPoint) {
-        ScrollToShowOffset(*context.newlyAddedCursorPoint);
+        viewport_.ScrollToShowOffset(*context.newlyAddedCursorPoint);
     }
     else {
-        ScrollToShowPoint();
+        viewport_.ScrollToShowPoint();
     }
     return ran;
 }

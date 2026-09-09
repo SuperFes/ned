@@ -72,7 +72,7 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         }
     }
     else {
-        vimEngine_.SetViewport(topLine_, size().height > 0 ? static_cast<std::size_t>(size().height) : 0);
+        vimEngine_.SetViewport(viewport_.TopLine(), size().height > 0 ? static_cast<std::size_t>(size().height) : 0);
         vimEngine_.HandleKey(activeBuffer_.Get(), chord);
     }
 
@@ -113,13 +113,13 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         statusMessage_.clear();
     }
     ClampPointToNarrowing();
-    // Applied before ScrollToShowPoint() -- zz/zt/zb/C-e/C-y request an explicit topLine_
-    // independent of point, and ScrollToShowPoint() only nudges topLine_ far enough to
+    // Applied before viewport_.ScrollToShowPoint() -- zz/zt/zb/C-e/C-y request an explicit viewport_.TopLine()
+    // independent of point, and viewport_.ScrollToShowPoint() only nudges viewport_.TopLine() far enough to
     // keep point visible, so it leaves an already-visible point's explicit recenter alone.
     if (const auto pendingTop = vimEngine_.TakePendingTopLine()) {
-        SetTopLine(*pendingTop);
+        viewport_.SetTopLine(*pendingTop);
     }
-    ScrollToShowPoint();
+    viewport_.ScrollToShowPoint();
     return true;
 }
 
@@ -167,7 +167,7 @@ bool BufferView::HandleSnippetNavigationKey(const editor::KeyChord& chord) {
             statusMessage_ = snippetSession_->StatusText();
         }
         ClampPointToNarrowing();
-        ScrollToShowPoint();
+        viewport_.ScrollToShowPoint();
         return true;
     }
     // S-TAB's arrival as a shifted Tab chord is terminal-dependent (see
@@ -178,7 +178,7 @@ bool BufferView::HandleSnippetNavigationKey(const editor::KeyChord& chord) {
         snippetSession_->PreviousField(*buffer);
         statusMessage_ = snippetSession_->StatusText();
         ClampPointToNarrowing();
-        ScrollToShowPoint();
+        viewport_.ScrollToShowPoint();
         return true;
     }
     if (IsQuit(chord)) {
@@ -199,7 +199,7 @@ bool BufferView::HandleSnippetNavigationKey(const editor::KeyChord& chord) {
         snippetSession_->SyncMirrors(*buffer);
         buffer->EndUndoGroup();
         ClampPointToNarrowing();
-        ScrollToShowPoint();
+        viewport_.ScrollToShowPoint();
         return true;
     }
     if (snippetSession_->Pristine()) {
@@ -494,12 +494,12 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         }
         case editor::InteractiveRequest::Recenter: {
             // One-shot direct action, same shape as ToggleProjectSidebar --
-            // topLine_ is this widget's own state, so the command can only
+            // viewport_.TopLine() is this widget's own state, so the command can only
             // request the scroll. SetTopLine clamps via MaxTopLine.
             text::Buffer&     buffer    = activeBuffer_.Get();
             const std::size_t pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
             const std::size_t half      = static_cast<std::size_t>(std::max(0, size().height)) / 2;
-            SetTopLine(pointLine > half ? pointLine - half : 0);
+            viewport_.SetTopLine(pointLine > half ? pointLine - half : 0);
             return;
         }
         case editor::InteractiveRequest::GotoLine:
@@ -1531,7 +1531,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 const auto [start, end] = activeBuffer_.Get().Region();
                 activeBuffer_.Get().NarrowToRegion(start, end);
                 const std::size_t narrowedStart = activeBuffer_.Get().NarrowedRange().first;
-                SetTopLine(activeBuffer_.Get().Content().ByteOffsetToLine(narrowedStart));
+                viewport_.SetTopLine(activeBuffer_.Get().Content().ByteOffsetToLine(narrowedStart));
                 statusMessage_.clear();
             }
             return;
@@ -1692,7 +1692,7 @@ void BufferView::BeginSnippetExpansion(std::size_t replaceStart, std::size_t rep
         statusMessage_ = snippetSession_->StatusText();
     }
     ClampPointToNarrowing();
-    ScrollToShowPoint();
+    viewport_.ScrollToShowPoint();
 }
 
 text::Buffer* BufferView::ResolveSnippetBuffer() {
@@ -1784,7 +1784,7 @@ void BufferView::EndInteractiveSession() {
     contextMenuSelection_ = 0;
     contextMenuAnchor_.reset();
     renameTitle_.clear();
-    ScrollToShowPoint();
+    viewport_.ScrollToShowPoint();
 }
 
 void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
@@ -1873,7 +1873,7 @@ void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
     }
 
     statusMessage_ = SearchStatusText();
-    ScrollToShowPoint();
+    viewport_.ScrollToShowPoint();
 }
 
 void BufferView::HandleQueryReplaceKey(const editor::KeyChord& chord) {
@@ -1897,7 +1897,7 @@ void BufferView::HandleQueryReplaceKey(const editor::KeyChord& chord) {
         return;
     }
 
-    ScrollToShowPoint();
+    viewport_.ScrollToShowPoint();
 }
 
 std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {

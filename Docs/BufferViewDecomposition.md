@@ -290,12 +290,44 @@ pair with differently-typed vectors and keep their own index either way. The rep
 wrap-around and clamp arithmetic is real and worth removing — in Phase 4, once, where the
 sessions that own it are being written anyway.
 
-### Phase 3 — `GutterModel` and `Viewport`
+### Phase 3 — `GutterModel` and `Viewport` — **done**
 
-The first real extractions, and where `ViewServices` lands: `GutterModel` is the first
-class that needs to call back into the view, so its needs decide that struct's shape. Both are pure computation over `ITextStorage` + fold state +
-mode + width; both are trivially unit-testable headlessly. `Renderer` will consume them,
-so they come first.
+The first real extractions, landed as two classes in `ned::ui::bufferview`. 232 members →
+**202**; `BufferView.h` 4,446 → 3,995 lines.
+
+**`GutterModel`** owns the per-line data the gutter columns render — status, diagnostics,
+conflicts, folds, symbols, tests, coverage, inline diagnostics — and the four
+column-active predicates that only read them. Its accessors derive on demand, so the old
+`EnsureX(); ...read member_` pairs collapse to one call and there is no refresh step a
+caller can forget.
+
+**`Viewport`** owns the scroll position and the line↔row mapping: fold-hidden lines,
+wrapped row counts, narrowing, `MaxTopLine`, `ByteOffsetForPoint`, the scroll-to helpers.
+`BufferView` keeps `TopLine`/`SetTopLine`/`LeftColumn`/`SetLeftColumn` as public
+forwarders, because an externally-owned `ScrollBar`/`Minimap` is wired to them by the pane
+that owns both.
+
+Landed a cache group at a time rather than all thirteen at once, so a regression stayed
+bounded to one group's move.
+
+**What this settled about the seam.** `GutterModel` needs no back-reference to the view at
+all — the gutter code turned out to call no `BufferView` method — so it takes an
+`EditorContext` and one `StructuralWindowFn`, for the single fact it cannot work out
+itself: how much of a huge buffer its structural queries may look at, which depends on
+where the viewport is and moves with scrolling without any generation counter changing.
+
+`Viewport` needed more, and that is the interesting result. Its row arithmetic is *not*
+purely a function of the buffer: a line's height on screen includes the inline-diagnostic
+and code-lens rows drawn around it, and usable height excludes the sticky header rows. So
+it takes a `Viewport::Host` of six callbacks (`size`, `gutterWidth`, `stickyRowCount`,
+`annotationRows`, `leadingAnnotationRows`, `dismissHover`). That is `ViewServices`, and
+Phase 1 was right not to guess at it: five of those six were not on the speculative list.
+
+**Deliberately left behind.** Blame lines and diff hunks stay in `BufferView`. They are not
+derived from the buffer — they are pushed in from `VcsRunner` callbacks — so moving them
+into `GutterModel` would have meant setters that undo the encapsulation the class buys.
+They belong with `VcsFeatures` in Phase 5. `Gutter.cpp` is down to 191 lines holding that
+pushed data, `GutterWidth`, and the remaining column predicates.
 
 ### Phase 4 — `PromptController` and the session types
 

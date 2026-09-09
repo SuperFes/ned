@@ -25,7 +25,7 @@ void BufferView::JumpToPathLine(const std::filesystem::path& path, std::size_t l
         activeBuffer_.Set(opened);
         opened.SetPoint(opened.ByteOffsetForLineAndColumn(line - 1, 0)); // 1-indexed -> 0-indexed
         statusMessage_.clear();
-        ScrollToShowPoint();
+        viewport_.ScrollToShowPoint();
     }
     catch (const std::exception& e) {
         ReportError(e.what());
