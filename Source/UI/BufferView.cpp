@@ -248,42 +248,10 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
-    if (inputMode_ == InputMode::FindFile ||
-        inputMode_ == InputMode::ProjectSearch || inputMode_ == InputMode::CreateDirectory ||
-        inputMode_ == InputMode::FindScratch || inputMode_ == InputMode::StringRectangle ||
-        inputMode_ == InputMode::SetHeadlineTags || inputMode_ == InputMode::TaskName ||
-        inputMode_ == InputMode::GotoLine ||
-        inputMode_ == InputMode::AcpPromptText ||
-        // OnKeyEvent-dispatch-gap follow-up: DapEvaluate/VcsCreateBranch are
-        // both handled inside HandlePromptKey (and documented there as
-        // routing through it, same shape as TaskName/GotoLine above) but
-        // were never actually reachable from a real keystroke -- missing
-        // here, so input silently fell through to ordinary self-insert-command
-        // instead of the prompt.
-        inputMode_ == InputMode::DapEvaluate ||
-        inputMode_ == InputMode::VcsCreateBranch || inputMode_ == InputMode::DeleteProperty ||
-        inputMode_ == InputMode::OrgSchedule || inputMode_ == InputMode::OrgDeadline ||
-        // DAP round 2: same dispatch-gap fix as DapEvaluate above -- these
-        // four are HandlePromptKey-routed plain-text prompts too. DAP round
-        // 3 adds two more of the same shape.
-        inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage ||
-        inputMode_ == InputMode::DapAddWatch || inputMode_ == InputMode::DapSetVariableValue ||
-        inputMode_ == InputMode::DapBreakpointHitCondition || inputMode_ == InputMode::DapFunctionBreakpointName ||
-        inputMode_ == InputMode::DapMemoryByteCount ||
-        // Debugging wishlist: ShowMassifGraphPath is a plain-text prompt too,
-        // DapAddWatch's own shape.
-        inputMode_ == InputMode::ShowMassifGraphPath ||
-        // editor-ergonomics follow-up: BookmarkSetName is a plain-text
-        // prompt too, TaskName/GotoLine's own shape.
-        inputMode_ == InputMode::BookmarkSetName ||
-        // named-projects follow-up: OpenProjectPath/OpenProjectName are both
-        // routed through this shared chain too -- FindFile's own shape
-        // (plus real path completion) and BookmarkSetName's own shape,
-        // respectively.
-        inputMode_ == InputMode::OpenProjectPath || inputMode_ == InputMode::OpenProjectName ||
-        // REPL-engine follow-up: ReplName is a plain-text prompt too,
-        // TaskName's own shape.
-        inputMode_ == InputMode::ReplName) {
+    // Every plain text-entry prompt routes here. The set is TextEntryPromptCompletion's
+    // to decide, not a second list kept in agreement with it -- see
+    // BufferView/TextEntryPrompt.h for the two bugs that cost.
+    if (TextEntryPromptCompletion(inputMode_)) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
@@ -422,11 +390,6 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
     if (inputMode_ == InputMode::LspWorkspaceSymbol) {
         HandleWorkspaceSymbolKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::LspRenameNewName) {
-        HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
     }
