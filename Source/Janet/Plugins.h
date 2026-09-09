@@ -15,6 +15,12 @@ namespace ned::janet::plugins {
 // implementation for git. See PluginLoader.h for how/when this gets loaded.
 extern const char* const kVcsGit;
 
+// Source/Janet/Plugins/gradients.janet -- the array sugar over
+// ned/theme-gradient's one-line spec string, plus the bundled preset paints
+// (see Docs/Translucency.md). Loaded before init.janet, so a user
+// redefining a preset by name wins.
+extern const char* const kGradients;
+
 } // namespace ned::janet::plugins
 
 #endif // NED_JANET_PLUGINS_H

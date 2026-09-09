@@ -262,7 +262,7 @@ void JanetReplPanel::Paint(Canvas canvas) {
     const int caretCol = prompt_.CursorDisplayColumn();
     if (caretCol < width) {
         Cell& cell = canvas[{.x = caretCol, .y = inputRow}];
-        Brush{.background = theme_.echoArea.foreground, .foreground = Color::Black}.ApplyTo(cell);
+        Brush{.background = theme_.echoArea.foreground, .foreground = theme_.background}.ApplyTo(cell);
     }
 }
 

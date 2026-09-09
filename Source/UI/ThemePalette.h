@@ -9,9 +9,8 @@
 // one place those slots map to Theme's fields. A cloned theme becomes a
 // transcription of its official hex values into these slots, nothing more.
 //
-// The hand-built themes (DarkTheme/LightTheme in Theme.cpp, and the ANSI
-// fallback pair, which is deliberately Palette16-only and can't ride a
-// TrueColor derivation) stay as they are -- this is additive.
+// The hand-built themes (DarkTheme/LightTheme in Theme.cpp) stay as they
+// are -- this is additive.
 //
 
 #ifndef NED_UI_THEMEPALETTE_H

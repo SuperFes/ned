@@ -336,6 +336,7 @@ function(ned_embed_janet_plugin plugin_file symbol)
 endfunction()
 
 ned_embed_janet_plugin("${CMAKE_CURRENT_SOURCE_DIR}/Source/Janet/Plugins/vcs-git.janet" VcsGit)
+ned_embed_janet_plugin("${CMAKE_CURRENT_SOURCE_DIR}/Source/Janet/Plugins/gradients.janet" Gradients)
 
 ned_add_treesitter_grammar(tree-sitter-json https://github.com/tree-sitter/tree-sitter-json.git v0.24.8)
 
@@ -878,6 +879,10 @@ add_library(ned_lib STATIC
         Source/UI/KeyTranslation.cpp
         Source/UI/Border.cpp
         Source/UI/Widget.cpp
+        Source/UI/Compositing.cpp
+        Source/UI/Paint.cpp
+        Source/UI/PaintParse.cpp
+        Source/UI/ThemePaints.cpp
         Source/UI/EventLoop.cpp
         Source/UI/Layout.cpp
         Source/UI/ScrollBar.cpp
@@ -1063,7 +1068,6 @@ target_link_libraries(notcurses_gradient_probe PRIVATE notcurses-core)
 # handling that Notcurses itself cannot reach (3.0.17 has no iTerm2 backend).
 add_executable(terminal_image_alpha_probe Tools/TerminalImageAlphaProbe.cpp)
 
-
 if (NED_BUILD_TESTS)
     enable_testing()
     include(CTest)
@@ -1164,6 +1168,11 @@ if (NED_BUILD_TESTS)
             Tests/LinkTest.cpp
             Tests/HeaderSourceTest.cpp
             Tests/PerformanceTest.cpp
+            Tests/CompositingTest.cpp
+            Tests/PaintTest.cpp
+            Tests/PaintParseTest.cpp
+            Tests/BundledPaintsTest.cpp
+            Tests/ChromeSurfaceTest.cpp
             Tests/ThemeTest.cpp
             Tests/ThemePaletteTest.cpp
             Tests/VariablesTest.cpp
