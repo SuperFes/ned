@@ -19,6 +19,7 @@
 #define NED_UI_BUFFERVIEWINTERNAL_H
 
 #include "UI/BufferView.h"
+#include "UI/BufferView/RenderTypes.h"
 
 #include <algorithm>
 #include <cctype>
@@ -104,6 +105,13 @@
 #include "UI/ThemeRegistry.h"
 
 namespace ned::ui::detail {
+
+// Moved to BufferView/RenderTypes.h now that painting, the viewport and the
+// per-line render state all name them; pulled back in here so the helpers below
+// keep spelling them unqualified.
+using bufferview::RenderedInlayHint;
+using bufferview::RenderedLink;
+using bufferview::WrapSegment;
 
 // Plain, non-modifier printable input: the only kind of chord that should
 // feed into a query string during isearch/query-replace/prompt text entry.
@@ -515,16 +523,6 @@ inline int DisplayColumns(const std::string& text) {
     return columns;
 }
 
-// Links follow-up: an Org link that should render COLLAPSED on this
-// particular line -- i.e. one whose own [startByte, endByte) does NOT
-// contain point (a link containing point is deliberately excluded here,
-// which is what makes it fall through to every consumer's existing
-// plain-codepoint path instead, rendering its raw markup uncollapsed).
-struct RenderedLink {
-    std::size_t startByte;
-    std::size_t endByte; // exclusive
-    std::string displayText;
-};
 
 // Filters org::ParseLinks's whole-buffer result down to just the links
 // fully inside [lineStart, lineEnd) that should render collapsed --
@@ -563,16 +561,6 @@ inline const RenderedLink* LinkStartingAt(const std::vector<RenderedLink>& links
     return nullptr;
 }
 
-// inlayHint follow-up. A LspManager::ResolvedInlayHint (byteOffset +
-// label) filtered down to just [lineStart, lineEnd) -- same "filter
-// once per line, consult per-codepoint" shape LinksForLine/
-// SpansForLine already establish. Unlike a RenderedLink, this never
-// consumes/replaces real bytes -- see InlayHintStartingAt's own doc
-// comment for how a render-loop consumer uses it.
-struct RenderedInlayHint {
-    std::size_t byteOffset;
-    std::string label;
-};
 
 inline std::vector<RenderedInlayHint> InlayHintsForLine(const std::vector<editor::lsp::LspManager::ResolvedInlayHint>& hints,
                                                         std::size_t lineStart, std::size_t lineEnd) {
@@ -696,12 +684,6 @@ inline bool IsWrapBreakWhitespace(char32_t cp) {
     return cp == U' ' || cp == U'\t';
 }
 
-// [startByte, endByte) content range one wrapped canvas row draws --
-// always at least one per line, even an empty one.
-struct WrapSegment {
-    std::size_t startByte;
-    std::size_t endByte;
-};
 
 // line-wrap follow-up. Splits [lineStart, lineEnd) into one or more
 // word-break-aware segments, none exceeding wrapWidth columns. Breaks
