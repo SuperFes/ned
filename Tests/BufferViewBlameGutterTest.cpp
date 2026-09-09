@@ -12,10 +12,10 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/Vcs/VcsProvider.h"
+#include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
-#include "TestEvents.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
 #include "UI/Theme.h"
@@ -70,7 +70,7 @@ std::vector<VcsBlameLine> OneLineOfBlame() {
 } // namespace
 
 TEST_CASE("BufferView reserves no gutter column for blame until it's been populated", "[BufferView][Vcs]") {
-    Fixture    fixture;
+    Fixture fixture;
     fixture.buffer.InsertAtPoint("hello");
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
@@ -86,7 +86,7 @@ TEST_CASE("BufferView reserves no gutter column for blame until it's been popula
 }
 
 TEST_CASE("DispatchBlameForTesting populates the blame gutter and shifts content over by kBlameWidth", "[BufferView][Vcs]") {
-    Fixture    fixture;
+    Fixture fixture;
     fixture.buffer.InsertAtPoint("hello");
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
@@ -207,7 +207,9 @@ TEST_CASE("vcs-visit-result (C-c v v) jumps from a synthesized *vcs blame*-shape
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
     const std::filesystem::path targetFile = dir / "blamed.txt";
-    { std::ofstream(targetFile) << "line one\nline two\nline three\n"; }
+    {
+        std::ofstream(targetFile) << "line one\nline two\nline three\n";
+    }
 
     Fixture fixture;
     // Same shape BuildVcsBlameBuffer itself writes: "<path>:<line>: <hash>

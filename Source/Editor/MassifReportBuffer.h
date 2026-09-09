@@ -30,7 +30,7 @@ namespace ned::editor {
 // file the profile was read from), never reparsed here. Point lands at the
 // top of the buffer.
 text::Buffer& RebuildMassifReportBuffer(text::BufferList& bufferList, const MassifProfile& profile,
-                                         std::string_view sourcePath);
+                                        std::string_view sourcePath);
 
 } // namespace ned::editor
 

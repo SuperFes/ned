@@ -17,7 +17,7 @@ bool ResolveConflictHunk(text::Buffer& buffer, const text::ConflictHunk& hunk, C
     }
 
     const text::ITextStorage& content = buffer.Content();
-    std::string                replacement;
+    std::string               replacement;
     switch (resolution) {
         case ConflictResolution::TakeOurs:
             replacement = content.Substring(hunk.oursRange.start, hunk.oursRange.end - hunk.oursRange.start);

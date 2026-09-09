@@ -77,7 +77,7 @@ namespace {
 
     std::string LocalTimeLabel(std::chrono::system_clock::time_point timestamp) {
         const std::time_t seconds = std::chrono::system_clock::to_time_t(timestamp);
-        std::tm            local{};
+        std::tm           local{};
         localtime_r(&seconds, &local);
         char buffer[16];
         std::snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", local.tm_hour, local.tm_min, local.tm_sec);
@@ -88,7 +88,7 @@ namespace {
     // Backup.cpp's VersionFileName's own gmtime_r-based convention.
     std::string UtcDateLabel(std::chrono::system_clock::time_point timestamp) {
         const std::time_t seconds = std::chrono::system_clock::to_time_t(timestamp);
-        std::tm            utc{};
+        std::tm           utc{};
         gmtime_r(&seconds, &utc);
         char buffer[16];
         std::snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d", utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday);
@@ -153,7 +153,7 @@ namespace {
     // fallback click/Enter-visit it, with no new command needed.
     std::string FormatLine(const LogEntry& entry) {
         std::string line = LocalTimeLabel(entry.timestamp) + " [" + SeverityLabel(entry.severity) + "] [" +
-                            std::string(LogCategoryToString(entry.category)) + "] " + entry.message + CountSuffix(entry.count);
+                           std::string(LogCategoryToString(entry.category)) + "] " + entry.message + CountSuffix(entry.count);
         if (entry.path && entry.line) {
             line += " (" + *entry.path + ":" + std::to_string(*entry.line) + ":)";
         }
@@ -183,7 +183,7 @@ namespace {
             const std::filesystem::path directory = LogsDirectory();
             std::filesystem::create_directories(directory);
             const std::filesystem::path file = directory / ("ned-" + UtcDateLabel(entry.timestamp) + ".log");
-            std::ofstream                out(file, std::ios::app);
+            std::ofstream               out(file, std::ios::app);
             out << FormatLine(entry) << '\n';
         }
         catch (const std::exception&) {
@@ -203,7 +203,7 @@ namespace {
 } // namespace
 
 void LogMessage(LogCategory category, LogSeverity severity, std::string message, std::optional<std::string> path,
-                 std::optional<std::size_t> line) {
+                std::optional<std::size_t> line) {
     LogEntry entry{
         .timestamp = std::chrono::system_clock::now(),
         .category  = category,
@@ -224,10 +224,10 @@ void LogMessage(LogCategory category, LogSeverity severity, std::string message,
 
     {
         const std::lock_guard<std::mutex> lock(LogMutex());
-        std::deque<LogEntry>&             entries = EntriesStorage();
-        LogEntry* const                   last     = entries.empty() ? nullptr : &entries.back();
-        const bool repeatsLast = last && last->category == entry.category && last->severity == entry.severity &&
-                                 last->message == entry.message && last->path == entry.path && last->line == entry.line;
+        std::deque<LogEntry>&             entries     = EntriesStorage();
+        LogEntry* const                   last        = entries.empty() ? nullptr : &entries.back();
+        const bool                        repeatsLast = last && last->category == entry.category && last->severity == entry.severity &&
+                                                        last->message == entry.message && last->path == entry.path && last->line == entry.line;
         if (repeatsLast) {
             ++last->count;
             last->timestamp   = entry.timestamp;
@@ -341,7 +341,7 @@ std::string_view MessagesBufferName() {
 
 void RebuildMessagesBuffer(text::BufferList& bufferList) {
     const std::string bufferName(MessagesBufferName());
-    text::Buffer*      buffer = bufferList.Find(bufferName);
+    text::Buffer*     buffer = bufferList.Find(bufferName);
     if (!buffer) {
         buffer = &bufferList.CreateBuffer(bufferName);
         buffer->SetReadOnly(true); // must be set before the first append -- AppendWhileReadOnly's own precondition
@@ -443,11 +443,18 @@ void AcknowledgeDiagnosticsLogEntry() {
 void ResetDiagnosticsLogForTesting() {
     const std::lock_guard<std::mutex> lock(LogMutex());
     EntriesStorage().clear();
-    MaxEntriesStorage()    = 5000;
-    MaxAgeDaysStorage()    = 14;
-    GenerationStorage()    = 0;
+    MaxEntriesStorage()      = 5000;
+    MaxAgeDaysStorage()      = 14;
+    GenerationStorage()      = 0;
     CategoryVisibleStorage() = {
-        true, true, false, true, true, true, true, true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
     };
     LastPruneStorage().reset();
     HasUnseenStorage() = false;

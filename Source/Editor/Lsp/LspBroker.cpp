@@ -38,9 +38,9 @@ void BrokerRouter::TearDownEntry(const std::string& key, std::vector<BrokerActio
     if (state.status == BrokerLanguageStatus::Ready) {
         const int shutdownId = state.nextBrokerId++;
         actions.push_back(BrokerAction{.kind     = BrokerAction::Kind::SendToServer,
-                                        .root     = state.root,
-                                        .language = state.language,
-                                        .frame    = Json{{"jsonrpc", "2.0"}, {"id", shutdownId}, {"method", "shutdown"}}});
+                                       .root     = state.root,
+                                       .language = state.language,
+                                       .frame    = Json{{"jsonrpc", "2.0"}, {"id", shutdownId}, {"method", "shutdown"}}});
         actions.push_back(BrokerAction{
             .kind = BrokerAction::Kind::SendToServer, .root = state.root, .language = state.language, .frame = Json{{"jsonrpc", "2.0"}, {"method", "exit"}}});
     }
@@ -87,7 +87,7 @@ void BrokerRouter::MaybeEvictForCapacity(std::vector<BrokerAction>& actions) {
 }
 
 std::vector<BrokerAction> BrokerRouter::ClientAttached(ConnectionId conn, std::string root, std::string language, std::vector<std::string> argv,
-                                                        std::chrono::steady_clock::time_point now) {
+                                                       std::chrono::steady_clock::time_point now) {
     std::vector<BrokerAction> actions;
     const std::string         key = MakeKey(root, language);
     connectionKey_[conn]          = key;
@@ -97,10 +97,10 @@ std::vector<BrokerAction> BrokerRouter::ClientAttached(ConnectionId conn, std::s
         MaybeEvictForCapacity(actions);
         LanguageState state;
         state.root       = root;
-        state.language    = language;
-        state.argv        = std::move(argv);
-        state.status       = BrokerLanguageStatus::SpawningProcess;
-        state.lastActive  = now;
+        state.language   = language;
+        state.argv       = std::move(argv);
+        state.status     = BrokerLanguageStatus::SpawningProcess;
+        state.lastActive = now;
         actions.push_back(BrokerAction{.kind = BrokerAction::Kind::SpawnServer, .root = root, .language = language, .argv = state.argv});
         languages_.emplace(key, std::move(state));
     }
@@ -262,15 +262,15 @@ std::vector<BrokerAction> BrokerRouter::ServerSpawnFailed(const std::string& roo
 }
 
 std::vector<BrokerAction> BrokerRouter::ServerFrame(const std::string& root, const std::string& language, const Json& frame,
-                                                     std::chrono::steady_clock::time_point now) {
+                                                    std::chrono::steady_clock::time_point now) {
     std::vector<BrokerAction> actions;
-    const std::string         key    = MakeKey(root, language);
-    const auto                keyIt  = languages_.find(key);
+    const std::string         key   = MakeKey(root, language);
+    const auto                keyIt = languages_.find(key);
     if (keyIt == languages_.end()) {
         return actions; // a frame from a server we no longer track (e.g. arrived after ServerDisconnected already reset it) -- ignore
     }
     LanguageState& state = keyIt->second;
-    state.lastActive      = now;
+    state.lastActive     = now;
 
     const bool hasId     = frame.contains("id");
     const bool hasMethod = frame.contains("method");

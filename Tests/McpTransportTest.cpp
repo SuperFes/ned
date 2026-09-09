@@ -71,7 +71,7 @@ TEST_CASE("Mcp::Transport::ReadMessage throws on EOF mid-message", "[Mcp]") {
     REQUIRE(::pipe(toB) == 0);
     Transport reader(toB[0], -1);
     {
-        Transport  writer(-1, toB[1]);
+        Transport         writer(-1, toB[1]);
         const std::string partial = "{\"incomplete";
         std::size_t       written = 0;
         while (written < partial.size()) {

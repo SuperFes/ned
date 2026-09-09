@@ -36,8 +36,8 @@ namespace {
 } // namespace
 
 std::vector<std::filesystem::path> NodeModulesSearchPaths(const std::filesystem::path& baseDirectory,
-                                                           const std::filesystem::path& projectRoot) {
-    std::error_code errorCode;
+                                                          const std::filesystem::path& projectRoot) {
+    std::error_code             errorCode;
     const std::filesystem::path canonicalRoot = std::filesystem::weakly_canonical(projectRoot, errorCode);
 
     std::vector<std::filesystem::path> searchPaths;

@@ -25,11 +25,11 @@ namespace ned::editor {
 struct IndentStyle {
     bool useTabs = false; // default: spaces
     int  width   = 4;     // columns per indent level; also the spaces-per-tab-stop
-                           // used when useTabs collapses a full-width run to a literal tab
+                          // used when useTabs collapses a full-width run to a literal tab
 };
 
 // Process-wide default.
-void                       SetIndentStyle(IndentStyle style);
+void                      SetIndentStyle(IndentStyle style);
 [[nodiscard]] IndentStyle DefaultIndentStyle();
 
 // Per-mode-name override (e.g. "python-mode" -- Mode::name verbatim).

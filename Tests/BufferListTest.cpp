@@ -453,7 +453,7 @@ TEST_CASE("OpenFile routes a file over HugeFileThreshold through Buffer::FromHug
 
     Buffer& buffer = list.OpenFile(path);
 
-    REQUIRE(asyncHookCalls == 0); // the huge-file branch wins, never even reaches the async check
+    REQUIRE(asyncHookCalls == 0);      // the huge-file branch wins, never even reaches the async check
     REQUIRE_FALSE(buffer.IsLoading()); // no placeholder/background-fill state -- already fully open
     REQUIRE(buffer.Content().IsHuge());
     REQUIRE(buffer.Text() == "small file, but over a tiny huge-file threshold\n");
@@ -481,10 +481,10 @@ TEST_CASE("OpenFile hands a huge file to the async huge opener hook instead of l
     }
 
     BufferList  list;
-    Buffer*     hookedBuffer     = nullptr;
-    std::size_t hookCalls        = 0;
-    bool        hookAllowBinary  = true; // sentinel -- must observe false below
-    std::size_t asyncHookCalls   = 0;
+    Buffer*     hookedBuffer    = nullptr;
+    std::size_t hookCalls       = 0;
+    bool        hookAllowBinary = true; // sentinel -- must observe false below
+    std::size_t asyncHookCalls  = 0;
     list.SetAsyncFileOpener([&](Buffer&, const std::filesystem::path&) { ++asyncHookCalls; });
     list.SetAsyncHugeFileOpener([&](Buffer& buffer, const std::filesystem::path&, bool allowBinary) {
         hookedBuffer    = &buffer;
@@ -499,8 +499,8 @@ TEST_CASE("OpenFile hands a huge file to the async huge opener hook instead of l
     REQUIRE(hookCalls == 1);
     REQUIRE(hookedBuffer == &buffer);
     REQUIRE_FALSE(hookAllowBinary);
-    REQUIRE(asyncHookCalls == 0); // the huge-file branch wins, never even reaches the plain async-opener check
-    REQUIRE(buffer.IsLoading());  // placeholder handed to the hook, not yet filled in
+    REQUIRE(asyncHookCalls == 0);     // the huge-file branch wins, never even reaches the plain async-opener check
+    REQUIRE(buffer.IsLoading());      // placeholder handed to the hook, not yet filled in
     REQUIRE_FALSE(buffer.ReadOnly()); // MarkLoading(false) -- editable while loading, unlike the medium-tier placeholder
     REQUIRE(buffer.Size() == 0);      // OpenFile itself never reads the file on this path either
 

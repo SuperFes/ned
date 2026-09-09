@@ -90,7 +90,8 @@ std::vector<Keymap::ChildBinding> Keymap::ChildrenAt(const std::vector<KeyChord>
     return out;
 }
 
-KeymapStack::KeymapStack(std::vector<const Keymap*> layers) : layers_(std::move(layers)) {}
+KeymapStack::KeymapStack(std::vector<const Keymap*> layers) : layers_(std::move(layers)) {
+}
 
 Keymap::Lookup KeymapStack::Resolve(const std::vector<KeyChord>& sequence) const {
     bool anyPrefix = false;

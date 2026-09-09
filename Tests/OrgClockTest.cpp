@@ -24,13 +24,13 @@ using ned::text::Rope;
 
 namespace {
 
-    // A fixed point in time so tests don't depend on when they happen to
-    // run -- 2026-08-24 09:15 UTC.
-    std::chrono::system_clock::time_point TestNow(int hour, int minute) {
-        using namespace std::chrono;
-        const auto date = sys_days{year{2026} / August / day{24}};
-        return date + hours{hour} + minutes{minute};
-    }
+// A fixed point in time so tests don't depend on when they happen to
+// run -- 2026-08-24 09:15 UTC.
+std::chrono::system_clock::time_point TestNow(int hour, int minute) {
+    using namespace std::chrono;
+    const auto date = sys_days{year{2026} / August / day{24}};
+    return date + hours{hour} + minutes{minute};
+}
 
 } // namespace
 
@@ -155,19 +155,19 @@ TEST_CASE("ClockOut works regardless of where point currently is", "[Org][Clock]
 }
 
 TEST_CASE("TotalClockedMinutes sums closed entries and ignores a running one", "[Org][Clock]") {
-    const std::string text = "* Buy milk\n:LOGBOOK:\n"
-                             "CLOCK: [2026-08-23 Sun 09:00]--[2026-08-23 Sun 10:00] =>  1:00\n"
-                             "CLOCK: [2026-08-23 Sun 12:00]--[2026-08-23 Sun 12:30] =>  0:30\n"
-                             "CLOCK: [2026-08-24 Mon 09:00]\n"
-                             ":END:\n";
-    const auto headlines = ParseOutline(text);
-    const auto total     = TotalClockedMinutes(text, headlines[0]);
+    const std::string text      = "* Buy milk\n:LOGBOOK:\n"
+                                  "CLOCK: [2026-08-23 Sun 09:00]--[2026-08-23 Sun 10:00] =>  1:00\n"
+                                  "CLOCK: [2026-08-23 Sun 12:00]--[2026-08-23 Sun 12:30] =>  0:30\n"
+                                  "CLOCK: [2026-08-24 Mon 09:00]\n"
+                                  ":END:\n";
+    const auto        headlines = ParseOutline(text);
+    const auto        total     = TotalClockedMinutes(text, headlines[0]);
     CHECK(total.count() == 90); // 1:00 + 0:30, the still-running entry doesn't count
 }
 
 TEST_CASE("CurrentlyRunningClock finds the running headline and its start time", "[Org][Clock]") {
-    const std::string text      = "* Buy milk\n* Walk dog\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n";
-    const auto        running   = CurrentlyRunningClock(text);
+    const std::string text    = "* Buy milk\n* Walk dog\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n";
+    const auto        running = CurrentlyRunningClock(text);
     REQUIRE(running.has_value());
     CHECK(running->headline.title == "Walk dog");
     CHECK(running->start.hour == 9);
@@ -187,21 +187,21 @@ TEST_CASE("ElapsedMinutes computes now minus start across an hour boundary", "[O
 }
 
 TEST_CASE("TotalClockedMinutesForSubtree rolls up a parent's own time plus every descendant's", "[Org][Clock]") {
-    const std::string text = "* Parent\n:LOGBOOK:\n"
-                             "CLOCK: [2026-08-23 Sun 09:00]--[2026-08-23 Sun 09:30] =>  0:30\n"
-                             ":END:\n"
-                             "** Child A\n:LOGBOOK:\n"
-                             "CLOCK: [2026-08-23 Sun 10:00]--[2026-08-23 Sun 11:00] =>  1:00\n"
-                             ":END:\n"
-                             "** Child B\n"
-                             "*** Grandchild\n:LOGBOOK:\n"
-                             "CLOCK: [2026-08-23 Sun 12:00]--[2026-08-23 Sun 12:15] =>  0:15\n"
-                             ":END:\n";
-    const auto headlines = ParseOutline(text);
-    const auto tree      = BuildHeadlineTree(headlines);
+    const std::string text      = "* Parent\n:LOGBOOK:\n"
+                                  "CLOCK: [2026-08-23 Sun 09:00]--[2026-08-23 Sun 09:30] =>  0:30\n"
+                                  ":END:\n"
+                                  "** Child A\n:LOGBOOK:\n"
+                                  "CLOCK: [2026-08-23 Sun 10:00]--[2026-08-23 Sun 11:00] =>  1:00\n"
+                                  ":END:\n"
+                                  "** Child B\n"
+                                  "*** Grandchild\n:LOGBOOK:\n"
+                                  "CLOCK: [2026-08-23 Sun 12:00]--[2026-08-23 Sun 12:15] =>  0:15\n"
+                                  ":END:\n";
+    const auto        headlines = ParseOutline(text);
+    const auto        tree      = BuildHeadlineTree(headlines);
     REQUIRE(tree.size() == 1);
     CHECK(TotalClockedMinutesForSubtree(text, tree[0]).count() == 105); // 0:30 + 1:00 + 0:15
     REQUIRE(tree[0].children.size() == 2);
-    CHECK(TotalClockedMinutesForSubtree(text, tree[0].children[0]).count() == 60);  // Child A alone
-    CHECK(TotalClockedMinutesForSubtree(text, tree[0].children[1]).count() == 15);  // Child B has none of its own, Grandchild has 0:15
+    CHECK(TotalClockedMinutesForSubtree(text, tree[0].children[0]).count() == 60); // Child A alone
+    CHECK(TotalClockedMinutesForSubtree(text, tree[0].children[1]).count() == 15); // Child B has none of its own, Grandchild has 0:15
 }

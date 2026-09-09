@@ -26,9 +26,9 @@ std::vector<std::string> NamesInOrder(const std::vector<SymbolMarker>& chain) {
 } // namespace
 
 TEST_CASE("EnclosingSymbolChain returns the outer-to-inner chain containing a point", "[StickyScroll]") {
-    const auto mode = CppMode();
-    const std::string source = "namespace outer {\nclass Widget {\n    void run() {\n        return;\n    }\n};\n}\n";
-    const auto markers = mode.symbolKind(source);
+    const auto        mode    = CppMode();
+    const std::string source  = "namespace outer {\nclass Widget {\n    void run() {\n        return;\n    }\n};\n}\n";
+    const auto        markers = mode.symbolKind(source);
     REQUIRE(markers.size() == 3); // outer, Widget, run
 
     // A point inside run()'s body (the "return;" line).
@@ -37,9 +37,9 @@ TEST_CASE("EnclosingSymbolChain returns the outer-to-inner chain containing a po
 }
 
 TEST_CASE("EnclosingSymbolChain excludes a sibling and anything past the point", "[StickyScroll]") {
-    const auto mode = CppMode();
-    const std::string source = "void a() {\n    1;\n}\nvoid b() {\n    2;\n}\n";
-    const auto markers = mode.symbolKind(source);
+    const auto        mode    = CppMode();
+    const std::string source  = "void a() {\n    1;\n}\nvoid b() {\n    2;\n}\n";
+    const auto        markers = mode.symbolKind(source);
     REQUIRE(markers.size() == 2);
 
     const std::size_t pointInA = source.find("1;");
@@ -51,9 +51,9 @@ TEST_CASE("EnclosingSymbolChain excludes a sibling and anything past the point",
 }
 
 TEST_CASE("StickyChainForViewportTop excludes a header that's still the visible top line", "[StickyScroll]") {
-    const auto mode = CppMode();
-    const std::string source = "class Widget {\n    void run() {\n        return;\n    }\n};\n";
-    const auto markers = mode.symbolKind(source);
+    const auto        mode    = CppMode();
+    const std::string source  = "class Widget {\n    void run() {\n        return;\n    }\n};\n";
+    const auto        markers = mode.symbolKind(source);
     REQUIRE(markers.size() == 2); // Widget, run
 
     // Viewport top sits exactly at "class Widget {" -- its own header line
@@ -73,9 +73,9 @@ TEST_CASE("StickyChainForViewportTop excludes a header that's still the visible 
 }
 
 TEST_CASE("StickyChainForViewportTop is empty once the viewport scrolls past every enclosing block", "[StickyScroll]") {
-    const auto mode = CppMode();
-    const std::string source = "class Widget {\n    void run() {\n        return;\n    }\n};\nint after;\n";
-    const auto markers = mode.symbolKind(source);
+    const auto        mode    = CppMode();
+    const std::string source  = "class Widget {\n    void run() {\n        return;\n    }\n};\nint after;\n";
+    const auto        markers = mode.symbolKind(source);
 
     const std::size_t afterLineStart = source.find("int after;");
     REQUIRE(StickyChainForViewportTop(markers, afterLineStart).empty());

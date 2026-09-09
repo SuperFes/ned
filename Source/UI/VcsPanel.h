@@ -50,13 +50,18 @@ namespace ned::ui {
 // (BeginVcsCommitMessage/BeginVcsSwitchBranchPrompt/the vcs-create-branch
 // prompt) -- this panel adds no new commit/branch primitive of its own,
 // just a second entry point into flows that already work from C-c v c/w/n.
-enum class VcsPanelAction { Commit, SwitchBranch, CreateBranch };
+enum class VcsPanelAction { Commit,
+                            SwitchBranch,
+                            CreateBranch };
 
 // Which working-tree/stash bucket a row belongs to. Stash support follow-up:
 // Stash is a fourth bucket, distinct from the three working-tree ones --
 // unlike them, its section is only ever shown when non-empty (see
 // VcsPanel::BuildRows's own comment).
-enum class VcsPanelSection { Staged, Unstaged, Untracked, Stash };
+enum class VcsPanelSection { Staged,
+                             Unstaged,
+                             Untracked,
+                             Stash };
 
 // vcs-panel-context-menu follow-up: what a right-click landed on, reported
 // via SetOnContextMenuRequest below -- TabBar/ProjectSidebar's own
@@ -65,13 +70,14 @@ enum class VcsPanelSection { Staged, Unstaged, Untracked, Stash };
 // row never reaches this (no menu makes sense on it, same exclusion
 // ProjectSidebar applies to its own chrome rows).
 struct VcsPanelContextMenuTarget {
-    enum class Kind { Entry, StashEntry };
-    Kind                        kind        = Kind::Entry;
-    std::filesystem::path       path;                                   // Entry only
-    bool                        isDirectory = false;                    // Entry only
-    VcsPanelSection             section     = VcsPanelSection::Staged;  // Entry only
-    bool                        conflicted  = false;                    // Entry only
-    editor::vcs::VcsStashEntry  stash;                                  // StashEntry only
+    enum class Kind { Entry,
+                      StashEntry };
+    Kind                       kind = Kind::Entry;
+    std::filesystem::path      path;                                  // Entry only
+    bool                       isDirectory = false;                   // Entry only
+    VcsPanelSection            section     = VcsPanelSection::Staged; // Entry only
+    bool                       conflicted  = false;                   // Entry only
+    editor::vcs::VcsStashEntry stash;                                 // StashEntry only
 };
 
 class VcsPanel : public Widget {
@@ -227,7 +233,7 @@ class VcsPanel : public Widget {
     // around it) -- nullopt means "last notification was nullopt too".
     std::function<void(std::optional<std::filesystem::path>, bool)> onSelectionChanged_;
     std::optional<std::pair<std::filesystem::path, bool>>           lastNotifiedSelection_;
-    void                                                              NotifySelectionChanged();
+    void                                                            NotifySelectionChanged();
 
     // vcs-panel-context-menu follow-up: see SetOnContextMenuRequest's own
     // doc comment.
@@ -267,7 +273,9 @@ class VcsPanel : public Widget {
     // unknown.
     std::optional<editor::vcs::VcsAheadBehind> aheadBehind_;
 
-    enum class RemoteAction { Fetch, Pull, Push };
+    enum class RemoteAction { Fetch,
+                              Pull,
+                              Push };
     void RunRemoteAction(RemoteAction action);
 
     // Own throttled poll, independent of ProjectSidebar's own cache timer
@@ -296,15 +304,17 @@ class VcsPanel : public Widget {
     [[nodiscard]] int ContentHeight() const;
 
     struct Row {
-        enum class Kind { SectionHeader, Entry, StashEntry };
-        Kind                      kind;
-        VcsPanelSection           section;
-        std::size_t               fileCount = 0; // SectionHeader only
-        editor::ProjectTreeEntry  entry{};        // Entry only
-        std::u32string            treePrefix;     // Entry only -- ProjectSidebar's own box-drawing tree connectors
-        editor::vcs::VcsRowStatus status = editor::vcs::VcsRowStatus::None; // Entry (file rows) only
-        bool                      conflicted = false; // Entry (file rows) only -- see conflictedPaths_
-        editor::vcs::VcsStashEntry stash{};      // StashEntry only
+        enum class Kind { SectionHeader,
+                          Entry,
+                          StashEntry };
+        Kind                       kind;
+        VcsPanelSection            section;
+        std::size_t                fileCount = 0;                                // SectionHeader only
+        editor::ProjectTreeEntry   entry{};                                      // Entry only
+        std::u32string             treePrefix;                                   // Entry only -- ProjectSidebar's own box-drawing tree connectors
+        editor::vcs::VcsRowStatus  status     = editor::vcs::VcsRowStatus::None; // Entry (file rows) only
+        bool                       conflicted = false;                           // Entry (file rows) only -- see conflictedPaths_
+        editor::vcs::VcsStashEntry stash{};                                      // StashEntry only
     };
     [[nodiscard]] std::vector<Row> BuildRows() const;
 
@@ -324,7 +334,7 @@ class VcsPanel : public Widget {
     // did inline -- factored out so the new right-click handler doesn't
     // duplicate it a third time.
     [[nodiscard]] std::optional<std::size_t> RowIndexForContentRow(int contentRow, const std::vector<Row>& rows,
-                                                                    std::optional<std::size_t> stickyHeader) const;
+                                                                   std::optional<std::size_t> stickyHeader) const;
 
     void ToggleDirectory(const std::filesystem::path& path);
     bool HandleKeyEvent(const Event& event);

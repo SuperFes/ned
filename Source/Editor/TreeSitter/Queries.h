@@ -49,8 +49,8 @@ extern const char* const kToml;
 extern const char* const kClojure;
 extern const char* const kFish;
 extern const char* const kXml;
-extern const char* const kRust; // tree-sitter/tree-sitter-rust's own real queries/highlights.scm, unmodified
-extern const char* const kGo;   // tree-sitter/tree-sitter-go's own real queries/highlights.scm, unmodified
+extern const char* const kRust;   // tree-sitter/tree-sitter-rust's own real queries/highlights.scm, unmodified
+extern const char* const kGo;     // tree-sitter/tree-sitter-go's own real queries/highlights.scm, unmodified
 extern const char* const kCSharp; // tree-sitter/tree-sitter-c-sharp's own real queries/highlights.scm, unmodified
 
 // generic-code-folding follow-up: hand-written "@fold" queries, one per
@@ -136,8 +136,8 @@ extern const char* const kPhpTags;
 extern const char* const kJavaScriptTags;
 extern const char* const kTypeScriptTags;
 extern const char* const kPythonTags;
-extern const char* const kRustTags; // tree-sitter/tree-sitter-rust's own real queries/tags.scm, unmodified
-extern const char* const kGoTags;   // tree-sitter/tree-sitter-go's own real queries/tags.scm, unmodified
+extern const char* const kRustTags;   // tree-sitter/tree-sitter-rust's own real queries/tags.scm, unmodified
+extern const char* const kGoTags;     // tree-sitter/tree-sitter-go's own real queries/tags.scm, unmodified
 extern const char* const kCSharpTags; // tree-sitter/tree-sitter-c-sharp's own real queries/tags.scm, unmodified
 
 // test-runner integration: repo-local test-discovery queries
@@ -157,8 +157,8 @@ extern const char* const kPhpTests;
 extern const char* const kJavaScriptTests;
 extern const char* const kTypeScriptTests;
 extern const char* const kPythonTests;
-extern const char* const kRustTests; // #[test]/#[<framework>::test], rust-tests.scm's own header comment
-extern const char* const kGoTests;   // TestXxx/BenchmarkXxx/FuzzXxx/ExampleXxx, go-tests.scm's own header comment
+extern const char* const kRustTests;   // #[test]/#[<framework>::test], rust-tests.scm's own header comment
+extern const char* const kGoTests;     // TestXxx/BenchmarkXxx/FuzzXxx/ExampleXxx, go-tests.scm's own header comment
 extern const char* const kCSharpTests; // [Fact]/[Theory]/[Test]/[TestMethod]/etc, csharp-tests.scm's own header comment
 
 // smart-indentation follow-up: hand-written "indent"/"dedent" queries, one

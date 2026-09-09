@@ -665,8 +665,8 @@ class LspManager {
     // own "one bad entry, minor degrade" precedent, not
     // SendLocationRequest's stricter rename-only "refuse the whole batch."
     struct ResolvedHierarchyItem {
-        HierarchyItem          item;
-        std::filesystem::path  path;
+        HierarchyItem         item;
+        std::filesystem::path path;
     };
     using HierarchyItemsCallback = std::function<void(std::vector<ResolvedHierarchyItem> items)>;
 
@@ -715,7 +715,7 @@ class LspManager {
     // only for an annotation like "(3 call sites)", real navigation to a
     // specific call site is a documented future refinement.
     struct ResolvedHierarchyCall {
-        ResolvedHierarchyItem     item;
+        ResolvedHierarchyItem    item;
         std::vector<LspPosition> callSites;
     };
     using HierarchyCallsCallback = std::function<void(std::vector<ResolvedHierarchyCall> calls)>;
@@ -1110,7 +1110,7 @@ class LspManager {
     // true if the server actually filled it in) or nullopt on any failure.
     using ResolveCodeLensCallback = std::function<void(std::optional<ResolvedCodeLens> resolved)>;
     void ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& lens, ResolveCodeLensCallback callback,
-                        const std::string& serverKey = {});
+                         const std::string& serverKey = {});
 
     // documentLink follow-up. One server-reported link, already resolved to
     // byte offsets (ResolvedCodeLens' own layering) and, for a file:// URI,

@@ -98,17 +98,17 @@ TEST_CASE("EchoArea::Paint renders an error span in the diagnostic-error color a
     echoArea.Paint(canvas);
 
     REQUIRE(RowText(screen, 0, 16) == "before BAD after");
-    REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.echoArea.foreground); // 'b' -- untouched
-    REQUIRE(screen.PixelAt(7, 0).foreground_color == theme.diagnosticError);     // 'B' of "BAD"
-    REQUIRE(screen.PixelAt(9, 0).foreground_color == theme.diagnosticError);     // 'D' of "BAD"
+    REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.echoArea.foreground);  // 'b' -- untouched
+    REQUIRE(screen.PixelAt(7, 0).foreground_color == theme.diagnosticError);      // 'B' of "BAD"
+    REQUIRE(screen.PixelAt(9, 0).foreground_color == theme.diagnosticError);      // 'D' of "BAD"
     REQUIRE(screen.PixelAt(11, 0).foreground_color == theme.echoArea.foreground); // 'a' of "after" -- back to normal
 }
 
 TEST_CASE("EchoArea::Paint renders a ghosted span italic, more faded than a dimmed span, and strips its sentinel bytes",
           "[EchoArea]") {
     const std::string message = "before " + ned::ui::DimForEchoArea("DIM") + " " + ned::ui::GhostForEchoArea("GHOST") +
-                                 " after";
-    ned::ui::Theme    theme = ned::ui::DarkTheme();
+                                " after";
+    ned::ui::Theme    theme   = ned::ui::DarkTheme();
     ned::ui::EchoArea echoArea(message, theme);
 
     ned::ui::Screen screen(40, 1);
@@ -116,11 +116,11 @@ TEST_CASE("EchoArea::Paint renders a ghosted span italic, more faded than a dimm
     echoArea.Paint(canvas);
 
     REQUIRE(RowText(screen, 0, 22) == "before DIM GHOST after");
-    REQUIRE_FALSE(screen.PixelAt(7, 0).italic);                                    // 'D' of "DIM" -- not italic
-    REQUIRE(screen.PixelAt(11, 0).italic);                                         // 'G' of "GHOST" -- italic
-    REQUIRE(screen.PixelAt(11, 0).foreground_color != theme.echoArea.foreground);  // blended
+    REQUIRE_FALSE(screen.PixelAt(7, 0).italic);                                               // 'D' of "DIM" -- not italic
+    REQUIRE(screen.PixelAt(11, 0).italic);                                                    // 'G' of "GHOST" -- italic
+    REQUIRE(screen.PixelAt(11, 0).foreground_color != theme.echoArea.foreground);             // blended
     REQUIRE(screen.PixelAt(11, 0).foreground_color != screen.PixelAt(7, 0).foreground_color); // more faded than DIM
-    REQUIRE_FALSE(screen.PixelAt(17, 0).italic); // 'a' of "after" -- back to normal
+    REQUIRE_FALSE(screen.PixelAt(17, 0).italic);                                              // 'a' of "after" -- back to normal
 }
 
 // UTF-8-aware-rendering follow-up: a multi-byte codepoint must occupy

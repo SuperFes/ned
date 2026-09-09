@@ -39,5 +39,4 @@ auto Application::Title(const std::string& title) -> std::string {
     return Title;
 }
 
-
 } // namespace Ned

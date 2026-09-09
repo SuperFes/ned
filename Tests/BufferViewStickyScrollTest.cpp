@@ -64,7 +64,7 @@ const char* kSource =
     "        line1;\n"    // line 4
     "        line2;\n"    // line 5
     "        line3;\n"    // line 6
-    "    }\n"              // line 7
+    "    }\n"             // line 7
     "};\n"                // line 8
     "}\n";                // line 9
 
@@ -85,7 +85,7 @@ ned::ui::Event MousePress(int x, int y) {
 TEST_CASE("Sticky scroll pins the enclosing namespace/class/method chain once scrolled into a body",
           "[BufferView][StickyScroll]") {
     const StickyScrollSettingsGuard guard;
-    Fixture fixture;
+    Fixture                         fixture;
     fixture.buffer.InsertAtPoint(kSource);
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
@@ -107,7 +107,7 @@ TEST_CASE("Sticky scroll pins the enclosing namespace/class/method chain once sc
 TEST_CASE("Sticky scroll shows nothing when the viewport top is the outermost header itself",
           "[BufferView][StickyScroll]") {
     const StickyScrollSettingsGuard guard;
-    Fixture fixture;
+    Fixture                         fixture;
     fixture.buffer.InsertAtPoint(kSource);
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
@@ -162,7 +162,7 @@ TEST_CASE("Sticky scroll draws nothing when disabled via ned/set-sticky-scroll-e
 TEST_CASE("CursorPosition accounts for however many sticky rows the last Paint() drew",
           "[BufferView][StickyScroll]") {
     const StickyScrollSettingsGuard guard;
-    Fixture fixture;
+    Fixture                         fixture;
     fixture.buffer.InsertAtPoint(kSource);
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
@@ -182,7 +182,7 @@ TEST_CASE("CursorPosition accounts for however many sticky rows the last Paint()
 TEST_CASE("Clicking below the sticky rows resolves to the buffer line actually drawn there",
           "[BufferView][StickyScroll]") {
     const StickyScrollSettingsGuard guard;
-    Fixture fixture;
+    Fixture                         fixture;
     fixture.buffer.InsertAtPoint(kSource);
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
@@ -209,7 +209,7 @@ TEST_CASE("Clicking below the sticky rows resolves to the buffer line actually d
 TEST_CASE("Clicking a pinned sticky row jumps to that ancestor's own header line",
           "[BufferView][StickyScroll]") {
     const StickyScrollSettingsGuard guard;
-    Fixture fixture;
+    Fixture                         fixture;
     fixture.buffer.InsertAtPoint(kSource);
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
@@ -233,21 +233,21 @@ TEST_CASE("Clicking a pinned sticky row jumps to that ancestor's own header line
 // StickyScrollTest.cpp) an integration test needs enough trailing filler
 // lines for line 5 to actually be scrollable to at all.
 const char* kMarkdownSource =
-    "# Top\n"    // line 0
-    "intro\n"    // line 1
-    "## Sub\n"   // line 2
-    "line1\n"    // line 3
-    "line2\n"    // line 4
-    "line3\n"    // line 5
-    "line4\n"    // line 6
-    "line5\n"    // line 7
-    "line6\n"    // line 8
-    "line7\n";   // line 9
+    "# Top\n"  // line 0
+    "intro\n"  // line 1
+    "## Sub\n" // line 2
+    "line1\n"  // line 3
+    "line2\n"  // line 4
+    "line3\n"  // line 5
+    "line4\n"  // line 6
+    "line5\n"  // line 7
+    "line6\n"  // line 8
+    "line7\n"; // line 9
 
 TEST_CASE("Sticky scroll pins the enclosing Markdown heading chain once scrolled into a section's body",
           "[BufferView][StickyScroll][Markdown]") {
     const StickyScrollSettingsGuard guard;
-    Fixture fixture;
+    Fixture                         fixture;
     fixture.mode = ned::editor::MarkdownMode();
     fixture.buffer.InsertAtPoint(kMarkdownSource);
     BufferView view = fixture.View();
@@ -268,7 +268,7 @@ TEST_CASE("Sticky scroll pins the enclosing Markdown heading chain once scrolled
 TEST_CASE("Clicking a pinned Markdown sticky row jumps to that heading's own line",
           "[BufferView][StickyScroll][Markdown]") {
     const StickyScrollSettingsGuard guard;
-    Fixture fixture;
+    Fixture                         fixture;
     fixture.mode = ned::editor::MarkdownMode();
     fixture.buffer.InsertAtPoint(kMarkdownSource);
     BufferView view = fixture.View();
@@ -288,21 +288,21 @@ TEST_CASE("Clicking a pinned Markdown sticky row jumps to that heading's own lin
 // main-editor-sticky-scroll-markdown follow-up. Same shape as
 // kMarkdownSource above, for the same MaxTopLine() reason.
 const char* kOrgSource =
-    "* Top\n"    // line 0
-    "intro\n"    // line 1
-    "** Sub\n"   // line 2
-    "line1\n"    // line 3
-    "line2\n"    // line 4
-    "line3\n"    // line 5
-    "line4\n"    // line 6
-    "line5\n"    // line 7
-    "line6\n"    // line 8
-    "line7\n";   // line 9
+    "* Top\n"  // line 0
+    "intro\n"  // line 1
+    "** Sub\n" // line 2
+    "line1\n"  // line 3
+    "line2\n"  // line 4
+    "line3\n"  // line 5
+    "line4\n"  // line 6
+    "line5\n"  // line 7
+    "line6\n"  // line 8
+    "line7\n"; // line 9
 
 TEST_CASE("Sticky scroll pins the enclosing Org headline chain once scrolled into a subtree's body",
           "[BufferView][StickyScroll][Org]") {
     const StickyScrollSettingsGuard guard;
-    Fixture fixture;
+    Fixture                         fixture;
     fixture.mode = ned::editor::OrgMode();
     fixture.buffer.InsertAtPoint(kOrgSource);
     BufferView view = fixture.View();
@@ -329,14 +329,14 @@ TEST_CASE("Sticky scroll signature keeps a multi-byte codepoint in a single cell
     Fixture                         fixture;
     fixture.mode = ned::editor::MarkdownMode();
     fixture.buffer.InsertAtPoint("# Top\n"
-                                  "## Sub \xE2\x80\x94 note\n" // "## Sub — note"
-                                  "line1\n"
-                                  "line2\n"
-                                  "line3\n"
-                                  "line4\n"
-                                  "line5\n"
-                                  "line6\n"
-                                  "line7\n");
+                                 "## Sub \xE2\x80\x94 note\n" // "## Sub — note"
+                                 "line1\n"
+                                 "line2\n"
+                                 "line3\n"
+                                 "line4\n"
+                                 "line5\n"
+                                 "line6\n"
+                                 "line7\n");
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
     view.SetTopLine(5); // deep inside Sub's body
@@ -361,7 +361,7 @@ TEST_CASE("Sticky scroll signature keeps a multi-byte codepoint in a single cell
 TEST_CASE("Clicking a pinned Org sticky row jumps to that headline's own line",
           "[BufferView][StickyScroll][Org]") {
     const StickyScrollSettingsGuard guard;
-    Fixture fixture;
+    Fixture                         fixture;
     fixture.mode = ned::editor::OrgMode();
     fixture.buffer.InsertAtPoint(kOrgSource);
     BufferView view = fixture.View();

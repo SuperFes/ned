@@ -8,13 +8,13 @@ namespace ned::text {
 
 namespace {
 
-std::size_t BackNCodepoints(const ITextStorage& rope, std::size_t byteOffset, std::size_t n) {
-    std::size_t offset = byteOffset;
-    for (std::size_t i = 0; i < n && offset > 0; ++i) {
-        offset = rope.PreviousCodepointBoundary(offset);
+    std::size_t BackNCodepoints(const ITextStorage& rope, std::size_t byteOffset, std::size_t n) {
+        std::size_t offset = byteOffset;
+        for (std::size_t i = 0; i < n && offset > 0; ++i) {
+            offset = rope.PreviousCodepointBoundary(offset);
+        }
+        return offset;
     }
-    return offset;
-}
 
 } // namespace
 
@@ -26,8 +26,8 @@ std::size_t NextGraphemeBoundary(const ITextStorage& rope, std::size_t byteOffse
 
     utf8proc_int32_t state = 0;
 
-    const auto first = rope.CodepointAt(byteOffset);
-    char32_t   cp1    = first.codepoint;
+    const auto  first  = rope.CodepointAt(byteOffset);
+    char32_t    cp1    = first.codepoint;
     std::size_t offset = byteOffset + first.byteLength;
 
     while (offset < total) {
@@ -58,21 +58,21 @@ std::size_t PreviousGraphemeBoundary(const ITextStorage& rope, std::size_t byteO
     for (int attempt = 0; attempt < 10; ++attempt) {
         const std::size_t scanStart = BackNCodepoints(rope, byteOffset, lookback);
 
-        std::size_t lastBoundary   = scanStart;
+        std::size_t lastBoundary  = scanStart;
         bool        foundBoundary = false;
 
         if (scanStart < byteOffset) {
             utf8proc_int32_t state = 0;
 
-            const auto first = rope.CodepointAt(scanStart);
-            char32_t   cp1    = first.codepoint;
+            const auto  first  = rope.CodepointAt(scanStart);
+            char32_t    cp1    = first.codepoint;
             std::size_t offset = scanStart + first.byteLength;
 
             while (offset < byteOffset) {
                 const auto next = rope.CodepointAt(offset);
 
                 if (utf8proc_grapheme_break_stateful(static_cast<utf8proc_int32_t>(cp1), static_cast<utf8proc_int32_t>(next.codepoint), &state)) {
-                    lastBoundary   = offset;
+                    lastBoundary  = offset;
                     foundBoundary = true;
                 }
 
@@ -107,7 +107,7 @@ std::size_t SnapToGraphemeBoundary(const ITextStorage& rope, std::size_t byteOff
     // case to land on the containing codepoint's start instead.
     {
         const std::size_t codepointOffset = rope.ByteOffsetToCodepointOffset(byteOffset);
-        std::size_t        snapped         = rope.CodepointOffsetToByteOffset(codepointOffset);
+        std::size_t       snapped         = rope.CodepointOffsetToByteOffset(codepointOffset);
         if (snapped != byteOffset) {
             snapped = rope.CodepointOffsetToByteOffset(codepointOffset - 1);
         }
@@ -123,20 +123,20 @@ std::size_t SnapToGraphemeBoundary(const ITextStorage& rope, std::size_t byteOff
     for (int attempt = 0; attempt < 10; ++attempt) {
         const std::size_t scanStart = BackNCodepoints(rope, byteOffset, lookback);
 
-        std::size_t lastBoundary   = scanStart;
+        std::size_t lastBoundary  = scanStart;
         bool        foundBoundary = false;
 
         utf8proc_int32_t state = 0;
 
-        const auto first = rope.CodepointAt(scanStart);
-        char32_t   cp1    = first.codepoint;
+        const auto  first  = rope.CodepointAt(scanStart);
+        char32_t    cp1    = first.codepoint;
         std::size_t offset = scanStart + first.byteLength;
 
         while (offset <= byteOffset) {
             const auto next = rope.CodepointAt(offset);
 
             if (utf8proc_grapheme_break_stateful(static_cast<utf8proc_int32_t>(cp1), static_cast<utf8proc_int32_t>(next.codepoint), &state)) {
-                lastBoundary   = offset;
+                lastBoundary  = offset;
                 foundBoundary = true;
                 if (offset == byteOffset) {
                     return byteOffset; // byteOffset is itself a real boundary

@@ -5,7 +5,7 @@
 namespace ned::editor {
 
 namespace {
-ScriptingSession* g_current = nullptr;
+    ScriptingSession* g_current = nullptr;
 }
 
 ScriptingSessionScope::ScriptingSessionScope(ScriptingSession session) : session_(session) {

@@ -308,8 +308,8 @@ TEST_CASE("AcpClient answers an unhandled agent-initiated request with MethodNot
 // needs to do explicitly.
 TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an already-destroyed AcpClient", "[Acp]") {
     ned::ui::EventLoop eventLoop;
-    int                 clientWritesHere[2];
-    int                 clientReadsHere[2];
+    int                clientWritesHere[2];
+    int                clientReadsHere[2];
     REQUIRE(::pipe(clientWritesHere) == 0);
     REQUIRE(::pipe(clientReadsHere) == 0);
     const int agentStdinRead   = clientWritesHere[0];
@@ -319,7 +319,7 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
     client.emplace(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
     client->SetOnDisconnected([](std::string) {});
 
-    ::close(agentStdoutWrite); // EOF -- the read thread Post()s its disconnect notification, then exits
+    ::close(agentStdoutWrite);                                  // EOF -- the read thread Post()s its disconnect notification, then exits
     std::this_thread::sleep_for(std::chrono::milliseconds(50)); // let the background thread actually post before destroying
 
     client.reset(); // ~AcpClient() flips alive_ to false as its first statement

@@ -30,7 +30,7 @@ namespace ned::editor {
 // maxCandidates yields no candidates -- nothing meaningful to rank without a
 // prefix to anchor on.
 [[nodiscard]] std::vector<std::string> CollectDabbrevCandidates(std::string_view content, std::size_t point,
-                                                                 std::string_view prefix, std::size_t maxCandidates = 20);
+                                                                std::string_view prefix, std::size_t maxCandidates = 20);
 
 } // namespace ned::editor
 

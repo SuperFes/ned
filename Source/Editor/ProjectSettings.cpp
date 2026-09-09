@@ -76,7 +76,7 @@ ProjectSettings LoadProjectSettings(const std::filesystem::path& root) {
 
 const std::vector<std::filesystem::path>& IncludePathsForMode(const ProjectSettings& settings, const std::string& modeName) {
     static const std::vector<std::filesystem::path> kEmpty;
-    const auto                                       it = settings.includePathsByMode.find(modeName);
+    const auto                                      it = settings.includePathsByMode.find(modeName);
     return it != settings.includePathsByMode.end() ? it->second : kEmpty;
 }
 

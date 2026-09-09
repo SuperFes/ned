@@ -98,8 +98,8 @@ namespace {
 } // namespace
 
 std::vector<DiffLine> UnifiedDiff(std::string_view oldText, std::string_view newText, std::size_t contextLines) {
-    const std::vector<std::string_view> a = SplitLines(oldText);
-    const std::vector<std::string_view> b = SplitLines(newText);
+    const std::vector<std::string_view> a     = SplitLines(oldText);
+    const std::vector<std::string_view> b     = SplitLines(newText);
     const std::vector<LineDiffHunk>     hunks = DiffLines(a, b);
 
     std::vector<DiffLine> out;

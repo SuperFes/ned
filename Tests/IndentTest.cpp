@@ -25,7 +25,6 @@ using ned::editor::HtmlMode;
 using ned::editor::IndentBuffer;
 using ned::editor::IndentRegion;
 using ned::editor::IndentStyle;
-using ned::editor::RigidShiftRegion;
 using ned::editor::JanetMode;
 using ned::editor::JankMode;
 using ned::editor::JavaScriptMode;
@@ -35,6 +34,7 @@ using ned::editor::Mode;
 using ned::editor::OrgMode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
+using ned::editor::RigidShiftRegion;
 using ned::editor::SetIndentStyleForMode;
 using ned::editor::TomlMode;
 using ned::editor::TsxMode;
@@ -49,9 +49,9 @@ namespace {
 // own trailing newline -- mirrors IndentRegion's own internal computation,
 // so a test case can just name a line by index.
 std::pair<std::size_t, std::size_t> LineRange(const Buffer& buffer, std::size_t line) {
-    const auto&       content    = buffer.Content();
-    const std::size_t lineStart  = content.LineToByteOffset(line);
-    std::size_t        lineEnd    = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
+    const auto&       content   = buffer.Content();
+    const std::size_t lineStart = content.LineToByteOffset(line);
+    std::size_t       lineEnd   = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
     if (line + 1 < content.LineCount() && lineEnd > lineStart) {
         --lineEnd;
     }
@@ -67,7 +67,7 @@ std::pair<std::size_t, std::size_t> LineRange(const Buffer& buffer, std::size_t 
 // actually huge file on disk.
 std::filesystem::path WriteTempFile(const std::string& name, std::string_view content) {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
-    std::ofstream                file(path, std::ios::binary);
+    std::ofstream               file(path, std::ios::binary);
     file << content;
     return path;
 }
@@ -360,7 +360,7 @@ TEST_CASE("MarkdownMode indentColumn breaks out of a list on a second consecutiv
     buffer.InsertAtPoint("- item one\n  \n");
 
     const std::size_t newLinePos = buffer.Content().ByteLength();
-    const auto         column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
+    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
     REQUIRE(column.has_value());
     REQUIRE(*column == 0);
 }
@@ -375,7 +375,7 @@ TEST_CASE("MarkdownMode indentColumn still hangs a blank continuation on the FIR
     buffer.InsertAtPoint("- item one\n");
 
     const std::size_t newLinePos = buffer.Content().ByteLength();
-    const auto         column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
+    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
     REQUIRE(column.has_value());
     REQUIRE(*column == 2);
 }
@@ -643,7 +643,7 @@ TEST_CASE("OrgMode indentColumn hangs a list item's continuation to its own bull
     const auto [bulletStart, bulletEnd] = LineRange(buffer, 0); // "- item one" -- its own bullet line
     REQUIRE(mode.indentColumn(buffer.Text(), bulletStart, bulletEnd) == 0);
 
-    const auto [contStart, contEnd] = LineRange(buffer, 1); // "  more text" -- hanging continuation
+    const auto [contStart, contEnd] = LineRange(buffer, 1);             // "  more text" -- hanging continuation
     REQUIRE(mode.indentColumn(buffer.Text(), contStart, contEnd) == 2); // "- " is 2 columns wide
 }
 
@@ -653,7 +653,7 @@ TEST_CASE("OrgMode indentColumn breaks out of a list on a second consecutive bla
     buffer.InsertAtPoint("- item one\n  \n");
 
     const std::size_t newLinePos = buffer.Content().ByteLength();
-    const auto         column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
+    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
     REQUIRE(column.has_value());
     REQUIRE(*column == 0);
 }
@@ -665,7 +665,7 @@ TEST_CASE("OrgMode indentColumn still hangs a blank continuation on the FIRST En
     buffer.InsertAtPoint("- item one\n");
 
     const std::size_t newLinePos = buffer.Content().ByteLength();
-    const auto         column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
+    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
     REQUIRE(column.has_value());
     REQUIRE(*column == 2);
 }

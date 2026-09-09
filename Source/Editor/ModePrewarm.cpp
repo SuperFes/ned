@@ -23,16 +23,16 @@ Mode BuildWarmModeForPath(const std::filesystem::path& path, std::string_view te
     return mode;
 }
 
-ModePrewarmer::ModePrewarmer(text::BufferList& bufferList, ui::EventLoop& eventLoop)
-    : bufferList_(bufferList), eventLoop_(eventLoop) {}
+ModePrewarmer::ModePrewarmer(text::BufferList& bufferList, ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
+}
 
 void ModePrewarmer::Prewarm(text::Buffer& buffer) {
     if (!buffer.Path() || inFlight_.contains(buffer.Name())) {
         return;
     }
-    const std::string                        name     = buffer.Name();
-    const std::filesystem::path              path     = *buffer.Path();
-    std::unique_ptr<text::ITextStorage>      snapshot = buffer.Content().Clone(); // see header comment: O(1), thread-safe
+    const std::string                   name     = buffer.Name();
+    const std::filesystem::path         path     = *buffer.Path();
+    std::unique_ptr<text::ITextStorage> snapshot = buffer.Content().Clone(); // see header comment: O(1), thread-safe
 
     inFlight_[name] = std::jthread([this, name, path, snapshot = std::move(snapshot)](std::stop_token) {
         Mode mode = BuildWarmModeForPath(path, snapshot->ToString());

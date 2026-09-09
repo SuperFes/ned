@@ -21,7 +21,7 @@ namespace ned::editor {
 
 struct ScriptingSession {
     CommandRegistry& registry;
-    Keymap&          scriptKeymap; // where a backend's define-key equivalent writes bindings
+    Keymap&          scriptKeymap;      // where a backend's define-key equivalent writes bindings
     CommandContext*  context = nullptr; // set only while a script-backed command is running
 };
 

@@ -25,8 +25,7 @@ namespace {
 
 const editor::KeyChord TerminalPanel::kToggleChord{.Control = true, .Codepoint = U'`'};
 
-TerminalPanel::TerminalPanel(const Theme& theme, std::vector<std::string> argv, std::string label)
-    : theme_(theme), argv_(std::move(argv)), label_(std::move(label)), emulator_(24, 80) {
+TerminalPanel::TerminalPanel(const Theme& theme, std::vector<std::string> argv, std::string label) : theme_(theme), argv_(std::move(argv)), label_(std::move(label)), emulator_(24, 80) {
 }
 
 void TerminalPanel::SetEventLoop(EventLoop* eventLoop) {

@@ -1116,9 +1116,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // (AddCursorAt's dedupe).
     registry.Register("add-cursor-below", "Add a cursor one line below the bottom-most cursor.",
                       [](CommandContext& context) {
-                          text::Buffer&     buffer  = context.buffer;
+                          text::Buffer&             buffer  = context.buffer;
                           const text::ITextStorage& content = buffer.Content();
-                          std::size_t       lowest  = buffer.Point();
+                          std::size_t               lowest  = buffer.Point();
                           for (const auto& cursor : buffer.SecondaryCursors()) {
                               lowest = std::max(lowest, cursor.point);
                           }
@@ -1135,9 +1135,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("add-cursor-above", "Add a cursor one line above the top-most cursor.",
                       [](CommandContext& context) {
-                          text::Buffer&     buffer  = context.buffer;
+                          text::Buffer&             buffer  = context.buffer;
                           const text::ITextStorage& content = buffer.Content();
-                          std::size_t       highest = buffer.Point();
+                          std::size_t               highest = buffer.Point();
                           for (const auto& cursor : buffer.SecondaryCursors()) {
                               highest = std::min(highest, cursor.point);
                           }
@@ -1339,7 +1339,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 const auto&       content   = buffer.Content();
                 const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
                 const std::size_t lineStart = content.LineToByteOffset(line);
-                std::size_t        lineEnd   = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
+                std::size_t       lineEnd   = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
                 if (line + 1 < content.LineCount() && lineEnd > lineStart) {
                     --lineEnd; // exclude the line's own trailing '\n'
                 }
@@ -1358,9 +1358,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             // "not-yet-typed blank line" convention (Mode.h) -- the new line
             // is empty at this point, nothing to bound.
             if (context.mode != nullptr && context.mode->indentColumn) {
-                const auto&        content   = buffer.Content();
-                const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
-                const std::size_t  lineStart = content.LineToByteOffset(line);
+                const auto&       content   = buffer.Content();
+                const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
+                const std::size_t lineStart = content.LineToByteOffset(line);
                 if (const std::optional<int> column = context.mode->indentColumn(buffer.Text(), lineStart, lineStart)) {
                     const IndentStyle style = EffectiveIndentStyle(context.mode->name);
                     SetLineIndent(buffer, lineStart, *column, style);
@@ -1485,21 +1485,21 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             // motion", CommandsTest.cpp), not modern IDEs' own
             // keep-selection-for-repeated-Tab convention.
             if (context.buffer.HasMark()) {
-                const auto [start, end]      = context.buffer.Region();
-                const auto&        content    = context.buffer.Content();
-                const std::size_t  startLine  = content.ByteOffsetToLine(start);
-                const std::size_t  endLine    = content.ByteOffsetToLine(end) + 1; // exclusive
-                const IndentStyle  style      = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
+                const auto [start, end]     = context.buffer.Region();
+                const auto&       content   = context.buffer.Content();
+                const std::size_t startLine = content.ByteOffsetToLine(start);
+                const std::size_t endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
+                const IndentStyle style     = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
                 context.buffer.ClearMark();
                 RigidShiftRegion(context.buffer, style, startLine, endLine, 1);
                 return;
             }
             if (context.mode != nullptr && context.mode->indentColumn) {
-                text::Buffer&      buffer    = context.buffer;
-                const auto&        content   = buffer.Content();
-                const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
-                const std::size_t  lineStart = content.LineToByteOffset(line);
-                const std::size_t  indentEnd = LineIndentEnd(content, lineStart);
+                text::Buffer&     buffer    = context.buffer;
+                const auto&       content   = buffer.Content();
+                const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
+                const std::size_t lineStart = content.LineToByteOffset(line);
+                const std::size_t indentEnd = LineIndentEnd(content, lineStart);
                 if (buffer.Point() <= indentEnd) {
                     std::size_t lineEnd =
                         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
@@ -1535,9 +1535,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             const IndentStyle style = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
             if (context.buffer.HasMark()) {
                 const auto [start, end]     = context.buffer.Region();
-                const auto&        content   = context.buffer.Content();
-                const std::size_t  startLine = content.ByteOffsetToLine(start);
-                const std::size_t  endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
+                const auto&       content   = context.buffer.Content();
+                const std::size_t startLine = content.ByteOffsetToLine(start);
+                const std::size_t endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
                 // Clears the mark afterward -- matches every other editing
                 // command's own convention, see indent-for-tab-command's
                 // own mark-active branch above.
@@ -2784,7 +2784,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 return;
             }
             if (context.message) {
-                const editor::coverage::CoverageReport report = editor::coverage::CurrentCoverageReport();
+                const editor::coverage::CoverageReport report    = editor::coverage::CurrentCoverageReport();
                 std::size_t                            lineCount = 0;
                 for (const editor::coverage::FileCoverage& file : report) {
                     lineCount += file.lines.size();
@@ -3396,14 +3396,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           }
                           const std::string& prefix = context.mode->lineCommentPrefix;
 
-                          text::Buffer&     buffer  = context.buffer;
+                          text::Buffer& buffer = context.buffer;
                           // Safe to capture once here -- only read-only
                           // uses below (line-range resolution, the first
                           // pass' own scan) ever touch it; the second
                           // pass's mutating loop re-fetches its own fresh
                           // reference per iteration instead (see there).
                           const text::ITextStorage& content = buffer.Content();
-                          std::size_t       firstLine, lastLine;
+                          std::size_t               firstLine, lastLine;
                           if (buffer.HasMark()) {
                               const auto [start, end] = buffer.Region();
                               firstLine               = content.ByteOffsetToLine(start);
@@ -3453,10 +3453,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           // in this loop runs.
                           for (std::size_t line = lastLine + 1; line-- > firstLine;) {
                               const text::ITextStorage& lineContent = buffer.Content();
-                              const std::size_t start  = lineContent.LineToByteOffset(line);
-                              const std::size_t end    = LineContentEnd(lineContent, start);
-                              const std::string text   = lineContent.Substring(start, end - start);
-                              const std::size_t indent = text.find_first_not_of(" \t");
+                              const std::size_t         start       = lineContent.LineToByteOffset(line);
+                              const std::size_t         end         = LineContentEnd(lineContent, start);
+                              const std::string         text        = lineContent.Substring(start, end - start);
+                              const std::size_t         indent      = text.find_first_not_of(" \t");
                               if (indent == std::string::npos) {
                                   continue;
                               }
@@ -3507,10 +3507,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               }
                               return;
                           }
-                          const auto [start, end] = context.buffer.Region();
-                          const auto&        content   = context.buffer.Content();
-                          const std::size_t  startLine = content.ByteOffsetToLine(start);
-                          const std::size_t  endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
+                          const auto [start, end]     = context.buffer.Region();
+                          const auto&       content   = context.buffer.Content();
+                          const std::size_t startLine = content.ByteOffsetToLine(start);
+                          const std::size_t endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
                           context.buffer.ClearMark();
                           const std::size_t changed = IndentRegion(context.buffer, *context.mode, startLine, endLine);
                           if (context.message) {

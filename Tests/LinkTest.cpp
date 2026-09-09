@@ -220,7 +220,9 @@ TEST_CASE("ResolveFileLink with empty extension/index lists behaves exactly as b
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
     const std::filesystem::path file = dir / "note.txt";
-    { std::ofstream(file) << "hi"; }
+    {
+        std::ofstream(file) << "hi";
+    }
 
     REQUIRE(ResolveFileLink("note.txt", dir).has_value());
     REQUIRE_FALSE(ResolveFileLink("note", dir).has_value()); // no extension inference requested
@@ -233,7 +235,9 @@ TEST_CASE("ResolveFileLink appends a candidate extension to find a relative impo
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
     const std::filesystem::path file = dir / "foo.ts";
-    { std::ofstream(file) << "export {};"; }
+    {
+        std::ofstream(file) << "export {};";
+    }
 
     const auto resolved = ResolveFileLink("foo", dir, {}, {"ts", "js"});
     REQUIRE(resolved.has_value());
@@ -247,7 +251,9 @@ TEST_CASE("ResolveFileLink resolves a directory/package import via an index-file
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir / "foo");
     const std::filesystem::path indexFile = dir / "foo" / "index.js";
-    { std::ofstream(indexFile) << "module.exports = {};"; }
+    {
+        std::ofstream(indexFile) << "module.exports = {};";
+    }
 
     const auto resolved = ResolveFileLink("foo", dir, {}, {"js"}, {"index"});
     REQUIRE(resolved.has_value());
@@ -261,7 +267,9 @@ TEST_CASE("ResolveFileLink resolves a Python package's __init__.py after dot-to-
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir / "foo" / "bar");
     const std::filesystem::path initFile = dir / "foo" / "bar" / "__init__.py";
-    { std::ofstream(initFile) << "# package"; }
+    {
+        std::ofstream(initFile) << "# package";
+    }
 
     const auto resolved = ResolveFileLink("foo/bar", dir, {}, {"py"}, {"__init__"});
     REQUIRE(resolved.has_value());

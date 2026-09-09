@@ -45,9 +45,9 @@ namespace {
     // does. Kept as a separate map (rather than reusing g_dynamicModes'
     // now-different value type) since the two registration APIs have
     // genuinely different contracts.
-    std::unordered_map<std::string, Mode>             g_registeredModes;
-    std::unordered_map<std::string, std::string>      g_extensionOverrides;
-    std::unordered_map<std::string, std::string>      g_filenameOverrides;
+    std::unordered_map<std::string, Mode>        g_registeredModes;
+    std::unordered_map<std::string, std::string> g_extensionOverrides;
+    std::unordered_map<std::string, std::string> g_filenameOverrides;
     // per-buffer-mode-cache follow-up: see CachedModeForBuffer's own doc
     // comment in the header. Keyed by raw Buffer* -- only ever compared for
     // identity, never dereferenced, so an entry outliving its buffer briefly
@@ -192,9 +192,9 @@ void RegisterDynamicMode(const std::string& name, const std::filesystem::path& l
 
     const std::lock_guard lock(g_mutex);
     g_dynamicModes.insert_or_assign(name, DynamicModeEntry{.language          = language,
-                                                            .querySource       = std::move(querySource),
-                                                            .foldQuerySource   = std::move(foldQuerySource),
-                                                            .importQuerySource = std::move(importQuerySource)});
+                                                           .querySource       = std::move(querySource),
+                                                           .foldQuerySource   = std::move(foldQuerySource),
+                                                           .importQuerySource = std::move(importQuerySource)});
     // A re-registration under a name some already-cached buffer resolved to
     // would otherwise never take effect for it -- see g_modeCache's own
     // comment. Registration is rare (init.janet load time, or an
@@ -303,8 +303,8 @@ Mode CachedModeForBuffer(const text::Buffer& buffer) {
     // header comment, so there's no real race to build the same buffer's
     // Mode twice; insert_or_assign rather than emplace just in case, so a
     // hypothetical double-build overwrites rather than leaving two entries.
-    Mode                   mode = ModeForBuffer(buffer);
-    const std::lock_guard  lock(g_mutex);
+    Mode                  mode = ModeForBuffer(buffer);
+    const std::lock_guard lock(g_mutex);
     return g_modeCache.insert_or_assign(&buffer, std::move(mode)).first->second;
 }
 

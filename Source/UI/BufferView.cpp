@@ -647,7 +647,7 @@ bool BufferView::DispatchChordNormally(const editor::KeyChord& chord) {
     // survivor" reproduces it deterministically) -- this local copy is safe
     // to call regardless of whether *this* still exists by then.
     const std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChangedCopy = onPrefixHintChanged_;
-    const bool ran = RunCommandAndHandleOutcome(
+    const bool                                             ran                     = RunCommandAndHandleOutcome(
         context,
         [&] {
             outcome = dispatcher_.Feed(chord, context);
@@ -699,7 +699,7 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
                                             const editor::KeyChord* triggeringChord) {
     const std::size_t generationBefore    = activeBuffer_.Get().ContentGeneration();
     const std::size_t pointBefore         = activeBuffer_.Get().Point(); // documentHighlight follow-up: see MaybeScheduleDocumentHighlight's call site below
-    const std::string statusMessageBefore = statusMessage_; // status-message-lifecycle: see the "clear if unchanged" check below
+    const std::string statusMessageBefore = statusMessage_;              // status-message-lifecycle: see the "clear if unchanged" check below
     // Diff gutter markers follow-up: read alongside generationBefore, for
     // the same "safe as long as this dispatch doesn't itself switch active
     // buffers" reasoning MaybeScheduleAutoCompletion's own generationBefore
@@ -1272,8 +1272,8 @@ void BufferView::RequestDiagnosticsBuffer() {
     excerpts.reserve(pending.size());
     for (const PendingDiagnostic& item : pending) {
         const text::ITextStorage& content = item.source->Content();
-        const std::size_t line    = content.ByteOffsetToLine(item.sourceLineStart);
-        const std::size_t lineEnd = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        const std::size_t         line    = content.ByteOffsetToLine(item.sourceLineStart);
+        const std::size_t         lineEnd = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         // U+25B8, ProjectSidebar's own disclosure triangle -- same header
         // glyph vcs-full-diff-buffer's excerpts use, for visual consistency
         // between the two multibuffer consumers.
@@ -1538,7 +1538,7 @@ void BufferView::CloseEligibleBuffers(const std::vector<text::Buffer*>& targets)
     }
     if (skipped > 0) {
         statusMessage_ = "Closed " + std::to_string(closed) + " tab(s); " + std::to_string(skipped) +
-                          " left open (unsaved changes).";
+                         " left open (unsaved changes).";
     }
     else if (closed > 0) {
         statusMessage_ = "Closed " + std::to_string(closed) + " tab(s).";
@@ -1559,9 +1559,9 @@ void BufferView::CloseOtherTabs(text::Buffer& keep) {
 }
 
 void BufferView::CloseTabsToTheRight(text::Buffer& from) {
-    const auto& buffers = bufferList_.Buffers();
-    const auto  it       = std::find_if(buffers.begin(), buffers.end(),
-                                        [&](const std::unique_ptr<text::Buffer>& candidate) { return candidate.get() == &from; });
+    const auto&                buffers = bufferList_.Buffers();
+    const auto                 it      = std::find_if(buffers.begin(), buffers.end(),
+                                                      [&](const std::unique_ptr<text::Buffer>& candidate) { return candidate.get() == &from; });
     std::vector<text::Buffer*> targets;
     if (it != buffers.end()) {
         for (auto rest = std::next(it); rest != buffers.end(); ++rest) {

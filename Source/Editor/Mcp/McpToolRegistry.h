@@ -112,11 +112,11 @@ class ToolRegistry {
     void RegisterBuiltinTools();
 
     text::BufferList&    bufferList_;
-    lsp::LspManager&      lspManager_;
-    vcs::VcsRunner&       vcsRunner_;
-    testrun::TestRunner&  testRunner_;
-    dap::DapManager&      dapManager_;
-    std::vector<Entry>    entries_;
+    lsp::LspManager&     lspManager_;
+    vcs::VcsRunner&      vcsRunner_;
+    testrun::TestRunner& testRunner_;
+    dap::DapManager&     dapManager_;
+    std::vector<Entry>   entries_;
 };
 
 } // namespace ned::editor::mcp

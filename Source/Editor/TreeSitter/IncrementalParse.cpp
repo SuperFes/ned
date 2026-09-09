@@ -47,7 +47,7 @@ const Tree& IncrementalParseCache::Update(const Parser& parser, std::string_view
         ++prefix;
     }
     const std::size_t maxSuffix = maxCommon - prefix; // caps prefix+suffix at maxCommon, so they can't overlap
-    std::size_t        suffix    = 0;
+    std::size_t       suffix    = 0;
     while (suffix < maxSuffix && oldText[oldText.size() - 1 - suffix] == newText[newText.size() - 1 - suffix]) {
         ++suffix;
     }

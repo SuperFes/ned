@@ -18,14 +18,14 @@ using ned::editor::JsonMode;
 using ned::editor::PythonMode;
 using ned::editor::TypeScriptMode;
 using ned::editor::codefold::FoldableBlocks;
+using ned::editor::codefold::FoldedLineRanges;
 using ned::editor::codefold::FoldRegion;
 using ned::editor::codefold::FoldRegionsWithDepth;
-using ned::editor::codefold::FoldedLineRanges;
 using ned::editor::codefold::ToggleFoldAtLine;
 using ned::text::Buffer;
 
 TEST_CASE("FoldableBlocks finds a C function body", "[CodeFold]") {
-    const auto mode = CMode();
+    const auto mode   = CMode();
     const auto blocks = FoldableBlocks(mode, "int main(void) {\n    return 0;\n}\n");
     REQUIRE(blocks.size() == 1);
     REQUIRE(blocks[0].first == std::string("int main(void) ").size());
@@ -81,8 +81,8 @@ TEST_CASE("FoldableBlocks finds a C# class body, a method body, and an initializ
 }
 
 TEST_CASE("FoldableBlocks returns nothing for a mode with no fold query", "[CodeFold]") {
-    const ned::editor::Mode mode = ned::editor::FundamentalMode();
-    const auto               blocks = FoldableBlocks(mode, "anything at all");
+    const ned::editor::Mode mode   = ned::editor::FundamentalMode();
+    const auto              blocks = FoldableBlocks(mode, "anything at all");
     REQUIRE(blocks.empty());
 }
 
@@ -163,8 +163,8 @@ TEST_CASE("ToggleFoldAtLine picks the outermost block when two start on the same
 TEST_CASE("FoldRegionsWithDepth gives disjoint siblings depth 0", "[CodeFold]") {
     // Two independent, non-nested function bodies -- neither contains the
     // other, so both are top-level.
-    const std::vector<std::pair<std::size_t, std::size_t>> blocks = {{10, 20}, {30, 40}};
-    const auto                                              regions = FoldRegionsWithDepth(blocks);
+    const std::vector<std::pair<std::size_t, std::size_t>> blocks  = {{10, 20}, {30, 40}};
+    const auto                                             regions = FoldRegionsWithDepth(blocks);
     REQUIRE(regions.size() == 2);
     REQUIRE(regions[0].depth == 0);
     REQUIRE(regions[1].depth == 0);
@@ -172,8 +172,8 @@ TEST_CASE("FoldRegionsWithDepth gives disjoint siblings depth 0", "[CodeFold]") 
 
 TEST_CASE("FoldRegionsWithDepth gives increasing depth for properly nested blocks", "[CodeFold]") {
     // [0,100) contains [10,90) contains [20,80) -- three levels deep.
-    const std::vector<std::pair<std::size_t, std::size_t>> blocks = {{0, 100}, {10, 90}, {20, 80}};
-    const auto                                              regions = FoldRegionsWithDepth(blocks);
+    const std::vector<std::pair<std::size_t, std::size_t>> blocks  = {{0, 100}, {10, 90}, {20, 80}};
+    const auto                                             regions = FoldRegionsWithDepth(blocks);
     REQUIRE(regions.size() == 3);
     REQUIRE(regions[0].depth == 0);
     REQUIRE(regions[1].depth == 1);
@@ -183,8 +183,8 @@ TEST_CASE("FoldRegionsWithDepth gives increasing depth for properly nested block
 TEST_CASE("FoldRegionsWithDepth resets depth for a sibling after a nested block closes", "[CodeFold]") {
     // [0,10) contains [1,5); [11,20) is a separate top-level sibling after
     // the first one closes.
-    const std::vector<std::pair<std::size_t, std::size_t>> blocks = {{0, 10}, {1, 5}, {11, 20}};
-    const auto                                              regions = FoldRegionsWithDepth(blocks);
+    const std::vector<std::pair<std::size_t, std::size_t>> blocks  = {{0, 10}, {1, 5}, {11, 20}};
+    const auto                                             regions = FoldRegionsWithDepth(blocks);
     REQUIRE(regions.size() == 3);
     REQUIRE(regions[0].depth == 0);
     REQUIRE(regions[1].depth == 1);

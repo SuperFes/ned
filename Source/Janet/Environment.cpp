@@ -82,9 +82,9 @@ namespace {
         }
 
       private:
-        int         pipeFds_[2]    = {-1, -1};
-        int         savedStderr_   = -1;
-        bool        active_        = false;
+        int         pipeFds_[2]  = {-1, -1};
+        int         savedStderr_ = -1;
+        bool        active_      = false;
         std::string captured_;
     };
 
@@ -108,7 +108,7 @@ void Environment::RegisterRaw(const char* prefix, const char* name, const char* 
 }
 
 int DoStringCapturingStacktrace(JanetTable* env, const std::string& code, const std::string& sourcePath, Janet* out,
-                                 std::string* capturedError) {
+                                std::string* capturedError) {
     // janet_dostring independently prints a real stacktrace -- including the
     // "path:line:col:" location *out itself never carries, for either a
     // runtime panic or a compile error -- straight to the process's raw
@@ -133,7 +133,7 @@ int DoStringCapturingStacktrace(JanetTable* env, const std::string& code, const 
         else {
             const JanetString description = janet_to_string(*out);
             *capturedError                = std::string(reinterpret_cast<const char*>(description),
-                                                          static_cast<std::size_t>(janet_string_length(description)));
+                                                        static_cast<std::size_t>(janet_string_length(description)));
             if (capturedError->empty()) {
                 *capturedError = "ned: janet error evaluating " + sourcePath + " (no error value captured)";
             }

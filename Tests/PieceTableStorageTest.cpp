@@ -15,7 +15,7 @@ using ned::text::PieceTableStorage;
 namespace {
 std::filesystem::path WriteTempFile(const std::string& name, std::string_view content) {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
-    std::ofstream                file(path, std::ios::binary);
+    std::ofstream               file(path, std::ios::binary);
     file << content;
     return path;
 }
@@ -28,7 +28,7 @@ TEST_CASE("PieceTableStorage IsHuge is true, unlike RopeStorage", "[PieceTableSt
 
 TEST_CASE("PieceTableStorage delegates content queries to the wrapped PieceTable", "[PieceTableStorage]") {
     const std::filesystem::path path = WriteTempFile("ned_piecetablestorage_basic.txt", "hello, world\nsecond line\n");
-    const PieceTableStorage      storage(PieceTable::FromFile(path));
+    const PieceTableStorage     storage(PieceTable::FromFile(path));
 
     REQUIRE_FALSE(storage.Empty());
     REQUIRE(storage.ByteLength() == 25);
@@ -43,7 +43,7 @@ TEST_CASE("PieceTableStorage delegates content queries to the wrapped PieceTable
 
 TEST_CASE("PieceTableStorage Inserted/Erased return new IsHuge storage, non-mutating", "[PieceTableStorage]") {
     const std::filesystem::path path = WriteTempFile("ned_piecetablestorage_edit.txt", "hello world");
-    const PieceTableStorage      original(PieceTable::FromFile(path));
+    const PieceTableStorage     original(PieceTable::FromFile(path));
 
     const std::unique_ptr<ITextStorage> inserted = original.Inserted(5, ",");
     REQUIRE(inserted->IsHuge());
@@ -59,7 +59,7 @@ TEST_CASE("PieceTableStorage Inserted/Erased return new IsHuge storage, non-muta
 
 TEST_CASE("PieceTableStorage Clone is an independent, equal-content copy", "[PieceTableStorage]") {
     const std::filesystem::path path = WriteTempFile("ned_piecetablestorage_clone.txt", "clone me");
-    const PieceTableStorage      original(PieceTable::FromFile(path));
+    const PieceTableStorage     original(PieceTable::FromFile(path));
 
     const std::unique_ptr<ITextStorage> cloned = original.Clone();
     REQUIRE(cloned->IsHuge());
@@ -67,16 +67,16 @@ TEST_CASE("PieceTableStorage Clone is an independent, equal-content copy", "[Pie
 
     const std::unique_ptr<ITextStorage> editedClone = cloned->Inserted(0, "did I ");
     REQUIRE(editedClone->ToString() == "did I clone me");
-    REQUIRE(cloned->ToString() == "clone me");   // the clone itself is untouched by editing its own derivative
+    REQUIRE(cloned->ToString() == "clone me");  // the clone itself is untouched by editing its own derivative
     REQUIRE(original.ToString() == "clone me"); // and the original is untouched by any of it
 
     std::filesystem::remove(path);
 }
 
 TEST_CASE("PieceTableStorage codepoint navigation matches ITextStorage's UTF-8 contract", "[PieceTableStorage]") {
-    const std::string           text  = "h\xC3\xA9llo"; // "héllo"
-    const std::filesystem::path path  = WriteTempFile("ned_piecetablestorage_utf8.txt", text);
-    const PieceTableStorage      storage(PieceTable::FromFile(path));
+    const std::string           text = "h\xC3\xA9llo"; // "héllo"
+    const std::filesystem::path path = WriteTempFile("ned_piecetablestorage_utf8.txt", text);
+    const PieceTableStorage     storage(PieceTable::FromFile(path));
 
     REQUIRE(storage.ByteLength() == 6);
     REQUIRE(storage.CodepointLength() == 5);
@@ -95,7 +95,7 @@ TEST_CASE("PieceTableStorage codepoint navigation matches ITextStorage's UTF-8 c
 
 TEST_CASE("PieceTableStorage Value exposes the wrapped PieceTable unchanged", "[PieceTableStorage]") {
     const std::filesystem::path path = WriteTempFile("ned_piecetablestorage_value.txt", "raw access");
-    const PieceTableStorage      storage(PieceTable::FromFile(path));
+    const PieceTableStorage     storage(PieceTable::FromFile(path));
 
     REQUIRE(storage.Value().ToString() == "raw access");
 

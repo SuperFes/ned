@@ -12,7 +12,7 @@ DiskSpaceCheck CheckFreeSpaceForSave(const std::filesystem::path& path, std::uin
     // configured values are ~1.5-3.0), but cheap to make well-defined
     // regardless of what a caller (or a test forcing "insufficient"
     // unconditionally) passes.
-    const double requiredDouble = static_cast<double>(contentBytes) * multiplier;
+    const double         requiredDouble = static_cast<double>(contentBytes) * multiplier;
     const std::uintmax_t requiredBytes =
         requiredDouble >= static_cast<double>(std::numeric_limits<std::uintmax_t>::max())
             ? std::numeric_limits<std::uintmax_t>::max()

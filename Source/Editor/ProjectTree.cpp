@@ -59,8 +59,8 @@ namespace {
 
 } // namespace
 
-std::vector<ProjectTreeEntry> BuildProjectTree(const std::filesystem::path& root,
-                                                const std::function<bool(const std::filesystem::path&)>& shouldExpand) {
+std::vector<ProjectTreeEntry> BuildProjectTree(const std::filesystem::path&                             root,
+                                               const std::function<bool(const std::filesystem::path&)>& shouldExpand) {
     std::vector<ProjectTreeEntry> entries;
 
     std::error_code             ec;

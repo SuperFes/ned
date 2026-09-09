@@ -7,15 +7,15 @@ using ned::editor::SetFillColumn;
 
 namespace {
 
-    // FillColumn is process-wide state (see FillColumn.h's own doc comment);
-    // every test that sets one must restore the default for the next test,
-    // guaranteed via RAII the same way TabWidthTest.cpp's own
-    // TabWidthGuard does.
-    struct FillColumnGuard {
-        ~FillColumnGuard() {
-            SetFillColumn(70);
-        }
-    };
+// FillColumn is process-wide state (see FillColumn.h's own doc comment);
+// every test that sets one must restore the default for the next test,
+// guaranteed via RAII the same way TabWidthTest.cpp's own
+// TabWidthGuard does.
+struct FillColumnGuard {
+    ~FillColumnGuard() {
+        SetFillColumn(70);
+    }
+};
 
 } // namespace
 

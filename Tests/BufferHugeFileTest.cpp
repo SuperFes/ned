@@ -5,8 +5,8 @@
 #include <fstream>
 #include <string>
 
-#include "Text/Buffer.h"
 #include "Text/BinaryDetect.h"
+#include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/MappedFile.h"
 #include "Text/PieceTable.h"
@@ -21,7 +21,7 @@ using ned::text::SetHugeFileMinFreeSpaceMultiplier;
 namespace {
 std::filesystem::path WriteTempFile(const std::string& name, std::string_view content) {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
-    std::ofstream                file(path, std::ios::binary);
+    std::ofstream               file(path, std::ios::binary);
     file << content;
     return path;
 }
@@ -180,7 +180,7 @@ TEST_CASE("Buffer::FromHugeFile SaveToFile round-trips edited content", "[Buffer
 
     REQUIRE_FALSE(buffer.Modified());
 
-    std::ifstream saved(path, std::ios::binary);
+    std::ifstream     saved(path, std::ios::binary);
     const std::string savedContent((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
     REQUIRE(savedContent == "original content\nsecond line\nthird line\n");
 
@@ -222,7 +222,7 @@ TEST_CASE("Buffer::FromHugeFile handles a real multi-MB file: edit at start/midd
 
     // Delete a chunk out of the middle-ish region too, to exercise Erased()
     // against a multi-leaf tree, not just Inserted().
-    const std::size_t deleteAt       = buffer.Size() / 3;
+    const std::size_t deleteAt        = buffer.Size() / 3;
     const std::string expectedDeleted = reference.substr(deleteAt, 50);
     const std::string deleted         = buffer.DeleteRange(deleteAt, 50);
     reference.erase(deleteAt, 50);
@@ -231,7 +231,7 @@ TEST_CASE("Buffer::FromHugeFile handles a real multi-MB file: edit at start/midd
     REQUIRE(buffer.Text() == reference);
 
     buffer.Save();
-    std::ifstream saved(path, std::ios::binary);
+    std::ifstream     saved(path, std::ios::binary);
     const std::string savedContent((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
     REQUIRE(savedContent == reference);
 
@@ -286,8 +286,8 @@ TEST_CASE("Buffer::FromHugeFile SaveToFile does not materialize the whole docume
     REQUIRE(growthKb < kFileSize / 1024 / 4);
 
     // Correctness, not just memory: the edit actually landed on disk.
-    std::ifstream      saved(path, std::ios::binary);
-    std::string         firstLine;
+    std::ifstream saved(path, std::ios::binary);
+    std::string   firstLine;
     std::getline(saved, firstLine);
     REQUIRE(firstLine == ">>> edited >>>");
 
@@ -305,7 +305,7 @@ struct DiskSpaceSettingsGuard {
 } // namespace
 
 TEST_CASE("Buffer::FromHugeFile downgrades to read-only when free space is insufficient", "[Buffer][HugeFile][DiskSpace]") {
-    DiskSpaceSettingsGuard guard;
+    DiskSpaceSettingsGuard      guard;
     const std::filesystem::path path = WriteTempFile("ned_buffer_huge_diskspace_open.txt", "some content\n");
 
     // An absurd multiplier makes "insufficient" true regardless of the real
@@ -327,7 +327,7 @@ TEST_CASE("Buffer::FromHugeFile downgrades to read-only when free space is insuf
 }
 
 TEST_CASE("Buffer::FromHugeFile stays editable when free space is sufficient", "[Buffer][HugeFile][DiskSpace]") {
-    DiskSpaceSettingsGuard guard;
+    DiskSpaceSettingsGuard      guard;
     const std::filesystem::path path = WriteTempFile("ned_buffer_huge_diskspace_ok.txt", "some content\n");
 
     SetHugeFileMinFreeSpaceMultiplier(0.0); // trivially satisfied regardless of real free space
@@ -341,7 +341,7 @@ TEST_CASE("Buffer::FromHugeFile stays editable when free space is sufficient", "
 }
 
 TEST_CASE("toggle-read-only's mechanism (SetReadOnly(false)) overrides the open-time downgrade", "[Buffer][HugeFile][DiskSpace]") {
-    DiskSpaceSettingsGuard guard;
+    DiskSpaceSettingsGuard      guard;
     const std::filesystem::path path = WriteTempFile("ned_buffer_huge_diskspace_override.txt", "hello");
 
     SetHugeFileMinFreeSpaceMultiplier(1e18);
@@ -361,7 +361,7 @@ TEST_CASE("toggle-read-only's mechanism (SetReadOnly(false)) overrides the open-
 }
 
 TEST_CASE("Buffer::SaveToFile refuses an unsafe huge save even after the open-time override", "[Buffer][HugeFile][DiskSpace]") {
-    DiskSpaceSettingsGuard guard;
+    DiskSpaceSettingsGuard      guard;
     const std::filesystem::path path = WriteTempFile("ned_buffer_huge_diskspace_save_backstop.txt", "hello");
 
     SetHugeFileMinFreeSpaceMultiplier(1e18);
@@ -378,7 +378,7 @@ TEST_CASE("Buffer::SaveToFile refuses an unsafe huge save even after the open-ti
     // No wasted I/O: the doomed write never even opened the temp file.
     REQUIRE_FALSE(std::filesystem::exists(tempPath));
     // The original file is untouched.
-    std::ifstream original(path, std::ios::binary);
+    std::ifstream     original(path, std::ios::binary);
     const std::string originalContent((std::istreambuf_iterator<char>(original)), std::istreambuf_iterator<char>());
     REQUIRE(originalContent == "hello");
 
@@ -386,7 +386,7 @@ TEST_CASE("Buffer::SaveToFile refuses an unsafe huge save even after the open-ti
 }
 
 TEST_CASE("HugeFileDiskSpaceCheckEnabled(false) skips both the open-time and save-time checks", "[Buffer][HugeFile][DiskSpace]") {
-    DiskSpaceSettingsGuard guard;
+    DiskSpaceSettingsGuard      guard;
     const std::filesystem::path path = WriteTempFile("ned_buffer_huge_diskspace_disabled.txt", "hello");
 
     SetHugeFileMinFreeSpaceMultiplier(1e18); // would otherwise always fail
@@ -484,7 +484,7 @@ TEST_CASE("Buffer progressive huge-load: a real edit between two appends keeps e
     buffer.ReplaceContentForHugeLoad(FragmentFor(mappedFile, 0, 4));
     buffer.AppendHugeLoadChunk(FragmentFor(mappedFile, 4, 4)); // -> "AAAABBBB", one undo step
     buffer.SetPoint(buffer.Size());
-    buffer.InsertAtPoint("X"); // real edit -- must not merge into the append's step, and must block the NEXT append from merging into it either
+    buffer.InsertAtPoint("X");                                 // real edit -- must not merge into the append's step, and must block the NEXT append from merging into it either
     buffer.AppendHugeLoadChunk(FragmentFor(mappedFile, 8, 4)); // -> "AAAABBBBXCCCC", its own step
     REQUIRE(buffer.Text() == "AAAABBBBXCCCC");
 
@@ -554,9 +554,9 @@ TEST_CASE("Buffer::HasConflictMarkers finds a marker straddling an internal scan
 
 TEST_CASE("Buffer::HasConflictMarkers finds a marker at the very start of a huge buffer",
           "[Buffer][HugeFile][HasConflictMarkers]") {
-    constexpr std::size_t kSize = 5 * 1024 * 1024;
-    std::string           content = "<<<<<<< buffer\n" + std::string(kSize, 'a');
-    const std::filesystem::path path = WriteTempFile("ned_buffer_huge_conflict_start.txt", content);
+    constexpr std::size_t       kSize   = 5 * 1024 * 1024;
+    std::string                 content = "<<<<<<< buffer\n" + std::string(kSize, 'a');
+    const std::filesystem::path path    = WriteTempFile("ned_buffer_huge_conflict_start.txt", content);
 
     Buffer buffer = Buffer::FromHugeFile(path);
     REQUIRE(buffer.Content().IsHuge());
@@ -580,7 +580,7 @@ TEST_CASE("Buffer progressive huge-load: SaveToFile refuses while loading and su
     buffer.FinishHugeLoad();
     buffer.Save(/*ensureFinalNewline=*/false); // must not throw now; no trailing newline so the byte-for-byte check below is exact
 
-    std::ifstream saved(path, std::ios::binary);
+    std::ifstream     saved(path, std::ios::binary);
     const std::string savedContent((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
     REQUIRE(savedContent == "AAAABBBB");
 

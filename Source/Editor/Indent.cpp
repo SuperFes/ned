@@ -113,8 +113,8 @@ namespace {
 } // namespace
 
 std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree, std::string_view bufferText,
-                                                     const treesitter::Query& indentQuery, std::size_t lineStart,
-                                                     std::size_t lineEnd, const IndentStyle& style) {
+                                                    const treesitter::Query& indentQuery, std::size_t lineStart,
+                                                    std::size_t lineEnd, const IndentStyle& style) {
     if (tree.IsNull()) {
         return std::nullopt;
     }
@@ -174,8 +174,8 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
         }
     }
 
-    const auto isIndentCaptured  = [&indentIds](const treesitter::Node& node) { return indentIds.contains(node.Id()); };
-    const auto isAlignedCaptured = [&alignedIds](const treesitter::Node& node) { return alignedIds.contains(node.Id()); };
+    const auto isIndentCaptured     = [&indentIds](const treesitter::Node& node) { return indentIds.contains(node.Id()); };
+    const auto isAlignedCaptured    = [&alignedIds](const treesitter::Node& node) { return alignedIds.contains(node.Id()); };
     const auto isBodyIndentCaptured = [&bodyIndentIds](const treesitter::Node& node) {
         return bodyIndentIds.contains(node.Id());
     };
@@ -263,10 +263,10 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     // gets to seed that exclusion.
     const auto computeForWalkStart = [&](const treesitter::Node& walkStart, std::size_t position) -> IndentComputation {
         const bool  selfOpensHere = (isIndentCaptured(walkStart) || isAlignedCaptured(walkStart) ||
-                                    isBodyIndentCaptured(walkStart)) &&
-                                   walkStart.StartByte() == position;
-        std::size_t lastRow = selfOpensHere ? walkStart.StartRow() : kNoRow;
-        int         level   = 0;
+                                     isBodyIndentCaptured(walkStart)) &&
+                                    walkStart.StartByte() == position;
+        std::size_t lastRow       = selfOpensHere ? walkStart.StartRow() : kNoRow;
+        int         level         = 0;
         for (treesitter::Node node = walkStart; !node.IsNull(); node = node.Parent()) {
             const bool opensAtPosition = node.StartByte() == position;
             if (isBodyIndentCaptured(node) && !opensAtPosition) {
@@ -326,14 +326,14 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
             // alignNode -- is not, and still resolves correctly via the
             // same self-exclusion rule rather than assuming captured-ness).
             const treesitter::Node walkStart = resolveWalkStart(alignNode.StartByte());
-            result = walkStart.IsNull() ? std::optional<IndentComputation>(IndentComputation{IndentComputation::Kind::Level, 0})
-                                        : computeForWalkStart(walkStart, alignNode.StartByte());
+            result                           = walkStart.IsNull() ? std::optional<IndentComputation>(IndentComputation{IndentComputation::Kind::Level, 0})
+                                                                  : computeForWalkStart(walkStart, alignNode.StartByte());
         }
     }
     else {
         const treesitter::Node walkStart = resolveWalkStart(contentStart);
-        result = walkStart.IsNull() ? std::optional<IndentComputation>(IndentComputation{IndentComputation::Kind::Level, 0})
-                                    : computeForWalkStart(walkStart, contentStart);
+        result                           = walkStart.IsNull() ? std::optional<IndentComputation>(IndentComputation{IndentComputation::Kind::Level, 0})
+                                                              : computeForWalkStart(walkStart, contentStart);
 
         // smart-blank-line-on-newline follow-up: a freshly inserted,
         // not-yet-typed blank line (Mode.h's own "lineStart == lineEnd"
@@ -396,8 +396,8 @@ IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser> parser, s
                                    std::shared_ptr<treesitter::IncrementalParseCache> sharedParse, std::string modeName) {
     return [parser, indentQuery, sharedParse, modeName](std::string_view bufferText, std::size_t lineStart,
                                                         std::size_t lineEnd) -> std::optional<int> {
-        const treesitter::Tree& tree  = sharedParse->Update(*parser, bufferText);
-        const IndentStyle       style = EffectiveIndentStyle(modeName);
+        const treesitter::Tree&                tree  = sharedParse->Update(*parser, bufferText);
+        const IndentStyle                      style = EffectiveIndentStyle(modeName);
         const std::optional<IndentComputation> result =
             IndentLevelForLine(tree, bufferText, *indentQuery, lineStart, lineEnd, style);
         if (!result) {
@@ -416,7 +416,7 @@ int IndentColumnForLevel(int level, const IndentStyle& style) {
 
 std::size_t LineIndentEnd(const text::ITextStorage& content, std::size_t lineStart) {
     const std::size_t length = content.ByteLength();
-    std::size_t        offset = lineStart;
+    std::size_t       offset = lineStart;
     while (offset < length) {
         const text::ITextStorage::DecodedCodepoint decoded = content.CodepointAt(offset);
         if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
@@ -435,18 +435,18 @@ std::string IndentString(int column, const IndentStyle& style) {
     if (!style.useTabs) {
         return std::string(columns, ' ');
     }
-    const auto width  = static_cast<std::size_t>(std::max(1, style.width));
-    const std::size_t tabs    = columns / width;
+    const auto        width  = static_cast<std::size_t>(std::max(1, style.width));
+    const std::size_t tabs   = columns / width;
     const std::size_t spaces = columns % width;
-    std::string        result(tabs, '\t');
+    std::string       result(tabs, '\t');
     result.append(spaces, ' ');
     return result;
 }
 
 std::ptrdiff_t SetLineIndent(text::Buffer& buffer, std::size_t lineStart, int column, const IndentStyle& style) {
-    const std::size_t indentEnd  = LineIndentEnd(buffer.Content(), lineStart);
-    const std::size_t oldLength  = indentEnd - lineStart;
-    const std::string desired    = IndentString(column, style);
+    const std::size_t indentEnd = LineIndentEnd(buffer.Content(), lineStart);
+    const std::size_t oldLength = indentEnd - lineStart;
+    const std::string desired   = IndentString(column, style);
     if (desired.size() == oldLength && buffer.Content().Substring(lineStart, oldLength) == desired) {
         return 0; // already correct -- don't touch the buffer/undo tree for a genuine no-op
     }
@@ -480,22 +480,22 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
     // unaffected -- the window always spans the whole document, and huge
     // stays false, so every line still takes the original buffer.Text() path
     // byte-for-byte unchanged.
-    const text::ITextStorage& initialContent          = buffer.Content();
-    const bool                 huge                    = initialContent.IsHuge();
-    std::size_t                 windowStartLine         = 0;
-    std::size_t                 windowEndLineExclusive = initialContent.LineCount();
+    const text::ITextStorage& initialContent         = buffer.Content();
+    const bool                huge                   = initialContent.IsHuge();
+    std::size_t               windowStartLine        = 0;
+    std::size_t               windowEndLineExclusive = initialContent.LineCount();
     if (huge) {
-        const std::size_t margin          = HugeStructuralWindowBytes();
-        const std::size_t regionStartByte = initialContent.LineToByteOffset(startLine);
-        const std::size_t regionEndByte   = (endLineExclusive < initialContent.LineCount())
-                                                ? initialContent.LineToByteOffset(endLineExclusive)
-                                                : initialContent.ByteLength();
+        const std::size_t margin             = HugeStructuralWindowBytes();
+        const std::size_t regionStartByte    = initialContent.LineToByteOffset(startLine);
+        const std::size_t regionEndByte      = (endLineExclusive < initialContent.LineCount())
+                                                   ? initialContent.LineToByteOffset(endLineExclusive)
+                                                   : initialContent.ByteLength();
         const std::size_t rawWindowStartByte = regionStartByte > margin ? regionStartByte - margin : 0;
-        windowStartLine                     = initialContent.ByteOffsetToLine(rawWindowStartByte);
+        windowStartLine                      = initialContent.ByteOffsetToLine(rawWindowStartByte);
 
-        const std::size_t byteLength      = initialContent.ByteLength();
+        const std::size_t byteLength       = initialContent.ByteLength();
         const std::size_t rawWindowEndByte = (byteLength - regionEndByte > margin) ? regionEndByte + margin : byteLength;
-        windowEndLineExclusive = std::min(initialContent.ByteOffsetToLine(rawWindowEndByte) + 1, initialContent.LineCount());
+        windowEndLineExclusive             = std::min(initialContent.ByteOffsetToLine(rawWindowEndByte) + 1, initialContent.LineCount());
     }
 
     buffer.BeginUndoGroup();
@@ -510,7 +510,7 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
             continue; // out of range -- nothing to do (defensive, shouldn't happen bottom-to-top)
         }
         const std::size_t lineStart = content.LineToByteOffset(line);
-        std::size_t        lineEnd   = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
+        std::size_t       lineEnd   = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
         if (line + 1 < content.LineCount() && lineEnd > lineStart) {
             --lineEnd; // exclude the line's own trailing '\n'
         }
@@ -526,8 +526,8 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
             const std::size_t windowEndByte   = (windowEndLineExclusive < content.LineCount())
                                                     ? content.LineToByteOffset(windowEndLineExclusive)
                                                     : content.ByteLength();
-            const std::string windowText = content.Substring(windowStartByte, windowEndByte - windowStartByte);
-            column = mode.indentColumn(windowText, lineStart - windowStartByte, lineEnd - windowStartByte);
+            const std::string windowText      = content.Substring(windowStartByte, windowEndByte - windowStartByte);
+            column                            = mode.indentColumn(windowText, lineStart - windowStartByte, lineEnd - windowStartByte);
         }
         else {
             const std::string text = buffer.Text(); // see this function's own doc comment on this cost
@@ -551,7 +551,7 @@ std::size_t IndentBuffer(text::Buffer& buffer, const Mode& mode) {
 std::size_t RigidShiftRegion(text::Buffer& buffer, const IndentStyle& style, std::size_t startLine,
                              std::size_t endLineExclusive, int deltaLevels) {
     const int width    = std::max(1, style.width);
-    const int tabWidth  = TabWidth();
+    const int tabWidth = TabWidth();
 
     buffer.BeginUndoGroup();
     std::size_t changed = 0;
@@ -561,10 +561,10 @@ std::size_t RigidShiftRegion(text::Buffer& buffer, const IndentStyle& style, std
         if (line >= content.LineCount()) {
             continue;
         }
-        const std::size_t lineStart      = content.LineToByteOffset(line);
-        const std::size_t indentEnd      = LineIndentEnd(content, lineStart);
-        const std::size_t currentColumn  = buffer.VisualColumnForByteOffset(lineStart, indentEnd, static_cast<std::size_t>(tabWidth));
-        const int          newColumn      = std::max(0, static_cast<int>(currentColumn) + deltaLevels * width);
+        const std::size_t lineStart     = content.LineToByteOffset(line);
+        const std::size_t indentEnd     = LineIndentEnd(content, lineStart);
+        const std::size_t currentColumn = buffer.VisualColumnForByteOffset(lineStart, indentEnd, static_cast<std::size_t>(tabWidth));
+        const int         newColumn     = std::max(0, static_cast<int>(currentColumn) + deltaLevels * width);
         if (SetLineIndent(buffer, lineStart, newColumn, style) != 0) {
             ++changed;
         }

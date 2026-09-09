@@ -14,7 +14,7 @@ using ned::text::PieceTable;
 namespace {
 std::filesystem::path WriteTempFile(const std::string& name, std::string_view content) {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
-    std::ofstream                file(path, std::ios::binary);
+    std::ofstream               file(path, std::ios::binary);
     file << content;
     return path;
 }
@@ -47,7 +47,7 @@ TEST_CASE("Empty piece table", "[PieceTable]") {
 
 TEST_CASE("PieceTable::FromFile maps ASCII content", "[PieceTable]") {
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_ascii.txt", "hello");
-    const PieceTable             table = PieceTable::FromFile(path);
+    const PieceTable            table = PieceTable::FromFile(path);
 
     REQUIRE_FALSE(table.Empty());
     REQUIRE(table.ByteLength() == 5);
@@ -73,7 +73,7 @@ TEST_CASE("PieceTable::FromFile content is correct after its internal page relea
     }
 
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_release.txt", content);
-    const PieceTable             table = PieceTable::FromFile(path);
+    const PieceTable            table = PieceTable::FromFile(path);
 
     REQUIRE(table.ByteLength() == content.size());
     REQUIRE(table.ToString() == content);
@@ -84,7 +84,7 @@ TEST_CASE("PieceTable::FromFile content is correct after its internal page relea
 
 TEST_CASE("PieceTable::FromFile on a zero-byte file is empty", "[PieceTable]") {
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_empty.txt", "");
-    const PieceTable             table = PieceTable::FromFile(path);
+    const PieceTable            table = PieceTable::FromFile(path);
 
     REQUIRE(table.Empty());
     REQUIRE(table.ByteLength() == 0);
@@ -99,7 +99,7 @@ TEST_CASE("PieceTable::FromFile throws MappedFileError for a nonexistent path", 
 
 TEST_CASE("PieceTable insert and erase are non-mutating", "[PieceTable]") {
     const std::filesystem::path path     = WriteTempFile("ned_piecetable_nonmutating.txt", "hello world");
-    const PieceTable             original = PieceTable::FromFile(path);
+    const PieceTable            original = PieceTable::FromFile(path);
 
     const PieceTable inserted = original.Inserted(5, ",");
     REQUIRE(inserted.ToString() == "hello, world");
@@ -114,7 +114,7 @@ TEST_CASE("PieceTable insert and erase are non-mutating", "[PieceTable]") {
 
 TEST_CASE("PieceTable insert at boundaries", "[PieceTable]") {
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_boundaries.txt", "world");
-    const PieceTable             table = PieceTable::FromFile(path);
+    const PieceTable            table = PieceTable::FromFile(path);
 
     REQUIRE(table.Inserted(0, "hello ").ToString() == "hello world");
     REQUIRE(table.Inserted(5, "!").ToString() == "world!");
@@ -124,9 +124,9 @@ TEST_CASE("PieceTable insert at boundaries", "[PieceTable]") {
 
 TEST_CASE("PieceTable insert on top of insert exercises the shared append buffer", "[PieceTable]") {
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_double_insert.txt", "ac");
-    const PieceTable             base  = PieceTable::FromFile(path);
-    const PieceTable             once  = base.Inserted(1, "b");
-    const PieceTable             twice = once.Inserted(3, "d");
+    const PieceTable            base  = PieceTable::FromFile(path);
+    const PieceTable            once  = base.Inserted(1, "b");
+    const PieceTable            twice = once.Inserted(3, "d");
 
     // Every intermediate snapshot must stay independently correct even
     // though `once` and `twice` share the same underlying append buffer.
@@ -139,8 +139,8 @@ TEST_CASE("PieceTable insert on top of insert exercises the shared append buffer
 
 TEST_CASE("PieceTable erase spanning original and added text", "[PieceTable]") {
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_erase_span.txt", "helloworld");
-    const PieceTable             base  = PieceTable::FromFile(path);
-    const PieceTable             mixed = base.Inserted(5, ", "); // "hello, world"
+    const PieceTable            base  = PieceTable::FromFile(path);
+    const PieceTable            mixed = base.Inserted(5, ", "); // "hello, world"
 
     REQUIRE(mixed.ToString() == "hello, world");
 
@@ -154,7 +154,7 @@ TEST_CASE("PieceTable erase spanning original and added text", "[PieceTable]") {
 TEST_CASE("PieceTable multi-byte UTF-8 counts bytes vs codepoints correctly", "[PieceTable]") {
     const std::string           text  = "h\xC3\xA9llo"; // "héllo"
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_utf8.txt", text);
-    const PieceTable             table = PieceTable::FromFile(path);
+    const PieceTable            table = PieceTable::FromFile(path);
 
     REQUIRE(table.ByteLength() == 6);
     REQUIRE(table.CodepointLength() == 5);
@@ -172,7 +172,7 @@ TEST_CASE("PieceTable multi-byte UTF-8 counts bytes vs codepoints correctly", "[
 
 TEST_CASE("PieceTable line counting", "[PieceTable]") {
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_lines.txt", "a\nb\nc");
-    const PieceTable             table = PieceTable::FromFile(path);
+    const PieceTable            table = PieceTable::FromFile(path);
 
     REQUIRE(table.LineCount() == 3);
     REQUIRE(table.ByteOffsetToLine(0) == 0);
@@ -188,7 +188,7 @@ TEST_CASE("PieceTable line counting", "[PieceTable]") {
 TEST_CASE("PieceTable codepoint/byte offset conversions", "[PieceTable]") {
     const std::string           text  = "h\xC3\xA9llo"; // "héllo"
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_offsets.txt", text);
-    const PieceTable             table = PieceTable::FromFile(path);
+    const PieceTable            table = PieceTable::FromFile(path);
 
     REQUIRE(table.ByteOffsetToCodepointOffset(0) == 0);
     REQUIRE(table.ByteOffsetToCodepointOffset(1) == 1);
@@ -205,7 +205,7 @@ TEST_CASE("PieceTable codepoint/byte offset conversions", "[PieceTable]") {
 
 TEST_CASE("PieceTable Substring matches Rope-style semantics", "[PieceTable]") {
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_substring.txt", "hello, world");
-    const PieceTable             table = PieceTable::FromFile(path);
+    const PieceTable            table = PieceTable::FromFile(path);
 
     REQUIRE(table.Substring(0, 5) == "hello");
     REQUIRE(table.Substring(7, 5) == "world");
@@ -213,9 +213,9 @@ TEST_CASE("PieceTable Substring matches Rope-style semantics", "[PieceTable]") {
 }
 
 TEST_CASE("PieceTable::ForEachChunk reconstructs the same content as ToString", "[PieceTable]") {
-    const std::filesystem::path path = WriteTempFile("ned_piecetable_chunks.txt", "hello world, this is a test file for chunk streaming");
-    const PieceTable             base = PieceTable::FromFile(path);
-    const PieceTable             table = base.Inserted(5, " there").Erased(0, 1);
+    const std::filesystem::path path  = WriteTempFile("ned_piecetable_chunks.txt", "hello world, this is a test file for chunk streaming");
+    const PieceTable            base  = PieceTable::FromFile(path);
+    const PieceTable            table = base.Inserted(5, " there").Erased(0, 1);
 
     std::string reconstructed;
     table.ForEachChunk([&](std::string_view chunk) { reconstructed += chunk; });
@@ -261,7 +261,8 @@ TEST_CASE("PieceTable survives random edits across chunk boundaries and origins"
 
             reference.insert(pos, chunk);
             table = table.Inserted(pos, chunk);
-        } else {
+        }
+        else {
             std::uniform_int_distribution<std::size_t> posDist(0, reference.size());
             const std::size_t                          pos    = posDist(rng);
             const std::size_t                          maxLen = reference.size() - pos;
@@ -289,8 +290,8 @@ TEST_CASE("PieceTable survives random edits across chunk boundaries and origins"
 // Concatenated splices it onto a live tree cheaply on the main thread. See
 // Text/PieceTable.h's own doc comments on both.
 TEST_CASE("PieceTable::FromFileRange builds a fragment covering just the requested range", "[PieceTable]") {
-    const std::string           content = "0123456789abcdefghij";
-    const std::filesystem::path path    = WriteTempFile("ned_piecetable_range.txt", content);
+    const std::string           content    = "0123456789abcdefghij";
+    const std::filesystem::path path       = WriteTempFile("ned_piecetable_range.txt", content);
     auto                        mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
 
     const PieceTable middle = PieceTable::FromFileRange(mappedFile, 4, 6);
@@ -308,8 +309,8 @@ TEST_CASE("PieceTable::FromFileRange builds a fragment covering just the request
 }
 
 TEST_CASE("PieceTable::Concatenated joins fragments in order with no byte copied", "[PieceTable]") {
-    const std::string           content = "the quick brown fox jumps over the lazy dog";
-    const std::filesystem::path path    = WriteTempFile("ned_piecetable_concat.txt", content);
+    const std::string           content    = "the quick brown fox jumps over the lazy dog";
+    const std::filesystem::path path       = WriteTempFile("ned_piecetable_concat.txt", content);
     auto                        mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
 
     // Mirrors HugeFileLoader's own usage: build the first range directly,
@@ -319,9 +320,9 @@ TEST_CASE("PieceTable::Concatenated joins fragments in order with no byte copied
     REQUIRE(table.ToString() == content.substr(0, 10));
 
     for (std::size_t offset = 10; offset < content.size();) {
-        const std::size_t       len      = std::min<std::size_t>(7, content.size() - offset);
-        const PieceTable        fragment = PieceTable::FromFileRange(mappedFile, offset, len);
-        table                            = table.Concatenated(fragment);
+        const std::size_t len      = std::min<std::size_t>(7, content.size() - offset);
+        const PieceTable  fragment = PieceTable::FromFileRange(mappedFile, offset, len);
+        table                      = table.Concatenated(fragment);
         offset += len;
     }
 
@@ -333,8 +334,8 @@ TEST_CASE("PieceTable::Concatenated joins fragments in order with no byte copied
 }
 
 TEST_CASE("PieceTable::Concatenated result stays editable exactly like any other table", "[PieceTable]") {
-    const std::string           content = "abcdefghij";
-    const std::filesystem::path path    = WriteTempFile("ned_piecetable_concat_edit.txt", content);
+    const std::string           content    = "abcdefghij";
+    const std::filesystem::path path       = WriteTempFile("ned_piecetable_concat_edit.txt", content);
     auto                        mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
 
     const PieceTable first  = PieceTable::FromFileRange(mappedFile, 0, 5);
@@ -377,7 +378,7 @@ TEST_CASE("PieceTable::FromFile does not leave a large file fully resident", "[P
     }
 
     const std::size_t rssBeforeKb = CurrentRssKb();
-    const PieceTable   table       = PieceTable::FromFile(path);
+    const PieceTable  table       = PieceTable::FromFile(path);
     const std::size_t rssAfterKb  = CurrentRssKb();
 
     REQUIRE(table.ByteLength() == kFileSize);
@@ -421,7 +422,7 @@ TEST_CASE("PieceTable::FromFileRange plus per-call ReleasePages does not leave a
     mappedFile->Advise(ned::text::AccessPattern::kSequential);
 
     const std::size_t rssBeforeKb = CurrentRssKb();
-    PieceTable         table;
+    PieceTable        table;
     for (std::size_t offset = 0; offset < kFileSize;) {
         const std::size_t len      = std::min(kGroupSize, kFileSize - offset);
         const PieceTable  fragment = PieceTable::FromFileRange(mappedFile, offset, len);

@@ -36,7 +36,7 @@ namespace {
     // framework reported it: still informative to read, and no worse than
     // before.
     std::string FormatResultLine(const TestResult& result, TestSourceResolver& resolver) {
-        std::string line;
+        std::string       line;
         const std::string file =
             result.file.empty()
                 ? std::string()
@@ -77,9 +77,9 @@ text::Buffer& RebuildTestResultsBuffer(text::BufferList& bufferList, const TestR
     std::vector<text::Buffer::Diagnostic> diagnostics;
     // One resolver per rebuild: its project-tree index is built lazily and
     // at most once, so N failures in one module cost one walk, not N.
-    TestSourceResolver                    resolver(ProjectRoot());
-    std::size_t                           offset     = 0;
-    const auto                            appendLine = [&](const std::string& text) {
+    TestSourceResolver resolver(ProjectRoot());
+    std::size_t        offset     = 0;
+    const auto         appendLine = [&](const std::string& text) {
         buffer->InsertAtPoint(text + "\n");
         offset += text.size() + 1;
     };

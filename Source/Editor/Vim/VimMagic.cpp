@@ -4,9 +4,9 @@ namespace ned::editor::vim {
 
 namespace {
 
-// PCRE2 has no directional word-boundary atoms the way vim's \< (word start) and \>
-// (word end) do -- \b matches both edges, a documented approximation (see VimMagic.h).
-constexpr std::string_view kWordBoundary = "\\b";
+    // PCRE2 has no directional word-boundary atoms the way vim's \< (word start) and \>
+    // (word end) do -- \b matches both edges, a documented approximation (see VimMagic.h).
+    constexpr std::string_view kWordBoundary = "\\b";
 
 } // namespace
 

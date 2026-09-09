@@ -15,8 +15,7 @@ DapClient::~DapClient() {
     *alive_ = false;
 }
 
-DapClient::DapClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop)
-    : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
+DapClient::DapClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
     StartReadLoop();
     StartStderrReadLoop();
 }

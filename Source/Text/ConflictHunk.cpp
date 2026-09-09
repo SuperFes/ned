@@ -4,7 +4,9 @@ namespace ned::text {
 
 namespace {
 
-    bool IsLineStart(std::string_view text, std::size_t pos) { return pos == 0 || text[pos - 1] == '\n'; }
+    bool IsLineStart(std::string_view text, std::size_t pos) {
+        return pos == 0 || text[pos - 1] == '\n';
+    }
 
     // Next line-start occurrence of a 7-character labeled marker ("<<<<<<<",
     // "|||||||", ">>>>>>>") at or after `from` -- a labeled marker always
@@ -77,12 +79,12 @@ std::vector<ConflictHunk> ParseConflictHunks(std::string_view text) {
         std::optional<ConflictHunk::Range> baseRange;
         std::size_t                        oursEnd = sepMarker;
         if (baseMarker != std::string_view::npos) {
-            oursEnd         = baseMarker;
-            baseRange       = ConflictHunk::Range{LineEndAfter(text, baseMarker), sepMarker};
+            oursEnd   = baseMarker;
+            baseRange = ConflictHunk::Range{LineEndAfter(text, baseMarker), sepMarker};
         }
 
-        const std::size_t theirsStart = LineEndAfter(text, sepMarker);
-        const std::size_t endMarker   = FindLabeledMarker(text, theirsStart, ">>>>>>>");
+        const std::size_t theirsStart    = LineEndAfter(text, sepMarker);
+        const std::size_t endMarker      = FindLabeledMarker(text, theirsStart, ">>>>>>>");
         const std::size_t nestedAfterSep = FindLabeledMarker(text, theirsStart, "<<<<<<<");
         if (endMarker == std::string_view::npos || (nestedAfterSep != std::string_view::npos && nestedAfterSep < endMarker)) {
             pos = oursStart;

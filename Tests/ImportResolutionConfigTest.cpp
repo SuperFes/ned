@@ -32,7 +32,7 @@ TEST_CASE("DefaultImportResolutionConfig returns an empty config for an unknown 
 TEST_CASE("ResolveImportResolutionConfig returns the bundled default when no project override exists",
           "[ImportResolutionConfig]") {
     const ProjectSettings settings;
-    const auto             config = ResolveImportResolutionConfig(settings, "python");
+    const auto            config = ResolveImportResolutionConfig(settings, "python");
     CHECK(config.extensions == DefaultImportResolutionConfig("python").extensions);
 }
 

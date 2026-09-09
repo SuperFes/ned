@@ -9,7 +9,7 @@ std::vector<std::filesystem::path> ProjectPluginFiles(const std::filesystem::pat
     std::vector<std::filesystem::path> files;
 
     const std::filesystem::path pluginsDir = root / ".ned" / "plugins";
-    std::error_code              ec;
+    std::error_code             ec;
     if (!std::filesystem::is_directory(pluginsDir, ec)) {
         return files;
     }

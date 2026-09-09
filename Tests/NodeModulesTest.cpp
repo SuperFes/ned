@@ -27,8 +27,7 @@ namespace {
 struct TempTree {
     std::filesystem::path root;
 
-    explicit TempTree(const std::string& name = "ned-node-modules-test")
-        : root(std::filesystem::temp_directory_path() / UniqueName(name)) {
+    explicit TempTree(const std::string& name = "ned-node-modules-test") : root(std::filesystem::temp_directory_path() / UniqueName(name)) {
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root);
     }

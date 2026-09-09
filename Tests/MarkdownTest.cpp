@@ -171,7 +171,7 @@ TEST_CASE("KillTableRowAtPoint refuses on the header row", "[Markdown]") {
 }
 
 TEST_CASE("KillTableRowAtPoint leaves a header-and-delimiter-only table when the only data row is killed",
-         "[Markdown]") {
+          "[Markdown]") {
     Buffer            buffer("test", Rope("| Name | Age |\n|---|---|\n| Alice | 30 |\n"));
     const std::size_t aliceCell = buffer.Text().find("Alice");
     buffer.SetPoint(aliceCell);

@@ -160,7 +160,7 @@ std::string ReadExcerptText(text::BufferList& bufferList, const std::filesystem:
     std::ostringstream contents;
     contents << input.rdbuf();
     const std::string fullText = contents.str();
-    const auto         range    = LineRangeToByteRange(fullText, startLine, endLine);
+    const auto        range    = LineRangeToByteRange(fullText, startLine, endLine);
     return range ? fullText.substr(range->first, range->second - range->first) : std::string();
 }
 
@@ -202,7 +202,7 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
     std::vector<std::size_t> collapseOffsets;
     const std::size_t        lineThreshold = editor::MultibufferAutoCollapseLineThreshold();
     const std::size_t        byteThreshold = editor::MultibufferAutoCollapseByteThreshold();
-    const std::size_t        excerptCap     = editor::MultibufferAutoCollapseExcerptCap();
+    const std::size_t        excerptCap    = editor::MultibufferAutoCollapseExcerptCap();
 
     // 0-indexed, matching Rope::ByteOffsetToLine's own convention -- the
     // running composite line number as text is appended, so each body
@@ -367,7 +367,7 @@ CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& co
     // their originalText snapshot are collected -- an untouched excerpt is
     // left alone, not rewritten with identical content.
     std::map<std::filesystem::path, std::vector<std::size_t>> changedByPath;
-    const std::vector<text::Buffer::ExcerptRange>&             ranges = composite.ExcerptRanges();
+    const std::vector<text::Buffer::ExcerptRange>&            ranges = composite.ExcerptRanges();
     for (std::size_t i = 0; i < ranges.size(); ++i) {
         const text::Buffer::ExcerptRange& range = ranges[i];
         if (!range.editable) {
@@ -409,10 +409,10 @@ CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& co
         // source buffer, over-conservative for excerpts that never
         // overlap.
         std::sort(indices.begin(), indices.end(),
-                 [&ranges](std::size_t a, std::size_t b) { return ranges[a].sourceStartByte > ranges[b].sourceStartByte; });
+                  [&ranges](std::size_t a, std::size_t b) { return ranges[a].sourceStartByte > ranges[b].sourceStartByte; });
 
         const std::size_t sourceLength = source->Content().ByteLength();
-        bool               conflicted  = false;
+        bool              conflicted   = false;
         for (std::size_t i : indices) {
             const text::Buffer::ExcerptRange& range = ranges[i];
             if (range.sourceEndByte > sourceLength) {

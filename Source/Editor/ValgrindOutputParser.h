@@ -47,12 +47,12 @@
 namespace ned::editor {
 
 struct ValgrindFinding {
-    std::string tool; // "memcheck", "helgrind", ... verbatim from the document's own
-                       // top-level <tool> element; empty if the document carries none.
-    std::string kind;    // Verbatim <kind> text -- "InvalidRead", "Leak_DefinitelyLost", "Race", ...
-    std::string message; // <xwhat><text> when present (memcheck leak reports), else <what>;
+    std::string tool;     // "memcheck", "helgrind", ... verbatim from the document's own
+                          // top-level <tool> element; empty if the document carries none.
+    std::string kind;     // Verbatim <kind> text -- "InvalidRead", "Leak_DefinitelyLost", "Race", ...
+    std::string message;  // <xwhat><text> when present (memcheck leak reports), else <what>;
                           // empty if the error block carries neither.
-    std::string file;    // <dir>/<file> joined when both present, else bare <file>; empty when no
+    std::string file;     // <dir>/<file> joined when both present, else bare <file>; empty when no
                           // frame in the error's first <stack> block carries a location at all.
     std::size_t line = 0; // 1-based; 0 = unknown/absent
 

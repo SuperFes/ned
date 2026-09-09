@@ -111,10 +111,10 @@ int main() {
     DrawLabel(std_plane, y, "C) NCALPHA_BLEND green @ ~50% over a KNOWN dark-gray plane placed beneath it (control case):");
     {
         ncplane_options popts{};
-        popts.y    = y;
-        popts.x    = 2;
-        popts.rows = 1;
-        popts.cols = static_cast<unsigned>(rowWidth);
+        popts.y        = y;
+        popts.x        = 2;
+        popts.rows     = 1;
+        popts.cols     = static_cast<unsigned>(rowWidth);
         ncplane* under = ncplane_create(std_plane, &popts);
         ncplane_set_bg_rgb8(under, 30, 30, 30);
         for (int x = 0; x < rowWidth; ++x) {

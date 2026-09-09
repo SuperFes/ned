@@ -11,7 +11,7 @@ using ned::editor::KeymapStack;
 using ned::editor::ParseKeySequence;
 
 TEST_CASE("Resolve reports NoMatch for an unbound sequence", "[Keymap]") {
-    Keymap keymap;
+    Keymap     keymap;
     const auto lookup = keymap.Resolve(ParseKeySequence("C-x"));
     REQUIRE(lookup.result == Keymap::LookupResult::NoMatch);
 }
@@ -61,7 +61,7 @@ TEST_CASE("KeymapStack prefers the higher-priority layer for an exact match", "[
     global.Bind(ParseKeySequence("C-c"), "global-command");
 
     const KeymapStack stack({&minor, &global});
-    const auto         lookup = stack.Resolve(ParseKeySequence("C-c"));
+    const auto        lookup = stack.Resolve(ParseKeySequence("C-c"));
 
     REQUIRE(lookup.result == Keymap::LookupResult::Match);
     REQUIRE(lookup.commandName == "minor-mode-command");
@@ -128,7 +128,7 @@ TEST_CASE("ChildrenAt lists the next chord of every sequence bound under a prefi
 
     const auto find = [&](const ned::editor::KeyChord& chord) {
         return std::find_if(children.begin(), children.end(),
-                             [&](const Keymap::ChildBinding& binding) { return binding.chord == chord; });
+                            [&](const Keymap::ChildBinding& binding) { return binding.chord == chord; });
     };
     const auto saveChord = ParseKeySequence("C-s").front();
     const auto it        = find(saveChord);
@@ -165,7 +165,7 @@ TEST_CASE("KeymapStack::ChildrenAt merges layers, first layer wins on overlap", 
 
     const auto find = [&](const ned::editor::KeyChord& chord) {
         return std::find_if(children.begin(), children.end(),
-                             [&](const Keymap::ChildBinding& binding) { return binding.chord == chord; });
+                            [&](const Keymap::ChildBinding& binding) { return binding.chord == chord; });
     };
     REQUIRE(find(ParseKeySequence("a").front())->commandName == "minor-command");
     REQUIRE(find(ParseKeySequence("b").front())->commandName == "global-only");

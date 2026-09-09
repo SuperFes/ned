@@ -35,7 +35,7 @@ TEST_CASE("Current throws when no ScriptingSessionScope is active", "[ScriptingS
 }
 
 TEST_CASE("A ScriptingSessionScope makes its session current", "[ScriptingSession]") {
-    Fixture fixture;
+    Fixture               fixture;
     ScriptingSessionScope scope(ScriptingSession{fixture.registry, fixture.scriptKeymap});
 
     ScriptingSession& current = ScriptingSessionScope::Current();
@@ -60,13 +60,13 @@ TEST_CASE("Nested ScriptingSessionScopes restore the outer one on destruction", 
 }
 
 TEST_CASE("CommandContextScope requires an active ScriptingSessionScope", "[ScriptingSession]") {
-    Fixture         fixture;
-    CommandContext  context = fixture.Context();
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
     REQUIRE_THROWS_AS(CommandContextScope(context), std::runtime_error);
 }
 
 TEST_CASE("CommandContextScope sets and restores the session's context pointer", "[ScriptingSession]") {
-    Fixture fixture;
+    Fixture               fixture;
     ScriptingSessionScope session(ScriptingSession{fixture.registry, fixture.scriptKeymap});
     REQUIRE(ScriptingSessionScope::Current().context == nullptr);
 
@@ -79,8 +79,8 @@ TEST_CASE("CommandContextScope sets and restores the session's context pointer",
 }
 
 TEST_CASE("Nested CommandContextScopes restore the outer context", "[ScriptingSession]") {
-    Fixture fixtureA;
-    Fixture fixtureB;
+    Fixture               fixtureA;
+    Fixture               fixtureB;
     ScriptingSessionScope session(ScriptingSession{fixtureA.registry, fixtureA.scriptKeymap});
 
     CommandContext contextA = fixtureA.Context();

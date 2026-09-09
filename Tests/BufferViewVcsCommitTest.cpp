@@ -56,7 +56,7 @@ struct Fixture {
     ned::editor::Keymap          keymap = ned::editor::BuildDefaultGlobalKeymap();
     ned::editor::Dispatcher      dispatcher{registry, ned::editor::KeymapStack({&keymap})};
     ned::editor::Mode            mode  = ned::editor::FundamentalMode();
-    ned::ui::Theme                theme = ned::ui::DarkTheme();
+    ned::ui::Theme               theme = ned::ui::DarkTheme();
 
     std::string           statusMessage;
     ned::text::Buffer&    original = bufferList.OpenOrCreateFile("/repo/original.txt");
@@ -106,9 +106,9 @@ TEST_CASE("BeginVcsCommitMessage without a wired VcsRunner reports and creates n
 
 TEST_CASE("BeginVcsCommitMessage opens a fresh, template-seeded buffer with point at 0 and switches to it",
           "[BufferView][Vcs]") {
-    Fixture                    fixture;
-    CommitTempFileGuard        tempGuard;
-    ProjectRootGuard           rootGuard("/repo");
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
     ned::editor::vcs::ClearRegistry();
     ned::ui::EventLoop          eventLoop;
     ned::editor::vcs::VcsRunner runner(eventLoop);
@@ -126,9 +126,9 @@ TEST_CASE("BeginVcsCommitMessage opens a fresh, template-seeded buffer with poin
 
 TEST_CASE("BeginVcsCommitMessage reuses an already-open commit buffer, preserving in-progress edits",
           "[BufferView][Vcs]") {
-    Fixture                    fixture;
-    CommitTempFileGuard        tempGuard;
-    ProjectRootGuard           rootGuard("/repo");
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
     ned::editor::vcs::ClearRegistry();
     ned::ui::EventLoop          eventLoop;
     ned::editor::vcs::VcsRunner runner(eventLoop);
@@ -142,7 +142,7 @@ TEST_CASE("BeginVcsCommitMessage reuses an already-open commit buffer, preservin
     firstOpen->InsertAtPoint("My in-progress message\n");
 
     fixture.activeBuffer.Set(fixture.original); // simulate switching away
-    view.BeginVcsCommitMessageForTesting();      // and re-running vcs-commit
+    view.BeginVcsCommitMessageForTesting();     // and re-running vcs-commit
 
     ned::text::Buffer* secondOpen = fixture.bufferList.FindByPath(ned::editor::vcs::VcsCommitMessagePath());
     REQUIRE(secondOpen == firstOpen); // same buffer, not a fresh re-seed
@@ -152,9 +152,9 @@ TEST_CASE("BeginVcsCommitMessage reuses an already-open commit buffer, preservin
 
 TEST_CASE("FinishVcsCommitMessage strips the comment template, fires RequestCommit, and closes the buffer",
           "[BufferView][Vcs]") {
-    Fixture                    fixture;
-    CommitTempFileGuard        tempGuard;
-    ProjectRootGuard           rootGuard("/repo");
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
     ned::editor::vcs::ClearRegistry(); // no provider -- RequestCommit's own guard resolves synchronously
     ned::ui::EventLoop          eventLoop;
     ned::editor::vcs::VcsRunner runner(eventLoop);
@@ -178,9 +178,9 @@ TEST_CASE("FinishVcsCommitMessage strips the comment template, fires RequestComm
 
 TEST_CASE("FinishVcsCommitMessage with only the template (no real message) doesn't call RequestCommit",
           "[BufferView][Vcs]") {
-    Fixture                    fixture;
-    CommitTempFileGuard        tempGuard;
-    ProjectRootGuard           rootGuard("/repo");
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
     ned::editor::vcs::ClearRegistry();
     ned::ui::EventLoop          eventLoop;
     ned::editor::vcs::VcsRunner runner(eventLoop);
@@ -195,9 +195,9 @@ TEST_CASE("FinishVcsCommitMessage with only the template (no real message) doesn
 }
 
 TEST_CASE("AbortVcsCommitMessage discards the buffer without committing", "[BufferView][Vcs]") {
-    Fixture                    fixture;
-    CommitTempFileGuard        tempGuard;
-    ProjectRootGuard           rootGuard("/repo");
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
     ned::editor::vcs::ClearRegistry();
     ned::ui::EventLoop          eventLoop;
     ned::editor::vcs::VcsRunner runner(eventLoop);

@@ -21,16 +21,31 @@ namespace {
 // aren't exercised by these registry-only tests.
 class FakeProvider : public VcsProvider {
   public:
-    explicit FakeProvider(bool matches) : matches_(matches) {}
+    explicit FakeProvider(bool matches) : matches_(matches) {
+    }
 
-    [[nodiscard]] bool Detect(const std::filesystem::path&) const override { return matches_; }
+    [[nodiscard]] bool Detect(const std::filesystem::path&) const override {
+        return matches_;
+    }
 
-    [[nodiscard]] VcsCommandSpec BlameArgv(const std::filesystem::path&) const override { return {}; }
-    [[nodiscard]] std::vector<VcsBlameLine> ParseBlame(const std::string&) const override { return {}; }
-    [[nodiscard]] VcsCommandSpec LogArgv(const std::filesystem::path&) const override { return {}; }
-    [[nodiscard]] std::vector<VcsLogEntry> ParseLog(const std::string&) const override { return {}; }
-    [[nodiscard]] VcsCommandSpec DiffArgv(const std::filesystem::path&) const override { return {}; }
-    [[nodiscard]] std::vector<VcsDiffHunk> ParseDiff(const std::string&) const override { return {}; }
+    [[nodiscard]] VcsCommandSpec BlameArgv(const std::filesystem::path&) const override {
+        return {};
+    }
+    [[nodiscard]] std::vector<VcsBlameLine> ParseBlame(const std::string&) const override {
+        return {};
+    }
+    [[nodiscard]] VcsCommandSpec LogArgv(const std::filesystem::path&) const override {
+        return {};
+    }
+    [[nodiscard]] std::vector<VcsLogEntry> ParseLog(const std::string&) const override {
+        return {};
+    }
+    [[nodiscard]] VcsCommandSpec DiffArgv(const std::filesystem::path&) const override {
+        return {};
+    }
+    [[nodiscard]] std::vector<VcsDiffHunk> ParseDiff(const std::string&) const override {
+        return {};
+    }
 
   private:
     bool matches_;
@@ -40,8 +55,12 @@ class FakeProvider : public VcsProvider {
 // ordering/prior failures, mirroring how other mutex-guarded-static-state
 // tests in this codebase reset before asserting.
 struct RegistryResetGuard {
-    RegistryResetGuard() { ClearRegistry(); }
-    ~RegistryResetGuard() { ClearRegistry(); }
+    RegistryResetGuard() {
+        ClearRegistry();
+    }
+    ~RegistryResetGuard() {
+        ClearRegistry();
+    }
 };
 
 } // namespace
@@ -68,8 +87,8 @@ TEST_CASE("ActiveProviderFor returns the first provider whose Detect matches", "
 
 TEST_CASE("ActiveProviderFor prefers the first-registered match on ties", "[VcsProviderRegistry]") {
     RegistryResetGuard guard;
-    auto* const first  = new FakeProvider(true);
-    auto* const second = new FakeProvider(true);
+    auto* const        first  = new FakeProvider(true);
+    auto* const        second = new FakeProvider(true);
     RegisterProvider("first", std::unique_ptr<VcsProvider>(first));
     RegisterProvider("second", std::unique_ptr<VcsProvider>(second));
 
@@ -78,7 +97,7 @@ TEST_CASE("ActiveProviderFor prefers the first-registered match on ties", "[VcsP
 
 TEST_CASE("ActiveProviderFor caches its result per root", "[VcsProviderRegistry]") {
     RegistryResetGuard guard;
-    auto* const matching = new FakeProvider(true);
+    auto* const        matching = new FakeProvider(true);
     RegisterProvider("matches", std::unique_ptr<VcsProvider>(matching));
 
     REQUIRE(ActiveProviderFor("/cached/root") == matching);

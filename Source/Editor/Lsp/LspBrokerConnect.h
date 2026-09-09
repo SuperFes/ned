@@ -55,8 +55,8 @@ namespace ned::editor::lsp {
 // spawning a server directly on nullptr, exactly like today, never to
 // treat this as an error worth surfacing on its own.
 [[nodiscard]] std::unique_ptr<LspClient> TryConnectToBroker(const std::filesystem::path& projectRoot, const std::string& language,
-                                                             const std::vector<std::string>& argv, ned::ui::EventLoop& eventLoop,
-                                                             std::optional<std::filesystem::path> socketPathOverride = std::nullopt);
+                                                            const std::vector<std::string>& argv, ned::ui::EventLoop& eventLoop,
+                                                            std::optional<std::filesystem::path> socketPathOverride = std::nullopt);
 
 } // namespace ned::editor::lsp
 

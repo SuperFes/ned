@@ -102,7 +102,11 @@ using ConnectionId = std::uint64_t;
 // LspServerConfig.h's own "no auto-retry beyond that" precedent); the next
 // successful attach for the same (root, language) only happens once this
 // entry is reset via ServerDisconnected/eviction or the daemon restarts.
-enum class BrokerLanguageStatus { NotStarted, SpawningProcess, AwaitingRealHandshake, Ready, Failed };
+enum class BrokerLanguageStatus { NotStarted,
+                                  SpawningProcess,
+                                  AwaitingRealHandshake,
+                                  Ready,
+                                  Failed };
 
 // One instruction for LspBrokerMain.cpp's imperative layer to carry out --
 // BrokerRouter never performs I/O itself, only describes what should
@@ -118,12 +122,12 @@ struct BrokerAction {
         ShutdownProcess, // no fields: every entry has been told to shut down -- exit the daemon process once pending writes flush.
     };
 
-    Kind                      kind;
-    std::string               root;
-    std::string               language;
-    std::vector<std::string>  argv;
-    Json                      frame;
-    ConnectionId              connection = 0;
+    Kind                     kind;
+    std::string              root;
+    std::string              language;
+    std::vector<std::string> argv;
+    Json                     frame;
+    ConnectionId             connection = 0;
 };
 
 // The pure routing core -- one instance for the whole daemon process (every
@@ -156,8 +160,8 @@ class BrokerRouter {
     // idle-exits). now is injectable for tests only, defaulting to the
     // real clock.
     [[nodiscard]] std::vector<BrokerAction> ClientAttached(ConnectionId conn, std::string root, std::string language,
-                                                            std::vector<std::string> argv,
-                                                            std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+                                                           std::vector<std::string>              argv,
+                                                           std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
 
     // An already-attached client sent an ordinary JSON-RPC frame -- may be
     // that client's own "initialize"/"initialized" (handled specially, see
@@ -166,7 +170,7 @@ class BrokerRouter {
     // (no matching ClientAttached) is ignored. now is injectable for tests
     // only, defaulting to the real clock.
     [[nodiscard]] std::vector<BrokerAction> ClientFrame(ConnectionId conn, const Json& frame,
-                                                         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+                                                        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
 
     // conn's socket closed for any reason. Forgets every trace of conn:
     // its queued-but-unanswered "initialize" (if any), its entry in the
@@ -206,7 +210,7 @@ class BrokerRouter {
     // attached to this entry). now is injectable for tests only, defaulting
     // to the real clock.
     [[nodiscard]] std::vector<BrokerAction> ServerFrame(const std::string& root, const std::string& language, const Json& frame,
-                                                         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+                                                        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
 
     // The real server subprocess for (root, language) exited/crashed for
     // any reason. Every client currently attached (or queued
@@ -270,16 +274,16 @@ class BrokerRouter {
     };
 
     struct LanguageState {
-        std::string                    root;
-        std::string                    language;
-        BrokerLanguageStatus           status = BrokerLanguageStatus::NotStarted;
-        std::vector<std::string>       argv;
-        bool                           processRunning = false; // ServerSpawned fired, still true even once AwaitingRealHandshake/Ready
-        std::vector<QueuedInitialize>  pendingInitializeRequests;
-        std::optional<Json>            cachedInitializeResult;
-        std::string                    failureReason;
-        int                            nextBrokerId          = 1;
-        int                            handshakeBrokerId     = 0; // the broker's own in-flight synthetic "initialize" id, while AwaitingRealHandshake
+        std::string                             root;
+        std::string                             language;
+        BrokerLanguageStatus                    status = BrokerLanguageStatus::NotStarted;
+        std::vector<std::string>                argv;
+        bool                                    processRunning = false; // ServerSpawned fired, still true even once AwaitingRealHandshake/Ready
+        std::vector<QueuedInitialize>           pendingInitializeRequests;
+        std::optional<Json>                     cachedInitializeResult;
+        std::string                             failureReason;
+        int                                     nextBrokerId      = 1;
+        int                                     handshakeBrokerId = 0; // the broker's own in-flight synthetic "initialize" id, while AwaitingRealHandshake
         std::unordered_map<int, PendingRequest> pendingByBrokerId;
         std::unordered_set<ConnectionId>        attached; // completed their own initialize -> initialized round trip
         std::chrono::steady_clock::time_point   lastActive;
@@ -317,9 +321,9 @@ class BrokerRouter {
     // refusing the new spawn.
     void MaybeEvictForCapacity(std::vector<BrokerAction>& actions);
 
-    int                                              maxConcurrentServers_;
-    std::unordered_map<std::string, LanguageState>   languages_; // keyed by MakeKey(root, language)
-    std::unordered_map<ConnectionId, std::string>    connectionKey_; // which (root, language) key a connection attached to
+    int                                            maxConcurrentServers_;
+    std::unordered_map<std::string, LanguageState> languages_;     // keyed by MakeKey(root, language)
+    std::unordered_map<ConnectionId, std::string>  connectionKey_; // which (root, language) key a connection attached to
 };
 
 } // namespace ned::editor::lsp

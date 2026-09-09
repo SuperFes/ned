@@ -101,9 +101,9 @@ std::vector<editor::SymbolMarker> BufferView::StickyScrollChainForCurrentViewpor
         return {};
     }
 
-    const text::Buffer&       buffer          = activeBuffer_.Get();
-    const text::ITextStorage& content         = buffer.Content();
-    const std::size_t         viewportTopByte = content.LineToByteOffset(viewport_.TopLine());
+    const text::Buffer&               buffer          = activeBuffer_.Get();
+    const text::ITextStorage&         content         = buffer.Content();
+    const std::size_t                 viewportTopByte = content.LineToByteOffset(viewport_.TopLine());
     std::vector<editor::SymbolMarker> chain =
         editor::stickyscroll::StickyChainForViewportTop(gutters_.SymbolMarkers(), viewportTopByte);
     if (static_cast<int>(chain.size()) > maxRows) {
@@ -165,7 +165,7 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         if (LineNumberGutterActive()) {
             const std::string lineNumber = std::to_string(line + 1);
             const std::size_t padding    = gutterDigits > lineNumber.size() ? gutterDigits - lineNumber.size() : 0;
-            const Brush lineNumberBrush{.background = theme_.tabBar.background, .foreground = theme_.lineNumberForeground};
+            const Brush       lineNumberBrush{.background = theme_.tabBar.background, .foreground = theme_.lineNumberForeground};
             for (std::size_t k = 0; k < lineNumber.size() && static_cast<int>(digitsStart + padding + k) < width; ++k) {
                 Cell& cell     = c[{.x = static_cast<int>(digitsStart + padding + k), .y = row}];
                 cell.character = std::string(1, lineNumber[k]);
@@ -181,8 +181,8 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
             const Brush glyphBrush{.background = theme_.tabBar.background,
                                    .foreground = theme_.BrushFor(editor::SyntaxClassFor(marker.kind)).foreground,
                                    .bold       = true};
-            Cell& glyphCell     = c[{.x = static_cast<int>(symbolStart), .y = row}];
-            glyphCell.character = SymbolGlyphFor(marker.kind);
+            Cell&       glyphCell = c[{.x = static_cast<int>(symbolStart), .y = row}];
+            glyphCell.character   = SymbolGlyphFor(marker.kind);
             glyphBrush.ApplyTo(glyphCell);
         }
 
@@ -290,10 +290,10 @@ void BufferView::Paint(Canvas paneCanvas) {
     }
 
     const text::ITextStorage& content    = buffer.Content();
-    const std::size_t totalLines = content.LineCount();
-    const Brush       emptyBrush = theme_.BrushFor(editor::SyntaxClass::Default);
-    const std::size_t point      = buffer.Point();
-    const std::size_t pointLine  = content.ByteOffsetToLine(point);
+    const std::size_t         totalLines = content.LineCount();
+    const Brush               emptyBrush = theme_.BrushFor(editor::SyntaxClass::Default);
+    const std::size_t         point      = buffer.Point();
+    const std::size_t         pointLine  = content.ByteOffsetToLine(point);
 
     // narrow-to-region/widen follow-up: caps which rows actually get
     // painted -- deliberately a *separate* value from totalLines above,
@@ -571,7 +571,7 @@ void BufferView::Paint(Canvas paneCanvas) {
     // per-insert heap allocations, then finally this: sorted vectors cached
     // alongside gutters_.FoldableBlocks() itself rather than rebuilt every
     // Paint() call).
-    
+
     // Recomputed only when the active buffer or its content has actually
     // changed since the last Paint() call -- see highlightCacheBuffer_'s own
     // doc comment in BufferView.h for why this caching exists at all (a real,
@@ -647,7 +647,7 @@ void BufferView::Paint(Canvas paneCanvas) {
 
     // Links follow-up: see EnsureLinkCache's own doc comment in BufferView.h
     // for why this is a no-op outside an org-mode buffer.
-    
+
     // depth-aware-fold-gutter follow-up: streaming state for the per-row
     // gutter rendering below -- one pass over the whole row loop, not
     // rebuilt per row; see that code's own doc comment for why a plain
@@ -757,7 +757,7 @@ void BufferView::Paint(Canvas paneCanvas) {
     // anchors, and mouse-click row resolution all agree with what got drawn
     // this frame.
     stickyRowCount_ = PaintStickyScrollRows(paneCanvas, gutterWidth);
-    Box shiftedBox = Box_();
+    Box shiftedBox  = Box_();
     shiftedBox.y_min += stickyRowCount_;
     Canvas c = paneCanvas.ForBox(shiftedBox);
 
@@ -875,7 +875,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 }
                 if (wrapActive) {
                     const int fullWidth = std::max(1, c.size().width - static_cast<int>(gutterWidth));
-                    lineSegments = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, currentLineLinks);
+                    lineSegments        = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, currentLineLinks);
                 }
                 else {
                     lineSegments = {WrapSegment{.startByte = lineStart, .endByte = lineEnd}};
@@ -1095,7 +1095,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     // Vim's "relativenumber": current line keeps its real
                     // (1-indexed) number, every other visible line shows its
                     // distance from it instead.
-                    const std::string number = editor::RelativeLineNumbersEnabled() && line != pointLine
+                    const std::string number  = editor::RelativeLineNumbersEnabled() && line != pointLine
                                                     ? std::to_string(line > pointLine ? line - pointLine : pointLine - line)
                                                     : std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
                     const std::size_t padding = gutterDigits > number.size() ? gutterDigits - number.size() : 0;
@@ -1864,10 +1864,10 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
     // sits below the line's LAST wrap row, where first-row column math
     // would lie) and the span's start still on-screen horizontally.
     if (!viewport_.EffectiveWrapLines()) {
-        const text::Buffer& buffer    = activeBuffer_.Get();
-        const text::ITextStorage&   content   = buffer.Content();
-        const std::size_t   lineStart = content.LineToByteOffset(line);
-        const std::size_t   lineEnd =
+        const text::Buffer&       buffer    = activeBuffer_.Get();
+        const text::ITextStorage& content   = buffer.Content();
+        const std::size_t         lineStart = content.LineToByteOffset(line);
+        const std::size_t         lineEnd =
             (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         const std::vector<RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, buffer.Point());
 
@@ -1939,10 +1939,10 @@ void BufferView::PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::
         return;
     }
 
-    const text::Buffer& buffer     = activeBuffer_.Get();
-    const text::ITextStorage&   content    = buffer.Content();
-    const std::size_t   byteLength = content.ByteLength();
-    const auto&         glyphs     = RoundedBorderGlyphs();
+    const text::Buffer&       buffer     = activeBuffer_.Get();
+    const text::ITextStorage& content    = buffer.Content();
+    const std::size_t         byteLength = content.ByteLength();
+    const auto&               glyphs     = RoundedBorderGlyphs();
 
     // Gathering pass: every on-screen Prose diagnostic reduced to a
     // ProseCalloutItem, sorted by its own firstRow -- the clustering pass
@@ -2104,11 +2104,11 @@ std::optional<Point> BufferView::CursorPosition() const {
     // buffer/content access, one GutterWidth() call, one
     // ByteOffsetToLine/LineToByteOffset pair, one bounded VisualColumn scan
     // -- nowhere near Paint()'s own per-visible-row cost.
-    const text::Buffer& buffer      = activeBuffer_.Get();
-    const text::ITextStorage&   content     = buffer.Content();
-    const std::size_t   point       = buffer.Point();
-    const std::size_t   pointLine   = content.ByteOffsetToLine(point);
-    const std::size_t   gutterWidth = GutterWidth();
+    const text::Buffer&       buffer      = activeBuffer_.Get();
+    const text::ITextStorage& content     = buffer.Content();
+    const std::size_t         point       = buffer.Point();
+    const std::size_t         pointLine   = content.ByteOffsetToLine(point);
+    const std::size_t         gutterWidth = GutterWidth();
 
     // Org-mode fold/unfold follow-up: a point sitting on a currently-hidden
     // line has no on-screen row to report at all -- can't happen through

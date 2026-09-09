@@ -103,15 +103,15 @@ class BufferListPanel {
     void SetOnMessage(std::function<void(std::string)> handler);
 
   private:
-    text::BufferList&  bufferList_;
-    ListPopup           popup_;
+    text::BufferList& bufferList_;
+    ListPopup         popup_;
 
     std::vector<text::Buffer*> rows_;       // this Show()/Refresh()'s buffer order, index-parallel to popup_'s rows
     std::vector<bool>          markedKill_; // index-parallel to rows_ -- d/D
     std::vector<bool>          markedSave_; // index-parallel to rows_ -- s/S
     std::size_t                selectedIndex_ = 0;
 
-    bool                        confirming_ = false;
+    bool                       confirming_ = false;
     std::vector<text::Buffer*> pendingKill_; // computed by x, executed on 'y'
 
     std::function<void(text::Buffer&)> onRequestSwitchTo_;
@@ -119,8 +119,8 @@ class BufferListPanel {
     std::function<void(text::Buffer&)> onBufferClosing_;
     std::function<void(std::string)>   onMessage_;
 
-    void Refresh();         // rebuilds rows_/markedKill_/markedSave_ from bufferList_, preserving marks by identity
-    void RefreshDisplay();  // pushes rows_/markedKill_/markedSave_/selectedIndex_ into popup_'s model
+    void Refresh();        // rebuilds rows_/markedKill_/markedSave_ from bufferList_, preserving marks by identity
+    void RefreshDisplay(); // pushes rows_/markedKill_/markedSave_/selectedIndex_ into popup_'s model
 
     void HandleActivate(std::size_t index);
     void HandleCancel();

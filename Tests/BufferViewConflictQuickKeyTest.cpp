@@ -95,10 +95,10 @@ TEST_CASE("M-t/M-b/M-d/M-k resolve via theirs/both/neither/keep-base", "[BufferV
 }
 
 TEST_CASE("M-n/M-p navigate between unresolved conflict hunks, wrapping", "[BufferView][ConflictResolution]") {
-    Fixture fixture;
+    Fixture           fixture;
     const std::string text = "<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n"
-                              "middle\n"
-                              "<<<<<<< a\np\n=======\nq\n>>>>>>> b\n";
+                             "middle\n"
+                             "<<<<<<< a\np\n=======\nq\n>>>>>>> b\n";
     fixture.buffer.InsertAtPoint(text);
     fixture.buffer.SetPoint(0);
     BufferView view = fixture.View();
@@ -126,7 +126,7 @@ TEST_CASE("M-o falls through to its ordinary global binding once no conflicts re
 }
 
 TEST_CASE("Ctrl-Alt-o is not a conflict quick key even with an unresolved hunk", "[BufferView][ConflictResolution]") {
-    Fixture fixture;
+    Fixture           fixture;
     const std::string text = "<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n";
     fixture.buffer.InsertAtPoint(text);
     fixture.buffer.SetPoint(0);

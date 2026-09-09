@@ -78,13 +78,13 @@ TEST_CASE("A sanitizer report in the run's output is logged to DiagnosticsLog wi
     ResetDiagnosticsLogForTesting();
 
     runner.DispatchProcessOutput("2/2 Test #2: SomeTest ......................***Failed    0.00 sec\n"
-                                  "==12345==ERROR: AddressSanitizer: heap-use-after-free on address 0x1\n"
-                                  "SUMMARY: AddressSanitizer: heap-use-after-free /a/file.cpp:12:3 in main\n"
-                                  "0% tests passed, 1 tests failed out of 1\n");
+                                 "==12345==ERROR: AddressSanitizer: heap-use-after-free on address 0x1\n"
+                                 "SUMMARY: AddressSanitizer: heap-use-after-free /a/file.cpp:12:3 in main\n"
+                                 "0% tests passed, 1 tests failed out of 1\n");
     runner.DispatchProcessExit(1);
 
     const auto entries = LogEntries();
-    const auto it       = std::ranges::find_if(entries, [](const auto& e) { return e.category == LogCategory::Subprocess; });
+    const auto it      = std::ranges::find_if(entries, [](const auto& e) { return e.category == LogCategory::Subprocess; });
     REQUIRE(it != entries.end());
     CHECK(it->message.find("AddressSanitizer") != std::string::npos);
     CHECK(it->message.find("heap-use-after-free") != std::string::npos);

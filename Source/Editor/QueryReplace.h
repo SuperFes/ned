@@ -90,7 +90,7 @@ class QueryReplace {
     Stage                       stage_ = Stage::EnteringPattern;
     std::string                 patternText_;
     std::string                 replacementText_;
-    std::optional<RegexPattern> pattern_; // set by ConfirmPattern
+    std::optional<RegexPattern> pattern_;      // set by ConfirmPattern
     bool                        huge_ = false; // buffer_.Content().IsHuge(), decided in ConfirmReplacement
     std::string                 content_;      // kept in sync with the buffer as replacements happen; empty when huge_
     std::size_t                 searchCursor_     = 0;

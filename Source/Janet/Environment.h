@@ -147,7 +147,7 @@ class Environment {
 // janet_to_string(*out) only if nothing was captured (e.g. a panic with no
 // default stacktrace print at all).
 int DoStringCapturingStacktrace(JanetTable* env, const std::string& code, const std::string& sourcePath, Janet* out,
-                                 std::string* capturedError);
+                                std::string* capturedError);
 
 } // namespace ned::janet
 

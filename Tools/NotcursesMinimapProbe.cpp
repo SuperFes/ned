@@ -43,36 +43,36 @@ namespace {
 // a field of disconnected specks the way sparse text content might.
 std::vector<std::uint8_t> BuildRingImage(int width, int height) {
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
-    const double              cx = width / 2.0;
-    const double              cy = height / 2.0;
+    const double              cx   = width / 2.0;
+    const double              cy   = height / 2.0;
     const double              maxR = std::min(cx, cy);
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            const double dx = x - cx;
-            const double dy = y - cy;
-            const double r  = std::sqrt(dx * dx + dy * dy) / maxR;
+            const double dx   = x - cx;
+            const double dy   = y - cy;
+            const double r    = std::sqrt(dx * dx + dy * dy) / maxR;
             const int    ring = static_cast<int>(r * 6.0) % 2;
             std::uint8_t red, green, blue;
             if (r > 1.0) {
-                red = 20;
+                red   = 20;
                 green = 20;
-                blue = 30;
+                blue  = 30;
             }
             else if (ring == 0) {
-                red = 255;
+                red   = 255;
                 green = 80;
-                blue = 80;
+                blue  = 80;
             }
             else {
-                red = 80;
+                red   = 80;
                 green = 160;
-                blue = 255;
+                blue  = 255;
             }
             const std::size_t idx = (static_cast<std::size_t>(y) * width + x) * 4;
-            pixels[idx + 0]        = red;
-            pixels[idx + 1]        = green;
-            pixels[idx + 2]        = blue;
-            pixels[idx + 3]        = 255;
+            pixels[idx + 0]       = red;
+            pixels[idx + 1]       = green;
+            pixels[idx + 2]       = blue;
+            pixels[idx + 3]       = 255;
         }
     }
     return pixels;
@@ -106,7 +106,7 @@ int main() {
     y++;
 
     const ncpixelimpl_e impl = notcurses_check_pixel_support(nc);
-    char                 line[256];
+    char                line[256];
     std::snprintf(line, sizeof(line), "Detected pixel implementation: %d (0 == NCPIXEL_NONE)", static_cast<int>(impl));
     ncplane_putstr_yx(std_plane, y++, 2, line);
 
@@ -118,8 +118,8 @@ int main() {
     notcurses_render(nc);
     Progress(line);
 
-    const int labelY   = y;
-    const int panelY   = y + 1;
+    const int labelY    = y;
+    const int panelY    = y + 1;
     const int panelRows = 20;
     const int panelCols = 5;
 
@@ -133,15 +133,15 @@ int main() {
     // to exactly match this plane's real cell-pixel footprint -- the exact
     // Minimap::EnsurePlane() approach for real-pixel-graphics mode.
     {
-        const int imgW = panelCols * (celldimx > 0 ? static_cast<int>(celldimx) : 8);
-        const int imgH = panelRows * (celldimy > 0 ? static_cast<int>(celldimy) : 16);
+        const int                       imgW   = panelCols * (celldimx > 0 ? static_cast<int>(celldimx) : 8);
+        const int                       imgH   = panelRows * (celldimy > 0 ? static_cast<int>(celldimy) : 16);
         const std::vector<std::uint8_t> pixels = BuildRingImage(imgW, imgH);
 
         ncplane_options nopts{};
-        nopts.y    = panelY;
-        nopts.x    = 2;
-        nopts.rows = panelRows;
-        nopts.cols = panelCols;
+        nopts.y        = panelY;
+        nopts.x        = 2;
+        nopts.rows     = panelRows;
+        nopts.cols     = panelCols;
         ncplane* plane = ncplane_create(std_plane, &nopts);
         Progress(plane == nullptr ? "ncplane_create (panel 1) failed" : "ncplane_create (panel 1) succeeded");
 
@@ -212,23 +212,23 @@ int main() {
     // is specifically in pixel-graphics delivery, not in the image data or
     // plane sizing.
     {
-        const int imgW = panelCols * 2;
-        const int imgH = panelRows * 2;
+        const int                       imgW   = panelCols * 2;
+        const int                       imgH   = panelRows * 2;
         const std::vector<std::uint8_t> pixels = BuildRingImage(imgW, imgH);
 
         ncplane_options nopts{};
-        nopts.y    = panelY;
-        nopts.x    = 2 + panelCols + 4;
-        nopts.rows = panelRows;
-        nopts.cols = panelCols;
+        nopts.y        = panelY;
+        nopts.x        = 2 + panelCols + 4;
+        nopts.rows     = panelRows;
+        nopts.cols     = panelCols;
         ncplane* plane = ncplane_create(std_plane, &nopts);
         if (plane != nullptr) {
             ncvisual* visual = ncvisual_from_rgba(pixels.data(), imgH, imgW * 4, imgW);
             if (visual != nullptr) {
                 ncvisual_options vopts{};
-                vopts.n       = plane;
-                vopts.scaling = NCSCALE_STRETCH;
-                vopts.blitter = NCBLIT_2x2;
+                vopts.n        = plane;
+                vopts.scaling  = NCSCALE_STRETCH;
+                vopts.blitter  = NCBLIT_2x2;
                 ncplane* drawn = ncvisual_blit(nc, visual, &vopts);
                 Progress(drawn == nullptr ? "ncvisual_blit (panel 2, NCBLIT_2x2) failed"
                                           : "ncvisual_blit (panel 2, NCBLIT_2x2) succeeded");
@@ -244,23 +244,23 @@ int main() {
     // hand-rolled braille minimap renderer, for a direct density/resolution
     // comparison against panel 1.
     {
-        const int imgW = panelCols * 2;
-        const int imgH = panelRows * 4;
+        const int                       imgW   = panelCols * 2;
+        const int                       imgH   = panelRows * 4;
         const std::vector<std::uint8_t> pixels = BuildRingImage(imgW, imgH);
 
         ncplane_options nopts{};
-        nopts.y    = panelY;
-        nopts.x    = 2 + 2 * (panelCols + 4);
-        nopts.rows = panelRows;
-        nopts.cols = panelCols;
+        nopts.y        = panelY;
+        nopts.x        = 2 + 2 * (panelCols + 4);
+        nopts.rows     = panelRows;
+        nopts.cols     = panelCols;
         ncplane* plane = ncplane_create(std_plane, &nopts);
         if (plane != nullptr) {
             ncvisual* visual = ncvisual_from_rgba(pixels.data(), imgH, imgW * 4, imgW);
             if (visual != nullptr) {
                 ncvisual_options vopts{};
-                vopts.n       = plane;
-                vopts.scaling = NCSCALE_STRETCH;
-                vopts.blitter = NCBLIT_BRAILLE;
+                vopts.n        = plane;
+                vopts.scaling  = NCSCALE_STRETCH;
+                vopts.blitter  = NCBLIT_BRAILLE;
                 ncplane* drawn = ncvisual_blit(nc, visual, &vopts);
                 Progress(drawn == nullptr ? "ncvisual_blit (panel 3, NCBLIT_BRAILLE) failed"
                                           : "ncvisual_blit (panel 3, NCBLIT_BRAILLE) succeeded");
@@ -285,15 +285,15 @@ int main() {
         const int wideY    = panelY + panelRows + 2;
         ncplane_putstr_yx(std_plane, wideY - 1, 2, "NCBLIT_PIXEL, owned, 30 cells wide (width-isolation test)");
 
-        const int imgW = wideCols * (celldimx > 0 ? static_cast<int>(celldimx) : 8);
-        const int imgH = wideRows * (celldimy > 0 ? static_cast<int>(celldimy) : 16);
+        const int                       imgW   = wideCols * (celldimx > 0 ? static_cast<int>(celldimx) : 8);
+        const int                       imgH   = wideRows * (celldimy > 0 ? static_cast<int>(celldimy) : 16);
         const std::vector<std::uint8_t> pixels = BuildRingImage(imgW, imgH);
 
         ncplane_options nopts{};
-        nopts.y    = wideY;
-        nopts.x    = 2;
-        nopts.rows = wideRows;
-        nopts.cols = wideCols;
+        nopts.y        = wideY;
+        nopts.x        = 2;
+        nopts.rows     = wideRows;
+        nopts.cols     = wideCols;
         ncplane* plane = ncplane_create(std_plane, &nopts);
         Progress(plane == nullptr ? "ncplane_create (panel 4, wide) failed" : "ncplane_create (panel 4, wide) succeeded");
 

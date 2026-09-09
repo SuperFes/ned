@@ -5,7 +5,7 @@
 #include "UI/Theme.h"
 
 TEST_CASE("MemoryImageView fills its entire interior with the theme background, leaving no stale cells", "[MemoryImageView]") {
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    ned::ui::Theme           theme = ned::ui::DarkTheme();
     ned::ui::MemoryImageView view(theme);
     view.SetModel(ned::ui::MemoryImageModel{.title = "Memory image: 0x1000 (4 bytes)", .bytes = {0, 64, 128, 255}});
 
@@ -30,7 +30,7 @@ TEST_CASE("MemoryImageView fills its entire interior with the theme background, 
 }
 
 TEST_CASE("MemoryImageView degrades sanely for a zero-area canvas and an empty model", "[MemoryImageView]") {
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    ned::ui::Theme           theme = ned::ui::DarkTheme();
     ned::ui::MemoryImageView view(theme);
     view.SetModel(ned::ui::MemoryImageModel{});
 
@@ -45,7 +45,7 @@ TEST_CASE("MemoryImageView degrades sanely for a zero-area canvas and an empty m
 
 TEST_CASE("MemoryImageView paints each byte as a grayscale foreground/background pair via the half-block glyph",
           "[MemoryImageView]") {
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    ned::ui::Theme           theme = ned::ui::DarkTheme();
     ned::ui::MemoryImageView view(theme);
     // 2 bytes, one pixel row of 2 columns wide -- ComputeMemoryImageLayout(2, N)
     // picks 2 columns, 1 row, so this lands in the single top-only cell row
@@ -77,7 +77,7 @@ TEST_CASE("MemoryImageView paints each byte as a grayscale foreground/background
 }
 
 TEST_CASE("MemoryImageView dismisses on any key while focused", "[MemoryImageView]") {
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    ned::ui::Theme           theme = ned::ui::DarkTheme();
     ned::ui::MemoryImageView view(theme);
     view.SetModel(ned::ui::MemoryImageModel{.title = "t", .bytes = {1, 2, 3}});
 

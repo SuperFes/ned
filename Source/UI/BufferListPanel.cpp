@@ -34,8 +34,7 @@ namespace {
 
 } // namespace
 
-BufferListPanel::BufferListPanel(const Theme& theme, text::BufferList& bufferList)
-    : bufferList_(bufferList), popup_(theme) {
+BufferListPanel::BufferListPanel(const Theme& theme, text::BufferList& bufferList) : bufferList_(bufferList), popup_(theme) {
     popup_.SetFocusable(true);
     popup_.SetOnHighlightChange([this](std::size_t index) { selectedIndex_ = index; });
     popup_.SetOnActivate([this](std::size_t index) { HandleActivate(index); });
@@ -103,7 +102,7 @@ void BufferListPanel::RefreshDisplay() {
     model.rows.reserve(rows_.size());
     for (std::size_t i = 0; i < rows_.size(); ++i) {
         const text::Buffer& buffer = *rows_[i];
-        std::string          left;
+        std::string         left;
         left += markedKill_[i] ? 'D' : ' ';
         left += markedSave_[i] ? 'S' : ' ';
         left += buffer.Modified() ? '*' : ' ';

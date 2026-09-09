@@ -39,8 +39,8 @@
 namespace ned::ui {
 
 struct ListPopupRow {
-    std::string left;          // optional leading column (a key chord, a mark glyph, "N)") -- empty means none
-    std::string main;          // the row's main label
+    std::string left;             // optional leading column (a key chord, a mark glyph, "N)") -- empty means none
+    std::string main;             // the row's main label
     bool        accented = false; // paint `left` in the theme's accent brush (which-key's chord color)
     // completion-popup follow-up: overrides `left`'s color entirely (ahead
     // of `accented`) with an explicit foreground -- a completion item's
@@ -58,8 +58,8 @@ struct ListPopupRow {
 };
 
 struct ListPopupModel {
-    std::string                title; // border title
-    std::vector<ListPopupRow>  rows;
+    std::string               title; // border title
+    std::vector<ListPopupRow> rows;
 
     // Set => paint a selection bar across this row (theme_.selectionBackground,
     // ProjectSidebar's own selected-row technique). Unset => a plain static
@@ -119,7 +119,7 @@ class ListPopup : public Widget {
 
     // Selects the focus-owning mode described in this file's header comment.
     // Defaults to false (which-key's original non-focusable behavior).
-    void SetFocusable(bool focusable);
+    void               SetFocusable(bool focusable);
     [[nodiscard]] bool Focusable() const override {
         return focusable_;
     }
@@ -171,16 +171,16 @@ class ListPopup : public Widget {
     bool OnEvent(const Event& event) override;
 
   private:
-    const Theme&    theme_;
-    ListPopupModel  model_;
-    bool            focusable_ = false;
+    const Theme&   theme_;
+    ListPopupModel model_;
+    bool           focusable_ = false;
 
-    std::function<void(std::size_t)>              onHighlightChange_;
-    std::function<void(std::size_t)>               onActivate_;
-    std::function<void()>                           onCancel_;
-    std::function<void(const editor::KeyChord&)>    onKey_;
-    std::function<void(std::size_t, int)>           onLeftColumnClick_;
-    std::function<void(int)>                        onScrollBy_; // see SetOnScrollBy
+    std::function<void(std::size_t)>             onHighlightChange_;
+    std::function<void(std::size_t)>             onActivate_;
+    std::function<void()>                        onCancel_;
+    std::function<void(const editor::KeyChord&)> onKey_;
+    std::function<void(std::size_t, int)>        onLeftColumnClick_;
+    std::function<void(int)>                     onScrollBy_; // see SetOnScrollBy
 
     bool HandleKeyEvent(const Event& event);
 

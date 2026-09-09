@@ -205,8 +205,8 @@ void BufferView::RequestCompletionResolve() {
 
 void BufferView::ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point) {
     const text::ITextStorage& content     = buffer.Content();
-    const std::size_t prefixStart = WordPrefixStart(content, point);
-    const std::string prefix      = content.Substring(prefixStart, point - prefixStart);
+    const std::size_t         prefixStart = WordPrefixStart(content, point);
+    const std::string         prefix      = content.Substring(prefixStart, point - prefixStart);
 
     std::vector<std::string> words = editor::CollectDabbrevCandidates(buffer.Text(), point, prefix);
     if (words.empty()) {
@@ -320,8 +320,8 @@ std::size_t BufferView::CurrentCompletionPrefixStart(const text::Buffer& buffer,
 }
 
 void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore) {
-    text::Buffer&     buffer         = activeBuffer_.Get();
-    const bool        contentChanged = buffer.ContentGeneration() != generationBefore;
+    text::Buffer& buffer         = activeBuffer_.Get();
+    const bool    contentChanged = buffer.ContentGeneration() != generationBefore;
 
     // completion-fidelity follow-up: the incremental-narrowing path. A live
     // session gets first refusal on the keystroke, before any of the
@@ -442,8 +442,8 @@ void BufferView::RequestDocumentHighlightAtPoint() {
     text::Buffer&     buffer = activeBuffer_.Get();
     const std::size_t point  = buffer.Point();
 
-    const std::string serverKey   = ResolvedLspServerKey(point);
-    const std::string languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
+    const std::string serverKey     = ResolvedLspServerKey(point);
+    const std::string languageKey   = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
     const bool        hasRunningLsp = lspManager_ && lspManager_->StatusForLanguage(lspManager_->ConnectionKeyForBuffer(
                                                          buffer, languageKey)) == editor::lsp::LspManager::LspStatus::Running;
     if (!hasRunningLsp) {
@@ -451,8 +451,8 @@ void BufferView::RequestDocumentHighlightAtPoint() {
         return;
     }
 
-    text::Buffer* const bufferPtr                = &buffer;
-    const std::size_t   generation               = documentHighlightRequest_.Begin();
+    text::Buffer* const bufferPtr                  = &buffer;
+    const std::size_t   generation                 = documentHighlightRequest_.Begin();
     const std::size_t   contentGenerationAtRequest = buffer.ContentGeneration();
     lspManager_->RequestDocumentHighlight(
         buffer, point,
@@ -468,7 +468,7 @@ void BufferView::RequestDocumentHighlightAtPoint() {
                 documentHighlight_.reset();
                 return;
             }
-            const text::ITextStorage&                                 content = bufferPtr->Content();
+            const text::ITextStorage&                        content = bufferPtr->Content();
             std::vector<std::pair<std::size_t, std::size_t>> ranges;
             ranges.reserve(highlights.size());
             for (const editor::lsp::DocumentHighlight& highlight : highlights) {
@@ -514,10 +514,10 @@ void BufferView::MaybeScheduleHover(Point localMousePoint) {
         // the new debounce settles.
         onHoverChanged_(std::nullopt);
     }
-    hoverOffset_ = offset;
-    const std::size_t generation = hoverRequest_.Begin();
-    const Box&        box        = Box_();
-    const Point        anchor{.x = box.x_min + localMousePoint.x, .y = box.y_min + localMousePoint.y + 1};
+    hoverOffset_                               = offset;
+    const std::size_t               generation = hoverRequest_.Begin();
+    const Box&                      box        = Box_();
+    const Point                     anchor{.x = box.x_min + localMousePoint.x, .y = box.y_min + localMousePoint.y + 1};
     const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
     hoverDebounceTimer_.Arm(*eventLoop_, delay, [this, offset, anchor, generation] {
         RequestHoverAtOffset(offset, anchor, generation);
@@ -576,11 +576,11 @@ void BufferView::RequestLinkedEditingRangeAtPoint() {
         statusMessage_ = "No LSP manager available.";
         return;
     }
-    text::Buffer&       buffer     = activeBuffer_.Get();
-    text::Buffer* const bufferPtr  = &buffer;
-    const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = linkedEditingRequest_.Begin();
-    const std::string   serverKey  = ResolvedLspServerKey(point);
+    text::Buffer&       buffer                     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr                  = &buffer;
+    const std::size_t   point                      = buffer.Point();
+    const std::size_t   generation                 = linkedEditingRequest_.Begin();
+    const std::string   serverKey                  = ResolvedLspServerKey(point);
     const std::size_t   contentGenerationAtRequest = buffer.ContentGeneration();
 
     lspManager_->RequestLinkedEditingRange(
@@ -597,7 +597,7 @@ void BufferView::RequestLinkedEditingRangeAtPoint() {
                 statusMessage_ = "No linked ranges at point.";
                 return;
             }
-            const text::ITextStorage&                         content = bufferPtr->Content();
+            const text::ITextStorage&                        content = bufferPtr->Content();
             std::vector<std::pair<std::size_t, std::size_t>> byteRanges;
             byteRanges.reserve(ranges.size());
             for (const editor::lsp::LinkedEditingRange& range : ranges) {
@@ -1133,7 +1133,7 @@ void BufferView::ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action
 }
 
 void BufferView::ApplyProjectEdit(const std::vector<std::pair<text::Buffer*, std::vector<editor::lsp::WorkspaceTextEdit>>>& perBufferEdits,
-                                  std::string description) {
+                                  std::string                                                                               description) {
     editor::ProjectEditTransaction transaction;
     transaction.description = description;
     transaction.records.reserve(perBufferEdits.size());
@@ -1192,10 +1192,10 @@ void BufferView::MaybeScheduleOnTypeFormatting(const editor::KeyChord& chord, st
         return;
     }
 
-    text::Buffer&      buffer      = activeBuffer_.Get();
-    const std::size_t  point       = buffer.Point();
-    const std::string  serverKey   = ResolvedLspServerKey(point);
-    const std::string  languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
+    text::Buffer&                                              buffer      = activeBuffer_.Get();
+    const std::size_t                                          point       = buffer.Point();
+    const std::string                                          serverKey   = ResolvedLspServerKey(point);
+    const std::string                                          languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
     const std::optional<editor::lsp::OnTypeFormattingTriggers> triggers =
         lspManager_->OnTypeFormattingTriggersFor(lspManager_->ConnectionKeyForBuffer(buffer, languageKey));
     if (!triggers) {
@@ -1495,11 +1495,11 @@ void BufferView::RequestPeekDefinitionAtPoint() {
 }
 
 void BufferView::RefreshPeekDefinitionStatus() {
-    const editor::lsp::LspManager::ResolvedLocation& location = pendingPeekDefinitions_[peekDefinitionSelection_];
-    const std::size_t targetLine = location.position.line + 1; // LSP lines are 0-indexed
-    const std::size_t startLine  = targetLine > kPeekContextLinesBefore ? targetLine - kPeekContextLinesBefore : 1;
-    const std::size_t endLine    = targetLine + kPeekContextLinesAfter;
-    const std::string excerpt    = editor::multibuffer::ReadExcerptText(bufferList_, location.path, startLine, endLine);
+    const editor::lsp::LspManager::ResolvedLocation& location   = pendingPeekDefinitions_[peekDefinitionSelection_];
+    const std::size_t                                targetLine = location.position.line + 1; // LSP lines are 0-indexed
+    const std::size_t                                startLine  = targetLine > kPeekContextLinesBefore ? targetLine - kPeekContextLinesBefore : 1;
+    const std::size_t                                endLine    = targetLine + kPeekContextLinesAfter;
+    const std::string                                excerpt    = editor::multibuffer::ReadExcerptText(bufferList_, location.path, startLine, endLine);
 
     ListPopupModel model;
     model.title = location.path.filename().string() + ":" + std::to_string(targetLine);
@@ -1608,7 +1608,7 @@ void BufferView::RequestHierarchyAtPoint(HierarchyDirection direction) {
             break;
     }
 
-    statusMessage_ = "Requesting hierarchy...";
+    statusMessage_  = "Requesting hierarchy...";
     auto onPrepared = [this, bufferPtr, point, generation, direction, serverKey,
                        subjectLabel](std::vector<editor::lsp::LspManager::ResolvedHierarchyItem> items) {
         if (hierarchyRequest_.IsStale(generation)) {
@@ -1627,7 +1627,7 @@ void BufferView::RequestHierarchyAtPoint(HierarchyDirection direction) {
         editor::lsp::LspManager::ResolvedHierarchyItem root = std::move(items.front());
         HierarchySession                               session{.direction = direction, .buffer = bufferPtr, .serverKey = serverKey, .rootName = root.item.name};
         session.tree.Reset({std::move(root)});
-        hierarchySession_      = std::move(session);
+        hierarchySession_       = std::move(session);
         hierarchySelectedIndex_ = 0;
         ExpandHierarchyNode(0); // auto-expand the root -- see this method's own doc comment in BufferView.h
     };
@@ -2114,11 +2114,11 @@ void BufferView::RequestPrepareRenameAtPoint() {
         openPrompt({}); // no LSP manager at all -- same unprefilled prompt lsp-rename always opened before this existed
         return;
     }
-    text::Buffer&       buffer     = activeBuffer_.Get();
-    text::Buffer* const bufferPtr  = &buffer;
-    const std::size_t   point      = buffer.Point();
-    const std::size_t   generation = prepareRenameRequest_.Begin();
-    const std::string   serverKey  = ResolvedLspServerKey(point);
+    text::Buffer&       buffer                     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr                  = &buffer;
+    const std::size_t   point                      = buffer.Point();
+    const std::size_t   generation                 = prepareRenameRequest_.Begin();
+    const std::string   serverKey                  = ResolvedLspServerKey(point);
     const std::size_t   contentGenerationAtRequest = buffer.ContentGeneration();
 
     lspManager_->RequestPrepareRename(
@@ -2147,9 +2147,9 @@ void BufferView::RequestPrepareRenameAtPoint() {
             const std::size_t rangeStart = editor::lsp::LspPositionToByte(bufferPtr->Content(), result->start);
             const std::size_t rangeEnd   = editor::lsp::LspPositionToByte(bufferPtr->Content(), result->end);
             const std::string prefill    = !result->placeholder.empty()
-                                             ? result->placeholder
-                                             : (rangeEnd > rangeStart ? bufferPtr->Content().Substring(rangeStart, rangeEnd - rangeStart)
-                                                                      : std::string());
+                                               ? result->placeholder
+                                               : (rangeEnd > rangeStart ? bufferPtr->Content().Substring(rangeStart, rangeEnd - rangeStart)
+                                                                        : std::string());
             openPrompt(prefill);
         },
         serverKey);
@@ -2357,7 +2357,7 @@ std::vector<std::string> BufferView::GatherPathCompletionCandidates() const {
 
 void BufferView::RefreshPathCompletionPopup() {
     const std::vector<std::string> candidates = GatherPathCompletionCandidates();
-    pathCompletionSelection_ = candidates.empty() ? 0 : std::min(pathCompletionSelection_, candidates.size() - 1);
+    pathCompletionSelection_                  = candidates.empty() ? 0 : std::min(pathCompletionSelection_, candidates.size() - 1);
 
     statusMessage_ = prompt_->StatusText();
     if (!onCandidatesChanged_) {
@@ -2367,7 +2367,7 @@ void BufferView::RefreshPathCompletionPopup() {
         onCandidatesChanged_(std::nullopt);
         return;
     }
-    const bool isPathMode = inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath;
+    const bool                                           isPathMode = inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath;
     const std::function<std::string(const std::string&)> display =
         isPathMode ? std::function<std::string(const std::string&)>(MaskPathCandidateToLastSegment)
                    : std::function<std::string(const std::string&)>{};
@@ -2376,7 +2376,7 @@ void BufferView::RefreshPathCompletionPopup() {
 }
 
 void BufferView::RequestProjectFindReferences() {
-    text::Buffer&     buffer  = activeBuffer_.Get();
+    text::Buffer&             buffer  = activeBuffer_.Get();
     const text::ITextStorage& content = buffer.Content();
 
     const std::optional<std::pair<std::size_t, std::size_t>> wordRegion = WordRegionAtPoint(content, buffer.Point());

@@ -169,7 +169,7 @@ TEST_CASE("RequestHierarchyAtPoint(IncomingCalls) sends prepareCallHierarchy, th
     const auto        prepareReq = ned::editor::lsp::Json::parse(prepareRaw.substr(prepareRaw.find("\r\n\r\n") + 4));
     REQUIRE(prepareReq["method"] == "textDocument/prepareCallHierarchy");
 
-    const std::string ownUri = "file://" + path.string();
+    const std::string ownUri   = "file://" + path.string();
     const auto        rootItem = ned::editor::lsp::Json{
         {"name", "callee"},
         {"kind", 12},

@@ -53,9 +53,9 @@ TEST_CASE("CollectResultLocations parses flat \"path:line:\" results lines in do
     ResetGuard guard;
     Buffer     buffer("results");
     buffer.InsertAtPoint("alpha.txt:3: first match\n"
-                          "beta.txt:9: second match\n"
-                          "not a results line at all\n"
-                          "gamma.txt:1: third match\n");
+                         "beta.txt:9: second match\n"
+                         "not a results line at all\n"
+                         "gamma.txt:1: third match\n");
 
     const std::vector<ned::editor::ErrorLocation> locations = CollectResultLocations(buffer);
     REQUIRE(locations.size() == 3);
@@ -84,7 +84,7 @@ TEST_CASE("CollectResultLocations skips a malformed line number rather than abor
     // A line number too large for std::stoul's unsigned long range --
     // CollectResultLocations must skip it, not throw out of the whole scan.
     buffer.InsertAtPoint("alpha.txt:999999999999999999999: overflow\n"
-                          "beta.txt:5: a real match\n");
+                         "beta.txt:5: a real match\n");
 
     const std::vector<ned::editor::ErrorLocation> locations = CollectResultLocations(buffer);
     REQUIRE(locations.size() == 1);

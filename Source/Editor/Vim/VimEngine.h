@@ -313,10 +313,10 @@ class VimEngine {
     // (registers_, via VimRegisters::SetRaw/Get) rather than a private cache here --
     // isRecordingMacro_/recordingMacroRegister_/macroRecordingBuffer_ are just the
     // in-flight recording state, not the macro's storage.
-    bool                   isRecordingMacro_       = false;
-    char32_t               recordingMacroRegister_ = 0;
-    std::vector<KeyChord>  macroRecordingBuffer_;
-    char32_t               lastMacroRegister_ = 0;
+    bool                  isRecordingMacro_       = false;
+    char32_t              recordingMacroRegister_ = 0;
+    std::vector<KeyChord> macroRecordingBuffer_;
+    char32_t              lastMacroRegister_ = 0;
 
     std::size_t topLine_        = 0;
     std::size_t viewportHeight_ = 0;

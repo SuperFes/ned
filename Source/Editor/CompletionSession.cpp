@@ -27,8 +27,7 @@ namespace {
 } // namespace
 
 CompletionSession::CompletionSession(std::vector<lsp::CompletionItem> items, bool isIncomplete, const text::ITextStorage& content,
-                                     std::size_t point, std::size_t fallbackPrefixStart)
-    : isIncomplete_(isIncomplete), prefixStart_(std::min(fallbackPrefixStart, point)) {
+                                     std::size_t point, std::size_t fallbackPrefixStart) : isIncomplete_(isIncomplete), prefixStart_(std::min(fallbackPrefixStart, point)) {
     allCandidates_.reserve(items.size());
     for (lsp::CompletionItem& item : items) {
         const std::size_t replaceStart = ResolveReplaceStart(item, content, point, prefixStart_);

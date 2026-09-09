@@ -27,7 +27,8 @@ class EnvVarGuard {
         }
         if (value) {
             setenv(name, value, 1);
-        } else {
+        }
+        else {
             unsetenv(name);
         }
     }
@@ -35,7 +36,8 @@ class EnvVarGuard {
     ~EnvVarGuard() {
         if (hadPrevious_) {
             setenv(name_.c_str(), previous_.c_str(), 1);
-        } else {
+        }
+        else {
             unsetenv(name_.c_str());
         }
     }

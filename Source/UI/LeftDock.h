@@ -74,7 +74,7 @@ class LeftDock : public Widget {
     [[nodiscard]] std::size_t ActivePanel() const {
         return active_;
     }
-    [[nodiscard]] Widget* ActiveContent() const;
+    [[nodiscard]] Widget*     ActiveContent() const;
     [[nodiscard]] std::size_t PanelCount() const {
         return entries_.size();
     }
@@ -105,12 +105,12 @@ class LeftDock : public Widget {
     // Collapsed() (width_ itself untouched, so expanding restores the
     // previous width exactly).
     [[nodiscard]] int Width() const;
-    void              SetWidth(int width); // clamped to a sane minimum, same as a resize drag
+    void              SetWidth(int width);   // clamped to a sane minimum, same as a resize drag
     [[nodiscard]] int ExpandedWidth() const; // width_ itself, not masked by Collapsed()
 
     [[nodiscard]] bool Collapsed() const;
     void               SetCollapsed(bool collapsed); // programmatic; no commit callback
-    void               ToggleCollapsed();             // deliberate; commits
+    void               ToggleCollapsed();            // deliberate; commits
 
     // ProjectSidebar::TakeKeyboardFocus/ReturnFocus's own pairing, promoted
     // here now that collapse lives on this widget instead: a caller driving
@@ -169,8 +169,8 @@ class LeftDock : public Widget {
 
   private:
     struct Entry {
-        std::size_t id = 0;
-        char32_t    glyph  = U' ';
+        std::size_t id    = 0;
+        char32_t    glyph = U' ';
         std::string name;
         Widget*     content = nullptr;
     };
@@ -197,10 +197,10 @@ class LeftDock : public Widget {
     void BeginResize(int globalMouseX);
     void CommitCollapsed(bool collapsed); // SetCollapsed + onCollapseCommitted_, ProjectSidebar's own split
 
-    const Theme&           theme_;
-    std::vector<Entry>     entries_;
-    std::size_t            nextId_ = 0;
-    std::size_t            active_ = 0; // an Entry::id, not a rail row -- see ActivePanel's doc comment
+    const Theme&       theme_;
+    std::vector<Entry> entries_;
+    std::size_t        nextId_ = 0;
+    std::size_t        active_ = 0; // an Entry::id, not a rail row -- see ActivePanel's doc comment
 
     int  width_     = 30; // total width including the rail -- see Width()
     bool collapsed_ = false;

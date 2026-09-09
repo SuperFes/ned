@@ -521,7 +521,7 @@ TEST_CASE("ModeLine shows the embedded language at point only while SetLanguageA
 }
 
 TEST_CASE("ModeLine shows a live clock indicator in org-mode while a clock is running", "[ModeLine]") {
-    ned::text::Buffer buffer("notes.org", ned::text::Rope("* Buy milk\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n"));
+    ned::text::Buffer     buffer("notes.org", ned::text::Rope("* Buy milk\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n"));
     ned::ui::ActiveBuffer activeBuffer(buffer);
     ned::editor::Mode     mode  = ned::editor::OrgMode();
     ned::ui::Theme        theme = ned::ui::DarkTheme();
@@ -539,7 +539,7 @@ TEST_CASE("ModeLine shows a live clock indicator in org-mode while a clock is ru
 }
 
 TEST_CASE("ModeLine shows no clock indicator outside org-mode, even with LOGBOOK-shaped text", "[ModeLine]") {
-    ned::text::Buffer buffer("notes.txt", ned::text::Rope("* Buy milk\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n"));
+    ned::text::Buffer     buffer("notes.txt", ned::text::Rope("* Buy milk\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n"));
     ned::ui::ActiveBuffer activeBuffer(buffer);
     ned::editor::Mode     mode  = ned::editor::FundamentalMode();
     ned::ui::Theme        theme = ned::ui::DarkTheme();

@@ -37,11 +37,11 @@ namespace {
 // subprocess or background thread ever involved -- exactly the deterministic
 // shape a fast unit test wants.
 struct Fixture {
-    BufferList   bufferList;
+    BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager   lspManager{bufferList, eventLoop};
-    VcsRunner    vcsRunner{eventLoop};
-    TestRunner   testRunner{bufferList, eventLoop};
+    LspManager         lspManager{bufferList, eventLoop};
+    VcsRunner          vcsRunner{eventLoop};
+    TestRunner         testRunner{bufferList, eventLoop};
     DapManager         dapManager{eventLoop};
     ToolRegistry       registry{bufferList, lspManager, vcsRunner, testRunner, dapManager};
 };
@@ -57,7 +57,7 @@ std::string ResultText(const ned::editor::mcp::Json& result) {
 } // namespace
 
 TEST_CASE("ToolRegistry::ListTools reports every built-in tool", "[Mcp]") {
-    Fixture fixture;
+    Fixture    fixture;
     const auto tools = fixture.registry.ListTools();
 
     const std::vector<std::string> expectedNames = {
@@ -138,7 +138,7 @@ TEST_CASE("get_diagnostics reports a missing required argument", "[Mcp]") {
 }
 
 TEST_CASE("get_diagnostics returns an empty diagnostics array for an open buffer with none", "[Mcp]") {
-    Fixture               fixture;
+    Fixture                     fixture;
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-mcp-registry-test-diag.txt";
     {
         std::ofstream out(path);
@@ -293,7 +293,7 @@ TEST_CASE("git_blame reports an error when the file isn't open in ned", "[Mcp]")
 }
 
 TEST_CASE("workspace_symbols resolves synchronously to no results for a buffer never synced to an LSP server", "[Mcp]") {
-    Fixture               fixture;
+    Fixture                     fixture;
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-mcp-registry-test-workspace-symbols.txt";
     {
         std::ofstream out(path);
@@ -313,7 +313,7 @@ TEST_CASE("workspace_symbols resolves synchronously to no results for a buffer n
 }
 
 TEST_CASE("format_buffer reports an error for a buffer never synced to an LSP server", "[Mcp]") {
-    Fixture               fixture;
+    Fixture                     fixture;
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-mcp-registry-test-format.txt";
     {
         std::ofstream out(path);
@@ -332,7 +332,7 @@ TEST_CASE("format_buffer reports an error for a buffer never synced to an LSP se
 }
 
 TEST_CASE("code_actions resolves synchronously to no actions for a buffer never synced to an LSP server", "[Mcp]") {
-    Fixture               fixture;
+    Fixture                     fixture;
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-mcp-registry-test-code-actions.txt";
     {
         std::ofstream out(path);
@@ -352,7 +352,7 @@ TEST_CASE("code_actions resolves synchronously to no actions for a buffer never 
 }
 
 TEST_CASE("preview_rename reports an error for a buffer never synced to an LSP server", "[Mcp]") {
-    Fixture               fixture;
+    Fixture                     fixture;
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-mcp-registry-test-rename.txt";
     {
         std::ofstream out(path);

@@ -29,8 +29,8 @@
 namespace ned::ui {
 
 struct DetectedColors {
-    std::optional<Color>                foreground; // OSC 10
-    std::optional<Color>                background; // OSC 11
+    std::optional<Color>                 foreground; // OSC 10
+    std::optional<Color>                 background; // OSC 11
     std::array<std::optional<Color>, 16> palette;    // OSC 4;0 .. OSC 4;15
 };
 

@@ -137,10 +137,10 @@ TEST_CASE("AcpManager::StartSession advertises a stdio MCP server when a bridge 
     ManagerFixture fixture;
     fixture.InjectClient();
 
-    ned::text::BufferList          mcpBufferList;
-    ned::editor::lsp::LspManager   lspManager(mcpBufferList, fixture.eventLoop);
-    ned::editor::vcs::VcsRunner    vcsRunner(fixture.eventLoop);
-    ned::editor::testrun::TestRunner testRunner(mcpBufferList, fixture.eventLoop);
+    ned::text::BufferList             mcpBufferList;
+    ned::editor::lsp::LspManager      lspManager(mcpBufferList, fixture.eventLoop);
+    ned::editor::vcs::VcsRunner       vcsRunner(fixture.eventLoop);
+    ned::editor::testrun::TestRunner  testRunner(mcpBufferList, fixture.eventLoop);
     ned::editor::dap::DapManager      dapManager(fixture.eventLoop);
     ned::editor::mcp::ToolRegistry    registry(mcpBufferList, lspManager, vcsRunner, testRunner, dapManager);
     ned::editor::mcp::McpBridgeServer bridge(registry, fixture.eventLoop);
@@ -572,7 +572,7 @@ TEST_CASE("AcpManager coalesces consecutive agent_message_chunk updates into one
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent"); // a successful start pushes no transcript event -- see StartSession
-    const std::size_t baseline           = fixture.manager.Transcript().size();
+    const std::size_t baseline             = fixture.manager.Transcript().size();
     const std::size_t generationAfterStart = fixture.manager.TranscriptGeneration();
 
     fixture.client->DispatchFrame(AgentMessageChunkUpdate("Hello").dump());
@@ -696,29 +696,29 @@ TEST_CASE("AcpManager::SetOnTranscriptChanged fires on every transcript-affectin
 // ACP checkpoint/rewind follow-up.
 namespace {
 
-    // Dispatches an agent-initiated fs/write_text_file the way a real agent
-    // mid-turn tool call would, and drains its response -- request ids just
-    // need to be unique per test, requestId is the caller's own counter.
-    void WriteFileViaAgent(ManagerFixture& fixture, const std::filesystem::path& path, const std::string& content, int requestId) {
-        const Json request = {{"jsonrpc", "2.0"},
-                              {"id", requestId},
-                              {"method", "fs/write_text_file"},
-                              {"params", {{"path", path.string()}, {"content", content}}}};
-        fixture.client->DispatchFrame(request.dump());
-        (void)fixture.reader.Next();
-    }
+// Dispatches an agent-initiated fs/write_text_file the way a real agent
+// mid-turn tool call would, and drains its response -- request ids just
+// need to be unique per test, requestId is the caller's own counter.
+void WriteFileViaAgent(ManagerFixture& fixture, const std::filesystem::path& path, const std::string& content, int requestId) {
+    const Json request = {{"jsonrpc", "2.0"},
+                          {"id", requestId},
+                          {"method", "fs/write_text_file"},
+                          {"params", {{"path", path.string()}, {"content", content}}}};
+    fixture.client->DispatchFrame(request.dump());
+    (void)fixture.reader.Next();
+}
 
-    // Runs one whole turn -- SendPrompt, an agent-initiated fs/write_text_file
-    // mid-turn (the write has to land *before* the session/prompt response,
-    // exactly like a real tool call would, so AcpManager's pendingCheckpoint_
-    // is still open to record it), then resolves session/prompt.
-    void RunTurnWithFileWrite(ManagerFixture& fixture, const std::string& promptText, const std::filesystem::path& path,
-                              const std::string& content, int requestId, const std::string& stopReason = "end_turn") {
-        REQUIRE(fixture.manager.SendPrompt(promptText) == "Sent.");
-        const Json promptRequest = fixture.reader.Next();
-        WriteFileViaAgent(fixture, path, content, requestId);
-        fixture.client->DispatchFrame(ResultFrame(promptRequest["id"], Json{{"stopReason", stopReason}}));
-    }
+// Runs one whole turn -- SendPrompt, an agent-initiated fs/write_text_file
+// mid-turn (the write has to land *before* the session/prompt response,
+// exactly like a real tool call would, so AcpManager's pendingCheckpoint_
+// is still open to record it), then resolves session/prompt.
+void RunTurnWithFileWrite(ManagerFixture& fixture, const std::string& promptText, const std::filesystem::path& path,
+                          const std::string& content, int requestId, const std::string& stopReason = "end_turn") {
+    REQUIRE(fixture.manager.SendPrompt(promptText) == "Sent.");
+    const Json promptRequest = fixture.reader.Next();
+    WriteFileViaAgent(fixture, path, content, requestId);
+    fixture.client->DispatchFrame(ResultFrame(promptRequest["id"], Json{{"stopReason", stopReason}}));
+}
 
 } // namespace
 
@@ -781,7 +781,7 @@ TEST_CASE("AcpManager::RewindTo on a later checkpoint leaves an earlier turn's e
     REQUIRE(buffer.Text() == "v1");
     REQUIRE(fixture.manager.CheckpointCount() == 1);
 
-    const auto& transcript = fixture.manager.Transcript();
+    const auto& transcript     = fixture.manager.Transcript();
     const auto  firstTurnEntry = std::find_if(transcript.begin(), transcript.end(), [](const auto& e) {
         return e.kind == AcpManager::TranscriptEntry::Kind::UserMessage && e.text == "first turn";
     });
@@ -855,8 +855,8 @@ TEST_CASE("AcpManager::RewindTo with an out-of-range index is a no-op", "[Acp]")
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
 
-    const std::size_t transcriptSize = fixture.manager.Transcript().size();
-    const AcpManager::RewindOutcome outcome = fixture.manager.RewindTo(0); // no checkpoints exist yet
+    const std::size_t               transcriptSize = fixture.manager.Transcript().size();
+    const AcpManager::RewindOutcome outcome        = fixture.manager.RewindTo(0); // no checkpoints exist yet
     REQUIRE(outcome.turnsRewound == 0);
     REQUIRE(outcome.revertedFiles.empty());
     REQUIRE(fixture.manager.Transcript().size() == transcriptSize);

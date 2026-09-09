@@ -201,7 +201,7 @@ TEST_CASE("A binary file's diff block produces no hunks from ParseDiffHunks", "[
     REQUIRE(ParseDiffHunks("diff --git a/image.png b/image.png\n"
                            "index 1234567..89abcde 100644\n"
                            "Binary files a/image.png and b/image.png differ\n")
-               .empty());
+                .empty());
 }
 
 TEST_CASE("CountBinaryFileDiffs counts binary-file summary lines across a mixed diff", "[DiffPatch]") {

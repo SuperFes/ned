@@ -2,11 +2,11 @@
 
 #include <string>
 
-#include "Editor/Mode.h"
 #include "Editor/MinimapSettings.h"
+#include "Editor/Mode.h"
+#include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/Utf8.h"
-#include "TestEvents.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/Minimap.h"
 #include "UI/Theme.h"
@@ -69,8 +69,8 @@ TEST_CASE("Minimap paints without crashing on an empty buffer", "[Minimap]") {
 // wired EventLoop, per the test above, but the same code path a live
 // pane's own Minimap goes through on a real buffer close either way).
 TEST_CASE("Minimap::ClearBufferCache is a safe no-op, with or without a prior paint", "[Minimap]") {
-    Fixture  fixture;
-    Minimap  minimap = fixture.View();
+    Fixture fixture;
+    Minimap minimap = fixture.View();
     minimap.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 4, .y_min = 0, .y_max = 9});
     REQUIRE_NOTHROW(minimap.ClearBufferCache(fixture.buffer));
 

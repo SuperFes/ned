@@ -35,7 +35,7 @@ std::vector<DiffHunkText> TwoHunks() {
 } // namespace
 
 TEST_CASE("VcsDiffPreview renders nothing but the title with no model", "[VcsDiffPreview]") {
-    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
     ned::ui::VcsDiffPreview preview(theme);
     PlacePreview(preview, 40, 10);
 
@@ -48,7 +48,7 @@ TEST_CASE("VcsDiffPreview renders nothing but the title with no model", "[VcsDif
 }
 
 TEST_CASE("VcsDiffPreview renders hunk headers with a [stage] affordance and +/- body lines", "[VcsDiffPreview]") {
-    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
     ned::ui::VcsDiffPreview preview(theme);
     PlacePreview(preview, 40, 10);
     preview.SetModel(ned::ui::VcsDiffPreviewModel{"/tmp/file.txt", /*staged=*/false, TwoHunks()});
@@ -63,7 +63,7 @@ TEST_CASE("VcsDiffPreview renders hunk headers with a [stage] affordance and +/-
 }
 
 TEST_CASE("Clicking a staged model's hunk shows [unstage] and requests stage=false", "[VcsDiffPreview]") {
-    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
     ned::ui::VcsDiffPreview preview(theme);
     PlacePreview(preview, 40, 10);
     preview.SetModel(ned::ui::VcsDiffPreviewModel{"/tmp/file.txt", /*staged=*/true, TwoHunks()});
@@ -91,7 +91,7 @@ TEST_CASE("Clicking a staged model's hunk shows [unstage] and requests stage=fal
 }
 
 TEST_CASE("Clicking a body line or past the affordance label does not fire the callback", "[VcsDiffPreview]") {
-    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
     ned::ui::VcsDiffPreview preview(theme);
     PlacePreview(preview, 40, 10);
     preview.SetModel(ned::ui::VcsDiffPreviewModel{"/tmp/file.txt", /*staged=*/false, TwoHunks()});

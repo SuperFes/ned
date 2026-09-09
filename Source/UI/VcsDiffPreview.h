@@ -34,9 +34,9 @@
 namespace ned::ui {
 
 struct VcsDiffPreviewModel {
-    std::filesystem::path                    path;
-    bool                                      staged; // which side's diff this is -- see SetModel's own doc comment
-    std::vector<editor::vcs::DiffHunkText>    hunks;
+    std::filesystem::path                  path;
+    bool                                   staged; // which side's diff this is -- see SetModel's own doc comment
+    std::vector<editor::vcs::DiffHunkText> hunks;
 };
 
 class VcsDiffPreview : public Widget {
@@ -65,8 +65,8 @@ class VcsDiffPreview : public Widget {
     bool OnEvent(const Event& event) override;
 
   private:
-    const Theme&                        theme_;
-    std::optional<VcsDiffPreviewModel>  model_;
+    const Theme&                                                         theme_;
+    std::optional<VcsDiffPreviewModel>                                   model_;
     std::function<void(const std::filesystem::path&, std::size_t, bool)> onHunkStageToggle_;
 
     int scrollOffset_ = 0;

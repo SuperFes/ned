@@ -21,9 +21,9 @@ namespace ned::editor {
 enum class ConflictResolution {
     TakeOurs,
     TakeTheirs,
-    TakeBoth,   // ours then theirs
+    TakeBoth,    // ours then theirs
     TakeNeither, // delete the whole marked block
-    KeepBase,   // diff3 only -- caller must check hunk.baseRange first
+    KeepBase,    // diff3 only -- caller must check hunk.baseRange first
 };
 
 // The conflict hunk containing `point`, if any -- no "nearest hunk"

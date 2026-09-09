@@ -144,9 +144,9 @@ void BufferView::JumpToNextHunk() {
         statusMessage_ = "No changes in this buffer.";
         return;
     }
-    text::Buffer&      buffer      = activeBuffer_.Get();
-    const std::size_t  currentLine = buffer.Content().ByteOffsetToLine(buffer.Point());
-    const auto         it          = std::upper_bound(diffHunkStartLines_.begin(), diffHunkStartLines_.end(), currentLine);
+    text::Buffer&     buffer      = activeBuffer_.Get();
+    const std::size_t currentLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+    const auto        it          = std::upper_bound(diffHunkStartLines_.begin(), diffHunkStartLines_.end(), currentLine);
     if (it == diffHunkStartLines_.end()) {
         statusMessage_ = "No more changed hunks below point.";
         return;
@@ -161,9 +161,9 @@ void BufferView::JumpToPreviousHunk() {
         statusMessage_ = "No changes in this buffer.";
         return;
     }
-    text::Buffer&      buffer      = activeBuffer_.Get();
-    const std::size_t  currentLine = buffer.Content().ByteOffsetToLine(buffer.Point());
-    const auto         it          = std::lower_bound(diffHunkStartLines_.begin(), diffHunkStartLines_.end(), currentLine);
+    text::Buffer&     buffer      = activeBuffer_.Get();
+    const std::size_t currentLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+    const auto        it          = std::lower_bound(diffHunkStartLines_.begin(), diffHunkStartLines_.end(), currentLine);
     if (it == diffHunkStartLines_.begin()) {
         statusMessage_ = "No more changed hunks above point.";
         return;
@@ -248,7 +248,7 @@ void BufferView::BuildVcsBlameBuffer(const std::filesystem::path& path, const st
     }
 
     const std::string bufferName = "*vcs blame " + path.filename().string() + "*";
-    text::Buffer&      results   = bufferList_.CreateBuffer(bufferName);
+    text::Buffer&     results    = bufferList_.CreateBuffer(bufferName);
     results.InsertAtPoint(resultsText);
     results.SetPoint(0);
     results.SetReadOnly(true); // see BuildResultsBuffer's own doc comment for why
@@ -269,7 +269,6 @@ void BufferView::BuildVcsLogBuffer(const std::filesystem::path& path, const std:
     results.SetReadOnly(true);
     activeBuffer_.Set(results);
 }
-
 
 // Full commit diff view follow-up: the shared tail of RequestVcsFullDiffBuffer
 // and RequestVcsCommitDiffBuffer -- both hand this the same shape of raw
@@ -442,9 +441,9 @@ std::optional<std::filesystem::path> BufferView::ResolveVcsFileTarget() {
     text::Buffer& buffer = activeBuffer_.Get();
     if (buffer.Name() == kVcsStatusBufferName) {
         const text::ITextStorage& content   = buffer.Content();
-        const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
-        const std::size_t lineStart = content.LineToByteOffset(line);
-        const std::size_t lineEnd =
+        const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+        const std::size_t         lineStart = content.LineToByteOffset(line);
+        const std::size_t         lineEnd =
             (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
 
@@ -679,7 +678,7 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
                         watches[w],
                         [this, lines, remaining, chunks, onComplete, w, expression = watches[w]](bool success, std::string text) {
                             (*chunks)[0][1 + w] = "  " + expression + " = " + (success ? text : ("<" + text + ">")) + "  [watch:" +
-                                                   std::to_string(w) + "]";
+                                                  std::to_string(w) + "]";
                             if (--*remaining == 0) {
                                 for (const std::vector<std::string>& finishedChunk : *chunks) {
                                     lines->insert(lines->end(), finishedChunk.begin(), finishedChunk.end());
@@ -756,11 +755,11 @@ void BufferView::BuildDebugBuffer(const std::vector<std::string>& lines) {
 }
 
 void BufferView::ExpandVariableAtPoint() {
-    text::Buffer&     buffer    = activeBuffer_.Get();
+    text::Buffer&             buffer    = activeBuffer_.Get();
     const text::ITextStorage& content   = buffer.Content();
-    const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
-    const std::size_t lineStart = content.LineToByteOffset(line);
-    const std::size_t lineEnd =
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
 
@@ -781,7 +780,7 @@ void BufferView::ExpandVariableAtPoint() {
             if (bufferPtr != &activeBuffer_.Get()) {
                 return; // switched away while the request was in flight
             }
-            text::Buffer&     target        = *bufferPtr;
+            text::Buffer&             target        = *bufferPtr;
             const text::ITextStorage& targetContent = target.Content();
             if (line >= targetContent.LineCount()) {
                 return;
@@ -1137,11 +1136,11 @@ void BufferView::BuildDisassemblyBuffer(const std::vector<editor::dap::DapManage
 }
 
 void BufferView::RemoveWatchAtPoint() {
-    text::Buffer&      buffer    = activeBuffer_.Get();
-    const text::ITextStorage&  content   = buffer.Content();
-    const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
-    const std::size_t  lineStart = content.LineToByteOffset(line);
-    const std::size_t  lineEnd =
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
 
@@ -1163,11 +1162,11 @@ void BufferView::RemoveWatchAtPoint() {
 }
 
 void BufferView::SetVariableAtPoint() {
-    text::Buffer&      buffer    = activeBuffer_.Get();
-    const text::ITextStorage&  content   = buffer.Content();
-    const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
-    const std::size_t  lineStart = content.LineToByteOffset(line);
-    const std::size_t  lineEnd =
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
 
@@ -1426,11 +1425,11 @@ void BufferView::LineInspectAtPoint() {
     // per candidate so the final message reads left-to-right regardless of
     // response interleaving. A failed evaluation is wrapped in "<...>",
     // ShowDebugInfo's watch-fan-out convention.
-    auto texts    = std::make_shared<std::vector<std::string>>(candidates.size());
-    auto remaining = std::make_shared<std::size_t>(candidates.size());
-    const bool capped = candidates.size() >= editor::kMaxLineInspectExpressions;
+    auto       texts     = std::make_shared<std::vector<std::string>>(candidates.size());
+    auto       remaining = std::make_shared<std::size_t>(candidates.size());
+    const bool capped    = candidates.size() >= editor::kMaxLineInspectExpressions;
     for (std::size_t i = 0; i < candidates.size(); ++i) {
-        const auto [start, end] = candidates[i];
+        const auto [start, end]      = candidates[i];
         const std::string expression = std::string(content.Substring(start, end - start));
         dapManager_->Evaluate(expression, [this, bufferPtr, texts, remaining, i, expression, capped](bool success, std::string text) {
             (*texts)[i] = expression + " = " + (success ? text : ("<" + text + ">"));

@@ -480,7 +480,7 @@ TEST_CASE("A right-press on a tab reports that tab and the click's absolute posi
     ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
-    ned::text::Buffer*    requested = nullptr;
+    ned::text::Buffer*            requested = nullptr;
     std::optional<ned::ui::Point> anchor;
     tabBar.SetOnContextMenuRequest([&](ned::text::Buffer& buffer, ned::ui::Point point) {
         requested = &buffer;

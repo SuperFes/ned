@@ -46,8 +46,8 @@ struct DesktopThemeInfo {
     // ProbeDesktopTheme only ever returns a DesktopThemeInfo at all when at
     // least one of polarity or accent was determined, so a caller that gets
     // std::nullopt back never needs to consult this default.
-    bool                  preferDark = true;
-    std::optional<Color>  accent;
+    bool                 preferDark = true;
+    std::optional<Color> accent;
 };
 
 // freedesktop portal color-scheme reply parsing (both `gdbus`'s

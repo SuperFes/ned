@@ -39,7 +39,7 @@ void RegisterProvider(const std::string& name, std::unique_ptr<VcsProvider> prov
     const std::lock_guard lock(RegistryMutex());
 
     auto& providers = Providers();
-    auto& index      = NameIndex();
+    auto& index     = NameIndex();
 
     if (const auto it = index.find(name); it != index.end()) {
         providers[it->second].second = std::move(provider);

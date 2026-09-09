@@ -35,7 +35,6 @@
 #include <fstream>
 #include <string>
 
-
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Mode.h"
@@ -105,7 +104,7 @@ TEST_CASE("Inserting near the end of a multi-megabyte buffer stays fast", "[Perf
 }
 
 TEST_CASE("Point navigation across a multi-megabyte buffer stays fast", "[Performance]") {
-    const ned::text::Buffer buffer("scratch", ned::text::Rope(MakeMultiLineContent(10'000'000)));
+    const ned::text::Buffer        buffer("scratch", ned::text::Rope(MakeMultiLineContent(10'000'000)));
     const ned::text::ITextStorage& content = buffer.Content();
 
     const auto start = steady_clock::now();
@@ -232,7 +231,7 @@ TEST_CASE("BufferView::paint on a pathologically long single line stays fast", "
     ned::ui::BufferView   view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
-    ned::ui::Screen   screen = ned::ui::Screen(80, 24);
+    ned::ui::Screen screen = ned::ui::Screen(80, 24);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
     // Put point far into the line so paint (if it ever regressed to scanning
@@ -293,9 +292,9 @@ TEST_CASE("BufferView::paint on a large wrap-enabled document stays fast across 
     ned::editor::RegisterBuiltinCommands(registry);
     ned::editor::Keymap     keymap = ned::editor::BuildDefaultGlobalKeymap();
     ned::editor::Dispatcher dispatcher(registry, ned::editor::KeymapStack({&keymap}));
-    ned::editor::Mode       mode  = ned::editor::FundamentalMode();
-    mode.wrapLines                = true;
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    ned::editor::Mode       mode = ned::editor::FundamentalMode();
+    mode.wrapLines               = true;
+    ned::ui::Theme theme         = ned::ui::DarkTheme();
 
     std::string statusMessage;
 
@@ -303,7 +302,7 @@ TEST_CASE("BufferView::paint on a large wrap-enabled document stays fast across 
     ned::ui::BufferView   view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
-    ned::ui::Screen   screen = ned::ui::Screen(80, 24);
+    ned::ui::Screen screen = ned::ui::Screen(80, 24);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
     const auto start = steady_clock::now();
@@ -361,7 +360,7 @@ TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast
     ned::ui::BufferView   view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
-    ned::ui::Screen   screen = ned::ui::Screen(80, 24);
+    ned::ui::Screen screen = ned::ui::Screen(80, 24);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
     const auto start = steady_clock::now();

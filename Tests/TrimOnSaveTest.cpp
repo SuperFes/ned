@@ -11,7 +11,9 @@ namespace {
 // every test that sets it must restore the default for the next test,
 // guaranteed via RAII. Mirrors FinalNewlineTest.cpp's own guard exactly.
 struct TrimOnSaveGuard {
-    ~TrimOnSaveGuard() { SetTrimTrailingWhitespaceOnSave(true); }
+    ~TrimOnSaveGuard() {
+        SetTrimTrailingWhitespaceOnSave(true);
+    }
 };
 
 } // namespace

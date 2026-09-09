@@ -32,7 +32,7 @@ namespace ned::editor::codefold {
 // this result themselves rather than call it fresh on every use, the same
 // way BufferView already caches mode.highlight's result.
 [[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> FoldableBlocks(const Mode&      mode,
-                                                                               std::string_view bufferText);
+                                                                              std::string_view bufferText);
 
 // Hidden [startLine, endLineExclusive) ranges for every FoldMarker::Collapsed
 // entry in buffer.FoldMarkers() whose key matches one of `blocks`' own

@@ -15,8 +15,6 @@ namespace ned::ui {
 // what let the split leave every call site untouched.
 using namespace detail;
 
-
-
 void BufferView::EnsureEmbeddedDocumentCache() {
     text::Buffer& buffer = activeBuffer_.Get();
 
@@ -38,15 +36,9 @@ void BufferView::EnsureEmbeddedDocumentCache() {
     embeddedDocumentCacheByBuffer_.insert_or_assign(&buffer, std::move(entry));
 }
 
-
-
-
-
-
-
 void BufferView::EnsureBlameGutterCache() const {
-    text::Buffer& buffer = activeBuffer_.Get();
-    const bufferview::CacheStamp stamp = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
+    text::Buffer&                buffer = activeBuffer_.Get();
+    const bufferview::CacheStamp stamp  = bufferview::CacheStamp::For(&buffer, {buffer.ContentGeneration()});
     if (blameGutterCacheStamp_.Matches(stamp)) {
         return; // still valid for this buffer/content -- nothing to do (see this method's own header comment)
     }
@@ -61,16 +53,6 @@ void BufferView::EnsureBlameGutterCache() const {
 bool BufferView::BlameGutterActive() const {
     return !blameLineInfo_.empty();
 }
-
-
-
-
-
-
-
-
-
-
 
 void BufferView::ClampPointToNarrowing() {
     text::Buffer& buffer = activeBuffer_.Get();
@@ -93,8 +75,6 @@ void BufferView::ClampPointToNarrowing() {
         buffer.SetPoint(std::clamp(point, start, maxPoint));
     }
 }
-
-
 
 std::size_t BufferView::GutterWidth() const {
     const std::size_t totalLines = activeBuffer_.Get().Content().LineCount();
@@ -126,8 +106,6 @@ std::size_t BufferView::GutterWidth() const {
            symbolColumn + foldColumn + blameColumn;
 }
 
-
-
 std::size_t BufferView::TestGutterColumnStart() const {
     // Mirrors Paint()'s own left-to-right column sum
     // ([dap][diff][status][diagnostic][gap][digits][gap][test]) rather than
@@ -142,7 +120,6 @@ std::size_t BufferView::TestGutterColumnStart() const {
     return dapColumnWidth + diffColumnWidth + kStatusWidth + kDiagnosticWidth + lineNumberGapWidth + gutterDigits +
            lineNumberGapWidth;
 }
-
 
 bool BufferView::DiffGutterActive() const {
     return !diffLineKinds_.empty();
@@ -176,16 +153,5 @@ void BufferView::EnsureDapPathKey() const {
     dapPathKeyRawPath_ = buffer.Path();
     dapPathKey_        = buffer.Path() ? editor::dap::DapManager::NormalizePathKey(*buffer.Path()) : std::string();
 }
-
-
-
-
-
-
-
-
-
-
-
 
 } // namespace ned::ui

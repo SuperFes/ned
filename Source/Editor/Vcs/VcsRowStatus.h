@@ -26,7 +26,11 @@ namespace ned::editor::vcs {
 // porcelain code -- a row only needs to know which color to paint, the same
 // "don't reinterpret VCS-specific text beyond what the UI needs" call
 // BufferView's own DiffLineKind already makes for the per-line diff gutter.
-enum class VcsRowStatus { None, Untracked, Added, Modified, Deleted };
+enum class VcsRowStatus { None,
+                          Untracked,
+                          Added,
+                          Modified,
+                          Deleted };
 
 // Classifies git's own two-letter porcelain "XY" status code
 // (VcsStatusEntry::state, kept verbatim by VcsProvider::ParseStatus -- see

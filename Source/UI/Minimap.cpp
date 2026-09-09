@@ -120,9 +120,9 @@ void Minimap::ClearBufferCache(text::Buffer& buffer) {
 void Minimap::ForEachDensityDot(
     int subRows, int subCols, double charsPerDot,
     const std::function<void(int subRow, int subCol, std::size_t offset, std::size_t linesInRow)>& visit) const {
-    text::Buffer&     buffer     = activeBuffer_.Get();
+    text::Buffer&             buffer     = activeBuffer_.Get();
     const text::ITextStorage& content    = buffer.Content();
-    const std::size_t totalLines = content.LineCount();
+    const std::size_t         totalLines = content.LineCount();
     if (totalLines == 0 || subRows <= 0 || subCols <= 0) {
         return;
     }
@@ -188,9 +188,9 @@ void Minimap::ForEachDensityDot(
             const std::size_t lineEndByte =
                 (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) : content.ByteLength();
 
-            std::size_t offset          = lineStartByte;
-            int         column          = 0;
-            int         lastVisitedCol  = -1; // weighted-minimap-density follow-up: see below
+            std::size_t offset         = lineStartByte;
+            int         column         = 0;
+            int         lastVisitedCol = -1; // weighted-minimap-density follow-up: see below
             while (offset < lineEndByte && column < maxColumn) {
                 const auto decoded = content.CodepointAt(offset);
                 if (!IsBlank(decoded.codepoint)) {
@@ -326,14 +326,14 @@ void Minimap::EnsurePlane() const {
     // path) could -- and in practice did -- skip over entirely. A whole
     // cell's worth of dot-rows is wide enough that some sampled row within
     // it is always hit.
-    const int cellDotRows     = dotRows / height; // exact -- dotRows is always a multiple of height
-    const int total           = std::max(scrollable_length, 1);
-    const bool scrolls        = total > item_visual_length;
-    const int bandRowsCells   = std::clamp(static_cast<int>((static_cast<long long>(item_visual_length) * height) / total), 1, height);
-    const int maxBandTopCells = height - bandRowsCells;
-    const int bandTopCells =
+    const int  cellDotRows     = dotRows / height; // exact -- dotRows is always a multiple of height
+    const int  total           = std::max(scrollable_length, 1);
+    const bool scrolls         = total > item_visual_length;
+    const int  bandRowsCells   = std::clamp(static_cast<int>((static_cast<long long>(item_visual_length) * height) / total), 1, height);
+    const int  maxBandTopCells = height - bandRowsCells;
+    const int  bandTopCells =
         scrolls ? std::clamp(static_cast<int>((static_cast<long long>(position) * maxBandTopCells) /
-                                               std::max(total - item_visual_length, 1)),
+                                              std::max(total - item_visual_length, 1)),
                              0, maxBandTopCells)
                 : 0;
     const int bandTop  = bandTopCells * cellDotRows;
@@ -451,7 +451,7 @@ void Minimap::EnsurePlane() const {
         // even though its result only actually changes when buffer's
         // content/mode does. See highlightCacheByBuffer_'s own doc comment
         // in Minimap.h.
-        const auto it = highlightCacheByBuffer_.find(&buffer);
+        const auto                                it = highlightCacheByBuffer_.find(&buffer);
         const std::vector<editor::HighlightSpan>* spans;
         if (it == highlightCacheByBuffer_.end() || it->second.contentGeneration != buffer.ContentGeneration() ||
             it->second.classGeneration != editor::CaptureClassGeneration() || it->second.modeName != mode_.name) {
@@ -517,7 +517,7 @@ void Minimap::EnsurePlane() const {
                           const std::size_t idx = static_cast<std::size_t>(subRow) * static_cast<std::size_t>(contentCols) +
                                                   static_cast<std::size_t>(subCol);
                           ++hitCount[idx];
-                          hitColor[idx]                                       = fg; // last-hit color -- one representative color per pixel is enough here
+                          hitColor[idx]                                  = fg; // last-hit color -- one representative color per pixel is enough here
                           rowLineCount[static_cast<std::size_t>(subRow)] = std::max<std::size_t>(linesInRow, 1);
                       });
 

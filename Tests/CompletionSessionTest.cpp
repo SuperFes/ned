@@ -13,25 +13,27 @@ using ned::text::Rope;
 
 namespace {
 
-    Buffer MakeBuffer(const std::string& content) { return Buffer("test", Rope(content)); }
+Buffer MakeBuffer(const std::string& content) {
+    return Buffer("test", Rope(content));
+}
 
-    // Mirrors what LspContent's own parsing guarantees (sortText/filterText
-    // default to the label), so a test that doesn't care about them doesn't
-    // have to keep restating it.
-    CompletionItem Item(std::string label, std::string insertText = {}) {
-        CompletionItem item;
-        item.label      = label;
-        item.insertText = insertText.empty() ? label : std::move(insertText);
-        item.sortText   = label;
-        item.filterText = label;
-        return item;
-    }
+// Mirrors what LspContent's own parsing guarantees (sortText/filterText
+// default to the label), so a test that doesn't care about them doesn't
+// have to keep restating it.
+CompletionItem Item(std::string label, std::string insertText = {}) {
+    CompletionItem item;
+    item.label      = label;
+    item.insertText = insertText.empty() ? label : std::move(insertText);
+    item.sortText   = label;
+    item.filterText = label;
+    return item;
+}
 
 } // namespace
 
 TEST_CASE("A candidate with no textEdit falls back to the caller's word-boundary prefix start", "[CompletionSession]") {
-    Buffer            buffer  = MakeBuffer("foo");
-    const std::size_t point   = 3;
+    Buffer            buffer = MakeBuffer("foo");
+    const std::size_t point  = 3;
     CompletionSession session({Item("foobar")}, /*isIncomplete=*/false, buffer.Content(), point, /*fallbackPrefixStart=*/0);
 
     REQUIRE(session.Candidates().size() == 1);
@@ -127,9 +129,9 @@ TEST_CASE("Candidates are ranked by sortText, not arrival order", "[CompletionSe
 }
 
 TEST_CASE("Ranking matches against filterText, not the label", "[CompletionSession]") {
-    Buffer            buffer = MakeBuffer("foo");
-    CompletionItem    item   = Item("foo (from <bar>)");
-    item.filterText          = "foo";
+    Buffer         buffer = MakeBuffer("foo");
+    CompletionItem item   = Item("foo (from <bar>)");
+    item.filterText       = "foo";
 
     CompletionSession session({item, Item("unrelated")}, false, buffer.Content(), 3, 0);
     REQUIRE(session.Candidates().size() == 1);

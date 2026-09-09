@@ -502,7 +502,7 @@ namespace {
     // sort is needed. Stops recursing (but keeps whatever was already
     // collected) once the cap is hit.
     void CollectLineInspectCandidates(const treesitter::Node& node, std::size_t lineStart, std::size_t lineEnd,
-                                      const std::function<bool(std::string_view)>& matches,
+                                      const std::function<bool(std::string_view)>&      matches,
                                       std::vector<std::pair<std::size_t, std::size_t>>& out) {
         if (out.size() >= kMaxLineInspectExpressions || node.IsNull() || node.EndByte() <= lineStart || node.StartByte() >= lineEnd) {
             return; // no overlap with the line at all, or already at the cap
@@ -522,9 +522,17 @@ namespace {
     // identifier-only default with this richer predicate.
     bool IsCLikeExpressionNodeType(std::string_view type) {
         static constexpr std::array<std::string_view, 11> kTypes = {
-            "identifier",          "call_expression",     "field_expression",  "subscript_expression",  "binary_expression",
-            "unary_expression",    "pointer_expression",   "cast_expression",   "conditional_expression",
-            "assignment_expression", "parenthesized_expression",
+            "identifier",
+            "call_expression",
+            "field_expression",
+            "subscript_expression",
+            "binary_expression",
+            "unary_expression",
+            "pointer_expression",
+            "cast_expression",
+            "conditional_expression",
+            "assignment_expression",
+            "parenthesized_expression",
         };
         return std::find(kTypes.begin(), kTypes.end(), type) != kTypes.end();
     }
@@ -537,7 +545,7 @@ namespace {
     // node types count as candidate sub-expressions -- see the Tier 1
     // (identifier-only) and Tier 2 (CMode/CppMode's richer set) call sites.
     LineInspectFunction BuildLineInspectFunction(const treesitter::Language& language, std::function<bool(std::string_view)> matches) {
-        const auto parser     = std::make_shared<treesitter::Parser>(language);
+        const auto parser      = std::make_shared<treesitter::Parser>(language);
         const auto sharedParse = std::make_shared<treesitter::IncrementalParseCache>();
         return [parser, sharedParse, matches = std::move(matches)](
                    std::string_view bufferText, std::size_t lineStart,
@@ -546,7 +554,7 @@ namespace {
             if (tree.IsNull()) {
                 return {};
             }
-            const treesitter::Node entry = tree.RootNode().NamedDescendantForByteRange(lineStart, lineEnd);
+            const treesitter::Node                           entry = tree.RootNode().NamedDescendantForByteRange(lineStart, lineEnd);
             std::vector<std::pair<std::size_t, std::size_t>> candidates;
             CollectLineInspectCandidates(entry.IsNull() ? tree.RootNode() : entry, lineStart, lineEnd, matches, candidates);
             return candidates;
@@ -1160,7 +1168,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     IndentFunction indentColumn;
     if (!indentQuerySource.empty()) {
         const auto indentQuery = std::make_shared<treesitter::Query>(language, indentQuerySource);
-        indentColumn            = BuildIndentFunction(parser, indentQuery, sharedParse, name);
+        indentColumn           = BuildIndentFunction(parser, indentQuery, sharedParse, name);
     }
 
     // Debugging wishlist (line-inspect follow-up): Tier 1 -- unconditional,
@@ -1558,7 +1566,7 @@ Mode MarkdownMode() {
     // with .highlight above -- one more closure reusing the same cached
     // parse, not a second reparse on the same Paint()/keystroke cycle.
     mode.indentColumn = [blockParser, sharedParse](std::string_view bufferText, std::size_t lineStart,
-                                                    std::size_t lineEnd) -> std::optional<int> {
+                                                   std::size_t lineEnd) -> std::optional<int> {
         const treesitter::Tree& tree = sharedParse->Update(*blockParser, bufferText);
         if (tree.IsNull()) {
             return std::nullopt;
@@ -1599,10 +1607,10 @@ Mode MarkdownMode() {
             // back than that, for the newline terminating the line before
             // IT, or this finds lineStart right back again instead of the
             // previous line's start.
-            const std::size_t searchFrom  = (lineStart <= 1) ? 0 : lineStart - 2;
-            std::size_t        prevLineStart = bufferText.rfind('\n', searchFrom);
-            prevLineStart                  = (prevLineStart == std::string_view::npos) ? 0 : prevLineStart + 1;
-            int column                = 0;
+            const std::size_t searchFrom    = (lineStart <= 1) ? 0 : lineStart - 2;
+            std::size_t       prevLineStart = bufferText.rfind('\n', searchFrom);
+            prevLineStart                   = (prevLineStart == std::string_view::npos) ? 0 : prevLineStart + 1;
+            int column                      = 0;
             for (std::size_t i = prevLineStart; i < bufferText.size() && (bufferText[i] == ' ' || bufferText[i] == '\t');
                  ++i) {
                 ++column;
@@ -1672,9 +1680,9 @@ Mode MarkdownMode() {
         // tree-sitter-driven rule would be.
         if (lineStart == lineEnd && column > 0 && lineStart > 0) {
             const std::size_t searchFrom    = (lineStart <= 1) ? 0 : lineStart - 2;
-            std::size_t        prevLineStart = bufferText.rfind('\n', searchFrom);
-            prevLineStart                  = (prevLineStart == std::string_view::npos) ? 0 : prevLineStart + 1;
-            bool prevLineBlank = true;
+            std::size_t       prevLineStart = bufferText.rfind('\n', searchFrom);
+            prevLineStart                   = (prevLineStart == std::string_view::npos) ? 0 : prevLineStart + 1;
+            bool prevLineBlank              = true;
             for (std::size_t i = prevLineStart; i < lineStart - 1; ++i) {
                 if (bufferText[i] != ' ' && bufferText[i] != '\t') {
                     prevLineBlank = false;
@@ -1968,9 +1976,9 @@ Mode OrgMode() {
         // this closure's own contentStart computation already is.
         if (lineStart == lineEnd && column > 0 && lineStart > 0) {
             const std::size_t searchFrom    = (lineStart <= 1) ? 0 : lineStart - 2;
-            std::size_t        prevLineStart = bufferText.rfind('\n', searchFrom);
-            prevLineStart                  = (prevLineStart == std::string_view::npos) ? 0 : prevLineStart + 1;
-            bool prevLineBlank = true;
+            std::size_t       prevLineStart = bufferText.rfind('\n', searchFrom);
+            prevLineStart                   = (prevLineStart == std::string_view::npos) ? 0 : prevLineStart + 1;
+            bool prevLineBlank              = true;
             for (std::size_t i = prevLineStart; i < lineStart - 1; ++i) {
                 if (bufferText[i] != ' ' && bufferText[i] != '\t') {
                     prevLineBlank = false;

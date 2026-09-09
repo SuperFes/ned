@@ -40,17 +40,17 @@ namespace ned::editor {
 // captured, since the in-memory ring, not the buffer's own bytes, is the
 // source of truth.
 enum class LogCategory { General,
-                          Janet,
-                          Lsp,
-                          Dap,
-                          Acp,
-                          Vcs,
-                          Task,
-                          Subprocess };
+                         Janet,
+                         Lsp,
+                         Dap,
+                         Acp,
+                         Vcs,
+                         Task,
+                         Subprocess };
 
 enum class LogSeverity { Info,
-                          Warning,
-                          Error };
+                         Warning,
+                         Error };
 
 struct LogEntry {
     std::chrono::system_clock::time_point timestamp;
@@ -88,7 +88,7 @@ struct LogEntry {
 // into it -- see LogEntry::count's own doc comment -- rather than appending
 // a distinct entry every time.
 void LogMessage(LogCategory category, LogSeverity severity, std::string message, std::optional<std::string> path = std::nullopt,
-                 std::optional<std::size_t> line = std::nullopt);
+                std::optional<std::size_t> line = std::nullopt);
 
 // Process-wide settings (mutex-guarded static state, TabWidth.h's exact
 // pattern), each configured from Janet: ned/set-log-category-visible,
@@ -99,7 +99,7 @@ void               SetLogCategoryVisible(LogCategory category, bool visible);
 // The in-memory ring's cap -- oldest entries are evicted past this count.
 // Default 5000. A decrease trims the ring immediately, not on the next
 // LogMessage call.
-void                       SetLogMaxEntries(std::size_t maxEntries);
+void                      SetLogMaxEntries(std::size_t maxEntries);
 [[nodiscard]] std::size_t LogMaxEntries();
 
 [[nodiscard]] std::optional<LogCategory> LogCategoryFromString(std::string_view name);

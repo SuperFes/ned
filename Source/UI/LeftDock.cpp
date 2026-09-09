@@ -8,11 +8,11 @@
 namespace ned::ui {
 
 namespace {
-constexpr int kRailWidth          = 3; // one glyph, centered, plus one column of padding each side
-constexpr int kMinContentWidth    = 4; // ProjectSidebar::kMinSidebarWidth's own value
-constexpr int kMinWidth           = kRailWidth + kMinContentWidth;
-constexpr int kHeaderHeight       = 1; // the content region's own border title row
-constexpr int kBottomBorderHeight = 1;
+    constexpr int kRailWidth          = 3; // one glyph, centered, plus one column of padding each side
+    constexpr int kMinContentWidth    = 4; // ProjectSidebar::kMinSidebarWidth's own value
+    constexpr int kMinWidth           = kRailWidth + kMinContentWidth;
+    constexpr int kHeaderHeight       = 1; // the content region's own border title row
+    constexpr int kBottomBorderHeight = 1;
 } // namespace
 
 LeftDock::LeftDock(const Theme& theme) : theme_(theme) {
@@ -189,7 +189,7 @@ void LeftDock::UpdateResize(int globalMouseX) {
     // whichever widget now has the cursor, so there's no single consistent
     // "previous event" to diff against across that handoff).
     const int delta = globalMouseX - resizeAnchorGlobalX_;
-    width_           = std::max(kMinWidth, resizeAnchorWidth_ + delta);
+    width_          = std::max(kMinWidth, resizeAnchorWidth_ + delta);
 }
 
 void LeftDock::EndResize() {
@@ -263,8 +263,8 @@ void LeftDock::Paint(Canvas c) {
     // (see this file's own header comment on why collapse is rail-driven,
     // not divider-driven).
     for (std::size_t i = 0; i < entries_.size() && static_cast<int>(i) < c.size().height; ++i) {
-        const Entry& entry    = entries_[i];
-        const bool   isActive = entry.id == active_;
+        const Entry& entry     = entries_[i];
+        const bool   isActive  = entry.id == active_;
         const Brush& railBrush = isActive ? theme_.activeTab : theme_.tabBar;
         const int    row       = static_cast<int>(i);
         for (int col = 0; col < kRailWidth && col < c.size().width; ++col) {

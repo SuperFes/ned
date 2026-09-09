@@ -70,8 +70,8 @@ class McpBridgeServer {
     // directory creation, socket/bind/listen syscall failure).
     void Start();
 
-    [[nodiscard]] bool                          IsListening() const noexcept;
-    [[nodiscard]] const std::filesystem::path&  SocketPath() const noexcept;
+    [[nodiscard]] bool                         IsListening() const noexcept;
+    [[nodiscard]] const std::filesystem::path& SocketPath() const noexcept;
 
   private:
     void AcceptLoop(std::stop_token stopToken);
@@ -87,13 +87,13 @@ class McpBridgeServer {
     void SendResult(const std::weak_ptr<Transport>& transport, const Json& id, const Json& result);
     void SendError(const std::weak_ptr<Transport>& transport, const Json& id, int code, const std::string& message);
 
-    ToolRegistry&          registry_;
-    ned::ui::EventLoop&    eventLoop_;
-    std::filesystem::path  socketPath_;
-    int                    listenFd_ = -1;
-    std::atomic<int>       currentConnFd_{-1};
-    std::shared_ptr<bool>  alive_ = std::make_shared<bool>(true);
-    std::jthread           acceptThread_; // declared last: its destructor (auto stop+join) must run only after ~McpBridgeServer's body has already unblocked it
+    ToolRegistry&         registry_;
+    ned::ui::EventLoop&   eventLoop_;
+    std::filesystem::path socketPath_;
+    int                   listenFd_ = -1;
+    std::atomic<int>      currentConnFd_{-1};
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
+    std::jthread          acceptThread_; // declared last: its destructor (auto stop+join) must run only after ~McpBridgeServer's body has already unblocked it
 };
 
 } // namespace ned::editor::mcp

@@ -549,7 +549,7 @@ void VcsRunner::RequestRevert(const std::filesystem::path& path, std::function<v
 }
 
 void VcsRunner::RequestStashList(std::function<void(std::vector<VcsStashEntry>)> onComplete,
-                                 std::function<void(std::string)>                 onError) {
+                                 std::function<void(std::string)>                onError) {
     const std::filesystem::path root = ProjectRoot();
     RunProviderOperation(
         "stash listing", "stash-list:" + root.string(),

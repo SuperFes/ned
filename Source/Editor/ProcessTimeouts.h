@@ -52,19 +52,19 @@ namespace ned::editor {
 
 // Non-positive values are clamped to 1ms rather than rejected, same
 // convention as TabWidth::SetTabWidth/DiffRefreshSettings.h.
-void SetSubprocessReadTimeoutMs(int milliseconds);
+void                                    SetSubprocessReadTimeoutMs(int milliseconds);
 [[nodiscard]] std::chrono::milliseconds SubprocessReadTimeoutMs(); // default 5000ms
 
-void SetSubprocessWriteTimeoutMs(int milliseconds);
+void                                    SetSubprocessWriteTimeoutMs(int milliseconds);
 [[nodiscard]] std::chrono::milliseconds SubprocessWriteTimeoutMs(); // default 5000ms
 
-void SetProtocolReadStallTimeoutMs(int milliseconds);
+void                                    SetProtocolReadStallTimeoutMs(int milliseconds);
 [[nodiscard]] std::chrono::milliseconds ProtocolReadStallTimeoutMs(); // default 30000ms
 
-void SetProtocolWriteStallTimeoutMs(int milliseconds);
+void                                    SetProtocolWriteStallTimeoutMs(int milliseconds);
 [[nodiscard]] std::chrono::milliseconds ProtocolWriteStallTimeoutMs(); // default 30000ms
 
-void SetProtocolRequestTimeoutMs(int milliseconds);
+void                                    SetProtocolRequestTimeoutMs(int milliseconds);
 [[nodiscard]] std::chrono::milliseconds ProtocolRequestTimeoutMs(); // default 30000ms
 
 } // namespace ned::editor

@@ -4,7 +4,8 @@
 
 namespace ned::text {
 
-RopeStorage::RopeStorage(Rope rope) : rope_(std::move(rope)) {}
+RopeStorage::RopeStorage(Rope rope) : rope_(std::move(rope)) {
+}
 
 const Rope& RopeStorage::Value() const {
     return rope_;

@@ -39,7 +39,7 @@ namespace {
 
 std::filesystem::path WriteTempFile(const std::string& name, std::string_view content) {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
-    std::ofstream                file(path, std::ios::binary);
+    std::ofstream               file(path, std::ios::binary);
     file << content;
     return path;
 }
@@ -74,10 +74,10 @@ struct Fixture {
         ned::editor::RegisterBuiltinCommands(r);
         return r;
     }()};
-    ned::editor::Keymap     keymap = ned::editor::BuildDefaultGlobalKeymap();
-    ned::editor::Dispatcher dispatcher{registry, ned::editor::KeymapStack({&keymap})};
-    ned::editor::Mode       mode = ned::editor::CMode();
-    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    ned::editor::Keymap          keymap = ned::editor::BuildDefaultGlobalKeymap();
+    ned::editor::Dispatcher      dispatcher{registry, ned::editor::KeymapStack({&keymap})};
+    ned::editor::Mode            mode  = ned::editor::CMode();
+    ned::ui::Theme               theme = ned::ui::DarkTheme();
 
     Buffer buffer;
 
@@ -162,7 +162,7 @@ TEST_CASE("Fold gutter remaps a huge buffer's window-relative offsets back to th
 
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2}); // 3 rows visible
-    view.SetTopLine(targetLine); // scroll so the function's own header line is row 0
+    view.SetTopLine(targetLine);                                                 // scroll so the function's own header line is row 0
     ned::ui::Screen screen = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);

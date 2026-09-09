@@ -94,8 +94,8 @@ class TreeView : public Widget {
     bool OnEvent(const Event& event) override;
 
   private:
-    const Theme&   theme_;
-    TreeViewModel  model_;
+    const Theme&  theme_;
+    TreeViewModel model_;
 
     std::function<void(std::size_t)> onSelectionChanged_;
     std::function<void(std::size_t)> onActivate_;

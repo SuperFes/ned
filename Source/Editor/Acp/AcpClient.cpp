@@ -15,8 +15,7 @@ AcpClient::~AcpClient() {
     *alive_ = false;
 }
 
-AcpClient::AcpClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop)
-    : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
+AcpClient::AcpClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
     StartReadLoop();
     StartStderrReadLoop();
 }

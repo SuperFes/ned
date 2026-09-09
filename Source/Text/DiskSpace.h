@@ -23,7 +23,7 @@
 namespace ned::text {
 
 struct DiskSpaceCheck {
-    bool           sufficient = true;
+    bool           sufficient     = true;
     std::uintmax_t availableBytes = 0;
     std::uintmax_t requiredBytes  = 0;
 };

@@ -37,11 +37,11 @@ namespace {
         }
         catch (const std::exception& e) {
             editor::LogMessage(editor::LogCategory::General, editor::LogSeverity::Error,
-                                "ned: uncaught exception in " + std::string(what) + ": " + e.what());
+                               "ned: uncaught exception in " + std::string(what) + ": " + e.what());
         }
         catch (...) {
             editor::LogMessage(editor::LogCategory::General, editor::LogSeverity::Error,
-                                "ned: uncaught non-std::exception in " + std::string(what));
+                               "ned: uncaught non-std::exception in " + std::string(what));
         }
     }
 
@@ -463,7 +463,7 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
             nc_ = nullptr;
             std::raise(SIGTSTP);
             InitializeNotcurses_();
-            inputFd = notcurses_inputready_fd(nc_);
+            inputFd       = notcurses_inputready_fd(nc_);
             unsigned rows = 0, cols = 0;
             notcurses_refresh(nc_, &rows, &cols);
             const Size resumedSize{static_cast<int>(cols), static_cast<int>(rows)};

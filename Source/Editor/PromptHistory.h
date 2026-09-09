@@ -43,7 +43,7 @@ class PromptHistory {
 
   private:
     std::unordered_map<std::string, std::vector<std::string>> rings_; // each vector front = most recent
-    std::size_t                                                capacityPerKind_;
+    std::size_t                                               capacityPerKind_;
 };
 
 } // namespace ned::editor

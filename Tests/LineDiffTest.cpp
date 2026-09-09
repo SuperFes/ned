@@ -113,8 +113,8 @@ TEST_CASE("UnifiedDiff merges two hunks whose context windows overlap into one c
     // Two single-line changes only one line apart -- with contextLines=2 the
     // windows overlap, so the connecting line between them is shown as plain
     // context rather than triggering two separate Omitted-bounded groups.
-    const auto lines = UnifiedDiff("a\nb\nc\nd\ne\n", "X\nb\nc\nY\ne\n", /*contextLines=*/2);
-    bool sawOmitted = false;
+    const auto lines      = UnifiedDiff("a\nb\nc\nd\ne\n", "X\nb\nc\nY\ne\n", /*contextLines=*/2);
+    bool       sawOmitted = false;
     for (const DiffLine& line : lines) {
         if (line.kind == DiffLineKind::Omitted) {
             sawOmitted = true;

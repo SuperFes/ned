@@ -48,8 +48,8 @@ TEST_CASE("Rope insert at boundaries", "[Rope]") {
 TEST_CASE("Rope multi-byte UTF-8 counts bytes vs codepoints correctly", "[Rope]") {
     // "h", "e", U+00E9 (2 bytes), "l", "l", "o" -> "héllo" is not what we want;
     // use an explicit accented character: "h" + U+00E9 + "llo".
-    const std::string text  = "h\xC3\xA9llo"; // "héllo"
-    const Rope         rope(text);
+    const std::string text = "h\xC3\xA9llo"; // "héllo"
+    const Rope        rope(text);
 
     REQUIRE(rope.ByteLength() == 6);
     REQUIRE(rope.CodepointLength() == 5);
@@ -77,7 +77,7 @@ TEST_CASE("Rope line counting", "[Rope]") {
 
 TEST_CASE("Rope codepoint/byte offset conversions", "[Rope]") {
     const std::string text = "h\xC3\xA9llo"; // "héllo"
-    const Rope         rope(text);
+    const Rope        rope(text);
 
     REQUIRE(rope.ByteOffsetToCodepointOffset(0) == 0);
     REQUIRE(rope.ByteOffsetToCodepointOffset(1) == 1);
@@ -113,7 +113,8 @@ TEST_CASE("Rope survives random edits across chunk boundaries", "[Rope]") {
 
             reference.insert(pos, chunk);
             rope = rope.Inserted(pos, chunk);
-        } else {
+        }
+        else {
             std::uniform_int_distribution<std::size_t> posDist(0, reference.size());
             const std::size_t                          pos    = posDist(rng);
             const std::size_t                          maxLen = reference.size() - pos;

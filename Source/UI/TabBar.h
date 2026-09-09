@@ -126,8 +126,8 @@ class TabBar : public Widget {
     text::Buffer* dragBuffer_ = nullptr;
 
     std::function<void(text::Buffer&)>              onCloseRequest_;
-    std::function<void(text::Buffer&, std::size_t)> onReorder_;     // see SetOnReorder
-    std::function<bool()>                           focusProvider_; // see SetFocusProvider
+    std::function<void(text::Buffer&, std::size_t)> onReorder_;            // see SetOnReorder
+    std::function<bool()>                           focusProvider_;        // see SetFocusProvider
     std::function<void(text::Buffer&, Point)>       onContextMenuRequest_; // see SetOnContextMenuRequest
 };
 

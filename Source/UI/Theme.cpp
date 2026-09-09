@@ -321,16 +321,16 @@ Theme DarkTheme() {
         // enough to stay secondary to real syntax highlighting (same
         // "deliberately low-contrast" spirit as indentGuideForeground
         // above, just spread across a few distinct hues instead of one).
-        .indentGuideDepthPalette       = {Color::RGB(0x8a5050), Color::RGB(0x8a7250), Color::RGB(0x8a8a50),
-                                          Color::RGB(0x508a5f), Color::RGB(0x50748a), Color::RGB(0x74508a)},
-        .headlineLevel1Foreground      = Color::BrightBlue,
-        .headlineLevel2Foreground      = Color::BrightCyan,
-        .headlineLevel3Foreground      = Color::BrightGreen,
-        .todoKeywordForeground         = Color::BrightRed,
-        .doneKeywordForeground         = Color::BrightGreen,
-        .checkboxForeground            = Color::BrightYellow,
-        .underlineForeground           = Color::White,
-        .strikethroughForeground       = Color::BrightBlack,
+        .indentGuideDepthPalette  = {Color::RGB(0x8a5050), Color::RGB(0x8a7250), Color::RGB(0x8a8a50),
+                                     Color::RGB(0x508a5f), Color::RGB(0x50748a), Color::RGB(0x74508a)},
+        .headlineLevel1Foreground = Color::BrightBlue,
+        .headlineLevel2Foreground = Color::BrightCyan,
+        .headlineLevel3Foreground = Color::BrightGreen,
+        .todoKeywordForeground    = Color::BrightRed,
+        .doneKeywordForeground    = Color::BrightGreen,
+        .checkboxForeground       = Color::BrightYellow,
+        .underlineForeground      = Color::White,
+        .strikethroughForeground  = Color::BrightBlack,
         // The chrome family's two poles (chrome-redesign follow-up): border
         // is a quiet structural blue-grey one step lighter than the
         // 0x1b1b30/0x2b2b40 tab/mode-line chrome it frames; the accent is
@@ -422,16 +422,16 @@ Theme LightTheme() {
         // Depth-colorized-indent-guides follow-up: DarkTheme's own palette
         // pulled darker/more saturated so each hue stays visible against a
         // light background instead of washing out.
-        .indentGuideDepthPalette       = {Color::RGB(0xb03030), Color::RGB(0xb07a20), Color::RGB(0x9a9a20),
-                                          Color::RGB(0x2f9a4f), Color::RGB(0x2f70b0), Color::RGB(0x7a2fb0)},
-        .headlineLevel1Foreground      = Color::RGB(0x1f4fa0),
-        .headlineLevel2Foreground      = Color::RGB(0x1f7a7a),
-        .headlineLevel3Foreground      = Color::RGB(0x2f6f2f),
-        .todoKeywordForeground         = Color::RGB(0xa03030),
-        .doneKeywordForeground         = Color::RGB(0x2f8f2f),
-        .checkboxForeground            = Color::RGB(0x8f6f1f),
-        .underlineForeground           = Color::RGB(0x202020),
-        .strikethroughForeground       = Color::RGB(0x808080),
+        .indentGuideDepthPalette  = {Color::RGB(0xb03030), Color::RGB(0xb07a20), Color::RGB(0x9a9a20),
+                                     Color::RGB(0x2f9a4f), Color::RGB(0x2f70b0), Color::RGB(0x7a2fb0)},
+        .headlineLevel1Foreground = Color::RGB(0x1f4fa0),
+        .headlineLevel2Foreground = Color::RGB(0x1f7a7a),
+        .headlineLevel3Foreground = Color::RGB(0x2f6f2f),
+        .todoKeywordForeground    = Color::RGB(0xa03030),
+        .doneKeywordForeground    = Color::RGB(0x2f8f2f),
+        .checkboxForeground       = Color::RGB(0x8f6f1f),
+        .underlineForeground      = Color::RGB(0x202020),
+        .strikethroughForeground  = Color::RGB(0x808080),
         // Same two-pole structure as DarkTheme's: a warm structural grey
         // against the cream background, accent from the mode-line blue
         // family, focused gradient pulled toward the light purple
@@ -526,20 +526,20 @@ Theme AnsiDarkTheme() {
         // has no dim/desaturated variants to reach for, so this is
         // literally the base hue rotation -- rainbow indent guides in the
         // plainest sense.
-        .indentGuideDepthPalette       = {Color::Red, Color::Yellow, Color::Green, Color::Cyan, Color::Blue, Color::Magenta},
-        .headlineLevel1Foreground      = Color::Blue,
-        .headlineLevel2Foreground      = Color::Cyan,
-        .headlineLevel3Foreground      = Color::Green,
-        .todoKeywordForeground         = Color::Red,
-        .doneKeywordForeground         = Color::Green,
-        .checkboxForeground            = Color::Yellow,
-        .underlineForeground           = Color::White,
-        .strikethroughForeground       = Color::White,
-        .border                        = Brush{.foreground = Color::Blue},
-        .borderAccent                  = Brush{.foreground = Color::Magenta, .bold = true},
-        .modeLineFocusedGradientStart  = Color::Magenta,
-        .modeLineFocusedGradientEnd    = Color::Magenta,
-        .markupMarkerForeground        = Color::Blue,
+        .indentGuideDepthPalette      = {Color::Red, Color::Yellow, Color::Green, Color::Cyan, Color::Blue, Color::Magenta},
+        .headlineLevel1Foreground     = Color::Blue,
+        .headlineLevel2Foreground     = Color::Cyan,
+        .headlineLevel3Foreground     = Color::Green,
+        .todoKeywordForeground        = Color::Red,
+        .doneKeywordForeground        = Color::Green,
+        .checkboxForeground           = Color::Yellow,
+        .underlineForeground          = Color::White,
+        .strikethroughForeground      = Color::White,
+        .border                       = Brush{.foreground = Color::Blue},
+        .borderAccent                 = Brush{.foreground = Color::Magenta, .bold = true},
+        .modeLineFocusedGradientStart = Color::Magenta,
+        .modeLineFocusedGradientEnd   = Color::Magenta,
+        .markupMarkerForeground       = Color::Blue,
     };
 }
 

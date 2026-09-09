@@ -48,7 +48,7 @@ TEST_CASE("SnapDownToCodepointBoundary is a no-op at an already-aligned offset",
 TEST_CASE("SnapDownToCodepointBoundary moves a mid-codepoint offset back to its start", "[Utf8]") {
     using ned::text::SnapDownToCodepointBoundary;
 
-    const std::string text = "a\xC3\xA9\xE4\xB8\xADz"; // 'a' + 'é' (2 bytes) + '中' (3 bytes) + 'z'
+    const std::string text = "a\xC3\xA9\xE4\xB8\xADz";  // 'a' + 'é' (2 bytes) + '中' (3 bytes) + 'z'
     REQUIRE(SnapDownToCodepointBoundary(text, 2) == 1); // 2nd byte of 'é' -> 'é' start
     REQUIRE(SnapDownToCodepointBoundary(text, 4) == 3); // 2nd byte of '中' -> '中' start
     REQUIRE(SnapDownToCodepointBoundary(text, 5) == 3); // 3rd byte of '中' -> '中' start
@@ -79,9 +79,9 @@ TEST_CASE("SnapUpToCodepointBoundary moves a mid-codepoint offset forward past i
     using ned::text::SnapUpToCodepointBoundary;
 
     const std::string text = "a\xC3\xA9\xE4\xB8\xADz"; // 'a' + 'é' (2 bytes) + '中' (3 bytes) + 'z'
-    REQUIRE(SnapUpToCodepointBoundary(text, 2) == 3);   // 2nd byte of 'é' -> start of '中'
-    REQUIRE(SnapUpToCodepointBoundary(text, 4) == 6);   // 2nd byte of '中' -> start of 'z'
-    REQUIRE(SnapUpToCodepointBoundary(text, 5) == 6);   // 3rd byte of '中' -> start of 'z'
+    REQUIRE(SnapUpToCodepointBoundary(text, 2) == 3);  // 2nd byte of 'é' -> start of '中'
+    REQUIRE(SnapUpToCodepointBoundary(text, 4) == 6);  // 2nd byte of '中' -> start of 'z'
+    REQUIRE(SnapUpToCodepointBoundary(text, 5) == 6);  // 3rd byte of '中' -> start of 'z'
 }
 
 TEST_CASE("SnapUpToCodepointBoundary bounds its walk against malformed input", "[Utf8]") {
@@ -112,9 +112,9 @@ TEST_CASE("DecodeCodepointUtf8 decodes the codepoint starting at an arbitrary bo
 TEST_CASE("DecodeCodepointUtf8 is U+FFFD-tolerant of malformed/truncated input", "[Utf8]") {
     using ned::text::DecodeCodepointUtf8;
 
-    REQUIRE(DecodeCodepointUtf8("", 0) == 0xFFFD);            // empty
-    REQUIRE(DecodeCodepointUtf8("abc", 99) == 0xFFFD);        // offset past the end
-    REQUIRE(DecodeCodepointUtf8("\xFF", 0) == 0xFFFD);        // invalid lead byte
-    REQUIRE(DecodeCodepointUtf8("\xE4\xB8", 0) == 0xFFFD);    // truncated 3-byte sequence
-    REQUIRE(DecodeCodepointUtf8("\xC3\x20", 0) == 0xFFFD);    // lead byte, non-continuation follower
+    REQUIRE(DecodeCodepointUtf8("", 0) == 0xFFFD);         // empty
+    REQUIRE(DecodeCodepointUtf8("abc", 99) == 0xFFFD);     // offset past the end
+    REQUIRE(DecodeCodepointUtf8("\xFF", 0) == 0xFFFD);     // invalid lead byte
+    REQUIRE(DecodeCodepointUtf8("\xE4\xB8", 0) == 0xFFFD); // truncated 3-byte sequence
+    REQUIRE(DecodeCodepointUtf8("\xC3\x20", 0) == 0xFFFD); // lead byte, non-continuation follower
 }

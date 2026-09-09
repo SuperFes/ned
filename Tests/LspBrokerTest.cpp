@@ -10,45 +10,45 @@ using ned::editor::lsp::Json;
 
 namespace {
 
-    std::size_t CountKind(const std::vector<BrokerAction>& actions, BrokerAction::Kind kind) {
-        std::size_t count = 0;
-        for (const BrokerAction& action : actions) {
-            if (action.kind == kind) {
-                ++count;
-            }
+std::size_t CountKind(const std::vector<BrokerAction>& actions, BrokerAction::Kind kind) {
+    std::size_t count = 0;
+    for (const BrokerAction& action : actions) {
+        if (action.kind == kind) {
+            ++count;
         }
-        return count;
     }
+    return count;
+}
 
-    const BrokerAction* FindKind(const std::vector<BrokerAction>& actions, BrokerAction::Kind kind) {
-        for (const BrokerAction& action : actions) {
-            if (action.kind == kind) {
-                return &action;
-            }
+const BrokerAction* FindKind(const std::vector<BrokerAction>& actions, BrokerAction::Kind kind) {
+    for (const BrokerAction& action : actions) {
+        if (action.kind == kind) {
+            return &action;
         }
-        return nullptr;
     }
+    return nullptr;
+}
 
-    Json InitializeFrame(int id) {
-        return Json{{"jsonrpc", "2.0"}, {"id", id}, {"method", "initialize"}, {"params", Json{{"processId", nullptr}}}};
-    }
+Json InitializeFrame(int id) {
+    return Json{{"jsonrpc", "2.0"}, {"id", id}, {"method", "initialize"}, {"params", Json{{"processId", nullptr}}}};
+}
 
-    Json InitializedFrame() {
-        return Json{{"jsonrpc", "2.0"}, {"method", "initialized"}, {"params", Json::object()}};
-    }
+Json InitializedFrame() {
+    return Json{{"jsonrpc", "2.0"}, {"method", "initialized"}, {"params", Json::object()}};
+}
 
-    // Drives (conn, root, language) through a full attach -> real handshake
-    // -> Ready -> client "initialized" sequence, using a synthetic id for
-    // the client's own initialize request. Shared setup for every test that
-    // just needs a Ready entry with one attached client to build on.
-    void BringToReady(BrokerRouter& router, ConnectionId conn, const std::string& root, const std::string& language, int clientInitId = 1) {
-        (void) router.ClientAttached(conn, root, language, {"clangd"});
-        (void) router.ClientFrame(conn, InitializeFrame(clientInitId));
-        const auto spawned      = router.ServerSpawned(root, language);
-        const int  handshakeId  = FindKind(spawned, BrokerAction::Kind::SendToServer)->frame.at("id").get<int>();
-        (void) router.ServerFrame(root, language, Json{{"jsonrpc", "2.0"}, {"id", handshakeId}, {"result", Json::object()}});
-        (void) router.ClientFrame(conn, InitializedFrame());
-    }
+// Drives (conn, root, language) through a full attach -> real handshake
+// -> Ready -> client "initialized" sequence, using a synthetic id for
+// the client's own initialize request. Shared setup for every test that
+// just needs a Ready entry with one attached client to build on.
+void BringToReady(BrokerRouter& router, ConnectionId conn, const std::string& root, const std::string& language, int clientInitId = 1) {
+    (void)router.ClientAttached(conn, root, language, {"clangd"});
+    (void)router.ClientFrame(conn, InitializeFrame(clientInitId));
+    const auto spawned     = router.ServerSpawned(root, language);
+    const int  handshakeId = FindKind(spawned, BrokerAction::Kind::SendToServer)->frame.at("id").get<int>();
+    (void)router.ServerFrame(root, language, Json{{"jsonrpc", "2.0"}, {"id", handshakeId}, {"result", Json::object()}});
+    (void)router.ClientFrame(conn, InitializedFrame());
+}
 
 } // namespace
 
@@ -66,8 +66,8 @@ TEST_CASE("BrokerRouter spawns on first attach, ignores argv on later attaches",
 
 TEST_CASE("BrokerRouter drives one real handshake and answers every waiting client from cache", "[LspBroker]") {
     BrokerRouter router;
-    (void) router.ClientAttached(1, "/proj", "cpp", {"clangd"});
-    (void) router.ClientAttached(2, "/proj", "cpp", {});
+    (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
+    (void)router.ClientAttached(2, "/proj", "cpp", {});
 
     // Both clients send their own initialize before the process finishes spawning.
     auto c1Init = router.ClientFrame(1, InitializeFrame(100));
@@ -76,8 +76,8 @@ TEST_CASE("BrokerRouter drives one real handshake and answers every waiting clie
     REQUIRE(c2Init.empty());
 
     // Process comes up -- the real handshake should fire now, using client 1's params.
-    auto                 spawned  = router.ServerSpawned("/proj", "cpp");
-    const BrokerAction*  realInit = FindKind(spawned, BrokerAction::Kind::SendToServer);
+    auto                spawned  = router.ServerSpawned("/proj", "cpp");
+    const BrokerAction* realInit = FindKind(spawned, BrokerAction::Kind::SendToServer);
     REQUIRE(realInit != nullptr);
     REQUIRE(realInit->frame.at("method") == "initialize");
     REQUIRE(router.StatusFor("/proj", "cpp") == BrokerLanguageStatus::AwaitingRealHandshake);
@@ -111,7 +111,7 @@ TEST_CASE("BrokerRouter answers a client that attaches after the entry is alread
     BrokerRouter router;
     BringToReady(router, 1, "/proj", "cpp");
 
-    (void) router.ClientAttached(2, "/proj", "cpp", {});
+    (void)router.ClientAttached(2, "/proj", "cpp", {});
     auto lateInit = router.ClientFrame(2, InitializeFrame(55));
     REQUIRE(lateInit.size() == 1);
     REQUIRE(lateInit[0].kind == BrokerAction::Kind::SendToClient);
@@ -139,14 +139,14 @@ TEST_CASE("BrokerRouter rewrites request ids and routes the response back to the
 
 TEST_CASE("BrokerRouter broadcasts a server notification to every attached client", "[LspBroker]") {
     BrokerRouter router;
-    (void) router.ClientAttached(1, "/proj", "cpp", {"clangd"});
-    (void) router.ClientAttached(2, "/proj", "cpp", {});
-    (void) router.ClientFrame(1, InitializeFrame(1));
-    (void) router.ClientFrame(2, InitializeFrame(2));
+    (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
+    (void)router.ClientAttached(2, "/proj", "cpp", {});
+    (void)router.ClientFrame(1, InitializeFrame(1));
+    (void)router.ClientFrame(2, InitializeFrame(2));
     int handshakeId = FindKind(router.ServerSpawned("/proj", "cpp"), BrokerAction::Kind::SendToServer)->frame.at("id").get<int>();
-    (void) router.ServerFrame("/proj", "cpp", Json{{"jsonrpc", "2.0"}, {"id", handshakeId}, {"result", Json::object()}});
-    (void) router.ClientFrame(1, InitializedFrame());
-    (void) router.ClientFrame(2, InitializedFrame());
+    (void)router.ServerFrame("/proj", "cpp", Json{{"jsonrpc", "2.0"}, {"id", handshakeId}, {"result", Json::object()}});
+    (void)router.ClientFrame(1, InitializedFrame());
+    (void)router.ClientFrame(2, InitializedFrame());
 
     auto diagnostics = router.ServerFrame(
         "/proj", "cpp", Json{{"jsonrpc", "2.0"}, {"method", "textDocument/publishDiagnostics"}, {"params", Json{{"uri", "file:///a.cpp"}}}});
@@ -168,10 +168,10 @@ TEST_CASE("BrokerRouter auto-acknowledges a server-initiated request without rou
 
 TEST_CASE("BrokerRouter flushes queued clients with an error when the real spawn fails", "[LspBroker]") {
     BrokerRouter router;
-    (void) router.ClientAttached(1, "/proj", "cpp", {"clangd"});
-    (void) router.ClientAttached(2, "/proj", "cpp", {});
-    (void) router.ClientFrame(1, InitializeFrame(11));
-    (void) router.ClientFrame(2, InitializeFrame(22));
+    (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
+    (void)router.ClientAttached(2, "/proj", "cpp", {});
+    (void)router.ClientFrame(1, InitializeFrame(11));
+    (void)router.ClientFrame(2, InitializeFrame(22));
 
     auto failed = router.ServerSpawnFailed("/proj", "cpp", "clangd: no such file or directory");
     REQUIRE(router.StatusFor("/proj", "cpp") == BrokerLanguageStatus::Failed);
@@ -181,7 +181,7 @@ TEST_CASE("BrokerRouter flushes queued clients with an error when the real spawn
     }
 
     // A client attaching after Failed gets an immediate error too, no respawn attempt.
-    (void) router.ClientAttached(3, "/proj", "cpp", {"whatever"});
+    (void)router.ClientAttached(3, "/proj", "cpp", {"whatever"});
     auto lateInit = router.ClientFrame(3, InitializeFrame(33));
     REQUIRE(lateInit.size() == 1);
     REQUIRE(lateInit[0].frame.contains("error"));
@@ -189,8 +189,8 @@ TEST_CASE("BrokerRouter flushes queued clients with an error when the real spawn
 
 TEST_CASE("BrokerRouter flushes queued clients with an error when the real handshake itself errors", "[LspBroker]") {
     BrokerRouter router;
-    (void) router.ClientAttached(1, "/proj", "cpp", {"clangd"});
-    (void) router.ClientFrame(1, InitializeFrame(1));
+    (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
+    (void)router.ClientFrame(1, InitializeFrame(1));
     int handshakeId = FindKind(router.ServerSpawned("/proj", "cpp"), BrokerAction::Kind::SendToServer)->frame.at("id").get<int>();
 
     auto errored = router.ServerFrame("/proj", "cpp", Json{{"jsonrpc", "2.0"}, {"id", handshakeId}, {"error", Json{{"code", -1}, {"message", "boom"}}}});
@@ -201,10 +201,10 @@ TEST_CASE("BrokerRouter flushes queued clients with an error when the real hands
 
 TEST_CASE("BrokerRouter disconnecting mid-handshake doesn't affect a later client sharing the same handshake", "[LspBroker]") {
     BrokerRouter router;
-    (void) router.ClientAttached(1, "/proj", "cpp", {"clangd"});
-    (void) router.ClientAttached(2, "/proj", "cpp", {});
-    (void) router.ClientFrame(1, InitializeFrame(1));
-    (void) router.ClientFrame(2, InitializeFrame(2));
+    (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
+    (void)router.ClientAttached(2, "/proj", "cpp", {});
+    (void)router.ClientFrame(1, InitializeFrame(1));
+    (void)router.ClientFrame(2, InitializeFrame(2));
     int handshakeId = FindKind(router.ServerSpawned("/proj", "cpp"), BrokerAction::Kind::SendToServer)->frame.at("id").get<int>();
 
     // Client 1 (whose params drove the real handshake) disconnects before the server answers.
@@ -220,14 +220,14 @@ TEST_CASE("BrokerRouter disconnecting mid-handshake doesn't affect a later clien
 
 TEST_CASE("BrokerRouter closes every attached client and resets state when the real server disconnects", "[LspBroker]") {
     BrokerRouter router;
-    (void) router.ClientAttached(1, "/proj", "cpp", {"clangd"});
-    (void) router.ClientAttached(2, "/proj", "cpp", {});
-    (void) router.ClientFrame(1, InitializeFrame(1));
-    (void) router.ClientFrame(2, InitializeFrame(2));
+    (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
+    (void)router.ClientAttached(2, "/proj", "cpp", {});
+    (void)router.ClientFrame(1, InitializeFrame(1));
+    (void)router.ClientFrame(2, InitializeFrame(2));
     int handshakeId = FindKind(router.ServerSpawned("/proj", "cpp"), BrokerAction::Kind::SendToServer)->frame.at("id").get<int>();
-    (void) router.ServerFrame("/proj", "cpp", Json{{"jsonrpc", "2.0"}, {"id", handshakeId}, {"result", Json::object()}});
-    (void) router.ClientFrame(1, InitializedFrame());
-    (void) router.ClientFrame(2, InitializedFrame());
+    (void)router.ServerFrame("/proj", "cpp", Json{{"jsonrpc", "2.0"}, {"id", handshakeId}, {"result", Json::object()}});
+    (void)router.ClientFrame(1, InitializedFrame());
+    (void)router.ClientFrame(2, InitializedFrame());
     REQUIRE(router.ConnectionCount() == 2);
 
     auto crashed = router.ServerDisconnected("/proj", "cpp");
@@ -284,19 +284,19 @@ TEST_CASE("BrokerRouter's LRU eviction picks the oldest idle entry under pressur
 
     // proj-a becomes Ready and idle (client disconnects, no one attached) at t0.
     BringToReady(router, 1, "/proj-a", "cpp", 1);
-    (void) router.ClientDisconnected(1);
+    (void)router.ClientDisconnected(1);
     REQUIRE(router.StatusFor("/proj-a", "cpp") == BrokerLanguageStatus::Ready);
 
     // proj-b becomes Ready and STAYS attached (busy) at t0 + 1s -- more recently active than proj-a.
-    (void) router.ClientAttached(2, "/proj-b", "python", {"pylsp"}, t0 + std::chrono::seconds(1));
-    (void) router.ClientFrame(2, InitializeFrame(2), t0 + std::chrono::seconds(1));
+    (void)router.ClientAttached(2, "/proj-b", "python", {"pylsp"}, t0 + std::chrono::seconds(1));
+    (void)router.ClientFrame(2, InitializeFrame(2), t0 + std::chrono::seconds(1));
     int handshakeId = FindKind(router.ServerSpawned("/proj-b", "python"), BrokerAction::Kind::SendToServer)->frame.at("id").get<int>();
-    (void) router.ServerFrame("/proj-b", "python", Json{{"jsonrpc", "2.0"}, {"id", handshakeId}, {"result", Json::object()}}, t0 + std::chrono::seconds(1));
-    (void) router.ClientFrame(2, InitializedFrame(), t0 + std::chrono::seconds(1));
+    (void)router.ServerFrame("/proj-b", "python", Json{{"jsonrpc", "2.0"}, {"id", handshakeId}, {"result", Json::object()}}, t0 + std::chrono::seconds(1));
+    (void)router.ClientFrame(2, InitializedFrame(), t0 + std::chrono::seconds(1));
 
     // Now at capacity (2). A third project attaches -- proj-a (idle, oldest) should be evicted, not proj-b (busy).
     auto third = router.ClientAttached(3, "/proj-c", "rust", {"rust-analyzer"}, t0 + std::chrono::seconds(2));
-    REQUIRE(CountKind(third, BrokerAction::Kind::SpawnServer) == 1); // proj-c spawns
+    REQUIRE(CountKind(third, BrokerAction::Kind::SpawnServer) == 1);                 // proj-c spawns
     REQUIRE(router.StatusFor("/proj-a", "cpp") == BrokerLanguageStatus::NotStarted); // evicted
     REQUIRE(router.StatusFor("/proj-b", "python") == BrokerLanguageStatus::Ready);   // untouched -- was busy
     REQUIRE(router.StatusFor("/proj-c", "rust") == BrokerLanguageStatus::SpawningProcess);
@@ -308,7 +308,7 @@ TEST_CASE("BrokerRouter exceeds the cap rather than disrupting anything when eve
     REQUIRE(router.ConnectionCount() == 1);
 
     auto third = router.ClientAttached(2, "/proj-b", "python", {"pylsp"});
-    REQUIRE(CountKind(third, BrokerAction::Kind::SpawnServer) == 1); // spawns anyway, cap exceeded
+    REQUIRE(CountKind(third, BrokerAction::Kind::SpawnServer) == 1);            // spawns anyway, cap exceeded
     REQUIRE(router.StatusFor("/proj-a", "cpp") == BrokerLanguageStatus::Ready); // untouched
 }
 
@@ -318,7 +318,7 @@ TEST_CASE("BrokerRouter's IdleSweep tears down only entries idle past the timeou
     const auto   t0 = Clock::now();
 
     BringToReady(router, 1, "/proj-a", "cpp", 1); // will go idle
-    (void) router.ClientDisconnected(1);
+    (void)router.ClientDisconnected(1);
     BringToReady(router, 2, "/proj-b", "python", 2); // stays attached -- never idle-eligible
 
     auto tooSoon = router.IdleSweep(t0, std::chrono::minutes(30));

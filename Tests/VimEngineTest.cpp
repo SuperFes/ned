@@ -261,10 +261,10 @@ TEST_CASE("An override count typed before dot becomes the new recorded count for
     Buffer    buffer = MakeBuffer("a b c d e f g h i j");
     VimEngine engine;
 
-    Feed(engine, buffer, "dw");  // deletes "a "
+    Feed(engine, buffer, "dw"); // deletes "a "
     Feed(engine, buffer, "2."); // overridden: delete 2 words ("b c ")
     REQUIRE(buffer.Text() == "d e f g h i j");
-    Feed(engine, buffer, ".");  // bare dot -- real vim reuses the override (2), not the original 1
+    Feed(engine, buffer, "."); // bare dot -- real vim reuses the override (2), not the original 1
     REQUIRE(buffer.Text() == "f g h i j");
 }
 
@@ -417,7 +417,7 @@ TEST_CASE("Uppercase-name recording appends onto the register's existing text", 
     Buffer    buffer = MakeBuffer("a\n");
     VimEngine engine;
 
-    Feed(engine, buffer, "qaA1\x1bq");  // record 'a': append "1"
+    Feed(engine, buffer, "qaA1\x1bq"); // record 'a': append "1"
     Feed(engine, buffer, "qAA2\x1bq"); // append-record 'A' onto 'a': append "2"
     REQUIRE(buffer.Text() == "a12\n");
 

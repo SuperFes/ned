@@ -43,7 +43,7 @@ ImportResolutionConfig DefaultImportResolutionConfig(const std::string& language
 }
 
 ImportResolutionConfig ResolveImportResolutionConfig(const ProjectSettings& settings, const std::string& languageKey) {
-    ImportResolutionConfig            config   = DefaultImportResolutionConfig(languageKey);
+    ImportResolutionConfig          config    = DefaultImportResolutionConfig(languageKey);
     const ImportResolutionOverride& override_ = ImportResolutionOverrideForLanguage(settings, languageKey);
     if (!override_.extensions.empty()) {
         config.extensions = override_.extensions;

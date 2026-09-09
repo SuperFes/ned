@@ -516,7 +516,9 @@ TEST_CASE("bundled git plugin runs revert/stash against a real temp repo end to 
     RunToCompletion({"git", "-C", root, "config", "user.name", "Ned Test"});
 
     const std::filesystem::path filePath = repoRoot / "file.txt";
-    { std::ofstream(filePath) << "hello world\n"; }
+    {
+        std::ofstream(filePath) << "hello world\n";
+    }
     RunToCompletion({"git", "-C", root, "add", "file.txt"});
     RunToCompletion({"git", "-C", root, "commit", "-q", "-m", "initial commit"});
 
@@ -526,9 +528,13 @@ TEST_CASE("bundled git plugin runs revert/stash against a real temp repo end to 
     // Revert: a working-tree edit (both staged and further edited)
     // disappears entirely, back to HEAD's own content -- distinct from
     // unstage, which only moves the index.
-    { std::ofstream(filePath) << "staged change\n"; }
+    {
+        std::ofstream(filePath) << "staged change\n";
+    }
     RunToCompletion(provider->StageArgv(filePath).argv);
-    { std::ofstream(filePath, std::ios::app) << "further unstaged edit\n"; }
+    {
+        std::ofstream(filePath, std::ios::app) << "further unstaged edit\n";
+    }
     auto statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
     REQUIRE(statusEntries.size() == 1);
     REQUIRE(statusEntries[0].state == "MM"); // tracked file: staged mod + further unstaged mod
@@ -536,8 +542,8 @@ TEST_CASE("bundled git plugin runs revert/stash against a real temp repo end to 
     statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
     REQUIRE(statusEntries.empty());
     {
-        std::ifstream  in(filePath);
-        std::string    content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::ifstream in(filePath);
+        std::string   content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         REQUIRE(content == "hello world\n");
     }
 
@@ -545,7 +551,9 @@ TEST_CASE("bundled git plugin runs revert/stash against a real temp repo end to 
     auto stashes = provider->ParseStashList(RunToCompletion(provider->StashListArgv(repoRoot).argv));
     REQUIRE(stashes.empty());
 
-    { std::ofstream(filePath) << "hello world, stashable\n"; }
+    {
+        std::ofstream(filePath) << "hello world, stashable\n";
+    }
     RunToCompletion(provider->StashPushArgv(repoRoot, "my test stash").argv);
     statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
     REQUIRE(statusEntries.empty()); // stashed away, working tree clean again
@@ -601,7 +609,9 @@ TEST_CASE("bundled git plugin runs push/pull/fetch/ahead-behind against a real b
     RunToCompletion({"git", "clone", "-q", bareRemote.string(), repoA.string()});
     RunToCompletion({"git", "-C", repoA.string(), "config", "user.email", "ned-test@example.com"});
     RunToCompletion({"git", "-C", repoA.string(), "config", "user.name", "Ned Test"});
-    { std::ofstream(repoA / "file.txt") << "hello from a\n"; }
+    {
+        std::ofstream(repoA / "file.txt") << "hello from a\n";
+    }
     RunToCompletion({"git", "-C", repoA.string(), "add", "file.txt"});
     RunToCompletion({"git", "-C", repoA.string(), "commit", "-q", "-m", "initial commit"});
     RunToCompletion({"git", "-C", repoA.string(), "push", "-q", "-u", "origin", "main"});
@@ -615,7 +625,9 @@ TEST_CASE("bundled git plugin runs push/pull/fetch/ahead-behind against a real b
     REQUIRE(ab.behind == 0);
 
     // A local-only commit puts repoA one ahead of its upstream.
-    { std::ofstream(repoA / "file.txt", std::ios::app) << "a local commit\n"; }
+    {
+        std::ofstream(repoA / "file.txt", std::ios::app) << "a local commit\n";
+    }
     RunToCompletion({"git", "-C", repoA.string(), "commit", "-aq", "-m", "local commit"});
     ab = provider->ParseAheadBehind(RunToCompletion(provider->AheadBehindArgv(repoA).argv));
     REQUIRE(ab.ahead == 1);
@@ -632,7 +644,9 @@ TEST_CASE("bundled git plugin runs push/pull/fetch/ahead-behind against a real b
     RunToCompletion({"git", "clone", "-q", bareRemote.string(), repoB.string()});
     RunToCompletion({"git", "-C", repoB.string(), "config", "user.email", "ned-test@example.com"});
     RunToCompletion({"git", "-C", repoB.string(), "config", "user.name", "Ned Test"});
-    { std::ofstream(repoB / "file.txt", std::ios::app) << "a remote commit\n"; }
+    {
+        std::ofstream(repoB / "file.txt", std::ios::app) << "a remote commit\n";
+    }
     RunToCompletion({"git", "-C", repoB.string(), "commit", "-aq", "-m", "remote commit"});
     RunToCompletion({"git", "-C", repoB.string(), "push", "-q"});
 
@@ -642,8 +656,8 @@ TEST_CASE("bundled git plugin runs push/pull/fetch/ahead-behind against a real b
     REQUIRE(ab.ahead == 0);
     REQUIRE(ab.behind == 1);
     {
-        std::ifstream  in(repoA / "file.txt");
-        std::string    content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::ifstream in(repoA / "file.txt");
+        std::string   content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         REQUIRE(content.find("a remote commit") == std::string::npos); // not merged into the working tree yet
     }
 
@@ -653,8 +667,8 @@ TEST_CASE("bundled git plugin runs push/pull/fetch/ahead-behind against a real b
     REQUIRE(ab.ahead == 0);
     REQUIRE(ab.behind == 0);
     {
-        std::ifstream  in(repoA / "file.txt");
-        std::string    content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::ifstream in(repoA / "file.txt");
+        std::string   content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         REQUIRE(content.find("a remote commit") != std::string::npos);
     }
 }

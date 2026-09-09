@@ -423,8 +423,8 @@ TEST_CASE("SetOnDisconnected replaces a previous handler, and unset is a safe no
 // just that the hook is replaceable.
 TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an already-destroyed LspClient", "[Lsp]") {
     ned::ui::EventLoop eventLoop;
-    int                 clientWritesHere[2]; // client's write end -> test's read end
-    int                 clientReadsHere[2];  // test's write end -> client's read end
+    int                clientWritesHere[2]; // client's write end -> test's read end
+    int                clientReadsHere[2];  // test's write end -> client's read end
     REQUIRE(::pipe(clientWritesHere) == 0);
     REQUIRE(::pipe(clientReadsHere) == 0);
     const int serverStdinRead   = clientWritesHere[0];
@@ -434,7 +434,7 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
     client.emplace(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop, /*startHandshakeComplete=*/true);
     client->SetOnDisconnected([](std::string) {}); // present and callable, matching a real wired client
 
-    ::close(serverStdoutWrite); // EOF -- the read thread Post()s its disconnect notification, then exits
+    ::close(serverStdoutWrite);                                 // EOF -- the read thread Post()s its disconnect notification, then exits
     std::this_thread::sleep_for(std::chrono::milliseconds(50)); // let the background thread actually post before destroying
 
     client.reset(); // ~LspClient() flips alive_ to false as its first statement
@@ -570,7 +570,7 @@ TEST_CASE("SendNotification returns immediately even while the underlying pipe i
     // something drains it. That blocking now happens on writeThread_, not
     // the calling thread -- this test's own timing is the proof.
     const std::string bigParam(4096, 'x');
-    const auto         start = std::chrono::steady_clock::now();
+    const auto        start = std::chrono::steady_clock::now();
     for (int i = 0; i < 64; ++i) { // 64 * (4096 + framing overhead) comfortably exceeds any real pipe buffer
         fixture.client.SendNotification("textDocument/didChange", Json{{"marker", bigParam}});
     }
@@ -636,7 +636,7 @@ TEST_CASE("PrepareForGracefulShutdown drains a queued frame before the writer th
     fixture.client.PrepareForGracefulShutdown();
     fixture.client.SendNotification("shutdown-marker", Json::object());
 
-    const std::string raw = ReadRawFrame(fixture.serverStdinRead);
+    const std::string raw     = ReadRawFrame(fixture.serverStdinRead);
     const Json        message = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(message["method"] == "shutdown-marker"); // delivered, not silently dropped by teardown
 }

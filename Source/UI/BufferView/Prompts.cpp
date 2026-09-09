@@ -33,14 +33,29 @@ bool BufferView::HandleConflictQuickKey(const editor::KeyChord& chord) {
     }
     const char* commandName = nullptr;
     switch (chord.Codepoint) {
-        case U'n': commandName = "next-conflict-hunk"; break;
-        case U'p': commandName = "previous-conflict-hunk"; break;
-        case U'o': commandName = "merge-take-ours"; break;
-        case U't': commandName = "merge-take-theirs"; break;
-        case U'b': commandName = "merge-take-both"; break;
-        case U'd': commandName = "merge-take-neither"; break;
-        case U'k': commandName = "merge-keep-base"; break;
-        default: return false;
+        case U'n':
+            commandName = "next-conflict-hunk";
+            break;
+        case U'p':
+            commandName = "previous-conflict-hunk";
+            break;
+        case U'o':
+            commandName = "merge-take-ours";
+            break;
+        case U't':
+            commandName = "merge-take-theirs";
+            break;
+        case U'b':
+            commandName = "merge-take-both";
+            break;
+        case U'd':
+            commandName = "merge-take-neither";
+            break;
+        case U'k':
+            commandName = "merge-keep-base";
+            break;
+        default:
+            return false;
     }
     const std::vector<text::ConflictHunk>& conflictHunks = gutters_.ConflictHunks();
     if (conflictHunks.empty()) {
@@ -779,7 +794,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 return;
             }
             const std::size_t line = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1; // 1-based, DAP's own convention
-            statusMessage_          = dapManager_->RunToCursor(*buffer.Path(), line);
+            statusMessage_         = dapManager_->RunToCursor(*buffer.Path(), line);
             return;
         }
         // Debugging wishlist: jump-to-line -- same path/line resolution as
@@ -798,7 +813,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 return;
             }
             const std::size_t line = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1;
-            statusMessage_          = "Jumping to line...";
+            statusMessage_         = "Jumping to line...";
             dapManager_->JumpToLine(*buffer.Path(), line, [this](bool, std::string message) { statusMessage_ = std::move(message); });
             return;
         }
@@ -890,7 +905,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "Buffer has no file to set a breakpoint in.";
                 return;
             }
-            const std::size_t line = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1;
+            const std::size_t line      = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1;
             pendingDapBreakpointTarget_ = PendingDapBreakpointTarget{.path = *buffer.Path(), .line = line};
             switch (request) {
                 case editor::InteractiveRequest::DapSetBreakpointCondition:
@@ -1333,8 +1348,8 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             std::vector<std::string> themeNames = ThemeNames();
             themeNames.insert(themeNames.begin(), std::string(kCurrentThemeLabel));
             selectThemeList_.Reset(std::move(themeNames));
-            themeBeforePreview_    = theme_;
-            inputMode_             = InputMode::SelectTheme;
+            themeBeforePreview_ = theme_;
+            inputMode_          = InputMode::SelectTheme;
             prompt_.emplace("Theme (fuzzy): ");
             selectThemeList_.SelectTop();
             RefreshSelectThemeStatus();
@@ -1649,8 +1664,8 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
 }
 
 std::string BufferView::SearchStatusText() const {
-    std::string         text  = search_->StatusLabel();
-    const std::string&  query = search_->Query();
+    std::string        text  = search_->StatusLabel();
+    const std::string& query = search_->Query();
 
     // partial-match-highlighting follow-up: a failing search's query is
     // split at MatchedPrefixLength() -- the still-matching prefix rendered
@@ -2306,15 +2321,15 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                             statusMessage_ = "Set variable failed: " + result.errorMessage;
                             return;
                         }
-                        text::Buffer&     target        = *bufferPtr;
+                        text::Buffer&             target        = *bufferPtr;
                         const text::ITextStorage& targetContent = target.Content();
                         if (line >= targetContent.LineCount()) {
                             return;
                         }
                         const std::size_t targetLineStart = targetContent.LineToByteOffset(line);
-                        const std::size_t targetLineEnd    = (line + 1 < targetContent.LineCount())
-                                                                 ? targetContent.LineToByteOffset(line + 1) - 1
-                                                                 : targetContent.ByteLength();
+                        const std::size_t targetLineEnd   = (line + 1 < targetContent.LineCount())
+                                                                ? targetContent.LineToByteOffset(line + 1) - 1
+                                                                : targetContent.ByteLength();
                         if (targetContent.Substring(targetLineStart, targetLineEnd - targetLineStart) != lineText) {
                             statusMessage_ = "Debug line changed -- variable set on the adapter, but not re-displayed.";
                             return;
@@ -2329,11 +2344,11 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                             ++indent;
                         }
                         editor::dap::DapManager::Variable variable;
-                        variable.name               = name;
-                        variable.value               = result.value;
-                        variable.type                = result.type;
-                        variable.variablesReference = result.variablesReference;
-                        std::string replacement      = FormatDebugVariableLine(variable, indent);
+                        variable.name                 = name;
+                        variable.value                = result.value;
+                        variable.type                 = result.type;
+                        variable.variablesReference   = result.variablesReference;
+                        std::string       replacement = FormatDebugVariableLine(variable, indent);
                         const std::size_t ownerMarker = lineText.rfind("[owner:");
                         if (ownerMarker != std::string::npos) {
                             replacement += "  " + lineText.substr(ownerMarker);
@@ -3330,8 +3345,8 @@ void BufferView::HandleZapToCharKey(const editor::KeyChord& chord) {
     // (matches Buffer's own word-motion scanning style).
     const auto findForward = [&](std::size_t from) -> std::optional<std::size_t> {
         const text::ITextStorage& content = buffer.Content();
-        const std::size_t total   = content.ByteLength();
-        std::size_t       offset  = from;
+        const std::size_t         total   = content.ByteLength();
+        std::size_t               offset  = from;
         while (offset < total) {
             const auto decoded = content.CodepointAt(offset);
             offset += decoded.byteLength;
@@ -3742,7 +3757,6 @@ void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
     HandleFuzzyPromptKey(FindRecentFilePrompt(), chord);
 }
 
-
 // named-projects follow-up: HandleProjectFindFileKey/RefreshProjectFindFileStatus's
 // own shape, over switchProjectEntries_ (Editor/ProjectRegistry.h's saved-project
 // list) formatted via FormatProjectEntry.
@@ -3895,8 +3909,8 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             return;
         }
         case InputMode::FindRecentFile: {
-            const std::vector<std::string>& ranked = recentFileList_.Refiltered(prompt_->Text());
-            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, recentFileList_.Selection(), ranked.size());
+            const std::vector<std::string>& ranked   = recentFileList_.Refiltered(prompt_->Text());
+            const auto                      resolved = ResolveFuzzyCandidateRowIndex(index, recentFileList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
@@ -3905,8 +3919,8 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             return;
         }
         case InputMode::ProjectFindFile: {
-            const std::vector<std::string>& ranked = projectFindFileList_.Refiltered(prompt_->Text());
-            const auto resolved = ResolveFuzzyCandidateRowIndex(index, projectFindFileList_.Selection(), ranked.size());
+            const std::vector<std::string>& ranked   = projectFindFileList_.Refiltered(prompt_->Text());
+            const auto                      resolved = ResolveFuzzyCandidateRowIndex(index, projectFindFileList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
@@ -3920,8 +3934,8 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             for (const auto& entry : switchProjectEntries_) {
                 candidates.push_back(FormatProjectEntry(entry));
             }
-            const std::vector<std::string>& ranked = switchProjectList_.Refiltered(candidates, prompt_->Text());
-            const auto resolved = ResolveFuzzyCandidateRowIndex(index, switchProjectList_.Selection(), ranked.size());
+            const std::vector<std::string>& ranked   = switchProjectList_.Refiltered(candidates, prompt_->Text());
+            const auto                      resolved = ResolveFuzzyCandidateRowIndex(index, switchProjectList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
@@ -3930,9 +3944,9 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             return;
         }
         case InputMode::SwitchToBuffer: {
-            const std::vector<std::string> candidates = text::CompleteBufferNames(bufferList_, "");
-            const std::vector<std::string>& ranked = switchToBufferList_.Refiltered(candidates, prompt_->Text());
-            const auto resolved = ResolveFuzzyCandidateRowIndex(index, switchToBufferList_.Selection(), ranked.size());
+            const std::vector<std::string>  candidates = text::CompleteBufferNames(bufferList_, "");
+            const std::vector<std::string>& ranked     = switchToBufferList_.Refiltered(candidates, prompt_->Text());
+            const auto                      resolved   = ResolveFuzzyCandidateRowIndex(index, switchToBufferList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
@@ -3941,8 +3955,8 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             return;
         }
         case InputMode::VcsSwitchBranch: {
-            const std::vector<std::string>& ranked = vcsBranchList_.Refiltered(prompt_->Text());
-            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, vcsBranchList_.Selection(), ranked.size());
+            const std::vector<std::string>& ranked   = vcsBranchList_.Refiltered(prompt_->Text());
+            const auto                      resolved = ResolveFuzzyCandidateRowIndex(index, vcsBranchList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
@@ -3951,8 +3965,8 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             return;
         }
         case InputMode::BookmarkJump: {
-            const std::vector<std::string>& ranked = bookmarkList_.Refiltered(prompt_->Text());
-            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, bookmarkList_.Selection(), ranked.size());
+            const std::vector<std::string>& ranked   = bookmarkList_.Refiltered(prompt_->Text());
+            const auto                      resolved = ResolveFuzzyCandidateRowIndex(index, bookmarkList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
@@ -3961,8 +3975,8 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             return;
         }
         case InputMode::SelectTheme: {
-            const std::vector<std::string>& ranked = selectThemeList_.Refiltered(prompt_->Text());
-            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, selectThemeList_.Selection(), ranked.size());
+            const std::vector<std::string>& ranked   = selectThemeList_.Refiltered(prompt_->Text());
+            const auto                      resolved = ResolveFuzzyCandidateRowIndex(index, selectThemeList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }

@@ -27,11 +27,11 @@ enum class LineEndingPolicyMode {
 };
 
 struct LineEndingPolicy {
-    LineEndingPolicyMode  mode          = LineEndingPolicyMode::Preserve;
-    ned::text::LineEnding forcedEnding  = ned::text::LineEnding::LF; // only meaningful when mode == Force
+    LineEndingPolicyMode  mode         = LineEndingPolicyMode::Preserve;
+    ned::text::LineEnding forcedEnding = ned::text::LineEnding::LF; // only meaningful when mode == Force
 };
 
-void SetLineEndingPolicy(LineEndingPolicy policy);
+void                           SetLineEndingPolicy(LineEndingPolicy policy);
 [[nodiscard]] LineEndingPolicy GetLineEndingPolicy();
 
 // ned/set-line-ending-policy's own binding: "preserve" (the default) /

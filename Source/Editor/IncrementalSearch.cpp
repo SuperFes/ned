@@ -39,10 +39,10 @@ namespace {
 
 } // namespace
 
-IncrementalSearch::IncrementalSearch(text::Buffer& buffer, Direction direction)
-    : buffer_(buffer), direction_(direction), huge_(buffer.Content().IsHuge()),
-      content_(huge_ ? std::string() : buffer.Text()), contentLower_(huge_ ? std::string() : ToAsciiLower(content_)),
-      originalPoint_(buffer.Point()) {}
+IncrementalSearch::IncrementalSearch(text::Buffer& buffer, Direction direction) : buffer_(buffer), direction_(direction), huge_(buffer.Content().IsHuge()),
+                                                                                  content_(huge_ ? std::string() : buffer.Text()), contentLower_(huge_ ? std::string() : ToAsciiLower(content_)),
+                                                                                  originalPoint_(buffer.Point()) {
+}
 
 void IncrementalSearch::AppendChar(char32_t codepoint) {
     query_ += text::EncodeCodepointUtf8(codepoint);
@@ -164,9 +164,9 @@ std::size_t IncrementalSearch::MatchedPrefixLength() const {
 }
 
 std::size_t IncrementalSearch::ComputeMatchedPrefixLength() const {
-    const bool          caseSensitive = HasAsciiUppercase(query_);
-    const std::string&  haystack      = caseSensitive ? content_ : contentLower_;
-    const std::string   needleOwner   = caseSensitive ? query_ : ToAsciiLower(query_);
+    const bool         caseSensitive = HasAsciiUppercase(query_);
+    const std::string& haystack      = caseSensitive ? content_ : contentLower_;
+    const std::string  needleOwner   = caseSensitive ? query_ : ToAsciiLower(query_);
 
     std::size_t len = text::PreviousCodepointBoundary(query_, query_.size());
     while (len > 0) {
@@ -193,10 +193,10 @@ void IncrementalSearch::Search(std::size_t from) {
 
     // Smart case, Emacs-style: case-insensitive unless the query itself
     // contains an uppercase letter (see this file's header comment).
-    const bool          caseSensitive = HasAsciiUppercase(query_);
-    const std::string&  haystack      = caseSensitive ? content_ : contentLower_;
-    const std::string   needleOwner   = caseSensitive ? std::string() : ToAsciiLower(query_);
-    const std::string&  needle        = caseSensitive ? query_ : needleOwner;
+    const bool         caseSensitive = HasAsciiUppercase(query_);
+    const std::string& haystack      = caseSensitive ? content_ : contentLower_;
+    const std::string  needleOwner   = caseSensitive ? std::string() : ToAsciiLower(query_);
+    const std::string& needle        = caseSensitive ? query_ : needleOwner;
 
     std::size_t pos;
     if (direction_ == Direction::Forward) {
@@ -204,7 +204,8 @@ void IncrementalSearch::Search(std::size_t from) {
         if (pos == std::string::npos) {
             pos = haystack.find(needle); // wrap around to the top of the document
         }
-    } else {
+    }
+    else {
         pos = (from == 0) ? std::string::npos : haystack.rfind(needle, from - 1);
         if (pos == std::string::npos) {
             pos = haystack.rfind(needle); // wrap around to the bottom of the document
@@ -235,9 +236,9 @@ void IncrementalSearch::SearchHuge(std::size_t from) {
     constexpr std::size_t kWindow = 4 * 1024 * 1024;
 
     const std::size_t total         = buffer_.Content().ByteLength();
-    const bool         caseSensitive = HasAsciiUppercase(query_);
-    const std::string  needle        = caseSensitive ? query_ : ToAsciiLower(query_);
-    const std::size_t  needleLen     = needle.size();
+    const bool        caseSensitive = HasAsciiUppercase(query_);
+    const std::string needle        = caseSensitive ? query_ : ToAsciiLower(query_);
+    const std::size_t needleLen     = needle.size();
 
     auto readLower = [&](std::size_t start, std::size_t length) {
         std::string window = buffer_.Content().Substring(start, length);
@@ -255,7 +256,7 @@ void IncrementalSearch::SearchHuge(std::size_t from) {
         while (offset < total) {
             const std::size_t windowLen = std::min(kWindow + needleLen - 1, total - offset);
             const std::string window    = readLower(offset, windowLen);
-            const std::size_t  pos      = window.find(needle);
+            const std::size_t pos       = window.find(needle);
             if (pos != std::string::npos) {
                 return offset + pos;
             }
@@ -271,7 +272,7 @@ void IncrementalSearch::SearchHuge(std::size_t from) {
             const std::size_t windowLen = std::min(kWindow + needleLen - 1, end);
             const std::size_t start     = end - windowLen;
             const std::string window    = readLower(start, windowLen);
-            const std::size_t  pos      = window.rfind(needle);
+            const std::size_t pos       = window.rfind(needle);
             if (pos != std::string::npos) {
                 return start + pos;
             }
@@ -289,7 +290,8 @@ void IncrementalSearch::SearchHuge(std::size_t from) {
         if (pos == std::string::npos) {
             pos = scanForwardFrom(0); // wrap around to the top of the document
         }
-    } else {
+    }
+    else {
         pos = scanBackwardFrom(from);
         if (pos == std::string::npos) {
             pos = scanBackwardFrom(total); // wrap around to the bottom of the document

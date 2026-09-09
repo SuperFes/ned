@@ -5,8 +5,8 @@
 
 namespace ned::editor {
 
-Command::Command(std::string name, std::string docstring, CommandFunction function)
-    : Name_(std::move(name)), Docstring_(std::move(docstring)), Function_(std::move(function)) {}
+Command::Command(std::string name, std::string docstring, CommandFunction function) : Name_(std::move(name)), Docstring_(std::move(docstring)), Function_(std::move(function)) {
+}
 
 const std::string& Command::Name() const {
     return Name_;

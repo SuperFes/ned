@@ -47,7 +47,7 @@ std::string MassifReportBufferName() {
 }
 
 text::Buffer& RebuildMassifReportBuffer(text::BufferList& bufferList, const MassifProfile& profile,
-                                         std::string_view sourcePath) {
+                                        std::string_view sourcePath) {
     text::Buffer* buffer = bufferList.Find(MassifReportBufferName());
     if (!buffer) {
         buffer = &bufferList.CreateBuffer(MassifReportBufferName());
@@ -88,7 +88,7 @@ text::Buffer& RebuildMassifReportBuffer(text::BufferList& bufferList, const Mass
     }
     if (peak != nullptr) {
         appendLine("Peak: " + std::to_string(peak->TotalBytes()) + " B (snapshot " + std::to_string(peak->index) +
-                    ", time " + std::to_string(peak->time) + ")");
+                   ", time " + std::to_string(peak->time) + ")");
     }
     appendLine("");
 

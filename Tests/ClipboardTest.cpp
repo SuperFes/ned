@@ -10,17 +10,17 @@
 using ned::editor::BuildOsc52CopySequence;
 using ned::editor::ClipboardEnabled;
 using ned::editor::CopyToSystemClipboard;
+using ned::editor::Osc52Enabled;
 using ned::editor::PasteFromPrimarySelection;
 using ned::editor::PasteFromSystemClipboard;
 using ned::editor::ResolvedClipboardCopyCommand;
 using ned::editor::ResolvedClipboardPasteCommand;
 using ned::editor::ResolvedPrimarySelectionPasteCommand;
 using ned::editor::SetClipboardCopyCommand;
-using ned::editor::Osc52Enabled;
 using ned::editor::SetClipboardEnabled;
-using ned::editor::SetOsc52Enabled;
 using ned::editor::SetClipboardPasteCommand;
 using ned::editor::SetClipboardPrimaryPasteCommand;
+using ned::editor::SetOsc52Enabled;
 
 namespace {
 

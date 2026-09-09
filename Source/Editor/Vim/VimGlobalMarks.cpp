@@ -7,15 +7,15 @@ namespace ned::editor::vim {
 
 namespace {
 
-std::mutex& Mutex() {
-    static std::mutex mutex;
-    return mutex;
-}
+    std::mutex& Mutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
 
-std::array<std::optional<GlobalMark>, 26>& Marks() {
-    static std::array<std::optional<GlobalMark>, 26> marks;
-    return marks;
-}
+    std::array<std::optional<GlobalMark>, 26>& Marks() {
+        static std::array<std::optional<GlobalMark>, 26> marks;
+        return marks;
+    }
 
 } // namespace
 

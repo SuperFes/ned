@@ -51,9 +51,9 @@
 #include "Widget.h"
 
 struct JanetTable; // <janet.h>'s own typedef target -- kept as a forward
-                    // declaration here so this UI header doesn't pull in
-                    // the full Janet C API; JanetReplPanel.cpp includes
-                    // <janet.h> for real.
+                   // declaration here so this UI header doesn't pull in
+                   // the full Janet C API; JanetReplPanel.cpp includes
+                   // <janet.h> for real.
 
 namespace ned::ui {
 

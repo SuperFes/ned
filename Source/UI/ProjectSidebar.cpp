@@ -147,14 +147,14 @@ namespace {
     std::unordered_map<std::filesystem::path, VcsRowStatus> BuildVcsStatusIndex(
         const std::vector<editor::vcs::VcsStatusEntry>& entries, const std::filesystem::path& root) {
         std::unordered_map<std::filesystem::path, VcsRowStatus> index;
-        auto merge = [&index](const std::filesystem::path& path, VcsRowStatus status) {
+        auto                                                    merge = [&index](const std::filesystem::path& path, VcsRowStatus status) {
             auto [it, inserted] = index.try_emplace(path, status);
             if (!inserted && status > it->second) {
                 it->second = status;
             }
         };
         for (const editor::vcs::VcsStatusEntry& entry : entries) {
-            const VcsRowStatus           status   = editor::vcs::ClassifyPorcelainStatus(entry.state);
+            const VcsRowStatus          status   = editor::vcs::ClassifyPorcelainStatus(entry.state);
             const std::filesystem::path filePath = (root / entry.path).lexically_normal();
             merge(filePath, status);
 
@@ -172,7 +172,7 @@ namespace {
     }
 
     [[nodiscard]] VcsRowStatus LookupVcsStatus(const std::unordered_map<std::filesystem::path, VcsRowStatus>& index,
-                                               const std::filesystem::path& path) {
+                                               const std::filesystem::path&                                   path) {
         const auto it = index.find(path.lexically_normal());
         return it == index.end() ? VcsRowStatus::None : it->second;
     }
@@ -380,8 +380,8 @@ void ProjectSidebar::Paint(Canvas c) {
     // Focused() is layered on top, the same "this has your attention"
     // signal the old border-accent frame gave -- there's no frame to tint
     // anymore, so just this row carries it.
-    Brush headerBrush  = Focused() ? theme_.borderAccent : theme_.tabBar;
-    headerBrush.bold   = true;
+    Brush headerBrush = Focused() ? theme_.borderAccent : theme_.tabBar;
+    headerBrush.bold  = true;
     for (int col = 0; col < c.size().width; ++col) {
         headerBrush.ApplyTo(c[{.x = col, .y = 0}]);
     }
@@ -427,7 +427,7 @@ void ProjectSidebar::Paint(Canvas c) {
             : isSticky   ? theme_.tabBar // pinned ancestor header -- same chrome family as TabBar's own row
                          : Brush{.background = theme_.background,
                                  .foreground = vcsColor.value_or(entry.isDirectory ? theme_.lineNumberForeground
-                                                                                    : theme_.defaultForeground)};
+                                                                                   : theme_.defaultForeground)};
         if (isSelected) {
             brush.background = theme_.selectionBackground;
             for (int x = 0; x < contentColumns; ++x) {
@@ -526,8 +526,8 @@ bool ProjectSidebar::OnEvent(const Event& event) {
                     EntryIndexAtRow(layout, entries, ContentHeight(), std::max(mouse->at.y - kHeaderHeight, 0));
                 if (index) {
                     const editor::ProjectTreeEntry& entry = entries[*index];
-                    selectedIndex_                         = static_cast<int>(*index);
-                    const Box& box                         = Box_();
+                    selectedIndex_                        = static_cast<int>(*index);
+                    const Box& box                        = Box_();
                     onContextMenuRequest_(entry.path, entry.isDirectory,
                                           Point{.x = box.x_min + mouse->at.x, .y = box.y_min + mouse->at.y});
                 }
@@ -714,10 +714,10 @@ bool ProjectSidebar::HandleKeyEvent(const Event& event) {
         }
         return true; // nothing to navigate; still consume -- we hold focus
     }
-    selectedIndex_ = std::clamp(selectedIndex_, 0, static_cast<int>(entries.size()) - 1);
+    selectedIndex_                        = std::clamp(selectedIndex_, 0, static_cast<int>(entries.size()) - 1);
     const editor::ProjectTreeEntry& entry = entries[static_cast<std::size_t>(selectedIndex_)];
 
-    const bool up = chord->Special == editor::SpecialKey::Up || (chord->Control && chord->Codepoint == U'p');
+    const bool up   = chord->Special == editor::SpecialKey::Up || (chord->Control && chord->Codepoint == U'p');
     const bool down = chord->Special == editor::SpecialKey::Down || (chord->Control && chord->Codepoint == U'n');
 
     if (up || down) {
@@ -757,7 +757,6 @@ bool ProjectSidebar::HandleKeyEvent(const Event& event) {
     }
     return true; // every other key is consumed while this widget holds focus
 }
-
 
 std::optional<std::filesystem::path> ProjectSidebar::DraggingFilePath() const {
     return dragPath_;

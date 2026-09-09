@@ -261,7 +261,7 @@ TEST_CASE("RecordFilePlace and RestoreFilePlace round-trip through a huge Buffer
     // round-trip isn't accidentally only correct for content already near
     // the start.
     SessionStateGuard           guard;
-    const std::filesystem::path dir  = FreshTestDir("ned_session_test_huge_buffer");
+    const std::filesystem::path dir = FreshTestDir("ned_session_test_huge_buffer");
     std::string                 content;
     for (int i = 0; i < 2000; ++i) {
         content += "line " + std::to_string(i) + "\n";
