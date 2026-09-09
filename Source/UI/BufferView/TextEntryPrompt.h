@@ -19,6 +19,8 @@
 #ifndef NED_UI_BUFFERVIEW_TEXTENTRYPROMPT_H
 #define NED_UI_BUFFERVIEW_TEXTENTRYPROMPT_H
 
+#include <string>
+
 namespace ned::ui::bufferview {
 
 enum class PromptCompletion {
@@ -31,6 +33,23 @@ enum class PromptCompletion {
     Names,
     // Filesystem paths, offered as an anchored dropdown that Tab accepts from.
     PathDropdown,
+};
+
+// Whether committing finished the prompt, or handed off to a second one that now
+// owns the session -- find-file discovering a binary file and asking whether to
+// open it anyway, or open-project asking for a name once it has a path. A
+// hand-off must not end the session or record history: the prompt that took over
+// is still running.
+enum class PromptCommit {
+    Finished,
+    Transitioned,
+};
+
+// What one text-entry prompt needs beyond its commit action: what Tab offers,
+// and the name it goes by when the user abandons it ("<label> cancelled.").
+struct TextEntryPrompt {
+    PromptCompletion completion = PromptCompletion::None;
+    std::string      cancelLabel;
 };
 
 } // namespace ned::ui::bufferview

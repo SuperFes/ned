@@ -2009,7 +2009,14 @@ class BufferView : public Widget {
     // text-entry prompt at all. This is the single table both the key dispatch
     // and Tab handling read -- see BufferView/TextEntryPrompt.h for why it is
     // one table and not two lists.
-    [[nodiscard]] static std::optional<bufferview::PromptCompletion> TextEntryPromptCompletion(InputMode mode);
+    // What Enter does in each text-entry prompt, one branch per mode. Split out
+    // of HandlePromptKey so the key handling and the twenty-odd commit actions
+    // are not the same 668-line function.
+    bufferview::PromptCommit CommitTextEntryPrompt(const std::string& input);
+
+    [[nodiscard]] std::optional<bufferview::TextEntryPrompt> TextEntryPromptFor(InputMode mode) const;
+    // What Tab means in the prompt currently up; None when nothing is.
+    [[nodiscard]] bufferview::PromptCompletion PromptCompletionForCurrentMode() const;
 
     // The behaviour every yes/no confirmation shares; the builders below are the
     // parts that differ. See BufferView/ConfirmPrompt.h.
