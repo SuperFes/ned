@@ -1700,20 +1700,12 @@ void BufferView::HandleDapExceptionFilterSelectKey(const editor::KeyChord& chord
     RefreshDapExceptionFilterStatus();
 }
 
+bufferview::ConfirmPrompt BufferView::ConfirmRevertHunkPrompt() {
+    return {.cancelMessage = "Revert cancelled.", .onConfirm = [this] { RevertHunkAtPoint(); }};
+}
+
 void BufferView::HandleConfirmRevertHunkKey(const editor::KeyChord& chord) {
-    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
-        EndInteractiveSession();
-        RevertHunkAtPoint();
-        return;
-    }
-    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
-        statusMessage_ = "Revert cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt, VcsPanel's own
-    // pendingRevertConfirm_ convention doesn't apply here (this is a real
-    // MinibufferPrompt-less y/n InputMode, not a locally-tracked bool).
+    HandleConfirmPromptKey(ConfirmRevertHunkPrompt(), chord);
 }
 
 bufferview::FuzzyPrompt BufferView::VcsSwitchBranchPrompt() {

@@ -2028,6 +2028,56 @@ bool BufferView::TryNavigatePromptHistory(const editor::KeyChord& chord, std::st
     return true;
 }
 
+std::optional<bufferview::PromptCompletion> BufferView::TextEntryPromptCompletion(InputMode mode) {
+    switch (mode) {
+        // Real filesystem paths, with the dropdown Tab accepts from.
+        case InputMode::FindFile:
+        case InputMode::OpenProjectPath:
+        case InputMode::FindScratch:
+            return bufferview::PromptCompletion::PathDropdown;
+
+        // Naming something after an existing buffer or file is common enough to
+        // be worth completing against them.
+        case InputMode::BookmarkSetName:
+        case InputMode::OpenProjectName:
+            return bufferview::PromptCompletion::Names;
+
+        // Everything else is free text. Completing any of these against buffer
+        // and file names would be meaningless: a search regex, a column of text
+        // to insert, org tags, a rename, a task/REPL name, a debuggee
+        // expression, a branch being deliberately invented, a message to an
+        // agent, a property name, a date or relative shorthand, the DAP
+        // condition/log-message/watch/value/hit-count/function prompts, a byte
+        // count, a massif output path, or a line number.
+        case InputMode::ProjectSearch:
+        case InputMode::CreateDirectory:
+        case InputMode::StringRectangle:
+        case InputMode::SetHeadlineTags:
+        case InputMode::LspRenameNewName:
+        case InputMode::TaskName:
+        case InputMode::ReplName:
+        case InputMode::DapEvaluate:
+        case InputMode::VcsCreateBranch:
+        case InputMode::AcpPromptText:
+        case InputMode::DeleteProperty:
+        case InputMode::OrgSchedule:
+        case InputMode::OrgDeadline:
+        case InputMode::DapBreakpointCondition:
+        case InputMode::DapBreakpointLogMessage:
+        case InputMode::DapAddWatch:
+        case InputMode::DapSetVariableValue:
+        case InputMode::DapBreakpointHitCondition:
+        case InputMode::DapFunctionBreakpointName:
+        case InputMode::DapMemoryByteCount:
+        case InputMode::ShowMassifGraphPath:
+        case InputMode::GotoLine:
+            return bufferview::PromptCompletion::None;
+
+        default:
+            return std::nullopt; // not a text-entry prompt
+    }
+}
+
 void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
         const std::string input = prompt_->Text();
@@ -2608,8 +2658,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         EndInteractiveSession();
         return;
     }
-    if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath ||
-        inputMode_ == InputMode::FindScratch) {
+    if (TextEntryPromptCompletion(inputMode_) == bufferview::PromptCompletion::PathDropdown) {
         // dropdown-path-completion follow-up: Up/Down move the live popup's
         // highlight (prompt history stays on M-p/M-n, TryNavigatePromptHistory
         // below -- never plain Up/Down, so there's no conflict); Tab accepts
@@ -2640,39 +2689,8 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             return;
         }
     }
-    if (chord.Special == editor::SpecialKey::Tab && inputMode_ != InputMode::ProjectSearch &&
-        inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
-        inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
-        inputMode_ != InputMode::TaskName && inputMode_ != InputMode::ReplName && inputMode_ != InputMode::DapEvaluate &&
-        inputMode_ != InputMode::VcsCreateBranch && inputMode_ != InputMode::AcpPromptText &&
-        inputMode_ != InputMode::DeleteProperty &&
-        inputMode_ != InputMode::OrgSchedule && inputMode_ != InputMode::OrgDeadline &&
-        inputMode_ != InputMode::DapBreakpointCondition && inputMode_ != InputMode::DapBreakpointLogMessage &&
-        inputMode_ != InputMode::DapAddWatch && inputMode_ != InputMode::DapSetVariableValue &&
-        inputMode_ != InputMode::DapBreakpointHitCondition && inputMode_ != InputMode::DapFunctionBreakpointName &&
-        inputMode_ != InputMode::DapMemoryByteCount &&
-        inputMode_ != InputMode::ShowMassifGraphPath &&
-        inputMode_ != InputMode::GotoLine &&
-        // dropdown-path-completion follow-up: Tab is fully handled by the
-        // dedicated block above for these three (accept-highlighted, never
-        // reaching this common-prefix/echo-area-list path anymore).
-        inputMode_ != InputMode::FindFile && inputMode_ != InputMode::OpenProjectPath &&
-        inputMode_ != InputMode::FindScratch) { // completing a line number is meaningless
-        // DapEvaluate excluded too: completing a debuggee expression
-        // against buffer names would be meaningless, same reasoning as
-        // ProjectSearch's regex pattern. VcsCreateBranch likewise
-        // (deliberately *new* free text). AcpPromptText stays free-text --
-        // it's a message to the agent, not a name. OrgSchedule/OrgDeadline: a
-        // typed date/relative-shorthand has no candidate list either.
-        // against. DeleteProperty likewise -- completing a property name
-        // against file/buffer names would be meaningless. The four new DAP
-        // round-2 prompts (condition/log-message/watch expression/variable
-        // value) are all free-text against debuggee state, same reasoning.
-        // ShowMassifGraphPath is a real filesystem path but stays plain
-        // free-text too -- unlike FindFile/OpenProjectPath/FindScratch, this
-        // one wasn't given the dropdown-path-completion treatment (a v1 cut,
-        // not a correctness issue); completing it against buffer names here
-        // would still be meaningless either way.
+    if (chord.Special == editor::SpecialKey::Tab &&
+        TextEntryPromptCompletion(inputMode_) == bufferview::PromptCompletion::Names) {
         CompletePrompt();
         return;
     }
@@ -2684,8 +2702,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
 
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_ = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
-        if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath ||
-            inputMode_ == InputMode::FindScratch) {
+        if (TextEntryPromptCompletion(inputMode_) == bufferview::PromptCompletion::PathDropdown) {
             pathCompletionSelection_ = 0;
             RefreshPathCompletionPopup();
             return;
@@ -2836,85 +2853,88 @@ void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
     // Anything else is ignored -- stay in Confirming.
 }
 
-void BufferView::HandleConfirmQuitKey(const editor::KeyChord& chord) {
+void BufferView::HandleConfirmPromptKey(const bufferview::ConfirmPrompt& prompt, const editor::KeyChord& chord) {
     if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
-        // See the identical null check in OnKeyEvent's own context.quit
-        // branch for why this is required, not defensive -- and that
-        // branch's comment for why the message is set before exiting.
-        statusMessage_ = "Shutting down...";
-        if (eventLoop_) {
-            eventLoop_->Exit();
-        }
+        EndInteractiveSession();
+        prompt.onConfirm();
         return;
     }
     if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
-        statusMessage_ = "Quit cancelled.";
+        statusMessage_ = prompt.cancelMessage;
         EndInteractiveSession();
         return;
     }
-    // Anything else is ignored -- stay in the prompt.
+    // Anything else is ignored: a stray keystroke must not answer a question
+    // about discarding work.
+}
+
+void BufferView::ForceSaveBuffer() {
+    editor::CommandContext context = MakeContext();
+    try {
+        dispatcher_.Registry().Invoke("save-buffer-force", context);
+    }
+    catch (const std::exception& e) {
+        ReportError(e.what());
+    }
+}
+
+bufferview::ConfirmPrompt BufferView::ConfirmQuitPrompt() {
+    return {.cancelMessage = "Quit cancelled.", .onConfirm = [this] {
+                statusMessage_ = "Shutting down...";
+                if (eventLoop_) {
+                    eventLoop_->Exit();
+                }
+            }};
+}
+
+bufferview::ConfirmPrompt BufferView::ConfirmCloseBufferPrompt() {
+    // Captured now: ending the session clears pendingClose_, and it must be
+    // clear before CloseBufferNow touches the active buffer.
+    return {.cancelMessage = "Close cancelled.", .onConfirm = [this, buffer = pendingClose_] {
+                if (buffer != nullptr) {
+                    CloseBufferNow(*buffer);
+                }
+            }};
+}
+
+bufferview::ConfirmPrompt BufferView::ConfirmOverwriteSavePrompt() {
+    return {.cancelMessage = "Save cancelled; the file on disk was left as-is.",
+            .onConfirm     = [this] { ForceSaveBuffer(); }};
+}
+
+bufferview::ConfirmPrompt BufferView::ConfirmSaveWithConflictsPrompt() {
+    return {.cancelMessage = "Save cancelled; resolve the <<<<<<< markers first.",
+            .onConfirm     = [this] { ForceSaveBuffer(); }};
+}
+
+bufferview::ConfirmPrompt BufferView::ConfirmOpenBinaryPrompt() {
+    // Captured for the same reason ConfirmCloseBufferPrompt captures its buffer.
+    return {.cancelMessage = "Open cancelled.", .onConfirm = [this, path = pendingBinaryOpenPath_] {
+                try {
+                    text::Buffer& opened = bufferList_.OpenOrCreateFile(path, /*allowBinary=*/true);
+                    activeBuffer_.Set(opened);
+                    statusMessage_ = "Opened " + opened.Name();
+                }
+                catch (const std::exception& e) {
+                    ReportError(e.what());
+                }
+            }};
+}
+
+void BufferView::HandleConfirmQuitKey(const editor::KeyChord& chord) {
+    HandleConfirmPromptKey(ConfirmQuitPrompt(), chord);
 }
 
 void BufferView::HandleConfirmCloseBufferKey(const editor::KeyChord& chord) {
-    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
-        text::Buffer* buffer = pendingClose_;
-        EndInteractiveSession(); // clears pendingClose_ and inputMode_ before CloseBufferNow touches activeBuffer_
-        if (buffer != nullptr) {
-            CloseBufferNow(*buffer);
-        }
-        return;
-    }
-    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
-        statusMessage_ = "Close cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    HandleConfirmPromptKey(ConfirmCloseBufferPrompt(), chord);
 }
 
 void BufferView::HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord) {
-    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
-        EndInteractiveSession();
-        // save-buffer-force is the same save body save-buffer runs, minus
-        // the supersession gate that routed us here -- see Commands.cpp.
-        editor::CommandContext context = MakeContext();
-        try {
-            dispatcher_.Registry().Invoke("save-buffer-force", context);
-        }
-        catch (const std::exception& e) {
-            ReportError(e.what());
-        }
-        return;
-    }
-    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
-        statusMessage_ = "Save cancelled; the file on disk was left as-is.";
-        EndInteractiveSession();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    HandleConfirmPromptKey(ConfirmOverwriteSavePrompt(), chord);
 }
 
 void BufferView::HandleConfirmSaveWithConflictsKey(const editor::KeyChord& chord) {
-    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
-        EndInteractiveSession();
-        // save-buffer-force is the same save body save-buffer runs, minus
-        // both gates (ExternallyModified() and HasConflictMarkers()) that
-        // could have routed us here -- see Commands.cpp.
-        editor::CommandContext context = MakeContext();
-        try {
-            dispatcher_.Registry().Invoke("save-buffer-force", context);
-        }
-        catch (const std::exception& e) {
-            ReportError(e.what());
-        }
-        return;
-    }
-    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
-        statusMessage_ = "Save cancelled; resolve the <<<<<<< markers first.";
-        EndInteractiveSession();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    HandleConfirmPromptKey(ConfirmSaveWithConflictsPrompt(), chord);
 }
 
 void BufferView::RequestOpenBinaryFile(const std::filesystem::path& path) {
@@ -2926,25 +2946,7 @@ void BufferView::RequestOpenBinaryFile(const std::filesystem::path& path) {
 }
 
 void BufferView::HandleConfirmOpenBinaryKey(const editor::KeyChord& chord) {
-    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
-        const std::filesystem::path path = pendingBinaryOpenPath_;
-        EndInteractiveSession(); // clears pendingBinaryOpenPath_ before the open below touches activeBuffer_
-        try {
-            text::Buffer& opened = bufferList_.OpenOrCreateFile(path, /*allowBinary=*/true);
-            activeBuffer_.Set(opened);
-            statusMessage_ = "Opened " + opened.Name();
-        }
-        catch (const std::exception& e) {
-            ReportError(e.what());
-        }
-        return;
-    }
-    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
-        statusMessage_ = "Open cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    HandleConfirmPromptKey(ConfirmOpenBinaryPrompt(), chord);
 }
 
 void BufferView::RequestTrustProjectInit(

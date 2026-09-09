@@ -78,10 +78,12 @@
 #include "TreeView.h"
 #include "UI/BufferView/CacheStamp.h"
 #include "UI/BufferView/CandidateList.h"
+#include "UI/BufferView/ConfirmPrompt.h"
 #include "UI/BufferView/EditorContext.h"
 #include "UI/BufferView/FuzzyPrompt.h"
 #include "UI/BufferView/GutterModel.h"
 #include "UI/BufferView/RequestSlot.h"
+#include "UI/BufferView/TextEntryPrompt.h"
 #include "UI/BufferView/Viewport.h"
 #include "VcsPanel.h"
 #include "WhichKeyHint.h"
@@ -2002,6 +2004,28 @@ class BufferView : public Widget {
     // and back several sessions, including the right-click context menu
     // below, so the "no floating/popup widget concept" claim this comment
     // used to make no longer holds.)
+    // Whether `mode` is one of the plain text-entry prompts HandlePromptKey
+    // drives, and if so what Tab offers there. nullopt means it is not a
+    // text-entry prompt at all. This is the single table both the key dispatch
+    // and Tab handling read -- see BufferView/TextEntryPrompt.h for why it is
+    // one table and not two lists.
+    [[nodiscard]] static std::optional<bufferview::PromptCompletion> TextEntryPromptCompletion(InputMode mode);
+
+    // The behaviour every yes/no confirmation shares; the builders below are the
+    // parts that differ. See BufferView/ConfirmPrompt.h.
+    void HandleConfirmPromptKey(const bufferview::ConfirmPrompt& prompt, const editor::KeyChord& chord);
+
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmQuitPrompt();
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmCloseBufferPrompt();
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmOverwriteSavePrompt();
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmSaveWithConflictsPrompt();
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmOpenBinaryPrompt();
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmRevertHunkPrompt();
+
+    // Shared by the two save confirmations, which both answer by forcing the
+    // save the guard had stopped.
+    void ForceSaveBuffer();
+
     // The behaviour every fuzzy prompt shares; the eight builders below are the
     // parts that differ. See BufferView/FuzzyPrompt.h.
     void RefreshFuzzyPrompt(const bufferview::FuzzyPrompt& prompt);

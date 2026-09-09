@@ -1034,10 +1034,21 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
-As of 2026-09-08: `ctest -j8` is clean under both the `default` and
-`sanitize` presets, and so is the single-process `./build/ned_tests` (see the build/test
-note at the end of this file for why that is a separate check worth making). One flake
-and one documented behavioral limitation:
+As of 2026-09-08: `ctest -j8` is clean under the `default` preset, and so is the
+single-process `./build/ned_tests` (see the build/test note at the end of this file for
+why that is a separate check worth making). The `sanitize` preset has one reproducible
+failure, below. Two flakes and one documented behavioral limitation:
+
+- **"Point navigation across a huge (piece-table-backed) buffer stays fast" fails under
+  `ctest -j8` on the `sanitize` preset**, reproducibly, and passes on `--rerun-failed`
+  in isolation. Confirmed pre-existing by stashing a working branch and re-running
+  against a clean tree, so it is not attributable to whatever is in flight. This is the
+  perf-budget-under-ASan problem in general: the budgets are calibrated for an optimised
+  `NDEBUG` build, and ASan plus seven other test processes competing for cores is a
+  different machine entirely. The fix is to gate the `[Performance]` budgets on the
+  build being optimised rather than to loosen them — that would give up the regression
+  signal the tests exist for. Until then, treat a `[Performance]` failure under
+  `sanitize -j8` as noise, and confirm any real perf work against the `default` preset.
 
 - **Fold gutter huge-buffer window remap test, under `ctest -j8` only.** "Fold gutter
   remaps a huge buffer's window-relative offsets back to the correct absolute line when
