@@ -2701,6 +2701,12 @@ class BufferView : public Widget {
     // the real byte, not a replacement, so the caller still renders that byte.
     void EmitInlayHint(Canvas& c, int row, int& col, std::size_t offset, const LineRenderState& lineState) const;
 
+    // Paints the fold ellipsis and any preview of what is hidden, after a line's
+    // own content. Belongs on the line's last visual row: it means "content
+    // after this line is hidden", not something to repeat per wrapped row.
+    void PaintFoldEllipsis(Canvas& c, int row, int& col, std::size_t line, std::size_t lineStart,
+                           const FramePaint& frame) const;
+
     // Draws every gutter column for `line` on `row`. Called only for a line's
     // first visual row -- a wrapped continuation row has no gutter of its own.
     void PaintLineGutter(Canvas& c, int row, std::size_t line, std::size_t lineStart, std::size_t lineEnd,
