@@ -6,14 +6,14 @@
 // not because it's on by default for anyone.
 //
 
-#ifndef NED_EDITOR_VIM_VIMSETTINGS_H
-#define NED_EDITOR_VIM_VIMSETTINGS_H
+#ifndef NED_EDITOR_VIM_SETTINGS_H
+#define NED_EDITOR_VIM_SETTINGS_H
 
 namespace ned::editor::vim {
 
 void               SetVimModeEnabled(bool enabled);
-[[nodiscard]] bool VimModeEnabled();
+[[nodiscard]] bool ModeEnabled();
 
 } // namespace ned::editor::vim
 
-#endif // NED_EDITOR_VIM_VIMSETTINGS_H
+#endif // NED_EDITOR_VIM_SETTINGS_H

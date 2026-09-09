@@ -11,8 +11,8 @@
 // per visual-block row.
 //
 
-#ifndef NED_EDITOR_VIM_VIMREGISTERS_H
-#define NED_EDITOR_VIM_VIMREGISTERS_H
+#ifndef NED_EDITOR_VIM_REGISTERS_H
+#define NED_EDITOR_VIM_REGISTERS_H
 
 #include <cstddef>
 #include <map>
@@ -32,11 +32,11 @@ struct RegisterEntry {
 
     // Char: pieces[0]. Line: every piece newline-joined, with a trailing newline. Block:
     // every piece newline-joined (informational only -- paste's own per-row column
-    // placement is VimEngine's concern, not this type's).
+    // placement is Engine's concern, not this type's).
     [[nodiscard]] std::string Joined() const;
 };
 
-class VimRegisters {
+class Registers {
   public:
     // name == 0 means "no register was explicitly named" -- Store then applies vim's
     // own unnamed-write routing: isDelete false (a yank) writes "0; isDelete true and
@@ -61,9 +61,9 @@ class VimRegisters {
     // vim-macro-register follow-up: a direct, unrouted write -- unlike Store, doesn't
     // mirror into the unnamed register or apply uppercase-append semantics. Real vim's
     // own macro recording (`q{register}...q`) writes its named register exactly this
-    // way, distinct from a yank/delete; VimEngine::StopMacroRecording is the sole
+    // way, distinct from a yank/delete; Engine::StopMacroRecording is the sole
     // caller. name must already be a plain lowercase a-z (an uppercase *recording*
-    // name's append semantics are handled by VimEngine itself, seeding
+    // name's append semantics are handled by Engine itself, seeding
     // macroRecordingBuffer_ from the existing register before recording starts, not by
     // this method).
     void SetRaw(char32_t name, RegisterEntry entry);
@@ -78,4 +78,4 @@ class VimRegisters {
 
 } // namespace ned::editor::vim
 
-#endif // NED_EDITOR_VIM_VIMREGISTERS_H
+#endif // NED_EDITOR_VIM_REGISTERS_H

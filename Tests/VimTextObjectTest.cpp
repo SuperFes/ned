@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "Editor/Vim/VimTextObject.h"
+#include "Editor/Vim/TextObject.h"
 #include "Text/Buffer.h"
 
 using ned::editor::vim::AroundBracket;
@@ -26,7 +26,7 @@ Buffer MakeBuffer(const std::string& text) {
 }
 } // namespace
 
-TEST_CASE("iw/aw select a word and its surrounding whitespace", "[VimTextObject]") {
+TEST_CASE("iw/aw select a word and its surrounding whitespace", "[TextObject]") {
     Buffer buffer = MakeBuffer("foo bar baz");
 
     const auto iw = InnerWord(buffer, 5, false); // inside "bar"
@@ -38,14 +38,14 @@ TEST_CASE("iw/aw select a word and its surrounding whitespace", "[VimTextObject]
     REQUIRE(buffer.Content().Substring(aw.start, aw.end - aw.start) == "bar "); // trailing space eaten
 }
 
-TEST_CASE("aw eats leading whitespace when there's no trailing whitespace", "[VimTextObject]") {
+TEST_CASE("aw eats leading whitespace when there's no trailing whitespace", "[TextObject]") {
     Buffer buffer = MakeBuffer("foo bar");
 
     const auto aw = AroundWord(buffer, 5, false); // inside "bar", last word, no trailing space
     REQUIRE(buffer.Content().Substring(aw.start, aw.end - aw.start) == " bar");
 }
 
-TEST_CASE("i\"/a\" select quoted content and the quotes themselves", "[VimTextObject]") {
+TEST_CASE("i\"/a\" select quoted content and the quotes themselves", "[TextObject]") {
     Buffer buffer = MakeBuffer("x = \"hello\" + 1");
 
     const auto inner = InnerQuote(buffer, 6, U'"');
@@ -56,7 +56,7 @@ TEST_CASE("i\"/a\" select quoted content and the quotes themselves", "[VimTextOb
     REQUIRE(buffer.Content().Substring(around.start, around.end - around.start) == "\"hello\"");
 }
 
-TEST_CASE("i(/a( work from inside, and from resting on either bracket", "[VimTextObject]") {
+TEST_CASE("i(/a( work from inside, and from resting on either bracket", "[TextObject]") {
     Buffer buffer = MakeBuffer("foo(bar(baz)qux)end");
 
     const auto innerOuter = InnerBracket(buffer, 5, U'(', U')'); // inside "bar(baz)qux", on the 'b' of bar
@@ -76,13 +76,13 @@ TEST_CASE("i(/a( work from inside, and from resting on either bracket", "[VimTex
     REQUIRE(buffer.Content().Substring(around.start, around.end - around.start) == "(bar(baz)qux)");
 }
 
-TEST_CASE("i(/a( report not found outside any bracket pair", "[VimTextObject]") {
+TEST_CASE("i(/a( report not found outside any bracket pair", "[TextObject]") {
     Buffer buffer = MakeBuffer("no brackets here");
 
     REQUIRE_FALSE(InnerBracket(buffer, 3, U'(', U')').found);
 }
 
-TEST_CASE("ip/ap select a contiguous non-blank paragraph and its trailing blank run", "[VimTextObject]") {
+TEST_CASE("ip/ap select a contiguous non-blank paragraph and its trailing blank run", "[TextObject]") {
     Buffer buffer = MakeBuffer("a\nb\n\nc\nd\n\ne\n");
 
     const auto inner = InnerParagraph(buffer, 0); // "a\nb\n"
@@ -93,7 +93,7 @@ TEST_CASE("ip/ap select a contiguous non-blank paragraph and its trailing blank 
     REQUIRE(buffer.Content().Substring(around.start, around.end - around.start) == "a\nb\n\n");
 }
 
-TEST_CASE("count on iw/aw extends by additional word/whitespace runs", "[VimTextObject]") {
+TEST_CASE("count on iw/aw extends by additional word/whitespace runs", "[TextObject]") {
     Buffer buffer = MakeBuffer("foo bar baz");
 
     const auto iw2 = InnerWord(buffer, 0, false, 2); // "foo" then the space run after it
@@ -106,7 +106,7 @@ TEST_CASE("count on iw/aw extends by additional word/whitespace runs", "[VimText
     REQUIRE(buffer.Content().Substring(aw3.start, aw3.end - aw3.start) == "foo bar ");
 }
 
-TEST_CASE("is/as select a sentence, with/without its trailing whitespace", "[VimTextObject]") {
+TEST_CASE("is/as select a sentence, with/without its trailing whitespace", "[TextObject]") {
     Buffer buffer = MakeBuffer("One. Two. Three.");
 
     const auto inner = InnerSentence(buffer, 6); // inside "Two."
@@ -117,21 +117,21 @@ TEST_CASE("is/as select a sentence, with/without its trailing whitespace", "[Vim
     REQUIRE(buffer.Content().Substring(around.start, around.end - around.start) == "Two. ");
 }
 
-TEST_CASE("is at a sentence's own first character still selects that sentence", "[VimTextObject]") {
+TEST_CASE("is at a sentence's own first character still selects that sentence", "[TextObject]") {
     Buffer buffer = MakeBuffer("One. Two. Three.");
 
     const auto inner = InnerSentence(buffer, 5); // exactly the 'T' of "Two."
     REQUIRE(buffer.Content().Substring(inner.start, inner.end - inner.start) == "Two.");
 }
 
-TEST_CASE("2is extends the sentence selection by one more sentence", "[VimTextObject]") {
+TEST_CASE("2is extends the sentence selection by one more sentence", "[TextObject]") {
     Buffer buffer = MakeBuffer("One. Two. Three.");
 
     const auto inner = InnerSentence(buffer, 6, 2); // "Two." + "Three."
     REQUIRE(buffer.Content().Substring(inner.start, inner.end - inner.start) == "Two. Three.");
 }
 
-TEST_CASE("it/at select tag content and the tags themselves", "[VimTextObject]") {
+TEST_CASE("it/at select tag content and the tags themselves", "[TextObject]") {
     Buffer buffer = MakeBuffer("<div>hello</div>");
 
     const auto inner = InnerTag(buffer, 7); // inside "hello"
@@ -142,7 +142,7 @@ TEST_CASE("it/at select tag content and the tags themselves", "[VimTextObject]")
     REQUIRE(buffer.Content().Substring(around.start, around.end - around.start) == "<div>hello</div>");
 }
 
-TEST_CASE("it/at resolve the innermost enclosing tag when nested", "[VimTextObject]") {
+TEST_CASE("it/at resolve the innermost enclosing tag when nested", "[TextObject]") {
     Buffer buffer = MakeBuffer("<div><span>hi</span></div>");
 
     const auto innerSpan = InnerTag(buffer, 12); // inside "hi"
@@ -152,14 +152,14 @@ TEST_CASE("it/at resolve the innermost enclosing tag when nested", "[VimTextObje
     REQUIRE(buffer.Content().Substring(aroundSpan.start, aroundSpan.end - aroundSpan.start) == "<span>hi</span>");
 }
 
-TEST_CASE("it/at skip self-closing tags entirely", "[VimTextObject]") {
+TEST_CASE("it/at skip self-closing tags entirely", "[TextObject]") {
     Buffer buffer = MakeBuffer("<div>before<br/>after</div>");
 
     const auto inner = InnerTag(buffer, 18); // inside "after", past the self-closing <br/>
     REQUIRE(buffer.Content().Substring(inner.start, inner.end - inner.start) == "before<br/>after");
 }
 
-TEST_CASE("it/at report not found outside any tag", "[VimTextObject]") {
+TEST_CASE("it/at report not found outside any tag", "[TextObject]") {
     Buffer buffer = MakeBuffer("no tags here");
 
     REQUIRE_FALSE(InnerTag(buffer, 3).found);

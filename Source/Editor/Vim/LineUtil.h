@@ -1,6 +1,6 @@
 //
 // Small line/character-classification helpers shared across the Vim subsystem's own
-// files (VimMotion.cpp/VimTextObject.cpp/VimEngine.cpp) -- Commands.cpp's own local
+// files (Motion.cpp/TextObject.cpp/Engine.cpp) -- Commands.cpp's own local
 // LineContentEnd/GetLineSpan helpers duplicated and named for this subsystem rather than
 // exported from Commands.cpp (an editor-command-registration file, not a reusable
 // library seam) or added to Buffer itself (these are Vim-specific conveniences over
@@ -11,8 +11,8 @@
 // documented word-char scope cut -- not Unicode word-boundary-aware.
 //
 
-#ifndef NED_EDITOR_VIM_VIMLINEUTIL_H
-#define NED_EDITOR_VIM_VIMLINEUTIL_H
+#ifndef NED_EDITOR_VIM_LINEUTIL_H
+#define NED_EDITOR_VIM_LINEUTIL_H
 
 #include <cstddef>
 
@@ -87,4 +87,4 @@ namespace ned::editor::vim {
 
 } // namespace ned::editor::vim
 
-#endif // NED_EDITOR_VIM_VIMLINEUTIL_H
+#endif // NED_EDITOR_VIM_LINEUTIL_H

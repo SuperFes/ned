@@ -65,7 +65,7 @@
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
-#include "Editor/Vim/VimSettings.h"
+#include "Editor/Vim/Settings.h"
 #include "Editor/WhichKeySettings.h"
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
@@ -210,7 +210,7 @@ namespace {
     }
 
     // Vim-mode follow-up: same process-wide-bool-toggle shape as
-    // NedSetLspAutoComplete -- default false, see Editor/Vim/VimSettings.h.
+    // NedSetLspAutoComplete -- default false, see Editor/Vim/Settings.h.
     void NedSetVimMode(bool enabled) {
         editor::vim::SetVimModeEnabled(enabled);
     }

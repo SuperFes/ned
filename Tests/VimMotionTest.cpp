@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "Editor/Vim/VimMotion.h"
+#include "Editor/Vim/Motion.h"
 #include "Text/Buffer.h"
 
 using ned::editor::vim::CharLeft;
@@ -31,7 +31,7 @@ Buffer MakeBuffer(const std::string& text) {
 }
 } // namespace
 
-TEST_CASE("h/l move within a line and stop at its edges", "[VimMotion]") {
+TEST_CASE("h/l move within a line and stop at its edges", "[Motion]") {
     Buffer buffer = MakeBuffer("abcde");
 
     REQUIRE(CharRight(buffer, 0, 2).target == 2);
@@ -40,14 +40,14 @@ TEST_CASE("h/l move within a line and stop at its edges", "[VimMotion]") {
     REQUIRE(CharLeft(buffer, 0, 1).target == 0);
 }
 
-TEST_CASE("h/l do not cross line boundaries", "[VimMotion]") {
+TEST_CASE("h/l do not cross line boundaries", "[Motion]") {
     Buffer buffer = MakeBuffer("ab\ncd");
 
     REQUIRE(CharRight(buffer, 0, 10).target == 1); // stops at 'b', not the newline
     REQUIRE(CharLeft(buffer, 3, 10).target == 3);  // 'c' is already line start
 }
 
-TEST_CASE("0/^/$ within a line", "[VimMotion]") {
+TEST_CASE("0/^/$ within a line", "[Motion]") {
     Buffer buffer = MakeBuffer("  abc  \n");
 
     REQUIRE(LineStartMotion(buffer, 5).target == 0);
@@ -57,7 +57,7 @@ TEST_CASE("0/^/$ within a line", "[VimMotion]") {
     REQUIRE(end.inclusive);
 }
 
-TEST_CASE("j/k move by sticky goal column", "[VimMotion]") {
+TEST_CASE("j/k move by sticky goal column", "[Motion]") {
     Buffer buffer = MakeBuffer("abcdef\nab\nabcdef\n");
 
     // Start on column 4 of line 0 ('e'), move down: line 1 is short, goal column
@@ -72,7 +72,7 @@ TEST_CASE("j/k move by sticky goal column", "[VimMotion]") {
     REQUIRE(up.target == buffer.ByteOffsetForLineAndColumn(0, 4, 1));
 }
 
-TEST_CASE("gg/G with and without a count", "[VimMotion]") {
+TEST_CASE("gg/G with and without a count", "[Motion]") {
     Buffer buffer = MakeBuffer("one\ntwo\nthree\n");
 
     REQUIRE(GotoFirstLine(buffer, 0).target == 0);
@@ -80,7 +80,7 @@ TEST_CASE("gg/G with and without a count", "[VimMotion]") {
     REQUIRE(GotoFirstLine(buffer, 2).target == buffer.Content().LineToByteOffset(1));
 }
 
-TEST_CASE("w/b/e word motion over word/punctuation/blank runs", "[VimMotion]") {
+TEST_CASE("w/b/e word motion over word/punctuation/blank runs", "[Motion]") {
     Buffer buffer = MakeBuffer("foo.bar  baz");
 
     const auto w1 = WordForward(buffer, 0, 1, false);
@@ -97,7 +97,7 @@ TEST_CASE("w/b/e word motion over word/punctuation/blank runs", "[VimMotion]") {
     REQUIRE(e1.inclusive);
 }
 
-TEST_CASE("ge moves backward to the end of the previous word/punctuation run", "[VimMotion]") {
+TEST_CASE("ge moves backward to the end of the previous word/punctuation run", "[Motion]") {
     Buffer buffer = MakeBuffer("foo.bar  baz");
 
     const auto g1 = WordEndBackward(buffer, 11, 1, false); // from 'z' of baz
@@ -113,28 +113,28 @@ TEST_CASE("ge moves backward to the end of the previous word/punctuation run", "
     REQUIRE(WordEndBackward(buffer, 0, 1, false).target == 0); // no previous word: clamps
 }
 
-TEST_CASE("gE treats punctuation as part of the WORD", "[VimMotion]") {
+TEST_CASE("gE treats punctuation as part of the WORD", "[Motion]") {
     Buffer buffer = MakeBuffer("foo.bar  baz");
 
     const auto g = WordEndBackward(buffer, 11, 1, true); // from 'z' of baz
     REQUIRE(g.target == 6);                              // end of the whole "foo.bar" WORD
 }
 
-TEST_CASE("W/B/E treat punctuation as part of the WORD", "[VimMotion]") {
+TEST_CASE("W/B/E treat punctuation as part of the WORD", "[Motion]") {
     Buffer buffer = MakeBuffer("foo.bar  baz");
 
     const auto w = WordForward(buffer, 0, 1, true);
     REQUIRE(w.target == 9); // whole "foo.bar" is one WORD, blanks skipped
 }
 
-TEST_CASE("w stops on an empty line as its own word", "[VimMotion]") {
+TEST_CASE("w stops on an empty line as its own word", "[Motion]") {
     Buffer buffer = MakeBuffer("abc\n\ndef");
 
     const auto w = WordForward(buffer, 0, 1, false);
     REQUIRE(w.target == buffer.Content().LineToByteOffset(1)); // the empty line itself
 }
 
-TEST_CASE("f/t find a character on the current line, failing past its end", "[VimMotion]") {
+TEST_CASE("f/t find a character on the current line, failing past its end", "[Motion]") {
     Buffer buffer = MakeBuffer("abcdef");
 
     const auto f = FindChar(buffer, 0, 1, U'd', true, false);
@@ -149,7 +149,7 @@ TEST_CASE("f/t find a character on the current line, failing past its end", "[Vi
     REQUIRE_FALSE(miss.found);
 }
 
-TEST_CASE("F/T find a character backward on the current line", "[VimMotion]") {
+TEST_CASE("F/T find a character backward on the current line", "[Motion]") {
     Buffer buffer = MakeBuffer("abcdef");
 
     const auto F = FindChar(buffer, 5, 1, U'b', false, false);
@@ -161,7 +161,7 @@ TEST_CASE("F/T find a character backward on the current line", "[VimMotion]") {
     REQUIRE(T.target == 2);
 }
 
-TEST_CASE("{ and } move between blank-line paragraph boundaries", "[VimMotion]") {
+TEST_CASE("{ and } move between blank-line paragraph boundaries", "[Motion]") {
     Buffer buffer = MakeBuffer("a\nb\n\nc\nd\n\ne\n");
 
     const auto p1 = ParagraphForward(buffer, 0, 1);
@@ -173,7 +173,7 @@ TEST_CASE("{ and } move between blank-line paragraph boundaries", "[VimMotion]")
     REQUIRE(back.target == p1.target);
 }
 
-TEST_CASE("% jumps to the matching bracket", "[VimMotion]") {
+TEST_CASE("% jumps to the matching bracket", "[Motion]") {
     Buffer buffer = MakeBuffer("foo(bar(baz)qux)end");
 
     const auto m1 = MatchPair(buffer, 0);

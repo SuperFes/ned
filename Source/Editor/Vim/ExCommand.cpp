@@ -1,4 +1,4 @@
-#include "VimExCommand.h"
+#include "ExCommand.h"
 
 #include <algorithm>
 #include <cctype>
@@ -87,7 +87,7 @@ std::optional<ExCommand> ParseExCommand(std::string_view text, std::size_t curre
     cmd.range = range;
 
     if (s.empty()) {
-        return cmd; // a bare range, e.g. ":42" or ":'<,'>" -- VimEngine goes to range.endLine
+        return cmd; // a bare range, e.g. ":42" or ":'<,'>" -- Engine goes to range.endLine
     }
 
     // ":s" takes an arbitrary punctuation delimiter right after the letter, not a space
@@ -102,7 +102,7 @@ std::optional<ExCommand> ParseExCommand(std::string_view text, std::size_t curre
 
     // ":>"/":<" (range indent/outdent) -- neither character is alphabetic, so the generic
     // command-word scan below would never recognize them. Real vim lets the character
-    // repeat (":>>>" shifts three times); this codebase's own VimEngine::ExecuteExCommand
+    // repeat (":>>>" shifts three times); this codebase's own Engine::ExecuteExCommand
     // deliberately only ever shifts once regardless of how many were typed (documented v1
     // cut), but the repeats are still consumed here so trailing input doesn't get
     // misparsed as something else.

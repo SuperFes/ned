@@ -11,8 +11,8 @@
 // TranslateVimMagicPattern is the one function that bridges this: given a pattern as the
 // user actually typed it (vim's own default-magic convention), it returns the
 // equivalent PCRE2 pattern RegexPattern can compile directly. Applied once, at the
-// point a pattern is first read from typed command-line text (VimEngine::PerformSearch
-// for `/`/`?`, VimEngine::ExecuteSubstitute/ExecuteGlobal for `:s`/`:g`) -- everything
+// point a pattern is first read from typed command-line text (Engine::PerformSearch
+// for `/`/`?`, Engine::ExecuteSubstitute/ExecuteGlobal for `:s`/`:g`) -- everything
 // downstream of that (RunSearch/RepeatSearch/SubstituteLineRange/the "&" repeat-last-
 // substitute command) already operates on an already-translated, PCRE2-ready pattern
 // string, so it must never be applied a second time to the same pattern.
@@ -60,8 +60,8 @@
 // PCRE2 unmodified, so \v users were already getting essentially-correct behavior).
 //
 
-#ifndef NED_EDITOR_VIM_VIMMAGIC_H
-#define NED_EDITOR_VIM_VIMMAGIC_H
+#ifndef NED_EDITOR_VIM_MAGIC_H
+#define NED_EDITOR_VIM_MAGIC_H
 
 #include <string>
 #include <string_view>
@@ -76,7 +76,7 @@ namespace ned::editor::vim {
 // template language (`$1`-`$99`, `$&`, a literal `$` needing `$$`) any more than the
 // pattern side matches PCRE2's own syntax -- same shape of problem, a separate function
 // since the translation rules don't overlap with TranslateVimMagicPattern's at all.
-// Applied once, at the same point (VimEngine::ExecuteSubstitute, right after
+// Applied once, at the same point (Engine::ExecuteSubstitute, right after
 // ParseSubstituteArgs) the pattern half is translated.
 //
 // Handled: \0-\9 -> $0-$9; bare & -> $&; \& -> &; \\ -> \ (one literal backslash); a
@@ -91,4 +91,4 @@ namespace ned::editor::vim {
 
 } // namespace ned::editor::vim
 
-#endif // NED_EDITOR_VIM_VIMMAGIC_H
+#endif // NED_EDITOR_VIM_MAGIC_H

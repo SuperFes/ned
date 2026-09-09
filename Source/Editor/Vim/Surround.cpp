@@ -1,14 +1,14 @@
-#include "VimSurround.h"
+#include "Surround.h"
 
-#include "VimTextObject.h"
-#include "VimTypes.h"
+#include "TextObject.h"
+#include "Types.h"
 
 namespace ned::editor::vim {
 
 namespace {
 
     // Resolves `from` to the same (open, close)-delimiter bracket/quote/tag pair
-    // VimTextObject.h's own i(/a( family already scans for, returning both the inner and
+    // TextObject.h's own i(/a( family already scans for, returning both the inner and
     // around ranges in one call (ds/cs need both: around's edges are exactly the delimiter
     // bytes to remove/replace, inner's edges are where the replacement delimiter goes).
     bool FindDelimiterPair(const text::Buffer& buffer, std::size_t point, char32_t from, ObjectRange& innerOut, ObjectRange& aroundOut) {

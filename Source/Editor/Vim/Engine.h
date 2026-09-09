@@ -7,14 +7,14 @@
 // Deliberate v1 cuts, documented here once rather than scattered across every method
 // that would otherwise need its own caveat: no mark letters beyond a-z/A-Z and '</'> (the
 // visual-selection marks) -- a-z stay buffer-scoped (see currentBufferIdentity_'s own
-// doc comment), A-Z are real cross-file marks (VimGlobalMarks.h), but this engine has no
+// doc comment), A-Z are real cross-file marks (GlobalMarks.h), but this engine has no
 // notion of "other buffers" beyond that one seam, so nothing else (registers, macros,
 // jumpList_/changeList_) is cross-file; macros are real, editable register text
-// (StopMacroRecording/PlayMacro, VimRegisters::SetRaw/Get) but spelled in this
+// (StopMacroRecording/PlayMacro, Registers::SetRaw/Get) but spelled in this
 // codebase's own Emacs kbd notation (Editor/Key.h's FormatKeySequence/ParseKeySequence)
 // rather than real vim's own <key> bracket notation -- a deliberate reuse of existing,
 // already-tested infrastructure over a second codec; search/:s/:g translate vim's own default "magic"
-// escaping convention to PCRE2 syntax for the common core (VimMagic.h has the exact rule
+// escaping convention to PCRE2 syntax for the common core (Magic.h has the exact rule
 // table and its own documented cuts -- \ze, \%[...], mid-pattern \m/\M/\V). Insert-mode
 // typing itself is not handled here at all: BufferView
 // forwards those keystrokes straight through its ordinary Dispatcher path (self-insert-
@@ -24,8 +24,8 @@
 // during "."/macro replay, not live typing.
 //
 
-#ifndef NED_EDITOR_VIM_VIMENGINE_H
-#define NED_EDITOR_VIM_VIMENGINE_H
+#ifndef NED_EDITOR_VIM_ENGINE_H
+#define NED_EDITOR_VIM_ENGINE_H
 
 #include <cstddef>
 #include <filesystem>
@@ -37,9 +37,9 @@
 
 #include "Editor/Key.h"
 #include "Text/Buffer.h"
-#include "VimExCommand.h"
-#include "VimRegisters.h"
-#include "VimTypes.h"
+#include "ExCommand.h"
+#include "Registers.h"
+#include "Types.h"
 
 namespace ned::editor::vim {
 
@@ -51,9 +51,9 @@ enum class PendingIntent { None,
                            Quit,
                            CloseBuffer };
 
-class VimEngine {
+class Engine {
   public:
-    VimEngine() = default;
+    Engine() = default;
 
     [[nodiscard]] Mode CurrentMode() const;
 
@@ -97,7 +97,7 @@ class VimEngine {
 
     // vim-global-marks follow-up: jumping to an uppercase (A-Z) mark set in a different
     // file than the one currently open needs to switch the active buffer -- something
-    // this engine, deliberately UI-free, can't do itself (see VimGlobalMarks.h's own doc
+    // this engine, deliberately UI-free, can't do itself (see GlobalMarks.h's own doc
     // comment). Set by GotoMark when the resolved global mark's path doesn't match the
     // current buffer's; BufferView must consume this the same way it already does
     // TakePendingIntent -- open (or find) the target file and move point to (line,
@@ -141,7 +141,7 @@ class VimEngine {
     bool                                      HandleVisualSpecific(text::Buffer& buffer, const KeyChord& chord, long count); // true if the chord was consumed
     void                                      HandleAction(text::Buffer& buffer, const KeyChord& chord, long count);
 
-    // ds/cs/ys (Editor/Vim/VimSurround.h) -- entered when 's' arrives with pendingOperator_
+    // ds/cs/ys (Editor/Vim/Surround.h) -- entered when 's' arrives with pendingOperator_
     // already d/c/y (real vim-surround's own "ys"/"ds"/"cs" two-letter mappings, reusing
     // the ordinary d/c/y operator-pending state this engine already sets up rather than a
     // new prefix key). Sets up the pendingCharHandler_ chain reading whatever the specific
@@ -160,9 +160,9 @@ class VimEngine {
     void JoinLines(text::Buffer& buffer, long count, bool insertSpace = true); // gJ passes false
 
     // The four read-only special registers (., %, :, /) -- intercepted before
-    // VimRegisters is ever consulted, since none of them are ordinary named storage:
-    // '.' and '%' need state VimRegisters has no access to (last-inserted text, the live
-    // Buffer's own path), and while '/' could live in VimRegisters trivially, keeping all
+    // Registers is ever consulted, since none of them are ordinary named storage:
+    // '.' and '%' need state Registers has no access to (last-inserted text, the live
+    // Buffer's own path), and while '/' could live in Registers trivially, keeping all
     // four together in one place is simpler than splitting the interception. Falls
     // through to registers_.Get(name) for every other register name.
     [[nodiscard]] std::optional<RegisterEntry> ReadRegister(const text::Buffer& buffer, char32_t name) const;
@@ -302,7 +302,7 @@ class VimEngine {
     void                     ChangeListOlder(text::Buffer& buffer);
     void                     ChangeListNewer(text::Buffer& buffer);
 
-    VimRegisters registers_;
+    Registers registers_;
 
     std::vector<KeyChord> currentCommandChords_;
     std::size_t           generationBeforeCommand_ = 0;
@@ -310,7 +310,7 @@ class VimEngine {
     int                   replayDepth_ = 0; // guards against runaway recursive "."/@ replay
 
     // vim-macro-register follow-up: macros are stored as real register text now
-    // (registers_, via VimRegisters::SetRaw/Get) rather than a private cache here --
+    // (registers_, via Registers::SetRaw/Get) rather than a private cache here --
     // isRecordingMacro_/recordingMacroRegister_/macroRecordingBuffer_ are just the
     // in-flight recording state, not the macro's storage.
     bool                  isRecordingMacro_       = false;
@@ -349,4 +349,4 @@ class VimEngine {
 
 } // namespace ned::editor::vim
 
-#endif // NED_EDITOR_VIM_VIMENGINE_H
+#endif // NED_EDITOR_VIM_ENGINE_H

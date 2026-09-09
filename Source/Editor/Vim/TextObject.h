@@ -1,6 +1,6 @@
 //
 // Vim text objects (di( / ciw / ya" / ...) as pure functions over a Buffer, the
-// ObjectRange counterpart to VimMotion.h's MotionResult. VimEngine.h calls one of these
+// ObjectRange counterpart to Motion.h's MotionResult. Engine.h calls one of these
 // once it's read the "i"/"a" + object-char pair following an operator.
 //
 // Count support (e.g. "2iw" selecting two words) is wired for the word and sentence
@@ -12,13 +12,13 @@
 // this.
 //
 
-#ifndef NED_EDITOR_VIM_VIMTEXTOBJECT_H
-#define NED_EDITOR_VIM_VIMTEXTOBJECT_H
+#ifndef NED_EDITOR_VIM_TEXTOBJECT_H
+#define NED_EDITOR_VIM_TEXTOBJECT_H
 
 #include <cstddef>
 
 #include "Text/Buffer.h"
-#include "VimTypes.h"
+#include "Types.h"
 
 namespace ned::editor::vim {
 
@@ -31,7 +31,7 @@ namespace ned::editor::vim {
 [[nodiscard]] ObjectRange AroundQuote(const text::Buffer& buffer, std::size_t point, char32_t quote); // a" / a' / a`
 
 // open/close is one of ()/[]/{}/<>. Scans the whole buffer (brackets commonly span
-// lines), tracking nesting depth the same way VimMotion::MatchPair does.
+// lines), tracking nesting depth the same way Motion::MatchPair does.
 [[nodiscard]] ObjectRange InnerBracket(const text::Buffer& buffer, std::size_t point, char32_t open, char32_t close);  // i( / i[ / i{ / i<
 [[nodiscard]] ObjectRange AroundBracket(const text::Buffer& buffer, std::size_t point, char32_t open, char32_t close); // a( / a[ / a{ / a<
 
@@ -50,7 +50,7 @@ namespace ned::editor::vim {
 
 // Tag objects (it/at) -- plain byte/text scanning for the nearest enclosing
 // <name ...> ... </name> pair, tracking a stack of open tag names the same way
-// FindEnclosingBracket tracks nesting depth (VimTextObject.cpp, anonymous namespace).
+// FindEnclosingBracket tracks nesting depth (TextObject.cpp, anonymous namespace).
 // Self-closing tags (<br/>) are skipped entirely, never treated as enclosing anything.
 // Not a real HTML/XML parser or tree-sitter-backed -- consistent with every other object
 // in this file.
@@ -59,4 +59,4 @@ namespace ned::editor::vim {
 
 } // namespace ned::editor::vim
 
-#endif // NED_EDITOR_VIM_VIMTEXTOBJECT_H
+#endif // NED_EDITOR_VIM_TEXTOBJECT_H
