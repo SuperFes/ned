@@ -753,126 +753,111 @@ void BufferView::BeginLineRender(LineRenderState& state, std::size_t line, std::
     }
 }
 
-void BufferView::Paint(Canvas paneCanvas) {
-    viewport_.EnsureTopLineValidForActiveBuffer();
-    EnsureStatusMessageFreshness();
+void BufferView::EchoPointDiagnostic() {
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         pointLine = content.ByteOffsetToLine(buffer.Point());
 
-    text::Buffer& buffer = activeBuffer_.Get();
-    if (modeSyncBuffer_ != &buffer) {
-        modeSyncBuffer_ = &buffer;
-        if (onActiveBufferChanged_) {
-            onActiveBufferChanged_(buffer);
+    // diagnostics-UX follow-up: live echo of the diagnostic on point's own
+    // line, updating as point moves, so reading an error never requires a
+    // command at all (lsp-show-diagnostic stays for the full/multi-message
+    // case). Same once-per-frame poll idiom as the LSP-log check above.
+    // autoDiagnosticMessage_ remembers exactly what this poll last wrote so
+    // it only ever overwrites/clears its OWN message -- a real command
+    // result, prompt text, or any other writer always wins, and leaving the
+    // line takes the echo away instead of it lingering like a normal status
+    // message would.
+    if (inputMode_ == InputMode::Normal) {
+        const std::size_t pointLineStart = content.LineToByteOffset(pointLine);
+        const std::size_t pointLineEnd =
+            (pointLine + 1 < content.LineCount()) ? content.LineToByteOffset(pointLine + 1) : content.ByteLength();
+        const text::Buffer::Diagnostic* firstOnLine = nullptr;
+        std::size_t                     extraOnLine = 0;
+        for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+            if (diagnostic.startByte >= pointLineStart && diagnostic.startByte < pointLineEnd) {
+                if (firstOnLine == nullptr) {
+                    firstOnLine = &diagnostic;
+                }
+                else {
+                    ++extraOnLine;
+                }
+            }
         }
-        // The callback just (possibly) replaced mode_ -- but a GutterWidth()
-        // call during the switch's own event handling (ScrollToShowPoint,
-        // CursorPosition) may already have run the mode-derived gutter
-        // caches against this buffer under the OLD mode and stamped them
-        // current-and-empty, which the (buffer, generation) gate can't
-        // detect (neither stamp changes with the mode). Confirmed live via
-        // an instrumented trace: switching back to a python buffer after
-        // visiting a fundamental-mode one left the symbol/test columns
-        // permanently blank until the next edit. Discarding the stamps here
-        // forces one recompute under the mode that will actually paint.
-        gutters_.InvalidateModeDependentCaches();
+        std::string autoMessage;
+        if (firstOnLine != nullptr) {
+            switch (firstOnLine->severity) {
+                case text::Buffer::Diagnostic::Severity::Error:
+                    autoMessage = "Error: ";
+                    break;
+                case text::Buffer::Diagnostic::Severity::Warning:
+                    autoMessage = "Warning: ";
+                    break;
+                case text::Buffer::Diagnostic::Severity::Information:
+                    autoMessage = "Info: ";
+                    break;
+                case text::Buffer::Diagnostic::Severity::Hint:
+                    autoMessage = "Hint: ";
+                    break;
+            }
+            autoMessage += firstOnLine->message;
+            if (extraOnLine > 0) {
+                autoMessage += " (+" + std::to_string(extraOnLine) + " more on this line)";
+            }
+        }
+        if (!autoMessage.empty()) {
+            if (statusMessage_.empty() || statusMessage_ == autoDiagnosticMessage_) {
+                statusMessage_         = autoMessage;
+                autoDiagnosticMessage_ = autoMessage;
+            }
+        }
+        else if (!autoDiagnosticMessage_.empty()) {
+            if (statusMessage_ == autoDiagnosticMessage_) {
+                statusMessage_.clear();
+            }
+            autoDiagnosticMessage_.clear();
+        }
     }
-    // Diff gutter markers follow-up: a newly-active buffer's diff markers
-    // belong to a completely different file -- clearing immediately
-    // (rather than leaving the old buffer's markers visible until the
-    // fresh request completes) avoids a real, if brief, "wrong file's
-    // markers" flash; RequestDiffForCurrentBuffer then kicks off a fresh,
-    // unthrottled (not debounced -- switching buffers is a natural "want
-    // it now" moment, same as a save) request for this buffer.
-    //
-    // initial-buffer-diff fix: tracked by its own diffSyncBuffer_, NOT
-    // folded into the modeSyncBuffer_ branch above -- the constructor
-    // deliberately pre-seeds modeSyncBuffer_ to suppress a spurious
-    // first-frame onActiveBufferChanged_, and while the diff request lived
-    // in that branch the seeding silently suppressed the initial buffer's
-    // diff request too: the file ned was launched on (and every new split
-    // pane's starting view) never showed markers until an edit/save
-    // happened to fire a request. Confirmed against a live session with
-    // gdb (RequestDiffForCurrentBuffer never called at all), not assumed.
-    // diffSyncBuffer_ starts null instead, so a pane's very first Paint()
-    // fetches its buffer's diff.
-    if (diffSyncBuffer_ != &buffer) {
-        diffSyncBuffer_ = &buffer;
-        diffLineKinds_.clear();
-        RequestDiffForCurrentBuffer();
+}
+
+void BufferView::SurfaceLogMessages() {
+    text::Buffer& buffer = activeBuffer_.Get();
+
+    // error-visibility follow-up: a cheap once-per-frame poll, the same
+    // "recompute, don't cache" idiom every other Paint()-time check here
+    // already uses. Gated on statusMessage_ being empty so this never
+    // clobbers an in-progress prompt or another just-set message -- surface
+    // via statusMessage_, never forcibly switch the user's buffer out from
+    // under them (see BufferView::StartInteractiveSession's LspShowLog case
+    // for the actual, user-initiated way to view the log).
+    if (lspManager_ && lspManager_->HasUnseenLogEntry() && statusMessage_.empty()) {
+        statusMessage_ = "LSP error -- see *lsp log* (M-x lsp-show-log)";
+        lspManager_->AcknowledgeLogEntry();
     }
 
+    // user-facing-hang-affordance follow-up (ChildProcess-hang-protection-
+    // round-2): same once-per-frame poll idiom as the LSP-log check above,
+    // just against the shared *Messages* log instead of the older, LSP-only
+    // "*lsp log*" one -- a hang/timeout recovery (a killed clipboard-paste
+    // subprocess, an LSP/DAP/ACP stall disconnect, a stale-request timeout)
+    // previously left no trace beyond that log entry itself, with nothing to
+    // draw the user's eye to it. Checked after the LSP-log branch above so
+    // the two never race for the same frame's statusMessage_ (whichever
+    // fires first wins; the other's flag stays set and surfaces next frame
+    // once statusMessage_ is empty again). Gated on surfaceUnseenLogEntries_
+    // (default false, see SetSurfaceUnseenLogEntries's own doc comment) --
+    // unlike lspManager_ above, editor::HasUnseenDiagnosticsLogEntry() reads
+    // genuinely process-wide state, so an unconditional check here would let
+    // any other test's own LogMessage call leak into this one's Paint().
+    if (surfaceUnseenLogEntries_ && editor::HasUnseenDiagnosticsLogEntry() && statusMessage_.empty()) {
+        statusMessage_ = "New warning -- see *Messages* (M-x show-messages)";
+        editor::AcknowledgeDiagnosticsLogEntry();
+    }
+}
+
+void BufferView::SyncLspForFrame() {
+    text::Buffer&             buffer     = activeBuffer_.Get();
     const text::ITextStorage& content    = buffer.Content();
     const std::size_t         totalLines = content.LineCount();
-    const Brush               emptyBrush = theme_.BrushFor(editor::SyntaxClass::Default);
-    const std::size_t         point      = buffer.Point();
-    const std::size_t         pointLine  = content.ByteOffsetToLine(point);
-
-    // narrow-to-region/widen follow-up: caps which rows actually get
-    // painted -- deliberately a *separate* value from totalLines above,
-    // which stays the real, whole-buffer line count. lineEnd/
-    // lineEndWithNewline below still need to know whether `line` is the
-    // buffer's own real last line (to fall back to content.ByteLength())
-    // regardless of narrowing -- the narrowed range's own last line is
-    // usually not the buffer's real last line at all, just the last one
-    // currently visible, and still needs its real next-line boundary looked
-    // up correctly.
-    const std::size_t renderEndLine = viewport_.NarrowedLineRange().second;
-
-    if (scrollBar_ != nullptr) {
-        // scrollable_length is fed as viewport_.MaxTopLine() + 1, not totalLines: the
-        // scroll bar internally clamps a user-driven drag/click's target
-        // position to [0, scrollable_length - 1], so this is what makes its
-        // own built-in range match ours exactly -- dragging all the way
-        // down actually reaches true end-of-file, not one line short of it.
-        scrollBar_->scrollable_length  = static_cast<int>(viewport_.MaxTopLine()) + 1;
-        scrollBar_->position           = static_cast<int>(viewport_.TopLine());
-        scrollBar_->item_visual_length = 1; // one buffer line per canvas row
-    }
-    if (scrollUpArrow_ != nullptr) {
-        scrollUpArrow_->SetEnabled(viewport_.TopLine() > 0);
-    }
-    if (scrollDownArrow_ != nullptr) {
-        scrollDownArrow_->SetEnabled(viewport_.TopLine() < viewport_.MaxTopLine());
-    }
-    if (minimap_ != nullptr) {
-        // Same fields, same semantics, same values ScrollBar's own sync
-        // above uses -- Minimap mirrors ScrollBar's public surface exactly
-        // so its viewport-band/click math stays consistent with it.
-        minimap_->scrollable_length  = static_cast<int>(viewport_.MaxTopLine()) + 1;
-        minimap_->position           = static_cast<int>(viewport_.TopLine());
-        minimap_->item_visual_length = 1;
-    }
-
-    // Every column offset for this frame, from the same computation that
-    // decides how wide the gutter is -- see BufferView/GutterLayout.h.
-    const bufferview::GutterLayout gutter = ComputeGutterLayout(totalLines);
-
-    std::vector<editor::dap::DapManager::Breakpoint>   dapBreakpoints;
-    std::optional<std::pair<std::string, std::size_t>> dapStop;
-    if (gutter.dapWidth > 0) {
-        dapBreakpoints = dapManager_->BreakpointsForKey(dapPathKey_);
-        dapStop        = dapManager_->CurrentStopKeyAndLine();
-        if (dapStop && dapStop->first != dapPathKey_) {
-            dapStop.reset(); // stopped in some other file -- nothing to mark here
-        }
-    }
-
-    // status-gutter unsaved-change-indicator follow-up: recomputed once
-    // per Paint() call (not per row) -- see EnsureUnsavedChangeCache's own
-    // doc comment. Unconditional, unlike EnsureFoldGutterCache -- every
-    // buffer gets a status column regardless of mode/language.
-    const std::vector<std::pair<std::size_t, std::size_t>>& unsavedChangeLineRanges = gutters_.UnsavedChangeLineRanges();
-    // LSP client follow-up: same "unconditional, every buffer gets one"
-    // reasoning as EnsureUnsavedChangeCache above.
-    const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& diagnosticLineSeverities =
-        gutters_.DiagnosticLineSeverities();
-
-    const FramePaint frame{buffer, content, gutter, totalLines,
-                           point, pointLine, dapBreakpoints, unsavedChangeLineRanges,
-                           diagnosticLineSeverities};
-    // VCS blame gutter: unconditional every Paint() like the two above, but
-    // this only ever clears (never repopulates) blameLineInfo_ -- see its
-    // own doc comment.
-    EnsureBlameGutterCache();
 
     // LSP client follow-up: syncs the *active* buffer only, once per frame
     // -- see LspManager::SyncBuffer's own doc comment for why only the
@@ -939,97 +924,146 @@ void BufferView::Paint(Canvas paneCanvas) {
         }
         lspManager_->SyncEmbeddedDocuments(buffer, embeddedSync);
     }
+}
 
-    // error-visibility follow-up: a cheap once-per-frame poll, the same
-    // "recompute, don't cache" idiom every other Paint()-time check here
-    // already uses. Gated on statusMessage_ being empty so this never
-    // clobbers an in-progress prompt or another just-set message -- surface
-    // via statusMessage_, never forcibly switch the user's buffer out from
-    // under them (see BufferView::StartInteractiveSession's LspShowLog case
-    // for the actual, user-initiated way to view the log).
-    if (lspManager_ && lspManager_->HasUnseenLogEntry() && statusMessage_.empty()) {
-        statusMessage_ = "LSP error -- see *lsp log* (M-x lsp-show-log)";
-        lspManager_->AcknowledgeLogEntry();
+void BufferView::SyncScrollWidgets(std::size_t totalLines, std::size_t renderEndLine) {
+    text::Buffer& buffer = activeBuffer_.Get();
+
+    if (scrollBar_ != nullptr) {
+        // scrollable_length is fed as viewport_.MaxTopLine() + 1, not totalLines: the
+        // scroll bar internally clamps a user-driven drag/click's target
+        // position to [0, scrollable_length - 1], so this is what makes its
+        // own built-in range match ours exactly -- dragging all the way
+        // down actually reaches true end-of-file, not one line short of it.
+        scrollBar_->scrollable_length  = static_cast<int>(viewport_.MaxTopLine()) + 1;
+        scrollBar_->position           = static_cast<int>(viewport_.TopLine());
+        scrollBar_->item_visual_length = 1; // one buffer line per canvas row
+    }
+    if (scrollUpArrow_ != nullptr) {
+        scrollUpArrow_->SetEnabled(viewport_.TopLine() > 0);
+    }
+    if (scrollDownArrow_ != nullptr) {
+        scrollDownArrow_->SetEnabled(viewport_.TopLine() < viewport_.MaxTopLine());
+    }
+    if (minimap_ != nullptr) {
+        // Same fields, same semantics, same values ScrollBar's own sync
+        // above uses -- Minimap mirrors ScrollBar's public surface exactly
+        // so its viewport-band/click math stays consistent with it.
+        minimap_->scrollable_length  = static_cast<int>(viewport_.MaxTopLine()) + 1;
+        minimap_->position           = static_cast<int>(viewport_.TopLine());
+        minimap_->item_visual_length = 1;
+    }
+}
+
+void BufferView::SyncBufferSwitch() {
+    text::Buffer& buffer = activeBuffer_.Get();
+
+    if (modeSyncBuffer_ != &buffer) {
+        modeSyncBuffer_ = &buffer;
+        if (onActiveBufferChanged_) {
+            onActiveBufferChanged_(buffer);
+        }
+        // The callback just (possibly) replaced mode_ -- but a GutterWidth()
+        // call during the switch's own event handling (ScrollToShowPoint,
+        // CursorPosition) may already have run the mode-derived gutter
+        // caches against this buffer under the OLD mode and stamped them
+        // current-and-empty, which the (buffer, generation) gate can't
+        // detect (neither stamp changes with the mode). Confirmed live via
+        // an instrumented trace: switching back to a python buffer after
+        // visiting a fundamental-mode one left the symbol/test columns
+        // permanently blank until the next edit. Discarding the stamps here
+        // forces one recompute under the mode that will actually paint.
+        gutters_.InvalidateModeDependentCaches();
+    }
+    // Diff gutter markers follow-up: a newly-active buffer's diff markers
+    // belong to a completely different file -- clearing immediately
+    // (rather than leaving the old buffer's markers visible until the
+    // fresh request completes) avoids a real, if brief, "wrong file's
+    // markers" flash; RequestDiffForCurrentBuffer then kicks off a fresh,
+    // unthrottled (not debounced -- switching buffers is a natural "want
+    // it now" moment, same as a save) request for this buffer.
+    //
+    // initial-buffer-diff fix: tracked by its own diffSyncBuffer_, NOT
+    // folded into the modeSyncBuffer_ branch above -- the constructor
+    // deliberately pre-seeds modeSyncBuffer_ to suppress a spurious
+    // first-frame onActiveBufferChanged_, and while the diff request lived
+    // in that branch the seeding silently suppressed the initial buffer's
+    // diff request too: the file ned was launched on (and every new split
+    // pane's starting view) never showed markers until an edit/save
+    // happened to fire a request. Confirmed against a live session with
+    // gdb (RequestDiffForCurrentBuffer never called at all), not assumed.
+    // diffSyncBuffer_ starts null instead, so a pane's very first Paint()
+    // fetches its buffer's diff.
+    if (diffSyncBuffer_ != &buffer) {
+        diffSyncBuffer_ = &buffer;
+        diffLineKinds_.clear();
+        RequestDiffForCurrentBuffer();
+    }
+}
+
+void BufferView::Paint(Canvas paneCanvas) {
+    viewport_.EnsureTopLineValidForActiveBuffer();
+    EnsureStatusMessageFreshness();
+
+    text::Buffer& buffer = activeBuffer_.Get();
+    SyncBufferSwitch();
+
+    const text::ITextStorage& content    = buffer.Content();
+    const std::size_t         totalLines = content.LineCount();
+    const Brush               emptyBrush = theme_.BrushFor(editor::SyntaxClass::Default);
+    const std::size_t         point      = buffer.Point();
+    const std::size_t         pointLine  = content.ByteOffsetToLine(point);
+
+    // narrow-to-region/widen follow-up: caps which rows actually get
+    // painted -- deliberately a *separate* value from totalLines above,
+    // which stays the real, whole-buffer line count. lineEnd/
+    // lineEndWithNewline below still need to know whether `line` is the
+    // buffer's own real last line (to fall back to content.ByteLength())
+    // regardless of narrowing -- the narrowed range's own last line is
+    // usually not the buffer's real last line at all, just the last one
+    // currently visible, and still needs its real next-line boundary looked
+    // up correctly.
+    const std::size_t renderEndLine = viewport_.NarrowedLineRange().second;
+
+    SyncScrollWidgets(totalLines, renderEndLine);
+
+    // Every column offset for this frame, from the same computation that
+    // decides how wide the gutter is -- see BufferView/GutterLayout.h.
+    const bufferview::GutterLayout gutter = ComputeGutterLayout(totalLines);
+
+    std::vector<editor::dap::DapManager::Breakpoint>   dapBreakpoints;
+    std::optional<std::pair<std::string, std::size_t>> dapStop;
+    if (gutter.dapWidth > 0) {
+        dapBreakpoints = dapManager_->BreakpointsForKey(dapPathKey_);
+        dapStop        = dapManager_->CurrentStopKeyAndLine();
+        if (dapStop && dapStop->first != dapPathKey_) {
+            dapStop.reset(); // stopped in some other file -- nothing to mark here
+        }
     }
 
-    // user-facing-hang-affordance follow-up (ChildProcess-hang-protection-
-    // round-2): same once-per-frame poll idiom as the LSP-log check above,
-    // just against the shared *Messages* log instead of the older, LSP-only
-    // "*lsp log*" one -- a hang/timeout recovery (a killed clipboard-paste
-    // subprocess, an LSP/DAP/ACP stall disconnect, a stale-request timeout)
-    // previously left no trace beyond that log entry itself, with nothing to
-    // draw the user's eye to it. Checked after the LSP-log branch above so
-    // the two never race for the same frame's statusMessage_ (whichever
-    // fires first wins; the other's flag stays set and surfaces next frame
-    // once statusMessage_ is empty again). Gated on surfaceUnseenLogEntries_
-    // (default false, see SetSurfaceUnseenLogEntries's own doc comment) --
-    // unlike lspManager_ above, editor::HasUnseenDiagnosticsLogEntry() reads
-    // genuinely process-wide state, so an unconditional check here would let
-    // any other test's own LogMessage call leak into this one's Paint().
-    if (surfaceUnseenLogEntries_ && editor::HasUnseenDiagnosticsLogEntry() && statusMessage_.empty()) {
-        statusMessage_ = "New warning -- see *Messages* (M-x show-messages)";
-        editor::AcknowledgeDiagnosticsLogEntry();
-    }
+    // status-gutter unsaved-change-indicator follow-up: recomputed once
+    // per Paint() call (not per row) -- see EnsureUnsavedChangeCache's own
+    // doc comment. Unconditional, unlike EnsureFoldGutterCache -- every
+    // buffer gets a status column regardless of mode/language.
+    const std::vector<std::pair<std::size_t, std::size_t>>& unsavedChangeLineRanges = gutters_.UnsavedChangeLineRanges();
+    // LSP client follow-up: same "unconditional, every buffer gets one"
+    // reasoning as EnsureUnsavedChangeCache above.
+    const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& diagnosticLineSeverities =
+        gutters_.DiagnosticLineSeverities();
 
-    // diagnostics-UX follow-up: live echo of the diagnostic on point's own
-    // line, updating as point moves, so reading an error never requires a
-    // command at all (lsp-show-diagnostic stays for the full/multi-message
-    // case). Same once-per-frame poll idiom as the LSP-log check above.
-    // autoDiagnosticMessage_ remembers exactly what this poll last wrote so
-    // it only ever overwrites/clears its OWN message -- a real command
-    // result, prompt text, or any other writer always wins, and leaving the
-    // line takes the echo away instead of it lingering like a normal status
-    // message would.
-    if (inputMode_ == InputMode::Normal) {
-        const std::size_t pointLineStart = content.LineToByteOffset(pointLine);
-        const std::size_t pointLineEnd =
-            (pointLine + 1 < content.LineCount()) ? content.LineToByteOffset(pointLine + 1) : content.ByteLength();
-        const text::Buffer::Diagnostic* firstOnLine = nullptr;
-        std::size_t                     extraOnLine = 0;
-        for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
-            if (diagnostic.startByte >= pointLineStart && diagnostic.startByte < pointLineEnd) {
-                if (firstOnLine == nullptr) {
-                    firstOnLine = &diagnostic;
-                }
-                else {
-                    ++extraOnLine;
-                }
-            }
-        }
-        std::string autoMessage;
-        if (firstOnLine != nullptr) {
-            switch (firstOnLine->severity) {
-                case text::Buffer::Diagnostic::Severity::Error:
-                    autoMessage = "Error: ";
-                    break;
-                case text::Buffer::Diagnostic::Severity::Warning:
-                    autoMessage = "Warning: ";
-                    break;
-                case text::Buffer::Diagnostic::Severity::Information:
-                    autoMessage = "Info: ";
-                    break;
-                case text::Buffer::Diagnostic::Severity::Hint:
-                    autoMessage = "Hint: ";
-                    break;
-            }
-            autoMessage += firstOnLine->message;
-            if (extraOnLine > 0) {
-                autoMessage += " (+" + std::to_string(extraOnLine) + " more on this line)";
-            }
-        }
-        if (!autoMessage.empty()) {
-            if (statusMessage_.empty() || statusMessage_ == autoDiagnosticMessage_) {
-                statusMessage_         = autoMessage;
-                autoDiagnosticMessage_ = autoMessage;
-            }
-        }
-        else if (!autoDiagnosticMessage_.empty()) {
-            if (statusMessage_ == autoDiagnosticMessage_) {
-                statusMessage_.clear();
-            }
-            autoDiagnosticMessage_.clear();
-        }
-    }
+    const FramePaint frame{buffer, content, gutter, totalLines,
+                           point, pointLine, dapBreakpoints, unsavedChangeLineRanges,
+                           diagnosticLineSeverities};
+    // VCS blame gutter: unconditional every Paint() like the two above, but
+    // this only ever clears (never repopulates) blameLineInfo_ -- see its
+    // own doc comment.
+    EnsureBlameGutterCache();
+
+    SyncLspForFrame();
+
+    SurfaceLogMessages();
+
+    EchoPointDiagnostic();
 
     // depth-aware-fold-gutter follow-up: recomputed once per Paint() call
     // (not per row, and not rebuilt from scratch even across separate
