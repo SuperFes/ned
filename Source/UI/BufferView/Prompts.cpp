@@ -1762,6 +1762,7 @@ void BufferView::EndInteractiveSession() {
     projectReplace_.reset();
     pendingClose_ = nullptr;
     pendingBinaryOpenPath_.clear();
+    pendingOpenProjectRoot_.clear(); // session state, cleared with the rest of it
     pendingZapToCharAppend_ = false;
     pendingTrustInitPath_.clear();
     onTrustDecision_ = nullptr;
@@ -2028,529 +2029,566 @@ bool BufferView::TryNavigatePromptHistory(const editor::KeyChord& chord, std::st
     return true;
 }
 
-std::optional<bufferview::PromptCompletion> BufferView::TextEntryPromptCompletion(InputMode mode) {
+bufferview::PromptCompletion BufferView::PromptCompletionForCurrentMode() const {
+    const std::optional<bufferview::TextEntryPrompt> prompt = TextEntryPromptFor(inputMode_);
+    return prompt ? prompt->completion : bufferview::PromptCompletion::None;
+}
+
+std::optional<bufferview::TextEntryPrompt> BufferView::TextEntryPromptFor(InputMode mode) const {
     switch (mode) {
         // Real filesystem paths, with the dropdown Tab accepts from.
         case InputMode::FindFile:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::PathDropdown, "Find file"};
         case InputMode::OpenProjectPath:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::PathDropdown, "Open project"};
         case InputMode::FindScratch:
-            return bufferview::PromptCompletion::PathDropdown;
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::PathDropdown, "Find scratch"};
 
         // Naming something after an existing buffer or file is common enough to
         // be worth completing against them.
         case InputMode::BookmarkSetName:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::Names, "Bookmark name"};
         case InputMode::OpenProjectName:
-            return bufferview::PromptCompletion::Names;
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::Names, "Project name"};
 
-        // Everything else is free text. Completing any of these against buffer
-        // and file names would be meaningless: a search regex, a column of text
-        // to insert, org tags, a rename, a task/REPL name, a debuggee
-        // expression, a branch being deliberately invented, a message to an
-        // agent, a property name, a date or relative shorthand, the DAP
-        // condition/log-message/watch/value/hit-count/function prompts, a byte
-        // count, a massif output path, or a line number.
-        case InputMode::ProjectSearch:
-        case InputMode::CreateDirectory:
-        case InputMode::StringRectangle:
-        case InputMode::SetHeadlineTags:
-        case InputMode::LspRenameNewName:
+        // The task prompt is the one whose label depends on state: the same
+        // prompt runs a task or cancels one.
         case InputMode::TaskName:
-        case InputMode::ReplName:
-        case InputMode::DapEvaluate:
-        case InputMode::VcsCreateBranch:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None,
+                                               taskPromptAction_ == TaskPromptAction::Run ? "Run task" : "Cancel task"};
+
+        // Everything else is free text -- completing any of these against buffer
+        // and file names would be meaningless: a search regex, a column of text,
+        // org tags, a rename, a REPL name, a debuggee expression, a branch being
+        // deliberately invented, a message to an agent, a property name, a date,
+        // the DAP condition/log/watch/value/hit-count/function prompts, a byte
+        // count, a massif output path, or a line number.
         case InputMode::AcpPromptText:
-        case InputMode::DeleteProperty:
-        case InputMode::OrgSchedule:
-        case InputMode::OrgDeadline:
-        case InputMode::DapBreakpointCondition:
-        case InputMode::DapBreakpointLogMessage:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Send ACP prompt"};
+        case InputMode::CreateDirectory:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Create directory"};
         case InputMode::DapAddWatch:
-        case InputMode::DapSetVariableValue:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Add watch"};
+        case InputMode::DapBreakpointCondition:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Breakpoint condition"};
         case InputMode::DapBreakpointHitCondition:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Breakpoint hit condition"};
+        case InputMode::DapBreakpointLogMessage:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Breakpoint log message"};
+        case InputMode::DapEvaluate:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Evaluate"};
         case InputMode::DapFunctionBreakpointName:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Function breakpoint name"};
         case InputMode::DapMemoryByteCount:
-        case InputMode::ShowMassifGraphPath:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Memory byte count"};
+        case InputMode::DapSetVariableValue:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Set variable"};
+        case InputMode::DeleteProperty:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Delete property"};
         case InputMode::GotoLine:
-            return bufferview::PromptCompletion::None;
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Goto line"};
+        case InputMode::LspRenameNewName:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Rename"};
+        case InputMode::OrgDeadline:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Deadline"};
+        case InputMode::OrgSchedule:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Schedule"};
+        case InputMode::ProjectSearch:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Project search"};
+        case InputMode::ReplName:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Run REPL"};
+        case InputMode::SetHeadlineTags:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Set headline tags"};
+        case InputMode::ShowMassifGraphPath:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Massif output file"};
+        case InputMode::StringRectangle:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "String rectangle"};
+        case InputMode::VcsCreateBranch:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Create branch"};
 
         default:
             return std::nullopt; // not a text-entry prompt
     }
 }
 
-void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
-    if (chord.Special == editor::SpecialKey::Enter) {
-        const std::string input = prompt_->Text();
-
-        if (inputMode_ == InputMode::FindFile) {
-            const bool isNewFile = !std::filesystem::exists(input);
-            try {
-                text::Buffer& opened = bufferList_.OpenOrCreateFile(input);
-                activeBuffer_.Set(opened);
-                statusMessage_ = isNewFile ? "(New file)" : ("Opened " + opened.Name());
-            }
-            catch (const text::BinaryFileError&) {
-                // open-binary-anyway follow-up: ask instead of just
-                // reporting the refusal -- returns without EndInteractiveSession()
-                // below, since this transitions to a second y/n prompt
-                // rather than finishing the session outright.
-                prompt_.reset();
-                BeginConfirmOpenBinary(input);
-                return;
-            }
-            catch (const std::exception& e) {
-                ReportError(e.what());
-            }
+bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& input) {
+    if (inputMode_ == InputMode::FindFile) {
+        const bool isNewFile = !std::filesystem::exists(input);
+        try {
+            text::Buffer& opened = bufferList_.OpenOrCreateFile(input);
+            activeBuffer_.Set(opened);
+            statusMessage_ = isNewFile ? "(New file)" : ("Opened " + opened.Name());
         }
-        else if (inputMode_ == InputMode::OpenProjectPath) {
-            const std::filesystem::path root = editor::DetectProjectRoot(input);
-            if (editor::FindProjectByRoot(root)) {
-                // Already registered/named -- nothing to ask, activate directly.
-                ActivateProjectAndReport(root);
-            }
-            else {
-                // BookmarkSet's own pre-filled-second-prompt shape --
-                // returns rather than falling through to this function's
-                // shared EndInteractiveSession() tail below, since this
-                // transitions to OpenProjectName instead of finishing.
-                pendingOpenProjectRoot_ = root;
-                inputMode_              = InputMode::OpenProjectName;
-                prompt_.emplace("Project name: ");
-                prompt_->SetText(root.filename().string());
-                statusMessage_ = prompt_->StatusText();
-                return;
-            }
+        catch (const text::BinaryFileError&) {
+            // Ask whether to open it anyway rather than just reporting the
+            // refusal. That is a second y/n prompt taking over, so this reports
+            // a hand-off: the session must not end and nothing is recorded.
+            prompt_.reset();
+            BeginConfirmOpenBinary(input);
+            return bufferview::PromptCommit::Transitioned;
         }
-        else if (inputMode_ == InputMode::OpenProjectName) {
-            const std::string           name = input.empty() ? pendingOpenProjectRoot_.filename().string() : input;
-            const std::filesystem::path root = pendingOpenProjectRoot_;
-            pendingOpenProjectRoot_.clear();
-            editor::RegisterProject(name, root);
+        catch (const std::exception& e) {
+            ReportError(e.what());
+        }
+    }
+    else if (inputMode_ == InputMode::OpenProjectPath) {
+        const std::filesystem::path root = editor::DetectProjectRoot(input);
+        if (editor::FindProjectByRoot(root)) {
+            // Already registered/named -- nothing to ask, activate directly.
             ActivateProjectAndReport(root);
         }
-        else if (inputMode_ == InputMode::CreateDirectory) {
-            try {
-                editor::CreateProjectDirectory(input);
-                statusMessage_ = "Created directory " + input;
-                if (projectSidebar_) {
-                    projectSidebar_->InvalidateTree();
-                }
-            }
-            catch (const std::exception& e) {
-                ReportError(e.what());
+        else {
+            // BookmarkSet's own pre-filled-second-prompt shape --
+            // returns rather than falling through to this function's
+            // shared EndInteractiveSession() tail below, since this
+            // transitions to OpenProjectName instead of finishing.
+            pendingOpenProjectRoot_ = root;
+            inputMode_              = InputMode::OpenProjectName;
+            prompt_.emplace("Project name: ");
+            prompt_->SetText(root.filename().string());
+            statusMessage_ = prompt_->StatusText();
+            return bufferview::PromptCommit::Transitioned;
+        }
+    }
+    else if (inputMode_ == InputMode::OpenProjectName) {
+        const std::string           name = input.empty() ? pendingOpenProjectRoot_.filename().string() : input;
+        const std::filesystem::path root = pendingOpenProjectRoot_;
+        pendingOpenProjectRoot_.clear();
+        editor::RegisterProject(name, root);
+        ActivateProjectAndReport(root);
+    }
+    else if (inputMode_ == InputMode::CreateDirectory) {
+        try {
+            editor::CreateProjectDirectory(input);
+            statusMessage_ = "Created directory " + input;
+            if (projectSidebar_) {
+                projectSidebar_->InvalidateTree();
             }
         }
-        else if (inputMode_ == InputMode::ProjectSearch) {
-            try {
-                const std::vector<editor::SearchMatch> matches =
-                    editor::SearchDirectory(editor::ProjectRoot(), input);
+        catch (const std::exception& e) {
+            ReportError(e.what());
+        }
+    }
+    else if (inputMode_ == InputMode::ProjectSearch) {
+        try {
+            const std::vector<editor::SearchMatch> matches =
+                editor::SearchDirectory(editor::ProjectRoot(), input);
 
-                if (matches.empty()) {
-                    statusMessage_ = "No matches for \"" + input + "\"";
-                }
-                else {
-                    BuildResultsBuffer(matches, "*search results*");
-                    statusMessage_ = std::to_string(matches.size()) + " match" + (matches.size() == 1 ? "" : "es") +
-                                     " for \"" + input + "\" -- C-c C-v to visit";
-                }
-            }
-            catch (const editor::SearchPatternError& e) {
-                ReportError(std::string("Invalid regex: ") + e.what());
-            }
-        }
-        else if (inputMode_ == InputMode::StringRectangle) {
-            text::Buffer& buffer = activeBuffer_.Get();
-            if (!buffer.HasSecondaryCursors()) {
-                editor::StringRectangle(buffer, input, editor::TabWidth());
+            if (matches.empty()) {
+                statusMessage_ = "No matches for \"" + input + "\"";
             }
             else {
-                // multi-cursor-round-2 follow-up: one shared, user-typed
-                // replacement string applied to every cursor's own
-                // rectangle -- no piece-distribution question here, unlike
-                // kill/yank.
-                buffer.ForEachCursor([&] {
-                    if (buffer.HasMark()) {
-                        editor::StringRectangle(buffer, input, editor::TabWidth());
-                    }
-                });
+                BuildResultsBuffer(matches, "*search results*");
+                statusMessage_ = std::to_string(matches.size()) + " match" + (matches.size() == 1 ? "" : "es") +
+                                 " for \"" + input + "\" -- C-c C-v to visit";
             }
-            statusMessage_.clear();
         }
-        else if (inputMode_ == InputMode::SetHeadlineTags) {
-            // Re-resolved fresh (matches StartInteractiveSession's own
-            // comment on why this is safe) rather than trusting a value
-            // captured when the prompt opened -- point hasn't moved, so
-            // this always finds the same headline.
-            if (const auto headline = editor::org::HeadlineAtPoint(activeBuffer_.Get())) {
-                std::vector<std::string> newTags;
-                std::string              current;
-                for (const char ch : input) {
-                    if (ch == ':') {
-                        if (!current.empty()) {
-                            newTags.push_back(current);
-                            current.clear();
-                        }
-                    }
-                    else {
-                        current.push_back(ch);
+        catch (const editor::SearchPatternError& e) {
+            ReportError(std::string("Invalid regex: ") + e.what());
+        }
+    }
+    else if (inputMode_ == InputMode::StringRectangle) {
+        text::Buffer& buffer = activeBuffer_.Get();
+        if (!buffer.HasSecondaryCursors()) {
+            editor::StringRectangle(buffer, input, editor::TabWidth());
+        }
+        else {
+            // multi-cursor-round-2 follow-up: one shared, user-typed
+            // replacement string applied to every cursor's own
+            // rectangle -- no piece-distribution question here, unlike
+            // kill/yank.
+            buffer.ForEachCursor([&] {
+                if (buffer.HasMark()) {
+                    editor::StringRectangle(buffer, input, editor::TabWidth());
+                }
+            });
+        }
+        statusMessage_.clear();
+    }
+    else if (inputMode_ == InputMode::SetHeadlineTags) {
+        // Re-resolved fresh (matches StartInteractiveSession's own
+        // comment on why this is safe) rather than trusting a value
+        // captured when the prompt opened -- point hasn't moved, so
+        // this always finds the same headline.
+        if (const auto headline = editor::org::HeadlineAtPoint(activeBuffer_.Get())) {
+            std::vector<std::string> newTags;
+            std::string              current;
+            for (const char ch : input) {
+                if (ch == ':') {
+                    if (!current.empty()) {
+                        newTags.push_back(current);
+                        current.clear();
                     }
                 }
-                if (!current.empty())
-                    newTags.push_back(current);
-                editor::org::SetHeadlineTags(activeBuffer_.Get(), *headline, newTags);
+                else {
+                    current.push_back(ch);
+                }
             }
+            if (!current.empty())
+                newTags.push_back(current);
+            editor::org::SetHeadlineTags(activeBuffer_.Get(), *headline, newTags);
+        }
+        statusMessage_.clear();
+    }
+    else if (inputMode_ == InputMode::DeleteProperty) {
+        if (editor::org::DeletePropertyAtPoint(activeBuffer_.Get(), input)) {
             statusMessage_.clear();
         }
-        else if (inputMode_ == InputMode::DeleteProperty) {
-            if (editor::org::DeletePropertyAtPoint(activeBuffer_.Get(), input)) {
+        else {
+            statusMessage_ = "No such property.";
+        }
+    }
+    else if (inputMode_ == InputMode::OrgSchedule || inputMode_ == InputMode::OrgDeadline) {
+        // Re-resolved fresh, same reasoning SetHeadlineTags's own branch
+        // above states.
+        const bool isDeadline = (inputMode_ == InputMode::OrgDeadline);
+        if (const auto headline = editor::org::HeadlineAtPoint(activeBuffer_.Get())) {
+            editor::org::Planning planning =
+                editor::org::ParsePlanning(activeBuffer_.Get().Text(), *headline).value_or(editor::org::Planning{});
+            if (input.empty()) {
+                // Empty input clears this slot -- same "empty removes
+                // it" precedent SetHeadlineTags's own empty-tags case
+                // and SetProperty's own empty-value case establish.
+                (isDeadline ? planning.deadline : planning.scheduled) = std::nullopt;
+                editor::org::SetPlanning(activeBuffer_.Get(), *headline, planning);
                 statusMessage_.clear();
             }
             else {
-                statusMessage_ = "No such property.";
-            }
-        }
-        else if (inputMode_ == InputMode::OrgSchedule || inputMode_ == InputMode::OrgDeadline) {
-            // Re-resolved fresh, same reasoning SetHeadlineTags's own branch
-            // above states.
-            const bool isDeadline = (inputMode_ == InputMode::OrgDeadline);
-            if (const auto headline = editor::org::HeadlineAtPoint(activeBuffer_.Get())) {
-                editor::org::Planning planning =
-                    editor::org::ParsePlanning(activeBuffer_.Get().Text(), *headline).value_or(editor::org::Planning{});
-                if (input.empty()) {
-                    // Empty input clears this slot -- same "empty removes
-                    // it" precedent SetHeadlineTags's own empty-tags case
-                    // and SetProperty's own empty-value case establish.
-                    (isDeadline ? planning.deadline : planning.scheduled) = std::nullopt;
+                const auto today = std::chrono::year_month_day{
+                    std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())};
+                if (const auto parsed = editor::org::ParseTimestampInput(input, today)) {
+                    (isDeadline ? planning.deadline : planning.scheduled) = parsed;
                     editor::org::SetPlanning(activeBuffer_.Get(), *headline, planning);
                     statusMessage_.clear();
                 }
                 else {
-                    const auto today = std::chrono::year_month_day{
-                        std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())};
-                    if (const auto parsed = editor::org::ParseTimestampInput(input, today)) {
-                        (isDeadline ? planning.deadline : planning.scheduled) = parsed;
-                        editor::org::SetPlanning(activeBuffer_.Get(), *headline, planning);
-                        statusMessage_.clear();
-                    }
-                    else {
-                        statusMessage_ = "Unrecognized date -- try \"today\", \"+N\", or \"YYYY-MM-DD[ HH:MM]\".";
-                    }
+                    statusMessage_ = "Unrecognized date -- try \"today\", \"+N\", or \"YYYY-MM-DD[ HH:MM]\".";
                 }
             }
         }
-        else if (inputMode_ == InputMode::LspRenameNewName) {
-            // Fire-and-forget, same async shape as RequestCodeActionsAtPoint:
-            // EndInteractiveSession() below runs immediately, the actual
-            // rename applies later, from inside RequestRenameAtPoint's own
-            // callback, once the response arrives -- no separate y/n
-            // confirmation (worst case, undo).
-            RequestRenameAtPoint(input);
+    }
+    else if (inputMode_ == InputMode::LspRenameNewName) {
+        // Fire-and-forget, same async shape as RequestCodeActionsAtPoint:
+        // EndInteractiveSession() below runs immediately, the actual
+        // rename applies later, from inside RequestRenameAtPoint's own
+        // callback, once the response arrives -- no separate y/n
+        // confirmation (worst case, undo).
+        RequestRenameAtPoint(input);
+    }
+    else if (inputMode_ == InputMode::TaskName) {
+        if (input.empty()) {
+            statusMessage_ = "No task name given.";
         }
-        else if (inputMode_ == InputMode::TaskName) {
-            if (input.empty()) {
-                statusMessage_ = "No task name given.";
+        else if (!taskRunner_) {
+            statusMessage_ = "No task runner available.";
+        }
+        else if (taskPromptAction_ == TaskPromptAction::Run) {
+            if (text::Buffer* buffer = taskRunner_->RunTask(input)) {
+                activeBuffer_.Set(*buffer);
+                statusMessage_.clear();
             }
-            else if (!taskRunner_) {
-                statusMessage_ = "No task runner available.";
+        }
+        else { // Cancel
+            if (taskRunner_->IsRunning(input)) {
+                taskRunner_->CancelTask(input);
+                statusMessage_ = "Cancelling task \"" + input + "\"...";
             }
-            else if (taskPromptAction_ == TaskPromptAction::Run) {
-                if (text::Buffer* buffer = taskRunner_->RunTask(input)) {
-                    activeBuffer_.Set(*buffer);
+            else {
+                statusMessage_ = "No running task named \"" + input + "\"";
+            }
+        }
+    }
+    else if (inputMode_ == InputMode::ReplName) {
+        if (input.empty()) {
+            statusMessage_ = "No REPL name given.";
+        }
+        else if (!editor::repl::ReplCommand(input).has_value()) {
+            statusMessage_ = "No REPL command configured for \"" + input + "\" (see ned/set-repl-command).";
+        }
+        else if (!onRunReplRequest_) {
+            statusMessage_ = "No REPL host available.";
+        }
+        else {
+            onRunReplRequest_(input);
+            statusMessage_.clear();
+        }
+    }
+    else if (inputMode_ == InputMode::AcpPromptText) {
+        // Fire-and-forget, same async shape as DapEvaluate below: the
+        // reply streams into the output buffer asynchronously via
+        // AcpManager's own session/update handling, not through this
+        // return value.
+        statusMessage_ = acpManager_ ? acpManager_->SendPrompt(input) : "No ACP manager available.";
+    }
+    else if (inputMode_ == InputMode::DapEvaluate) {
+        if (input.empty()) {
+            statusMessage_.clear();
+        }
+        else if (!dapManager_) {
+            statusMessage_ = "No debugger available.";
+        }
+        else {
+            // Fire-and-forget, same async shape as LspRenameNewName
+            // above: EndInteractiveSession() below runs immediately,
+            // the result lands in statusMessage_ from the callback.
+            statusMessage_ = "Evaluating...";
+            dapManager_->Evaluate(input, [this, input](bool success, std::string text) {
+                statusMessage_ = success ? (input + " = " + text) : ("Evaluate failed: " + text);
+            });
+        }
+    }
+    else if (inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage ||
+             inputMode_ == InputMode::DapBreakpointHitCondition) {
+        // Empty input is meaningful here (clears the field), unlike
+        // DapEvaluate above -- no early-return on it.
+        if (!dapManager_ || !pendingDapBreakpointTarget_) {
+            statusMessage_ = "No debugger available.";
+        }
+        else if (inputMode_ == InputMode::DapBreakpointCondition) {
+            statusMessage_ = dapManager_->SetBreakpointCondition(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
+        }
+        else if (inputMode_ == InputMode::DapBreakpointLogMessage) {
+            statusMessage_ = dapManager_->SetBreakpointLogMessage(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
+        }
+        else {
+            statusMessage_ = dapManager_->SetBreakpointHitCondition(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
+        }
+        pendingDapBreakpointTarget_.reset();
+    }
+    else if (inputMode_ == InputMode::DapFunctionBreakpointName) {
+        if (input.empty()) {
+            statusMessage_ = "No function name given.";
+        }
+        else if (!dapManager_) {
+            statusMessage_ = "No debugger available.";
+        }
+        else {
+            const bool nowSet = dapManager_->ToggleFunctionBreakpoint(input);
+            statusMessage_    = (nowSet ? "Function breakpoint added: " : "Function breakpoint removed: ") + input;
+        }
+    }
+    else if (inputMode_ == InputMode::DapAddWatch) {
+        if (input.empty()) {
+            statusMessage_ = "No expression given.";
+        }
+        else if (!dapManager_) {
+            statusMessage_ = "No debugger available.";
+        }
+        else {
+            dapManager_->AddWatch(input);
+            statusMessage_ = "Watch added: " + input;
+        }
+    }
+    else if (inputMode_ == InputMode::DapSetVariableValue) {
+        if (!dapManager_ || !pendingDapSetVariable_) {
+            statusMessage_ = "No debugger available.";
+        }
+        else {
+            text::Buffer* const bufferPtr = pendingDapSetVariable_->buffer;
+            const std::size_t   line      = pendingDapSetVariable_->line;
+            const std::string   lineText  = pendingDapSetVariable_->lineText;
+            const int           ownerRef  = pendingDapSetVariable_->ownerRef;
+            const std::string   name      = pendingDapSetVariable_->name;
+            statusMessage_                = "Setting " + name + "...";
+            dapManager_->SetVariable(
+                ownerRef, name, input,
+                [this, bufferPtr, line, lineText, name](editor::dap::DapManager::SetVariableResult result) {
+                    if (bufferPtr != &activeBuffer_.Get()) {
+                        return; // switched away while the request was in flight
+                    }
+                    if (!result.success) {
+                        statusMessage_ = "Set variable failed: " + result.errorMessage;
+                        return;
+                    }
+                    text::Buffer&             target        = *bufferPtr;
+                    const text::ITextStorage& targetContent = target.Content();
+                    if (line >= targetContent.LineCount()) {
+                        return;
+                    }
+                    const std::size_t targetLineStart = targetContent.LineToByteOffset(line);
+                    const std::size_t targetLineEnd   = (line + 1 < targetContent.LineCount())
+                                                            ? targetContent.LineToByteOffset(line + 1) - 1
+                                                            : targetContent.ByteLength();
+                    if (targetContent.Substring(targetLineStart, targetLineEnd - targetLineStart) != lineText) {
+                        statusMessage_ = "Debug line changed -- variable set on the adapter, but not re-displayed.";
+                        return;
+                    }
+                    // Rebuild this single line the same way FormatDebugVariableLine
+                    // would, preserving indent and the owner marker (whose ref
+                    // hasn't changed) but reflecting the possibly-new value/type/
+                    // ref -- same programmatic-splice-under-a-lifted-read-only-flag
+                    // pattern ExpandVariableAtPoint uses.
+                    std::size_t indent = 0;
+                    while (indent < lineText.size() && lineText[indent] == ' ') {
+                        ++indent;
+                    }
+                    editor::dap::DapManager::Variable variable;
+                    variable.name                 = name;
+                    variable.value                = result.value;
+                    variable.type                 = result.type;
+                    variable.variablesReference   = result.variablesReference;
+                    std::string       replacement = FormatDebugVariableLine(variable, indent);
+                    const std::size_t ownerMarker = lineText.rfind("[owner:");
+                    if (ownerMarker != std::string::npos) {
+                        replacement += "  " + lineText.substr(ownerMarker);
+                    }
+                    const bool wasReadOnly = target.ReadOnly();
+                    target.SetReadOnly(false);
+                    target.DeleteRange(targetLineStart, targetLineEnd - targetLineStart);
+                    target.InsertAt(targetLineStart, replacement);
+                    target.SetReadOnly(wasReadOnly);
                     statusMessage_.clear();
-                }
-            }
-            else { // Cancel
-                if (taskRunner_->IsRunning(input)) {
-                    taskRunner_->CancelTask(input);
-                    statusMessage_ = "Cancelling task \"" + input + "\"...";
-                }
-                else {
-                    statusMessage_ = "No running task named \"" + input + "\"";
-                }
-            }
-        }
-        else if (inputMode_ == InputMode::ReplName) {
-            if (input.empty()) {
-                statusMessage_ = "No REPL name given.";
-            }
-            else if (!editor::repl::ReplCommand(input).has_value()) {
-                statusMessage_ = "No REPL command configured for \"" + input + "\" (see ned/set-repl-command).";
-            }
-            else if (!onRunReplRequest_) {
-                statusMessage_ = "No REPL host available.";
-            }
-            else {
-                onRunReplRequest_(input);
-                statusMessage_.clear();
-            }
-        }
-        else if (inputMode_ == InputMode::AcpPromptText) {
-            // Fire-and-forget, same async shape as DapEvaluate below: the
-            // reply streams into the output buffer asynchronously via
-            // AcpManager's own session/update handling, not through this
-            // return value.
-            statusMessage_ = acpManager_ ? acpManager_->SendPrompt(input) : "No ACP manager available.";
-        }
-        else if (inputMode_ == InputMode::DapEvaluate) {
-            if (input.empty()) {
-                statusMessage_.clear();
-            }
-            else if (!dapManager_) {
-                statusMessage_ = "No debugger available.";
-            }
-            else {
-                // Fire-and-forget, same async shape as LspRenameNewName
-                // above: EndInteractiveSession() below runs immediately,
-                // the result lands in statusMessage_ from the callback.
-                statusMessage_ = "Evaluating...";
-                dapManager_->Evaluate(input, [this, input](bool success, std::string text) {
-                    statusMessage_ = success ? (input + " = " + text) : ("Evaluate failed: " + text);
                 });
-            }
         }
-        else if (inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage ||
-                 inputMode_ == InputMode::DapBreakpointHitCondition) {
-            // Empty input is meaningful here (clears the field), unlike
-            // DapEvaluate above -- no early-return on it.
-            if (!dapManager_ || !pendingDapBreakpointTarget_) {
-                statusMessage_ = "No debugger available.";
-            }
-            else if (inputMode_ == InputMode::DapBreakpointCondition) {
-                statusMessage_ = dapManager_->SetBreakpointCondition(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
-            }
-            else if (inputMode_ == InputMode::DapBreakpointLogMessage) {
-                statusMessage_ = dapManager_->SetBreakpointLogMessage(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
-            }
-            else {
-                statusMessage_ = dapManager_->SetBreakpointHitCondition(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
-            }
-            pendingDapBreakpointTarget_.reset();
+        pendingDapSetVariable_.reset();
+    }
+    else if (inputMode_ == InputMode::DapMemoryByteCount) {
+        if (!dapManager_ || !pendingDapMemoryReference_) {
+            statusMessage_ = "No debugger available.";
         }
-        else if (inputMode_ == InputMode::DapFunctionBreakpointName) {
-            if (input.empty()) {
-                statusMessage_ = "No function name given.";
-            }
-            else if (!dapManager_) {
-                statusMessage_ = "No debugger available.";
-            }
-            else {
-                const bool nowSet = dapManager_->ToggleFunctionBreakpoint(input);
-                statusMessage_    = (nowSet ? "Function breakpoint added: " : "Function breakpoint removed: ") + input;
-            }
-        }
-        else if (inputMode_ == InputMode::DapAddWatch) {
-            if (input.empty()) {
-                statusMessage_ = "No expression given.";
-            }
-            else if (!dapManager_) {
-                statusMessage_ = "No debugger available.";
-            }
-            else {
-                dapManager_->AddWatch(input);
-                statusMessage_ = "Watch added: " + input;
-            }
-        }
-        else if (inputMode_ == InputMode::DapSetVariableValue) {
-            if (!dapManager_ || !pendingDapSetVariable_) {
-                statusMessage_ = "No debugger available.";
-            }
-            else {
-                text::Buffer* const bufferPtr = pendingDapSetVariable_->buffer;
-                const std::size_t   line      = pendingDapSetVariable_->line;
-                const std::string   lineText  = pendingDapSetVariable_->lineText;
-                const int           ownerRef  = pendingDapSetVariable_->ownerRef;
-                const std::string   name      = pendingDapSetVariable_->name;
-                statusMessage_                = "Setting " + name + "...";
-                dapManager_->SetVariable(
-                    ownerRef, name, input,
-                    [this, bufferPtr, line, lineText, name](editor::dap::DapManager::SetVariableResult result) {
-                        if (bufferPtr != &activeBuffer_.Get()) {
-                            return; // switched away while the request was in flight
-                        }
-                        if (!result.success) {
-                            statusMessage_ = "Set variable failed: " + result.errorMessage;
-                            return;
-                        }
-                        text::Buffer&             target        = *bufferPtr;
-                        const text::ITextStorage& targetContent = target.Content();
-                        if (line >= targetContent.LineCount()) {
-                            return;
-                        }
-                        const std::size_t targetLineStart = targetContent.LineToByteOffset(line);
-                        const std::size_t targetLineEnd   = (line + 1 < targetContent.LineCount())
-                                                                ? targetContent.LineToByteOffset(line + 1) - 1
-                                                                : targetContent.ByteLength();
-                        if (targetContent.Substring(targetLineStart, targetLineEnd - targetLineStart) != lineText) {
-                            statusMessage_ = "Debug line changed -- variable set on the adapter, but not re-displayed.";
-                            return;
-                        }
-                        // Rebuild this single line the same way FormatDebugVariableLine
-                        // would, preserving indent and the owner marker (whose ref
-                        // hasn't changed) but reflecting the possibly-new value/type/
-                        // ref -- same programmatic-splice-under-a-lifted-read-only-flag
-                        // pattern ExpandVariableAtPoint uses.
-                        std::size_t indent = 0;
-                        while (indent < lineText.size() && lineText[indent] == ' ') {
-                            ++indent;
-                        }
-                        editor::dap::DapManager::Variable variable;
-                        variable.name                 = name;
-                        variable.value                = result.value;
-                        variable.type                 = result.type;
-                        variable.variablesReference   = result.variablesReference;
-                        std::string       replacement = FormatDebugVariableLine(variable, indent);
-                        const std::size_t ownerMarker = lineText.rfind("[owner:");
-                        if (ownerMarker != std::string::npos) {
-                            replacement += "  " + lineText.substr(ownerMarker);
-                        }
-                        const bool wasReadOnly = target.ReadOnly();
-                        target.SetReadOnly(false);
-                        target.DeleteRange(targetLineStart, targetLineEnd - targetLineStart);
-                        target.InsertAt(targetLineStart, replacement);
-                        target.SetReadOnly(wasReadOnly);
-                        statusMessage_.clear();
-                    });
-            }
-            pendingDapSetVariable_.reset();
-        }
-        else if (inputMode_ == InputMode::DapMemoryByteCount) {
-            if (!dapManager_ || !pendingDapMemoryReference_) {
-                statusMessage_ = "No debugger available.";
-            }
-            else {
-                std::size_t count = 128; // DAP round 5's default -- enough for most pointer/array previews
-                if (!input.empty()) {
-                    try {
-                        const long parsed = std::stol(input);
-                        if (parsed > 0) {
-                            count = static_cast<std::size_t>(parsed);
-                        }
-                    }
-                    catch (const std::exception&) {
-                        // Keep the default -- an unparsable count isn't worth failing the request over.
+        else {
+            std::size_t count = 128; // DAP round 5's default -- enough for most pointer/array previews
+            if (!input.empty()) {
+                try {
+                    const long parsed = std::stol(input);
+                    if (parsed > 0) {
+                        count = static_cast<std::size_t>(parsed);
                     }
                 }
-                const std::string memoryReference = *pendingDapMemoryReference_;
-                const bool        asImage         = pendingDapMemoryAsImage_;
-                statusMessage_                    = "Fetching memory...";
-                dapManager_->RequestMemory(
-                    memoryReference, 0, count,
-                    [this, memoryReference, asImage](bool success, editor::dap::DapManager::MemoryBlock block) {
-                        if (!success) {
-                            statusMessage_ = "Read memory failed (adapter may not support readMemory).";
-                            return;
-                        }
-                        if (asImage) {
-                            PushMemoryImageModel(memoryReference, block);
-                        }
-                        else {
-                            BuildMemoryBuffer(memoryReference, block);
-                        }
-                    });
-            }
-            pendingDapMemoryReference_.reset();
-            pendingDapMemoryAsImage_ = false;
-        }
-        else if (inputMode_ == InputMode::ShowMassifGraphPath) {
-            if (input.empty()) {
-                statusMessage_ = "No massif output file given.";
-            }
-            else {
-                std::ifstream file(input, std::ios::binary);
-                if (!file) {
-                    ReportError("Cannot open " + input);
+                catch (const std::exception&) {
+                    // Keep the default -- an unparsable count isn't worth failing the request over.
                 }
-                else {
-                    std::ostringstream contents;
-                    contents << file.rdbuf();
-                    const editor::MassifProfile profile = editor::ParseMassifOutput(contents.str());
-                    if (profile.snapshots.empty()) {
-                        statusMessage_ = "No massif snapshots found in " + input;
+            }
+            const std::string memoryReference = *pendingDapMemoryReference_;
+            const bool        asImage         = pendingDapMemoryAsImage_;
+            statusMessage_                    = "Fetching memory...";
+            dapManager_->RequestMemory(
+                memoryReference, 0, count,
+                [this, memoryReference, asImage](bool success, editor::dap::DapManager::MemoryBlock block) {
+                    if (!success) {
+                        statusMessage_ = "Read memory failed (adapter may not support readMemory).";
+                        return;
+                    }
+                    if (asImage) {
+                        PushMemoryImageModel(memoryReference, block);
                     }
                     else {
-                        text::Buffer& report = editor::RebuildMassifReportBuffer(bufferList_, profile, input);
-                        activeBuffer_.Set(report);
-                        statusMessage_ = "Massif report: " + std::to_string(profile.snapshots.size()) + " snapshots";
+                        BuildMemoryBuffer(memoryReference, block);
                     }
+                });
+        }
+        pendingDapMemoryReference_.reset();
+        pendingDapMemoryAsImage_ = false;
+    }
+    else if (inputMode_ == InputMode::ShowMassifGraphPath) {
+        if (input.empty()) {
+            statusMessage_ = "No massif output file given.";
+        }
+        else {
+            std::ifstream file(input, std::ios::binary);
+            if (!file) {
+                ReportError("Cannot open " + input);
+            }
+            else {
+                std::ostringstream contents;
+                contents << file.rdbuf();
+                const editor::MassifProfile profile = editor::ParseMassifOutput(contents.str());
+                if (profile.snapshots.empty()) {
+                    statusMessage_ = "No massif snapshots found in " + input;
+                }
+                else {
+                    text::Buffer& report = editor::RebuildMassifReportBuffer(bufferList_, profile, input);
+                    activeBuffer_.Set(report);
+                    statusMessage_ = "Massif report: " + std::to_string(profile.snapshots.size()) + " snapshots";
                 }
             }
         }
-        else if (inputMode_ == InputMode::VcsCreateBranch) {
-            if (input.empty()) {
-                statusMessage_ = "No branch name given.";
+    }
+    else if (inputMode_ == InputMode::VcsCreateBranch) {
+        if (input.empty()) {
+            statusMessage_ = "No branch name given.";
+        }
+        else if (!vcsRunner_) {
+            statusMessage_ = "no vcs runner configured";
+        }
+        else {
+            statusMessage_ = "Creating branch " + input + "...";
+            // A branch switch rewrites the working tree underneath any
+            // open buffer. Unmodified buffers catch up on the next
+            // auto-revert tick (external-modification-safety follow-up,
+            // Editor/AutoRevert.h -- this message predates it and used
+            // to say "not reloaded"); a *modified* buffer is still left
+            // alone, and its save will hit the supersession y/n rather
+            // than a confusing stale-content overwrite.
+            vcsRunner_->RequestBranchCreate(
+                input,
+                [this, input] {
+                    statusMessage_ = "Created and switched to " + input + " (modified buffers not reloaded)";
+                    RefreshVcsStatusBuffer();
+                    RequestDiffForCurrentBuffer();
+                },
+                [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
+        }
+    }
+    else if (inputMode_ == InputMode::GotoLine) {
+        std::size_t parsed   = 0;
+        bool        allDigit = !input.empty();
+        for (const char ch : input) {
+            if (ch < '0' || ch > '9') {
+                allDigit = false;
+                break;
             }
-            else if (!vcsRunner_) {
-                statusMessage_ = "no vcs runner configured";
+            parsed = parsed * 10 + static_cast<std::size_t>(ch - '0');
+        }
+        if (!allDigit) {
+            statusMessage_ = "Not a line number: \"" + input + "\"";
+        }
+        else {
+            // 1-based like Emacs' own goto-line; out-of-range clamps to
+            // the last line rather than erroring.
+            text::Buffer&     buffer = activeBuffer_.Get();
+            const std::size_t target = std::min(std::max<std::size_t>(parsed, 1), buffer.Content().LineCount()) - 1;
+            PushJumpMark();
+            buffer.SetPoint(buffer.Content().LineToByteOffset(target));
+            statusMessage_.clear();
+        }
+    }
+    else if (inputMode_ == InputMode::BookmarkSetName) {
+        if (input.empty()) {
+            statusMessage_ = "Bookmark name cannot be empty";
+        }
+        else {
+            editor::RecordBookmark(input, activeBuffer_.Get(), static_cast<std::size_t>(editor::TabWidth()));
+            editor::SaveBookmarks();
+            statusMessage_ = "Bookmark set: " + input;
+        }
+    }
+    else { // FindScratch
+        if (!editor::IsValidScratchName(input)) {
+            statusMessage_ = "Invalid scratch name: \"" + input + "\"";
+        }
+        else {
+            try {
+                std::filesystem::create_directories(editor::ScratchDirectory());
+                text::Buffer& opened = bufferList_.OpenOrCreateFile(editor::ScratchPathForName(input));
+                activeBuffer_.Set(opened);
+                statusMessage_ = "Scratch: " + input;
             }
-            else {
-                statusMessage_ = "Creating branch " + input + "...";
-                // A branch switch rewrites the working tree underneath any
-                // open buffer. Unmodified buffers catch up on the next
-                // auto-revert tick (external-modification-safety follow-up,
-                // Editor/AutoRevert.h -- this message predates it and used
-                // to say "not reloaded"); a *modified* buffer is still left
-                // alone, and its save will hit the supersession y/n rather
-                // than a confusing stale-content overwrite.
-                vcsRunner_->RequestBranchCreate(
-                    input,
-                    [this, input] {
-                        statusMessage_ = "Created and switched to " + input + " (modified buffers not reloaded)";
-                        RefreshVcsStatusBuffer();
-                        RequestDiffForCurrentBuffer();
-                    },
-                    [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
+            catch (const std::exception& e) {
+                ReportError(e.what());
             }
         }
-        else if (inputMode_ == InputMode::GotoLine) {
-            std::size_t parsed   = 0;
-            bool        allDigit = !input.empty();
-            for (const char ch : input) {
-                if (ch < '0' || ch > '9') {
-                    allDigit = false;
-                    break;
-                }
-                parsed = parsed * 10 + static_cast<std::size_t>(ch - '0');
-            }
-            if (!allDigit) {
-                statusMessage_ = "Not a line number: \"" + input + "\"";
-            }
-            else {
-                // 1-based like Emacs' own goto-line; out-of-range clamps to
-                // the last line rather than erroring.
-                text::Buffer&     buffer = activeBuffer_.Get();
-                const std::size_t target = std::min(std::max<std::size_t>(parsed, 1), buffer.Content().LineCount()) - 1;
-                PushJumpMark();
-                buffer.SetPoint(buffer.Content().LineToByteOffset(target));
-                statusMessage_.clear();
-            }
-        }
-        else if (inputMode_ == InputMode::BookmarkSetName) {
-            if (input.empty()) {
-                statusMessage_ = "Bookmark name cannot be empty";
-            }
-            else {
-                editor::RecordBookmark(input, activeBuffer_.Get(), static_cast<std::size_t>(editor::TabWidth()));
-                editor::SaveBookmarks();
-                statusMessage_ = "Bookmark set: " + input;
-            }
-        }
-        else { // FindScratch
-            if (!editor::IsValidScratchName(input)) {
-                statusMessage_ = "Invalid scratch name: \"" + input + "\"";
-            }
-            else {
-                try {
-                    std::filesystem::create_directories(editor::ScratchDirectory());
-                    text::Buffer& opened = bufferList_.OpenOrCreateFile(editor::ScratchPathForName(input));
-                    activeBuffer_.Set(opened);
-                    statusMessage_ = "Scratch: " + input;
-                }
-                catch (const std::exception& e) {
-                    ReportError(e.what());
-                }
-            }
-        }
+    }
 
+    return bufferview::PromptCommit::Finished;
+}
+
+void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        const std::string input = prompt_->Text();
+        if (CommitTextEntryPrompt(input) == bufferview::PromptCommit::Transitioned) {
+            return; // handed off to a second prompt, which owns the session now
+        }
         promptHistory_.Record(HistoryKeyForInputMode(inputMode_), input);
         EndInteractiveSession();
         return;
@@ -2560,105 +2598,12 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         // message rather than an immediate blank -- the new auto-clear
         // mechanism (EnsureStatusMessageFreshness/OnAnimation) takes it
         // from here, the same way it does for any other status message.
-        std::string label;
-        switch (inputMode_) {
-            case InputMode::FindFile:
-                label = "Find file";
-                break;
-            case InputMode::ProjectSearch:
-                label = "Project search";
-                break;
-            case InputMode::CreateDirectory:
-                label = "Create directory";
-                break;
-            case InputMode::FindScratch:
-                label = "Find scratch";
-                break;
-            case InputMode::GotoLine:
-                label = "Goto line";
-                break;
-            case InputMode::StringRectangle:
-                label = "String rectangle";
-                break;
-            case InputMode::SetHeadlineTags:
-                label = "Set headline tags";
-                break;
-            case InputMode::DeleteProperty:
-                label = "Delete property";
-                break;
-            case InputMode::OrgSchedule:
-                label = "Schedule";
-                break;
-            case InputMode::OrgDeadline:
-                label = "Deadline";
-                break;
-            case InputMode::LspRenameNewName:
-                label = "Rename";
-                break;
-            case InputMode::TaskName:
-                label = (taskPromptAction_ == TaskPromptAction::Run) ? "Run task" : "Cancel task";
-                break;
-            case InputMode::ReplName:
-                label = "Run REPL";
-                break;
-            case InputMode::DapEvaluate:
-                label = "Evaluate";
-                break;
-            case InputMode::DapBreakpointCondition:
-                label = "Breakpoint condition";
-                pendingDapBreakpointTarget_.reset();
-                break;
-            case InputMode::DapBreakpointLogMessage:
-                label = "Breakpoint log message";
-                pendingDapBreakpointTarget_.reset();
-                break;
-            case InputMode::DapAddWatch:
-                label = "Add watch";
-                break;
-            case InputMode::DapSetVariableValue:
-                label = "Set variable";
-                pendingDapSetVariable_.reset();
-                break;
-            case InputMode::DapBreakpointHitCondition:
-                label = "Breakpoint hit condition";
-                pendingDapBreakpointTarget_.reset();
-                break;
-            case InputMode::DapFunctionBreakpointName:
-                label = "Function breakpoint name";
-                break;
-            case InputMode::ShowMassifGraphPath:
-                label = "Massif output file";
-                break;
-            case InputMode::DapMemoryByteCount:
-                label = "Memory byte count";
-                pendingDapMemoryReference_.reset();
-                pendingDapMemoryAsImage_ = false;
-                break;
-            case InputMode::VcsCreateBranch:
-                label = "Create branch";
-                break;
-            case InputMode::AcpPromptText:
-                label = "Send ACP prompt";
-                break;
-            case InputMode::BookmarkSetName:
-                label = "Bookmark name";
-                break;
-            case InputMode::OpenProjectPath:
-                label = "Open project";
-                break;
-            case InputMode::OpenProjectName:
-                label = "Project name";
-                pendingOpenProjectRoot_.clear();
-                break;
-            default:
-                label = "Prompt";
-                break;
-        }
-        statusMessage_ = label + " cancelled.";
+        const std::optional<bufferview::TextEntryPrompt> prompt = TextEntryPromptFor(inputMode_);
+        statusMessage_                                          = (prompt ? prompt->cancelLabel : std::string("Prompt")) + " cancelled.";
         EndInteractiveSession();
         return;
     }
-    if (TextEntryPromptCompletion(inputMode_) == bufferview::PromptCompletion::PathDropdown) {
+    if (PromptCompletionForCurrentMode() == bufferview::PromptCompletion::PathDropdown) {
         // dropdown-path-completion follow-up: Up/Down move the live popup's
         // highlight (prompt history stays on M-p/M-n, TryNavigatePromptHistory
         // below -- never plain Up/Down, so there's no conflict); Tab accepts
@@ -2690,7 +2635,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         }
     }
     if (chord.Special == editor::SpecialKey::Tab &&
-        TextEntryPromptCompletion(inputMode_) == bufferview::PromptCompletion::Names) {
+        PromptCompletionForCurrentMode() == bufferview::PromptCompletion::Names) {
         CompletePrompt();
         return;
     }
@@ -2702,7 +2647,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
 
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_ = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
-        if (TextEntryPromptCompletion(inputMode_) == bufferview::PromptCompletion::PathDropdown) {
+        if (PromptCompletionForCurrentMode() == bufferview::PromptCompletion::PathDropdown) {
             pathCompletionSelection_ = 0;
             RefreshPathCompletionPopup();
             return;

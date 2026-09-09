@@ -251,7 +251,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
     // Every plain text-entry prompt routes here. The set is TextEntryPromptCompletion's
     // to decide, not a second list kept in agreement with it -- see
     // BufferView/TextEntryPrompt.h for the two bugs that cost.
-    if (TextEntryPromptCompletion(inputMode_)) {
+    if (TextEntryPromptFor(inputMode_)) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
