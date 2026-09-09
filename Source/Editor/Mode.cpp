@@ -1409,6 +1409,22 @@ Mode CSharpMode() {
     return mode;
 }
 
+Mode JavaMode() {
+    Mode mode              = TreeSitterMode("java-mode", "java", treesitter::queries::kJava, treesitter::queries::kJavaFolds,
+                                            nullptr, treesitter::queries::kJavaTags, treesitter::queries::kJavaTests,
+                                            treesitter::queries::kJavaIndents);
+    mode.lineCommentPrefix = "//";
+    return mode;
+}
+
+Mode KotlinMode() {
+    Mode mode              = TreeSitterMode("kotlin-mode", "kotlin", treesitter::queries::kKotlin, treesitter::queries::kKotlinFolds,
+                                            nullptr, treesitter::queries::kKotlinTags, treesitter::queries::kKotlinTests,
+                                            treesitter::queries::kKotlinIndents);
+    mode.lineCommentPrefix = "//";
+    return mode;
+}
+
 Mode YamlMode() {
     Mode mode              = TreeSitterMode("yaml-mode", "yaml", treesitter::queries::kYaml, nullptr, nullptr, nullptr, nullptr,
                                             treesitter::queries::kYamlIndents);

@@ -224,56 +224,26 @@ Notcurses.
 
 ### Language Intelligence
 
-- [ ] **Java & Kotlin bundled language support** (raised 2026-09-03 — user wants broad,
-      general-purpose Java support, Kotlin alongside it, and Android development to not
-      be painful). A system-installed `libtree-sitter-java.so` (confirmed present on this
-      machine, e.g. Gentoo's own package) has no queries because a compiled grammar
-      `.so` never carries them — `queries/*.scm` are separate text files that live in the
-      grammar's own repo, not in the shared library; this is normal for every grammar,
-      not a Java-specific gap. `DynamicGrammar.h`'s `dlopen`/runtime-load path (currently
-      the only way to reach a non-bundled grammar via `init.janet`) would still need
-      those query files sourced from somewhere, so it doesn't actually save the real
-      work. The clean path is instead the same one every one of the ~20 bundled
-      languages already takes: a real `ned_add_treesitter_grammar(tree-sitter-java
-      https://github.com/tree-sitter/tree-sitter-java.git <tag>)` `FetchContent` entry in
-      `CMakeLists.txt` (pulls the grammar's own `queries/highlights.scm` etc. with it,
-      compiled in via `ned_embed_treesitter_query`, no system package involved at all —
-      same reasoning applies to Kotlin, whose absence from the system's own tree-sitter
-      packages is irrelevant to ned's build). A community-maintained
-      `tree-sitter-kotlin` grammar exists (verify current maintainer/repo/tag before
-      wiring it in — unlike Java's grammar, it isn't the tree-sitter org's own). Once
-      grammars are in, "broad support" is the same checklist every bundled language
-      gets, applied to two more:
-      - `TreeSitterMode`/`TreeSitterModeFromLanguage` one-line `JavaMode()`/`KotlinMode()`
-        factories (`Mode.h`'s existing pattern), `*-tags.scm` for the symbol-kind gutter,
-        smart-indent queries (`cpp-indents.scm`'s own precedent), `*-tests.scm` for test
-        discovery (JUnit 4/5's `@Test` annotation, Kotlin's `kotlin.test`/JUnit-on-Kotlin).
-      - LSP: `eclipse.jdt.ls` (jdtls) for Java, `kotlin-language-server` (or Kotlin's
-        newer official LSP, verify current recommendation) for Kotlin — both configured
-        the ordinary `ned/set-lsp-command` way, nothing bundled/auto-detected (this
-        project's own stated policy). `Editor/Lsp/LspRootResolver.cpp`'s per-language
-        root-marker table gets `java`/`kotlin` entries: `pom.xml`/`build.gradle`/
-        `build.gradle.kts`/`settings.gradle.kts`.
-      - Test running: `TestOutputParser.h` already has a `"junit-xml"` parser (Maven
-        Surefire/Gradle both emit JUnit XML reports) — Java/Kotlin projects need zero new
-        parser work, just `ned/set-test-command`/`ned/set-test-results-file` pointed at
-        `mvn test`/`gradle test` and the report path.
-      - DAP: `java-debug` (the adapter behind VS Code's own Java debugging, also usable
-        standalone) — `ned/set-dap-adapter`/`ned/set-dap-launch`, same as any other
-        language, no new `DapManager` work.
-      - **Android development** mostly falls out of the above once Java/Kotlin +
-        `Editor/Tasks/`'s existing generic task-runner (`ned/set-task-command` pointed at
-        `./gradlew ...`) + the already-bundled XML mode (layout files) are in place — no
-        Android-specific engineering needed for editing/building/testing an Android
-        project. A real gap worth naming separately: `adb logcat` streaming and a
-        one-click "install + run on device/emulator" flow have no natural home in
-        anything that exists today — worth scoping only if plain shelled-out
-        `adb`/`gradlew` tasks prove too manual in practice, not speculatively.
+- [ ] **Android device tooling** (the one part of the Java/Kotlin work below that
+      didn't fall out of it). Editing, building and testing an Android project works
+      today via Java/Kotlin modes + the generic task runner (`ned/set-task-command`
+      pointed at `./gradlew ...`) + the bundled XML mode for layout files. What has no
+      natural home in anything that exists: `adb logcat` streaming, and a one-click
+      "install + run on device/emulator" flow. Deliberately left unscoped — worth
+      building only if plain shelled-out `adb`/`gradlew` tasks prove too manual in
+      practice, not speculatively.
 
 Shipped here, one slug each for `git log --grep=`: `go-bundled-language`,
-`csharp-bundled-language` (both via `FetchContent` like every bundled grammar — a
-system-installed `.so` never carries its own `queries/*.scm`, which is why leaning on one
-is never the shortcut it looks like), `resolver-gaps` and `lsp-document-link`
+`csharp-bundled-language`, `java-kotlin-bundled-language` (all via `FetchContent` like
+every bundled grammar — a system-installed `.so` never carries its own `queries/*.scm`,
+which is why leaning on one is never the shortcut it looks like; Kotlin is the one
+language whose grammar choice needed recording, see `CMakeLists.txt` beside
+`ned_add_treesitter_grammar(tree-sitter-kotlin ...)`. Java/Kotlin LSP, test running and
+debugging all fell out of existing machinery: jdtls and `kotlin-language-server` are
+configured the ordinary `ned/set-lsp-command` way with new Maven/Gradle entries in
+`RootResolver.cpp`, `TestOutputParser`'s existing `junit-xml` parser already reads
+Surefire/Gradle reports, and `java-debug` needs no new `DapManager` work),
+`resolver-gaps` and `lsp-document-link`
 (go-to-file-at-point, LSP-first via `textDocument/documentLink`),
 `protocol-stall-timeout-split`, `lsp-multiroot` + `lsp-multiroot-cache-scoping` +
 `lsp-workspace-folders`, `listpopup-scroll`.

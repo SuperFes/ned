@@ -166,6 +166,10 @@ TEST_CASE("ModeForPath resolves a representative sample of bundled extensions", 
     REQUIRE(ModeForPath("/some/path/deps.edn").name == "clojure-mode");
     REQUIRE(ModeForPath("/some/path/task.bb").name == "clojure-mode");
     REQUIRE(ModeForPath("/some/path/main.jank").name == "jank-mode");
+    REQUIRE(ModeForPath("/some/path/Widget.java").name == "java-mode");
+    REQUIRE(ModeForPath("/some/path/Widget.kt").name == "kotlin-mode");
+    // A Gradle build script is Kotlin source, not a dialect of its own.
+    REQUIRE(ModeForPath("/some/path/build.gradle.kts").name == "kotlin-mode");
 }
 
 TEST_CASE("ModeForPath falls back to FundamentalMode for an unrecognized extension", "[ModeOverrides]") {

@@ -590,6 +590,69 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${tree-sitter-c-sharp_SOURCE_DIR}/queries/tags.scm" CSharpTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/csharp-tests.scm" CSharpTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/csharp-indents.scm" CSharpIndents)
+
+# Java & Kotlin bundled language support (raised 2026-09-03 -- user wants
+# broad, general-purpose Java support with Kotlin alongside it, and Android
+# development not to be painful). A system-installed libtree-sitter-java.so
+# is present on this machine but is not a shortcut: a compiled grammar .so
+# never carries queries/*.scm, which live as separate text files in the
+# grammar's own repo -- the same reasoning csharp/go's own comments above
+# already record, and the reason every bundled grammar in this file comes
+# from FetchContent rather than a system package.
+#
+# tree-sitter/tree-sitter-java is the tree-sitter org's own official grammar
+# (same provenance bar as c/cpp/python/javascript/rust/go/c-sharp above) and
+# ships a real queries/highlights.scm and queries/tags.scm, both consumed
+# unmodified (checked directly against both files: class/interface/method
+# declarations are distinct node types with no overlapping @definition match,
+# so no c-tags.scm/cpp-tags.scm-style vendoring is needed). folds/indents/
+# tests are hand-written locally as they are for every bundled language.
+# No java-imports.scm: `import some.package.Class;` names a class within a
+# PACKAGE whose on-disk location depends on the build's own source roots and
+# classpath (Maven's src/main/java, Gradle's sourceSets, a jar) -- knowledge
+# a syntax-only query has no way to reconstruct, the same "package path, not
+# a file path" reasoning go-imports.scm's and csharp-imports.scm's own
+# absences document. That is jdtls's textDocument/definition job.
+ned_add_treesitter_grammar(tree-sitter-java https://github.com/tree-sitter/tree-sitter-java.git v0.23.5)
+
+ned_embed_treesitter_query("${tree-sitter-java_SOURCE_DIR}/queries/highlights.scm" Java)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/java-folds.scm" JavaFolds)
+ned_embed_treesitter_query("${tree-sitter-java_SOURCE_DIR}/queries/tags.scm" JavaTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/java-tests.scm" JavaTests)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/java-indents.scm" JavaIndents)
+
+# Kotlin is the one bundled language with no obvious single upstream, so the
+# choice is recorded rather than left implicit. Two real candidates exist and
+# both are effectively dormant: fwcd/tree-sitter-kotlin (0.3.8, last commit
+# Aug 2024 -- the original, and what nvim-treesitter tracked for years) and
+# tree-sitter-grammars/tree-sitter-kotlin (v1.1.0, last commit Jan 2025 -- a
+# fork under the same community org that supplies this file's markdown/yaml/
+# toml/xml grammars, which would otherwise be the better provenance bar).
+# fwcd wins on the one thing that actually decides it: it ships a real
+# queries/highlights.scm and the fork ships no queries at all, and the fork
+# is not a drop-in for the original's -- diffing the two node-types.json
+# files shows ~50 renamed node types on each side (simple_identifier,
+# multiline_comment and the whole *_expression family on one side vs.
+# binary_expression/block/block_comment on the other), so pairing the fork
+# with fwcd's query would silently highlight almost nothing. Taking the fork
+# instead would mean hand-writing a ~380-line highlights query against a
+# grammar nobody upstream writes queries for. Revisit if either repo wakes
+# up. Its highlights.scm is itself derived from nvim-treesitter's (stated in
+# that file's own header), with the #lua-match?-based patterns already
+# removed upstream -- which matters here, since Query.h treats an
+# unrecognized predicate as inert rather than as a filter, so a surviving
+# #lua-match? would over-match rather than fail loudly.
+#
+# No upstream tags.scm either, so kotlin-tags.scm is repo-local -- the only
+# bundled language whose symbol-kind query is hand-written for absence rather
+# than (like c-tags.scm/cpp-tags.scm) to correct an ambiguous upstream one.
+ned_add_treesitter_grammar(tree-sitter-kotlin https://github.com/fwcd/tree-sitter-kotlin.git 0.3.8)
+
+ned_embed_treesitter_query("${tree-sitter-kotlin_SOURCE_DIR}/queries/highlights.scm" Kotlin)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-folds.scm" KotlinFolds)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-tags.scm" KotlinTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-tests.scm" KotlinTests)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-indents.scm" KotlinIndents)
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -912,6 +975,8 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-rust
         PUBLIC tree-sitter-go
         PUBLIC tree-sitter-c-sharp
+        PUBLIC tree-sitter-java
+        PUBLIC tree-sitter-kotlin
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public
