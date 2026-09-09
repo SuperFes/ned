@@ -1,6 +1,6 @@
 //
 // Vim motions as pure functions over a Buffer: (buffer, point, ...) -> MotionResult.
-// Never mutate the buffer -- VimEngine.h calls these both to move point directly (plain
+// Never mutate the buffer -- Engine.h calls these both to move point directly (plain
 // motion) and to compute an operator's target range (operator-pending), the one thing
 // that makes Vim's "any operator + any motion" composition need a real function per
 // motion rather than Command.h's usual "command directly mutates Buffer" shape.
@@ -9,13 +9,13 @@
 // Buffer::MoveForwardWord's own documented word-char scope cut.
 //
 
-#ifndef NED_EDITOR_VIM_VIMMOTION_H
-#define NED_EDITOR_VIM_VIMMOTION_H
+#ifndef NED_EDITOR_VIM_MOTION_H
+#define NED_EDITOR_VIM_MOTION_H
 
 #include <cstddef>
 
 #include "Text/Buffer.h"
-#include "VimTypes.h"
+#include "Types.h"
 
 namespace ned::editor::vim {
 
@@ -26,7 +26,7 @@ namespace ned::editor::vim {
 [[nodiscard]] MotionResult FirstNonBlankMotion(const text::Buffer& buffer, std::size_t point);       // ^
 [[nodiscard]] MotionResult LineEndMotion(const text::Buffer& buffer, std::size_t point, long count); // $
 
-// goalColumn is the caller-maintained "sticky" visual column (VimEngine's own field,
+// goalColumn is the caller-maintained "sticky" visual column (Engine's own field,
 // mirroring Buffer::Cursor::goalColumn's concept -- kept out here since these functions
 // are pure/non-mutating and Buffer's own goal-column state is private to its Emacs-side
 // MoveDownLines/MoveUpLines).
@@ -73,4 +73,4 @@ namespace ned::editor::vim {
 
 } // namespace ned::editor::vim
 
-#endif // NED_EDITOR_VIM_VIMMOTION_H
+#endif // NED_EDITOR_VIM_MOTION_H

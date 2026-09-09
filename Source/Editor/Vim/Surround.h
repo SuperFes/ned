@@ -1,25 +1,25 @@
 //
 // vim-surround-style delimiter editing (ds/cs/ys/visual-S) as pure functions over a
-// Buffer, VimTextObject.h's sibling: DeleteSurroundAtPoint/ChangeSurroundAtPoint reuse
+// Buffer, TextObject.h's sibling: DeleteSurroundAtPoint/ChangeSurroundAtPoint reuse
 // InnerQuote/InnerBracket/InnerTag's own "around" ranges directly (the delimiter bytes
 // are exactly [around.start, inner.start) and [inner.end, around.end)), and AddSurround
 // is the shared insertion primitive behind ys/yss/visual-S alike.
 //
-// v1 cuts, documented here once: `from`/`to` accept the same alias set VimTextObject.h's
+// v1 cuts, documented here once: `from`/`to` accept the same alias set TextObject.h's
 // bracket objects already use ('(' / ')' / 'b', '[' / ']', '{' / '}' / 'B', '<' / '>',
 // plus the three quote chars and 't' for tag) -- not real vim-surround's fuller alias
 // table (r/a for []/<>) or its interactive tag-name-entry prompt when '<'/'t' is typed as
-// a *target*: '<'/'>' resolve to literal angle brackets here, matching VimTextObject's
+// a *target*: '<'/'>' resolve to literal angle brackets here, matching TextObject's
 // own i</a< convention, and 't' is only ever a valid `from` (an existing tag can be
 // stripped or changed away from), never a `to` (there's no text-entry sub-session to read
-// a new tag name/attributes). ys itself is wired in VimEngine.cpp only for text-object
+// a new tag name/attributes). ys itself is wired in Engine.cpp only for text-object
 // ranges (ysiw), yss) and the doubled current-line form (yss)) -- ys against an arbitrary
 // motion (ysw), ys$), ...) and the uppercase "own line" variants (yS/ySS) are both
-// unimplemented; VimEngine's own header comment carries the authoritative cut list.
+// unimplemented; Engine's own header comment carries the authoritative cut list.
 //
 
-#ifndef NED_EDITOR_VIM_VIMSURROUND_H
-#define NED_EDITOR_VIM_VIMSURROUND_H
+#ifndef NED_EDITOR_VIM_SURROUND_H
+#define NED_EDITOR_VIM_SURROUND_H
 
 #include <cstddef>
 #include <optional>
@@ -56,4 +56,4 @@ bool AddSurround(text::Buffer& buffer, std::size_t start, std::size_t end, char3
 
 } // namespace ned::editor::vim
 
-#endif // NED_EDITOR_VIM_VIMSURROUND_H
+#endif // NED_EDITOR_VIM_SURROUND_H

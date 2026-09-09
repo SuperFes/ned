@@ -29,8 +29,8 @@
 // slot another call could overwrite.
 //
 
-#ifndef NED_EDITOR_MCP_MCPTOOLREGISTRY_H
-#define NED_EDITOR_MCP_MCPTOOLREGISTRY_H
+#ifndef NED_EDITOR_MCP_TOOLREGISTRY_H
+#define NED_EDITOR_MCP_TOOLREGISTRY_H
 
 #include <functional>
 #include <string>
@@ -121,4 +121,4 @@ class ToolRegistry {
 
 } // namespace ned::editor::mcp
 
-#endif // NED_EDITOR_MCP_MCPTOOLREGISTRY_H
+#endif // NED_EDITOR_MCP_TOOLREGISTRY_H

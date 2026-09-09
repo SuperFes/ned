@@ -1,4 +1,4 @@
-#include "VimSettings.h"
+#include "Settings.h"
 
 #include <mutex>
 
@@ -23,7 +23,7 @@ void SetVimModeEnabled(bool enabled) {
     EnabledStorage() = enabled;
 }
 
-bool VimModeEnabled() {
+bool ModeEnabled() {
     const std::lock_guard<std::mutex> lock(EnabledMutex());
     return EnabledStorage();
 }

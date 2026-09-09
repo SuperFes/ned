@@ -1,4 +1,4 @@
-#include "VimTextObject.h"
+#include "TextObject.h"
 
 #include <cctype>
 #include <optional>
@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "Text/Grapheme.h"
-#include "VimLineUtil.h"
+#include "LineUtil.h"
 
 namespace ned::editor::vim {
 

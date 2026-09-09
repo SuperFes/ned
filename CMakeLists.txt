@@ -736,15 +736,15 @@ add_library(ned_lib STATIC
         Source/Editor/TerminalTabLauncher.cpp
         Source/Editor/ProjectSwitch.cpp
         Source/Editor/ProjectPlugins.cpp
-        Source/Editor/Vim/VimSettings.cpp
-        Source/Editor/Vim/VimMotion.cpp
-        Source/Editor/Vim/VimTextObject.cpp
-        Source/Editor/Vim/VimSurround.cpp
-        Source/Editor/Vim/VimRegisters.cpp
-        Source/Editor/Vim/VimExCommand.cpp
-        Source/Editor/Vim/VimEngine.cpp
-        Source/Editor/Vim/VimGlobalMarks.cpp
-        Source/Editor/Vim/VimMagic.cpp
+        Source/Editor/Vim/Settings.cpp
+        Source/Editor/Vim/Motion.cpp
+        Source/Editor/Vim/TextObject.cpp
+        Source/Editor/Vim/Surround.cpp
+        Source/Editor/Vim/Registers.cpp
+        Source/Editor/Vim/ExCommand.cpp
+        Source/Editor/Vim/Engine.cpp
+        Source/Editor/Vim/GlobalMarks.cpp
+        Source/Editor/Vim/Magic.cpp
         Source/Editor/Vcs/DiffPatch.cpp
         Source/Editor/Vcs/VcsProviderRegistry.cpp
         Source/Editor/Vcs/VcsRowStatus.cpp

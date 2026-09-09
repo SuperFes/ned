@@ -1,13 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "Editor/Vim/VimExCommand.h"
+#include "Editor/Vim/ExCommand.h"
 
 using ned::editor::vim::ExRange;
 using ned::editor::vim::ParseExCommand;
 using ned::editor::vim::ParseGlobalArgs;
 using ned::editor::vim::ParseSubstituteArgs;
 
-TEST_CASE("A plain command with no range", "[VimExCommand]") {
+TEST_CASE("A plain command with no range", "[ExCommand]") {
     const auto cmd = ParseExCommand("w", 5, 10, std::nullopt);
     REQUIRE(cmd.has_value());
     REQUIRE_FALSE(cmd->range.present);
@@ -15,7 +15,7 @@ TEST_CASE("A plain command with no range", "[VimExCommand]") {
     REQUIRE_FALSE(cmd->bang);
 }
 
-TEST_CASE("wq and q! parse name and bang", "[VimExCommand]") {
+TEST_CASE("wq and q! parse name and bang", "[ExCommand]") {
     const auto wq = ParseExCommand("wq", 0, 0, std::nullopt);
     REQUIRE(wq->name == "wq");
 
@@ -24,7 +24,7 @@ TEST_CASE("wq and q! parse name and bang", "[VimExCommand]") {
     REQUIRE(qbang->bang);
 }
 
-TEST_CASE("A bare numeric address is a range-only command (goto line)", "[VimExCommand]") {
+TEST_CASE("A bare numeric address is a range-only command (goto line)", "[ExCommand]") {
     const auto cmd = ParseExCommand("42", 0, 100, std::nullopt);
     REQUIRE(cmd->range.present);
     REQUIRE(cmd->range.startLine == 41); // 1-based -> 0-based
@@ -32,7 +32,7 @@ TEST_CASE("A bare numeric address is a range-only command (goto line)", "[VimExC
     REQUIRE(cmd->name.empty());
 }
 
-TEST_CASE("% expands to the whole file", "[VimExCommand]") {
+TEST_CASE("% expands to the whole file", "[ExCommand]") {
     const auto cmd = ParseExCommand("%d", 3, 20, std::nullopt);
     REQUIRE(cmd->range.present);
     REQUIRE(cmd->range.startLine == 0);
@@ -40,13 +40,13 @@ TEST_CASE("% expands to the whole file", "[VimExCommand]") {
     REQUIRE(cmd->name == "d");
 }
 
-TEST_CASE(". and $ resolve against the caller's current/last line", "[VimExCommand]") {
+TEST_CASE(". and $ resolve against the caller's current/last line", "[ExCommand]") {
     const auto cmd = ParseExCommand(".,$d", 7, 20, std::nullopt);
     REQUIRE(cmd->range.startLine == 7);
     REQUIRE(cmd->range.endLine == 20);
 }
 
-TEST_CASE("'< and '> resolve against the supplied visual range", "[VimExCommand]") {
+TEST_CASE("'< and '> resolve against the supplied visual range", "[ExCommand]") {
     const auto cmd = ParseExCommand("'<,'>s/foo/bar/g", 0, 100, ExRange{true, 3, 8});
     REQUIRE(cmd->range.startLine == 3);
     REQUIRE(cmd->range.endLine == 8);
@@ -54,24 +54,24 @@ TEST_CASE("'< and '> resolve against the supplied visual range", "[VimExCommand]
     REQUIRE(cmd->rest == "/foo/bar/g");
 }
 
-TEST_CASE("A reversed explicit range is normalized low-to-high", "[VimExCommand]") {
+TEST_CASE("A reversed explicit range is normalized low-to-high", "[ExCommand]") {
     const auto cmd = ParseExCommand("10,5d", 0, 100, std::nullopt);
     REQUIRE(cmd->range.startLine == 4);
     REQUIRE(cmd->range.endLine == 9);
 }
 
-TEST_CASE(":normal keeps its raw argument, stripping exactly one leading space", "[VimExCommand]") {
+TEST_CASE(":normal keeps its raw argument, stripping exactly one leading space", "[ExCommand]") {
     const auto cmd = ParseExCommand("normal  ddp", 0, 0, std::nullopt);
     REQUIRE(cmd->name == "normal");
     REQUIRE(cmd->rest == " ddp"); // only one of the two spaces is the separator
 }
 
-TEST_CASE("Blank input is not a command", "[VimExCommand]") {
+TEST_CASE("Blank input is not a command", "[ExCommand]") {
     REQUIRE_FALSE(ParseExCommand("", 0, 0, std::nullopt).has_value());
     REQUIRE_FALSE(ParseExCommand("   ", 0, 0, std::nullopt).has_value());
 }
 
-TEST_CASE("ParseSubstituteArgs splits pattern/replacement/flags on the chosen delimiter", "[VimExCommand]") {
+TEST_CASE("ParseSubstituteArgs splits pattern/replacement/flags on the chosen delimiter", "[ExCommand]") {
     const auto args = ParseSubstituteArgs("/foo/bar/g");
     REQUIRE(args.has_value());
     REQUIRE(args->pattern == "foo");
@@ -79,7 +79,7 @@ TEST_CASE("ParseSubstituteArgs splits pattern/replacement/flags on the chosen de
     REQUIRE(args->flags == "g");
 }
 
-TEST_CASE("ParseSubstituteArgs accepts a non-slash delimiter and missing flags", "[VimExCommand]") {
+TEST_CASE("ParseSubstituteArgs accepts a non-slash delimiter and missing flags", "[ExCommand]") {
     const auto args = ParseSubstituteArgs("#/usr#/opt#");
     REQUIRE(args.has_value());
     REQUIRE(args->pattern == "/usr");
@@ -87,14 +87,14 @@ TEST_CASE("ParseSubstituteArgs accepts a non-slash delimiter and missing flags",
     REQUIRE(args->flags.empty());
 }
 
-TEST_CASE("ParseSubstituteArgs tolerates a missing trailing delimiter", "[VimExCommand]") {
+TEST_CASE("ParseSubstituteArgs tolerates a missing trailing delimiter", "[ExCommand]") {
     const auto args = ParseSubstituteArgs("/foo/bar");
     REQUIRE(args->pattern == "foo");
     REQUIRE(args->replacement == "bar");
     REQUIRE(args->flags.empty());
 }
 
-TEST_CASE(":g dispatch splits name/bang/rest, leaving :g's own args to ParseGlobalArgs", "[VimExCommand]") {
+TEST_CASE(":g dispatch splits name/bang/rest, leaving :g's own args to ParseGlobalArgs", "[ExCommand]") {
     const auto cmd = ParseExCommand("g!/foo bar/normal x", 0, 0, std::nullopt);
     REQUIRE(cmd.has_value());
     REQUIRE(cmd->name == "g");
@@ -102,21 +102,21 @@ TEST_CASE(":g dispatch splits name/bang/rest, leaving :g's own args to ParseGlob
     REQUIRE(cmd->rest == "/foo bar/normal x");
 }
 
-TEST_CASE("ParseGlobalArgs splits pattern from the verbatim command tail", "[VimExCommand]") {
+TEST_CASE("ParseGlobalArgs splits pattern from the verbatim command tail", "[ExCommand]") {
     const auto args = ParseGlobalArgs("/foo/normal x");
     REQUIRE(args.has_value());
     REQUIRE(args->pattern == "foo");
     REQUIRE(args->command == "normal x");
 }
 
-TEST_CASE("ParseGlobalArgs leaves the command portion unparsed even if it repeats the delimiter", "[VimExCommand]") {
+TEST_CASE("ParseGlobalArgs leaves the command portion unparsed even if it repeats the delimiter", "[ExCommand]") {
     const auto args = ParseGlobalArgs("/foo/s/foo/bar/g");
     REQUIRE(args.has_value());
     REQUIRE(args->pattern == "foo");
     REQUIRE(args->command == "s/foo/bar/g");
 }
 
-TEST_CASE("ParseGlobalArgs tolerates a missing command (bare pattern)", "[VimExCommand]") {
+TEST_CASE("ParseGlobalArgs tolerates a missing command (bare pattern)", "[ExCommand]") {
     const auto args = ParseGlobalArgs("/foo/");
     REQUIRE(args.has_value());
     REQUIRE(args->pattern == "foo");

@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "Editor/Vim/VimSurround.h"
+#include "Editor/Vim/Surround.h"
 #include "Text/Buffer.h"
 
 using ned::editor::vim::AddSurround;
@@ -18,7 +18,7 @@ Buffer MakeBuffer(const std::string& text) {
 }
 } // namespace
 
-TEST_CASE("ResolveSurroundTarget pads an opening bracket char but not its closing/alias counterpart", "[VimSurround]") {
+TEST_CASE("ResolveSurroundTarget pads an opening bracket char but not its closing/alias counterpart", "[Surround]") {
     const auto open = ResolveSurroundTarget(U'(');
     REQUIRE(open);
     REQUIRE(open->open == "( ");
@@ -42,7 +42,7 @@ TEST_CASE("ResolveSurroundTarget pads an opening bracket char but not its closin
     REQUIRE_FALSE(ResolveSurroundTarget(U'z'));
 }
 
-TEST_CASE("AddSurround wraps a range and reports its start as the new point", "[VimSurround]") {
+TEST_CASE("AddSurround wraps a range and reports its start as the new point", "[Surround]") {
     Buffer buffer = MakeBuffer("hello world");
 
     std::size_t point = 0;
@@ -51,7 +51,7 @@ TEST_CASE("AddSurround wraps a range and reports its start as the new point", "[
     REQUIRE(point == 0);
 }
 
-TEST_CASE("AddSurround fails without touching the buffer for an unresolved target", "[VimSurround]") {
+TEST_CASE("AddSurround fails without touching the buffer for an unresolved target", "[Surround]") {
     Buffer buffer = MakeBuffer("hello");
 
     std::size_t point = 99;
@@ -59,7 +59,7 @@ TEST_CASE("AddSurround fails without touching the buffer for an unresolved targe
     REQUIRE(buffer.Text() == "hello");
 }
 
-TEST_CASE("DeleteSurroundAtPoint strips the enclosing quotes", "[VimSurround]") {
+TEST_CASE("DeleteSurroundAtPoint strips the enclosing quotes", "[Surround]") {
     Buffer buffer = MakeBuffer("x = \"hello\" + 1");
     buffer.SetPoint(6); // inside "hello"
 
@@ -67,7 +67,7 @@ TEST_CASE("DeleteSurroundAtPoint strips the enclosing quotes", "[VimSurround]") 
     REQUIRE(buffer.Text() == "x = hello + 1");
 }
 
-TEST_CASE("DeleteSurroundAtPoint strips the enclosing brackets, aliasable via b", "[VimSurround]") {
+TEST_CASE("DeleteSurroundAtPoint strips the enclosing brackets, aliasable via b", "[Surround]") {
     Buffer buffer = MakeBuffer("foo(bar(baz)qux)end");
     buffer.SetPoint(9); // inside the inner "baz" parens
 
@@ -75,7 +75,7 @@ TEST_CASE("DeleteSurroundAtPoint strips the enclosing brackets, aliasable via b"
     REQUIRE(buffer.Text() == "foo(barbazqux)end");
 }
 
-TEST_CASE("DeleteSurroundAtPoint strips an enclosing tag", "[VimSurround]") {
+TEST_CASE("DeleteSurroundAtPoint strips an enclosing tag", "[Surround]") {
     Buffer buffer = MakeBuffer("<div><span>hi</span></div>");
     buffer.SetPoint(13); // inside "hi"
 
@@ -83,7 +83,7 @@ TEST_CASE("DeleteSurroundAtPoint strips an enclosing tag", "[VimSurround]") {
     REQUIRE(buffer.Text() == "<div>hi</div>");
 }
 
-TEST_CASE("DeleteSurroundAtPoint is a no-op when no such pair encloses point", "[VimSurround]") {
+TEST_CASE("DeleteSurroundAtPoint is a no-op when no such pair encloses point", "[Surround]") {
     Buffer buffer = MakeBuffer("hello world");
     buffer.SetPoint(3);
 
@@ -91,7 +91,7 @@ TEST_CASE("DeleteSurroundAtPoint is a no-op when no such pair encloses point", "
     REQUIRE(buffer.Text() == "hello world");
 }
 
-TEST_CASE("ChangeSurroundAtPoint swaps double quotes for single quotes", "[VimSurround]") {
+TEST_CASE("ChangeSurroundAtPoint swaps double quotes for single quotes", "[Surround]") {
     Buffer buffer = MakeBuffer("say \"hi\" now");
     buffer.SetPoint(6);
 
@@ -99,7 +99,7 @@ TEST_CASE("ChangeSurroundAtPoint swaps double quotes for single quotes", "[VimSu
     REQUIRE(buffer.Text() == "say 'hi' now");
 }
 
-TEST_CASE("ChangeSurroundAtPoint from quotes to a padded bracket", "[VimSurround]") {
+TEST_CASE("ChangeSurroundAtPoint from quotes to a padded bracket", "[Surround]") {
     Buffer buffer = MakeBuffer("say \"hi\" now");
     buffer.SetPoint(6);
 
@@ -107,7 +107,7 @@ TEST_CASE("ChangeSurroundAtPoint from quotes to a padded bracket", "[VimSurround
     REQUIRE(buffer.Text() == "say ( hi ) now");
 }
 
-TEST_CASE("ChangeSurroundAtPoint fails without touching the buffer for an unresolved target", "[VimSurround]") {
+TEST_CASE("ChangeSurroundAtPoint fails without touching the buffer for an unresolved target", "[Surround]") {
     Buffer buffer = MakeBuffer("say \"hi\" now");
     buffer.SetPoint(6);
 

@@ -1,6 +1,6 @@
 //
 // vim-global-marks follow-up: real vim's A-Z marks are cross-file, unlike a-z (buffer-
-// local) and '</'> (visual-selection) marks, which VimEngine.h's own marks_ map already
+// local) and '</'> (visual-selection) marks, which Engine.h's own marks_ map already
 // covers correctly. A small, process-wide, mutex-guarded store -- this codebase's own
 // dominant "process-wide setting" shape (see CLAUDE.md's own convention note) -- mapping
 // a mark letter to a file path plus (line, column), not a byte offset: Bookmark.h's own
@@ -9,15 +9,15 @@
 // clamps sanely via Buffer::ByteOffsetForLineAndColumn.
 //
 // Setting/reading this store is plain process-wide state, no UI dependency, so
-// VimEngine.cpp (Editor/, UI-free) can call it directly -- see SetMarkAt/GotoMark.
+// Engine.cpp (Editor/, UI-free) can call it directly -- see SetMarkAt/GotoMark.
 // Actually opening a different file and switching the active buffer, though, is
 // BufferView's own job (the same "engine signals intent, host UI acts" split
 // PendingIntent/pendingIntent_ already establishes) -- see
-// VimEngine::TakePendingBufferJump().
+// Engine::TakePendingBufferJump().
 //
 
-#ifndef NED_EDITOR_VIM_VIMGLOBALMARKS_H
-#define NED_EDITOR_VIM_VIMGLOBALMARKS_H
+#ifndef NED_EDITOR_VIM_GLOBALMARKS_H
+#define NED_EDITOR_VIM_GLOBALMARKS_H
 
 #include <cstddef>
 #include <filesystem>
@@ -33,7 +33,7 @@ struct GlobalMark {
     bool operator==(const GlobalMark&) const = default;
 };
 
-// name must be 'A'-'Z' -- callers (VimEngine::SetMarkAt/GotoMark) have already checked
+// name must be 'A'-'Z' -- callers (Engine::SetMarkAt/GotoMark) have already checked
 // this, matching every other process-wide setting module's own "no redundant
 // re-validation" convention.
 void                                    SetGlobalMark(char32_t name, GlobalMark mark);
@@ -47,4 +47,4 @@ void ClearGlobalMarksForTesting();
 
 } // namespace ned::editor::vim
 
-#endif // NED_EDITOR_VIM_VIMGLOBALMARKS_H
+#endif // NED_EDITOR_VIM_GLOBALMARKS_H

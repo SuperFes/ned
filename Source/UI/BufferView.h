@@ -62,7 +62,7 @@
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/Vcs/VcsProvider.h"
 #include "Editor/Vcs/VcsRunner.h"
-#include "Editor/Vim/VimEngine.h"
+#include "Editor/Vim/Engine.h"
 #include "EventLoop.h"
 #include "LeftDock.h"
 #include "ListPopup.h"
@@ -1301,10 +1301,10 @@ class BufferView : public Widget {
     // to resolve; consumes and returns true only for a real quick-key hit.
     bool HandleConflictQuickKey(const editor::KeyChord& chord);
     // Vim-mode follow-up: called instead of DispatchChordNormally from the tail of
-    // Normal-mode key handling whenever editor::vim::VimModeEnabled() is true.
+    // Normal-mode key handling whenever editor::vim::ModeEnabled() is true.
     // vimEngine_'s own Mode::Insert is the one case that still falls through to
     // DispatchChordNormally underneath (self-insert-command, auto-pair, snippets, ghost
-    // completion all keep working unmodified in Insert mode -- see VimEngine.h's own
+    // completion all keep working unmodified in Insert mode -- see Engine.h's own
     // header comment) -- everything else (Normal/Visual/Replace/CommandLine) is consumed
     // by vimEngine_ directly, never reaching Dispatcher::Feed at all. May destroy *this*
     // (a PendingIntent::CloseBuffer forwards to RequestCloseBuffer, same
@@ -3140,11 +3140,11 @@ class BufferView : public Widget {
     // exhaustively handled.
     std::optional<editor::PrefixArgumentReader> prefixArgReader_;
     std::optional<long>                         pendingPrefixArg_;
-    // Vim-mode follow-up: one VimEngine per pane, always constructed (cheap) but only
-    // ever driven when editor::vim::VimModeEnabled() is true -- read live each keystroke
+    // Vim-mode follow-up: one Engine per pane, always constructed (cheap) but only
+    // ever driven when editor::vim::ModeEnabled() is true -- read live each keystroke
     // rather than cached, matching every other process-wide setting's own convention.
     // See HandleVimKey's own doc comment for the Normal/Visual/Replace-vs-Insert split.
-    editor::vim::VimEngine vimEngine_;
+    editor::vim::Engine vimEngine_;
     // snippet-expansion follow-up: the live tabstop session (see
     // InputMode::Snippet above). pendingSnippetExpansion_ carries a
     // command's CommandContext::snippetExpansion from
