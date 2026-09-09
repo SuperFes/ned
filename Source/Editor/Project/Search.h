@@ -31,6 +31,10 @@
 #include <string>
 #include <vector>
 
+namespace ned::text {
+class BufferList;
+} // namespace ned::text
+
 namespace ned::editor {
 
 struct SearchMatch {
@@ -59,6 +63,28 @@ class SearchPatternError : public std::runtime_error {
 // Throws SearchPatternError on invalid pattern syntax. Returns an empty list
 // rather than throwing if root doesn't exist or can't be listed.
 [[nodiscard]] std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const std::string& pattern);
+
+// live-buffer-search follow-up: the same search, but an open buffer's own
+// content is what gets searched instead of its file. Editing a file and then
+// not finding what was just typed is the editor lying about its own state --
+// the buffer is the truth the user is working against, the file is the thing
+// about to be overwritten.
+//
+// Only *modified* buffers are snapshotted: an unmodified one is byte-identical
+// to its file, so reading the file is both correct and cheaper. A huge buffer
+// (ITextStorage::IsHuge) is deliberately left to the disk read too rather than
+// materialized whole just to be searched -- the same bound every other
+// huge-file path in this codebase keeps. A modified buffer whose file doesn't
+// exist on disk yet (a never-saved new file) is searched anyway, appended
+// after the walk's own files in path order, so results stay deterministic;
+// .gitignore and the dot-directory rule apply to it exactly as they would if
+// it were on disk.
+//
+// The snapshot is taken on the calling thread before any worker starts, so
+// BufferList (main-thread-only, like every other Text/ type) is never touched
+// concurrently.
+[[nodiscard]] std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const std::string& pattern,
+                                                       text::BufferList& liveBuffers);
 
 } // namespace ned::editor
 

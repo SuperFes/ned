@@ -7,16 +7,22 @@
 
 #include "Editor/Multibuffer.h"
 #include "Editor/MultibufferFoldSettings.h"
+#include "Editor/MultibufferLimits.h"
 #include "Text/BufferList.h"
 
 using ned::editor::multibuffer::BuildMultibuffer;
 using ned::editor::multibuffer::ClearMultibufferIndexFor;
 using ned::editor::multibuffer::ClearRegistryForTesting;
 using ned::editor::multibuffer::CommitExcerptChanges;
+using ned::editor::multibuffer::CommitResult;
 using ned::editor::multibuffer::ExcerptSource;
 using ned::editor::multibuffer::FoldableExcerptBlocks;
 using ned::editor::multibuffer::MultibufferIndexFor;
+using ned::editor::multibuffer::NextExcerptBodyStart;
+using ned::editor::multibuffer::PreviousExcerptBodyStart;
 using ned::editor::multibuffer::ReadExcerptText;
+using ned::editor::multibuffer::RevertExcerptAtOffset;
+using ned::editor::multibuffer::RevertExcerptsForFileAtOffset;
 using ned::text::Buffer;
 using ned::text::BufferList;
 
@@ -47,6 +53,15 @@ struct FoldSettingsResetGuard {
         ned::editor::SetMultibufferAutoCollapseLineThreshold(40);
         ned::editor::SetMultibufferAutoCollapseByteThreshold(2000);
         ned::editor::SetMultibufferAutoCollapseExcerptCap(100);
+    }
+};
+
+// Multibuffer-gaps follow-up: the excerpt cap is process-wide state too
+// (Editor/MultibufferLimits.h) -- same RAII restore convention as
+// FoldSettingsResetGuard above.
+struct LimitsResetGuard {
+    ~LimitsResetGuard() {
+        ned::editor::SetMultibufferMaxExcerpts(500);
     }
 };
 
@@ -643,4 +658,315 @@ TEST_CASE("FoldableExcerptBlocks excludes an excerpt with no header line", "[Mul
     REQUIRE(index != nullptr);
     const auto blocks = FoldableExcerptBlocks(*index);
     REQUIRE(blocks.size() == 1); // only the headered excerpt offered
+}
+
+// Multibuffer-gaps follow-up.
+
+TEST_CASE("BuildMultibuffer stitches at most MultibufferMaxExcerpts excerpts and names the rest", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    LimitsResetGuard   limitsGuard;
+    ned::editor::SetMultibufferMaxExcerpts(2);
+
+    BufferList bufferList;
+    Buffer&    multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
+                                              {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "a\n"},
+                                               ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "b\n"},
+                                               ExcerptSource{"/repo/c.cpp", 1, 1, "c.cpp:1", "c\n"},
+                                               ExcerptSource{"/repo/d.cpp", 1, 1, "d.cpp:1", "d\n"}});
+
+    const std::string text = multibuffer.Text();
+    REQUIRE(text.find("a.cpp:1") != std::string::npos);
+    REQUIRE(text.find("b.cpp:1") != std::string::npos);
+    REQUIRE(text.find("c.cpp:1") == std::string::npos);
+    REQUIRE(text.find("d.cpp:1") == std::string::npos);
+    REQUIRE(text.find("… 2 more not shown") != std::string::npos);
+
+    // The note line is outside every span, exactly like a rule line -- so
+    // Enter/click on it can't be mistaken for a real excerpt.
+    const auto* index = MultibufferIndexFor(multibuffer);
+    REQUIRE(index != nullptr);
+    REQUIRE(index->Spans().size() == 2);
+    REQUIRE(index->SpanAtOffset(text.find("… 2 more not shown")) == nullptr);
+}
+
+TEST_CASE("A caller that capped its own excerpt-building reports the real total via totalAvailable", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    LimitsResetGuard   limitsGuard;
+    ned::editor::SetMultibufferMaxExcerpts(10); // well above what's handed over
+
+    BufferList bufferList;
+    // The find-references shape: 200 matches, only 2 excerpts ever built.
+    Buffer& multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
+                                           {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "a\n"},
+                                            ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "b\n"}},
+                                           /*totalAvailable=*/200);
+
+    REQUIRE(multibuffer.Text().find("… 198 more not shown") != std::string::npos);
+}
+
+TEST_CASE("A totalAvailable smaller than the excerpts handed over never understates what was dropped",
+          "[Multibuffer]") {
+    RegistryResetGuard guard;
+    LimitsResetGuard   limitsGuard;
+    ned::editor::SetMultibufferMaxExcerpts(1);
+
+    BufferList bufferList;
+    Buffer&    multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
+                                              {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "a\n"},
+                                               ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "b\n"},
+                                               ExcerptSource{"/repo/c.cpp", 1, 1, "c.cpp:1", "c\n"}},
+                                              /*totalAvailable=*/1);
+
+    REQUIRE(multibuffer.Text().find("… 2 more not shown") != std::string::npos);
+}
+
+TEST_CASE("A zero cap means unlimited, and an uncapped build carries no note line", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    LimitsResetGuard   limitsGuard;
+    ned::editor::SetMultibufferMaxExcerpts(0);
+
+    BufferList bufferList;
+    Buffer&    multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
+                                              {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "a\n"},
+                                               ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "b\n"},
+                                               ExcerptSource{"/repo/c.cpp", 1, 1, "c.cpp:1", "c\n"}});
+
+    const std::string text = multibuffer.Text();
+    REQUIRE(text.find("c.cpp:1") != std::string::npos);
+    REQUIRE(text.find("more not shown") == std::string::npos);
+}
+
+// project-replace-review follow-up: CommitTarget::Disk -- the sed-flavored
+// half of the one replace path, folded in here rather than kept as a second
+// endpoint. The file-preservation coverage below moved over from
+// ProjectReplaceTest.cpp's ReplaceMatches tests along with it.
+
+TEST_CASE("A disk-target commit rewrites the source file and opens no buffer for it", "[Multibuffer]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_multibuffer_commit_disk";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path file = dir / "a.txt";
+    {
+        std::ofstream(file) << "one cat here\ntwo\n";
+    }
+
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            composite = BuildMultibuffer(bufferList, "*review*",
+                                                    {ExcerptSource{file, 1, 1, "a.txt:1", "one cat here\n", {}, /*editable=*/true}});
+
+    const std::size_t bodyStart = composite.Text().find("one cat here");
+    composite.DeleteRange(bodyStart, std::string("one cat here").size());
+    composite.InsertAt(bodyStart, "one dog here");
+
+    const CommitResult result = CommitExcerptChanges(bufferList, composite, /*projectUndo=*/nullptr, /*onlyPath=*/nullptr,
+                                                     ned::editor::multibuffer::CommitTarget::Disk);
+    REQUIRE(result.committedExcerpts == 1);
+    REQUIRE(result.filesWritten == 1);
+    REQUIRE(result.buffersCommitted == 0);
+    REQUIRE(bufferList.FindByPath(file) == nullptr); // no buffer opened for it
+
+    std::ifstream     check(file);
+    const std::string written((std::istreambuf_iterator<char>(check)), std::istreambuf_iterator<char>());
+    REQUIRE(written == "one dog here\ntwo\n");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A disk-target commit preserves the rewritten file's permissions and hard links", "[Multibuffer]") {
+    // file-attribute-preservation follow-up: this writes the user's own files
+    // with the temp-then-rename pattern Buffer::SaveToFile uses, and needs the
+    // same care -- see Text/FilePreservation.h. Moved here from
+    // ProjectReplaceTest.cpp when ReplaceMatches was folded into this path.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_multibuffer_commit_disk_preserve";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+
+    const std::filesystem::path script = dir / "run.sh";
+    {
+        std::ofstream(script) << "echo cat\n";
+    }
+    std::filesystem::permissions(script, std::filesystem::perms::owner_all);
+
+    const std::filesystem::path linked = dir / "linked.txt";
+    const std::filesystem::path alias  = dir / "alias.txt";
+    {
+        std::ofstream(linked) << "a cat here\n";
+    }
+    std::filesystem::create_hard_link(linked, alias);
+
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            composite =
+        BuildMultibuffer(bufferList, "*review*",
+                         {ExcerptSource{script, 1, 1, "run.sh:1", "echo cat\n", {}, /*editable=*/true},
+                          ExcerptSource{linked, 1, 1, "linked.txt:1", "a cat here\n", {}, /*editable=*/true}});
+
+    for (const char* before : {"echo cat", "a cat here"}) {
+        const std::string original(before);
+        const std::string replaced = original.substr(0, original.find("cat")) + "dog" +
+                                     original.substr(original.find("cat") + 3);
+        const std::size_t start    = composite.Text().find(original);
+        REQUIRE(start != std::string::npos);
+        composite.DeleteRange(start, original.size());
+        composite.InsertAt(start, replaced);
+    }
+
+    const CommitResult result = CommitExcerptChanges(bufferList, composite, nullptr, nullptr,
+                                                     ned::editor::multibuffer::CommitTarget::Disk);
+    REQUIRE(result.filesWritten == 2);
+
+    const auto read = [](const std::filesystem::path& p) {
+        std::ifstream f(p, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    REQUIRE(read(script) == "echo dog\n");
+    REQUIRE((std::filesystem::status(script).permissions() & std::filesystem::perms::owner_exec) !=
+            std::filesystem::perms::none);
+    REQUIRE(read(linked) == "a dog here\n");
+    REQUIRE(std::filesystem::equivalent(linked, alias)); // hard link survived the rewrite
+    REQUIRE(read(alias) == "a dog here\n");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A disk-target commit applies into a modified open buffer instead of writing behind it", "[Multibuffer]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_multibuffer_commit_disk_modified";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path file = dir / "a.txt";
+    {
+        std::ofstream(file) << "one cat here\n";
+    }
+
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            open = bufferList.OpenOrCreateFile(file);
+    open.SetPoint(open.Content().ByteLength());
+    open.InsertAtPoint("a second, unsaved line\n"); // the reason writing the file would be wrong
+
+    Buffer&           composite = BuildMultibuffer(bufferList, "*review*",
+                                                   {ExcerptSource{file, 1, 1, "a.txt:1", "one cat here\n", {}, /*editable=*/true}});
+    const std::size_t bodyStart = composite.Text().find("one cat here");
+    composite.DeleteRange(bodyStart, std::string("one cat here").size());
+    composite.InsertAt(bodyStart, "one dog here");
+
+    const CommitResult result = CommitExcerptChanges(bufferList, composite, nullptr, nullptr,
+                                                     ned::editor::multibuffer::CommitTarget::Disk);
+    REQUIRE(result.buffersCommitted == 1);
+    REQUIRE(result.filesWritten == 0);
+    REQUIRE(open.Text() == "one dog here\na second, unsaved line\n"); // both survive
+
+    std::ifstream     check(file);
+    const std::string onDisk((std::istreambuf_iterator<char>(check)), std::istreambuf_iterator<char>());
+    REQUIRE(onDisk == "one cat here\n"); // untouched -- the unsaved line was never at risk
+
+    std::filesystem::remove_all(dir);
+}
+
+// project-replace-review follow-up: per-excerpt / per-file revert and the
+// file-scoped commit.
+
+TEST_CASE("RevertExcerptAtOffset puts one excerpt back and leaves its siblings alone", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            source = bufferList.CreateBuffer("a.cpp");
+    source.SetPath("/repo/a.cpp");
+    source.InsertAtPoint("one\ntwo\n");
+
+    Buffer& composite = BuildMultibuffer(bufferList, "*review*",
+                                         {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "one\n", {}, /*editable=*/true},
+                                          ExcerptSource{"/repo/a.cpp", 2, 2, "a.cpp:2", "two\n", {}, /*editable=*/true}});
+
+    const std::size_t first = composite.Text().find("one\n");
+    composite.DeleteRange(first, 3);
+    composite.InsertAt(first, "ONE");
+    const std::size_t second = composite.Text().find("two\n");
+    composite.DeleteRange(second, 3);
+    composite.InsertAt(second, "TWO");
+
+    REQUIRE(RevertExcerptAtOffset(composite, composite.Text().find("ONE")));
+    REQUIRE(composite.Text().find("one\n") != std::string::npos);
+    REQUIRE(composite.Text().find("TWO") != std::string::npos); // untouched
+
+    // Already back to its original -- nothing left to do.
+    REQUIRE_FALSE(RevertExcerptAtOffset(composite, composite.Text().find("one\n")));
+}
+
+TEST_CASE("RevertExcerptsForFileAtOffset reverts every excerpt of that file in one step", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            a = bufferList.CreateBuffer("a.cpp");
+    a.SetPath("/repo/a.cpp");
+    a.InsertAtPoint("one\ntwo\n");
+    Buffer& b = bufferList.CreateBuffer("b.cpp");
+    b.SetPath("/repo/b.cpp");
+    b.InsertAtPoint("three\n");
+
+    Buffer& composite = BuildMultibuffer(bufferList, "*review*",
+                                         {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "one\n", {}, /*editable=*/true},
+                                          ExcerptSource{"/repo/a.cpp", 2, 2, "a.cpp:2", "two\n", {}, /*editable=*/true},
+                                          ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "three\n", {}, /*editable=*/true}});
+
+    for (const char* word : {"one", "two", "three"}) {
+        const std::size_t at = composite.Text().find(std::string(word) + "\n");
+        composite.DeleteRange(at, std::string(word).size());
+        composite.InsertAt(at, "X");
+    }
+
+    const std::size_t undoDepthBefore = composite.CurrentUndoSequence();
+    REQUIRE(RevertExcerptsForFileAtOffset(composite, composite.Text().find("X")) == 2); // a.cpp's two, not b.cpp's
+    REQUIRE(composite.Text().find("one\n") != std::string::npos);
+    REQUIRE(composite.Text().find("two\n") != std::string::npos);
+    REQUIRE(composite.Text().find("X\n") != std::string::npos); // b.cpp's excerpt still edited
+    REQUIRE(composite.CurrentUndoSequence() != undoDepthBefore);
+
+    composite.Undo(); // one step puts both back
+    REQUIRE(composite.Text().find("one\n") == std::string::npos);
+}
+
+TEST_CASE("A file-scoped commit leaves every other file's excerpts pending", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            a = bufferList.CreateBuffer("a.cpp");
+    a.SetPath("/repo/a.cpp");
+    a.InsertAtPoint("one\n");
+    Buffer& b = bufferList.CreateBuffer("b.cpp");
+    b.SetPath("/repo/b.cpp");
+    b.InsertAtPoint("two\n");
+
+    Buffer& composite = BuildMultibuffer(bufferList, "*review*",
+                                         {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "one\n", {}, /*editable=*/true},
+                                          ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "two\n", {}, /*editable=*/true}});
+
+    for (const char* word : {"one", "two"}) {
+        const std::size_t at = composite.Text().find(std::string(word) + "\n");
+        composite.DeleteRange(at, std::string(word).size());
+        composite.InsertAt(at, "EDITED");
+    }
+
+    const std::filesystem::path onlyA{"/repo/a.cpp"};
+    const CommitResult          result = CommitExcerptChanges(bufferList, composite, nullptr, &onlyA);
+    REQUIRE(result.committedExcerpts == 1);
+    REQUIRE(a.Text() == "EDITED\n");
+    REQUIRE(b.Text() == "two\n"); // left pending, not skipped-with-a-reason
+    REQUIRE(result.skipped.empty());
+}
+
+TEST_CASE("NextExcerptBodyStart / PreviousExcerptBodyStart step between excerpt bodies", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            composite = BuildMultibuffer(bufferList, "*review*",
+                                                    {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "one\n"},
+                                                     ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "two\n"}});
+
+    const std::size_t firstBody  = composite.Text().find("one\n");
+    const std::size_t secondBody = composite.Text().find("two\n");
+
+    REQUIRE(NextExcerptBodyStart(composite, 0) == firstBody);
+    REQUIRE(NextExcerptBodyStart(composite, firstBody) == secondBody);
+    REQUIRE_FALSE(NextExcerptBodyStart(composite, secondBody).has_value());
+
+    REQUIRE(PreviousExcerptBodyStart(composite, secondBody) == firstBody);
+    REQUIRE_FALSE(PreviousExcerptBodyStart(composite, firstBody).has_value());
 }

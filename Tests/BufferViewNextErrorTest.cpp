@@ -119,6 +119,13 @@ TEST_CASE("NextError walks forward through a flat \"path:line:\" results buffer,
 TEST_CASE("PreviousError walks backward through a flat results buffer", "[BufferView][NextError]") {
     Fixture fixture;
 
+    // Same pre-population reasoning as the forward test above -- and now
+    // load-bearing rather than just convenient: JumpToPathLine reports a
+    // miss instead of creating a buffer for a path that resolves to nothing
+    // (multibuffer-gaps follow-up), so an unpopulated target is no jump at all.
+    fixture.bufferList.OpenOrCreateFile("alpha.txt").InsertAtPoint("l1\nl2\nl3\nl4\n");
+    fixture.bufferList.OpenOrCreateFile("beta.txt").InsertAtPoint("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n");
+
     ned::text::Buffer& results = fixture.bufferList.CreateBuffer("*search results*");
     results.InsertAtPoint("alpha.txt:3: first\n"
                           "beta.txt:9: second\n");
@@ -169,6 +176,10 @@ TEST_CASE("NextError walks a MultibufferIndex-backed results buffer by excerpt",
 
 TEST_CASE("NextError keeps working after focus moved to an unrelated source buffer", "[BufferView][NextError]") {
     Fixture fixture;
+
+    // Same pre-population reasoning as every other jumping test here.
+    fixture.bufferList.OpenOrCreateFile("alpha.txt").InsertAtPoint("l1\nl2\nl3\nl4\n");
+    fixture.bufferList.OpenOrCreateFile("beta.txt").InsertAtPoint("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n");
 
     ned::text::Buffer& results = fixture.bufferList.CreateBuffer("*search results*");
     results.InsertAtPoint("alpha.txt:3: first\n"

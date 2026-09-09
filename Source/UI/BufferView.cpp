@@ -238,6 +238,9 @@ bool BufferView::OnKeyEvent(const Event& event) {
             ClampPointToNarrowing();
             return true;
 
+        case InputMode::MultibufferApplyTarget:
+            HandleMultibufferApplyTargetKey(*chord);
+            return true;
         case InputMode::ConfirmSaveWithConflicts:
             HandleConfirmSaveWithConflictsKey(*chord);
             ClampPointToNarrowing();
@@ -526,6 +529,9 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
 
     if (HandleConflictQuickKey(*chord)) {
+        return true;
+    }
+    if (HandleMultibufferQuickKey(*chord)) {
         return true;
     }
     if (editor::vim::ModeEnabled()) {

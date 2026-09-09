@@ -16,6 +16,7 @@
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Mode.h"
 #include "Editor/Multibuffer.h"
+#include "Editor/MultibufferLimits.h"
 #include "Editor/Project/Root.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
@@ -215,6 +216,48 @@ TEST_CASE("RequestProjectFindReferences finds every whole-word match across the 
     std::filesystem::remove_all(dir);
 }
 
+// Multibuffer-gaps follow-up: the excerpt cap, and the honest report of
+// what it dropped -- never a silent truncation.
+TEST_CASE("RequestProjectFindReferences caps the excerpts it builds and names what it dropped",
+          "[BufferView][ProjectFindReferences]") {
+    const ProjectRootGuard rootGuard;
+
+    struct LimitsResetGuard {
+        ~LimitsResetGuard() {
+            ned::editor::SetMultibufferMaxExcerpts(500);
+        }
+    } limitsGuard;
+    ned::editor::SetMultibufferMaxExcerpts(2);
+
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_find_references_cap_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.cpp") << "int widget = 1;\nint b = widget;\nint c = widget;\nint d = widget;\n";
+    }
+    ned::editor::SetProjectRoot(dir);
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("int widget = 1;\n");
+    fixture.buffer.SetPoint(5); // inside "widget"
+
+    BufferView view = fixture.View();
+    view.RequestProjectFindReferencesForTesting();
+
+    Buffer* results = fixture.bufferList.Find("*references: widget*");
+    REQUIRE(results != nullptr);
+
+    auto* index = MultibufferIndexFor(*results);
+    REQUIRE(index != nullptr);
+    REQUIRE(index->Spans().size() == 2);
+    REQUIRE(results->Text().find("… 2 more not shown") != std::string::npos);
+
+    // The status line reports the true match count *and* how many made it in.
+    REQUIRE(fixture.statusMessage.find("4 references to \"widget\" (showing 2)") == 0);
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("RequestProjectFindReferences reports no identifier at point without building a buffer", "[BufferView][ProjectFindReferences]") {
     const ProjectRootGuard rootGuard;
 
@@ -282,6 +325,72 @@ TEST_CASE("RequestProjectFindReferences sends textDocument/references when a lan
     REQUIRE(results != nullptr);
     REQUIRE(results->ExcerptRanges().size() == 1);
     REQUIRE(fixture.statusMessage.find("1 reference to \"widget\"") == 0);
+
+    std::filesystem::remove(targetPath);
+}
+
+// Multibuffer-gaps follow-up: an excerpt must show the content the user is
+// actually looking at, not what happens to be on disk -- and it has to,
+// since BuildMultibuffer resolves that same excerpt's byte range against the
+// live buffer. If the two disagree, everything downstream (the
+// column-preserving jump, a wgrep-style commit) is working from a body that
+// doesn't describe the range it claims to.
+TEST_CASE("A reference in an open buffer with unsaved edits excerpts the live line, not the disk line",
+          "[BufferView][ProjectFindReferences][Lsp]") {
+    const ProjectRootGuard rootGuard;
+
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_find_references_live_test.cpp";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int widget = 1;\n");
+    buffer.SetPoint(5); // inside "widget"
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screenBuf(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.RequestProjectFindReferencesForTesting();
+    const std::string raw = ReadRawLspFrame(server.serverStdinRead);
+
+    // The reference's own file: on disk one thing, open in ned as another.
+    const std::filesystem::path targetPath = std::filesystem::temp_directory_path() / "ned_find_references_live_target.cpp";
+    std::filesystem::remove(targetPath);
+    {
+        std::ofstream(targetPath) << "int other = widget + 1;\n";
+    }
+    ned::text::Buffer& target = fixture.bufferList.OpenOrCreateFile(targetPath);
+    target.SetPoint(0);
+    target.InsertAtPoint("/*x*/ "); // unsaved -- disk still says "int other = widget + 1;"
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array(
+                       {{{"uri", "file://" + targetPath.string()},
+                         {"range", {{"start", {{"line", 0}, {"character", 18}}}, {"end", {{"line", 0}, {"character", 24}}}}}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    Buffer* results = fixture.bufferList.Find("*references: widget*");
+    REQUIRE(results != nullptr);
+    REQUIRE(results->Text().find("/*x*/ int other = widget + 1;") != std::string::npos);
+
+    // Body and range agree, which is the whole point -- the excerpt's own
+    // text is byte-for-byte the source slice it names.
+    REQUIRE(results->ExcerptRanges().size() == 1);
+    const Buffer::ExcerptRange& range = results->ExcerptRanges()[0];
+    REQUIRE(target.Content().Substring(range.sourceStartByte, range.sourceEndByte - range.sourceStartByte) ==
+            range.originalText);
 
     std::filesystem::remove(targetPath);
 }

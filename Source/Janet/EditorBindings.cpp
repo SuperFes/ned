@@ -32,13 +32,14 @@
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/BackgroundSync.h"
+#include "Editor/Lsp/ProseChecker.h"
 #include "Editor/Lsp/RootResolver.h"
 #include "Editor/Lsp/ServerConfig.h"
-#include "Editor/Lsp/ProseChecker.h"
 #include "Editor/Mcp/BridgeSetting.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/MultibufferFoldSettings.h"
+#include "Editor/MultibufferLimits.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/PageScroll.h"
 #include "Editor/PersistentUndo.h"
@@ -59,8 +60,8 @@
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Terminal/Config.h"
-#include "Editor/TestRun/TestOutputParser.h"
 #include "Editor/TestRun/Config.h"
+#include "Editor/TestRun/TestOutputParser.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/TrimOnSave.h"
@@ -477,6 +478,10 @@ namespace {
 
     void NedSetMultibufferAutoCollapseByteThreshold(std::int64_t bytes) {
         editor::SetMultibufferAutoCollapseByteThreshold(bytes > 0 ? static_cast<std::size_t>(bytes) : 0);
+    }
+
+    void NedSetMultibufferMaxExcerpts(std::int64_t count) {
+        editor::SetMultibufferMaxExcerpts(count > 0 ? static_cast<std::size_t>(count) : 0);
     }
 
     void NedSetMultibufferAutoCollapseExcerptCap(std::int64_t count) {
@@ -1389,6 +1394,12 @@ void InstallEditorBindings(Environment& env) {
         "Once a multibuffer's own excerpt count passes this (default 100), every remaining excerpt collapses by "
         "default regardless of its own size -- catches a plain-large result set (e.g. project-find-references on a "
         "very common identifier) rather than dumping hundreds of expanded excerpts into view at once.");
+    env.Register<&NedSetMultibufferMaxExcerpts>(
+        "ned", "set-multibuffer-max-excerpts",
+        "Hard cap on how many excerpts a multibuffer stitches at all (default 500; 0 = unlimited) -- unlike "
+        "set-multibuffer-auto-collapse-excerpt-cap, which only collapses excerpts that were all still built, this "
+        "stops the work. Anything past the cap is dropped and named in a trailing \"N more not shown\" line of the "
+        "buffer itself; project-find-references also stops reading source lines off disk at this point.");
     env.Register<&NedSetStickyScrollEnabled>(
         "ned", "set-sticky-scroll-enabled",
         "Enable/disable pinned namespace/class/method breadcrumb rows at the top of a pane while scrolled into "

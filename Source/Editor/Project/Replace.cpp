@@ -24,7 +24,7 @@ namespace {
 
 } // namespace
 
-ProjectReplace::ProjectReplace(std::filesystem::path root) : root_(std::move(root)) {
+ProjectReplace::ProjectReplace(std::filesystem::path root, text::BufferList* liveBuffers) : root_(std::move(root)), liveBuffers_(liveBuffers) {
 }
 
 void ProjectReplace::AppendChar(char32_t codepoint) {
@@ -49,7 +49,10 @@ void ProjectReplace::ConfirmPattern() {
     if (stage_ != Stage::EnteringPattern || patternText_.empty()) {
         return;
     }
-    matches_ = SearchDirectory(root_, patternText_); // throws SearchPatternError on invalid syntax
+    // live-buffer-search follow-up: previews what the user is actually
+    // looking at, unsaved edits included, when a buffer list is wired up.
+    matches_ = liveBuffers_ ? SearchDirectory(root_, patternText_, *liveBuffers_)
+                            : SearchDirectory(root_, patternText_); // throws SearchPatternError on invalid syntax
     stage_   = Stage::EnteringReplacement;
 }
 
@@ -60,13 +63,6 @@ void ProjectReplace::ConfirmReplacement() {
     stage_ = matches_.empty() ? Stage::Done : Stage::Confirming;
 }
 
-ReplaceSummary ProjectReplace::Confirm() {
-    if (stage_ != Stage::Confirming) {
-        return {};
-    }
-    stage_ = Stage::Done;
-    return ReplaceMatches(matches_, patternText_, replacementText_);
-}
 
 void ProjectReplace::Cancel() {
     stage_ = Stage::Done;
@@ -94,84 +90,16 @@ std::string ProjectReplace::StatusText() const {
     return "";
 }
 
-const std::vector<SearchMatch>& ProjectReplace::Matches() const {
-    return matches_;
+const std::string& ProjectReplace::PatternText() const {
+    return patternText_;
 }
 
-ReplaceSummary ReplaceMatches(const std::vector<SearchMatch>& matches, const std::string& pattern,
-                              const std::string& replacement) {
-    const RegexPattern regex(pattern); // throws RegexPatternError on invalid syntax
+const std::string& ProjectReplace::ReplacementText() const {
+    return replacementText_;
+}
 
-    std::vector<std::filesystem::path> files;
-    for (const SearchMatch& match : matches) {
-        if (std::find(files.begin(), files.end(), match.file) == files.end()) {
-            files.push_back(match.file);
-        }
-    }
-
-    ReplaceSummary summary;
-    for (const std::filesystem::path& file : files) {
-        std::ifstream input(file, std::ios::binary);
-        if (!input) {
-            continue;
-        }
-        std::ostringstream buffer;
-        buffer << input.rdbuf();
-        input.close();
-        const std::string content = buffer.str();
-
-        const RegexPattern::ReplaceAllResult replaceResult = regex.ReplaceAll(content, replacement);
-        if (replaceResult.count == 0) {
-            continue;
-        }
-        const std::string& replaced = replaceResult.text;
-
-        // file-attribute-preservation follow-up: same resolve/capture/apply
-        // sequence Buffer::SaveToFile uses -- see Text/FilePreservation.h
-        // for what a bare rename would silently discard. Every failure here
-        // stays a `continue` rather than an abort, matching this loop's
-        // existing best-effort-per-file contract.
-        const std::filesystem::path         target     = text::ResolveSaveTarget(file);
-        const text::PreservedFileAttributes attributes = text::CaptureFileAttributes(target);
-
-        if (text::ShouldWriteInPlace(attributes)) {
-            std::ofstream output(target, std::ios::binary | std::ios::trunc);
-            if (!output) {
-                continue;
-            }
-            output.write(replaced.data(), static_cast<std::streamsize>(replaced.size()));
-            if (!output) {
-                continue;
-            }
-        }
-        else {
-            std::filesystem::path tempPath = target;
-            tempPath += ".ned-tmp";
-            {
-                std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
-                if (!output) {
-                    continue;
-                }
-                output.write(replaced.data(), static_cast<std::streamsize>(replaced.size()));
-                if (!output) {
-                    continue;
-                }
-            }
-
-            text::ApplyFileAttributes(tempPath, attributes);
-
-            std::error_code ec;
-            std::filesystem::rename(tempPath, target, ec);
-            if (ec) {
-                continue; // leaves the .ned-tmp file behind -- rare, and better than losing the original
-            }
-        }
-
-        summary.filesChanged += 1;
-        summary.replacementCount += replaceResult.count;
-    }
-
-    return summary;
+const std::vector<SearchMatch>& ProjectReplace::Matches() const {
+    return matches_;
 }
 
 } // namespace ned::editor

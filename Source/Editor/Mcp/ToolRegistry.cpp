@@ -334,7 +334,9 @@ void ToolRegistry::RegisterBuiltinTools() {
             }
             std::vector<SearchMatch> matches;
             try {
-                matches = SearchDirectory(editor::ProjectRoot(), *pattern);
+                // live-buffer-search follow-up: an agent asking what the project
+                // contains must see the same text the user does, unsaved edits included.
+                matches = SearchDirectory(editor::ProjectRoot(), *pattern, bufferList_);
             }
             catch (const SearchPatternError& e) {
                 callback(MakeTextToolResult(std::string("Invalid search pattern: ") + e.what(), true));

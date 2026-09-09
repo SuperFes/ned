@@ -332,15 +332,43 @@ double/triple-click select, gutter click, middle-click paste, scrollback click-d
 ### Navigation & Search
 
 Shipped here, one slug each for `git log --grep=`: `full-commit-diff-view`,
-`auto-collapse-on-build`.
+`auto-collapse-on-build`,
+`live-buffer-search` (project search, project replace, find-references' no-LSP fallback
+and the MCP search tool all read an open buffer's live content in place of its file) and
+`project-replace-review` (project-wide replace is now an editable review multibuffer
+committed with `C-c C-c` into live source buffers as one undoable project transaction,
+replacing the old flat preview plus whole-batch y/n disk rewrite; `CommitExcerptChanges`
+records a `ProjectUndoManager` transaction for every wgrep-style commit now, not just
+this one), `project-replace-apply-targets` (one replace path, not two: `C-c C-c` asks
+whether the reviewed text goes into the open buffers or straight to the files, `M-c` asks
+the same for just the file under point, and the old `ReplaceMatches` disk-rewrite
+endpoint was deleted with its file-preservation half folded into `CommitExcerptChanges`;
+plus the review's own `M-n`/`M-p`/`M-r`/`M-R` minor-mode layer and `undo-buffer-only`),
+`live-search-huge-buffers` (a huge modified buffer is line-chunk scanned through its own
+storage instead of falling back to a stale disk read, and an excerpt whose source is huge
+says `[huge]` in its header), and `multibuffer-gaps` (the excerpt cap plus the byte-exact,
+column-preserving jump-to-source, and a results line whose path resolves to nothing
+now reporting a miss instead of creating an empty buffer named after it; also fixed a
+real `Buffer::ExcerptRange` relocation bug it surfaced — undoing an edit inside an
+excerpt body left the range one byte long, which `CommitExcerptChanges` would have
+written back into the user's source file as a spurious blank line; and every excerpt
+body now reads an open buffer's live content first, so what an excerpt shows and the
+source range it names can't disagree over unsaved edits).
 
-- [ ] **Multibuffer gaps, remainder**: `project-find-references`' RE2 text-scan
-      fallback path (no LSP server running for the buffer) and the real
-      `textDocument/references` path both still build one excerpt per match with no
-      upper bound on total work done — auto-collapse only degrades *display*
-      gracefully, not the search itself. `VisitResultUnderPoint`'s jump-to-source also
-      stays line-granularity even though `Buffer::ExcerptRange` already carries the
-      exact source byte range that would let it preserve the intra-line column.
+- [ ] **Searching *within* a multibuffer** — nothing exists for this today (checked
+      2026-09-09). Ordinary isearch/query-replace work on a multibuffer because it's an
+      ordinary buffer of text, but they see the whole composite: header lines, rule
+      lines and blank separators included. Two distinct shapes, neither built:
+      **(a) excerpt-scoped search** — isearch/query-replace confined to excerpt
+      *bodies*, skipping chrome. Chrome is already protected from being *written*
+      (`Buffer::CanInsertAtExcerpt`/`CanDeleteExcerptRange`), so this is about not
+      stopping on a match inside a header path and not offering a replace that will
+      only be refused. **(b) search within these results** — re-run a project search
+      restricted to the set of files an existing multibuffer references, the natural
+      "narrow the result set" follow-up to a broad find-references. Note (a)/(b) do
+      *not* address the live-vs-disk staleness item below: a multibuffer's excerpts are
+      already built from live buffer content (`multibuffer-gaps`), so searching one only
+      ever re-searches what a stale scan already found.
 - [ ] A real visual side-by-side 3-way merge/diff view. `AutoMerge` auto-resolves the
       common case and drops real `<<<<<<<`/`=======`/`>>>>>>>` conflict markers into the
       buffer for a genuine divergence, but a real conflict is still hand-edited text,
@@ -377,16 +405,6 @@ import path it already reports).
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
-- [ ] A results-buffer line whose path doesn't resolve still silently opens an empty
-      scratch buffer of that name (`BufferView::JumpToPathLine` →
-      `BufferList::OpenOrCreateFile`, which creates on miss by design — that's what
-      `find-file` on a new path needs). `test-runner-gaps` fixed this at the
-      *producer* for `*test results*` (`Editor/TestRun/TestSourceResolver.h` resolves
-      each path at rebuild time, so the line carries a real one), but every other
-      `path:line:` producer — project search/replace, the agenda, `DiagnosticsLog`,
-      blame — still hands its path straight through. The general fix is at
-      `VisitResultUnderPoint`: report a miss rather than creating. Left alone because
-      those producers all write paths that do exist today.
 - [ ] `TestSourceResolver`'s basename search picks the shallowest candidate when
       nothing disambiguates (no go package hint, no directory components in the
       reported path, several same-named files) — deterministic, but it can be the
@@ -1008,6 +1026,22 @@ As of 2026-09-08: `ctest -j8` is clean under the `default` preset, and so is the
 single-process `./build/ned_tests` (see the build/test note at the end of this file for
 why that is a separate check worth making). The `sanitize` preset has one reproducible
 failure, below. Two flakes and one documented behavioral limitation:
+
+- **`ResolvePsr4Namespace strips a leading fully-qualified backslash` aborted once
+  under `ctest -j8`** (seen 2026-09-09, passed on immediate rerun and on a full clean
+  re-run of the suite). "Subprocess aborted", not an assertion failure, so it's a crash
+  in the test process rather than a wrong answer. Unreproduced since; noted so the next
+  sighting is a second data point rather than a first.
+
+- **`UnsavedChangeRanges` can drift by a byte across undo/redo inside a run of
+  identical characters.** Same root cause as the `ExcerptRange` bug `multibuffer-gaps`
+  fixed: `Buffer::UpdateUnsavedRangesForRestore` relocates across a `ChangedByteRange`
+  diff, which is free to report any of several equivalent change positions when the
+  edited byte sits inside a run of identical ones. Cosmetic here (a status-gutter mark
+  one byte wide, on a line already marked touched), unlike the excerpt case where a
+  stale range fed a real write-back — which is why only the latter got the exact
+  per-undo-node snapshot treatment. If this is ever worth fixing, that snapshot
+  mechanism (`Buffer::SnapshotExcerptRangeOffsets`) is the shape to copy.
 
 - **"Point navigation across a huge (piece-table-backed) buffer stays fast" fails under
   `ctest -j8` on the `sanitize` preset**, reproducibly, and passes on `--rerun-failed`

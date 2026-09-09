@@ -5207,7 +5207,7 @@ TEST_CASE("A mouse click in an ordinary, editable buffer just moves point, no vi
     REQUIRE(&fixture.activeBuffer.Get() == &fixture.buffer); // unchanged -- no visit happened
 }
 
-TEST_CASE("C-c C-r walks pattern, replacement, and confirmation, rewriting matched files on 'y'", "[BufferView]") {
+TEST_CASE("C-c C-r walks pattern and replacement, landing in an editable review buffer", "[BufferView]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_replace";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
@@ -5233,21 +5233,42 @@ TEST_CASE("C-c C-r walks pattern, replacement, and confirmation, rewriting match
     REQUIRE(&fixture.activeBuffer.Get() != &fixture.buffer);
     REQUIRE(fixture.activeBuffer.Get().Text().find((dir / "a.txt").string() + ":1: needle") != std::string::npos);
 
+    // project-replace-review follow-up: the old whole-batch y/n over a flat
+    // list is now an editable review multibuffer, committed on the user's own
+    // terms with C-c C-c (multibuffer-commit-changes) -- which writes into
+    // live source buffers, never straight to disk.
     TypeText(view, "found");
     view.OnEvent(ned::ui::test::Return());
-    REQUIRE(fixture.statusMessage.find("Replace matches on 1 line across 1 file with \"found\"? (y/n)") == 0);
+    REQUIRE(fixture.statusMessage.find("1 replacement in 1 line across 1 file") == 0);
+    REQUIRE(fixture.activeBuffer.Get().Name() == "*project replace*");
+    REQUIRE(fixture.activeBuffer.Get().Text().find("found") != std::string::npos); // already rewritten in the review
+    REQUIRE_FALSE(fixture.activeBuffer.Get().ReadOnly());
 
-    view.OnEvent(ned::ui::test::Character("y"));
-    REQUIRE(fixture.statusMessage == "Replaced 1 occurrence in 1 file.");
+    {
+        std::ifstream     beforeCommit(dir / "a.txt");
+        const std::string untouched((std::istreambuf_iterator<char>(beforeCommit)), std::istreambuf_iterator<char>());
+        REQUIRE(untouched == "needle\n"); // nothing written just by reviewing
+    }
+
+    // C-c C-c asks where to apply; 'b' is "into the open source buffers".
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    REQUIRE(fixture.statusMessage.find("(b) into open buffers") != std::string::npos);
+    view.OnEvent(ned::ui::test::Character("b"));
+
+    ned::text::Buffer* source = fixture.bufferList.FindByPath(dir / "a.txt");
+    REQUIRE(source != nullptr);
+    REQUIRE(source->Text() == "found\n");
+    REQUIRE(source->Modified()); // the user's own save is still the thing that reaches disk
 
     std::ifstream     file(dir / "a.txt");
     const std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    REQUIRE(written == "found\n");
+    REQUIRE(written == "needle\n");
 
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("'n' at the project-replace confirmation cancels without touching any file", "[BufferView]") {
+TEST_CASE("Abandoning the project-replace review leaves every file and buffer untouched", "[BufferView]") {
     const std::filesystem::path dir =
         std::filesystem::temp_directory_path() / "ned_bufferview_test_project_replace_cancel";
     std::filesystem::remove_all(dir);
@@ -5268,8 +5289,14 @@ TEST_CASE("'n' at the project-replace confirmation cancels without touching any 
     TypeText(view, "found");
     view.OnEvent(ned::ui::test::Return());
 
-    view.OnEvent(ned::ui::test::Character("n"));
-    REQUIRE(fixture.statusMessage == "Project replace cancelled.");
+    // project-replace-review follow-up: abandoning is just not committing --
+    // the review buffer holds every pending change and nothing outside it has
+    // been touched, so walking away (or killing the buffer) is the whole
+    // cancel gesture. No y/n stage remains to say "n" to.
+    REQUIRE(fixture.activeBuffer.Get().Name() == "*project replace*");
+
+    ned::text::Buffer* source = fixture.bufferList.FindByPath(dir / "a.txt");
+    REQUIRE(source == nullptr); // the source was never even opened
 
     std::ifstream     file(dir / "a.txt");
     const std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());

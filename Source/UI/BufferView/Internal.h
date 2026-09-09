@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -34,6 +35,7 @@
 #include <limits>
 #include <regex>
 #include <sstream>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -60,6 +62,7 @@
 #include "Editor/MassifReportBuffer.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
+#include "Editor/MultibufferLimits.h"
 #include "Editor/NextError.h"
 #include "Editor/NodeModules.h"
 #include "Editor/Org.h"
@@ -77,6 +80,7 @@
 #include "Editor/Project/Undo.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/Rectangle.h"
+#include "Editor/RegexPattern.h"
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/ScratchPad.h"
@@ -86,8 +90,8 @@
 #include "Editor/StickyScrollSettings.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
-#include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/TestRun/Config.h"
+#include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/DiffPatch.h"
@@ -97,6 +101,7 @@
 #include "Editor/WrapOverrides.h"
 #include "Janet/Environment.h"
 #include "Text/BinaryDetect.h"
+#include "Text/Grapheme.h"
 #include "Text/Utf8.h"
 #include "UI/Border.h"
 #include "UI/EchoArea.h"
@@ -1354,6 +1359,114 @@ inline std::string ReadFileLine(const std::filesystem::path& path, std::size_t l
     }
     return line;
 }
+
+// project-replace-review follow-up: whether a result's source is a huge file
+// (Text/BufferList.h's HugeFileThreshold), so an excerpt header can say so.
+// Huge-file support is deliberately second-class throughout this codebase --
+// it stays correct and bounded, but it isn't what shapes any fast path, and
+// several operations behave differently on one (a disk-target commit routes
+// through the buffer instead; project search scans it single-threaded rather
+// than snapshotting it). Saying "huge" on the row is what keeps that
+// difference visible instead of surprising.
+inline bool LooksHugeSource(text::BufferList& bufferList, const std::filesystem::path& path) {
+    if (const text::Buffer* open = bufferList.FindByPath(path)) {
+        return open->Content().IsHuge();
+    }
+    std::error_code      ec;
+    const std::uintmax_t size = std::filesystem::file_size(path, ec);
+    return !ec && size > text::HugeFileThreshold();
+}
+
+// Multibuffer-gaps follow-up: ReadFileLine's live-first, caching sibling,
+// for a caller resolving *many* lines at once (find-references: one per
+// resolved LSP location).
+//
+// Live first, always. An open buffer's own content is what the user is
+// looking at, so it's what an excerpt must show -- and it's also what
+// BuildMultibuffer resolves that excerpt's byte range against
+// (ReadExcerptText's own rule), so reading the body from disk instead would
+// hand back an excerpt whose displayed text and source range disagree the
+// moment a buffer has unsaved edits. Everything downstream of that -- the
+// column-preserving jump, a wgrep-style commit -- is only as good as those
+// two agreeing. Resolved through the source's own bounded line index
+// (LineToByteOffset is O(log n)), so this stays cheap even for a huge open
+// buffer.
+//
+// The disk path is the fallback for the common case that a reference lives
+// in a file nobody has opened. ReadFileLine reopens and re-scans the file
+// for every single line -- 500 references inside one file was 500 full
+// re-reads -- so this caches exactly one file's lines, the most recently
+// asked-for: enough to collapse a run of same-file locations into one read
+// (LSP locations arrive grouped by file in practice), while keeping the
+// memory this can hold bounded by a single file rather than by the whole
+// result set. A file past kMaxCachedFileBytes is never cached at all and
+// falls back to ReadFileLine verbatim, so a huge unopened source file can't
+// be pulled into memory line-by-line just to build a display buffer.
+class FileLineReader {
+  public:
+    explicit FileLineReader(text::BufferList& bufferList) : bufferList_(&bufferList) {
+    }
+
+    std::string Line(const std::filesystem::path& path, std::size_t lineNumber) {
+        if (lineNumber == 0) {
+            return {};
+        }
+        if (const text::Buffer* open = bufferList_->FindByPath(path)) {
+            const text::ITextStorage& content   = open->Content();
+            const std::size_t         lineCount = content.LineCount();
+            if (lineNumber > lineCount) {
+                return {}; // past the live end -- same empty-body degrade a short file gets
+            }
+            // [start of this line, start of the next) -- LineToByteOffset
+            // clamps at the last line, so this is the whole tail there.
+            // Only the trailing '\n' comes off: a CRLF file's '\r' is a real
+            // source byte, and dropping it would put the excerpt's own text
+            // one byte out of step with the range resolved against it.
+            std::string line = content.Substring(content.LineToByteOffset(lineNumber - 1),
+                                                 content.LineToByteOffset(lineNumber) - content.LineToByteOffset(lineNumber - 1));
+            if (!line.empty() && line.back() == '\n') {
+                line.pop_back();
+            }
+            return line;
+        }
+        if (path != cachedPath_) {
+            Load(path);
+        }
+        if (!cached_) {
+            return ReadFileLine(path, lineNumber);
+        }
+        return lineNumber <= cachedLines_.size() ? cachedLines_[lineNumber - 1] : std::string();
+    }
+
+  private:
+    static constexpr std::uintmax_t kMaxCachedFileBytes = 8u * 1024u * 1024u;
+
+    void Load(const std::filesystem::path& path) {
+        cachedPath_ = path;
+        cachedLines_.clear();
+        cached_ = false;
+
+        std::error_code      ec;
+        const std::uintmax_t size = std::filesystem::file_size(path, ec);
+        if (ec || size > kMaxCachedFileBytes) {
+            return; // unreadable, or big enough that one line at a time is the cheaper trade
+        }
+        std::ifstream file(path);
+        if (!file) {
+            return;
+        }
+        std::string line;
+        while (std::getline(file, line)) {
+            cachedLines_.push_back(line);
+        }
+        cached_ = true;
+    }
+
+    text::BufferList*        bufferList_;
+    std::filesystem::path    cachedPath_;
+    std::vector<std::string> cachedLines_;
+    bool                     cached_ = false;
+};
 
 // ACP context auto-attach follow-up: ReadFileLine's ranged sibling, for
 // SendResultLineToAgent's "surrounding source" excerpt -- reads

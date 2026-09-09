@@ -8,8 +8,11 @@
 #include <unordered_map>
 
 #include "MultibufferFoldSettings.h"
+#include "MultibufferLimits.h"
+#include "Project/Undo.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/FilePreservation.h"
 
 namespace ned::editor::multibuffer {
 
@@ -187,7 +190,7 @@ namespace {
 } // namespace
 
 text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& name,
-                               const std::vector<ExcerptSource>& excerpts) {
+                               const std::vector<ExcerptSource>& excerpts, std::size_t totalAvailable) {
     std::string                                   composite;
     std::vector<ExcerptSpan>                      spans;
     std::vector<std::pair<std::size_t, LineTint>> lineTints;
@@ -210,8 +213,22 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
     // without a second pass over the finished text.
     std::size_t compositeLine = 0;
 
+    // Multibuffer-gaps follow-up: the hard bound on how many excerpts are
+    // stitched at all, distinct from the auto-collapse cap just above (which
+    // only changes an excerpt's initial fold state -- see
+    // Editor/MultibufferLimits.h's own doc comment for the difference).
+    const std::size_t maxExcerpts = editor::MultibufferMaxExcerpts();
+    const std::size_t keptCount   = (maxExcerpts == 0) ? excerpts.size() : std::min(excerpts.size(), maxExcerpts);
+    // A caller that capped its own excerpt-building work reports the real
+    // total via totalAvailable; everyone else passes 0 and the set it handed
+    // over *is* the total. max(), not a plain choice between them, so a
+    // caller passing a stale/too-small total can never make the note claim
+    // fewer were dropped than this function itself dropped.
+    const std::size_t elidedCount = std::max(totalAvailable, excerpts.size()) - keptCount;
+
     std::size_t excerptOrdinal = 0; // 1-based, for MultibufferAutoCollapseExcerptCap()
-    for (const ExcerptSource& excerpt : excerpts) {
+    for (std::size_t excerptIndex = 0; excerptIndex < keptCount; ++excerptIndex) {
+        const ExcerptSource& excerpt = excerpts[excerptIndex];
         ++excerptOrdinal;
         // A rule line ahead of every excerpt (including the first) --
         // doubles as the separator from whatever came before, and gives
@@ -311,12 +328,23 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
         ++compositeLine;
     }
 
-    if (!excerpts.empty()) {
+    if (keptCount > 0) {
         // A closing rule so the last excerpt gets a visible bottom edge
         // too, matching every other excerpt's own top-rule framing.
         composite += MakeRuleLine();
         composite += '\n';
         lineTints.emplace_back(compositeLine, LineTint::Rule);
+        ++compositeLine;
+    }
+
+    // Multibuffer-gaps follow-up: never a silent truncation. Outside every
+    // ExcerptSpan (spans were closed above), so Enter/click on it is the
+    // same no-op a rule line already is, and named in the buffer's own text
+    // rather than only in a status message that the next keystroke clears.
+    if (elidedCount > 0) {
+        composite += "… " + std::to_string(elidedCount) + " more not shown (ned/set-multibuffer-max-excerpts)";
+        composite += '\n';
+        lineTints.emplace_back(compositeLine, LineTint::Header);
         ++compositeLine;
     }
 
@@ -355,8 +383,167 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
     return results;
 }
 
-CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& composite) {
+namespace {
+
+    // The editable range covering offset, or nullptr. Edge semantics match
+    // CanInsertAtExcerpt's: [start, end) -- an offset sitting exactly at a
+    // range's end belongs to the chrome after it, not to the excerpt.
+    const text::Buffer::ExcerptRange* EditableRangeAt(const text::Buffer& composite, std::size_t offset) {
+        for (const text::Buffer::ExcerptRange& range : composite.ExcerptRanges()) {
+            if (range.editable && offset >= range.start && offset < range.end) {
+                return &range;
+            }
+        }
+        return nullptr;
+    }
+
+    // Restores one range's originalText in place. Assumes the caller has
+    // already opened an undo group if it wants several of these to fold into
+    // one step. Returns false when the text already matches.
+    bool RevertRange(text::Buffer& composite, std::size_t start, std::size_t end, const std::string& originalText) {
+        if (composite.Content().Substring(start, end - start) == originalText) {
+            return false;
+        }
+        composite.DeleteRange(start, end - start);
+        composite.InsertAt(start, originalText);
+        return true;
+    }
+
+} // namespace
+
+std::optional<std::filesystem::path> ExcerptPathAtOffset(const text::Buffer& composite, std::size_t compositeByteOffset) {
+    const text::Buffer::ExcerptRange* range = EditableRangeAt(composite, compositeByteOffset);
+    return range ? std::optional<std::filesystem::path>(range->sourcePath) : std::nullopt;
+}
+
+bool RevertExcerptAtOffset(text::Buffer& composite, std::size_t compositeByteOffset) {
+    const text::Buffer::ExcerptRange* range = EditableRangeAt(composite, compositeByteOffset);
+    if (range == nullptr) {
+        return false;
+    }
+    // Copied out before the edit: reverting relocates the vector these live in.
+    const std::size_t start        = range->start;
+    const std::size_t end          = range->end;
+    const std::string originalText = range->originalText;
+
+    composite.BeginUndoGroup();
+    const bool changed = RevertRange(composite, start, end, originalText);
+    composite.EndUndoGroup();
+    return changed;
+}
+
+std::size_t RevertExcerptsForFileAtOffset(text::Buffer& composite, std::size_t compositeByteOffset) {
+    const text::Buffer::ExcerptRange* under = EditableRangeAt(composite, compositeByteOffset);
+    if (under == nullptr) {
+        return 0;
+    }
+    const std::filesystem::path path = under->sourcePath;
+
+    // Reverse order, and each range's fields re-read fresh: an earlier
+    // excerpt's offsets can't be disturbed by a later one's revert, and the
+    // vector is relocated by every edit.
+    std::size_t reverted = 0;
+    composite.BeginUndoGroup();
+    for (std::size_t i = composite.ExcerptRanges().size(); i-- > 0;) {
+        const text::Buffer::ExcerptRange& range = composite.ExcerptRanges()[i];
+        if (!range.editable || range.sourcePath != path) {
+            continue;
+        }
+        const std::size_t start        = range.start;
+        const std::size_t end          = range.end;
+        const std::string originalText = range.originalText;
+        if (RevertRange(composite, start, end, originalText)) {
+            ++reverted;
+        }
+    }
+    composite.EndUndoGroup();
+    return reverted;
+}
+
+std::optional<std::size_t> NextExcerptBodyStart(const text::Buffer& composite, std::size_t compositeByteOffset) {
+    const MultibufferIndex* index = MultibufferIndexFor(composite);
+    if (index == nullptr) {
+        return std::nullopt;
+    }
+    for (const ExcerptSpan& span : index->Spans()) { // sorted by compositeStartByte
+        if (span.bodyStartByte > compositeByteOffset) {
+            return span.bodyStartByte;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::size_t> PreviousExcerptBodyStart(const text::Buffer& composite, std::size_t compositeByteOffset) {
+    const MultibufferIndex* index = MultibufferIndexFor(composite);
+    if (index == nullptr) {
+        return std::nullopt;
+    }
+    std::optional<std::size_t> best;
+    for (const ExcerptSpan& span : index->Spans()) {
+        if (span.bodyStartByte < compositeByteOffset) {
+            best = span.bodyStartByte;
+        }
+    }
+    return best;
+}
+
+namespace {
+
+    // The atomic sibling-then-rename write Buffer::SaveToFile and
+    // ProjectReplace's own rewrite both use -- see Text/FilePreservation.h
+    // for what a bare rename would silently discard (mode bits, xattrs/ACLs,
+    // the symlink the path was reached through, extra hard links). Returns
+    // false on any failure, leaving the original file untouched.
+    bool WriteFileAtomically(const std::filesystem::path& path, const std::string& content) {
+        const std::filesystem::path         target     = text::ResolveSaveTarget(path);
+        const text::PreservedFileAttributes attributes = text::CaptureFileAttributes(target);
+
+        if (text::ShouldWriteInPlace(attributes)) {
+            std::ofstream output(target, std::ios::binary | std::ios::trunc);
+            if (!output) {
+                return false;
+            }
+            output.write(content.data(), static_cast<std::streamsize>(content.size()));
+            return static_cast<bool>(output);
+        }
+
+        std::filesystem::path tempPath = target;
+        tempPath += ".ned-tmp";
+        {
+            std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
+            if (!output) {
+                return false;
+            }
+            output.write(content.data(), static_cast<std::streamsize>(content.size()));
+            if (!output) {
+                return false;
+            }
+        }
+        text::ApplyFileAttributes(tempPath, attributes);
+
+        std::error_code ec;
+        std::filesystem::rename(tempPath, target, ec);
+        return !ec; // a failed rename leaves the .ned-tmp behind -- rare, and better than losing the original
+    }
+
+    std::optional<std::string> ReadWholeFile(const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        if (!input) {
+            return std::nullopt;
+        }
+        std::ostringstream buffer;
+        buffer << input.rdbuf();
+        return buffer.str();
+    }
+
+} // namespace
+
+CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& composite, ProjectUndoManager* projectUndo,
+                                  const std::filesystem::path* onlyPath, CommitTarget target) {
     CommitResult result;
+    // One record per source buffer actually written -- see this function's
+    // own doc comment.
+    ProjectEditTransaction transaction;
 
     // Grouped by source path -- ranges belonging to a different source file
     // don't interact, and within one file's own group they're applied in
@@ -373,6 +560,9 @@ CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& co
         if (!range.editable) {
             continue;
         }
+        if (onlyPath != nullptr && range.sourcePath != *onlyPath) {
+            continue; // left pending on purpose -- see this function's own doc comment
+        }
         const std::string currentText = composite.Content().Substring(range.start, range.end - range.start);
         if (currentText != range.originalText) {
             changedByPath[range.sourcePath].push_back(i);
@@ -380,6 +570,65 @@ CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& co
     }
 
     for (auto& [path, indices] : changedByPath) {
+        // Disk target, and no unsaved buffer standing in the way: rewrite the
+        // file itself and never open a buffer for it. A file whose buffer is
+        // open *and modified* deliberately falls through to the LiveBuffers
+        // path below instead -- see CommitTarget's own doc comment.
+        text::Buffer* const openBuffer = bufferList.FindByPath(path);
+        // A huge source is never read whole here either -- it takes the
+        // LiveBuffers path below, where Buffer's own storage applies the edit
+        // in place. Huge-file support stays second-class throughout this
+        // subsystem: correct, bounded, and never the thing that shapes the
+        // fast path.
+        std::error_code      hugeCheckError;
+        const std::uintmax_t sourceSize = std::filesystem::file_size(path, hugeCheckError);
+        const bool           hugeSource = !hugeCheckError && sourceSize > text::HugeFileThreshold();
+
+        if (target == CommitTarget::Disk && !hugeSource && (openBuffer == nullptr || !openBuffer->Modified())) {
+            std::optional<std::string> fileText = ReadWholeFile(path);
+            if (!fileText) {
+                result.skipped.emplace_back(path, "source file could not be read");
+                continue;
+            }
+
+            // Same two guards the buffer path applies, against the file's own
+            // bytes: the excerpt's recorded range must still exist and still
+            // hold the text it was snapshotted with.
+            std::sort(indices.begin(), indices.end(),
+                      [&ranges](std::size_t a, std::size_t b) { return ranges[a].sourceStartByte > ranges[b].sourceStartByte; });
+            bool conflicted = false;
+            for (std::size_t i : indices) {
+                const text::Buffer::ExcerptRange& range = ranges[i];
+                if (range.sourceEndByte > fileText->size() ||
+                    fileText->compare(range.sourceStartByte, range.sourceEndByte - range.sourceStartByte, range.originalText) != 0) {
+                    conflicted = true;
+                    break;
+                }
+            }
+            if (conflicted) {
+                result.skipped.emplace_back(path, "source file changed on disk since this multibuffer was built");
+                continue;
+            }
+
+            for (std::size_t i : indices) {
+                const text::Buffer::ExcerptRange& range   = ranges[i];
+                const std::string                 newText = composite.Content().Substring(range.start, range.end - range.start);
+                fileText->replace(range.sourceStartByte, range.sourceEndByte - range.sourceStartByte, newText);
+                composite.MarkExcerptRangeCommitted(range.start, range.end, newText, range.sourceStartByte,
+                                                    range.sourceStartByte + newText.size());
+                ++result.committedExcerpts;
+            }
+            if (!WriteFileAtomically(path, *fileText)) {
+                result.skipped.emplace_back(path, "source file could not be written");
+                continue;
+            }
+            ++result.filesWritten;
+            if (openBuffer != nullptr) {
+                openBuffer->Revert(); // unmodified by the check above -- show what's now on disk
+            }
+            continue;
+        }
+
         text::Buffer* source = nullptr;
         try {
             source = &bufferList.OpenOrCreateFile(path);
@@ -431,6 +680,7 @@ CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& co
             continue;
         }
 
+        const std::size_t beforeSequence = source->CurrentUndoSequence();
         source->BeginUndoGroup();
         for (std::size_t i : indices) {
             const text::Buffer::ExcerptRange& range   = ranges[i];
@@ -442,6 +692,15 @@ CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& co
             ++result.committedExcerpts;
         }
         source->EndUndoGroup();
+        ++result.buffersCommitted;
+        transaction.records.push_back(ProjectUndoRecord{path, beforeSequence, source->CurrentUndoSequence()});
+    }
+
+    if (projectUndo != nullptr && transaction.records.size() > 1) {
+        transaction.description = "Commit " + std::to_string(result.committedExcerpts) + " excerpt" +
+                                  (result.committedExcerpts == 1 ? "" : "s") + " (" +
+                                  std::to_string(transaction.records.size()) + " files)";
+        projectUndo->RecordTransaction(std::move(transaction));
     }
 
     return result;

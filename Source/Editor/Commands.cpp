@@ -389,6 +389,30 @@ namespace {
 
     // project-undo follow-up: shared by the undo/redo commands' delegation
     // to ProjectUndoManager below.
+    // multibuffer-review follow-up: one message shape for every apply path
+    // (whole buffer, one file, buffers or disk), so the three commands can't
+    // drift into describing the same outcome differently.
+    std::string FormatCommitResult(const multibuffer::CommitResult& result) {
+        if (result.committedExcerpts == 0 && result.skipped.empty()) {
+            return "No changes to commit.";
+        }
+        std::string message =
+            "Committed " + std::to_string(result.committedExcerpts) + " excerpt" + (result.committedExcerpts == 1 ? "" : "s");
+        if (result.filesWritten > 0) {
+            message += " -- wrote " + std::to_string(result.filesWritten) + " file" + (result.filesWritten == 1 ? "" : "s");
+            if (result.buffersCommitted > 0) {
+                // The deliberate hodge-podge: a file with unsaved edits was
+                // applied into its buffer rather than written behind it.
+                message += ", " + std::to_string(result.buffersCommitted) + " into open buffer" +
+                           (result.buffersCommitted == 1 ? "" : "s");
+            }
+        }
+        if (!result.skipped.empty()) {
+            message += " (" + std::to_string(result.skipped.size()) + " skipped: " + result.skipped.front().second + ")";
+        }
+        return message;
+    }
+
     std::string FormatProjectUndoMessage(const char* verb, const ProjectUndoOutcome& outcome) {
         std::string message = std::string(verb) + " " + outcome.description;
         if (!outcome.divergedNames.empty()) {
@@ -2005,6 +2029,137 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // already use, except this one needs no InteractiveRequest round-trip
     // through BufferView: CommitExcerptChanges only needs context.buffer/
     // context.bufferList, both already on CommandContext.
+    registry.Register("undo-buffer-only",
+                      "Undo the last change in this buffer alone, even when it was part of a multi-file edit that "
+                      "plain undo would roll back in full.",
+                      [](CommandContext& context) {
+                          // Deliberately bypasses ProjectUndoManager, unlike undo above:
+                          // the whole point is "back out my file, leave the others". The
+                          // transaction is left on the stack and simply reports this file
+                          // as diverged if a later project-undo reaches it, which is
+                          // exactly right -- it no longer sits where the transaction left
+                          // it.
+                          context.buffer.ClearMark();
+                          context.buffer.Undo();
+                      });
+
+    registry.Register("multibuffer-revert-excerpt",
+                      "Put the excerpt under point back to the text it was built with -- the \"not this one\" "
+                      "gesture in a *project replace*/*references*/*diagnostics* review.",
+                      [](CommandContext& context) {
+                          if (context.buffer.ExcerptRanges().empty()) {
+                              return;
+                          }
+                          const bool reverted = multibuffer::RevertExcerptAtOffset(context.buffer, context.buffer.Point());
+                          if (context.message) {
+                              *context.message = reverted ? "Excerpt reverted." : "Nothing to revert here.";
+                          }
+                      });
+
+    registry.Register("multibuffer-revert-file",
+                      "Put every excerpt from the same source file as the one under point back to the text it was "
+                      "built with.",
+                      [](CommandContext& context) {
+                          if (context.buffer.ExcerptRanges().empty()) {
+                              return;
+                          }
+                          const std::size_t reverted =
+                              multibuffer::RevertExcerptsForFileAtOffset(context.buffer, context.buffer.Point());
+                          if (context.message) {
+                              *context.message = reverted == 0
+                                                     ? "Nothing to revert here."
+                                                     : "Reverted " + std::to_string(reverted) + " excerpt" +
+                                                           (reverted == 1 ? "" : "s") + " in this file.";
+                          }
+                      });
+
+    // The per-file pair, mirroring the whole-buffer pair above so the apply
+    // chooser can honor either answer at either scope -- offering "write
+    // files directly" and then quietly committing into a buffer instead
+    // would be worse than not offering it.
+    const auto commitFileUnderPoint = [](CommandContext& context, multibuffer::CommitTarget target) {
+        if (context.buffer.ExcerptRanges().empty()) {
+            return;
+        }
+        const std::optional<std::filesystem::path> path =
+            multibuffer::ExcerptPathAtOffset(context.buffer, context.buffer.Point());
+        if (!path) {
+            if (context.message) {
+                *context.message = "Point isn't inside an excerpt.";
+            }
+            return;
+        }
+        const multibuffer::CommitResult result =
+            multibuffer::CommitExcerptChanges(context.bufferList, context.buffer, context.projectUndo, &*path, target);
+        if (context.message) {
+            *context.message = result.committedExcerpts == 0 && result.skipped.empty()
+                                   ? "No changes to commit in " + path->filename().string() + "."
+                                   : FormatCommitResult(result) + " in " + path->filename().string();
+        }
+    };
+
+    registry.Register("multibuffer-commit-file",
+                      "Write back only the edited excerpts belonging to the source file under point, into that "
+                      "file's own buffer, leaving every other file in this multibuffer pending.",
+                      [commitFileUnderPoint](CommandContext& context) {
+                          commitFileUnderPoint(context, multibuffer::CommitTarget::LiveBuffers);
+                      });
+
+    registry.Register("multibuffer-commit-file-to-disk",
+                      "Write back only the edited excerpts belonging to the source file under point, straight to "
+                      "that file, leaving every other file in this multibuffer pending.",
+                      [commitFileUnderPoint](CommandContext& context) {
+                          commitFileUnderPoint(context, multibuffer::CommitTarget::Disk);
+                      });
+
+    registry.Register("next-excerpt", "Move point to the next excerpt's body in a multibuffer.",
+                      [](CommandContext& context) {
+                          if (const std::optional<std::size_t> next =
+                                  multibuffer::NextExcerptBodyStart(context.buffer, context.buffer.Point())) {
+                              context.buffer.SetPoint(*next);
+                          }
+                          else if (context.message) {
+                              *context.message = "No further excerpt.";
+                          }
+                      });
+
+    registry.Register("previous-excerpt", "Move point to the previous excerpt's body in a multibuffer.",
+                      [](CommandContext& context) {
+                          if (const std::optional<std::size_t> previous =
+                                  multibuffer::PreviousExcerptBodyStart(context.buffer, context.buffer.Point())) {
+                              context.buffer.SetPoint(*previous);
+                          }
+                          else if (context.message) {
+                              *context.message = "No previous excerpt.";
+                          }
+                      });
+
+    registry.Register("multibuffer-apply-changes",
+                      "Apply every edited excerpt in this multibuffer, asking first whether to write into the open "
+                      "source buffers (reviewable, undoable) or straight to the files.",
+                      [](CommandContext& context) {
+                          if (context.buffer.ExcerptRanges().empty()) {
+                              return;
+                          }
+                          context.interactiveRequest = InteractiveRequest::MultibufferApply;
+                      });
+
+    registry.Register(
+        "multibuffer-commit-to-disk",
+        "Write every edited excerpt in the current multibuffer straight to its source file, without opening a "
+        "buffer for it. A file whose buffer is open with unsaved edits is applied into that buffer instead.",
+        [](CommandContext& context) {
+            if (context.buffer.ExcerptRanges().empty()) {
+                return;
+            }
+            const multibuffer::CommitResult result =
+                multibuffer::CommitExcerptChanges(context.bufferList, context.buffer, context.projectUndo,
+                                                  /*onlyPath=*/nullptr, multibuffer::CommitTarget::Disk);
+            if (context.message) {
+                *context.message = FormatCommitResult(result);
+            }
+        });
+
     registry.Register(
         "multibuffer-commit-changes",
         "Write every edited excerpt in the current multibuffer (e.g. *diagnostics*, *references: ...*) back to "
@@ -2013,18 +2168,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             if (context.buffer.ExcerptRanges().empty()) {
                 return;
             }
-            const multibuffer::CommitResult result = multibuffer::CommitExcerptChanges(context.bufferList, context.buffer);
-            if (!context.message) {
-                return;
-            }
-            if (result.committedExcerpts == 0 && result.skipped.empty()) {
-                *context.message = "No changes to commit.";
-                return;
-            }
-            *context.message =
-                "Committed " + std::to_string(result.committedExcerpts) + " excerpt" + (result.committedExcerpts == 1 ? "" : "s");
-            if (!result.skipped.empty()) {
-                *context.message += " (" + std::to_string(result.skipped.size()) + " skipped: " + result.skipped.front().second + ")";
+            const multibuffer::CommitResult result =
+                multibuffer::CommitExcerptChanges(context.bufferList, context.buffer, context.projectUndo);
+            if (context.message) {
+                *context.message = FormatCommitResult(result);
             }
         });
 
@@ -4095,7 +4242,7 @@ Keymap BuildDefaultGlobalKeymap() {
     // configs), and is otherwise unbound globally (only a *local* leaf
     // inside vcs-commit-message-mode's own keymap, see vcs-commit-finish
     // below -- no collision, KeymapStack layers are independent).
-    keymap.Bind(ParseKeySequence("C-c C-c"), "multibuffer-commit-changes");
+    keymap.Bind(ParseKeySequence("C-c C-c"), "multibuffer-apply-changes");
     // VCS blame gutter follow-up: "C-c v" prefix, mirroring "C-c C-b"/
     // "C-c C-M-b" run-task/cancel-task's own choice of an otherwise-unused
     // letter+prefix combination.

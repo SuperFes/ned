@@ -35,6 +35,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,10 @@ namespace ned::text {
 class Buffer;
 class BufferList;
 } // namespace ned::text
+
+namespace ned::editor {
+class ProjectUndoManager;
+} // namespace ned::editor
 
 namespace ned::editor::multibuffer {
 
@@ -202,8 +207,21 @@ void ClearRegistryForTesting();
 // many references). One caller-agnostic policy applied here rather than
 // duplicated in every BuildMultibuffer caller -- see
 // Editor/MultibufferFoldSettings.h for the thresholds themselves.
+//
+// Multibuffer-gaps follow-up: at most MultibufferMaxExcerpts()
+// (Editor/MultibufferLimits.h) excerpts are stitched; the rest are dropped
+// and named in a trailing "N more not shown" note line of the composite's
+// own text (styled like a header, outside every ExcerptSpan, so clicking it
+// is the same no-op a rule line already is). totalAvailable lets a caller
+// that already capped its *own* per-excerpt work -- BufferView's
+// find-references pays one file read per resolved LSP location, so it
+// stops reading at the cap rather than handing over excerpts it then
+// discards -- report the true match count anyway, so the note names
+// everything dropped rather than only what this function itself dropped.
+// 0 (the default) means "excerpts is the whole set," every existing caller
+// unchanged.
 text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& name,
-                               const std::vector<ExcerptSource>& excerpts);
+                               const std::vector<ExcerptSource>& excerpts, std::size_t totalAvailable = 0);
 
 // Editable-multibuffer follow-up (wgrep-style commit): writes every changed
 // editable excerpt in composite's own ExcerptRanges() back to its real
@@ -216,8 +234,26 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
 // to the user's normal save-buffer on whichever source buffers came out
 // modified, the same scope wgrep itself keeps (commits to buffers, not
 // files).
+// Where a commit puts the reviewed text. LiveBuffers is the default and the
+// reviewable one: every touched file becomes an open, modified buffer (opened
+// if it wasn't), nothing reaches disk until the user saves, and the whole
+// commit is one undo. Disk is the sed-flavored one -- the file itself is
+// rewritten in place, atomically, preserving its mode/xattrs/links the same
+// way Buffer::SaveToFile does, with no buffer opened for it.
+//
+// The two aren't cleanly separable in practice and deliberately aren't kept
+// so: a file whose buffer is open *and modified* is committed into that
+// buffer even under Disk, because writing the file behind unsaved edits is
+// exactly the staleness this subsystem exists to avoid. An open but
+// unmodified buffer is reverted after the write so it shows what's now on
+// disk. CommitResult reports which happened.
+enum class CommitTarget { LiveBuffers,
+                          Disk };
+
 struct CommitResult {
     std::size_t committedExcerpts = 0; // ranges actually written
+    std::size_t buffersCommitted  = 0; // source files applied into an open Buffer
+    std::size_t filesWritten      = 0; // source files rewritten on disk directly
     // One entry per skipped range -- its source path plus why (currently
     // always "externally modified since this multibuffer was built,"
     // ExternallyModified()/ContentGeneration() checked per source buffer --
@@ -225,7 +261,57 @@ struct CommitResult {
     // rest of the commit.
     std::vector<std::pair<std::filesystem::path, std::string>> skipped;
 };
-CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& composite);
+// projectUndo (optional -- nullptr keeps every existing call site
+// byte-identical) records the whole commit as one ProjectUndoManager
+// transaction, so a commit spanning several source files backs out of all of
+// them with a single undo instead of leaving siblings written while the file
+// point happens to be in rolls back. A commit touching one file is left to
+// that buffer's own undo, which is already exactly the right thing --
+// RecordTransaction drops a single-file transaction itself.
+//
+// onlyPath (optional) restricts the commit to excerpts whose source is that
+// one file -- the review view's "apply just this file" gesture. Every other
+// excerpt is left pending, not skipped-and-reported: it isn't a failure, the
+// caller simply didn't ask for it.
+CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& composite,
+                                  ProjectUndoManager*          projectUndo = nullptr,
+                                  const std::filesystem::path* onlyPath    = nullptr,
+                                  CommitTarget                 target      = CommitTarget::LiveBuffers);
+
+// The source file an excerpt covering compositeByteOffset came from, or
+// nullopt if that offset isn't inside any excerpt (a header, a rule, the
+// blank between two). Reads text::Buffer::ExcerptRanges(), not the
+// MultibufferIndex -- the two agree on where an excerpt's *body* is, and only
+// the ranges know which of them are editable.
+[[nodiscard]] std::optional<std::filesystem::path> ExcerptPathAtOffset(const text::Buffer& composite,
+                                                                       std::size_t         compositeByteOffset);
+
+// Puts the excerpt covering compositeByteOffset back to the text it had when
+// the multibuffer was built (or when it was last committed) -- the
+// "I don't want this one" gesture, and the reason an excerpt carries an
+// originalText snapshot at all. One undo step. Returns false if that offset
+// isn't inside an editable excerpt, or if the excerpt is already unchanged.
+//
+// Note what this deliberately is *not*: an undo of an already-committed
+// change. Committing repoints originalText at the committed text, so
+// reverting afterwards is a no-op by construction -- undoing a commit is the
+// source buffer's own undo (see Commands.cpp's undo-buffer-only for the
+// one-file-at-a-time flavor of it).
+bool RevertExcerptAtOffset(text::Buffer& composite, std::size_t compositeByteOffset);
+
+// RevertExcerptAtOffset for every excerpt sharing the source file of the one
+// under compositeByteOffset -- the same gesture at file granularity, all in
+// one undo step. Returns how many excerpts actually changed back.
+std::size_t RevertExcerptsForFileAtOffset(text::Buffer& composite, std::size_t compositeByteOffset);
+
+// The composite byte offset of the next/previous excerpt *body* start
+// relative to compositeByteOffset, for stepping through a review without
+// landing on chrome. Nullopt when there is no such excerpt (already at the
+// last/first one, or none at all).
+[[nodiscard]] std::optional<std::size_t> NextExcerptBodyStart(const text::Buffer& composite,
+                                                              std::size_t         compositeByteOffset);
+[[nodiscard]] std::optional<std::size_t> PreviousExcerptBodyStart(const text::Buffer& composite,
+                                                                  std::size_t         compositeByteOffset);
 
 } // namespace ned::editor::multibuffer
 

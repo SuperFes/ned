@@ -22,6 +22,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -1107,6 +1108,30 @@ class Buffer {
     // tracked field.
     void UpdateExcerptRangesForRestore(const ITextStorage& oldStorage);
 
+    // multibuffer-gaps follow-up: what UpdateExcerptRangesForRestore above
+    // is now only the *fallback* for. Relocating across a
+    // ChangedByteRange diff can't be exact, because that diff is free to
+    // report any of several equivalent change positions inside a run of
+    // identical bytes -- and an ExcerptRange's grow-at-both-edges gravity
+    // reacts differently on either side of its own boundary. Found live:
+    // typing a newline at the end of an excerpt body (whose next bytes are
+    // also newlines -- the body terminator and the blank separator) and
+    // undoing it left the range one byte too long, so the excerpt read as
+    // "changed" forever after and CommitExcerptChanges would have written a
+    // spurious blank line into the user's source file.
+    //
+    // The exact answer needs no diff at all: every edit already relocates
+    // these ranges from real offsets, so the offsets that were correct at
+    // each undo node are simply recorded there and put back verbatim.
+    // Keyed by UndoTree::CurrentSequence() (a stable per-node identity, see
+    // its own doc comment), storing only (start, end) -- the sole fields
+    // relocation ever touches -- and applied by index, since relocation
+    // never adds or removes a range. A node with no snapshot (a buffer whose
+    // ranges were set after that node was recorded) falls back to the
+    // relocation path unchanged.
+    void               SnapshotExcerptRangeOffsets();
+    [[nodiscard]] bool RestoreExcerptRangeOffsets();
+
     // SaveToFile's non-atomic write mode: truncates and rewrites target's
     // own inode instead of renaming a fresh one over it, so everything
     // hanging off that inode survives (mode, owner, xattrs/ACLs, and every
@@ -1160,6 +1185,11 @@ class Buffer {
     std::size_t                       FoldGeneration_ = 0;    // see FoldGeneration()
     std::vector<SnippetRange>         SnippetRanges_;         // see SnippetRange's own doc comment above
     std::vector<ExcerptRange>         ExcerptRanges_;         // see ExcerptRange's own doc comment above
+    // Undo-node sequence -> that node's own ExcerptRanges_ (start, end)
+    // offsets. See SnapshotExcerptRangeOffsets' doc comment above. Empty
+    // for every buffer that never carries excerpt ranges at all, which is
+    // all of them but a live multibuffer.
+    std::unordered_map<std::size_t, std::vector<std::pair<std::size_t, std::size_t>>> ExcerptRangeOffsetSnapshots_;
 
     std::vector<Diagnostic> Diagnostics_;               // see Diagnostics()'s own doc comment
     std::size_t             DiagnosticsGeneration_ = 0; // see DiagnosticsGeneration()
