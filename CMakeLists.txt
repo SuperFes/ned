@@ -770,11 +770,11 @@ add_library(ned_lib STATIC
         Source/Editor/Lsp/LspBrokerMain.cpp
         Source/Editor/Lsp/LspBrokerDaemon.cpp
         Source/Editor/Lsp/LspBrokerConnect.cpp
-        Source/Editor/Mcp/McpSocketPath.cpp
-        Source/Editor/Mcp/McpTransport.cpp
-        Source/Editor/Mcp/McpToolRegistry.cpp
-        Source/Editor/Mcp/McpBridgeServer.cpp
-        Source/Editor/Mcp/McpBridgeSetting.cpp
+        Source/Editor/Mcp/SocketPath.cpp
+        Source/Editor/Mcp/Transport.cpp
+        Source/Editor/Mcp/ToolRegistry.cpp
+        Source/Editor/Mcp/BridgeServer.cpp
+        Source/Editor/Mcp/BridgeSetting.cpp
         Source/Editor/Tasks/TaskConfig.cpp
         Source/Editor/Tasks/TaskProcess.cpp
         Source/Editor/Tasks/TaskRunner.cpp

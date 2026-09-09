@@ -1,4 +1,4 @@
-#include "McpBridgeServer.h"
+#include "BridgeServer.h"
 
 #include <cerrno>
 #include <cstring>
@@ -10,8 +10,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include "McpSocketPath.h"
-#include "McpToolRegistry.h"
+#include "SocketPath.h"
+#include "ToolRegistry.h"
 
 namespace ned::editor::mcp {
 
@@ -19,10 +19,10 @@ namespace {
     constexpr int kListenBacklog = 1; // only one relay is ever expected to connect at a time -- see this file's own header comment
 } // namespace
 
-McpBridgeServer::McpBridgeServer(ToolRegistry& registry, ned::ui::EventLoop& eventLoop) : registry_(registry), eventLoop_(eventLoop) {
+BridgeServer::BridgeServer(ToolRegistry& registry, ned::ui::EventLoop& eventLoop) : registry_(registry), eventLoop_(eventLoop) {
 }
 
-McpBridgeServer::~McpBridgeServer() {
+BridgeServer::~BridgeServer() {
     *alive_ = false;
     if (listenFd_ >= 0) {
         ::shutdown(listenFd_, SHUT_RDWR);
@@ -41,12 +41,12 @@ McpBridgeServer::~McpBridgeServer() {
     }
 }
 
-void McpBridgeServer::Start() {
+void BridgeServer::Start() {
     if (listenFd_ >= 0) {
         return;
     }
-    EnsureMcpRuntimeDirectory();
-    socketPath_ = McpSocketPathForPid(::getpid());
+    EnsureRuntimeDirectory();
+    socketPath_ = SocketPathForPid(::getpid());
 
     const std::string socketPathStr = socketPath_.string();
     if (socketPathStr.size() >= sizeof(sockaddr_un{}.sun_path)) {
@@ -80,15 +80,15 @@ void McpBridgeServer::Start() {
     acceptThread_ = std::jthread([this](std::stop_token stopToken) { AcceptLoop(stopToken); });
 }
 
-bool McpBridgeServer::IsListening() const noexcept {
+bool BridgeServer::IsListening() const noexcept {
     return listenFd_ >= 0;
 }
 
-const std::filesystem::path& McpBridgeServer::SocketPath() const noexcept {
+const std::filesystem::path& BridgeServer::SocketPath() const noexcept {
     return socketPath_;
 }
 
-void McpBridgeServer::AcceptLoop(std::stop_token stopToken) {
+void BridgeServer::AcceptLoop(std::stop_token stopToken) {
     while (!stopToken.stop_requested()) {
         const int connFd = ::accept(listenFd_, nullptr, nullptr);
         if (connFd < 0) {
@@ -115,7 +115,7 @@ void McpBridgeServer::AcceptLoop(std::stop_token stopToken) {
     }
 }
 
-void McpBridgeServer::ServeConnection(const std::shared_ptr<Transport>& transport, std::stop_token stopToken) {
+void BridgeServer::ServeConnection(const std::shared_ptr<Transport>& transport, std::stop_token stopToken) {
     while (!stopToken.stop_requested()) {
         std::optional<std::string> line;
         try {
@@ -141,7 +141,7 @@ void McpBridgeServer::ServeConnection(const std::shared_ptr<Transport>& transpor
     }
 }
 
-void McpBridgeServer::HandleFrame(const std::shared_ptr<Transport>& transport, const std::string& line) {
+void BridgeServer::HandleFrame(const std::shared_ptr<Transport>& transport, const std::string& line) {
     Json frame;
     try {
         frame = Json::parse(line);
@@ -199,7 +199,7 @@ void McpBridgeServer::HandleFrame(const std::shared_ptr<Transport>& transport, c
     }
 }
 
-void McpBridgeServer::SendResult(const std::weak_ptr<Transport>& transport, const Json& id, const Json& result) {
+void BridgeServer::SendResult(const std::weak_ptr<Transport>& transport, const Json& id, const Json& result) {
     const std::shared_ptr<Transport> locked = transport.lock();
     if (!locked || id.is_null()) {
         return; // connection dropped, or this was a notification (no id to answer)
@@ -212,7 +212,7 @@ void McpBridgeServer::SendResult(const std::weak_ptr<Transport>& transport, cons
     }
 }
 
-void McpBridgeServer::SendError(const std::weak_ptr<Transport>& transport, const Json& id, int code, const std::string& message) {
+void BridgeServer::SendError(const std::weak_ptr<Transport>& transport, const Json& id, int code, const std::string& message) {
     const std::shared_ptr<Transport> locked = transport.lock();
     if (!locked || id.is_null()) {
         return;

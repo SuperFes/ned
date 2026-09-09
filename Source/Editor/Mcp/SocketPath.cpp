@@ -1,4 +1,4 @@
-#include "McpSocketPath.h"
+#include "SocketPath.h"
 
 #include <cstdlib>
 #include <stdexcept>
@@ -6,7 +6,7 @@
 
 namespace ned::editor::mcp {
 
-std::filesystem::path McpRuntimeDirectory() {
+std::filesystem::path RuntimeDirectory() {
     if (const char* xdgRuntimeHome = std::getenv("XDG_RUNTIME_DIR"); xdgRuntimeHome && *xdgRuntimeHome) {
         return std::filesystem::path(xdgRuntimeHome) / "ned";
     }
@@ -19,8 +19,8 @@ std::filesystem::path McpRuntimeDirectory() {
     throw std::runtime_error("ned: cannot determine a runtime directory for the MCP bridge socket (none of XDG_RUNTIME_DIR, XDG_STATE_HOME, HOME is set)");
 }
 
-void EnsureMcpRuntimeDirectory() {
-    const std::filesystem::path dir = McpRuntimeDirectory();
+void EnsureRuntimeDirectory() {
+    const std::filesystem::path dir = RuntimeDirectory();
     std::error_code             ec;
     std::filesystem::create_directories(dir, ec);
     if (ec) {
@@ -32,8 +32,8 @@ void EnsureMcpRuntimeDirectory() {
     }
 }
 
-std::filesystem::path McpSocketPathForPid(int pid) {
-    return McpRuntimeDirectory() / ("mcp-" + std::to_string(pid) + ".sock");
+std::filesystem::path SocketPathForPid(int pid) {
+    return RuntimeDirectory() / ("mcp-" + std::to_string(pid) + ".sock");
 }
 
 } // namespace ned::editor::mcp

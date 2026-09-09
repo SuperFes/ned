@@ -10,8 +10,8 @@
 #include "AcpConfig.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
-#include "Editor/Mcp/McpBridgeServer.h"
-#include "Editor/Mcp/McpBridgeSetting.h"
+#include "Editor/Mcp/BridgeServer.h"
+#include "Editor/Mcp/BridgeSetting.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
@@ -175,7 +175,7 @@ void AcpManager::SetOnTranscriptChanged(std::function<void()> handler) {
     onTranscriptChanged_ = std::move(handler);
 }
 
-void AcpManager::SetMcpBridgeServer(mcp::McpBridgeServer* server) {
+void AcpManager::SetMcpBridgeServer(mcp::BridgeServer* server) {
     mcpBridgeServer_ = server;
 }
 

@@ -35,7 +35,7 @@
 #include "Editor/Lsp/LspRootResolver.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/Lsp/ProseChecker.h"
-#include "Editor/Mcp/McpBridgeSetting.h"
+#include "Editor/Mcp/BridgeSetting.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/MultibufferFoldSettings.h"

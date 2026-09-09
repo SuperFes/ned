@@ -59,7 +59,7 @@ class BufferList;
 } // namespace ned::text
 
 namespace ned::editor::mcp {
-class McpBridgeServer;
+class BridgeServer;
 } // namespace ned::editor::mcp
 
 namespace ned::editor::acp {
@@ -343,11 +343,11 @@ class AcpManager {
     // ACP MCP tool-server bridge, slice 1. Connect-after-construction,
     // unset-is-safe-no-op, this class's usual convention -- wired from
     // main.cpp right after constructing LspManager/VcsRunner/TestRunner and
-    // the McpBridgeServer itself. When set (and ned/set-acp-mcp-bridge, see
+    // the BridgeServer itself. When set (and ned/set-acp-mcp-bridge, see
     // McpBridgeSetting.h, is on -- the default), StartSession starts the
     // bridge listening and advertises it to the agent as a stdio MCP server
     // instead of sending an empty mcpServers list.
-    void SetMcpBridgeServer(mcp::McpBridgeServer* server);
+    void SetMcpBridgeServer(mcp::BridgeServer* server);
 
     // Public primarily for tests -- mirrors DapManager::SetClientForTesting
     // exactly: registers an already-constructed AcpClient (typically
@@ -386,7 +386,7 @@ class AcpManager {
     ned::ui::EventLoop& eventLoop_;
 
     std::unique_ptr<AcpClient> client_;
-    mcp::McpBridgeServer*      mcpBridgeServer_ = nullptr;
+    mcp::BridgeServer*      mcpBridgeServer_ = nullptr;
     std::string                agentName_;
     std::string                sessionId_;
     SessionState               state_          = SessionState::Inactive;
