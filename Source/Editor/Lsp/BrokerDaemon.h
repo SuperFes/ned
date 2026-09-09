@@ -1,21 +1,21 @@
 //
-// lsp-broker follow-up. The imperative I/O shell around LspBroker.h's pure
+// lsp-broker follow-up. The imperative I/O shell around Broker.h's pure
 // BrokerRouter -- real sockets, real subprocesses, real threads.
-// LspBrokerMain.h's RunLspBrokerDaemon() is a thin wrapper that constructs
+// BrokerMain.h's RunLspBrokerDaemon() is a thin wrapper that constructs
 // one of these with production defaults and runs it.
 //
 // broker-reader-deadlock follow-up: this class used to live in an anonymous
-// namespace inside LspBrokerMain.cpp, which put the daemon's whole
+// namespace inside BrokerMain.cpp, which put the daemon's whole
 // threading/lifetime story -- the part that actually deadlocked in
 // production -- outside every test binary, and so outside the ASan/UBSan
 // build's coverage too. It's a real declared type now, with its timings and
 // socket path injectable (production defaults unchanged), specifically so
-// Tests/LspBrokerDaemonTest.cpp can drive the real accept/spawn/sweep/reap
+// Tests/BrokerDaemonTest.cpp can drive the real accept/spawn/sweep/reap
 // paths against a private socket with second-scale timeouts.
 //
 
-#ifndef NED_EDITOR_LSP_LSPBROKERDAEMON_H
-#define NED_EDITOR_LSP_LSPBROKERDAEMON_H
+#ifndef NED_EDITOR_LSP_BROKERDAEMON_H
+#define NED_EDITOR_LSP_BROKERDAEMON_H
 
 #include <atomic>
 #include <chrono>
@@ -31,7 +31,7 @@
 
 #include <sys/stat.h>
 
-#include "LspBroker.h"
+#include "Broker.h"
 #include "Transport.h"
 
 namespace ned::editor::lsp {
@@ -52,7 +52,7 @@ struct BrokerDaemonOptions {
     std::chrono::milliseconds perEntryIdleTimeout = std::chrono::minutes(30);
 
     // How long the whole daemon may sit with no connections at all before
-    // it exits -- see LspBrokerMain.cpp's own historical note on why this is
+    // it exits -- see BrokerMain.cpp's own historical note on why this is
     // about a minute rather than hours.
     std::chrono::milliseconds wholeDaemonIdleTimeout = std::chrono::minutes(1);
 
@@ -70,7 +70,7 @@ struct BrokerDaemonOptions {
 // subprocesses) and the one BrokerRouter they're all relayed through.
 //
 // Threading: one jthread per connection, each blocking on its own
-// Transport::ReadFrame() -- LspClient.h's own established shape, minus
+// Transport::ReadFrame() -- Client.h's own established shape, minus
 // EventLoop::Post (there is none here; a plain mutex_ guards router_ and
 // every map below instead). Every router_ call is made while holding
 // mutex_; WriteFrame calls are made *outside* it (a shared_ptr to the
@@ -105,7 +105,7 @@ struct BrokerDaemonOptions {
 //     mutex the reader needed to finish -- a hard deadlock that wedged the
 //     whole daemon (no more accepts, no idle timeout, no executable-change
 //     check) until it was killed. Reproduced and fixed 2026-09-07; see
-//     Tests/LspBrokerDaemonTest.cpp.
+//     Tests/BrokerDaemonTest.cpp.
 //
 // A genuinely hung language server that ignores "exit" and never closes its
 // pipes still leaves one reader thread parked in ReadFrame() forever. That
@@ -177,7 +177,7 @@ class BrokerDaemon {
     // its way out (the transport erase, the router callback, its own
     // finished-reader announcement). Any member declared *after* these
     // would already be gone by the time that thread ran its last lines --
-    // a real segfault, caught by Tests/LspBrokerDaemonTest.cpp the first
+    // a real segfault, caught by Tests/BrokerDaemonTest.cpp the first
     // time these threads outlived a daemon's own destruction rather than
     // Run()'s return. ~BrokerDaemon() additionally closes every remaining
     // connection first, so those joins can't block on a peer that would
@@ -188,4 +188,4 @@ class BrokerDaemon {
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPBROKERDAEMON_H
+#endif // NED_EDITOR_LSP_BROKERDAEMON_H

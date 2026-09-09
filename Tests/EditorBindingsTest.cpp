@@ -19,7 +19,7 @@
 #include "Editor/Key.h"
 #include "Editor/Keymap.h"
 #include "Editor/Link.h"
-#include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Lsp/ServerConfig.h"
 #include "Editor/MultibufferFoldSettings.h"
 #include "Editor/PageScroll.h"
 #include "Editor/ProjectRoot.h"
@@ -391,7 +391,7 @@ TEST_CASE("ned/set-lsp-command configures a per-language LSP server command", "[
     InstallEditorBindings(env);
 
     env.DoString(R"((ned/set-lsp-command "ned-editor-bindings-test-c" ["clangd"]))");
-    const auto command = ned::editor::lsp::LspServerCommand("ned-editor-bindings-test-c");
+    const auto command = ned::editor::lsp::ServerCommand("ned-editor-bindings-test-c");
     REQUIRE(command.has_value());
     REQUIRE(*command == std::vector<std::string>{"clangd"});
 }
@@ -407,7 +407,7 @@ TEST_CASE("ned/set-lsp-command accepts a real Janet array too, not just a tuple"
     InstallEditorBindings(env);
 
     env.DoString(R"((ned/set-lsp-command "ned-editor-bindings-test-py" @["pyright-langserver" "--stdio"]))");
-    const auto command = ned::editor::lsp::LspServerCommand("ned-editor-bindings-test-py");
+    const auto command = ned::editor::lsp::ServerCommand("ned-editor-bindings-test-py");
     REQUIRE(command.has_value());
     REQUIRE(*command == std::vector<std::string>{"pyright-langserver", "--stdio"});
 }
@@ -417,10 +417,10 @@ TEST_CASE("ned/set-lsp-command with an empty argv clears the configured command"
     InstallEditorBindings(env);
 
     env.DoString(R"((ned/set-lsp-command "ned-editor-bindings-test-clear" ["some-server"]))");
-    REQUIRE(ned::editor::lsp::LspServerCommand("ned-editor-bindings-test-clear").has_value());
+    REQUIRE(ned::editor::lsp::ServerCommand("ned-editor-bindings-test-clear").has_value());
 
     env.DoString(R"((ned/set-lsp-command "ned-editor-bindings-test-clear" []))");
-    REQUIRE_FALSE(ned::editor::lsp::LspServerCommand("ned-editor-bindings-test-clear").has_value());
+    REQUIRE_FALSE(ned::editor::lsp::ServerCommand("ned-editor-bindings-test-clear").has_value());
 }
 
 // theme-editing follow-up: ned/theme-set is pure accumulation into the
@@ -648,10 +648,10 @@ TEST_CASE("ned/register-snippet and ned/snippet-triggers round-trip the registry
 
 // completion-trigger-characters follow-up.
 TEST_CASE("ned/set-lsp-commit-characters toggles the process-wide commit-character setting", "[EditorBindings]") {
-    // Process-wide state (LspServerConfig.h); restored via RAII so it can't
+    // Process-wide state (ServerConfig.h); restored via RAII so it can't
     // leak into another test's typing behavior.
     struct CommitCharactersGuard {
-        CommitCharactersGuard() : previous_(ned::editor::lsp::LspCommitCharactersEnabled()) {
+        CommitCharactersGuard() : previous_(ned::editor::lsp::CommitCharactersEnabled()) {
         }
         ~CommitCharactersGuard() {
             ned::editor::lsp::SetLspCommitCharactersEnabled(previous_);
@@ -662,11 +662,11 @@ TEST_CASE("ned/set-lsp-commit-characters toggles the process-wide commit-charact
     Environment& env = ned_tests::TestEnvironment();
     InstallEditorBindings(env);
 
-    REQUIRE(ned::editor::lsp::LspCommitCharactersEnabled()); // default on, matching VS Code
+    REQUIRE(ned::editor::lsp::CommitCharactersEnabled()); // default on, matching VS Code
 
     env.DoString(R"((ned/set-lsp-commit-characters false))");
-    REQUIRE_FALSE(ned::editor::lsp::LspCommitCharactersEnabled());
+    REQUIRE_FALSE(ned::editor::lsp::CommitCharactersEnabled());
 
     env.DoString(R"((ned/set-lsp-commit-characters true))");
-    REQUIRE(ned::editor::lsp::LspCommitCharactersEnabled());
+    REQUIRE(ned::editor::lsp::CommitCharactersEnabled());
 }

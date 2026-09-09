@@ -16,7 +16,7 @@
 
 #include "ActiveBuffer.h"
 #include "Editor/BackgroundActivity.h"
-#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/Manager.h"
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
 #include "Text/Buffer.h"
@@ -50,7 +50,7 @@ class ModeLine : public Widget {
     // SetFocusProvider above and every other Set* hook in this codebase.
     // Wired by Pane/WindowManager::SetLspManager alongside BufferView's own
     // copy of the same pointer.
-    void SetLspManager(editor::lsp::LspManager* lspManager);
+    void SetLspManager(editor::lsp::Manager* lspManager);
 
     // embedded-language-documents follow-up: unset (the default, every
     // pre-existing construction site and test) means never show a
@@ -66,7 +66,7 @@ class ModeLine : public Widget {
     const editor::Mode&                         mode_;
     const Theme&                                theme_;
     std::function<bool()>                       focusProvider_;
-    editor::lsp::LspManager*                    lspManager_ = nullptr;
+    editor::lsp::Manager*                    lspManager_ = nullptr;
     std::function<std::optional<std::string>()> languageAtPointProvider_;
 
     // minimum-visible-duration follow-up: the last non-empty

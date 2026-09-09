@@ -1,4 +1,4 @@
-#include "LspContent.h"
+#include "Content.h"
 
 #include "Text/Utf8.h"
 
@@ -9,13 +9,13 @@ namespace {
     // signature-help follow-up. Converts a UTF-16 code-unit offset into a
     // plain string (an LSP ParameterInformation.label's own [start, end)
     // tuple form) to a byte offset -- the same tolerant per-codepoint walk
-    // LspPosition.cpp's BytePositionToLsp/LspPositionToByte do against a
+    // Position.cpp's BytePositionToLsp/PositionToByte do against a
     // Rope, just against a bare string here. A codepoint needs two UTF-16
     // units exactly when its UTF-8 encoding is 4 bytes long (every
     // codepoint above U+FFFF is encoded that way and no other codepoint
     // is), so NextCodepointBoundary's step size alone is enough -- no need
     // to actually decode the codepoint's value. Clamps to text.size() the
-    // same way LspPositionToByte clamps to its line's end.
+    // same way PositionToByte clamps to its line's end.
     std::size_t Utf16OffsetToByte(std::string_view text, std::size_t utf16Offset) {
         std::size_t byteOffset = 0;
         std::size_t utf16Count = 0;
@@ -86,8 +86,8 @@ namespace {
         return values;
     }
 
-    LspPosition PositionFromJson(const Json& position) {
-        return LspPosition{
+    Position PositionFromJson(const Json& position) {
+        return Position{
             .line      = position.value("line", static_cast<std::size_t>(0)),
             .character = position.value("character", static_cast<std::size_t>(0)),
         };
@@ -148,7 +148,7 @@ namespace {
         // completion-trigger-characters follow-up: the list-level default an
         // item with no commitCharacters of its own inherits. Distinct from
         // the server-level allCommitCharacters, which sits one tier further
-        // out (ExtractCompletionProvider) and is folded in by LspManager, not
+        // out (ExtractCompletionProvider) and is folded in by Manager, not
         // here -- this pure parsing layer never sees the initialize response.
         std::optional<std::vector<std::string>> commitCharacters;
     };
@@ -245,7 +245,7 @@ namespace {
         }
         // completion-resolve follow-up: an item's own commitCharacters wins
         // over the list's itemDefaults; the server-level allCommitCharacters
-        // tier below both is applied by LspManager (see this file's
+        // tier below both is applied by Manager (see this file's
         // CompletionItemDefaults comment for why it can't be applied here).
         std::vector<std::string> commitCharacters;
         if (const auto commitIt = item.find("commitCharacters"); commitIt != item.end() && commitIt->is_array()) {
@@ -451,7 +451,7 @@ namespace {
         if (uriIt == locationIt->end() || !uriIt->is_string()) {
             return;
         }
-        LspPosition position{}; // value-initialized to {0, 0} -- see this function's own doc comment on WorkspaceSymbol's optional range
+        Position position{}; // value-initialized to {0, 0} -- see this function's own doc comment on WorkspaceSymbol's optional range
         if (const auto rangeIt = locationIt->find("range"); rangeIt != locationIt->end() && rangeIt->is_object()) {
             position = PositionFromJson(rangeIt->value("start", Json::object()));
         }
@@ -1084,7 +1084,7 @@ std::vector<SemanticToken> DecodeSemanticTokenData(const std::vector<std::uint32
         line += deltaLine;
         character = (deltaLine == 0) ? character + deltaStartChar : deltaStartChar;
         tokens.push_back(SemanticToken{
-            .start          = LspPosition{.line = line, .character = character},
+            .start          = Position{.line = line, .character = character},
             .length         = data[i + 2],
             .tokenTypeIndex = data[i + 3],
             .tokenModifiers = data[i + 4],

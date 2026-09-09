@@ -22,7 +22,7 @@ using ned::text::BufferList;
 // synchronous behavior (buffer creation, no-command-configured handling,
 // re-run separators, already-running no-op) is under test here, matching
 // this codebase's established "never run a real EventLoop::Run() loop in a
-// unit test" convention (see LspClientTest.cpp/LspManagerTest.cpp).
+// unit test" convention (see ClientTest.cpp/ManagerTest.cpp).
 
 TEST_CASE("TaskOutputBufferName wraps the task name in the *task: ...* convention", "[Tasks]") {
     REQUIRE(TaskOutputBufferName("build") == "*task: build*");

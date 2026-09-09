@@ -29,7 +29,7 @@
 
 #include "ActiveBuffer.h"
 #include "Editor/Acp/AcpManager.h"
-#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/Manager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Theme.h"
 #include "Widget.h"
@@ -56,10 +56,10 @@ class AcpPanel : public Widget {
     // Prose-check-the-composer follow-up: connect-after-construction, unset
     // is a safe no-op -- this class's usual convention. Wires
     // ProseChecker/kProseLanguageKey's existing diagnostics-only connection
-    // (Editor/Lsp/LspManager.h's CheckComposerProseText) onto the composer's
+    // (Editor/Lsp/Manager.h's CheckComposerProseText) onto the composer's
     // own text so a spelling/grammar issue underlines live, before the
     // prompt is ever sent -- see RequestProseCheckIfNeeded's own doc comment.
-    void SetLspManager(editor::lsp::LspManager* lspManager);
+    void SetLspManager(editor::lsp::Manager* lspManager);
 
     // tabbed-bottom-dock-overlays follow-up: whether this panel is hosted as
     // one tab inside PanelDock.h's shared bottom dock (true, the default
@@ -304,7 +304,7 @@ class AcpPanel : public Widget {
     // mutation without needing one at each of InsertChar/DeleteBackward/
     // DeleteForward/HistoryPrevious/HistoryNext/AcceptMentionCandidate's own
     // call sites). A no-op once the text is unchanged since the last call --
-    // LspManager::CheckComposerProseText's own debounce covers the rest.
+    // Manager::CheckComposerProseText's own debounce covers the rest.
     void RequestProseCheckIfNeeded();
 
     const Theme&             theme_;
@@ -323,7 +323,7 @@ class AcpPanel : public Widget {
     // returned* -- slightly stale relative to what's typed since (the same
     // lag every real buffer's own diagnostics have against live typing),
     // clamped defensively at render time rather than assumed still in range.
-    editor::lsp::LspManager*              lspManager_ = nullptr;
+    editor::lsp::Manager*              lspManager_ = nullptr;
     std::string                           lastProseCheckedText_;
     std::vector<text::Buffer::Diagnostic> composerProseDiagnostics_;
 

@@ -8,8 +8,8 @@
 // <script> blocks as sharing one JS global scope.
 //
 // Width-preserving padding (see BuildEmbeddedDocuments' own doc comment) is
-// what lets Editor/Lsp/LspManager.h sync the resulting documentText to a real
-// server and use LspPosition.h's ordinary BytePositionToLsp/LspPositionToByte
+// what lets Editor/Lsp/Manager.h sync the resulting documentText to a real
+// server and use Position.h's ordinary BytePositionToLsp/PositionToByte
 // completely unchanged, against either the padded text or the real host
 // buffer's own Rope -- both agree on every line boundary and every
 // codepoint's UTF-16 width, so no offset-remapping layer exists anywhere in
@@ -36,7 +36,7 @@ namespace ned::editor {
 // (see BuildEmbeddedDocuments) -- everything outside ownedRanges is replaced
 // with Unicode-whitespace filler, never the real host content. ownedRanges
 // (sorted, non-overlapping, host-buffer byte coordinates) is what
-// EmbeddedLanguageAtByteOffset and LspManager's diagnostics filtering both
+// EmbeddedLanguageAtByteOffset and Manager's diagnostics filtering both
 // consult to tell "real content for this language" from "padding."
 struct EmbeddedDocument {
     std::string                                      language; // canonical, e.g. "javascript"
@@ -48,7 +48,7 @@ struct EmbeddedDocument {
 // html-mode) or reports no regions -- the common, cheap-to-check case. When
 // non-empty, one EmbeddedDocument per distinct language found, each built by
 // walking bufferText codepoint-by-codepoint (via text::Rope::CodepointAt, the
-// same primitive LspPosition.cpp's own position math already uses) and
+// same primitive Position.cpp's own position math already uses) and
 // replacing every codepoint OUTSIDE that language's own merged ranges with a
 // same-byte-length, same-UTF-16-width Unicode whitespace filler ('\n' is
 // always copied verbatim, preserving line structure regardless of
@@ -74,7 +74,7 @@ struct EmbeddedDocument {
 // in one call) for a call site with no BufferView-owned per-Paint() cache to
 // reuse -- Commands.cpp's lsp-hover, whose CommandContext carries no
 // BufferView&. Returns "" (meaning "use the primary/host server," matching
-// LspManager::ResolveSyncState's own empty-serverKey convention) when point
+// Manager::ResolveSyncState's own empty-serverKey convention) when point
 // isn't inside an embedded region, or mode has none configured. Cheap in
 // practice even though it re-derives BuildEmbeddedDocuments from scratch:
 // mode.embeddedRegions' closure (HtmlMode()) shares the same

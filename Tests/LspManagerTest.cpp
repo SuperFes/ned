@@ -14,11 +14,11 @@
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
-#include "Editor/Lsp/LspBackgroundSync.h"
-#include "Editor/Lsp/LspClient.h"
-#include "Editor/Lsp/LspManager.h"
-#include "Editor/Lsp/LspRootResolver.h"
-#include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Lsp/BackgroundSync.h"
+#include "Editor/Lsp/Client.h"
+#include "Editor/Lsp/Manager.h"
+#include "Editor/Lsp/RootResolver.h"
+#include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/ProjectRoot.h"
 #include "Text/Buffer.h"
@@ -33,8 +33,8 @@ using ned::editor::lsp::CodeAction;
 using ned::editor::lsp::CompletionItem;
 using ned::editor::lsp::Json;
 using ned::editor::lsp::kProseLanguageKey;
-using ned::editor::lsp::LspClient;
-using ned::editor::lsp::LspManager;
+using ned::editor::lsp::Client;
+using ned::editor::lsp::Manager;
 using ned::editor::lsp::SemanticTokensLegend;
 using ned::editor::lsp::SetLspRootMarkers;
 using ned::editor::lsp::SetLspWorkspaceFoldersEnabled;
@@ -45,11 +45,11 @@ using ned::text::BufferList;
 
 namespace {
 
-// Mirrors LspClientTest.cpp's own ClientFixture exactly (see that file's
+// Mirrors ClientTest.cpp's own ClientFixture exactly (see that file's
 // header comment for the full rationale, including why serverStdoutWrite
-// must be closed before the LspClient it feeds) -- a raw pipe pair standing
+// must be closed before the Client it feeds) -- a raw pipe pair standing
 // in for a real language server's stdin/stdout, used here to drive
-// LspManager::SetClientForTesting instead of LspClient directly.
+// Manager::SetClientForTesting instead of Client directly.
 struct FakeServer {
     int serverStdinRead;   // test reads what the client wrote
     int serverStdoutWrite; // test writes to feed the client's (unused, in these tests) read thread
@@ -81,14 +81,14 @@ struct FakeServer {
           serverStdoutWrite(std::exchange(other.serverStdoutWrite, -1)) {
     }
 
-    static FakeServer Create(LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop, LspClient*& outClient,
+    static FakeServer Create(Manager& manager, const std::string& language, ned::ui::EventLoop& eventLoop, Client*& outClient,
                              const Json& workspaceConfiguration = Json::object(), bool brokerBacked = false,
                              std::optional<std::string> connectionKeyOverride = std::nullopt) {
         int clientWritesHere[2]; // client's write end -> test's read end
         int clientReadsHere[2];  // test's write end -> client's read end
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
-        auto client = std::make_unique<LspClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+        auto client = std::make_unique<Client>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
         outClient   = &manager.SetClientForTesting(language, std::move(client), workspaceConfiguration, brokerBacked,
                                                    std::move(connectionKeyOverride));
         return FakeServer(clientWritesHere[0], clientReadsHere[1]);
@@ -96,7 +96,7 @@ struct FakeServer {
 };
 
 // Reads exactly one LSP frame's raw bytes off a plain fd -- copied from
-// LspClientTest.cpp's own ReadRawFrame (kept file-local here too rather than
+// ClientTest.cpp's own ReadRawFrame (kept file-local here too rather than
 // shared, matching that file's own "not worth a new dependency between the
 // two for something this small" precedent elsewhere in this codebase).
 std::string ReadRawFrame(int fd) {
@@ -126,7 +126,7 @@ std::string ReadRawFrame(int fd) {
 // graceful-lsp-shutdown follow-up: ReadRawFrame above assumes exactly one
 // frame arrives per call, which breaks the moment a caller (Shutdown())
 // writes two frames back-to-back before this test ever reads -- both can
-// land in the same read() (LspManager::Shutdown's own shutdown+exit pair,
+// land in the same read() (Manager::Shutdown's own shutdown+exit pair,
 // tiny frames over a fast local pipe), and ReadRawFrame's substr-to-end
 // parse would then choke on the second frame's own headers trailing the
 // first frame's body. Splits every complete frame out of raw by walking
@@ -230,7 +230,7 @@ void DrainOneFrame(int fd) {
 
 // diagnostics-debounce follow-up: HandlePublishDiagnostics no longer applies
 // a publish synchronously -- it (re)arms a per-buffer DeadlineTimer (see
-// LspServerConfig.h's LspDiagnosticsDebounceMs) whose fire is Post()ed onto
+// ServerConfig.h's DiagnosticsDebounceMs) whose fire is Post()ed onto
 // eventLoop from a background thread. Polls DrainPosted_ until predicate is
 // true or a generous deadline passes, the same real-timer idiom
 // PtyProcessTest.cpp's own tests already use.
@@ -254,10 +254,10 @@ void WaitForDiagnosticCount(ned::ui::EventLoop& eventLoop, const Buffer& buffer,
 
 } // namespace
 
-TEST_CASE("LspManager::RequestHover resolves synchronously to nullopt when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::RequestHover resolves synchronously to nullopt when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                       invoked = false;
@@ -271,11 +271,11 @@ TEST_CASE("LspManager::RequestHover resolves synchronously to nullopt when the b
     REQUIRE_FALSE(gotText.has_value());
 }
 
-TEST_CASE("LspManager::RequestCompletion resolves synchronously to an empty list when the buffer was never synced",
+TEST_CASE("Manager::RequestCompletion resolves synchronously to an empty list when the buffer was never synced",
           "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                        invoked = false;
@@ -289,10 +289,10 @@ TEST_CASE("LspManager::RequestCompletion resolves synchronously to an empty list
     REQUIRE(gotItems.empty());
 }
 
-TEST_CASE("LspManager::SyncBuffer is a no-op for a buffer with no associated path", "[Lsp]") {
+TEST_CASE("Manager::SyncBuffer is a no-op for a buffer with no associated path", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch"); // no path -- Buffer::Path() == nullopt
 
     ned::editor::lsp::SetLspServerCommand("test-lang", {"/bin/cat"});
@@ -305,10 +305,10 @@ TEST_CASE("LspManager::SyncBuffer is a no-op for a buffer with no associated pat
     ned::editor::lsp::SetLspServerCommand("test-lang", {}); // clean up global config state for other tests
 }
 
-TEST_CASE("LspManager::SyncBuffer is a no-op when nothing is configured for the buffer's language", "[Lsp]") {
+TEST_CASE("Manager::SyncBuffer is a no-op when nothing is configured for the buffer's language", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-test.txt");
 
     manager.SyncBuffer(buffer, "a-language-nothing-is-configured-for"); // must not crash
@@ -333,18 +333,18 @@ std::size_t CurrentRssKb() {
 }
 
 // progressive-huge-file-load follow-up: real, reproduced live bug --
-// LspManager::SyncToServer used to call buffer.Text() (a full
+// Manager::SyncToServer used to call buffer.Text() (a full
 // Storage_->ToString() materialization) unconditionally, before ever
 // checking whether a client is configured for the target language. For a
 // huge buffer with no server configured, SyncBackgroundBuffers' periodic
-// tick (Source/Editor/Lsp/LspBackgroundSync.cpp) paid that full-document
+// tick (Source/Editor/Lsp/BackgroundSync.cpp) paid that full-document
 // copy on every single tick for nothing -- at multi-GB scale this made
 // each tick take longer than the tick interval itself, backing up
 // EventLoop::Post forever and hanging the whole editor. Fixed by moving
 // the ClientForLanguage check ahead of the buffer.Text() argument in
 // SyncToServer. This test proves the fix holds: syncing a huge buffer
 // against an unconfigured language must not materialize its content.
-TEST_CASE("LspManager::SyncBuffer does not materialize a huge buffer's content when no server is configured",
+TEST_CASE("Manager::SyncBuffer does not materialize a huge buffer's content when no server is configured",
           "[Lsp][memory]") {
     constexpr std::size_t kFileSize = 200 * 1024 * 1024; // 200 MiB -- same "obviously wrong if resident" size the
                                                          // sibling PieceTable/BufferHugeFile [memory] tests use
@@ -367,7 +367,7 @@ TEST_CASE("LspManager::SyncBuffer does not materialize a huge buffer's content w
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenFile(path);
     REQUIRE(buffer.Content().IsHuge());
 
@@ -393,7 +393,7 @@ TEST_CASE("LspManager::SyncBuffer does not materialize a huge buffer's content w
 // buffer.Content().IsHuge() gate (checked before ever calling SyncToServer)
 // stops that regardless of what's configured, and that no frame reaches
 // the server either.
-TEST_CASE("LspManager::SyncBuffer does not sync a huge buffer even when a real server is configured",
+TEST_CASE("Manager::SyncBuffer does not sync a huge buffer even when a real server is configured",
           "[Lsp][memory]") {
     constexpr std::size_t kFileSize = 200 * 1024 * 1024;
 
@@ -415,11 +415,11 @@ TEST_CASE("LspManager::SyncBuffer does not sync a huge buffer even when a real s
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenFile(path);
     REQUIRE(buffer.Content().IsHuge());
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     const std::size_t rssBeforeKb = CurrentRssKb();
@@ -446,7 +446,7 @@ TEST_CASE("LspManager::SyncBuffer does not sync a huge buffer even when a real s
 // oscillating several GB, main thread stalling on every frame). This test
 // proves the fix: repeated SyncBuffer calls against an unchanged,
 // already-opened buffer must not keep re-materializing its content.
-TEST_CASE("LspManager::SyncBuffer does not re-materialize an unchanged buffer's content on repeated calls "
+TEST_CASE("Manager::SyncBuffer does not re-materialize an unchanged buffer's content on repeated calls "
           "once a server is configured",
           "[Lsp][memory]") {
     constexpr std::size_t kFileSize = 200 * 1024 * 1024;
@@ -462,11 +462,11 @@ TEST_CASE("LspManager::SyncBuffer does not re-materialize an unchanged buffer's 
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenFile(path);
     REQUIRE_FALSE(buffer.Content().IsHuge()); // ordinary RopeStorage path -- the bug wasn't specific to PieceTableStorage
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     // The didOpen frame below carries the full 200 MiB document -- far past
@@ -492,10 +492,10 @@ TEST_CASE("LspManager::SyncBuffer does not re-materialize an unchanged buffer's 
 }
 #endif
 
-TEST_CASE("LspManager::NotifyBufferClosed is a no-op for a buffer that was never synced", "[Lsp]") {
+TEST_CASE("Manager::NotifyBufferClosed is a no-op for a buffer that was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     manager.NotifyBufferClosed(buffer); // must not crash
@@ -509,10 +509,10 @@ TEST_CASE("SyncBuffer's didOpen is sent immediately, never debounced", "[Lsp]") 
     // if this were debounced too, the frame simply wouldn't be there yet.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-didopen-immediate-test.txt");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
 
@@ -523,15 +523,15 @@ TEST_CASE("SyncBuffer's didOpen is sent immediately, never debounced", "[Lsp]") 
 TEST_CASE("SyncBuffer debounces a rapid burst of edits into a single didChange with the final content", "[Lsp]") {
     // sync-debounce follow-up: the user's own reported bug, made concrete --
     // a burst of edits with no pause between them (well within
-    // LspSyncDebounceMs() of each other) must collapse into exactly one
+    // SyncDebounceMs() of each other) must collapse into exactly one
     // textDocument/didChange, not one per keystroke.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-sync-debounce-coalesce-test.txt");
     buffer.InsertAtPoint("a");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -541,7 +541,7 @@ TEST_CASE("SyncBuffer debounces a rapid burst of edits into a single didChange w
         manager.SyncBuffer(buffer, "test-lang"); // (re)arms the same debounce timer each time -- no send yet
     }
     // No "nothing sent yet" check here -- NoFrameArrives' own 200ms poll is
-    // longer than LspSyncDebounceMs()'s 150ms default, so it would race
+    // longer than SyncDebounceMs()'s 150ms default, so it would race
     // against the debounce firing mid-poll. WaitUntil below is the real,
     // race-free assertion: exactly one didChange eventually arrives, with
     // the burst's *final* content.
@@ -559,11 +559,11 @@ TEST_CASE("SyncBuffer sends a separate didChange for edits spaced further apart 
     // still produces its own didChange.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-sync-debounce-separate-test.txt");
     buffer.InsertAtPoint("a");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -589,12 +589,12 @@ TEST_CASE("SyncBuffer sends a full-document didChange when the server never adve
     // has, with no "range"/"rangeLength" keys at all.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(
         std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-default-full-test.txt");
     buffer.InsertAtPoint("a");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -614,12 +614,12 @@ TEST_CASE("SyncBuffer sends an incremental didChange containing only the changed
           "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(
         std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-append-test.txt");
     buffer.InsertAtPoint("abcde");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetTextDocumentSyncKindForTesting("test-lang", TextDocumentSyncKind::Incremental);
     manager.SyncBuffer(buffer, "test-lang");
@@ -645,12 +645,12 @@ TEST_CASE("SyncBuffer's incremental didChange has rangeLength matching the repla
     // UTF-16 units would still pass a plain-ASCII test.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(
         std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-rangelength-test.txt");
     buffer.InsertAtPoint("caf\xc3\xa9!"); // "café!" -- é is 2 bytes UTF-8, 1 UTF-16 unit
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetTextDocumentSyncKindForTesting("test-lang", TextDocumentSyncKind::Incremental);
     manager.SyncBuffer(buffer, "test-lang");
@@ -681,13 +681,13 @@ TEST_CASE("SyncBuffer's incremental diff snaps a diverging multi-byte character 
     // full range must be exactly the width of the one changed character.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(
         std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-utf8-boundary-test.txt");
     buffer.InsertAtPoint("abc\xe2\x80\x9c"
                          "def"); // "abc" + U+201C (“) + "def"
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetTextDocumentSyncKindForTesting("test-lang", TextDocumentSyncKind::Incremental);
     manager.SyncBuffer(buffer, "test-lang");
@@ -722,12 +722,12 @@ TEST_CASE("SyncBuffer's incremental diff widens to the outer span across a burst
     // content, not that the span is minimal.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(
         std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-burst-test.txt");
     buffer.InsertAtPoint("a");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetTextDocumentSyncKindForTesting("test-lang", TextDocumentSyncKind::Incremental);
     manager.SyncBuffer(buffer, "test-lang");
@@ -758,12 +758,12 @@ TEST_CASE("SyncBuffer falls back to a full-text didChange when textDocumentSync 
     // "unset" -- an explicit None must also take the full-text path.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(
         std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-none-fallback-test.txt");
     buffer.InsertAtPoint("a");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetTextDocumentSyncKindForTesting("test-lang", TextDocumentSyncKind::None);
     manager.SyncBuffer(buffer, "test-lang");
@@ -781,14 +781,14 @@ TEST_CASE("SyncBuffer falls back to a full-text didChange when textDocumentSync 
 TEST_CASE("NotifyBufferClosed cancels a pending sync debounce cleanly", "[Lsp]") {
     // sync-debounce follow-up: a buffer closed while a debounced didChange
     // is still pending must not crash, and the stale send must never reach
-    // the (now-closed, from LspManager's perspective) connection.
+    // the (now-closed, from Manager's perspective) connection.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-sync-debounce-close-test.txt");
     buffer.InsertAtPoint("a");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -800,18 +800,18 @@ TEST_CASE("NotifyBufferClosed cancels a pending sync debounce cleanly", "[Lsp]")
 
     // Long enough for the (cancelled) debounce to have fired if it were
     // somehow still live -- nothing should ever arrive.
-    std::this_thread::sleep_for(std::chrono::milliseconds(2 * ned::editor::lsp::LspSyncDebounceMs()));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2 * ned::editor::lsp::SyncDebounceMs()));
     eventLoop.DrainPosted_();
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 }
 
-TEST_CASE("LspManager::RequestHover round-trips a real request/response through an injected client", "[Lsp]") {
+TEST_CASE("Manager::RequestHover round-trips a real request/response through an injected client", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-hover-test.txt");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     manager.SyncBuffer(buffer, "test-lang");    // sends didOpen -- gets bufferState_ to "opened"
@@ -838,16 +838,16 @@ TEST_CASE("LspManager::RequestHover round-trips a real request/response through 
     REQUIRE(*gotText == "it's an int");
 }
 
-TEST_CASE("LspManager routes two buffers under different resolved LSP roots to two distinct connections", "[Lsp]") {
+TEST_CASE("Manager routes two buffers under different resolved LSP roots to two distinct connections", "[Lsp]") {
     // LSP multi-root follow-up: the actual feature under test -- two buffers
     // whose configured root markers resolve to two different directories
     // (neither the process's own ProjectRoot()) must never share a
     // connection, even though both sync the exact same language/serverKey
     // string. SetClientForTesting's connectionKeyOverride pre-registers a
     // fake server under the exact connection identity SyncBuffer's real
-    // resolution path (LspRootResolver.h's ResolveLspRoot, then
-    // LspManager's own ConnectionKey) is expected to compute -- see
-    // ConnectionKey's own doc comment in LspManager.h for the composition
+    // resolution path (RootResolver.h's ResolveLspRoot, then
+    // Manager's own ConnectionKey) is expected to compute -- see
+    // ConnectionKey's own doc comment in Manager.h for the composition
     // rule asserted here.
     ProjectRootGuard            rootGuard;
     const std::string           language = "lsp-manager-multiroot-test-lang";
@@ -868,12 +868,12 @@ TEST_CASE("LspManager routes two buffers under different resolved LSP roots to t
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            bufferA = bufferList.OpenOrCreateFile(pkgA / "file.txt");
     Buffer&            bufferB = bufferList.OpenOrCreateFile(pkgB / "file.txt");
 
-    LspClient* clientA = nullptr;
-    LspClient* clientB = nullptr;
+    Client* clientA = nullptr;
+    Client* clientB = nullptr;
     FakeServer serverA = FakeServer::Create(manager, language, eventLoop, clientA, Json::object(), false,
                                             pkgA.string() + '\x1f' + language);
     FakeServer serverB = FakeServer::Create(manager, language, eventLoop, clientB, Json::object(), false,
@@ -938,15 +938,15 @@ TEST_CASE("Two same-language connections under different roots keep independent 
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            bufferA = bufferList.OpenOrCreateFile(pkgA / "file.txt");
     Buffer&            bufferB = bufferList.OpenOrCreateFile(pkgB / "file.txt");
 
     const std::string connectionA = pkgA.string() + '\x1f' + language;
     const std::string connectionB = pkgB.string() + '\x1f' + language;
 
-    LspClient* clientA = nullptr;
-    LspClient* clientB = nullptr;
+    Client* clientA = nullptr;
+    Client* clientB = nullptr;
     auto       serverA = std::make_optional<FakeServer>(
         FakeServer::Create(manager, language, eventLoop, clientA, Json::object(), false, connectionA));
     FakeServer serverB = FakeServer::Create(manager, language, eventLoop, clientB, Json::object(), false, connectionB);
@@ -970,10 +970,10 @@ TEST_CASE("Two same-language connections under different roots keep independent 
     REQUIRE_FALSE(manager.SemanticTokensLegendFor(connectionA).has_value());
 
     serverA.reset(); // EOF on A's pipe only -- the real disconnect path
-    WaitUntil(eventLoop, [&] { return manager.StatusForLanguage(connectionA) != LspManager::LspStatus::Running; });
+    WaitUntil(eventLoop, [&] { return manager.StatusForLanguage(connectionA) != Manager::Status::Running; });
 
-    REQUIRE(manager.StatusForLanguage(connectionA) == LspManager::LspStatus::Disconnected);
-    REQUIRE(manager.StatusForLanguage(connectionB) == LspManager::LspStatus::Running); // untouched by A's death
+    REQUIRE(manager.StatusForLanguage(connectionA) == Manager::Status::Disconnected);
+    REQUIRE(manager.StatusForLanguage(connectionB) == Manager::Status::Running); // untouched by A's death
     REQUIRE(manager.TextDocumentSyncKindFor(connectionB) == TextDocumentSyncKind::Incremental);
     REQUIRE(manager.SemanticTokensLegendFor(connectionB).has_value());
 
@@ -1047,11 +1047,11 @@ TEST_CASE("A second root joins an existing workspaceFolders-capable connection i
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            bufferA = bufferList.OpenOrCreateFile(fixture.pkgA / "file.txt");
     Buffer&            bufferB = bufferList.OpenOrCreateFile(fixture.pkgB / "file.txt");
 
-    LspClient* clientA = nullptr;
+    Client* clientA = nullptr;
     FakeServer serverA = FakeServer::Create(manager, fixture.language, eventLoop, clientA, Json::object(), false,
                                             fixture.ConnectionKeyFor(fixture.pkgA));
     manager.SetWorkspaceFoldersSupportForTesting(fixture.ConnectionKeyFor(fixture.pkgA),
@@ -1077,7 +1077,7 @@ TEST_CASE("A second root joins an existing workspaceFolders-capable connection i
     // Both buffers now report the same connection -- pkgA's, not pkgB's own.
     REQUIRE(manager.ConnectionKeyForBuffer(bufferB, fixture.language) == fixture.ConnectionKeyFor(fixture.pkgA));
     REQUIRE(manager.ConnectionKeyForBuffer(bufferA, fixture.language) == fixture.ConnectionKeyFor(fixture.pkgA));
-    REQUIRE(manager.StatusForLanguage(fixture.ConnectionKeyFor(fixture.pkgB)) == LspManager::LspStatus::NotConfigured);
+    REQUIRE(manager.StatusForLanguage(fixture.ConnectionKeyFor(fixture.pkgB)) == Manager::Status::NotConfigured);
 }
 
 TEST_CASE("A root does not join a connection whose server can't be told about new folders", "[Lsp]") {
@@ -1091,12 +1091,12 @@ TEST_CASE("A root does not join a connection whose server can't be told about ne
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            bufferA = bufferList.OpenOrCreateFile(fixture.pkgA / "file.txt");
     Buffer&            bufferB = bufferList.OpenOrCreateFile(fixture.pkgB / "file.txt");
 
-    LspClient* clientA = nullptr;
-    LspClient* clientB = nullptr;
+    Client* clientA = nullptr;
+    Client* clientB = nullptr;
     FakeServer serverA = FakeServer::Create(manager, fixture.language, eventLoop, clientA, Json::object(), false,
                                             fixture.ConnectionKeyFor(fixture.pkgA));
     FakeServer serverB = FakeServer::Create(manager, fixture.language, eventLoop, clientB, Json::object(), false,
@@ -1130,12 +1130,12 @@ TEST_CASE("Disabling ned/set-lsp-workspace-folders keeps a process per root", "[
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            bufferA = bufferList.OpenOrCreateFile(fixture.pkgA / "file.txt");
     Buffer&            bufferB = bufferList.OpenOrCreateFile(fixture.pkgB / "file.txt");
 
-    LspClient* clientA = nullptr;
-    LspClient* clientB = nullptr;
+    Client* clientA = nullptr;
+    Client* clientB = nullptr;
     FakeServer serverA = FakeServer::Create(manager, fixture.language, eventLoop, clientA, Json::object(), false,
                                             fixture.ConnectionKeyFor(fixture.pkgA));
     FakeServer serverB = FakeServer::Create(manager, fixture.language, eventLoop, clientB, Json::object(), false,
@@ -1165,11 +1165,11 @@ TEST_CASE("A joined root re-resolves after the connection it joined disconnects"
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            bufferA = bufferList.OpenOrCreateFile(fixture.pkgA / "file.txt");
     Buffer&            bufferB = bufferList.OpenOrCreateFile(fixture.pkgB / "file.txt");
 
-    LspClient* clientA = nullptr;
+    Client* clientA = nullptr;
     auto       serverA = std::make_optional<FakeServer>(FakeServer::Create(
         manager, fixture.language, eventLoop, clientA, Json::object(), false, fixture.ConnectionKeyFor(fixture.pkgA)));
     manager.SetWorkspaceFoldersSupportForTesting(fixture.ConnectionKeyFor(fixture.pkgA),
@@ -1183,7 +1183,7 @@ TEST_CASE("A joined root re-resolves after the connection it joined disconnects"
 
     serverA.reset();
     WaitUntil(eventLoop, [&] {
-        return manager.StatusForLanguage(fixture.ConnectionKeyFor(fixture.pkgA)) != LspManager::LspStatus::Running;
+        return manager.StatusForLanguage(fixture.ConnectionKeyFor(fixture.pkgA)) != Manager::Status::Running;
     });
 
     // The redirect is gone -- bufferB resolves to its own root again, free to
@@ -1191,7 +1191,7 @@ TEST_CASE("A joined root re-resolves after the connection it joined disconnects"
     REQUIRE(manager.ConnectionKeyForBuffer(bufferB, fixture.language) == fixture.ConnectionKeyFor(fixture.pkgB));
 }
 
-TEST_CASE("LspManager collapses a buffer's resolved root to the plain server key when it equals ProjectRoot()", "[Lsp]") {
+TEST_CASE("Manager collapses a buffer's resolved root to the plain server key when it equals ProjectRoot()", "[Lsp]") {
     // The common-case guarantee ConnectionKey's own doc comment makes: a
     // buffer with no configured root markers (or whose nearest marker
     // happens to resolve to editor::ProjectRoot() itself) shares the exact
@@ -1204,11 +1204,11 @@ TEST_CASE("LspManager collapses a buffer's resolved root to the plain server key
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer =
         bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-collapse-test.txt");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "lsp-manager-collapse-test-lang", eventLoop, client);
 
     manager.SyncBuffer(buffer, "lsp-manager-collapse-test-lang");
@@ -1216,16 +1216,16 @@ TEST_CASE("LspManager collapses a buffer's resolved root to the plain server key
     REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/didOpen");
 }
 
-TEST_CASE("LspManager::ExpireStaleRequests reaches an injected client's own pending request", "[Lsp]") {
+TEST_CASE("Manager::ExpireStaleRequests reaches an injected client's own pending request", "[Lsp]") {
     // subprocess-hang-protection follow-up: confirms the manager-level sweep
-    // actually forwards to a real running client, not just LspClient's own
+    // actually forwards to a real running client, not just Client's own
     // already-covered unit behavior.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-expire-test.txt");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
@@ -1246,46 +1246,46 @@ TEST_CASE("LspManager::ExpireStaleRequests reaches an injected client's own pend
     REQUIRE_FALSE(gotText.has_value()); // synthetic timeout resolves like any other error response
 }
 
-TEST_CASE("LspManager::ExpireStaleRequests survives a stale initialize request disconnecting its own client mid-sweep", "[Lsp]") {
+TEST_CASE("Manager::ExpireStaleRequests survives a stale initialize request disconnecting its own client mid-sweep", "[Lsp]") {
     // reentrant-expiry-during-iteration follow-up: confirmed live via a real
-    // SIGSEGV (a unique_ptr<LspClient> read back as garbage, inside
+    // SIGSEGV (a unique_ptr<Client> read back as garbage, inside
     // ExpireStaleRequests itself). A timed-out *initialize* request's
     // synthesized-timeout callback (SpawnClient's own lambda) calls
     // ClientDisconnected on error, which erases the client from clients_
     // synchronously -- and that can happen from inside this very client's
-    // own ExpireStaleRequests(maxAge) call, while LspManager::
+    // own ExpireStaleRequests(maxAge) call, while Manager::
     // ExpireStaleRequests's loop is still iterating clients_, invalidating
     // the loop's own iterator. "cat" echoes the initialize request's raw
-    // bytes straight back -- no "result"/"error" key, so LspClient::
+    // bytes straight back -- no "result"/"error" key, so Client::
     // DispatchFrame never treats it as a response (see that function's own
     // id-plus-result-or-error check) and the request just stays pending
     // until the timeout below fires.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     manager.SetBrokerSocketPathOverrideForTesting(std::filesystem::temp_directory_path() / "ned-lsp-manager-test-no-broker.sock");
     ned::editor::lsp::SetLspServerCommand("hang-init-lang", {"cat"});
 
     Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-hang-init-test.txt");
     manager.SyncBuffer(buffer, "hang-init-lang"); // spawns cat, sends "initialize", which never validly answers
-    REQUIRE(manager.StatusForLanguage("hang-init-lang") == LspManager::LspStatus::Running);
+    REQUIRE(manager.StatusForLanguage("hang-init-lang") == Manager::Status::Running);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     manager.ExpireStaleRequests(std::chrono::milliseconds(1)); // the crash used to happen here
 
-    WaitUntil(eventLoop, [&] { return manager.StatusForLanguage("hang-init-lang") != LspManager::LspStatus::Running; });
-    REQUIRE(manager.StatusForLanguage("hang-init-lang") == LspManager::LspStatus::Disconnected);
+    WaitUntil(eventLoop, [&] { return manager.StatusForLanguage("hang-init-lang") != Manager::Status::Running; });
+    REQUIRE(manager.StatusForLanguage("hang-init-lang") == Manager::Status::Disconnected);
 
     ned::editor::lsp::SetLspServerCommand("hang-init-lang", {}); // clean up global config state for other tests
 }
 
-TEST_CASE("LspManager::RequestHover resolves to nullopt on a JSON-RPC error response", "[Lsp]") {
+TEST_CASE("Manager::RequestHover resolves to nullopt on a JSON-RPC error response", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-hover-error-test.txt");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
@@ -1307,13 +1307,13 @@ TEST_CASE("LspManager::RequestHover resolves to nullopt on a JSON-RPC error resp
     REQUIRE(log->Text().find("nope") != std::string::npos);
 }
 
-TEST_CASE("LspManager::SyncBuffer reports a spawn failure via *lsp log* instead of throwing, "
+TEST_CASE("Manager::SyncBuffer reports a spawn failure via *lsp log* instead of throwing, "
           "and doesn't retry every frame",
           "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
-    // LspManagerTest-broker-hermeticity follow-up: without this, ClientForLanguage's
+    Manager         manager(bufferList, eventLoop);
+    // ManagerTest-broker-hermeticity follow-up: without this, ClientForLanguage's
     // real spawn path tries the *real* broker socket first, and if any broker daemon
     // (this test's own past run, or another `ned` process) is already listening there,
     // the connect succeeds and the expected synchronous spawn failure never happens --
@@ -1345,28 +1345,28 @@ TEST_CASE("LspManager::SyncBuffer reports a spawn failure via *lsp log* instead 
     ned::editor::lsp::SetLspServerCommand("spawn-fail-lang", {}); // clean up global config state for other tests
 }
 
-TEST_CASE("LspManager::StatusForLanguage reports NotConfigured, Running, and SpawnFailed", "[Lsp]") {
+TEST_CASE("Manager::StatusForLanguage reports NotConfigured, Running, and SpawnFailed", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
-    using ned::editor::lsp::LspManager;
+    Manager         manager(bufferList, eventLoop);
+    using ned::editor::lsp::Manager;
     // See the spawn-failure test above for why this is needed for hermeticity.
     manager.SetBrokerSocketPathOverrideForTesting(std::filesystem::temp_directory_path() / "ned-lsp-manager-test-no-broker.sock");
 
-    REQUIRE(manager.StatusForLanguage("status-test-lang") == LspManager::LspStatus::NotConfigured);
+    REQUIRE(manager.StatusForLanguage("status-test-lang") == Manager::Status::NotConfigured);
     REQUIRE(manager.SpawnFailureDetail("status-test-lang").empty());
     REQUIRE(manager.DisconnectReason("status-test-lang").empty());
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "status-test-lang", eventLoop, client);
-    REQUIRE(manager.StatusForLanguage("status-test-lang") == LspManager::LspStatus::Running);
+    REQUIRE(manager.StatusForLanguage("status-test-lang") == Manager::Status::Running);
     REQUIRE(manager.SpawnFailureDetail("status-test-lang").empty());
 
     ned::editor::lsp::SetLspServerCommand("status-fail-lang", {"/definitely/does/not/exist/ned-fake-lsp"});
     Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-status-test.txt");
     manager.SyncBuffer(buffer, "status-fail-lang");
-    REQUIRE(manager.StatusForLanguage("status-fail-lang") == LspManager::LspStatus::SpawnFailed);
-    REQUIRE(manager.StatusForLanguage("status-test-lang") == LspManager::LspStatus::Running); // unaffected by the other language's failure
+    REQUIRE(manager.StatusForLanguage("status-fail-lang") == Manager::Status::SpawnFailed);
+    REQUIRE(manager.StatusForLanguage("status-test-lang") == Manager::Status::Running); // unaffected by the other language's failure
     // mode-line-lsp-status-round-3 follow-up: the spawn exception's message
     // is retained for the mode line's detail text.
     REQUIRE(manager.SpawnFailureDetail("status-fail-lang").find("ned-fake-lsp") != std::string::npos);
@@ -1375,42 +1375,42 @@ TEST_CASE("LspManager::StatusForLanguage reports NotConfigured, Running, and Spa
     ned::editor::lsp::SetLspServerCommand("status-fail-lang", {}); // clean up global config state for other tests
 }
 
-TEST_CASE("LspManager::ClientDisconnected removes the client and updates status on a real disconnect", "[Lsp]") {
+TEST_CASE("Manager::ClientDisconnected removes the client and updates status on a real disconnect", "[Lsp]") {
     // lsp-use-after-free follow-up: confirmed live -- a real SIGSEGV/ASan
-    // heap-use-after-free from LspClient's own background read thread
+    // heap-use-after-free from Client's own background read thread
     // Post()ing a callback that outlived the object. The fix now lives in
-    // LspClient itself (alive_, see LspClient.h's own header comment and
-    // LspClientTest.cpp's "A stray Post()ed callback safely no-ops..." for
+    // Client itself (alive_, see Client.h's own header comment and
+    // ClientTest.cpp's "A stray Post()ed callback safely no-ops..." for
     // the test that actually exercises that race) rather than here --
     // ClientDisconnected went back to a plain, immediate clients_.erase()
     // once that was fixed at the source. An earlier version of this fix
     // tried deferring destruction here instead (a retired_ vector, drained
     // by a periodic tick) and was confirmed live to not actually be safe at
-    // any delay -- LspClient's own periodic maintenance tick and a client's
+    // any delay -- Client's own periodic maintenance tick and a client's
     // background thread both Post() against EventLoop with no ordering
     // guarantee between them. This test just confirms the ordinary,
     // expected behavior: a real disconnect removes the client and updates
     // status, full stop.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     auto       server = std::make_optional<FakeServer>(FakeServer::Create(manager, "disconnect-test-lang", eventLoop, client));
     REQUIRE(client != nullptr);
-    REQUIRE(manager.StatusForLanguage("disconnect-test-lang") == LspManager::LspStatus::Running);
+    REQUIRE(manager.StatusForLanguage("disconnect-test-lang") == Manager::Status::Running);
 
     server.reset(); // closes the fake server's write end -- EOF, the real disconnect path
-    WaitUntil(eventLoop, [&] { return manager.StatusForLanguage("disconnect-test-lang") != LspManager::LspStatus::Running; });
-    REQUIRE(manager.StatusForLanguage("disconnect-test-lang") == LspManager::LspStatus::Disconnected);
+    WaitUntil(eventLoop, [&] { return manager.StatusForLanguage("disconnect-test-lang") != Manager::Status::Running; });
+    REQUIRE(manager.StatusForLanguage("disconnect-test-lang") == Manager::Status::Disconnected);
 }
 
 TEST_CASE("ClientDisconnected erases the cached textDocumentSync capability, re-defaulting to Full", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     auto       server = std::make_optional<FakeServer>(FakeServer::Create(manager, "disconnect-sync-kind-test-lang", eventLoop, client));
     REQUIRE(client != nullptr);
     manager.SetTextDocumentSyncKindForTesting("disconnect-sync-kind-test-lang", TextDocumentSyncKind::Incremental);
@@ -1418,12 +1418,12 @@ TEST_CASE("ClientDisconnected erases the cached textDocumentSync capability, re-
 
     server.reset(); // closes the fake server's write end -- EOF, the real disconnect path
     WaitUntil(eventLoop, [&] {
-        return manager.StatusForLanguage("disconnect-sync-kind-test-lang") != LspManager::LspStatus::Running;
+        return manager.StatusForLanguage("disconnect-sync-kind-test-lang") != Manager::Status::Running;
     });
     REQUIRE(manager.TextDocumentSyncKindFor("disconnect-sync-kind-test-lang") == TextDocumentSyncKind::Full);
 }
 
-TEST_CASE("LspManager::ClientDisconnected gives up after a burst of immediate disconnects (crash-loop guard)", "[Lsp]") {
+TEST_CASE("Manager::ClientDisconnected gives up after a burst of immediate disconnects (crash-loop guard)", "[Lsp]") {
     // crash-loop-respawn-guard follow-up: confirmed live -- a misconfigured
     // phpantom_lsp respawned thousands of times within about a second, since
     // nothing previously stood between one ClientDisconnected and the very
@@ -1432,33 +1432,33 @@ TEST_CASE("LspManager::ClientDisconnected gives up after a burst of immediate di
     // subprocess at all.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     ned::editor::lsp::SetLspServerCommand("crashloop-lang", {"/definitely/does/not/exist/ned-crashloop-lsp"});
 
     for (int i = 0; i < 3; ++i) {
-        LspClient* client = nullptr;
+        Client* client = nullptr;
         {
             FakeServer server = FakeServer::Create(manager, "crashloop-lang", eventLoop, client);
             // FakeServer's destructor closes serverStdoutWrite here -- EOF,
-            // which LspClient's own read loop reports as onDisconnected_.
+            // which Client's own read loop reports as onDisconnected_.
         }
-        WaitUntil(eventLoop, [&] { return manager.StatusForLanguage("crashloop-lang") != LspManager::LspStatus::Running; });
+        WaitUntil(eventLoop, [&] { return manager.StatusForLanguage("crashloop-lang") != Manager::Status::Running; });
     }
 
-    REQUIRE(manager.StatusForLanguage("crashloop-lang") == LspManager::LspStatus::SpawnFailed);
+    REQUIRE(manager.StatusForLanguage("crashloop-lang") == Manager::Status::SpawnFailed);
     REQUIRE(manager.SpawnFailureDetail("crashloop-lang").find("disconnects in a row") != std::string::npos);
 
     ned::editor::lsp::SetLspServerCommand("crashloop-lang", {}); // clean up global config state for other tests
 }
 
-TEST_CASE("LspManager::RequestCompletion round-trips a real request/response through an injected client", "[Lsp]") {
+TEST_CASE("Manager::RequestCompletion round-trips a real request/response through an injected client", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-completion-test.txt");
     buffer.InsertAtPoint("foo");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
@@ -1490,15 +1490,15 @@ TEST_CASE("LspManager::RequestCompletion round-trips a real request/response thr
     REQUIRE(gotItems[0].label == "foobar");
 }
 
-TEST_CASE("LspManager routes a real publishDiagnostics notification into Buffer::Diagnostics()", "[Lsp]") {
+TEST_CASE("Manager routes a real publishDiagnostics notification into Buffer::Diagnostics()", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-diagnostics-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad code");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -1521,17 +1521,17 @@ TEST_CASE("LspManager routes a real publishDiagnostics notification into Buffer:
 }
 
 TEST_CASE("A publishDiagnostics notification is not applied until the debounce delay elapses", "[Lsp]") {
-    const int originalDebounceMs = ned::editor::lsp::LspDiagnosticsDebounceMs();
+    const int originalDebounceMs = ned::editor::lsp::DiagnosticsDebounceMs();
     ned::editor::lsp::SetLspDiagnosticsDebounceMs(100);
 
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-diagnostics-debounce-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad code");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -1556,17 +1556,17 @@ TEST_CASE("A publishDiagnostics notification is not applied until the debounce d
 }
 
 TEST_CASE("A rapid burst of publishes collapses into a single application using only the latest content", "[Lsp]") {
-    const int originalDebounceMs = ned::editor::lsp::LspDiagnosticsDebounceMs();
+    const int originalDebounceMs = ned::editor::lsp::DiagnosticsDebounceMs();
     ned::editor::lsp::SetLspDiagnosticsDebounceMs(150);
 
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-diagnostics-burst-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad code bad code bad code");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -1601,11 +1601,11 @@ TEST_CASE("A rapid burst of publishes collapses into a single application using 
     ned::editor::lsp::SetLspDiagnosticsDebounceMs(originalDebounceMs);
 }
 
-TEST_CASE("LspManager::RequestCodeActions sends the range and overlapping diagnostics, and round-trips a real response",
+TEST_CASE("Manager::RequestCodeActions sends the range and overlapping diagnostics, and round-trips a real response",
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-code-action-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad_code");
@@ -1613,7 +1613,7 @@ TEST_CASE("LspManager::RequestCodeActions sends the range and overlapping diagno
         Buffer::Diagnostic{.startByte = 0, .endByte = 3, .severity = Buffer::Diagnostic::Severity::Error, .message = "boom"},
     });
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -1656,10 +1656,10 @@ TEST_CASE("LspManager::RequestCodeActions sends the range and overlapping diagno
     REQUIRE(gotActions[0].edits[0].edits[0].newText == "good");
 }
 
-TEST_CASE("LspManager::RequestCodeActions resolves to an empty list when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::RequestCodeActions resolves to an empty list when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                    invoked = false;
@@ -1673,15 +1673,15 @@ TEST_CASE("LspManager::RequestCodeActions resolves to an empty list when the buf
     REQUIRE(gotActions.empty());
 }
 
-TEST_CASE("LspManager::ResolveCodeAction sends action.raw verbatim and returns the resolved edit", "[Lsp]") {
+TEST_CASE("Manager::ResolveCodeAction sends action.raw verbatim and returns the resolved edit", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-resolve-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad_code");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     const std::string didOpen = ReadRawFrame(server.serverStdinRead);
@@ -1717,7 +1717,7 @@ TEST_CASE("LspManager::ResolveCodeAction sends action.raw verbatim and returns t
     REQUIRE(gotResolved->edits.size() == 1);
 }
 
-TEST_CASE("LspManager::ResolveCodeActionEdits resolves a URI per touched file", "[Lsp]") {
+TEST_CASE("Manager::ResolveCodeActionEdits resolves a URI per touched file", "[Lsp]") {
     CodeAction action;
     action.hasEdit = true;
     action.edits   = {
@@ -1731,7 +1731,7 @@ TEST_CASE("LspManager::ResolveCodeActionEdits resolves a URI per touched file", 
         },
     };
 
-    const auto resolved = LspManager::ResolveCodeActionEdits(action);
+    const auto resolved = Manager::ResolveCodeActionEdits(action);
     REQUIRE(resolved.has_value());
     REQUIRE(resolved->size() == 2);
     REQUIRE((*resolved)[0].path == std::filesystem::path("/a.c"));
@@ -1740,18 +1740,18 @@ TEST_CASE("LspManager::ResolveCodeActionEdits resolves a URI per touched file", 
     REQUIRE((*resolved)[1].path == std::filesystem::path("/b.c"));
 }
 
-TEST_CASE("LspManager::ResolveCodeActionEdits returns nullopt for touchesUnsupportedForm or a missing edit", "[Lsp]") {
+TEST_CASE("Manager::ResolveCodeActionEdits returns nullopt for touchesUnsupportedForm or a missing edit", "[Lsp]") {
     CodeAction unsupported;
     unsupported.hasEdit                = true;
     unsupported.touchesUnsupportedForm = true;
-    REQUIRE_FALSE(LspManager::ResolveCodeActionEdits(unsupported).has_value());
+    REQUIRE_FALSE(Manager::ResolveCodeActionEdits(unsupported).has_value());
 
     CodeAction noEdit;
     noEdit.hasEdit = false;
-    REQUIRE_FALSE(LspManager::ResolveCodeActionEdits(noEdit).has_value());
+    REQUIRE_FALSE(Manager::ResolveCodeActionEdits(noEdit).has_value());
 }
 
-TEST_CASE("LspManager::ResolveCodeActionEdits refuses wholesale when one URI doesn't resolve", "[Lsp]") {
+TEST_CASE("Manager::ResolveCodeActionEdits refuses wholesale when one URI doesn't resolve", "[Lsp]") {
     CodeAction action;
     action.hasEdit = true;
     action.edits   = {
@@ -1759,13 +1759,13 @@ TEST_CASE("LspManager::ResolveCodeActionEdits refuses wholesale when one URI doe
         ned::editor::lsp::RenameEdit{.uri = "not-a-file-uri", .edits = {ned::editor::lsp::WorkspaceTextEdit{.newText = "y"}}},
     };
 
-    REQUIRE_FALSE(LspManager::ResolveCodeActionEdits(action).has_value());
+    REQUIRE_FALSE(Manager::ResolveCodeActionEdits(action).has_value());
 }
 
-TEST_CASE("LspManager::ResolveCodeAction resolves to nullopt when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::ResolveCodeAction resolves to nullopt when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     ned::editor::lsp::CodeAction action;
@@ -1784,16 +1784,16 @@ TEST_CASE("LspManager::ResolveCodeAction resolves to nullopt when the buffer was
     REQUIRE_FALSE(gotResolved.has_value());
 }
 
-TEST_CASE("LspManager::RequestCodeActions with a serverKey routes to that connection, not the primary one", "[Lsp]") {
+TEST_CASE("Manager::RequestCodeActions with a serverKey routes to that connection, not the primary one", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-code-action-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("teh");
 
-    LspClient* primaryClient = nullptr;
-    LspClient* proseClient   = nullptr;
+    Client* primaryClient = nullptr;
+    Client* proseClient   = nullptr;
     FakeServer primaryServer = FakeServer::Create(manager, "test-lang", eventLoop, primaryClient);
     FakeServer proseServer   = FakeServer::Create(manager, std::string(kProseLanguageKey), eventLoop, proseClient);
 
@@ -1830,14 +1830,14 @@ TEST_CASE("LspManager::RequestCodeActions with a serverKey routes to that connec
     REQUIRE(gotActions[0].command->name == "HarperAddToUserDict");
 }
 
-TEST_CASE("LspManager::ExecuteCommand sends workspace/executeCommand and reports ok on a real response", "[Lsp]") {
+TEST_CASE("Manager::ExecuteCommand sends workspace/executeCommand and reports ok on a real response", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-execute-command-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -1862,14 +1862,14 @@ TEST_CASE("LspManager::ExecuteCommand sends workspace/executeCommand and reports
     REQUIRE(gotOk);
 }
 
-TEST_CASE("LspManager::ExecuteCommand reports failure on a JSON-RPC error response", "[Lsp]") {
+TEST_CASE("Manager::ExecuteCommand reports failure on a JSON-RPC error response", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-execute-command-error-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
@@ -1884,10 +1884,10 @@ TEST_CASE("LspManager::ExecuteCommand reports failure on a JSON-RPC error respon
     REQUIRE_FALSE(gotOk);
 }
 
-TEST_CASE("LspManager::ExecuteCommand reports failure when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::ExecuteCommand reports failure when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool invoked = false;
@@ -1901,22 +1901,22 @@ TEST_CASE("LspManager::ExecuteCommand reports failure when the buffer was never 
     REQUIRE_FALSE(gotOk);
 }
 
-TEST_CASE("LspManager::RequestDefinition resolves a Location-array response's uris to real paths", "[Lsp]") {
+TEST_CASE("Manager::RequestDefinition resolves a Location-array response's uris to real paths", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-definition-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("call_site();");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     bool                                      invoked = false;
-    std::vector<LspManager::ResolvedLocation> got;
-    manager.RequestDefinition(buffer, 0, [&](std::vector<LspManager::ResolvedLocation> locations) {
+    std::vector<Manager::ResolvedLocation> got;
+    manager.RequestDefinition(buffer, 0, [&](std::vector<Manager::ResolvedLocation> locations) {
         invoked = true;
         got     = std::move(locations);
     });
@@ -1941,15 +1941,15 @@ TEST_CASE("LspManager::RequestDefinition resolves a Location-array response's ur
     REQUIRE(got[0].position.character == 7);
 }
 
-TEST_CASE("LspManager::RequestDefinition resolves to an empty list when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::RequestDefinition resolves to an empty list when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                                      invoked = false;
-    std::vector<LspManager::ResolvedLocation> got;
-    manager.RequestDefinition(buffer, 0, [&](std::vector<LspManager::ResolvedLocation> locations) {
+    std::vector<Manager::ResolvedLocation> got;
+    manager.RequestDefinition(buffer, 0, [&](std::vector<Manager::ResolvedLocation> locations) {
         invoked = true;
         got     = std::move(locations);
     });
@@ -1965,22 +1965,22 @@ TEST_CASE("LspManager::RequestDefinition resolves to an empty list when the buff
 // above already covers in full -- no need to re-test empty-result/unsynced
 // cases three more times, that logic is shared (SendLocationRequest), not
 // duplicated per method.
-TEST_CASE("LspManager::RequestDeclaration sends textDocument/declaration and resolves a response", "[Lsp]") {
+TEST_CASE("Manager::RequestDeclaration sends textDocument/declaration and resolves a response", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-declaration-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("call_site();");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     bool                                      invoked = false;
-    std::vector<LspManager::ResolvedLocation> got;
-    manager.RequestDeclaration(buffer, 0, [&](std::vector<LspManager::ResolvedLocation> locations) {
+    std::vector<Manager::ResolvedLocation> got;
+    manager.RequestDeclaration(buffer, 0, [&](std::vector<Manager::ResolvedLocation> locations) {
         invoked = true;
         got     = std::move(locations);
     });
@@ -2002,40 +2002,40 @@ TEST_CASE("LspManager::RequestDeclaration sends textDocument/declaration and res
     REQUIRE(got[0].path == targetPath);
 }
 
-TEST_CASE("LspManager::RequestTypeDefinition sends textDocument/typeDefinition", "[Lsp]") {
+TEST_CASE("Manager::RequestTypeDefinition sends textDocument/typeDefinition", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-typedefinition-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("call_site();");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
 
-    manager.RequestTypeDefinition(buffer, 0, [](std::vector<LspManager::ResolvedLocation>) {});
+    manager.RequestTypeDefinition(buffer, 0, [](std::vector<Manager::ResolvedLocation>) {});
 
     const std::string raw     = ReadRawFrame(server.serverStdinRead);
     const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(request["method"] == "textDocument/typeDefinition");
 }
 
-TEST_CASE("LspManager::RequestImplementation sends textDocument/implementation", "[Lsp]") {
+TEST_CASE("Manager::RequestImplementation sends textDocument/implementation", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-implementation-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("call_site();");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
 
-    manager.RequestImplementation(buffer, 0, [](std::vector<LspManager::ResolvedLocation>) {});
+    manager.RequestImplementation(buffer, 0, [](std::vector<Manager::ResolvedLocation>) {});
 
     const std::string raw     = ReadRawFrame(server.serverStdinRead);
     const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
@@ -2046,23 +2046,23 @@ TEST_CASE("LspManager::RequestImplementation sends textDocument/implementation",
 // shape as the three tests above, plus the one thing that's actually unique
 // to this request -- a "context": {"includeDeclaration": true} field none
 // of the other three location requests send.
-TEST_CASE("LspManager::RequestReferences sends textDocument/references with includeDeclaration and resolves a response",
+TEST_CASE("Manager::RequestReferences sends textDocument/references with includeDeclaration and resolves a response",
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-references-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("call_site();");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     bool                                      invoked = false;
-    std::vector<LspManager::ResolvedLocation> got;
-    manager.RequestReferences(buffer, 0, [&](std::vector<LspManager::ResolvedLocation> locations) {
+    std::vector<Manager::ResolvedLocation> got;
+    manager.RequestReferences(buffer, 0, [&](std::vector<Manager::ResolvedLocation> locations) {
         invoked = true;
         got     = std::move(locations);
     });
@@ -2088,23 +2088,23 @@ TEST_CASE("LspManager::RequestReferences sends textDocument/references with incl
 }
 
 // symbol-search follow-up.
-TEST_CASE("LspManager::RequestDocumentSymbols sends textDocument/documentSymbol and resolves its own uri to a path",
+TEST_CASE("Manager::RequestDocumentSymbols sends textDocument/documentSymbol and resolves its own uri to a path",
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-docsymbol-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("struct Widget {};");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     bool                                  invoked = false;
-    std::vector<LspManager::SymbolResult> got;
-    manager.RequestDocumentSymbols(buffer, [&](std::vector<LspManager::SymbolResult> symbols) {
+    std::vector<Manager::SymbolResult> got;
+    manager.RequestDocumentSymbols(buffer, [&](std::vector<Manager::SymbolResult> symbols) {
         invoked = true;
         got     = std::move(symbols);
     });
@@ -2134,23 +2134,23 @@ TEST_CASE("LspManager::RequestDocumentSymbols sends textDocument/documentSymbol 
     REQUIRE(got[0].position.character == 7);
 }
 
-TEST_CASE("LspManager::RequestWorkspaceSymbols sends workspace/symbol with the query and no textDocument field",
+TEST_CASE("Manager::RequestWorkspaceSymbols sends workspace/symbol with the query and no textDocument field",
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-wssymbol-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("x");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
 
     bool                                  invoked = false;
-    std::vector<LspManager::SymbolResult> got;
-    manager.RequestWorkspaceSymbols(buffer, "Wid", [&](std::vector<LspManager::SymbolResult> symbols) {
+    std::vector<Manager::SymbolResult> got;
+    manager.RequestWorkspaceSymbols(buffer, "Wid", [&](std::vector<Manager::SymbolResult> symbols) {
         invoked = true;
         got     = std::move(symbols);
     });
@@ -2182,25 +2182,25 @@ TEST_CASE("LspManager::RequestWorkspaceSymbols sends workspace/symbol with the q
     REQUIRE(got[0].position.line == 4);
 }
 
-TEST_CASE("LspManager::RequestPrepareCallHierarchy sends textDocument/prepareCallHierarchy and resolves the item's uri "
+TEST_CASE("Manager::RequestPrepareCallHierarchy sends textDocument/prepareCallHierarchy and resolves the item's uri "
           "to a path",
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prepare-callh-test.cpp";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("call_site();");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     const std::string didOpen = ReadRawFrame(server.serverStdinRead);
     const std::string ownUri  = Json::parse(didOpen.substr(didOpen.find("\r\n\r\n") + 4))["params"]["textDocument"]["uri"].get<std::string>();
 
     bool                                           invoked = false;
-    std::vector<LspManager::ResolvedHierarchyItem> got;
-    manager.RequestPrepareCallHierarchy(buffer, 0, [&](std::vector<LspManager::ResolvedHierarchyItem> items) {
+    std::vector<Manager::ResolvedHierarchyItem> got;
+    manager.RequestPrepareCallHierarchy(buffer, 0, [&](std::vector<Manager::ResolvedHierarchyItem> items) {
         invoked = true;
         got     = std::move(items);
     });
@@ -2229,16 +2229,16 @@ TEST_CASE("LspManager::RequestPrepareCallHierarchy sends textDocument/prepareCal
     REQUIRE(got[0].item.raw == itemJson); // full item kept verbatim, not just name/kind/position
 }
 
-TEST_CASE("LspManager::RequestIncomingCalls sends item.raw verbatim as \"item\" and resolves fromRanges/from.uri",
+TEST_CASE("Manager::RequestIncomingCalls sends item.raw verbatim as \"item\" and resolves fromRanges/from.uri",
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-incoming-calls-test.cpp";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("callee();");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     const std::string didOpen = ReadRawFrame(server.serverStdinRead);
@@ -2252,8 +2252,8 @@ TEST_CASE("LspManager::RequestIncomingCalls sends item.raw verbatim as \"item\" 
     const ned::editor::lsp::HierarchyItem item          = ned::editor::lsp::ExtractHierarchyItems(Json::array({requestedItem}))[0];
 
     bool                                           invoked = false;
-    std::vector<LspManager::ResolvedHierarchyCall> got;
-    manager.RequestIncomingCalls(buffer, item, [&](std::vector<LspManager::ResolvedHierarchyCall> calls) {
+    std::vector<Manager::ResolvedHierarchyCall> got;
+    manager.RequestIncomingCalls(buffer, item, [&](std::vector<Manager::ResolvedHierarchyCall> calls) {
         invoked = true;
         got     = std::move(calls);
     });
@@ -2286,16 +2286,16 @@ TEST_CASE("LspManager::RequestIncomingCalls sends item.raw verbatim as \"item\" 
     REQUIRE(got[0].callSites[0].line == 5);
 }
 
-TEST_CASE("LspManager::RequestSupertypes sends typeHierarchy/supertypes with item.raw and resolves the response",
+TEST_CASE("Manager::RequestSupertypes sends typeHierarchy/supertypes with item.raw and resolves the response",
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-supertypes-test.cpp";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("class Derived {};");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     const std::string didOpen = ReadRawFrame(server.serverStdinRead);
@@ -2308,8 +2308,8 @@ TEST_CASE("LspManager::RequestSupertypes sends typeHierarchy/supertypes with ite
     const ned::editor::lsp::HierarchyItem item          = ned::editor::lsp::ExtractHierarchyItems(Json::array({requestedItem}))[0];
 
     bool                                           invoked = false;
-    std::vector<LspManager::ResolvedHierarchyItem> got;
-    manager.RequestSupertypes(buffer, item, [&](std::vector<LspManager::ResolvedHierarchyItem> items) {
+    std::vector<Manager::ResolvedHierarchyItem> got;
+    manager.RequestSupertypes(buffer, item, [&](std::vector<Manager::ResolvedHierarchyItem> items) {
         invoked = true;
         got     = std::move(items);
     });
@@ -2332,15 +2332,15 @@ TEST_CASE("LspManager::RequestSupertypes sends typeHierarchy/supertypes with ite
     REQUIRE(got[0].path == path);
 }
 
-TEST_CASE("LspManager::RequestPrepareCallHierarchy resolves an empty vector when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::RequestPrepareCallHierarchy resolves an empty vector when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                                           invoked = false;
-    std::vector<LspManager::ResolvedHierarchyItem> got{LspManager::ResolvedHierarchyItem{}}; // pre-seeded, must be cleared
-    manager.RequestPrepareCallHierarchy(buffer, 0, [&](std::vector<LspManager::ResolvedHierarchyItem> items) {
+    std::vector<Manager::ResolvedHierarchyItem> got{Manager::ResolvedHierarchyItem{}}; // pre-seeded, must be cleared
+    manager.RequestPrepareCallHierarchy(buffer, 0, [&](std::vector<Manager::ResolvedHierarchyItem> items) {
         invoked = true;
         got     = std::move(items);
     });
@@ -2349,15 +2349,15 @@ TEST_CASE("LspManager::RequestPrepareCallHierarchy resolves an empty vector when
     REQUIRE(got.empty());
 }
 
-TEST_CASE("LspManager::RequestSignatureHelp sends textDocument/signatureHelp and resolves the formatted text", "[Lsp]") {
+TEST_CASE("Manager::RequestSignatureHelp sends textDocument/signatureHelp and resolves the formatted text", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-signature-help-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("foo(");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -2385,10 +2385,10 @@ TEST_CASE("LspManager::RequestSignatureHelp sends textDocument/signatureHelp and
     REQUIRE(*got == "foo(**a: int**)");
 }
 
-TEST_CASE("LspManager::RequestSignatureHelp resolves nullopt when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::RequestSignatureHelp resolves nullopt when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                       invoked = false;
@@ -2402,15 +2402,15 @@ TEST_CASE("LspManager::RequestSignatureHelp resolves nullopt when the buffer was
     REQUIRE_FALSE(got.has_value());
 }
 
-TEST_CASE("LspManager::RequestDocumentHighlight sends textDocument/documentHighlight and resolves the parsed ranges", "[Lsp]") {
+TEST_CASE("Manager::RequestDocumentHighlight sends textDocument/documentHighlight and resolves the parsed ranges", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-document-highlight-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("foo = foo + 1");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -2440,10 +2440,10 @@ TEST_CASE("LspManager::RequestDocumentHighlight sends textDocument/documentHighl
     REQUIRE(got[1].start.character == 7);
 }
 
-TEST_CASE("LspManager::RequestDocumentHighlight resolves an empty vector when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::RequestDocumentHighlight resolves an empty vector when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                                             invoked = false;
@@ -2457,15 +2457,15 @@ TEST_CASE("LspManager::RequestDocumentHighlight resolves an empty vector when th
     REQUIRE(got.empty());
 }
 
-TEST_CASE("LspManager::RequestFormatting sends textDocument/formatting with tabSize/insertSpaces and resolves edits", "[Lsp]") {
+TEST_CASE("Manager::RequestFormatting sends textDocument/formatting with tabSize/insertSpaces and resolves edits", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-formatting-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x=1;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -2496,10 +2496,10 @@ TEST_CASE("LspManager::RequestFormatting sends textDocument/formatting with tabS
     REQUIRE((*got)[0].newText == " = ");
 }
 
-TEST_CASE("LspManager::RequestFormatting resolves nullopt when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::RequestFormatting resolves nullopt when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                                                            invoked = false;
@@ -2513,15 +2513,15 @@ TEST_CASE("LspManager::RequestFormatting resolves nullopt when the buffer was ne
     REQUIRE_FALSE(got.has_value());
 }
 
-TEST_CASE("LspManager::RequestRangeFormatting sends textDocument/rangeFormatting with the requested range", "[Lsp]") {
+TEST_CASE("Manager::RequestRangeFormatting sends textDocument/rangeFormatting with the requested range", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-range-formatting-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x=1;\nint y=2;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -2547,15 +2547,15 @@ TEST_CASE("LspManager::RequestRangeFormatting sends textDocument/rangeFormatting
     REQUIRE(got->empty());
 }
 
-TEST_CASE("LspManager::RequestSwitchSourceHeader sends a bare TextDocumentIdentifier and resolves a string uri response",
+TEST_CASE("Manager::RequestSwitchSourceHeader sends a bare TextDocumentIdentifier and resolves a string uri response",
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-switch-header-test.cpp";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -2586,14 +2586,14 @@ TEST_CASE("LspManager::RequestSwitchSourceHeader sends a bare TextDocumentIdenti
     REQUIRE(*got == headerPath);
 }
 
-TEST_CASE("LspManager::RequestSwitchSourceHeader resolves to nullopt on a null result (no counterpart)", "[Lsp]") {
+TEST_CASE("Manager::RequestSwitchSourceHeader resolves to nullopt on a null result (no counterpart)", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-switch-header-null-test.cpp";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -2617,10 +2617,10 @@ TEST_CASE("LspManager::RequestSwitchSourceHeader resolves to nullopt on a null r
     REQUIRE_FALSE(got.has_value());
 }
 
-TEST_CASE("LspManager::RequestSwitchSourceHeader resolves to nullopt when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::RequestSwitchSourceHeader resolves to nullopt when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                                 invoked = false;
@@ -2634,23 +2634,23 @@ TEST_CASE("LspManager::RequestSwitchSourceHeader resolves to nullopt when the bu
     REQUIRE_FALSE(got.has_value());
 }
 
-TEST_CASE("LspManager::RequestRename sends newName and resolves a multi-file WorkspaceEdit's uris to real paths", "[Lsp]") {
+TEST_CASE("Manager::RequestRename sends newName and resolves a multi-file WorkspaceEdit's uris to real paths", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-rename-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("old_name");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     const std::string didOpen = ReadRawFrame(server.serverStdinRead);
     const std::string ownUri  = Json::parse(didOpen.substr(didOpen.find("\r\n\r\n") + 4))["params"]["textDocument"]["uri"].get<std::string>();
 
     bool                                      invoked = false;
-    std::optional<LspManager::ResolvedRename> got;
-    manager.RequestRename(buffer, 0, "new_name", [&](std::optional<LspManager::ResolvedRename> result) {
+    std::optional<Manager::ResolvedRename> got;
+    manager.RequestRename(buffer, 0, "new_name", [&](std::optional<Manager::ResolvedRename> result) {
         invoked = true;
         got     = std::move(result);
     });
@@ -2683,23 +2683,23 @@ TEST_CASE("LspManager::RequestRename sends newName and resolves a multi-file Wor
     REQUIRE(got->edits.size() == 2);
 }
 
-TEST_CASE("LspManager::RequestWillRenameFiles sends oldUri/newUri only to a server whose filter matches, and resolves its WorkspaceEdit",
+TEST_CASE("Manager::RequestWillRenameFiles sends oldUri/newUri only to a server whose filter matches, and resolves its WorkspaceEdit",
           "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     manager.SetFileOperationFiltersForTesting("test-lang", {.willRenameGlobs = {"**/*.ts"}, .didRenameGlobs = {}});
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     const std::filesystem::path oldPath = std::filesystem::temp_directory_path() / "ned-will-rename-old.ts";
     const std::filesystem::path newPath = std::filesystem::temp_directory_path() / "ned-will-rename-new.ts";
 
     bool                                      invoked = false;
-    std::optional<LspManager::ResolvedRename> got;
-    manager.RequestWillRenameFiles({LspManager::FileRenameEntry{.oldPath = oldPath, .newPath = newPath}},
-                                   [&](std::optional<LspManager::ResolvedRename> result) {
+    std::optional<Manager::ResolvedRename> got;
+    manager.RequestWillRenameFiles({Manager::FileRenameEntry{.oldPath = oldPath, .newPath = newPath}},
+                                   [&](std::optional<Manager::ResolvedRename> result) {
                                        invoked = true;
                                        got     = std::move(result);
                                    });
@@ -2729,20 +2729,20 @@ TEST_CASE("LspManager::RequestWillRenameFiles sends oldUri/newUri only to a serv
     REQUIRE(got->edits.size() == 1);
 }
 
-TEST_CASE("LspManager::RequestWillRenameFiles resolves to nullopt synchronously when no connected server's filter matches", "[Lsp]") {
+TEST_CASE("Manager::RequestWillRenameFiles resolves to nullopt synchronously when no connected server's filter matches", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     manager.SetFileOperationFiltersForTesting("test-lang", {.willRenameGlobs = {"**/*.rs"}, .didRenameGlobs = {}});
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     bool                                      invoked = false;
-    std::optional<LspManager::ResolvedRename> got;
+    std::optional<Manager::ResolvedRename> got;
     manager.RequestWillRenameFiles(
-        {LspManager::FileRenameEntry{.oldPath = "/tmp/a.ts", .newPath = "/tmp/b.ts"}},
-        [&](std::optional<LspManager::ResolvedRename> result) {
+        {Manager::FileRenameEntry{.oldPath = "/tmp/a.ts", .newPath = "/tmp/b.ts"}},
+        [&](std::optional<Manager::ResolvedRename> result) {
             invoked = true;
             got     = std::move(result);
         });
@@ -2752,15 +2752,15 @@ TEST_CASE("LspManager::RequestWillRenameFiles resolves to nullopt synchronously 
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 }
 
-TEST_CASE("LspManager::RequestWillRenameFiles merges edits from every matching server", "[Lsp]") {
+TEST_CASE("Manager::RequestWillRenameFiles merges edits from every matching server", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     manager.SetFileOperationFiltersForTesting("lang-a", {.willRenameGlobs = {"**/*.ts"}, .didRenameGlobs = {}});
     manager.SetFileOperationFiltersForTesting("lang-b", {.willRenameGlobs = {"**/*.ts"}, .didRenameGlobs = {}});
 
-    LspClient* clientA = nullptr;
-    LspClient* clientB = nullptr;
+    Client* clientA = nullptr;
+    Client* clientB = nullptr;
     FakeServer serverA = FakeServer::Create(manager, "lang-a", eventLoop, clientA);
     FakeServer serverB = FakeServer::Create(manager, "lang-b", eventLoop, clientB);
 
@@ -2768,9 +2768,9 @@ TEST_CASE("LspManager::RequestWillRenameFiles merges edits from every matching s
     const std::filesystem::path newPath = "/tmp/ned-will-rename-multi-new.ts";
 
     bool                                      invoked = false;
-    std::optional<LspManager::ResolvedRename> got;
-    manager.RequestWillRenameFiles({LspManager::FileRenameEntry{.oldPath = oldPath, .newPath = newPath}},
-                                   [&](std::optional<LspManager::ResolvedRename> result) {
+    std::optional<Manager::ResolvedRename> got;
+    manager.RequestWillRenameFiles({Manager::FileRenameEntry{.oldPath = oldPath, .newPath = newPath}},
+                                   [&](std::optional<Manager::ResolvedRename> result) {
                                        invoked = true;
                                        got     = std::move(result);
                                    });
@@ -2800,20 +2800,20 @@ TEST_CASE("LspManager::RequestWillRenameFiles merges edits from every matching s
     REQUIRE(got->edits.size() == 2);
 }
 
-TEST_CASE("LspManager::NotifyFilesRenamed sends workspace/didRenameFiles only to a server whose filter matches", "[Lsp]") {
+TEST_CASE("Manager::NotifyFilesRenamed sends workspace/didRenameFiles only to a server whose filter matches", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     manager.SetFileOperationFiltersForTesting("ts-lang", {.willRenameGlobs = {}, .didRenameGlobs = {"**/*.ts"}});
     manager.SetFileOperationFiltersForTesting("rs-lang", {.willRenameGlobs = {}, .didRenameGlobs = {"**/*.rs"}});
 
-    LspClient* tsClient = nullptr;
-    LspClient* rsClient = nullptr;
+    Client* tsClient = nullptr;
+    Client* rsClient = nullptr;
     FakeServer tsServer = FakeServer::Create(manager, "ts-lang", eventLoop, tsClient);
     FakeServer rsServer = FakeServer::Create(manager, "rs-lang", eventLoop, rsClient);
 
     manager.NotifyFilesRenamed(
-        {LspManager::FileRenameEntry{.oldPath = "/tmp/ned-did-rename-old.ts", .newPath = "/tmp/ned-did-rename-new.ts"}});
+        {Manager::FileRenameEntry{.oldPath = "/tmp/ned-did-rename-old.ts", .newPath = "/tmp/ned-did-rename-new.ts"}});
 
     const std::string raw     = ReadRawFrame(tsServer.serverStdinRead);
     const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
@@ -2823,15 +2823,15 @@ TEST_CASE("LspManager::NotifyFilesRenamed sends workspace/didRenameFiles only to
     REQUIRE(NoFrameArrives(rsServer.serverStdinRead));
 }
 
-TEST_CASE("LspManager::RequestRename resolves to nullopt when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::RequestRename resolves to nullopt when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                                      invoked = false;
-    std::optional<LspManager::ResolvedRename> got;
-    manager.RequestRename(buffer, 0, "new_name", [&](std::optional<LspManager::ResolvedRename> result) {
+    std::optional<Manager::ResolvedRename> got;
+    manager.RequestRename(buffer, 0, "new_name", [&](std::optional<Manager::ResolvedRename> result) {
         invoked = true;
         got     = result;
     });
@@ -2862,7 +2862,7 @@ TEST_CASE("BuildInitializeParams advertises codeActionLiteralSupport alongside t
     // server (clangd included) may only return bare Command objects -- no
     // "edit", no "kind" -- so every "fix available" quickfix listed fine but
     // applied as "has no edit to apply". See BuildInitializeParams' own
-    // comment in LspManager.cpp.
+    // comment in Manager.cpp.
     const Json params = ned::editor::lsp::BuildInitializeParams(std::filesystem::path("/some/project"));
 
     REQUIRE(params["rootUri"] == "file:///some/project");
@@ -2923,7 +2923,7 @@ TEST_CASE("BuildInitializeParams sends booleans, not objects, for fileOperations
 }
 
 TEST_CASE("BuildInitializeParams absolutizes a relative rootUri", "[Lsp]") {
-    // PathToUri (file-local in LspManager.cpp, reached through
+    // PathToUri (file-local in Manager.cpp, reached through
     // BuildInitializeParams here) must never emit a relative file:// URI --
     // "file://demo.cpp" is unresolvable, and clangd rejects every request
     // naming one. A buffer opened via a relative CLI argument is the real
@@ -2966,12 +2966,12 @@ TEST_CASE("BuildInitializeParams merges a non-empty initializationOptions verbat
     REQUIRE(params["initializationOptions"] == options);
 }
 
-TEST_CASE("LspManager tracks $/progress begin/report/end as LSP background activity with detail", "[Lsp]") {
+TEST_CASE("Manager tracks $/progress begin/report/end as LSP background activity with detail", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
@@ -3004,12 +3004,12 @@ TEST_CASE("LspManager tracks $/progress begin/report/end as LSP background activ
     REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
 }
 
-TEST_CASE("LspManager answers window/workDoneProgress/create with a null result", "[Lsp]") {
+TEST_CASE("Manager answers window/workDoneProgress/create with a null result", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     const Json request = {{"jsonrpc", "2.0"}, {"id", 3}, {"method", "window/workDoneProgress/create"}, {"params", {{"token", "t"}}}};
@@ -3022,19 +3022,19 @@ TEST_CASE("LspManager answers window/workDoneProgress/create with a null result"
     REQUIRE(response["result"].is_null());
 }
 
-TEST_CASE("LspManager resolves workspace/configuration sections against lspWorkspaceConfiguration", "[Lsp]") {
+TEST_CASE("Manager resolves workspace/configuration sections against lspWorkspaceConfiguration", "[Lsp]") {
     // project-settings-lsp-init-options follow-up: a config-pull server
     // (e.g. intelephense/phpactor-style) asks for its own section by dotted
     // path -- confirm both a top-level and a nested section resolve, and an
     // unconfigured one still falls back to null rather than erroring.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
     const Json workspaceConfig = Json{{"phpactor", {{"file_extensions", Json::array({"php"})}}},
                                       {"intelephense", {{"environment", {{"includePaths", Json::array({"/stubs"})}}}}}};
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "php", eventLoop, client, workspaceConfig);
 
     const Json request = {{"jsonrpc", "2.0"},
@@ -3054,12 +3054,12 @@ TEST_CASE("LspManager resolves workspace/configuration sections against lspWorks
     CHECK(response["result"][2].is_null());
 }
 
-TEST_CASE("LspManager answers workspace/configuration with null for every item when nothing is configured", "[Lsp]") {
+TEST_CASE("Manager answers workspace/configuration with null for every item when nothing is configured", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     const Json request = {{"jsonrpc", "2.0"}, {"id", 9}, {"method", "workspace/configuration"}, {"params", {{"items", Json::array({{{"section", "anything"}}})}}}};
@@ -3073,15 +3073,15 @@ TEST_CASE("LspManager answers workspace/configuration with null for every item w
 }
 
 // edit-application-gaps follow-up: a server-pushed workspace/applyEdit
-// request -- LspManager::WireNotificationHandlers' own handler, exercised
+// request -- Manager::WireNotificationHandlers' own handler, exercised
 // the same live request/response round-trip window/workDoneProgress/create
 // and workspace/configuration already are above.
-TEST_CASE("LspManager answers workspace/applyEdit with applied:false when no handler is wired up", "[Lsp]") {
+TEST_CASE("Manager answers workspace/applyEdit with applied:false when no handler is wired up", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     const Json request = {{"jsonrpc", "2.0"},
@@ -3097,20 +3097,20 @@ TEST_CASE("LspManager answers workspace/applyEdit with applied:false when no han
     REQUIRE(response["result"]["failureReason"] == "not supported");
 }
 
-TEST_CASE("LspManager routes workspace/applyEdit through the wired handler, resolved to real paths", "[Lsp]") {
+TEST_CASE("Manager routes workspace/applyEdit through the wired handler, resolved to real paths", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
-    std::optional<LspManager::ResolvedRename> gotEdit;
+    std::optional<Manager::ResolvedRename> gotEdit;
     std::string                               gotLabel;
-    manager.SetApplyEditHandler([&](const LspManager::ResolvedRename& edit, const std::string& label) {
+    manager.SetApplyEditHandler([&](const Manager::ResolvedRename& edit, const std::string& label) {
         gotEdit  = edit;
         gotLabel = label;
         return true;
     });
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     const Json request = {
@@ -3134,13 +3134,13 @@ TEST_CASE("LspManager routes workspace/applyEdit through the wired handler, reso
     REQUIRE(gotEdit->edits[0].edits[0].newText == "x");
 }
 
-TEST_CASE("LspManager answers workspace/applyEdit with applied:false for an unresolvable uri", "[Lsp]") {
+TEST_CASE("Manager answers workspace/applyEdit with applied:false for an unresolvable uri", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
-    manager.SetApplyEditHandler([](const LspManager::ResolvedRename&, const std::string&) { return true; });
+    Manager         manager(bufferList, eventLoop);
+    manager.SetApplyEditHandler([](const Manager::ResolvedRename&, const std::string&) { return true; });
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
     const Json request = {{"jsonrpc", "2.0"},
@@ -3155,7 +3155,7 @@ TEST_CASE("LspManager answers workspace/applyEdit with applied:false for an unre
     REQUIRE(response["result"]["failureReason"] == "unresolvable uri");
 }
 
-TEST_CASE("LspManager::ResolveDocumentChangeOps resolves a create/rename/delete/edit sequence in order", "[Lsp]") {
+TEST_CASE("Manager::ResolveDocumentChangeOps resolves a create/rename/delete/edit sequence in order", "[Lsp]") {
     using ned::editor::lsp::DocumentChangeOp;
     using ned::editor::lsp::WorkspaceTextEdit;
 
@@ -3166,7 +3166,7 @@ TEST_CASE("LspManager::ResolveDocumentChangeOps resolves a create/rename/delete/
         DocumentChangeOp{.kind = DocumentChangeOp::Kind::DeleteFile, .uri = "file:///gone.c", .ignoreIfNotExists = true},
     };
 
-    const auto resolved = LspManager::ResolveDocumentChangeOps(ops);
+    const auto resolved = Manager::ResolveDocumentChangeOps(ops);
     REQUIRE(resolved.has_value());
     REQUIRE(resolved->size() == 4);
     CHECK((*resolved)[0].path == std::filesystem::path("/new.c"));
@@ -3177,18 +3177,18 @@ TEST_CASE("LspManager::ResolveDocumentChangeOps resolves a create/rename/delete/
     CHECK((*resolved)[3].ignoreIfNotExists);
 }
 
-TEST_CASE("LspManager::ResolveDocumentChangeOps refuses wholesale when a rename's oldUri doesn't resolve", "[Lsp]") {
+TEST_CASE("Manager::ResolveDocumentChangeOps refuses wholesale when a rename's oldUri doesn't resolve", "[Lsp]") {
     using ned::editor::lsp::DocumentChangeOp;
 
     const std::vector<DocumentChangeOp> ops = {
         DocumentChangeOp{.kind = DocumentChangeOp::Kind::RenameFile, .uri = "file:///renamed.c", .oldUri = "not-a-file-uri"},
     };
-    REQUIRE_FALSE(LspManager::ResolveDocumentChangeOps(ops).has_value());
+    REQUIRE_FALSE(Manager::ResolveDocumentChangeOps(ops).has_value());
 }
 
 // prose-checking follow-up: the prose-checker connection is just another
 // entry in the same clients_/bufferState_ maps under
-// LspManager::kProseLanguageKey (see LspManager.h's own doc comment on that
+// Manager::kProseLanguageKey (see Manager.h's own doc comment on that
 // constant) -- SetClientForTesting works on it exactly like any other
 // language, so these tests never touch ProseChecker.h's real
 // auto-detect/enabled machinery at all (ProseCheckerTestGuard.cpp disables
@@ -3197,13 +3197,13 @@ TEST_CASE("LspManager::ResolveDocumentChangeOps refuses wholesale when a rename'
 TEST_CASE("SyncBuffer opens both the primary language server and the prose checker independently", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-sync-test.md";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("some text");
 
-    LspClient* primaryClient = nullptr;
-    LspClient* proseClient   = nullptr;
+    Client* primaryClient = nullptr;
+    Client* proseClient   = nullptr;
     FakeServer primaryServer = FakeServer::Create(manager, "markdown", eventLoop, primaryClient);
     FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
 
@@ -3227,13 +3227,13 @@ TEST_CASE("Diagnostics published by the primary language server and the prose ch
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-merge-test.md";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad_code teh");
 
-    LspClient* primaryClient = nullptr;
-    LspClient* proseClient   = nullptr;
+    Client* primaryClient = nullptr;
+    Client* proseClient   = nullptr;
     FakeServer primaryServer = FakeServer::Create(manager, "markdown", eventLoop, primaryClient);
     FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
     manager.SyncBuffer(buffer, "markdown");
@@ -3290,14 +3290,14 @@ TEST_CASE("Diagnostics published by the primary language server and the prose ch
 // prose-check-composer follow-up (ROADMAP "Prose-check the ACP composer").
 TEST_CASE("CheckComposerProseText syncs text to the prose checker with no real Buffer, and diagnostics come back via the callback",
           "[Lsp]") {
-    const int originalDebounceMs = ned::editor::lsp::LspDiagnosticsDebounceMs();
+    const int originalDebounceMs = ned::editor::lsp::DiagnosticsDebounceMs();
     ned::editor::lsp::SetLspDiagnosticsDebounceMs(50);
 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
-    LspClient* proseClient = nullptr;
+    Client* proseClient = nullptr;
     FakeServer proseServer = FakeServer::Create(manager, std::string(kProseLanguageKey), eventLoop, proseClient);
 
     std::optional<std::vector<Buffer::Diagnostic>> received;
@@ -3348,13 +3348,13 @@ TEST_CASE("CheckComposerProseText syncs text to the prose checker with no real B
 TEST_CASE("A second publish from one source replaces only that source's own diagnostics slice", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-reslice-test.md";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad_code teh");
 
-    LspClient* primaryClient = nullptr;
-    LspClient* proseClient   = nullptr;
+    Client* primaryClient = nullptr;
+    Client* proseClient   = nullptr;
     FakeServer primaryServer = FakeServer::Create(manager, "markdown", eventLoop, primaryClient);
     FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
     manager.SyncBuffer(buffer, "markdown");
@@ -3426,19 +3426,19 @@ TEST_CASE("A didOpen sync sends textDocument/diagnostic when lsp-pull-diagnostic
     const PullDiagnosticsEnabledGuard guard;
     BufferList                        bufferList;
     ned::ui::EventLoop                eventLoop;
-    LspManager                        manager(bufferList, eventLoop);
+    Manager                        manager(bufferList, eventLoop);
     const std::filesystem::path       path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-pull-diagnostics-test.txt";
     Buffer&                           buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad code");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
 
     // didOpen and the pull-diagnostics request are sent back-to-back,
     // synchronously -- both can land in the same read() (ReadRawFrame's own
     // one-frame-per-call assumption breaks here, same as ParseAllFrames'
-    // own header comment describes for LspManager::Shutdown's frame pair).
+    // own header comment describes for Manager::Shutdown's frame pair).
     const std::string raw    = ReadRawFramesUntil(server.serverStdinRead, 2);
     const auto        frames = ParseAllFrames(raw);
     REQUIRE(frames.size() == 2);
@@ -3462,12 +3462,12 @@ TEST_CASE("A server erroring on textDocument/diagnostic is never asked again for
     const PullDiagnosticsEnabledGuard guard;
     BufferList                        bufferList;
     ned::ui::EventLoop                eventLoop;
-    LspManager                        manager(bufferList, eventLoop);
+    Manager                        manager(bufferList, eventLoop);
     const std::filesystem::path       path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-pull-diagnostics-unsupported-test.txt";
     Buffer&                           buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("a");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
 
@@ -3485,7 +3485,7 @@ TEST_CASE("A server erroring on textDocument/diagnostic is never asked again for
     // this safely (see its own doc comment: nothing else is queued to read).
     // sync-debounce follow-up: SyncBuffer no longer sends didChange
     // synchronously -- it (re)arms a per-(buffer, serverKey) DeadlineTimer
-    // (LspSyncDebounceMs), same WaitUntil-polling idiom this file already
+    // (SyncDebounceMs), same WaitUntil-polling idiom this file already
     // uses for the diagnostics debounce above.
     buffer.InsertAtPoint("b");
     manager.SyncBuffer(buffer, "test-lang");
@@ -3498,12 +3498,12 @@ TEST_CASE("A server erroring on textDocument/diagnostic is never asked again for
 TEST_CASE("No textDocument/diagnostic request is sent when lsp-pull-diagnostics is disabled (the default)", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-pull-diagnostics-disabled-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad code");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen -- nothing else was ever queued behind it
@@ -3515,12 +3515,12 @@ TEST_CASE("RequestSemanticTokens sends a plain full request when a legend is set
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetSemanticTokensLegendForTesting(
         "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword", "variable", "unknown"}, .tokenModifiers = {}});
@@ -3557,12 +3557,12 @@ TEST_CASE("RequestSemanticTokens sends a plain full request when a legend is set
 TEST_CASE("RequestSemanticTokens sends nothing when the server never advertised a legend", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-no-legend-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen -- nothing else was ever queued behind it
@@ -3575,12 +3575,12 @@ TEST_CASE("RequestSemanticTokens sends nothing when the server never advertised 
 TEST_CASE("RequestSemanticTokens does not resend for unchanged content", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-dedup-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetSemanticTokensLegendForTesting("test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}});
     manager.SyncBuffer(buffer, "test-lang");
@@ -3605,12 +3605,12 @@ TEST_CASE("RequestSemanticTokens sends nothing when semantic highlighting is dis
 
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-disabled-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetSemanticTokensLegendForTesting("test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}});
     manager.SyncBuffer(buffer, "test-lang");
@@ -3625,12 +3625,12 @@ TEST_CASE("RequestSemanticTokens prefers textDocument/semanticTokens/range when 
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-range-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;\nint y = 2;\n");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetSemanticTokensLegendForTesting(
         "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
@@ -3664,12 +3664,12 @@ TEST_CASE("RequestSemanticTokens falls back to full after a real error response 
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-range-unsupported-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetSemanticTokensLegendForTesting(
         "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
@@ -3698,12 +3698,12 @@ TEST_CASE("RequestSemanticTokens sends textDocument/semanticTokens/full/delta wi
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-delta-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetSemanticTokensLegendForTesting(
         "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword", "variable"}, .tokenModifiers = {}, .fullDeltaSupported = true});
@@ -3722,7 +3722,7 @@ TEST_CASE("RequestSemanticTokens sends textDocument/semanticTokens/full/delta wi
     REQUIRE(manager.SemanticTokenSpans(buffer).size() == 1);
 
     // Content edited -- re-sync (didChange is debounced, see
-    // LspSyncDebounceMs/SyncBuffer's own doc comment; the sibling
+    // SyncDebounceMs/SyncBuffer's own doc comment; the sibling
     // pull-diagnostics test above uses this exact WaitUntil+drain idiom) so
     // RequestSemanticTokens' own state->lastSyncedGeneration guard actually
     // lets the second request through. The second request now has a
@@ -3759,12 +3759,12 @@ TEST_CASE("RequestSemanticTokens falls back to plain full requests after a real 
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-delta-unsupported-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetSemanticTokensLegendForTesting(
         "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .fullDeltaSupported = true});
@@ -3806,12 +3806,12 @@ TEST_CASE("RequestSemanticTokens falls back to plain full requests after a real 
 TEST_CASE("RequestInlayHints sends the viewport range and applies byte-resolved, sorted hints", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -3832,7 +3832,7 @@ TEST_CASE("RequestInlayHints sends the viewport range and applies byte-resolved,
     };
     client->DispatchFrame(response.dump());
 
-    const std::vector<LspManager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
+    const std::vector<Manager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
     REQUIRE(hints.size() == 2);
     REQUIRE(hints[0].byteOffset == 3);
     REQUIRE(hints[1].byteOffset == 9);
@@ -3843,12 +3843,12 @@ TEST_CASE("RequestInlayHints does not resend for the same (content, viewport), b
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-dedup-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;\nint y = 2;\n");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -3867,12 +3867,12 @@ TEST_CASE("RequestInlayHints does not resend for the same (content, viewport), b
 TEST_CASE("A server erroring on textDocument/inlayHint is never asked again for that connection's lifetime", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-unsupported-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("a");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -3904,12 +3904,12 @@ TEST_CASE("No textDocument/inlayHint request is sent when lsp-inlay-hints is dis
 
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-disabled-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
@@ -3921,13 +3921,13 @@ TEST_CASE("No textDocument/inlayHint request is sent when lsp-inlay-hints is dis
 TEST_CASE("NotifyBufferClosed sends didClose to every server the buffer was opened with", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-close-test.md";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("some text");
 
-    LspClient* primaryClient = nullptr;
-    LspClient* proseClient   = nullptr;
+    Client* primaryClient = nullptr;
+    Client* proseClient   = nullptr;
     FakeServer primaryServer = FakeServer::Create(manager, "markdown", eventLoop, primaryClient);
     FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
     manager.SyncBuffer(buffer, "markdown");
@@ -3949,7 +3949,7 @@ TEST_CASE("SyncBuffer never opens the prose checker for a binary buffer, but the
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-binary-test.bin";
     {
         std::ofstream out(path, std::ios::binary);
@@ -3958,8 +3958,8 @@ TEST_CASE("SyncBuffer never opens the prose checker for a binary buffer, but the
     }
     Buffer& buffer = bufferList.OpenOrCreateFile(path, /*allowBinary=*/true);
 
-    LspClient* primaryClient = nullptr;
-    LspClient* proseClient   = nullptr;
+    Client* primaryClient = nullptr;
+    Client* proseClient   = nullptr;
     FakeServer primaryServer = FakeServer::Create(manager, "fundamental", eventLoop, primaryClient);
     FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
 
@@ -3982,13 +3982,13 @@ TEST_CASE("SyncEmbeddedDocuments opens an embedded server independently of the p
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-embedded-open-test.html";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("<script>let x = 1;</script>");
 
-    LspClient* htmlClient = nullptr;
-    LspClient* jsClient   = nullptr;
+    Client* htmlClient = nullptr;
+    Client* jsClient   = nullptr;
     FakeServer htmlServer = FakeServer::Create(manager, "html", eventLoop, htmlClient);
     FakeServer jsServer   = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
 
@@ -3999,7 +3999,7 @@ TEST_CASE("SyncEmbeddedDocuments opens an embedded server independently of the p
 
     const std::string paddedText = "        let x = 1;          "; // stands in for real padding -- content unimportant here
     manager.SyncEmbeddedDocuments(
-        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = paddedText, .ownedRanges = {{8, 19}}}});
+        buffer, {Manager::EmbeddedDocumentSync{.language = "javascript", .documentText = paddedText, .ownedRanges = {{8, 19}}}});
 
     const std::string raw    = ReadRawFrame(jsServer.serverStdinRead);
     const Json        opened = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
@@ -4019,14 +4019,14 @@ TEST_CASE("SyncEmbeddedDocuments sends an incremental didChange against the embe
     // virtual document), never the host buffer's.
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() / "ned-lsp-manager-embedded-incremental-test.html";
     Buffer& buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("<script>let x = 1;</script>");
 
-    LspClient* htmlClient = nullptr;
-    LspClient* jsClient   = nullptr;
+    Client* htmlClient = nullptr;
+    Client* jsClient   = nullptr;
     FakeServer htmlServer = FakeServer::Create(manager, "html", eventLoop, htmlClient);
     FakeServer jsServer   = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
     manager.SetTextDocumentSyncKindForTesting("javascript", TextDocumentSyncKind::Incremental);
@@ -4036,7 +4036,7 @@ TEST_CASE("SyncEmbeddedDocuments sends an incremental didChange against the embe
 
     const std::string firstPadded = "        let x = 1;          ";
     manager.SyncEmbeddedDocuments(
-        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = firstPadded, .ownedRanges = {{8, 19}}}});
+        buffer, {Manager::EmbeddedDocumentSync{.language = "javascript", .documentText = firstPadded, .ownedRanges = {{8, 19}}}});
     (void)ReadRawFrame(jsServer.serverStdinRead); // drain javascript's own didOpen
 
     // SyncTextToServer's own generation gate is keyed on the *host buffer's*
@@ -4052,7 +4052,7 @@ TEST_CASE("SyncEmbeddedDocuments sends an incremental didChange against the embe
     const std::string secondPadded = "        let x = 12;           ";
     manager.SyncEmbeddedDocuments(
         buffer,
-        {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = secondPadded, .ownedRanges = {{8, 20}}}});
+        {Manager::EmbeddedDocumentSync{.language = "javascript", .documentText = secondPadded, .ownedRanges = {{8, 20}}}});
 
     const std::string raw   = ReadRawFrame(jsServer.serverStdinRead);
     const Json        frame = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
@@ -4072,20 +4072,20 @@ TEST_CASE("SyncEmbeddedDocuments tears down a server key whose region disappeare
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-embedded-teardown-test.html";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("<script>let x = 1;</script>");
 
-    LspClient* htmlClient = nullptr;
-    LspClient* jsClient   = nullptr;
+    Client* htmlClient = nullptr;
+    Client* jsClient   = nullptr;
     FakeServer htmlServer = FakeServer::Create(manager, "html", eventLoop, htmlClient);
     FakeServer jsServer   = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
 
     manager.SyncBuffer(buffer, "html");
     (void)ReadRawFrame(htmlServer.serverStdinRead);
     manager.SyncEmbeddedDocuments(
-        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = "let x = 1;", .ownedRanges = {{0, 10}}}});
+        buffer, {Manager::EmbeddedDocumentSync{.language = "javascript", .documentText = "let x = 1;", .ownedRanges = {{0, 10}}}});
     (void)ReadRawFrame(jsServer.serverStdinRead); // drain didOpen
 
     // A javascript diagnostic lands while the region still exists.
@@ -4118,21 +4118,21 @@ TEST_CASE(
     "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-primary-ambiguity-test.html";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("<script>let x = 1;</script>");
 
-    LspClient* htmlClient  = nullptr;
-    LspClient* proseClient = nullptr;
-    LspClient* jsClient    = nullptr;
+    Client* htmlClient  = nullptr;
+    Client* proseClient = nullptr;
+    Client* jsClient    = nullptr;
     FakeServer htmlServer  = FakeServer::Create(manager, "html", eventLoop, htmlClient);
     FakeServer proseServer = FakeServer::Create(manager, std::string(kProseLanguageKey), eventLoop, proseClient);
     FakeServer jsServer    = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
 
     manager.SyncBuffer(buffer, "html"); // primary ("html") + prose
     manager.SyncEmbeddedDocuments(
-        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = "let x = 1;", .ownedRanges = {{0, 10}}}});
+        buffer, {Manager::EmbeddedDocumentSync{.language = "javascript", .documentText = "let x = 1;", .ownedRanges = {{0, 10}}}});
     (void)ReadRawFrame(htmlServer.serverStdinRead);
     (void)ReadRawFrame(proseServer.serverStdinRead);
     (void)ReadRawFrame(jsServer.serverStdinRead);
@@ -4153,18 +4153,18 @@ TEST_CASE("HandlePublishDiagnostics drops an embedded server's diagnostic whose 
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-embedded-diag-filter-test.html";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("<div></div><script>let x = 1;</script>");
 
-    LspClient* jsClient = nullptr;
+    Client* jsClient = nullptr;
     FakeServer jsServer = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
     // Owned range covers only the "let x = 1;" content (offsets 20..30 in
     // the buffer above); everything else is padding as far as javascript is
     // concerned.
     manager.SyncEmbeddedDocuments(
-        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = buffer.Text(), .ownedRanges = {{20, 30}}}});
+        buffer, {Manager::EmbeddedDocumentSync{.language = "javascript", .documentText = buffer.Text(), .ownedRanges = {{20, 30}}}});
     (void)ReadRawFrame(jsServer.serverStdinRead);
 
     const Json diagnosticsParams = {
@@ -4187,22 +4187,22 @@ TEST_CASE("HandlePublishDiagnostics drops an embedded server's diagnostic whose 
     REQUIRE(buffer.Diagnostics()[0].message == "kept: inside owned range");
 }
 
-TEST_CASE("LspManager::RequestHover with an explicit serverKey routes to that connection, not the primary one", "[Lsp]") {
+TEST_CASE("Manager::RequestHover with an explicit serverKey routes to that connection, not the primary one", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-hover-serverkey-test.html";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("<script>let x = 1;</script>");
 
-    LspClient* htmlClient = nullptr;
-    LspClient* jsClient   = nullptr;
+    Client* htmlClient = nullptr;
+    Client* jsClient   = nullptr;
     FakeServer htmlServer = FakeServer::Create(manager, "html", eventLoop, htmlClient);
     FakeServer jsServer   = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
 
     manager.SyncBuffer(buffer, "html");
     manager.SyncEmbeddedDocuments(
-        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = "let x = 1;", .ownedRanges = {{0, 10}}}});
+        buffer, {Manager::EmbeddedDocumentSync{.language = "javascript", .documentText = "let x = 1;", .ownedRanges = {{0, 10}}}});
     (void)ReadRawFrame(htmlServer.serverStdinRead);
     (void)ReadRawFrame(jsServer.serverStdinRead);
 
@@ -4232,30 +4232,30 @@ TEST_CASE("LspManager::RequestHover with an explicit serverKey routes to that co
     REQUIRE(gotText == std::optional<std::string>("let x: number"));
 }
 
-TEST_CASE("LspManager::RequestDefinition with an explicit serverKey routes to that connection, not the primary one", "[Lsp]") {
+TEST_CASE("Manager::RequestDefinition with an explicit serverKey routes to that connection, not the primary one", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-definition-serverkey-test.html";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("<script>call_site();</script>");
 
-    LspClient* htmlClient = nullptr;
-    LspClient* jsClient   = nullptr;
+    Client* htmlClient = nullptr;
+    Client* jsClient   = nullptr;
     FakeServer htmlServer = FakeServer::Create(manager, "html", eventLoop, htmlClient);
     FakeServer jsServer   = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
 
     manager.SyncBuffer(buffer, "html");
     manager.SyncEmbeddedDocuments(
-        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = "call_site();", .ownedRanges = {{0, 12}}}});
+        buffer, {Manager::EmbeddedDocumentSync{.language = "javascript", .documentText = "call_site();", .ownedRanges = {{0, 12}}}});
     (void)ReadRawFrame(htmlServer.serverStdinRead);
     (void)ReadRawFrame(jsServer.serverStdinRead);
 
     bool                                      invoked = false;
-    std::vector<LspManager::ResolvedLocation> got;
+    std::vector<Manager::ResolvedLocation> got;
     manager.RequestDefinition(
         buffer, 0,
-        [&](std::vector<LspManager::ResolvedLocation> locations) {
+        [&](std::vector<Manager::ResolvedLocation> locations) {
             invoked = true;
             got     = std::move(locations);
         },
@@ -4281,8 +4281,8 @@ TEST_CASE("LspManager::RequestDefinition with an explicit serverKey routes to th
     REQUIRE(got[0].path == definitionPath);
 }
 
-// LSP-deliberate-cuts follow-up: LspBackgroundSyncEnabled is process-wide
-// state (see LspBackgroundSync.h) -- every test that flips it must leave it
+// LSP-deliberate-cuts follow-up: BackgroundSyncEnabled is process-wide
+// state (see BackgroundSync.h) -- every test that flips it must leave it
 // default-on for the next test, AutoRevertTest.cpp's own RAII-guard pattern.
 namespace {
 struct LspBackgroundSyncGuard {
@@ -4295,15 +4295,15 @@ struct LspBackgroundSyncGuard {
 TEST_CASE("SyncBackgroundBuffers syncs every open, path-backed buffer, not just one", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
     const std::filesystem::path cPath    = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-test.c";
     const std::filesystem::path pyPath   = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-test.py";
     Buffer&                     cBuffer  = bufferList.OpenOrCreateFile(cPath);
     Buffer&                     pyBuffer = bufferList.OpenOrCreateFile(pyPath);
 
-    LspClient* cClient  = nullptr;
-    LspClient* pyClient = nullptr;
+    Client* cClient  = nullptr;
+    Client* pyClient = nullptr;
     FakeServer cServer  = FakeServer::Create(manager, "c", eventLoop, cClient);
     FakeServer pyServer = FakeServer::Create(manager, "python", eventLoop, pyClient);
 
@@ -4323,7 +4323,7 @@ TEST_CASE("SyncBackgroundBuffers syncs every open, path-backed buffer, not just 
 TEST_CASE("SyncBackgroundBuffers skips a buffer with no path and a buffer still loading", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
     Buffer& scratch = bufferList.CreateBuffer("scratch"); // no path
     (void)scratch;
@@ -4332,7 +4332,7 @@ TEST_CASE("SyncBackgroundBuffers skips a buffer with no path and a buffer still 
     Buffer&                     loading     = bufferList.OpenOrCreateFile(loadingPath);
     loading.MarkLoading();
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "c", eventLoop, client);
 
     ned::editor::lsp::SyncBackgroundBuffers(bufferList, manager); // must not crash and must not sync either buffer
@@ -4344,12 +4344,12 @@ TEST_CASE("SyncBackgroundBuffers is a no-op entirely when disabled", "[Lsp]") {
     LspBackgroundSyncGuard guard;
     BufferList             bufferList;
     ned::ui::EventLoop     eventLoop;
-    LspManager             manager(bufferList, eventLoop);
+    Manager             manager(bufferList, eventLoop);
 
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-disabled-test.c";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "c", eventLoop, client);
 
     ned::editor::lsp::SetLspBackgroundSyncEnabled(false);
@@ -4359,12 +4359,12 @@ TEST_CASE("SyncBackgroundBuffers is a no-op entirely when disabled", "[Lsp]") {
 }
 
 // graceful-lsp-shutdown follow-up.
-TEST_CASE("LspManager::Shutdown sends shutdown then exit to a directly-spawned client", "[Lsp]") {
+TEST_CASE("Manager::Shutdown sends shutdown then exit to a directly-spawned client", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client); // brokerBacked defaults to false
 
     manager.Shutdown();
@@ -4375,12 +4375,12 @@ TEST_CASE("LspManager::Shutdown sends shutdown then exit to a directly-spawned c
     REQUIRE(frames[1]["method"] == "exit");
 }
 
-TEST_CASE("LspManager::Shutdown never sends anything to a broker-backed client", "[Lsp]") {
+TEST_CASE("Manager::Shutdown never sends anything to a broker-backed client", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client, Json::object(), /*brokerBacked=*/true);
 
     manager.Shutdown();
@@ -4392,22 +4392,22 @@ TEST_CASE("LspManager::Shutdown never sends anything to a broker-backed client",
 }
 
 // documentLink follow-up.
-TEST_CASE("LspManager::RequestDocumentLinks resolves a file:// target to a path and byte offsets", "[Lsp]") {
+TEST_CASE("Manager::RequestDocumentLinks resolves a file:// target to a path and byte offsets", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-document-link-test.c";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("#include \"own.h\"\nint main() {}\n");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     bool                                          invoked = false;
-    std::vector<LspManager::ResolvedDocumentLink> got;
-    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) {
+    std::vector<Manager::ResolvedDocumentLink> got;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<Manager::ResolvedDocumentLink> links) {
         invoked = true;
         got     = std::move(links);
     });
@@ -4437,21 +4437,21 @@ TEST_CASE("LspManager::RequestDocumentLinks resolves a file:// target to a path 
     REQUIRE(got[0].endByte == 16);  // through the closing quote
 }
 
-TEST_CASE("LspManager::RequestDocumentLinks keeps a non-file target as a url, not a path", "[Lsp]") {
+TEST_CASE("Manager::RequestDocumentLinks keeps a non-file target as a url, not a path", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-document-link-url-test.c";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("// see https://example.com\n");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
 
-    std::vector<LspManager::ResolvedDocumentLink> got;
-    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) { got = std::move(links); });
+    std::vector<Manager::ResolvedDocumentLink> got;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<Manager::ResolvedDocumentLink> links) { got = std::move(links); });
 
     const std::string raw      = ReadRawFrame(server.serverStdinRead);
     const Json        response = {
@@ -4468,21 +4468,21 @@ TEST_CASE("LspManager::RequestDocumentLinks keeps a non-file target as a url, no
     REQUIRE(got[0].url == "https://example.com");
 }
 
-TEST_CASE("LspManager::RequestDocumentLinks marks a target-less link needsResolve and keeps its raw item", "[Lsp]") {
+TEST_CASE("Manager::RequestDocumentLinks marks a target-less link needsResolve and keeps its raw item", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-document-link-resolve-test.c";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("#include \"own.h\"\n");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
 
-    std::vector<LspManager::ResolvedDocumentLink> got;
-    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) { got = std::move(links); });
+    std::vector<Manager::ResolvedDocumentLink> got;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<Manager::ResolvedDocumentLink> links) { got = std::move(links); });
 
     const std::string raw      = ReadRawFrame(server.serverStdinRead);
     const Json        response = {
@@ -4503,9 +4503,9 @@ TEST_CASE("LspManager::RequestDocumentLinks marks a target-less link needsResolv
     // verbatim as its whole params body, and the resolved target lands in
     // the same shape an inline one would have.
     const std::filesystem::path                     target = std::filesystem::temp_directory_path() / "own.h";
-    std::optional<LspManager::ResolvedDocumentLink> resolved;
+    std::optional<Manager::ResolvedDocumentLink> resolved;
     manager.ResolveDocumentLink(buffer, got[0],
-                                [&](std::optional<LspManager::ResolvedDocumentLink> link) { resolved = std::move(link); });
+                                [&](std::optional<Manager::ResolvedDocumentLink> link) { resolved = std::move(link); });
 
     const std::string resolveRaw     = ReadRawFrame(server.serverStdinRead);
     const Json        resolveRequest = Json::parse(resolveRaw.substr(resolveRaw.find("\r\n\r\n") + 4));
@@ -4528,20 +4528,20 @@ TEST_CASE("LspManager::RequestDocumentLinks marks a target-less link needsResolv
     REQUIRE(resolved->endByte == 16);
 }
 
-TEST_CASE("LspManager::RequestDocumentLinks stops asking a server that answered with an error", "[Lsp]") {
+TEST_CASE("Manager::RequestDocumentLinks stops asking a server that answered with an error", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-document-link-latch-test.c";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
 
     bool firstInvoked = false;
-    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink>) { firstInvoked = true; });
+    manager.RequestDocumentLinks(buffer, [&](std::vector<Manager::ResolvedDocumentLink>) { firstInvoked = true; });
 
     const std::string raw      = ReadRawFrame(server.serverStdinRead);
     const Json        response = {
@@ -4553,7 +4553,7 @@ TEST_CASE("LspManager::RequestDocumentLinks stops asking a server that answered 
     REQUIRE(firstInvoked);
 
     bool secondInvoked = false;
-    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) {
+    manager.RequestDocumentLinks(buffer, [&](std::vector<Manager::ResolvedDocumentLink> links) {
         secondInvoked = true;
         REQUIRE(links.empty());
     });
@@ -4561,14 +4561,14 @@ TEST_CASE("LspManager::RequestDocumentLinks stops asking a server that answered 
     REQUIRE(NoFrameArrives(server.serverStdinRead)); // and nothing went out on the wire
 }
 
-TEST_CASE("LspManager::RequestDocumentLinks answers empty when the buffer was never synced", "[Lsp]") {
+TEST_CASE("Manager::RequestDocumentLinks answers empty when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool invoked = false;
-    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) {
+    manager.RequestDocumentLinks(buffer, [&](std::vector<Manager::ResolvedDocumentLink> links) {
         invoked = true;
         REQUIRE(links.empty());
     });
@@ -4576,7 +4576,7 @@ TEST_CASE("LspManager::RequestDocumentLinks answers empty when the buffer was ne
     REQUIRE(invoked); // synchronous, which is what lets BufferView fall straight through to its own resolution
 }
 
-TEST_CASE("LspManager percent-decodes a URI target before resolving it to a path", "[Lsp]") {
+TEST_CASE("Manager percent-decodes a URI target before resolving it to a path", "[Lsp]") {
     // Found live against clangd, which reports a system include's target as
     // ".../g%2B%2B-v16/algorithm" -- undecoded, that path exists nowhere.
     // documentLink is just the cheapest request to assert it through; the
@@ -4584,18 +4584,18 @@ TEST_CASE("LspManager percent-decodes a URI target before resolving it to a path
     // response goes through.
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-uri-decode-test.c";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("#include <algorithm>\n");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
 
-    std::vector<LspManager::ResolvedDocumentLink> got;
-    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) { got = std::move(links); });
+    std::vector<Manager::ResolvedDocumentLink> got;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<Manager::ResolvedDocumentLink> links) { got = std::move(links); });
 
     const std::string raw      = ReadRawFrame(server.serverStdinRead);
     const Json        response = {
@@ -4611,21 +4611,21 @@ TEST_CASE("LspManager percent-decodes a URI target before resolving it to a path
     REQUIRE(got[0].path == std::filesystem::path("/usr/include/g++-v16/a b/algorithm"));
 }
 
-TEST_CASE("LspManager leaves a stray percent sign in a URI alone", "[Lsp]") {
+TEST_CASE("Manager leaves a stray percent sign in a URI alone", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    LspManager                  manager(bufferList, eventLoop);
+    Manager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-uri-stray-percent-test.c";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("#include \"x.h\"\n");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
 
-    std::vector<LspManager::ResolvedDocumentLink> got;
-    manager.RequestDocumentLinks(buffer, [&](std::vector<LspManager::ResolvedDocumentLink> links) { got = std::move(links); });
+    std::vector<Manager::ResolvedDocumentLink> got;
+    manager.RequestDocumentLinks(buffer, [&](std::vector<Manager::ResolvedDocumentLink> links) { got = std::move(links); });
 
     const std::string raw      = ReadRawFrame(server.serverStdinRead);
     const Json        response = {
@@ -4645,14 +4645,14 @@ TEST_CASE("LspManager leaves a stray percent sign in a URI alone", "[Lsp]") {
 // completion-resolve / completion-trigger-characters
 // ---------------------------------------------------------------------------
 
-TEST_CASE("LspManager::RequestCompletion reports triggerKind 2 and the character that caused it", "[Lsp]") {
+TEST_CASE("Manager::RequestCompletion reports triggerKind 2 and the character that caused it", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-completion-trigger-test.txt");
     buffer.InsertAtPoint("foo.");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
@@ -4665,14 +4665,14 @@ TEST_CASE("LspManager::RequestCompletion reports triggerKind 2 and the character
     REQUIRE(request["params"]["context"]["triggerCharacter"] == ".");
 }
 
-TEST_CASE("LspManager::RequestCompletion folds allCommitCharacters into items that declared none", "[Lsp]") {
+TEST_CASE("Manager::RequestCompletion folds allCommitCharacters into items that declared none", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-commit-chars-test.txt");
     buffer.InsertAtPoint("foo");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     // SetClientForTesting bypasses the handshake that would normally populate this.
     manager.SetCompletionProviderForTesting("test-lang", ned::editor::lsp::CompletionProviderInfo{.allCommitCharacters = {";"}});
@@ -4697,14 +4697,14 @@ TEST_CASE("LspManager::RequestCompletion folds allCommitCharacters into items th
     CHECK(gotItems[1].commitCharacters == std::vector<std::string>{"("});
 }
 
-TEST_CASE("LspManager::ResolveCompletionItem round-trips the item's own raw JSON", "[Lsp]") {
+TEST_CASE("Manager::ResolveCompletionItem round-trips the item's own raw JSON", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-completion-resolve-test.txt");
     buffer.InsertAtPoint("vec");
 
-    LspClient* client = nullptr;
+    Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
@@ -4739,12 +4739,12 @@ TEST_CASE("LspManager::ResolveCompletionItem round-trips the item's own raw JSON
     CHECK(got->documentation == "A dynamic array.");
 }
 
-TEST_CASE("LspManager::ResolveCompletionItem answers nullopt for a synthesized item with no raw JSON", "[Lsp]") {
+TEST_CASE("Manager::ResolveCompletionItem answers nullopt for a synthesized item with no raw JSON", "[Lsp]") {
     // dabbrev/Janet-binding items are built by this editor, not parsed off
     // the wire -- there is nothing to hand back, and no request goes out.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-resolve-synth-test.txt");
 
     CompletionItem synthesized;
@@ -4758,12 +4758,12 @@ TEST_CASE("LspManager::ResolveCompletionItem answers nullopt for a synthesized i
     CHECK(invoked);
 }
 
-TEST_CASE("LspManager captures completionProvider from a real initialize response", "[Lsp]") {
+TEST_CASE("Manager captures completionProvider from a real initialize response", "[Lsp]") {
     // The handshake is what populates this in production; ClientDisconnected
     // must not leave a stale entry behind for a respawned server.
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         manager(bufferList, eventLoop);
+    Manager         manager(bufferList, eventLoop);
 
     manager.SetCompletionProviderForTesting(
         "test-lang", ned::editor::lsp::CompletionProviderInfo{.triggerCharacters = {"."}, .resolveProvider = true});

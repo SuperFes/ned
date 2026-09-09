@@ -922,7 +922,7 @@ class Buffer {
     // per-position metadata that happens to live on Buffer" role FoldMarker/
     // NarrowedRange_ already have. Unlike FoldMarkers_, not relocated across
     // edits: an LSP server re-reports its full, current diagnostic set after
-    // every textDocument/didChange (see Editor/Lsp/LspManager.h), so
+    // every textDocument/didChange (see Editor/Lsp/Manager.h), so
     // SetDiagnostics always *replaces* the set wholesale rather than being
     // incrementally maintained -- there's never a reason to relocate a stale
     // range across an edit when a fresh, correct set is coming right behind
@@ -936,11 +936,11 @@ class Buffer {
                               Hint } severity;
         // prose-diagnostic-callout follow-up: distinguishes a real language
         // server's diagnostic from the prose/spell/grammar checker's (see
-        // Editor/Lsp/LspManager.h's kProseLanguageKey) -- BufferView renders
+        // Editor/Lsp/Manager.h's kProseLanguageKey) -- BufferView renders
         // the two differently (Prose gets no code-style underline/inline
         // annotation row; it's a right-side callout brace instead, or
         // nothing at all when there's no room), so this has to survive
-        // LspManager's per-source merge into this wholesale-replaced set.
+        // Manager's per-source merge into this wholesale-replaced set.
         // Defaulted to Code so every other Diagnostic{...} call site in the
         // codebase (tests included) keeps compiling unchanged.
         enum class Origin { Code,

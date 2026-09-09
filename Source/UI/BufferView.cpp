@@ -483,9 +483,9 @@ bool BufferView::OnKeyEvent(const Event& event) {
         // declare them are not shy: typescript-language-server sends
         // {".", ",", ";", "("} on every item, so ned/set-lsp-commit-characters
         // exists to turn the whole behavior off (see its own doc comment in
-        // LspServerConfig.h).
+        // ServerConfig.h).
         if (chord->Special == editor::SpecialKey::None && !chord->Control && !chord->Meta &&
-            editor::lsp::LspCommitCharactersEnabled() &&
+            editor::lsp::CommitCharactersEnabled() &&
             activeCompletion_->IsCommitCharacter(text::EncodeCodepointUtf8(chord->Codepoint))) {
             AcceptActiveCompletion();
             ClampPointToNarrowing();
@@ -1227,7 +1227,7 @@ void BufferView::HandleQueryReplaceKeyInner(const editor::KeyChord& chord) {
 
 void BufferView::RequestDiagnosticsBuffer() {
     // One entry per Code-origin diagnostic across every open, path-backed
-    // buffer -- prose/spell-check diagnostics (Editor/Lsp/LspManager.h's
+    // buffer -- prose/spell-check diagnostics (Editor/Lsp/Manager.h's
     // kProseLanguageKey) stay out, matching the recent split that moved
     // them out of the code-diagnostic gutter entirely (they get their own
     // review flow, not this one). source is a raw pointer into

@@ -1,4 +1,4 @@
-#include "LspClient.h"
+#include "Client.h"
 
 #include <cerrno>
 #include <utility>
@@ -18,7 +18,7 @@ namespace {
 
 } // namespace
 
-LspClient::~LspClient() {
+Client::~Client() {
     // lsp-use-after-free follow-up: must be the first statement -- see this
     // file's own header comment on alive_. Every already-posted callback
     // capturing `this` also holds its own reference to this same bool, so
@@ -29,19 +29,19 @@ LspClient::~LspClient() {
     }
 }
 
-LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop), handshakeComplete_(false) {
+Client::Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop), handshakeComplete_(false) {
     StartReadLoop();
     StartStderrReadLoop();
     StartWriteLoop();
 }
 
-LspClient::LspClient(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete) : transport_(std::move(transport)), eventLoop_(eventLoop), handshakeComplete_(startHandshakeComplete) {
+Client::Client(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete) : transport_(std::move(transport)), eventLoop_(eventLoop), handshakeComplete_(startHandshakeComplete) {
     StartReadLoop();
     StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
     StartWriteLoop();
 }
 
-void LspClient::StartWriteLoop() {
+void Client::StartWriteLoop() {
     // async-write-queue follow-up -- see header comment.
     writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
         while (true) {
@@ -68,7 +68,7 @@ void LspClient::StartWriteLoop() {
     });
 }
 
-void LspClient::EnqueueWrite(std::string frame) {
+void Client::EnqueueWrite(std::string frame) {
     {
         std::lock_guard<std::mutex> lock(writeMutex_);
         writeQueue_.push_back(std::move(frame));
@@ -76,14 +76,14 @@ void LspClient::EnqueueWrite(std::string frame) {
     writeCv_.notify_one();
 }
 
-void LspClient::PrepareForGracefulShutdown() {
+void Client::PrepareForGracefulShutdown() {
     drainQueueOnStop_ = true;
 }
 
-void LspClient::StartReadLoop() {
+void Client::StartReadLoop() {
     // transport_ is already fully constructed by the time this runs (called
     // from the constructor *body*, after the member-initializer-list has
-    // run) -- see LspClient.h's header comment for why readThread_ has to
+    // run) -- see Client.h's header comment for why readThread_ has to
     // start out empty (default-constructed) rather than being given real
     // work directly in the initializer list.
     // closed-connection-never-parks follow-up: the stop token is genuinely
@@ -113,7 +113,7 @@ void LspClient::StartReadLoop() {
                 // *Messages*.
                 eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
                     if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this LspClient is gone
+                        return; // lsp-use-after-free follow-up -- this Client is gone
                     }
                     LogMessage(LogCategory::Lsp, LogSeverity::Warning, reason);
                     if (onDisconnected_) {
@@ -123,11 +123,11 @@ void LspClient::StartReadLoop() {
                 return;
             }
             if (!frame) {
-                // EOF -- server exited (or this LspClient is being
+                // EOF -- server exited (or this Client is being
                 // destroyed, see header comment). error-visibility
                 // follow-up: previously silent -- now reported the same way
                 // as the malformed-frame case above. A disconnect during
-                // this LspClient's own destruction is a real possibility
+                // this Client's own destruction is a real possibility
                 // (Transport's destructor closing this end's fds is exactly
                 // what makes the blocking ReadFrame() call above finally
                 // return -- see header comment); alive_ (see header comment)
@@ -135,7 +135,7 @@ void LspClient::StartReadLoop() {
                 // callback runs relative to destruction.
                 eventLoop_.Post([this, alive = alive_] {
                     if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this LspClient is gone
+                        return; // lsp-use-after-free follow-up -- this Client is gone
                     }
                     LogMessage(LogCategory::Lsp, LogSeverity::Warning, "server exited (EOF)");
                     if (onDisconnected_) {
@@ -152,7 +152,7 @@ void LspClient::StartReadLoop() {
             // shown without needing an explicit "force a frame" call.
             eventLoop_.Post([this, alive = alive_, frameText = std::move(*frame)]() mutable {
                 if (!*alive) {
-                    return; // lsp-use-after-free follow-up -- this LspClient is gone
+                    return; // lsp-use-after-free follow-up -- this Client is gone
                 }
                 DispatchFrame(frameText);
             });
@@ -160,7 +160,7 @@ void LspClient::StartReadLoop() {
     });
 }
 
-void LspClient::StartStderrReadLoop() {
+void Client::StartStderrReadLoop() {
     const int fd = transport_.StderrFd();
     if (fd < 0) {
         return; // not captured -- see header comment
@@ -184,7 +184,7 @@ void LspClient::StartStderrReadLoop() {
                 return; // a genuine read error here is rare and non-actionable -- the stdout loop's own EOF/malformed-frame path is what reports the real disconnect
             }
             if (result == 0) {
-                return; // EOF -- server exited, or this LspClient is being destroyed (see header comment)
+                return; // EOF -- server exited, or this Client is being destroyed (see header comment)
             }
             buffered.append(chunk, static_cast<std::size_t>(result));
 
@@ -211,7 +211,7 @@ void LspClient::StartStderrReadLoop() {
     });
 }
 
-void LspClient::DispatchFrame(const std::string& frameText) {
+void Client::DispatchFrame(const std::string& frameText) {
     Json message;
     try {
         message = Json::parse(frameText);
@@ -274,7 +274,7 @@ void LspClient::DispatchFrame(const std::string& frameText) {
     }
 }
 
-void LspClient::SendRequest(const std::string& method, Json params, ResponseCallback callback) {
+void Client::SendRequest(const std::string& method, Json params, ResponseCallback callback) {
     // handshake-ordering follow-up: see this method's own doc comment.
     // "initialize" itself is exempt -- it's what starts the handshake.
     if (!handshakeComplete_ && method != "initialize") {
@@ -286,7 +286,7 @@ void LspClient::SendRequest(const std::string& method, Json params, ResponseCall
 
     const int id = nextRequestId_++;
     pending_[id] = PendingRequest{std::move(callback), std::chrono::steady_clock::now()};
-    BeginBackgroundActivity(kLspActivity); // ended when the response dispatches, or by ~LspClient for a request never answered
+    BeginBackgroundActivity(kLspActivity); // ended when the response dispatches, or by ~Client for a request never answered
     const Json message = {
         {"jsonrpc", "2.0"},
         {"id", id},
@@ -296,9 +296,9 @@ void LspClient::SendRequest(const std::string& method, Json params, ResponseCall
     EnqueueWrite(message.dump());
 }
 
-void LspClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+void Client::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     // subprocess-hang-protection follow-up. Collect first, then erase+invoke
-    // -- a callback could in principle call back into this LspClient
+    // -- a callback could in principle call back into this Client
     // (SendRequest again, say), which must not happen while iterating
     // pending_ itself.
     const std::chrono::steady_clock::time_point   now = std::chrono::steady_clock::now();
@@ -321,7 +321,7 @@ void LspClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     }
 }
 
-void LspClient::SendNotification(const std::string& method, Json params) {
+void Client::SendNotification(const std::string& method, Json params) {
     // handshake-ordering follow-up: see this method's own doc comment.
     // "initialized" itself is exempt -- it's what opens the gate below.
     if (!handshakeComplete_ && method != "initialized") {
@@ -346,15 +346,15 @@ void LspClient::SendNotification(const std::string& method, Json params) {
     }
 }
 
-void LspClient::SetNotificationHandler(std::string method, NotificationHandler handler) {
+void Client::SetNotificationHandler(std::string method, NotificationHandler handler) {
     notificationHandlers_[std::move(method)] = std::move(handler);
 }
 
-void LspClient::SetRequestHandler(std::string method, RequestHandler handler) {
+void Client::SetRequestHandler(std::string method, RequestHandler handler) {
     requestHandlers_[std::move(method)] = std::move(handler);
 }
 
-void LspClient::SetOnDisconnected(std::function<void(std::string reason)> handler) {
+void Client::SetOnDisconnected(std::function<void(std::string reason)> handler) {
     onDisconnected_ = std::move(handler);
 }
 

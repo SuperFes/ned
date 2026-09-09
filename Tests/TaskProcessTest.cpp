@@ -12,7 +12,7 @@
 
 using ned::editor::tasks::TaskProcess;
 
-// Same rationale as LspClientTest.cpp's own ClientFixture comment: a real
+// Same rationale as ClientTest.cpp's own ClientFixture comment: a real
 // ned::ui::EventLoop is constructed (TaskProcess's constructor needs a real
 // EventLoop&), but its Run() loop is never started -- every test here calls
 // TaskProcess::DispatchOutput/DispatchExit directly instead, exercising the

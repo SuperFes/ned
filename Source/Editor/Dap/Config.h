@@ -1,6 +1,6 @@
 //
 // DAP client — slice 1. Per-language debug-adapter configuration, mirroring
-// Lsp/LspServerConfig.h's exact "mutex-guarded static maps, empty clears"
+// Lsp/ServerConfig.h's exact "mutex-guarded static maps, empty clears"
 // pattern: nothing is bundled or auto-detected, the user configures each
 // adapter from init.janet (ned/set-dap-adapter, ned/set-dap-launch) the same
 // way LSP servers are — see ROADMAP.md's DAP entry for the full design

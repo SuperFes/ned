@@ -550,8 +550,8 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # PACKAGE (a directory), never a single file, and mapping that path to a
 # real directory needs go.mod's module-path/replace-directive knowledge a
 # syntax-only query has no way to reconstruct -- exactly gopls's own
-# textDocument/definition job (go.mod is this language's own LspRootMarkers
-# entry, see LspRootResolver.cpp). Go's own basename-only file:line
+# textDocument/definition job (go.mod is this language's own RootMarkers
+# entry, see RootResolver.cpp). Go's own basename-only file:line
 # resolution gap for multi-directory modules is tracked separately under
 # ROADMAP.md's Test-runner gaps.
 ned_add_treesitter_grammar(tree-sitter-go https://github.com/tree-sitter/tree-sitter-go.git v0.25.0)
@@ -580,7 +580,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # same "package/namespace path, not a file path" reasoning go-imports.scm's
 # own absence documents for Go. `csproj`/`sln`'s own lack of a fixed
 # filename (unlike every other bundled language's root marker) needed a real
-# LspRootResolver.cpp change -- see MarkerExistsInDirectory's own comment
+# RootResolver.cpp change -- see MarkerExistsInDirectory's own comment
 # there for the "*.<ext>" glob-marker mechanism this language is the first
 # to need.
 ned_add_treesitter_grammar(tree-sitter-c-sharp https://github.com/tree-sitter/tree-sitter-c-sharp.git v0.23.5)
@@ -756,20 +756,20 @@ add_library(ned_lib STATIC
         Source/Editor/Acp/AcpPanelConfig.cpp
         Source/Editor/Acp/AcpManager.cpp
         Source/Editor/Lsp/Transport.cpp
-        Source/Editor/Lsp/LspClient.cpp
-        Source/Editor/Lsp/LspServerConfig.cpp
-        Source/Editor/Lsp/LspRootResolver.cpp
+        Source/Editor/Lsp/Client.cpp
+        Source/Editor/Lsp/ServerConfig.cpp
+        Source/Editor/Lsp/RootResolver.cpp
         Source/Editor/Lsp/ProseChecker.cpp
-        Source/Editor/Lsp/LspPosition.cpp
-        Source/Editor/Lsp/LspContent.cpp
-        Source/Editor/Lsp/LspEditApply.cpp
-        Source/Editor/Lsp/LspManager.cpp
-        Source/Editor/Lsp/LspBackgroundSync.cpp
-        Source/Editor/Lsp/LspBroker.cpp
+        Source/Editor/Lsp/Position.cpp
+        Source/Editor/Lsp/Content.cpp
+        Source/Editor/Lsp/EditApply.cpp
+        Source/Editor/Lsp/Manager.cpp
+        Source/Editor/Lsp/BackgroundSync.cpp
+        Source/Editor/Lsp/Broker.cpp
         Source/Editor/Lsp/BrokerSocketPath.cpp
-        Source/Editor/Lsp/LspBrokerMain.cpp
-        Source/Editor/Lsp/LspBrokerDaemon.cpp
-        Source/Editor/Lsp/LspBrokerConnect.cpp
+        Source/Editor/Lsp/BrokerMain.cpp
+        Source/Editor/Lsp/BrokerDaemon.cpp
+        Source/Editor/Lsp/BrokerConnect.cpp
         Source/Editor/Mcp/SocketPath.cpp
         Source/Editor/Mcp/Transport.cpp
         Source/Editor/Mcp/ToolRegistry.cpp

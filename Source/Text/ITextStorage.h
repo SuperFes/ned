@@ -22,7 +22,7 @@ namespace ned::text {
 // caller of Buffer::Content() -- can hold one reference type regardless of
 // which is active underneath. Confirmed against the real call surface
 // before adding this: every one of Buffer.cpp's own ~86 internal uses and
-// every external caller of Content() (Grapheme.h, LspPosition.h,
+// every external caller of Content() (Grapheme.h, Position.h,
 // CodeFold.h, BufferView.cpp, ...) only ever calls methods in this exact
 // set, so none of their logic needs to change -- only the declared type of
 // wherever they bind Content()'s result.

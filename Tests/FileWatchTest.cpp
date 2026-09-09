@@ -35,7 +35,7 @@ void WriteFile(const std::filesystem::path& path, const char* content) {
 }
 
 // Generous 2s deadline (the watcher's debounce quiet window is 100ms) --
-// the LspManagerTest WaitUntil shape, minus the EventLoop (FileWatcher's
+// the ManagerTest WaitUntil shape, minus the EventLoop (FileWatcher's
 // callback fires on its own thread, nothing to drain).
 template <typename Predicate>
 bool WaitFor(Predicate predicate) {

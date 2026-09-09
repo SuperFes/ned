@@ -1,6 +1,6 @@
 //
 // DAP client — slice 1. Owns the (single) running debug session and the
-// process-wide breakpoint store — analogous to Lsp/LspManager.h, but
+// process-wide breakpoint store — analogous to Lsp/Manager.h, but
 // deliberately one session at a time rather than a per-language map:
 // debugging is a modal activity in a way language servers aren't, and
 // nothing in slice 1's scope needs two adapters live at once (see
@@ -10,7 +10,7 @@
 // reference the same way. Threading matches the rest of this subsystem:
 // every public method runs on the main thread (called from BufferView's
 // key handling), and every Client callback is already Post-marshaled
-// onto the main thread — no mutexes needed, same reasoning LspClient.h
+// onto the main thread — no mutexes needed, same reasoning Client.h
 // documents.
 //
 // Session shape (the DAP handshake, for whoever touches this next):
@@ -303,14 +303,14 @@ class Manager {
 
     // subprocess-hang-protection follow-up. A no-op if no session is active;
     // otherwise forwards to the live client_'s own ExpireStaleRequests. See
-    // LspManager::ExpireStaleRequests's identical wiring/reasoning -- meant
+    // Manager::ExpireStaleRequests's identical wiring/reasoning -- meant
     // to be called from the same periodic background tick.
     void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
     // Slice 3: the inspection requests backing the *debug* buffer. Each
     // callback runs on the main thread with parsed results ([] on any
     // failure -- no session, adapter error, malformed response), the same
-    // graceful-empty convention LspManager's own Request* callbacks use.
+    // graceful-empty convention Manager's own Request* callbacks use.
     struct StackFrame {
         int                                  id = 0; // the adapter's own frame id, fed back to RequestScopes
         std::string                          name;
@@ -485,7 +485,7 @@ class Manager {
     // user-facing text.
     void SetOnSessionEnded(std::function<void(std::string reason)> handler);
 
-    // Public primarily for tests — mirrors LspManager::SetClientForTesting
+    // Public primarily for tests — mirrors Manager::SetClientForTesting
     // exactly (see that method's doc comment): registers an already-
     // constructed Client (typically pipe-backed, no real subprocess) as
     // the session's client without starting the handshake; the next

@@ -491,7 +491,7 @@ struct Mode {
     bool wrapLines = false;
 };
 
-// LSP/DAP client follow-up: LspServerConfig.h/Config.h's language keys
+// LSP/DAP client follow-up: ServerConfig.h/Config.h's language keys
 // ("c", "python", ...) are Mode's own name minus its "-mode" suffix -- every
 // bundled *Mode() factory names itself exactly that way (see
 // ModeOverrides.cpp's BundledModeFactories table, e.g. "c-mode"/

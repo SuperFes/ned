@@ -7,7 +7,7 @@
 // Mode.cpp) and the generic ResolveFileLink widening that consumes this
 // config are both fully language-agnostic; a file extension is a genuine
 // per-language fact with nowhere else to live, the same reasoning
-// Lsp/LspServerConfig.h's per-language argv table and
+// Lsp/ServerConfig.h's per-language argv table and
 // Editor/ProjectSettings.h's own per-mode includePaths already established.
 //
 
@@ -40,7 +40,7 @@ struct ImportResolutionConfig {
 
 // Bundled defaults, keyed by Editor/Mode.h's LanguageKeyForMode (e.g.
 // "python", "javascript" -- no "-mode" suffix, the same key
-// Lsp/LspServerConfig.h/ProjectSettings.h's lspInitializationOptionsByLanguage
+// Lsp/ServerConfig.h/ProjectSettings.h's lspInitializationOptionsByLanguage
 // already use). A language with no entry (including every language with no
 // import query configured at all) returns a default-constructed
 // ImportResolutionConfig -- empty extensions/indexBasenames,

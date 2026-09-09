@@ -1,16 +1,16 @@
 //
 // hover/completion follow-up. Parses the two LSP response payload shapes
-// LspManager::RequestHover/RequestCompletion consume -- factored out to
+// Manager::RequestHover/RequestCompletion consume -- factored out to
 // namespace scope (rather than kept as file-local anonymous-namespace
-// helpers in LspManager.cpp, which is where these started) specifically so
+// helpers in Manager.cpp, which is where these started) specifically so
 // they're directly unit-testable against crafted JSON, the same "extract a
 // pure conversion into its own declared, testable header" precedent
-// LspPosition.h already established, without needing a real LspClient/
+// Position.h already established, without needing a real Client/
 // subprocess round-trip just to exercise parsing logic.
 //
 
-#ifndef NED_EDITOR_LSP_LSPCONTENT_H
-#define NED_EDITOR_LSP_LSPCONTENT_H
+#ifndef NED_EDITOR_LSP_CONTENT_H
+#define NED_EDITOR_LSP_CONTENT_H
 
 #include <cstdint>
 #include <optional>
@@ -19,7 +19,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "LspPosition.h"
+#include "Position.h"
 
 namespace ned::editor::lsp {
 
@@ -33,8 +33,8 @@ using Json = nlohmann::json;
 // rather than beside its own ExtractWorkspaceEditChanges below because
 // completion-fidelity's CompletionItem::textEdit holds one by value.)
 struct WorkspaceTextEdit {
-    LspPosition start;
-    LspPosition end;
+    Position start;
+    Position end;
     std::string newText;
 
     bool operator==(const WorkspaceTextEdit&) const = default;
@@ -85,7 +85,7 @@ struct CompletionItem {
     // receipt. Both spec shapes land here: a plain TextEdit {range, newText}
     // and an InsertReplaceEdit {insert, replace, newText} -- for the latter
     // the *insert* range is taken (see kUseInsertRangeForInsertReplace in
-    // LspContent.cpp for why). Absent for dabbrev/Janet-synthesized items,
+    // Content.cpp for why). Absent for dabbrev/Janet-synthesized items,
     // and for a server that only ever sends insertText.
     std::optional<WorkspaceTextEdit> textEdit;
 
@@ -101,7 +101,7 @@ struct CompletionItem {
     std::string filterText;
 
     // completion-resolve follow-up: the item exactly as the server sent it,
-    // kept so LspManager::ResolveCompletionItem can hand it back verbatim on
+    // kept so Manager::ResolveCompletionItem can hand it back verbatim on
     // completionItem/resolve -- the spec requires the *whole* item round-trip
     // (a server's own "data" field is the usual carrier, but nothing says it
     // is the only one). CodeAction::raw's precedent, for the same reason.
@@ -329,7 +329,7 @@ struct CodeAction {
 // documentChanges array containing something unrecognized still sets
 // touchesUnsupportedForm=true with both left empty -- refused wholesale by
 // the caller rather than partially applied. Exposed publicly (not just used internally by ExtractCodeActions' own
-// loop below) so LspManager::ResolveCodeAction can parse a
+// loop below) so Manager::ResolveCodeAction can parse a
 // codeAction/resolve response -- itself always exactly one CodeAction, not
 // an array -- the same way. ownUri is kept in the signature for call-site
 // symmetry with every other ExtractX(..., ownUri) function in this file,
@@ -347,12 +347,12 @@ struct CodeAction {
 // /declaration, /typeDefinition, and /implementation, which the LSP spec
 // gives an identical result shape. uri stays a raw string here (not resolved
 // to a filesystem::path) so this stays a pure, URI-agnostic parser like
-// every other ExtractX function in this file -- LspManager is what resolves
+// every other ExtractX function in this file -- Manager is what resolves
 // it, the same layering ExtractCodeActions/ExtractSingleCodeAction already
 // keep (they take ownUri as a plain string too).
 struct DefinitionLocation {
     std::string uri;
-    LspPosition position;
+    Position position;
 
     bool operator==(const DefinitionLocation&) const = default;
 };
@@ -400,13 +400,13 @@ struct RenameResult {
 // documentHighlight follow-up. One occurrence of the symbol under point,
 // always within the requesting document itself -- unlike DefinitionLocation/
 // RenameEdit there is no per-item URI at all, so this is the first
-// LspPosition-pair result in this file whose *end* position actually matters
+// Position-pair result in this file whose *end* position actually matters
 // to the caller (BufferView needs the whole range to paint, not just a jump
 // target). kind is the LSP DocumentHighlightKind (1=Text, 2=Read, 3=Write);
 // defaults to 1 for a server that omits it, the spec's own stated default.
 struct DocumentHighlight {
-    LspPosition start;
-    LspPosition end;
+    Position start;
+    Position end;
     int         kind = 1;
 
     bool operator==(const DocumentHighlight&) const = default;
@@ -421,7 +421,7 @@ struct DocumentHighlight {
 // signature-help follow-up. Reduces a textDocument/signatureHelp response
 // straight to the single status-line-ready string BufferView/Commands.cpp
 // show verbatim -- mirrors ExtractHoverText's own "already plain, already
-// the caller's whole answer" contract, so LspManager::RequestSignatureHelp
+// the caller's whole answer" contract, so Manager::RequestSignatureHelp
 // can reuse HoverCallback's exact shape instead of a new one. Picks
 // signatures[activeSignature] (default index 0), then wraps the active
 // parameter's own slice of that signature's label in "**...**" -- plain
@@ -444,14 +444,14 @@ struct DocumentHighlight {
 // symbol-search follow-up. One entry from a textDocument/documentSymbol or
 // workspace/symbol response -- both requests return the same underlying
 // vocabulary (name/kind/location), just at different scopes, so one shape
-// serves both. uri stays a raw string (LspManager resolves it), the same
+// serves both. uri stays a raw string (Manager resolves it), the same
 // layering ExtractCodeActions/ExtractDefinitionLocations already keep.
 struct SymbolEntry {
     std::string name;
     std::string containerName; // immediate parent's name (hierarchical) or the server's own containerName; "" if none
     int         kind = 0;      // raw LSP SymbolKind (1-26); 0 for a malformed/missing entry, never produced by ExtractSymbols itself
     std::string uri;
-    LspPosition position; // jump target: a DocumentSymbol's selectionRange.start, or a SymbolInformation/WorkspaceSymbol's range.start
+    Position position; // jump target: a DocumentSymbol's selectionRange.start, or a SymbolInformation/WorkspaceSymbol's range.start
 
     bool operator==(const SymbolEntry&) const = default;
 };
@@ -490,7 +490,7 @@ struct SymbolEntry {
 // file, these are read from the handshake response itself, not from a
 // per-feature request's own response. Deliberately not part of a general
 // "does the server support X" capability store: this codebase never gates a
-// request on the server's advertised capabilities (see LspManager.h's own
+// request on the server's advertised capabilities (see Manager.h's own
 // ExecuteCommand doc comment) -- it just sends the request and treats an
 // error/empty response like any other "no results" case. These two are
 // different in kind: the response is literally uninterpretable without
@@ -559,7 +559,7 @@ enum class TextDocumentSyncKind {
 // form) or an object whose own "change" field carries the same 0/1/2
 // ("openClose"/"save" aren't read -- not needed by anything this client
 // does). nullopt when absent, non-numeric, or an out-of-range int --
-// LspManager::TextDocumentSyncKindFor treats nullopt the same as Full (see
+// Manager::TextDocumentSyncKindFor treats nullopt the same as Full (see
 // its own doc comment for why: preserving every already-working server's
 // current behavior takes priority over the spec's technical "absent means
 // None" default).
@@ -585,7 +585,7 @@ struct FileOperationFilters {
 // advertised at all (as opposed to advertised-but-empty-filters, which
 // would produce a present-but-all-empty struct -- callers treat both the
 // same way via the vectors' own emptiness, so this distinction only matters
-// to LspManager's decision of whether to keep an entry in its per-server
+// to Manager's decision of whether to keep an entry in its per-server
 // map at all).
 [[nodiscard]] std::optional<FileOperationFilters> ExtractFileOperationFilters(const Json& initializeResult);
 
@@ -600,7 +600,7 @@ struct FileOperationFilters {
 // forms mean the same "yes, send me workspace/didChangeWorkspaceFolders"
 // here). A server advertising supported:true but changeNotifications
 // absent/false can serve the folders it was handed at initialize time and
-// no others, which is useless to LspManager -- a folder is only ever
+// no others, which is useless to Manager -- a folder is only ever
 // discovered *after* that handshake, when a buffer under it is first
 // synced -- so that combination is treated as "can't join," not as a
 // partial capability worth modelling further.
@@ -618,15 +618,15 @@ struct WorkspaceFoldersSupport {
 
 // pull-diagnostics follow-up. One entry from a textDocument/diagnostic
 // response's "items" array -- same range/severity/message shape
-// LspManager::HandlePublishDiagnostics already parses inline for the push
+// Manager::HandlePublishDiagnostics already parses inline for the push
 // form (publishDiagnostics), kept here as its own struct rather than
 // reused directly since converting to byte offsets needs a Buffer's
-// content, which this file deliberately has no dependency on (LspManager
+// content, which this file deliberately has no dependency on (Manager
 // does that conversion itself, the same layering ExtractFormattingEdits'
-// LspPosition-based WorkspaceTextEdit already established).
+// Position-based WorkspaceTextEdit already established).
 struct PullDiagnosticItem {
-    LspPosition start;
-    LspPosition end;
+    Position start;
+    Position end;
     int         severity = 3; // raw LSP DiagnosticSeverity (1=Error..4=Hint); 3=Information is the spec's own implied default
     std::string message;
 };
@@ -651,8 +651,8 @@ struct PullDiagnosticItem {
 // ExtractSemanticTokensLegend) is the caller's job, the same layering split
 // PullDiagnosticItem's raw severity int already uses.
 struct SemanticToken {
-    LspPosition   start;
-    std::size_t   length;         // UTF-16 code units, same unit LspPosition::character already uses
+    Position   start;
+    std::size_t   length;         // UTF-16 code units, same unit Position::character already uses
     std::size_t   tokenTypeIndex; // index into the server's own legend.tokenTypes
     std::uint32_t tokenModifiers; // bitset -- bit i set means legend.tokenModifiers[i] applies
 
@@ -712,7 +712,7 @@ struct SemanticTokensDeltaEdit {
 
 // Pulls "resultId" out of a semanticTokens/{full,range,full/delta} response
 // -- present whenever the server intends this response to seed a later
-// full/delta request's own previousResultId (LspManager's own cache; this
+// full/delta request's own previousResultId (Manager's own cache; this
 // file has no opinion about caching, only parsing). nullopt if absent,
 // non-string, or result isn't an object -- callers treat that as "don't
 // cache anything for delta later," the same as a server that never
@@ -720,7 +720,7 @@ struct SemanticTokensDeltaEdit {
 [[nodiscard]] std::optional<std::string> ExtractSemanticTokensResultId(const Json& result);
 
 // Applies a full/delta response's edits to the previously-cached raw
-// "data" array (LspManager's own cache, seeded from an earlier full/range/
+// "data" array (Manager's own cache, seeded from an earlier full/range/
 // delta response's own ExtractSemanticTokensRawData/reconstructed result),
 // reconstructing what a fresh full response would have contained. Per
 // spec, each edit's start/deleteCount addresses previousData as it stood
@@ -736,7 +736,7 @@ struct SemanticTokensDeltaEdit {
                                                                        const std::vector<SemanticTokensDeltaEdit>& edits);
 
 // inlayHint follow-up. One entry from a textDocument/inlayHint response --
-// position stays an LspPosition (not yet resolved to a byte offset; the
+// position stays an Position (not yet resolved to a byte offset; the
 // caller does that against real buffer content, the same layering every
 // other LSP-position-carrying struct in this file already uses). label is
 // the resolved display text: a bare string per the simpler response shape,
@@ -744,7 +744,7 @@ struct SemanticTokensDeltaEdit {
 // richer one -- both flattened to plain text here, since this client
 // doesn't support per-part tooltips/commands (a v1 scope cut).
 struct InlayHint {
-    LspPosition position;
+    Position position;
     std::string label;
 
     bool operator==(const InlayHint&) const = default;
@@ -756,7 +756,7 @@ struct InlayHint {
 [[nodiscard]] std::vector<InlayHint> ExtractInlayHints(const Json& result);
 
 // codeLens follow-up. One entry from a textDocument/codeLens response --
-// start/end stay LspPositions, resolved to byte offsets by the caller, the
+// start/end stay Positions, resolved to byte offsets by the caller, the
 // same layering every other LSP-position-carrying struct in this file
 // already uses. A lens sent with no "command" at all (hasCommand=false)
 // needs codeLens/resolve before it's runnable -- title/commandName/
@@ -764,8 +764,8 @@ struct InlayHint {
 // item verbatim, needed to send back for resolve (same role
 // CodeAction::raw already plays for codeAction/resolve).
 struct CodeLens {
-    LspPosition start;
-    LspPosition end;
+    Position start;
+    Position end;
     std::string title;                            // Command.title -- what's rendered; empty until resolved
     std::string commandName;                      // Command.command -- opaque, replayed via workspace/executeCommand
     Json        commandArguments = Json::array(); // Command.arguments, round-tripped verbatim
@@ -803,7 +803,7 @@ struct HierarchyItem {
     std::string detail; // server's short type/signature string; "" if omitted
     int         kind = 0;
     std::string uri;
-    LspPosition position; // jump target: selectionRange.start
+    Position position; // jump target: selectionRange.start
     Json        raw;      // the original item verbatim; round-tripped as the next request's "item"
 
     bool operator==(const HierarchyItem&) const = default;
@@ -826,7 +826,7 @@ struct HierarchyItem {
 // than just the first; empty if the server sent no "fromRanges" at all.
 struct HierarchyCall {
     HierarchyItem            item;
-    std::vector<LspPosition> callSites;
+    std::vector<Position> callSites;
 
     bool operator==(const HierarchyCall&) const = default;
 };
@@ -853,8 +853,8 @@ struct HierarchyCall {
 struct PrepareRenameResult {
     bool        valid    = false;
     bool        hasRange = false;
-    LspPosition start{};
-    LspPosition end{};
+    Position start{};
+    Position end{};
     std::string placeholder;
 
     bool operator==(const PrepareRenameResult&) const = default;
@@ -872,8 +872,8 @@ struct PrepareRenameResult {
 // always within the requesting document, the same "no per-item URI" shape
 // DocumentHighlight already has.
 struct LinkedEditingRange {
-    LspPosition start;
-    LspPosition end;
+    Position start;
+    Position end;
 
     bool operator==(const LinkedEditingRange&) const = default;
 };
@@ -895,8 +895,8 @@ struct LinkedEditingRange {
 // malformed one; raw is the original item verbatim, replayed as that
 // request's whole body (CodeLens::raw's own contract).
 struct DocumentLink {
-    LspPosition start;
-    LspPosition end;
+    Position start;
+    Position end;
     std::string target; // a URI ("file://...", "https://...") -- empty when hasTarget is false
     bool        hasTarget = false;
     Json        raw;
@@ -918,4 +918,4 @@ struct DocumentLink {
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPCONTENT_H
+#endif // NED_EDITOR_LSP_CONTENT_H

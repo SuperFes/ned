@@ -11,8 +11,8 @@
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
-#include "Editor/Lsp/LspClient.h"
-#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/Client.h"
+#include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Mode.h"
 #include "Editor/Multibuffer.h"
@@ -105,13 +105,13 @@ struct FakeLspServer {
     FakeLspServer& operator=(const FakeLspServer&) = delete;
     FakeLspServer(FakeLspServer&&)                 = default;
 
-    static FakeLspServer Create(ned::editor::lsp::LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop,
-                                ned::editor::lsp::LspClient*& outClient) {
+    static FakeLspServer Create(ned::editor::lsp::Manager& manager, const std::string& language, ned::ui::EventLoop& eventLoop,
+                                ned::editor::lsp::Client*& outClient) {
         int clientWritesHere[2];
         int clientReadsHere[2];
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
-        auto client = std::make_unique<ned::editor::lsp::LspClient>(ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+        auto client = std::make_unique<ned::editor::lsp::Client>(ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
         outClient   = &manager.SetClientForTesting(language, std::move(client));
         return FakeLspServer(clientWritesHere[0], clientReadsHere[1]);
     }
@@ -245,8 +245,8 @@ TEST_CASE("RequestProjectFindReferences sends textDocument/references when a lan
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     BufferView view = fixture.View();

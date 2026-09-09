@@ -1,13 +1,13 @@
 //
-// lsp-broker follow-up. The editor-side (as opposed to LspBrokerMain.cpp's
+// lsp-broker follow-up. The editor-side (as opposed to BrokerMain.cpp's
 // daemon-side) half of attaching to the LSP broker -- a small, testable
-// seam kept out of LspManager.cpp so that file's own ClientForLanguage
-// stays focused on "which LspClient do I have for this language," not raw
+// seam kept out of Manager.cpp so that file's own ClientForLanguage
+// stays focused on "which Client do I have for this language," not raw
 // socket plumbing.
 //
 
-#ifndef NED_EDITOR_LSP_LSPBROKERCONNECT_H
-#define NED_EDITOR_LSP_LSPBROKERCONNECT_H
+#ifndef NED_EDITOR_LSP_BROKERCONNECT_H
+#define NED_EDITOR_LSP_BROKERCONNECT_H
 
 #include <filesystem>
 #include <memory>
@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include "LspClient.h"
+#include "Client.h"
 
 namespace ned::ui {
 class EventLoop;
@@ -24,13 +24,13 @@ class EventLoop;
 namespace ned::editor::lsp {
 
 // Attempts to attach to an already-running LSP broker daemon (see
-// LspBrokerMain.h) for (projectRoot, language) over socketPath -- connects,
+// BrokerMain.h) for (projectRoot, language) over socketPath -- connects,
 // writes the ned/broker-attach control frame (argv is only actually
 // honored by the daemon if this is the first attach ever seen for this
 // exact (projectRoot, language) pair; otherwise it's silently ignored, see
-// LspBroker.h's own header comment), and hands back a ready-to-use
-// LspClient built on that socket (the Transport-taking constructor,
-// startHandshakeComplete = false -- LspManager::ClientForLanguage's own
+// Broker.h's own header comment), and hands back a ready-to-use
+// Client built on that socket (the Transport-taking constructor,
+// startHandshakeComplete = false -- Manager::ClientForLanguage's own
 // initialize/initialized sequence, WireNotificationHandlers, and every
 // downstream request all run completely unchanged from here on, just
 // talking to the broker instead of a directly-spawned subprocess).
@@ -43,7 +43,7 @@ namespace ned::editor::lsp {
 // (BrokerRuntimeDirectory() throws if no XDG_RUNTIME_DIR/XDG_STATE_HOME/
 // HOME is set) -- a default-argument expression evaluates at the call
 // site, which would let that exception escape uncaught from
-// LspManager::ClientForLanguage's own try-broker-first branch; resolving
+// Manager::ClientForLanguage's own try-broker-first branch; resolving
 // it here instead keeps this function's "never throws" contract airtight.
 //
 // Returns nullptr -- never throws -- for any failure: no resolvable socket
@@ -54,10 +54,10 @@ namespace ned::editor::lsp {
 // crashed moments ago) -- the caller's own contract is to fall back to
 // spawning a server directly on nullptr, exactly like today, never to
 // treat this as an error worth surfacing on its own.
-[[nodiscard]] std::unique_ptr<LspClient> TryConnectToBroker(const std::filesystem::path& projectRoot, const std::string& language,
+[[nodiscard]] std::unique_ptr<Client> TryConnectToBroker(const std::filesystem::path& projectRoot, const std::string& language,
                                                             const std::vector<std::string>& argv, ned::ui::EventLoop& eventLoop,
                                                             std::optional<std::filesystem::path> socketPathOverride = std::nullopt);
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPBROKERCONNECT_H
+#endif // NED_EDITOR_LSP_BROKERCONNECT_H

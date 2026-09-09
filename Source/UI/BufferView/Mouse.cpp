@@ -101,7 +101,7 @@ void BufferView::ShowContextMenuAt(Point localClick) {
         // lspManager_ merely being wired to this pane isn't that signal.
         // ActiveServerKeysForBuffer (ModeLine's own status-glyph source)
         // is the public surface for this; PrimarySyncState itself is
-        // LspManager-private, so this checks for the buffer's own primary
+        // Manager-private, so this checks for the buffer's own primary
         // language key among the *active* keys directly rather than
         // kProseLanguageKey (which never supports either) alone being
         // enough.

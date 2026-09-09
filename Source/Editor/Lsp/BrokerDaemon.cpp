@@ -1,4 +1,4 @@
-#include "LspBrokerDaemon.h"
+#include "BrokerDaemon.h"
 
 #include <cerrno>
 #include <cstring>
@@ -39,7 +39,7 @@ namespace {
     // switch here. A manually-launched `ned --lsp-broker` inherits its
     // caller's own stderr unmodified, same as any ordinary Unix command
     // (redirect it yourself: `ned --lsp-broker >broker.log 2>&1 &`); the
-    // auto-spawned daemon (the common case -- LspBrokerConnect.cpp's own
+    // auto-spawned daemon (the common case -- BrokerConnect.cpp's own
     // TryBecomeBrokerSpawner) redirects stdout/stderr to
     // BrokerLogPath() (BrokerSocketPath.h) right after fork(), before
     // exec, so this output lands there instead of leaking indefinitely
@@ -303,7 +303,7 @@ void BrokerDaemon::ApplySpawnServer(const BrokerAction& action) {
     TransportPtr transport;
     try {
         transport = std::make_shared<lsp::Transport>(action.argv, /*captureStderr=*/false);
-        // Stderr capture/log rollup (the *lsp log* buffer real LspClient
+        // Stderr capture/log rollup (the *lsp log* buffer real Client
         // sessions feed) isn't wired for broker-spawned servers in v1 -- a
         // documented gap, not an oversight.
     }

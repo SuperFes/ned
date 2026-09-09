@@ -5,14 +5,14 @@
 #include <fstream>
 #include <vector>
 
-#include "Editor/Lsp/LspRootResolver.h"
+#include "Editor/Lsp/RootResolver.h"
 #include "Editor/ProjectRoot.h"
 
 using ned::editor::AutoDetectProjectRoot;
 using ned::editor::ProjectRoot;
 using ned::editor::SetAutoDetectProjectRoot;
 using ned::editor::SetProjectRoot;
-using ned::editor::lsp::LspRootMarkers;
+using ned::editor::lsp::RootMarkers;
 using ned::editor::lsp::ResolveLspRoot;
 using ned::editor::lsp::SetLspRootMarkers;
 
@@ -33,31 +33,31 @@ struct RootStateGuard {
 
 } // namespace
 
-TEST_CASE("LspRootMarkers is empty for a language with no default and no override", "[Lsp]") {
-    REQUIRE(LspRootMarkers("a-language-nobody-configured").empty());
+TEST_CASE("RootMarkers is empty for a language with no default and no override", "[Lsp]") {
+    REQUIRE(RootMarkers("a-language-nobody-configured").empty());
 }
 
-TEST_CASE("LspRootMarkers returns compiled-in defaults for bundled languages", "[Lsp]") {
-    const auto cpp = LspRootMarkers("cpp");
+TEST_CASE("RootMarkers returns compiled-in defaults for bundled languages", "[Lsp]") {
+    const auto cpp = RootMarkers("cpp");
     REQUIRE_FALSE(cpp.empty());
     REQUIRE(std::find(cpp.begin(), cpp.end(), "CMakeLists.txt") != cpp.end());
 
-    const auto python = LspRootMarkers("python");
+    const auto python = RootMarkers("python");
     REQUIRE_FALSE(python.empty());
     REQUIRE(std::find(python.begin(), python.end(), "pyproject.toml") != python.end());
 
-    const auto csharp = LspRootMarkers("csharp");
+    const auto csharp = RootMarkers("csharp");
     REQUIRE_FALSE(csharp.empty());
     REQUIRE(std::find(csharp.begin(), csharp.end(), "*.csproj") != csharp.end());
 }
 
 TEST_CASE("SetLspRootMarkers overrides the default, and an empty list reverts to it", "[Lsp]") {
     SetLspRootMarkers("cpp", {"WORKSPACE"});
-    REQUIRE(LspRootMarkers("cpp") == std::vector<std::string>{"WORKSPACE"});
+    REQUIRE(RootMarkers("cpp") == std::vector<std::string>{"WORKSPACE"});
 
     SetLspRootMarkers("cpp", {}); // clears the override -- reverts to the compiled-in default
-    REQUIRE_FALSE(LspRootMarkers("cpp").empty());
-    REQUIRE(std::find(LspRootMarkers("cpp").begin(), LspRootMarkers("cpp").end(), "CMakeLists.txt") != LspRootMarkers("cpp").end());
+    REQUIRE_FALSE(RootMarkers("cpp").empty());
+    REQUIRE(std::find(RootMarkers("cpp").begin(), RootMarkers("cpp").end(), "CMakeLists.txt") != RootMarkers("cpp").end());
 }
 
 TEST_CASE("ResolveLspRoot falls back to ProjectRoot() when nothing is configured for the language", "[Lsp]") {

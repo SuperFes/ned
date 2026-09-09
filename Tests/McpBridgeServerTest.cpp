@@ -11,7 +11,7 @@
 #include <unistd.h>
 
 #include "Editor/Dap/Manager.h"
-#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/Manager.h"
 #include "Editor/Mcp/BridgeServer.h"
 #include "Editor/Mcp/ToolRegistry.h"
 #include "Editor/Mcp/Transport.h"
@@ -21,8 +21,6 @@
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
 
-using ned::editor::dap::Manager;
-using ned::editor::lsp::LspManager;
 using ned::editor::mcp::Json;
 using ned::editor::mcp::BridgeServer;
 using ned::editor::mcp::ToolRegistry;
@@ -38,10 +36,10 @@ namespace {
 struct Fixture {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
-    LspManager         lspManager{bufferList, eventLoop};
+    ned::editor::lsp::Manager lspManager{bufferList, eventLoop};
     VcsRunner          vcsRunner{eventLoop};
     TestRunner         testRunner{bufferList, eventLoop};
-    Manager         dapManager{eventLoop};
+    ned::editor::dap::Manager dapManager{eventLoop};
     ToolRegistry       registry{bufferList, lspManager, vcsRunner, testRunner, dapManager};
     BridgeServer    server{registry, eventLoop};
 };
@@ -50,7 +48,7 @@ struct Fixture {
 // own shape: a background std::thread plays the MCP client (agent-spawned
 // relay's role) over a real connect()ed socket, while the main test thread
 // pumps eventLoop.DrainPosted_() -- the same real-timer/background-thread
-// idiom Tests/LspManagerTest.cpp's own WaitUntil uses -- since
+// idiom Tests/ManagerTest.cpp's own WaitUntil uses -- since
 // BridgeServer::HandleFrame only ever runs there, never on the
 // background accept/read thread.
 void PumpUntil(ned::ui::EventLoop& eventLoop, const std::atomic<bool>& done) {

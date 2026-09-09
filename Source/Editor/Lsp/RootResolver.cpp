@@ -1,4 +1,4 @@
-#include "LspRootResolver.h"
+#include "RootResolver.h"
 
 #include <mutex>
 #include <system_error>
@@ -88,7 +88,7 @@ void SetLspRootMarkers(const std::string& language, std::vector<std::string> mar
     }
 }
 
-std::vector<std::string> LspRootMarkers(const std::string& language) {
+std::vector<std::string> RootMarkers(const std::string& language) {
     const std::lock_guard<std::mutex> lock(RootMarkersMutex());
     if (const auto it = RootMarkersOverrides().find(language); it != RootMarkersOverrides().end()) {
         return it->second;
@@ -102,7 +102,7 @@ std::vector<std::string> LspRootMarkers(const std::string& language) {
 
 std::filesystem::path ResolveLspRoot(const std::filesystem::path& bufferPath, const std::string& language) {
     if (editor::AutoDetectProjectRoot()) {
-        const std::vector<std::string> markers = LspRootMarkers(language);
+        const std::vector<std::string> markers = RootMarkers(language);
         if (!markers.empty()) {
             // Same absolutize-then-weakly_canonical order as
             // ProjectRoot.cpp's DetectProjectRoot -- see that function's own

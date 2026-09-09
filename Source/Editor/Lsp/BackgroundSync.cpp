@@ -1,4 +1,4 @@
-#include "LspBackgroundSync.h"
+#include "BackgroundSync.h"
 
 #include <mutex>
 
@@ -6,7 +6,7 @@
 #include "Editor/ModeOverrides.h"
 #include "Text/BufferList.h"
 
-#include "LspManager.h"
+#include "Manager.h"
 
 namespace ned::editor::lsp {
 
@@ -29,13 +29,13 @@ void SetLspBackgroundSyncEnabled(bool enabled) {
     BackgroundSyncStorage() = enabled;
 }
 
-bool LspBackgroundSyncEnabled() {
+bool BackgroundSyncEnabled() {
     const std::lock_guard lock(BackgroundSyncMutex());
     return BackgroundSyncStorage();
 }
 
-void SyncBackgroundBuffers(text::BufferList& bufferList, LspManager& manager) {
-    if (!LspBackgroundSyncEnabled()) {
+void SyncBackgroundBuffers(text::BufferList& bufferList, Manager& manager) {
+    if (!BackgroundSyncEnabled()) {
         return;
     }
     for (const auto& buffer : bufferList.Buffers()) {

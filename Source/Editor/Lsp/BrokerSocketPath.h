@@ -1,7 +1,7 @@
 //
 // lsp-broker follow-up. Filesystem locations for the LSP broker daemon's
 // Unix domain socket and its startup-race lock file -- a single,
-// well-known pair (not one per project; see LspBroker.h's own header
+// well-known pair (not one per project; see Broker.h's own header
 // comment for why one daemon now multiplexes every project). Pure path
 // calculation, mirroring Backup.h/Session.h's own "calculate, don't
 // create" split -- BrokerRuntimeDirectory() is the one function here that
@@ -38,8 +38,8 @@ namespace ned::editor::lsp {
 void EnsureBrokerRuntimeDirectory();
 
 // BrokerRuntimeDirectory() / "broker.sock" -- the daemon's single Unix
-// domain socket, listened on by LspBrokerMain.cpp and connected to by
-// every `ned` process's LspManager.
+// domain socket, listened on by BrokerMain.cpp and connected to by
+// every `ned` process's Manager.
 [[nodiscard]] std::filesystem::path BrokerSocketPath();
 
 // BrokerRuntimeDirectory() / "broker.lock" -- flock()'d for the whole
@@ -51,8 +51,8 @@ void EnsureBrokerRuntimeDirectory();
 [[nodiscard]] std::filesystem::path BrokerLockPath();
 
 // broker-log-redirect follow-up. BrokerRuntimeDirectory() / "broker.log" -- where
-// LspBrokerMain.cpp's own timestamped Log() writes once TryBecomeBrokerSpawner
-// (LspBrokerConnect.cpp) redirects the daemon's stdout/stderr here right after fork(),
+// BrokerMain.cpp's own timestamped Log() writes once TryBecomeBrokerSpawner
+// (BrokerConnect.cpp) redirects the daemon's stdout/stderr here right after fork(),
 // before exec. A manually-launched `ned --lsp-broker` still inherits its caller's own
 // stdout/stderr unmodified (that redirect only happens in the auto-spawn path) -- this
 // is just where the auto-spawned daemon's log ends up so it stops leaking into whichever

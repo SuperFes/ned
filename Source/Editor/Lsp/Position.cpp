@@ -1,4 +1,4 @@
-#include "LspPosition.h"
+#include "Position.h"
 
 #include "Text/ITextStorage.h"
 
@@ -14,7 +14,7 @@ namespace {
 
 } // namespace
 
-LspPosition BytePositionToLsp(const text::ITextStorage& content, std::size_t byteOffset) {
+Position BytePositionToLsp(const text::ITextStorage& content, std::size_t byteOffset) {
     const std::size_t line      = content.ByteOffsetToLine(byteOffset);
     const std::size_t lineStart = content.LineToByteOffset(line);
 
@@ -26,10 +26,10 @@ LspPosition BytePositionToLsp(const text::ITextStorage& content, std::size_t byt
         cursor += decoded.byteLength;
     }
 
-    return LspPosition{.line = line, .character = utf16Count};
+    return Position{.line = line, .character = utf16Count};
 }
 
-std::size_t LspPositionToByte(const text::ITextStorage& content, LspPosition position) {
+std::size_t PositionToByte(const text::ITextStorage& content, Position position) {
     const std::size_t lineStart        = content.LineToByteOffset(position.line);
     const std::size_t lineEndExclusive = LineByteRangeEnd(content, position.line);
 
@@ -78,15 +78,15 @@ namespace {
 
 } // namespace
 
-LspRange ByteRangeToLspRange(std::string_view content, std::size_t startByte, std::size_t endByte) {
+Range ByteRangeToLspRange(std::string_view content, std::size_t startByte, std::size_t endByte) {
     std::size_t line   = 0;
     std::size_t utf16  = 0;
     std::size_t cursor = 0;
-    LspPosition start{.line = 0, .character = 0};
+    Position start{.line = 0, .character = 0};
 
     while (cursor < endByte) {
         if (cursor == startByte) {
-            start = LspPosition{.line = line, .character = utf16};
+            start = Position{.line = line, .character = utf16};
         }
         if (content[cursor] == '\n') {
             ++line;
@@ -99,10 +99,10 @@ LspRange ByteRangeToLspRange(std::string_view content, std::size_t startByte, st
         cursor += step.byteLength;
     }
     if (cursor == startByte) {
-        start = LspPosition{.line = line, .character = utf16}; // startByte == endByte
+        start = Position{.line = line, .character = utf16}; // startByte == endByte
     }
 
-    return LspRange{.start = start, .end = LspPosition{.line = line, .character = utf16}};
+    return Range{.start = start, .end = Position{.line = line, .character = utf16}};
 }
 
 std::size_t Utf16LengthOfByteRange(std::string_view content, std::size_t startByte, std::size_t endByte) {

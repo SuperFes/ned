@@ -1,7 +1,7 @@
 //
 // LSP client follow-up. LSP's own JSON-RPC framing ("Content-Length: N\r\n\r\n"
 // + payload) layered on top of Process/ChildProcess.h's raw spawn/pipe
-// mechanics -- no JSON-RPC/LSP *semantics* here at all (see LspClient.h for
+// mechanics -- no JSON-RPC/LSP *semantics* here at all (see Client.h for
 // that layer), just the framing. ChildProcess itself was extracted out of
 // this file (task-runner follow-up) once a second, framing-free consumer
 // (TaskProcess, streaming raw build/test output) needed the same spawn/pipe
@@ -61,7 +61,7 @@ class Transport {
     // preserving every existing caller's behavior unchanged (most notably
     // Client, which reuses this exact constructor and has no reader for
     // a captured stderr pipe -- see StderrFd()'s own doc comment on what an
-    // undrained Capture pipe risks). LspClient's real-subprocess constructor
+    // undrained Capture pipe risks). Client's real-subprocess constructor
     // is the one caller that passes true.
     explicit Transport(const std::vector<std::string>& argv, bool captureStderr = false);
 
@@ -120,7 +120,7 @@ class Transport {
 
     // lsp-stderr-capture follow-up. argv[0]'s basename, captured at
     // construction -- lets a stderr line be tagged with which server
-    // process produced it (e.g. "clangd: ...") without LspClient/LspManager
+    // process produced it (e.g. "clangd: ...") without Client/Manager
     // needing to thread a language name down into this layer. Empty for the
     // raw-fd constructor (no argv was ever given).
     [[nodiscard]] const std::string& ProcessLabel() const noexcept;

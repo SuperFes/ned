@@ -71,7 +71,7 @@ class AcpManager {
     AcpManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop);
     // Ends the "ACP" background activity if a prompt is still in flight when
     // this is destroyed without ever going through EndSession -- mirrors
-    // LspClient::~LspClient's identical cleanup for its own pending_ map
+    // Client::~Client's identical cleanup for its own pending_ map
     // (see that destructor's comment). A real ~AcpManager() rather than
     // = default because of this.
     ~AcpManager();
@@ -271,7 +271,7 @@ class AcpManager {
 
     // subprocess-hang-protection follow-up. A no-op if no session is active;
     // otherwise forwards to the live client_'s own ExpireStaleRequests. See
-    // LspManager::ExpireStaleRequests's identical wiring/reasoning -- meant
+    // Manager::ExpireStaleRequests's identical wiring/reasoning -- meant
     // to be called from the same periodic background tick.
     //
     // ACP round-1-live-validation follow-up: also a no-op whenever a
@@ -342,7 +342,7 @@ class AcpManager {
 
     // ACP MCP tool-server bridge, slice 1. Connect-after-construction,
     // unset-is-safe-no-op, this class's usual convention -- wired from
-    // main.cpp right after constructing LspManager/VcsRunner/TestRunner and
+    // main.cpp right after constructing Manager/VcsRunner/TestRunner and
     // the BridgeServer itself. When set (and ned/set-acp-mcp-bridge, see
     // McpBridgeSetting.h, is on -- the default), StartSession starts the
     // bridge listening and advertises it to the agent as a stdio MCP server

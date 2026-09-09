@@ -54,7 +54,7 @@ namespace {
     // path, for the mcpServers "command" the agent spawns as
     // `--mcp-stdio-relay` -- the exact same "/proc/self/exe is a magic
     // symlink tracking the specific inode this process actually is" idiom
-    // LspBrokerMain.cpp's own self-identity check already uses. Throws if
+    // BrokerMain.cpp's own self-identity check already uses. Throws if
     // unreadable (StartSession's own try/catch around this whole block
     // degrades to no MCP tools rather than propagating).
     std::filesystem::path SelfExecutablePath() {
@@ -68,7 +68,7 @@ namespace {
 
     // Mode-line spinner name for a prompt in flight -- see AcpManager::
     // PromptInFlight's doc comment. String, not string_view, to match
-    // BackgroundActivity's own std::string parameters (LspClient.cpp's
+    // BackgroundActivity's own std::string parameters (Client.cpp's
     // kLspActivity does the same conversion for the same reason).
     const std::string kAcpActivity{"ACP"};
 
@@ -862,10 +862,10 @@ void AcpManager::EndSession(std::string reason) {
     // lsp-use-after-free follow-up: client_ used to move into retired_ here
     // instead of destroying in place, deferring to the next StartSession.
     // Confirmed live elsewhere in this codebase that deferring isn't what
-    // actually makes this safe (LspClient's own identical pattern still
+    // actually makes this safe (Client's own identical pattern still
     // raced a periodic tick against a background thread's own Post()ed
     // callback for the same object) -- the real fix now lives in AcpClient
-    // itself (alive_, see LspClient.h's header comment), so plain immediate
+    // itself (alive_, see Client.h's header comment), so plain immediate
     // destruction is safe regardless of timing.
     client_.reset();
     AppendToOutputBuffer("\n[" + reason + "]\n");

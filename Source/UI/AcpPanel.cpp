@@ -185,7 +185,7 @@ void AcpPanel::SetActiveBufferProvider(std::function<ActiveBuffer&()> provider) 
     activeBufferProvider_ = std::move(provider);
 }
 
-void AcpPanel::SetLspManager(editor::lsp::LspManager* lspManager) {
+void AcpPanel::SetLspManager(editor::lsp::Manager* lspManager) {
     lspManager_ = lspManager;
 }
 
@@ -616,11 +616,11 @@ void AcpPanel::RequestProseCheckIfNeeded() {
         return;
     }
     lastProseCheckedText_ = prompt_.Text();
-    // AcpPanel and the LspManager it's wired to are both constructed once in
+    // AcpPanel and the Manager it's wired to are both constructed once in
     // main.cpp and live for the process's whole lifetime (destroyed together
     // during main()'s own teardown, well after EventLoop::Run has returned
     // and stopped posting callbacks) -- capturing `this` here carries the
-    // exact same lifetime contract every other LspManager callback in this
+    // exact same lifetime contract every other Manager callback in this
     // codebase already relies on (RequestHover/RequestCompletion/...).
     lspManager_->CheckComposerProseText(lastProseCheckedText_, [this](std::vector<text::Buffer::Diagnostic> diagnostics) {
         composerProseDiagnostics_ = std::move(diagnostics);

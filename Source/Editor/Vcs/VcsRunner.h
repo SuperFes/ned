@@ -71,7 +71,7 @@ inline constexpr std::string_view kVcsCommitMessageTemplate =
 class VcsRunner {
   public:
     // eventLoop must outlive this VcsRunner, same requirement
-    // TaskRunner/LspManager's own constructors document.
+    // TaskRunner/Manager's own constructors document.
     explicit VcsRunner(ned::ui::EventLoop& eventLoop);
     ~VcsRunner() = default;
 
@@ -85,7 +85,7 @@ class VcsRunner {
     // (never both) if buffer has no associated path, no provider resolves
     // for the current project root, the process fails to spawn or exits
     // non-zero, or either provider callback throws -- matching
-    // TaskRunner/LspManager's "nothing configured/a failure isn't a crash"
+    // TaskRunner/Manager's "nothing configured/a failure isn't a crash"
     // convention: report it, don't propagate an exception to the caller.
     // A second call for the same buffer path while one is already running
     // is a no-op (onError fires immediately) -- one concurrent blame/log

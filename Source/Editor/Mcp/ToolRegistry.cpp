@@ -9,10 +9,10 @@
 
 #include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
-#include "Editor/Lsp/LspContent.h"
-#include "Editor/Lsp/LspEditApply.h"
-#include "Editor/Lsp/LspManager.h"
-#include "Editor/Lsp/LspPosition.h"
+#include "Editor/Lsp/Content.h"
+#include "Editor/Lsp/EditApply.h"
+#include "Editor/Lsp/Manager.h"
+#include "Editor/Lsp/Position.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSearch.h"
@@ -104,8 +104,8 @@ namespace {
     }
 
     // Every handler below needs an already-open Buffer -- LSP requests only
-    // resolve against a buffer LspManager has already synced at least once
-    // (see LspManager.h's own header comment: every open buffer is synced,
+    // resolve against a buffer Manager has already synced at least once
+    // (see Manager.h's own header comment: every open buffer is synced,
     // on the active pane's own per-frame Paint() or the periodic background
     // tick for every other one), so "find it in BufferList" is the right
     // (and only) v1 resolution, not "open it fresh" -- a tool asking about a
@@ -138,7 +138,7 @@ Json MakeTextToolResult(std::string text, bool isError) {
     };
 }
 
-ToolRegistry::ToolRegistry(text::BufferList& bufferList, lsp::LspManager& lspManager, vcs::VcsRunner& vcsRunner, testrun::TestRunner& testRunner,
+ToolRegistry::ToolRegistry(text::BufferList& bufferList, lsp::Manager& lspManager, vcs::VcsRunner& vcsRunner, testrun::TestRunner& testRunner,
                            dap::Manager& dapManager) : bufferList_(bufferList), lspManager_(lspManager), vcsRunner_(vcsRunner), testRunner_(testRunner), dapManager_(dapManager) {
     RegisterBuiltinTools();
 }
@@ -193,7 +193,7 @@ void ToolRegistry::RegisterBuiltinTools() {
             }
             Json diagnostics = Json::array();
             for (const text::Buffer::Diagnostic& diagnostic : buffer->Diagnostics()) {
-                const lsp::LspPosition pos = lsp::BytePositionToLsp(buffer->Content(), diagnostic.startByte);
+                const lsp::Position pos = lsp::BytePositionToLsp(buffer->Content(), diagnostic.startByte);
                 diagnostics.push_back(Json{
                     {"line", pos.line + 1},
                     {"column", pos.character + 1},
@@ -228,14 +228,14 @@ void ToolRegistry::RegisterBuiltinTools() {
                 return;
             }
             const std::size_t byteOffset =
-                lsp::LspPositionToByte(buffer->Content(), lsp::LspPosition{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
+                lsp::PositionToByte(buffer->Content(), lsp::Position{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
             lspManager_.RequestHover(*buffer, byteOffset, [callback](std::optional<std::string> text) {
                 callback(MakeTextToolResult(text.value_or("No hover information available.")));
             });
         });
 
     // goto_definition and find_references share the exact same argument
-    // shape and result shape (LspManager::ResolvedLocation list) -- one
+    // shape and result shape (Manager::ResolvedLocation list) -- one
     // shared lambda factory rather than two near-identical handler bodies.
     auto registerLocationTool = [this](std::string name, std::string description, std::string emptyMessage, auto requestMember) {
         RegisterTool(
@@ -261,19 +261,19 @@ void ToolRegistry::RegisterBuiltinTools() {
                     callback(MakeTextToolResult("File is not open in ned: " + *file, true));
                     return;
                 }
-                const std::size_t byteOffset = lsp::LspPositionToByte(
-                    buffer->Content(), lsp::LspPosition{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
+                const std::size_t byteOffset = lsp::PositionToByte(
+                    buffer->Content(), lsp::Position{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
                 // Calling through a pointer-to-member drops RequestDefinition/
                 // RequestReferences' own default serverKey argument (default
                 // arguments aren't part of a function pointer's type) --
                 // pass it explicitly.
-                (lspManager_.*requestMember)(*buffer, byteOffset, [callback, emptyMessage](std::vector<lsp::LspManager::ResolvedLocation> locations) {
+                (lspManager_.*requestMember)(*buffer, byteOffset, [callback, emptyMessage](std::vector<lsp::Manager::ResolvedLocation> locations) {
                     if (locations.empty()) {
                         callback(MakeTextToolResult(emptyMessage));
                         return;
                     }
                     Json results = Json::array();
-                    for (const lsp::LspManager::ResolvedLocation& location : locations) {
+                    for (const lsp::Manager::ResolvedLocation& location : locations) {
                         results.push_back(Json{
                             {"file", location.path.string()},
                             {"line", location.position.line + 1},
@@ -284,9 +284,9 @@ void ToolRegistry::RegisterBuiltinTools() {
             });
     };
     registerLocationTool("goto_definition", "Find the definition location(s) of the symbol at a position in a file already open in ned.",
-                         "No definition found.", &lsp::LspManager::RequestDefinition);
+                         "No definition found.", &lsp::Manager::RequestDefinition);
     registerLocationTool("find_references", "Find every reference to the symbol at a position in a file already open in ned.",
-                         "No references found.", &lsp::LspManager::RequestReferences);
+                         "No references found.", &lsp::Manager::RequestReferences);
 
     RegisterTool(
         "git_status", "Get the current git working-tree status (changed/staged/untracked files) for the project.", Json{{"type", "object"}, {"properties", Json::object()}},
@@ -402,7 +402,7 @@ void ToolRegistry::RegisterBuiltinTools() {
 
     // acp-mcp-tool-bridge-remainder follow-up. Every tool below still reuses
     // an existing manager call unchanged -- the only new shared code this
-    // slice needed was extracting Editor/Lsp/LspEditApply.h out of
+    // slice needed was extracting Editor/Lsp/EditApply.h out of
     // BufferView.cpp (format_buffer's own apply step). Two things were
     // deliberately NOT added here after checking the real APIs against
     // ROADMAP's own aspirational list:
@@ -582,13 +582,13 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("File is not open in ned: " + *file, true));
                 return;
             }
-            lspManager_.RequestWorkspaceSymbols(*buffer, *query, [callback](std::vector<lsp::LspManager::SymbolResult> symbols) {
+            lspManager_.RequestWorkspaceSymbols(*buffer, *query, [callback](std::vector<lsp::Manager::SymbolResult> symbols) {
                 if (symbols.empty()) {
                     callback(MakeTextToolResult("No symbols found."));
                     return;
                 }
                 Json results = Json::array();
-                for (const lsp::LspManager::SymbolResult& symbol : symbols) {
+                for (const lsp::Manager::SymbolResult& symbol : symbols) {
                     results.push_back(Json{
                         {"name", symbol.name},
                         {"containerName", symbol.containerName},
@@ -670,8 +670,8 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("File is not open in ned: " + *file, true));
                 return;
             }
-            const std::size_t byteOffset = lsp::LspPositionToByte(
-                buffer->Content(), lsp::LspPosition{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
+            const std::size_t byteOffset = lsp::PositionToByte(
+                buffer->Content(), lsp::Position{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
             lspManager_.RequestCodeActions(*buffer, byteOffset, byteOffset, [callback](std::vector<lsp::CodeAction> actions) {
                 if (actions.empty()) {
                     callback(MakeTextToolResult("No code actions available here."));
@@ -712,9 +712,9 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("File is not open in ned: " + *file, true));
                 return;
             }
-            const std::size_t byteOffset = lsp::LspPositionToByte(
-                buffer->Content(), lsp::LspPosition{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
-            lspManager_.RequestRename(*buffer, byteOffset, *newName, [callback](std::optional<lsp::LspManager::ResolvedRename> result) {
+            const std::size_t byteOffset = lsp::PositionToByte(
+                buffer->Content(), lsp::Position{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
+            lspManager_.RequestRename(*buffer, byteOffset, *newName, [callback](std::optional<lsp::Manager::ResolvedRename> result) {
                 if (!result || !result->hasEdit) {
                     callback(MakeTextToolResult("Rename failed, or is not supported at this position.", true));
                     return;
@@ -724,10 +724,10 @@ void ToolRegistry::RegisterBuiltinTools() {
                     return;
                 }
                 Json files = Json::array();
-                for (const lsp::LspManager::ResolvedRenameEdit& edit : result->edits) {
+                for (const lsp::Manager::ResolvedRenameEdit& edit : result->edits) {
                     files.push_back(Json{{"file", edit.path.string()}, {"editCount", edit.edits.size()}});
                 }
-                for (const lsp::LspManager::ResolvedDocumentChangeOp& op : result->documentChangeOps) {
+                for (const lsp::Manager::ResolvedDocumentChangeOp& op : result->documentChangeOps) {
                     files.push_back(Json{{"file", op.path.string()}, {"editCount", op.edits.size()}});
                 }
                 callback(MakeTextToolResult(Json{{"preview", true}, {"filesTouched", files}}.dump()));
@@ -786,7 +786,7 @@ void ToolRegistry::RegisterBuiltinTools() {
     // Every Manager::Request*/status-string method already runs on the
     // main thread and answers gracefully (an empty result, or a short
     // explanatory status string) when there's no session/no adapter
-    // response/an out-of-range argument, exactly like LspManager's own
+    // response/an out-of-range argument, exactly like Manager's own
     // Request* methods do -- so these are thin wrappers, the same shape as
     // every git_*/lsp tool above, not new Manager capability. Debug
     // session state (breakpoints/stack/variables/watches) is inherently

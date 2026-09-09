@@ -1,4 +1,4 @@
-#include "LspBrokerConnect.h"
+#include "BrokerConnect.h"
 
 #include <chrono>
 #include <climits>
@@ -29,9 +29,9 @@ namespace {
     // blocking ::connect() to the broker's Unix socket froze a real,
     // interactive `ned` process's *main UI thread* solid (unix_wait_for_peer
     // in /proc, gdb-inaccessible since it never returns) the moment the
-    // daemon's listen(2) backlog (fixed at 16, LspBrokerMain.cpp) filled up
+    // daemon's listen(2) backlog (fixed at 16, BrokerMain.cpp) filled up
     // and its accept loop stalled -- every "attach" call in this codebase
-    // runs synchronously on LspManager::ClientForLanguage <- SyncBuffer <-
+    // runs synchronously on Manager::ClientForLanguage <- SyncBuffer <-
     // BufferView::Paint(), i.e. the main thread, exactly the header
     // comment above already says. A stalled/overloaded broker used to mean
     // an unkillable-by-the-user-except-via-kill-9 editor; this makes it
@@ -102,7 +102,7 @@ namespace {
     //
     // Deliberately never blocks the calling thread beyond a fast
     // open+flock+fork -- this whole call chain runs synchronously on
-    // LspManager::ClientForLanguage <- SyncBuffer <- BufferView::Paint(),
+    // Manager::ClientForLanguage <- SyncBuffer <- BufferView::Paint(),
     // i.e. the main UI thread. Waiting here for the newly-forked daemon to
     // actually finish binding its own socket (which the original design
     // sketch called for, polling for up to ~2s) would freeze the editor
@@ -202,7 +202,7 @@ namespace {
             // broker-log-redirect follow-up: setsid() alone detaches the
             // daemon's *session* but leaves fds 0/1/2 pointing at
             // whichever terminal this spawning `ned` inherited -- found
-            // live: LspBrokerMain.cpp's own Log() writes to std::cerr, so
+            // live: BrokerMain.cpp's own Log() writes to std::cerr, so
             // every attach/disconnect/spawn line was leaking straight
             // into the user's actual terminal, indefinitely, from a
             // daemon that had otherwise successfully detached. Redirected
@@ -210,7 +210,7 @@ namespace {
             // before fork -- std::filesystem::path construction isn't
             // async-signal-safe either) instead, the same "a caller who
             // wants a persistent record redirects stderr" contract
-            // LspBrokerMain.cpp's own Log() doc comment already promises,
+            // BrokerMain.cpp's own Log() doc comment already promises,
             // just applied automatically for the auto-spawned case
             // instead of only when someone runs `--lsp-broker` by hand.
             ::setsid();
@@ -262,7 +262,7 @@ namespace {
 
 } // namespace
 
-std::unique_ptr<LspClient> TryConnectToBroker(const std::filesystem::path& projectRoot, const std::string& language,
+std::unique_ptr<Client> TryConnectToBroker(const std::filesystem::path& projectRoot, const std::string& language,
                                               const std::vector<std::string>& argv, ned::ui::EventLoop& eventLoop,
                                               std::optional<std::filesystem::path> socketPathOverride) {
     std::string socketPathStr;
@@ -316,7 +316,7 @@ std::unique_ptr<LspClient> TryConnectToBroker(const std::filesystem::path& proje
                                   {"params", Json{{"projectRoot", projectRoot.string()}, {"language", language}, {"argv", argvJson}}}}
                                  .dump());
 
-        return std::make_unique<LspClient>(std::move(transport), eventLoop, /*startHandshakeComplete=*/false);
+        return std::make_unique<Client>(std::move(transport), eventLoop, /*startHandshakeComplete=*/false);
     }
     catch (const std::exception&) {
         return nullptr;

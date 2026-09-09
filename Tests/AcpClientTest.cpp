@@ -22,7 +22,7 @@ namespace {
 // One end of a pipe pair wrapped as a Transport for an AcpClient under
 // test; the other end is left as raw fds the test itself reads/writes
 // directly, standing in for "the agent's own stdin/stdout." Mirrors
-// Tests/LspClientTest.cpp's own ClientFixture, including its own comments'
+// Tests/ClientTest.cpp's own ClientFixture, including its own comments'
 // reasoning for why eventLoop is owned per-fixture (Notcurses enters the
 // alternate screen the instant one exists) and why serverStdoutWrite must be
 // closed before the client (unblocks its background read thread via EOF).
@@ -53,7 +53,7 @@ struct ClientFixture {
 };
 
 // Reads exactly one newline-delimited message's raw bytes (with the
-// trailing '\n') off a plain fd -- mirrors LspClientTest.cpp's own
+// trailing '\n') off a plain fd -- mirrors ClientTest.cpp's own
 // ReadRawFrame, adapted for ACP's simpler framing: no header/Content-Length
 // to look for, just read until a '\n' shows up.
 std::string ReadRawMessage(int fd) {
@@ -267,7 +267,7 @@ TEST_CASE("AcpClient answers an agent-initiated request asynchronously once resp
     // Simulates session/request_permission: the handler stashes `respond`
     // instead of calling it inline, standing in for a real UI round-trip
     // (waiting on a keystroke) that finishes on a later event-loop
-    // iteration -- exactly the case LspClient's own synchronous-only
+    // iteration -- exactly the case Client's own synchronous-only
     // RequestHandler couldn't model.
     std::function<void(std::optional<Json>, std::optional<Json>)> stashed;
     fixture.client.SetRequestHandler("session/request_permission", [&](const Json&, auto respond) { stashed = respond; });
@@ -296,10 +296,10 @@ TEST_CASE("AcpClient answers an unhandled agent-initiated request with MethodNot
     REQUIRE(response["error"]["code"] == -32601);
 }
 
-// lsp-use-after-free follow-up. Mirrors LspClientTest.cpp's "A stray
+// lsp-use-after-free follow-up. Mirrors ClientTest.cpp's "A stray
 // Post()ed callback safely no-ops instead of touching an already-destroyed
-// LspClient" exactly -- AcpClient's threading/lifetime contract is an
-// intentional mirror of LspClient's (see this class's own header comment),
+// Client" exactly -- AcpClient's threading/lifetime contract is an
+// intentional mirror of Client's (see this class's own header comment),
 // so it shares the identical hazard: a background thread's own already-
 // Post()ed callback (the EOF/"agent exited" disconnect notification here)
 // must not touch `this` once the AcpClient has been destroyed. Not built
@@ -341,7 +341,7 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
 // teardown, and used to park forever in poll() on the resulting -1 fd, so
 // the join never returned. Hammering construct-then-immediately-destroy is
 // what makes the scheduler land in that window; the loop simply has to
-// finish. LspClient/Client share this exact shape (see AcpClient.h's own
+// finish. Client/Client share this exact shape (see AcpClient.h's own
 // header comment) and are fixed by the same shared ChildProcess guard.
 TEST_CASE("Destroying an AcpClient before its read thread has started doesn't deadlock", "[Acp]") {
     ned::ui::EventLoop eventLoop;

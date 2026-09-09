@@ -1,6 +1,6 @@
 //
 // Task runner follow-up. Process-wide manager owning every currently-running
-// task (TaskProcess) -- analogous to Lsp/LspManager.h but considerably
+// task (TaskProcess) -- analogous to Lsp/Manager.h but considerably
 // simpler: no JSON-RPC, no per-buffer sync state, just "spawn this
 // configured command, stream its output into a buffer."
 //
@@ -29,13 +29,13 @@ namespace ned::editor::tasks {
 
 // The read-only, tossable buffer every run of `name` streams its output
 // into -- "*task: <name>*", the same "*name*" bracket-naming convention
-// Lsp/LspManager.h's kLspLogBufferName already established.
+// Lsp/Manager.h's kLspLogBufferName already established.
 [[nodiscard]] std::string TaskOutputBufferName(std::string_view name);
 
 class TaskRunner {
   public:
     // bufferList and eventLoop must both outlive this TaskRunner -- same
-    // requirement LspManager's own constructor documents.
+    // requirement Manager's own constructor documents.
     TaskRunner(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop);
     ~TaskRunner() = default;
 
@@ -44,7 +44,7 @@ class TaskRunner {
 
     // Looks up name via TaskConfig::TaskCommand; if unset, appends an error
     // line to the task's output buffer instead of spawning (no crash --
-    // matches LspManager's own "nothing configured" non-error handling).
+    // matches Manager's own "nothing configured" non-error handling).
     // Otherwise finds-or-creates "*task: <name>*" (SetReadOnly(true) before
     // the first append; a "--- re-run ---" separator is appended first if
     // the buffer already has content from a prior run), spawns a

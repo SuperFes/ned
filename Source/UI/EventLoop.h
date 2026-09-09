@@ -172,7 +172,7 @@ class EventLoop {
     // Thread-safe: queues fn to run on the loop's own thread at the next
     // opportunity, then wakes the loop if it's currently blocked waiting
     // for input (BufferView's scratch-auto-save background thread,
-    // LspManager's background read-loop threads both need to marshal work
+    // Manager's background read-loop threads both need to marshal work
     // back onto the thread that owns every Widget's state, never touching
     // it directly from a second thread).
     void Post(std::function<void()> fn);

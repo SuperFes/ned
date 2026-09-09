@@ -64,7 +64,7 @@ void BufferView::RequestCompletionAtPoint(const std::string& triggerCharacter) {
     // SpawnFailed/Disconnected all fall back to scanning the buffer itself
     // rather than asking a server that isn't there.
     const bool hasRunningLsp = lspManager_ && lspManager_->StatusForLanguage(lspManager_->ConnectionKeyForBuffer(
-                                                  buffer, languageKey)) == editor::lsp::LspManager::LspStatus::Running;
+                                                  buffer, languageKey)) == editor::lsp::Manager::Status::Running;
     if (!hasRunningLsp) {
         // Self-hosting-completion follow-up: tried ahead of plain
         // dabbrev-expand for a Janet-mode buffer, falling through to it when
@@ -158,7 +158,7 @@ void BufferView::MaybeScheduleCompletionResolve() {
         return; // this server never advertised completionItem/resolve -- see ResolveCompletionItem's own doc comment
     }
     completionResolveRequest_.Cancel();
-    completionResolveDebounceTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::LspCompletionDebounceMs()),
+    completionResolveDebounceTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::CompletionDebounceMs()),
                                         [this] { RequestCompletionResolve(); });
 }
 
@@ -367,7 +367,7 @@ void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std:
     // all -- RequestCompletionAtPoint (fired once this debounce elapses)
     // itself decides between an LSP request and the buffer-word fallback.
     // The auto-popup toggle still governs both sources uniformly.
-    if (!editor::lsp::LspAutoCompleteEnabled()) {
+    if (!editor::lsp::AutoCompleteEnabled()) {
         return;
     }
     if (chord.Control || chord.Meta || chord.Special != editor::SpecialKey::None) {
@@ -406,7 +406,7 @@ void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std:
     if (ShouldSuppressAutoCompletion()) {
         return;
     }
-    const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
+    const std::chrono::milliseconds delay(editor::lsp::CompletionDebounceMs());
     completionDebounceDeadline_ = std::chrono::steady_clock::now() + delay;
     // DeadlineTimer::Arm fires exactly once, delay from now -- re-typing
     // before it fires re-arms it via this same call site on the very next
@@ -428,7 +428,7 @@ void BufferView::MaybeScheduleDocumentHighlight(std::size_t pointBefore, std::si
     if (documentHighlight_ && (documentHighlight_->buffer != &buffer || documentHighlight_->contentGeneration != buffer.ContentGeneration())) {
         documentHighlight_.reset(); // stale: buffer switched under us, or content changed since the last response
     }
-    const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
+    const std::chrono::milliseconds delay(editor::lsp::CompletionDebounceMs());
     if (eventLoop_) {
         documentHighlightDebounceTimer_.Arm(*eventLoop_, delay, [this] { RequestDocumentHighlightAtPoint(); });
     }
@@ -445,7 +445,7 @@ void BufferView::RequestDocumentHighlightAtPoint() {
     const std::string serverKey     = ResolvedLspServerKey(point);
     const std::string languageKey   = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
     const bool        hasRunningLsp = lspManager_ && lspManager_->StatusForLanguage(lspManager_->ConnectionKeyForBuffer(
-                                                         buffer, languageKey)) == editor::lsp::LspManager::LspStatus::Running;
+                                                         buffer, languageKey)) == editor::lsp::Manager::Status::Running;
     if (!hasRunningLsp) {
         documentHighlight_.reset();
         return;
@@ -472,8 +472,8 @@ void BufferView::RequestDocumentHighlightAtPoint() {
             std::vector<std::pair<std::size_t, std::size_t>> ranges;
             ranges.reserve(highlights.size());
             for (const editor::lsp::DocumentHighlight& highlight : highlights) {
-                ranges.emplace_back(editor::lsp::LspPositionToByte(content, highlight.start),
-                                    editor::lsp::LspPositionToByte(content, highlight.end));
+                ranges.emplace_back(editor::lsp::PositionToByte(content, highlight.start),
+                                    editor::lsp::PositionToByte(content, highlight.end));
             }
             documentHighlight_ = DocumentHighlightState{
                 .buffer = bufferPtr, .contentGeneration = contentGenerationAtRequest, .requestPoint = point, .ranges = std::move(ranges)};
@@ -495,7 +495,7 @@ void BufferView::MaybeScheduleHover(Point localMousePoint) {
     if (!lspManager_ || !onHoverChanged_ || !eventLoop_) {
         return;
     }
-    if (!editor::lsp::LspHoverOnMouseMoveEnabled()) {
+    if (!editor::lsp::HoverOnMouseMoveEnabled()) {
         return; // ned/set-lsp-hover-on-mouse-move disabled this -- no debounce armed, no request ever sent
     }
     const std::size_t gutterWidth = GutterWidth();
@@ -518,7 +518,7 @@ void BufferView::MaybeScheduleHover(Point localMousePoint) {
     const std::size_t               generation = hoverRequest_.Begin();
     const Box&                      box        = Box_();
     const Point                     anchor{.x = box.x_min + localMousePoint.x, .y = box.y_min + localMousePoint.y + 1};
-    const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
+    const std::chrono::milliseconds delay(editor::lsp::CompletionDebounceMs());
     hoverDebounceTimer_.Arm(*eventLoop_, delay, [this, offset, anchor, generation] {
         RequestHoverAtOffset(offset, anchor, generation);
     });
@@ -601,8 +601,8 @@ void BufferView::RequestLinkedEditingRangeAtPoint() {
             std::vector<std::pair<std::size_t, std::size_t>> byteRanges;
             byteRanges.reserve(ranges.size());
             for (const editor::lsp::LinkedEditingRange& range : ranges) {
-                byteRanges.emplace_back(editor::lsp::LspPositionToByte(content, range.start),
-                                        editor::lsp::LspPositionToByte(content, range.end));
+                byteRanges.emplace_back(editor::lsp::PositionToByte(content, range.start),
+                                        editor::lsp::PositionToByte(content, range.end));
             }
             auto session = editor::LinkedEditingSession::Start(*bufferPtr, bufferPtr->Name(), byteRanges);
             if (!session) {
@@ -645,7 +645,7 @@ void BufferView::MaybeScheduleSignatureHelp(const editor::KeyChord& chord, std::
     if (inputMode_ != InputMode::Normal && inputMode_ != InputMode::Snippet) {
         return;
     }
-    if (!editor::lsp::LspSignatureHelpAutoTriggerEnabled()) {
+    if (!editor::lsp::SignatureHelpAutoTriggerEnabled()) {
         return;
     }
     if (chord.Control || chord.Meta || chord.Special != editor::SpecialKey::None) {
@@ -657,7 +657,7 @@ void BufferView::MaybeScheduleSignatureHelp(const editor::KeyChord& chord, std::
     if (activeBuffer_.Get().ContentGeneration() == generationBefore) {
         return; // nothing actually changed
     }
-    const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
+    const std::chrono::milliseconds delay(editor::lsp::CompletionDebounceMs());
     if (eventLoop_) {
         signatureHelpDebounceTimer_.Arm(*eventLoop_, delay, [this] { RequestSignatureHelpAtPoint(); });
     }
@@ -673,7 +673,7 @@ void BufferView::RequestSignatureHelpAtPoint() {
     const std::string serverKey   = ResolvedLspServerKey(point);
     const std::string languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
     if (!lspManager_ || lspManager_->StatusForLanguage(lspManager_->ConnectionKeyForBuffer(buffer, languageKey)) !=
-                            editor::lsp::LspManager::LspStatus::Running) {
+                            editor::lsp::Manager::Status::Running) {
         return;
     }
 
@@ -998,7 +998,7 @@ void BufferView::RequestCodeLensAtPoint() {
     const std::size_t         lineEnd =
         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
 
-    const editor::lsp::LspManager::ResolvedCodeLens* found = nullptr;
+    const editor::lsp::Manager::ResolvedCodeLens* found = nullptr;
     for (const auto& lens : lspManager_->CodeLensSpans(buffer)) {
         const bool onThisLine =
             (lens.startByte >= lineStart && lens.startByte < lineEnd) || (lineStart == lineEnd && lens.startByte == lineStart);
@@ -1026,11 +1026,11 @@ void BufferView::RequestCodeLensAtPoint() {
     // later, by which time a fresh RequestCodeLenses response (this
     // buffer's own per-Paint() background sync) could have replaced
     // CodeLensSpans' underlying vector out from under a raw pointer into it.
-    const editor::lsp::LspManager::ResolvedCodeLens lensCopy = *found;
+    const editor::lsp::Manager::ResolvedCodeLens lensCopy = *found;
     statusMessage_                                           = "Resolving code lens...";
     lspManager_->ResolveCodeLens(
         buffer, lensCopy,
-        [this, bufferPtr, serverKey](std::optional<editor::lsp::LspManager::ResolvedCodeLens> resolved) {
+        [this, bufferPtr, serverKey](std::optional<editor::lsp::Manager::ResolvedCodeLens> resolved) {
             if (bufferPtr != &activeBuffer_.Get()) {
                 return; // buffer changed under us
             }
@@ -1077,7 +1077,7 @@ void BufferView::ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action
     // advertising resolveProvider deliberately sends this action back
     // without an edit yet -- codeAction/resolve fills it in, only now
     // that the user has actually chosen to apply it (see CodeAction::
-    // resolvable's own doc comment in LspContent.h for why this isn't
+    // resolvable's own doc comment in Content.h for why this isn't
     // done eagerly for every listed action). Fire-and-forget, same
     // async shape as every other LSP request here: the caller continues
     // immediately, ApplyCodeAction runs later from inside the callback
@@ -1141,7 +1141,7 @@ void BufferView::MaybeScheduleOnTypeFormatting(const editor::KeyChord& chord, st
     if (inputMode_ != InputMode::Normal && inputMode_ != InputMode::Snippet) {
         return;
     }
-    if (!editor::lsp::LspOnTypeFormattingEnabled()) {
+    if (!editor::lsp::OnTypeFormattingEnabled()) {
         return;
     }
     if (chord.Control || chord.Meta) {
@@ -1264,10 +1264,10 @@ void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
     // own edits -- a real refactor.extract/rewrite shape, not just a rename)
     // resolves and applies through the same ApplyResolvedWorkspaceEdit path.
     if (action.hasEdit && (!action.edits.empty() || !action.documentChangeOps.empty())) {
-        editor::lsp::LspManager::ResolvedRename resolved;
+        editor::lsp::Manager::ResolvedRename resolved;
         if (!action.edits.empty()) {
-            const std::optional<std::vector<editor::lsp::LspManager::ResolvedRenameEdit>> resolvedEdits =
-                editor::lsp::LspManager::ResolveCodeActionEdits(action);
+            const std::optional<std::vector<editor::lsp::Manager::ResolvedRenameEdit>> resolvedEdits =
+                editor::lsp::Manager::ResolveCodeActionEdits(action);
             if (!resolvedEdits) {
                 statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
                 return;
@@ -1275,8 +1275,8 @@ void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
             resolved.edits = std::move(*resolvedEdits);
         }
         if (!action.documentChangeOps.empty()) {
-            const std::optional<std::vector<editor::lsp::LspManager::ResolvedDocumentChangeOp>> resolvedOps =
-                editor::lsp::LspManager::ResolveDocumentChangeOps(action.documentChangeOps);
+            const std::optional<std::vector<editor::lsp::Manager::ResolvedDocumentChangeOp>> resolvedOps =
+                editor::lsp::Manager::ResolveDocumentChangeOps(action.documentChangeOps);
             if (!resolvedOps) {
                 statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
                 return;
@@ -1337,7 +1337,7 @@ void BufferView::RequestDefinitionAtPoint(LspLocationKind kind) {
     }
 
     statusMessage_ = "Requesting " + label + "...";
-    auto callback  = [this, bufferPtr, point, generation, label](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
+    auto callback  = [this, bufferPtr, point, generation, label](std::vector<editor::lsp::Manager::ResolvedLocation> locations) {
         if (definitionRequest_.IsStale(generation)) {
             return; // superseded by a newer request
         }
@@ -1405,12 +1405,12 @@ void BufferView::HandleDefinitionSelectKey(const editor::KeyChord& chord) {
                           chord);
 }
 
-void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocation& location) {
+void BufferView::JumpToDefinition(const editor::lsp::Manager::ResolvedLocation& location) {
     try {
         text::Buffer& opened = bufferList_.OpenOrCreateFile(location.path);
         PushJumpMark(); // before mutating point/activeBuffer_ -- see JumpMark's own doc comment
         activeBuffer_.Set(opened);
-        opened.SetPoint(editor::lsp::LspPositionToByte(opened.Content(), location.position));
+        opened.SetPoint(editor::lsp::PositionToByte(opened.Content(), location.position));
         statusMessage_.clear();
         viewport_.ScrollToShowPoint();
     }
@@ -1431,7 +1431,7 @@ void BufferView::RequestPeekDefinitionAtPoint() {
     const std::string   serverKey  = ResolvedLspServerKey(point);
 
     statusMessage_ = "Requesting definition...";
-    auto callback  = [this, bufferPtr, point, generation](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
+    auto callback  = [this, bufferPtr, point, generation](std::vector<editor::lsp::Manager::ResolvedLocation> locations) {
         if (peekDefinitionRequest_.IsStale(generation)) {
             return; // superseded by a newer request
         }
@@ -1451,7 +1451,7 @@ void BufferView::RequestPeekDefinitionAtPoint() {
 }
 
 void BufferView::RefreshPeekDefinitionStatus() {
-    const editor::lsp::LspManager::ResolvedLocation& location   = pendingPeekDefinitions_[peekDefinitionSelection_];
+    const editor::lsp::Manager::ResolvedLocation& location   = pendingPeekDefinitions_[peekDefinitionSelection_];
     const std::size_t                                targetLine = location.position.line + 1; // LSP lines are 0-indexed
     const std::size_t                                startLine  = targetLine > kPeekContextLinesBefore ? targetLine - kPeekContextLinesBefore : 1;
     const std::size_t                                endLine    = targetLine + kPeekContextLinesAfter;
@@ -1513,7 +1513,7 @@ void BufferView::ActivatePeekDefinitionAt(std::size_t /*index*/) {
     if (inputMode_ != InputMode::LspPeekDefinition || pendingPeekDefinitions_.empty()) {
         return;
     }
-    const editor::lsp::LspManager::ResolvedLocation location = pendingPeekDefinitions_[peekDefinitionSelection_];
+    const editor::lsp::Manager::ResolvedLocation location = pendingPeekDefinitions_[peekDefinitionSelection_];
     EndInteractiveSession();
     JumpToDefinition(location);
 }
@@ -1543,7 +1543,7 @@ void BufferView::RequestHierarchyAtPoint(HierarchyDirection direction) {
 
     statusMessage_  = "Requesting hierarchy...";
     auto onPrepared = [this, bufferPtr, point, generation, direction, serverKey,
-                       subjectLabel](std::vector<editor::lsp::LspManager::ResolvedHierarchyItem> items) {
+                       subjectLabel](std::vector<editor::lsp::Manager::ResolvedHierarchyItem> items) {
         if (hierarchyRequest_.IsStale(generation)) {
             return; // superseded by a newer request
         }
@@ -1557,7 +1557,7 @@ void BufferView::RequestHierarchyAtPoint(HierarchyDirection direction) {
         // overload-set follow-up (see this method's own doc comment in
         // BufferView.h): more than one match is rare enough that taking
         // the first is an acceptable v1 cut.
-        editor::lsp::LspManager::ResolvedHierarchyItem root = std::move(items.front());
+        editor::lsp::Manager::ResolvedHierarchyItem root = std::move(items.front());
         HierarchySession                               session{.direction = direction, .buffer = bufferPtr, .serverKey = serverKey, .rootName = root.item.name};
         session.tree.Reset({std::move(root)});
         hierarchySession_       = std::move(session);
@@ -1605,7 +1605,7 @@ void BufferView::ExpandHierarchyNode(std::size_t index) {
     // find-references follow-up's own reasoning applies here too: a
     // superseded/stale response is simply dropped, not applied to
     // whatever the tree has become by the time it arrives.
-    auto onItems = [this, index, generation](std::vector<editor::lsp::LspManager::ResolvedHierarchyItem> children) {
+    auto onItems = [this, index, generation](std::vector<editor::lsp::Manager::ResolvedHierarchyItem> children) {
         if (!hierarchySession_ || hierarchyRequest_.IsStale(generation)) {
             return;
         }
@@ -1613,17 +1613,17 @@ void BufferView::ExpandHierarchyNode(std::size_t index) {
         PushHierarchyModel();
     };
     // callHierarchy/incomingCalls and .../outgoingCalls respond with the
-    // extra fromRanges wrapper (LspManager::ResolvedHierarchyCall) --
-    // call.callSites isn't surfaced in the tree yet (see LspManager.h's own
+    // extra fromRanges wrapper (Manager::ResolvedHierarchyCall) --
+    // call.callSites isn't surfaced in the tree yet (see Manager.h's own
     // ResolvedHierarchyCall doc comment on that v1 cut), so this just
     // unwraps each entry's item and reuses onItems above.
-    auto onCalls = [this, index, generation](std::vector<editor::lsp::LspManager::ResolvedHierarchyCall> calls) {
+    auto onCalls = [this, index, generation](std::vector<editor::lsp::Manager::ResolvedHierarchyCall> calls) {
         if (!hierarchySession_ || hierarchyRequest_.IsStale(generation)) {
             return;
         }
-        std::vector<editor::lsp::LspManager::ResolvedHierarchyItem> children;
+        std::vector<editor::lsp::Manager::ResolvedHierarchyItem> children;
         children.reserve(calls.size());
-        for (editor::lsp::LspManager::ResolvedHierarchyCall& call : calls) {
+        for (editor::lsp::Manager::ResolvedHierarchyCall& call : calls) {
             children.push_back(std::move(call.item));
         }
         hierarchySession_->tree.Expand(index, std::move(children));
@@ -1674,7 +1674,7 @@ void BufferView::PushHierarchyModel() {
     ui::TreeViewModel model;
     model.title = verb + session.rootName;
 
-    const std::vector<editor::ExpandableTree<editor::lsp::LspManager::ResolvedHierarchyItem>::VisibleRow> rows =
+    const std::vector<editor::ExpandableTree<editor::lsp::Manager::ResolvedHierarchyItem>::VisibleRow> rows =
         session.tree.FlattenVisible();
     model.rows.reserve(rows.size());
     for (const auto& row : rows) {
@@ -1713,8 +1713,8 @@ void BufferView::HierarchyActivate(std::size_t index) {
     if (!hierarchySession_ || index >= hierarchySession_->tree.Size()) {
         return;
     }
-    const editor::lsp::LspManager::ResolvedHierarchyItem& resolved = hierarchySession_->tree.At(index).data;
-    const editor::lsp::LspManager::ResolvedLocation       location{.path = resolved.path, .position = resolved.item.position};
+    const editor::lsp::Manager::ResolvedHierarchyItem& resolved = hierarchySession_->tree.At(index).data;
+    const editor::lsp::Manager::ResolvedLocation       location{.path = resolved.path, .position = resolved.item.position};
     EndHierarchySession();
     JumpToDefinition(location);
 }
@@ -1808,7 +1808,7 @@ void BufferView::RequestDocumentSymbolsAtPoint() {
     statusMessage_ = "Requesting symbols...";
     lspManager_->RequestDocumentSymbols(
         buffer,
-        [this, bufferPtr, generation](std::vector<editor::lsp::LspManager::SymbolResult> symbols) {
+        [this, bufferPtr, generation](std::vector<editor::lsp::Manager::SymbolResult> symbols) {
             if (documentSymbolRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
@@ -1822,7 +1822,7 @@ void BufferView::RequestDocumentSymbolsAtPoint() {
             documentSymbolCandidates_ = std::move(symbols);
             documentSymbolLabels_.clear();
             documentSymbolLabels_.reserve(documentSymbolCandidates_.size());
-            for (const editor::lsp::LspManager::SymbolResult& symbol : documentSymbolCandidates_) {
+            for (const editor::lsp::Manager::SymbolResult& symbol : documentSymbolCandidates_) {
                 documentSymbolLabels_.push_back(BuildSymbolLabel(symbol, /*includePath=*/false));
             }
             documentSymbolSelection_ = 0;
@@ -1863,8 +1863,8 @@ void BufferView::HandleDocumentSymbolKey(const editor::KeyChord& chord) {
             return; // unreachable: every ranked label comes from documentSymbolLabels_ itself
         }
         const std::size_t                            index  = static_cast<std::size_t>(it - documentSymbolLabels_.begin());
-        const editor::lsp::LspManager::SymbolResult& symbol = documentSymbolCandidates_[index];
-        JumpToDefinition(editor::lsp::LspManager::ResolvedLocation{.path = symbol.path, .position = symbol.position});
+        const editor::lsp::Manager::SymbolResult& symbol = documentSymbolCandidates_[index];
+        JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.path = symbol.path, .position = symbol.position});
         return;
     }
     if (IsQuit(chord)) {
@@ -1905,7 +1905,7 @@ void BufferView::RequestWorkspaceSymbolsForCurrentQuery() {
 
     lspManager_->RequestWorkspaceSymbols(
         buffer, query,
-        [this, bufferPtr, generation](std::vector<editor::lsp::LspManager::SymbolResult> symbols) {
+        [this, bufferPtr, generation](std::vector<editor::lsp::Manager::SymbolResult> symbols) {
             if (workspaceSymbolRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
@@ -1915,7 +1915,7 @@ void BufferView::RequestWorkspaceSymbolsForCurrentQuery() {
             pendingWorkspaceSymbols_ = std::move(symbols);
             workspaceSymbolLabels_.clear();
             workspaceSymbolLabels_.reserve(pendingWorkspaceSymbols_.size());
-            for (const editor::lsp::LspManager::SymbolResult& symbol : pendingWorkspaceSymbols_) {
+            for (const editor::lsp::Manager::SymbolResult& symbol : pendingWorkspaceSymbols_) {
                 workspaceSymbolLabels_.push_back(BuildSymbolLabel(symbol, /*includePath=*/true));
             }
             workspaceSymbolSelection_ =
@@ -1942,10 +1942,10 @@ void BufferView::HandleWorkspaceSymbolKey(const editor::KeyChord& chord) {
             EndInteractiveSession();
             return;
         }
-        const editor::lsp::LspManager::SymbolResult symbol =
+        const editor::lsp::Manager::SymbolResult symbol =
             pendingWorkspaceSymbols_[std::min(workspaceSymbolSelection_, pendingWorkspaceSymbols_.size() - 1)];
         EndInteractiveSession();
-        JumpToDefinition(editor::lsp::LspManager::ResolvedLocation{.path = symbol.path, .position = symbol.position});
+        JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.path = symbol.path, .position = symbol.position});
         return;
     }
     if (IsQuit(chord)) {
@@ -1974,7 +1974,7 @@ void BufferView::HandleWorkspaceSymbolKey(const editor::KeyChord& chord) {
         workspaceSymbolSelection_ = 0;
         statusMessage_            = prompt_->StatusText();
         if (eventLoop_) {
-            workspaceSymbolDebounceTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::LspCompletionDebounceMs()),
+            workspaceSymbolDebounceTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::CompletionDebounceMs()),
                                               [this] { RequestWorkspaceSymbolsForCurrentQuery(); });
         }
     }
@@ -2077,8 +2077,8 @@ void BufferView::RequestPrepareRenameAtPoint() {
                 openPrompt({}); // {defaultBehavior: true} -- renameable, but no range of its own to prefill from
                 return;
             }
-            const std::size_t rangeStart = editor::lsp::LspPositionToByte(bufferPtr->Content(), result->start);
-            const std::size_t rangeEnd   = editor::lsp::LspPositionToByte(bufferPtr->Content(), result->end);
+            const std::size_t rangeStart = editor::lsp::PositionToByte(bufferPtr->Content(), result->start);
+            const std::size_t rangeEnd   = editor::lsp::PositionToByte(bufferPtr->Content(), result->end);
             const std::string prefill    = !result->placeholder.empty()
                                                ? result->placeholder
                                                : (rangeEnd > rangeStart ? bufferPtr->Content().Substring(rangeStart, rangeEnd - rangeStart)
@@ -2104,7 +2104,7 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
     statusMessage_ = "Requesting rename...";
     lspManager_->RequestRename(
         buffer, point, newName,
-        [this, bufferPtr, point, generation](std::optional<editor::lsp::LspManager::ResolvedRename> result) {
+        [this, bufferPtr, point, generation](std::optional<editor::lsp::Manager::ResolvedRename> result) {
             if (renameRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
@@ -2155,15 +2155,15 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
         serverKey);
 }
 
-void BufferView::ApplyRename(const editor::lsp::LspManager::ResolvedRename& result) {
+void BufferView::ApplyRename(const editor::lsp::Manager::ResolvedRename& result) {
     ApplyResolvedWorkspaceEdit(result, "Renamed (" + renameTitle_ + ").");
 }
 
-bool BufferView::ApplyServerPushedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label) {
+bool BufferView::ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
     return ApplyResolvedWorkspaceEdit(edit, "Applied \"" + label + "\" (server request).");
 }
 
-bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, std::string description) {
+bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, std::string description) {
     if (edit.touchesUnsupportedForm || !edit.hasEdit) {
         statusMessage_ = description + " has no edit to apply.";
         return false;
@@ -2184,7 +2184,7 @@ bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::LspManager::Resol
         // Resolve (find-or-open) every "changes"-form buffer FIRST, same
         // all-or-nothing-open guarantee this method has always had.
         perBufferEdits.reserve(edit.edits.size() + edit.documentChangeOps.size());
-        for (const editor::lsp::LspManager::ResolvedRenameEdit& renameEdit : edit.edits) {
+        for (const editor::lsp::Manager::ResolvedRenameEdit& renameEdit : edit.edits) {
             text::Buffer* buffer = bufferList_.FindByPath(renameEdit.path);
             if (!buffer) {
                 buffer = &bufferList_.OpenFile(renameEdit.path);
@@ -2196,7 +2196,7 @@ bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::LspManager::Resol
         // filesystem side effect must land before a later EditFile op that
         // targets the file it just created/renamed.
         using Kind = editor::lsp::DocumentChangeOp::Kind;
-        for (const editor::lsp::LspManager::ResolvedDocumentChangeOp& op : edit.documentChangeOps) {
+        for (const editor::lsp::Manager::ResolvedDocumentChangeOp& op : edit.documentChangeOps) {
             switch (op.kind) {
                 case Kind::CreateFile: {
                     const bool exists = std::filesystem::exists(op.path);
@@ -2334,7 +2334,7 @@ void BufferView::RequestProjectFindReferences() {
     const std::string serverKey     = ResolvedLspServerKey(point);
     const std::string languageKey   = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
     const bool        hasRunningLsp = lspManager_ && lspManager_->StatusForLanguage(lspManager_->ConnectionKeyForBuffer(
-                                                         buffer, languageKey)) == editor::lsp::LspManager::LspStatus::Running;
+                                                         buffer, languageKey)) == editor::lsp::Manager::Status::Running;
 
     if (hasRunningLsp) {
         text::Buffer* const bufferPtr  = &buffer;
@@ -2342,7 +2342,7 @@ void BufferView::RequestProjectFindReferences() {
         statusMessage_                 = "Requesting references...";
         lspManager_->RequestReferences(
             buffer, point,
-            [this, bufferPtr, point, generation, word](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
+            [this, bufferPtr, point, generation, word](std::vector<editor::lsp::Manager::ResolvedLocation> locations) {
                 if (referencesRequest_.IsStale(generation)) {
                     return; // superseded by a newer request
                 }
@@ -2357,7 +2357,7 @@ void BufferView::RequestProjectFindReferences() {
                 const std::filesystem::path                     root = editor::ProjectRoot();
                 std::vector<editor::multibuffer::ExcerptSource> excerpts;
                 excerpts.reserve(locations.size());
-                for (const editor::lsp::LspManager::ResolvedLocation& location : locations) {
+                for (const editor::lsp::Manager::ResolvedLocation& location : locations) {
                     const std::size_t           lineNumber = location.position.line + 1; // LSP is 0-indexed, excerpts/SearchMatch are 1-indexed
                     std::error_code             ec;
                     const std::filesystem::path relative    = std::filesystem::relative(location.path, root, ec);
@@ -2605,12 +2605,12 @@ void BufferView::PerformProjectRename(const std::filesystem::path& source, const
     // rename-file-notifications follow-up: one (oldPath, newPath) pair per
     // real file this rename touches -- a directory rename touches every
     // file nested inside it, each needing its own pair for
-    // LspManager::RequestWillRenameFiles/NotifyFilesRenamed's per-file glob
+    // Manager::RequestWillRenameFiles/NotifyFilesRenamed's per-file glob
     // matching (a server's filter is typically an extension glob like
     // "**/*.ts", which only makes sense matched per file, not against the
     // renamed directory's own path). Walked from source, which must still
     // exist on disk at this point -- see the existence check above.
-    std::vector<editor::lsp::LspManager::FileRenameEntry> renamedFiles;
+    std::vector<editor::lsp::Manager::FileRenameEntry> renamedFiles;
     if (std::filesystem::is_directory(source, ec)) {
         std::error_code walkEc;
         for (const auto& entry : std::filesystem::recursive_directory_iterator(
@@ -2626,7 +2626,7 @@ void BufferView::PerformProjectRename(const std::filesystem::path& source, const
     }
 
     // rename-file-notifications follow-up: the actual rename+buffer-
-    // bookkeeping, deferred behind LspManager::RequestWillRenameFiles below
+    // bookkeeping, deferred behind Manager::RequestWillRenameFiles below
     // -- captured by value since source/destination/openBuffers/
     // sourceCanonical/renamedFiles must all outlive this call, and a fresh
     // rename session started before this one's round trip completes must
@@ -2634,7 +2634,7 @@ void BufferView::PerformProjectRename(const std::filesystem::path& source, const
     // renameSource_/renameStage_ members EndInteractiveSession already
     // reset before this method was ever called).
     auto finishRename = [this, source, destination, sourceCanonical, openBuffers, renamedFiles](
-                            std::optional<editor::lsp::LspManager::ResolvedRename> willRenameEdit) {
+                            std::optional<editor::lsp::Manager::ResolvedRename> willRenameEdit) {
         // Applied BEFORE the actual rename below, per spec's intended use:
         // a server's willRenameFiles response typically fixes up *other*
         // files' import paths while source still exists at its pre-rename
@@ -2693,7 +2693,7 @@ void BufferView::PerformProjectRename(const std::filesystem::path& source, const
     }
 }
 
-void BufferView::SetLspManager(editor::lsp::LspManager* lspManager) {
+void BufferView::SetLspManager(editor::lsp::Manager* lspManager) {
     lspManager_ = lspManager;
 }
 

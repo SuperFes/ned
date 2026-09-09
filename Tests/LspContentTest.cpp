@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "Editor/Lsp/LspContent.h"
+#include "Editor/Lsp/Content.h"
 
 using ned::editor::lsp::ApplySemanticTokensDeltaEdits;
 using ned::editor::lsp::CodeAction;
@@ -43,7 +43,7 @@ using ned::editor::lsp::ExtractWorkspaceFoldersSupport;
 using ned::editor::lsp::HierarchyCall;
 using ned::editor::lsp::HierarchyItem;
 using ned::editor::lsp::Json;
-using ned::editor::lsp::LspPosition;
+using ned::editor::lsp::Position;
 using ned::editor::lsp::OnTypeFormattingTriggers;
 using ned::editor::lsp::RenameResult;
 using ned::editor::lsp::SemanticTokensDeltaEdit;
@@ -127,8 +127,8 @@ TEST_CASE("ExtractCompletionItems parses a plain textEdit and mirrors its newTex
     const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
     REQUIRE(items.size() == 1);
     REQUIRE(items[0].textEdit.has_value());
-    REQUIRE(items[0].textEdit->start == ned::editor::lsp::LspPosition{.line = 3, .character = 4});
-    REQUIRE(items[0].textEdit->end == ned::editor::lsp::LspPosition{.line = 3, .character = 7});
+    REQUIRE(items[0].textEdit->start == ned::editor::lsp::Position{.line = 3, .character = 4});
+    REQUIRE(items[0].textEdit->end == ned::editor::lsp::Position{.line = 3, .character = 7});
     REQUIRE(items[0].textEdit->newText == "foobar");
     // The spec makes textEdit win outright over insertText when both are sent.
     REQUIRE(items[0].insertText == "foobar");
@@ -148,7 +148,7 @@ TEST_CASE("ExtractCompletionItems takes an InsertReplaceEdit's insert range, not
     const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
     REQUIRE(items.size() == 1);
     REQUIRE(items[0].textEdit.has_value());
-    REQUIRE(items[0].textEdit->end == ned::editor::lsp::LspPosition{.line = 1, .character = 5});
+    REQUIRE(items[0].textEdit->end == ned::editor::lsp::Position{.line = 1, .character = 5});
 }
 
 TEST_CASE("ExtractCompletionItems leaves textEdit unset for a malformed one", "[Lsp]") {
@@ -183,15 +183,15 @@ TEST_CASE("ExtractCompletionItems applies a CompletionList's itemDefaults.editRa
     REQUIRE(items.size() == 4);
     for (std::size_t i = 0; i < 3; ++i) {
         REQUIRE(items[i].textEdit.has_value());
-        REQUIRE(items[i].textEdit->start == ned::editor::lsp::LspPosition{.line = 0, .character = 2});
-        REQUIRE(items[i].textEdit->end == ned::editor::lsp::LspPosition{.line = 0, .character = 6});
+        REQUIRE(items[i].textEdit->start == ned::editor::lsp::Position{.line = 0, .character = 2});
+        REQUIRE(items[i].textEdit->end == ned::editor::lsp::Position{.line = 0, .character = 6});
     }
     // textEditText, then insertText, then label -- the spec's own precedence
     // for an item riding on itemDefaults.editRange.
     REQUIRE(items[0].insertText == "resolved");
     REQUIRE(items[1].insertText == "from-insert");
     REQUIRE(items[2].insertText == "bare");
-    REQUIRE(items[3].textEdit->start == ned::editor::lsp::LspPosition{.line = 9, .character = 1});
+    REQUIRE(items[3].textEdit->start == ned::editor::lsp::Position{.line = 9, .character = 1});
     REQUIRE(items[3].insertText == "own-text");
 }
 
@@ -267,8 +267,8 @@ TEST_CASE("ExtractCodeActions parses a CodeAction with a \"changes\" WorkspaceEd
     REQUIRE(actions[0].edits.size() == 1);
     REQUIRE(actions[0].edits[0].uri == "file:///a.c");
     REQUIRE(actions[0].edits[0].edits.size() == 1);
-    REQUIRE(actions[0].edits[0].edits[0].start == LspPosition{.line = 0, .character = 0});
-    REQUIRE(actions[0].edits[0].edits[0].end == LspPosition{.line = 0, .character = 0});
+    REQUIRE(actions[0].edits[0].edits[0].start == Position{.line = 0, .character = 0});
+    REQUIRE(actions[0].edits[0].edits[0].end == Position{.line = 0, .character = 0});
     REQUIRE(actions[0].edits[0].edits[0].newText == "#include <cstdio>\n");
 }
 
@@ -493,7 +493,7 @@ TEST_CASE("ExtractDefinitionLocations parses a bare Location object", "[Lsp]") {
     const std::vector<DefinitionLocation> locations = ExtractDefinitionLocations(result);
     REQUIRE(locations.size() == 1);
     REQUIRE(locations[0].uri == "file:///a.c");
-    REQUIRE(locations[0].position == LspPosition{.line = 4, .character = 2});
+    REQUIRE(locations[0].position == Position{.line = 4, .character = 2});
 }
 
 TEST_CASE("ExtractDefinitionLocations parses a Location-array response", "[Lsp]") {
@@ -505,7 +505,7 @@ TEST_CASE("ExtractDefinitionLocations parses a Location-array response", "[Lsp]"
     REQUIRE(locations.size() == 2);
     REQUIRE(locations[0].uri == "file:///a.c");
     REQUIRE(locations[1].uri == "file:///b.c");
-    REQUIRE(locations[1].position == LspPosition{.line = 2, .character = 0});
+    REQUIRE(locations[1].position == Position{.line = 2, .character = 0});
 }
 
 TEST_CASE("ExtractDefinitionLocations parses a LocationLink-array response via targetUri/targetSelectionRange", "[Lsp]") {
@@ -518,7 +518,7 @@ TEST_CASE("ExtractDefinitionLocations parses a LocationLink-array response via t
     REQUIRE(locations.size() == 1);
     REQUIRE(locations[0].uri == "file:///impl.c");
     // targetSelectionRange, not the wider targetRange -- the precise identifier location.
-    REQUIRE(locations[0].position == LspPosition{.line = 3, .character = 5});
+    REQUIRE(locations[0].position == Position{.line = 3, .character = 5});
 }
 
 TEST_CASE("ExtractDefinitionLocations returns empty for a null result", "[Lsp]") {

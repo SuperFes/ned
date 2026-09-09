@@ -1,8 +1,8 @@
-#include "LspEditApply.h"
+#include "EditApply.h"
 
 #include <algorithm>
 
-#include "LspPosition.h"
+#include "Position.h"
 #include "Text/Buffer.h"
 #include "Text/ITextStorage.h"
 
@@ -24,8 +24,8 @@ std::size_t ApplyWorkspaceTextEditsAndRelocate(text::Buffer& buffer, const std::
     resolved.reserve(edits.size());
     for (const WorkspaceTextEdit& edit : edits) {
         resolved.push_back(ResolvedEdit{
-            .startByte = LspPositionToByte(content, edit.start),
-            .endByte   = LspPositionToByte(content, edit.end),
+            .startByte = PositionToByte(content, edit.start),
+            .endByte   = PositionToByte(content, edit.end),
             .newText   = edit.newText,
         });
     }

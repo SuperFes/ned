@@ -1,8 +1,8 @@
 //
 // LSP multi-root follow-up. Resolves which directory an LSP server should be
 // initialized against for one buffer, instead of every buffer in the process
-// sharing editor::ProjectRoot() unconditionally (see LspManager.h's own
-// updated header comment for how LspManager actually uses this).
+// sharing editor::ProjectRoot() unconditionally (see Manager.h's own
+// updated header comment for how Manager actually uses this).
 //
 // editor::ProjectRoot()'s own VCS-marker walk (ProjectRoot.h) can't separate
 // independent packages inside one monorepo, since a monorepo typically has
@@ -15,12 +15,12 @@
 // convention every mainstream LSP client (VS Code included) resolves a
 // server's root against.
 //
-// Mutex-guarded static map, mirroring LspServerConfig.h's own per-language
+// Mutex-guarded static map, mirroring ServerConfig.h's own per-language
 // table shape.
 //
 
-#ifndef NED_EDITOR_LSP_LSPROOTRESOLVER_H
-#define NED_EDITOR_LSP_LSPROOTRESOLVER_H
+#ifndef NED_EDITOR_LSP_ROOTRESOLVER_H
+#define NED_EDITOR_LSP_ROOTRESOLVER_H
 
 #include <filesystem>
 #include <string>
@@ -30,25 +30,25 @@ namespace ned::editor::lsp {
 
 // Overwrites the marker list for language (e.g. {"pyproject.toml", "setup.py"}
 // for "python") -- re-registering replaces, mirroring
-// LspServerConfig::SetLspServerCommand's own "redefining is expected use"
+// ServerConfig::SetLspServerCommand's own "redefining is expected use"
 // convention. An empty list clears the override, reverting language to its
-// compiled-in default (see LspRootMarkers) rather than to "no markers at
+// compiled-in default (see RootMarkers) rather than to "no markers at
 // all" -- unlike SetLspServerCommand, a marker list has a real built-in
 // default to fall back to.
 void SetLspRootMarkers(const std::string& language, std::vector<std::string> markers);
 
 // The effective marker list for language: an explicit SetLspRootMarkers
 // override if one is registered, else the compiled-in default for a handful
-// of bundled languages (LspRootResolver.cpp), else empty. Empty is not an
+// of bundled languages (RootResolver.cpp), else empty. Empty is not an
 // error -- ResolveLspRoot's marker tier just never matches anything and
 // falls through to its next tier.
-[[nodiscard]] std::vector<std::string> LspRootMarkers(const std::string& language);
+[[nodiscard]] std::vector<std::string> RootMarkers(const std::string& language);
 
 // Resolves the LSP root for a buffer at bufferPath whose primary language is
 // `language` (Editor/Mode.h's LanguageKeyForMode convention -- the same
-// string LspServerConfig.h's command table is keyed by). Two tiers:
+// string ServerConfig.h's command table is keyed by). Two tiers:
 //
-//  1. If editor::AutoDetectProjectRoot() is on and LspRootMarkers(language)
+//  1. If editor::AutoDetectProjectRoot() is on and RootMarkers(language)
 //     is non-empty, walks upward from bufferPath's containing directory for
 //     the nearest ancestor containing one of those markers as an immediate
 //     child (file or directory, checked the same way
@@ -65,4 +65,4 @@ void SetLspRootMarkers(const std::string& language, std::vector<std::string> mar
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPROOTRESOLVER_H
+#endif // NED_EDITOR_LSP_ROOTRESOLVER_H

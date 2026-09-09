@@ -6,7 +6,7 @@
 // system paths goes stale across distros (multiarch triplet subdirs,
 // version-numbered C++ stdlib dirs, NixOS/container layouts with no fixed
 // prefix at all -- the exact non-portable-system-layout problem
-// Lsp/LspServerConfig.h's own doc comment already rejected auto-detecting
+// Lsp/ServerConfig.h's own doc comment already rejected auto-detecting
 // for LSP commands). Querying the real, installed compiler instead is
 // always correct for whatever's actually on this machine.
 //

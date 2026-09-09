@@ -30,9 +30,9 @@
 #include "Editor/FormatOnSave.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
-#include "Editor/Lsp/LspClient.h"
-#include "Editor/Lsp/LspManager.h"
-#include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Lsp/Client.h"
+#include "Editor/Lsp/Manager.h"
+#include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Mode.h"
 #include "Editor/Multibuffer.h"
@@ -433,7 +433,7 @@ ned::ui::Event ManualCompleteEvent() {
     return ned::ui::test::CtrlAlt('i');
 }
 
-// Mirrors LspManagerTest.cpp's own FakeServer/ReadRawFrame exactly (kept
+// Mirrors ManagerTest.cpp's own FakeServer/ReadRawFrame exactly (kept
 // file-local here too, rather than shared -- not worth a new dependency
 // between two test binaries' translation units for something this small,
 // the same call this codebase's own production code already makes
@@ -452,13 +452,13 @@ struct FakeLspServer {
     FakeLspServer& operator=(const FakeLspServer&) = delete;
     FakeLspServer(FakeLspServer&&)                 = default;
 
-    static FakeLspServer Create(ned::editor::lsp::LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop,
-                                ned::editor::lsp::LspClient*& outClient) {
+    static FakeLspServer Create(ned::editor::lsp::Manager& manager, const std::string& language, ned::ui::EventLoop& eventLoop,
+                                ned::editor::lsp::Client*& outClient) {
         int clientWritesHere[2];
         int clientReadsHere[2];
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
-        auto client = std::make_unique<ned::editor::lsp::LspClient>(ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+        auto client = std::make_unique<ned::editor::lsp::Client>(ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
         outClient   = &manager.SetClientForTesting(language, std::move(client));
         return FakeLspServer(clientWritesHere[0], clientReadsHere[1]);
     }
@@ -495,7 +495,7 @@ int LspRequestIdFromFrame(const std::string& raw) {
 // on-type-formatting follow-up: asserting "nothing was ever sent" can't use
 // ReadRawLspFrame's own blocking ::read (it would hang forever on a fd that
 // legitimately never gets written to -- the case under test). Mirrors
-// LspManagerTest.cpp's own NoFrameArrives exactly.
+// ManagerTest.cpp's own NoFrameArrives exactly.
 bool NoFrameArrives(int fd) {
     pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
     return ::poll(&pfd, 1, 200) == 0; // 0 == timed out, nothing readable
@@ -567,7 +567,7 @@ std::vector<ned::editor::lsp::Json> ParseConcatenatedLspFrames(const std::string
 // ::read() calls, justified by "by the time a caller reaches here,
 // DrainPosted_() has already synchronously run every producing callback, so
 // every expected frame's bytes are already fully written to the pipe." That
-// stopped being true when LspClient moved its writes onto a writeThread_ --
+// stopped being true when Client moved its writes onto a writeThread_ --
 // a producing callback now only *enqueues*, and the bytes reach the pipe
 // whenever that thread is next scheduled. Hence a real poll(2)-based
 // deadline instead: a frame that is merely late is waited for, and a frame
@@ -1396,10 +1396,10 @@ TEST_CASE("A textDocument/semanticTokens/full response overrides tree-sitter's o
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
     manager.SetSemanticTokensLegendForTesting(
         "json", ned::editor::lsp::SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}});
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "json", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -1450,8 +1450,8 @@ TEST_CASE("A textDocument/inlayHint response renders virtual text mid-line witho
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -1833,7 +1833,7 @@ TEST_CASE("Right-click in the content area opens the context menu and moves poin
 
     REQUIRE(fixture.buffer.Point() == 4);
     REQUIRE(fixture.contextMenu.has_value());
-    // context-aware-menu follow-up: this Fixture wires no LspManager, so
+    // context-aware-menu follow-up: this Fixture wires no Manager, so
     // the three purely-LSP rows (Go to Definition/Rename Symbol/Code
     // Actions...) are hidden -- see the dedicated "shows the LSP-only
     // rows" test below for the connected case.
@@ -1851,8 +1851,8 @@ TEST_CASE("Right-click in the content area shows the LSP-only rows once this buf
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "c", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -1862,7 +1862,7 @@ TEST_CASE("Right-click in the content area shows the LSP-only rows once this buf
 
     ned::ui::Screen screen = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
-    view.Paint(canvas); // drives BufferView::SyncBuffer -> LspManager::SyncBuffer, populating ActiveServerKeysForBuffer
+    view.Paint(canvas); // drives BufferView::SyncBuffer -> Manager::SyncBuffer, populating ActiveServerKeysForBuffer
 
     const int gutter = GutterWidth(1, /*foldColumn=*/4);
     view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Right));
@@ -1890,8 +1890,8 @@ TEST_CASE("Right-click in the content area auto-fills real LSP quick-fixes above
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "c", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -4281,7 +4281,7 @@ TEST_CASE("Switching to a shorter buffer clamps the viewport instead of renderin
 TEST_CASE("Switching to a shorter buffer whose point sits on its own last line still clamps to the top",
           "[BufferView]") {
     // Real reported bug, distinct from the sibling case just above (which
-    // leaves point at 0): a read-only log-style buffer (LspManager's own
+    // leaves point at 0): a read-only log-style buffer (Manager's own
     // "*lsp log*") keeps point pinned to its own end via
     // AppendWhileReadOnly's insert-at-point-position relocation, so point's
     // line is never 0. Switching to it from a deeply-scrolled long buffer
@@ -6495,9 +6495,9 @@ TEST_CASE("rename-file notifies a matching LSP server via willRenameFiles/didRen
 
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
     manager.SetFileOperationFiltersForTesting("fundamental", {.willRenameGlobs = {"**/*.ts"}, .didRenameGlobs = {"**/*.ts"}});
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -8780,8 +8780,8 @@ TEST_CASE("C-M-i (lsp-complete) shows a completion popup from a real completion 
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -8843,8 +8843,8 @@ TEST_CASE("Accepting a completion whose insertText doesn't extend the typed pref
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -8886,8 +8886,8 @@ TEST_CASE("A server-supplied textEdit range replaces more than the typed word", 
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -8932,8 +8932,8 @@ TEST_CASE("Typing narrows a complete completion list locally, with no second req
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -8987,8 +8987,8 @@ TEST_CASE("A long completion list is windowed around the selection with scroll i
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9053,8 +9053,8 @@ TEST_CASE("Up/Down and M-n/M-p both cycle the completion popup's selection", "[B
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9096,8 +9096,8 @@ TEST_CASE("Any other key dismisses the completion popup instead of accepting it"
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9138,8 +9138,8 @@ TEST_CASE("Typing a word character schedules an automatic completion request aft
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9153,7 +9153,7 @@ TEST_CASE("Typing a word character schedules an automatic completion request aft
     DrainAllPendingFrames(server.serverStdinRead);
 
     TypeText(view, "f");
-    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past LspCompletionDebounceMs()'s default 500ms
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past CompletionDebounceMs()'s default 500ms
     REQUIRE(eventLoop.DrainPosted_());                           // runs both debounce timers' posted callbacks -- completion AND
                                                                  // documentHighlight (which has no trigger-character gate at all,
                                                                  // just "did point move" -- see MaybeScheduleDocumentHighlight)
@@ -9173,8 +9173,8 @@ TEST_CASE("Typing '.' schedules an automatic completion request (member-access t
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9209,8 +9209,8 @@ TEST_CASE("Typing a statement-ending character like ';' does not schedule an aut
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9251,8 +9251,8 @@ TEST_CASE("A server's own declared trigger characters replace the hardcoded fall
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
     manager.SetCompletionProviderForTesting("fundamental", ned::editor::lsp::CompletionProviderInfo{.triggerCharacters = {"@"}});
 
@@ -9291,8 +9291,8 @@ TEST_CASE("Typing a character the server did not declare as a trigger schedules 
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
     manager.SetCompletionProviderForTesting("fundamental", ned::editor::lsp::CompletionProviderInfo{.triggerCharacters = {"@"}});
 
@@ -9324,8 +9324,8 @@ TEST_CASE("Typing a commit character accepts the selected completion and then in
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9371,8 +9371,8 @@ TEST_CASE("A character no completion item declared as a commit character just se
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9401,7 +9401,7 @@ TEST_CASE("A character no completion item declared as a commit character just se
 
 namespace {
 struct CommitCharactersDisabledGuard {
-    CommitCharactersDisabledGuard() : previous_(ned::editor::lsp::LspCommitCharactersEnabled()) {
+    CommitCharactersDisabledGuard() : previous_(ned::editor::lsp::CommitCharactersEnabled()) {
         ned::editor::lsp::SetLspCommitCharactersEnabled(false);
     }
     ~CommitCharactersDisabledGuard() {
@@ -9423,8 +9423,8 @@ TEST_CASE("ned/set-lsp-commit-characters false stops a declared commit character
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9466,8 +9466,8 @@ TEST_CASE("Completion popup hides when point's row scrolls off screen, but the s
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9514,8 +9514,8 @@ TEST_CASE("The selected completion item is resolved after the debounce and its d
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
     manager.SetCompletionProviderForTesting("fundamental", ned::editor::lsp::CompletionProviderInfo{.resolveProvider = true});
 
@@ -9543,7 +9543,7 @@ TEST_CASE("The selected completion item is resolved after the debounce and its d
     REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobar");
     REQUIRE_FALSE(fixture.completion->previewText.has_value());
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past LspCompletionDebounceMs()'s default 500ms
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past CompletionDebounceMs()'s default 500ms
     REQUIRE(eventLoop.DrainPosted_());
 
     const std::string resolveRaw     = ReadRawLspFrame(server.serverStdinRead);
@@ -9571,8 +9571,8 @@ TEST_CASE("No completionItem/resolve is sent to a server that never advertised r
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
     // Deliberately no SetCompletionProviderForTesting call at all.
 
@@ -9613,8 +9613,8 @@ TEST_CASE("A completion item's documentation populates the popup's previewText",
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9655,8 +9655,8 @@ TEST_CASE("AcceptActiveCompletionAt accepts the given index regardless of the cu
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9697,8 +9697,8 @@ TEST_CASE("Accepting a completion applies its additionalTextEdits, relocating it
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9750,8 +9750,8 @@ TEST_CASE("M-x lsp-document-highlight paints every reported occurrence with the 
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9795,8 +9795,8 @@ TEST_CASE("C-c C-a with no code actions reports \"No code actions available.\"",
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9827,8 +9827,8 @@ TEST_CASE("C-c C-a with one code action applies it directly, no confirmation", "
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9873,8 +9873,8 @@ TEST_CASE("C-c C-a with multiple code actions: digit-select applies the right on
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9929,8 +9929,8 @@ TEST_CASE("A click on a code-action row applies it directly, by row index, no co
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -9982,8 +9982,8 @@ TEST_CASE("Escape at the code-action selection list leaves the buffer untouched"
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10048,8 +10048,8 @@ TEST_CASE("M-. with one definition location jumps directly, no confirmation", "[
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10095,8 +10095,8 @@ TEST_CASE("M-. with no definitions reports \"No definition found.\"", "[BufferVi
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10126,8 +10126,8 @@ TEST_CASE("M-. with multiple definitions: digit-select jumps to the chosen one",
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10192,8 +10192,8 @@ TEST_CASE("M-x lsp-goto-declaration sends textDocument/declaration and jumps on 
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10241,8 +10241,8 @@ TEST_CASE("M-x lsp-goto-symbol sends textDocument/documentSymbol and jumps to th
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10293,8 +10293,8 @@ TEST_CASE("M-x lsp-workspace-symbol sends an immediate workspace/symbol request 
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10344,7 +10344,7 @@ TEST_CASE("M-x lsp-workspace-symbol sends an immediate workspace/symbol request 
 }
 
 // signature-help follow-up: same async-write-into-statusMessage shape as
-// lsp-hover's own tests (not shown here -- see LspManagerTest.cpp for the
+// lsp-hover's own tests (not shown here -- see ManagerTest.cpp for the
 // ExtractSignatureHelp/RequestSignatureHelp coverage this leans on), driven
 // through M-x since lsp-signature-help has no default keybinding.
 TEST_CASE("M-x lsp-signature-help shows the active parameter emphasized in the status line", "[BufferView]") {
@@ -10355,8 +10355,8 @@ TEST_CASE("M-x lsp-signature-help shows the active parameter emphasized in the s
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10391,10 +10391,10 @@ namespace {
 // for the duration of the test below so its own debounce timer (armed by
 // the exact same keystrokes) doesn't race the signature-help request onto
 // the fake server's stdin pipe ahead of it -- restores the previous value
-// (LspAutoCompleteEnabled's own default, true) on destruction, the same
+// (AutoCompleteEnabled's own default, true) on destruction, the same
 // save/restore shape SnippetRegistryTestGuard uses for a different global.
 struct AutoCompleteDisabledGuard {
-    AutoCompleteDisabledGuard() : previous_(ned::editor::lsp::LspAutoCompleteEnabled()) {
+    AutoCompleteDisabledGuard() : previous_(ned::editor::lsp::AutoCompleteEnabled()) {
         ned::editor::lsp::SetLspAutoCompleteEnabled(false);
     }
     ~AutoCompleteDisabledGuard() {
@@ -10414,8 +10414,8 @@ TEST_CASE("Typing ( inside a call auto-triggers signature help after the debounc
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10430,7 +10430,7 @@ TEST_CASE("Typing ( inside a call auto-triggers signature help after the debounc
 
     TypeText(view, "foo("); // the trailing '(' is the trigger character
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past LspCompletionDebounceMs()'s default 500ms
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past CompletionDebounceMs()'s default 500ms
     REQUIRE(eventLoop.DrainPosted_());                           // runs both debounce timers' posted callbacks -- signature help AND
                                                                  // documentHighlight (which has no toggle to disable, see design decision
                                                                  // 2 -- so its own request rides along here too)
@@ -10462,8 +10462,8 @@ TEST_CASE("Typing a non-trigger character does not schedule an automatic signatu
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10483,7 +10483,7 @@ TEST_CASE("Typing a non-trigger character does not schedule an automatic signatu
     // point/changes content regardless), so DrainPosted_() itself can't be
     // used as the signal; assert instead that no signatureHelp request
     // specifically was ever sent.
-    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past LspCompletionDebounceMs()'s default 500ms
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past CompletionDebounceMs()'s default 500ms
     (void)eventLoop.DrainPosted_();
     const std::vector<ned::editor::lsp::Json> requests = ReadLspFrames(server.serverStdinRead, 1);
     REQUIRE(std::none_of(requests.begin(), requests.end(),
@@ -10514,8 +10514,8 @@ TEST_CASE("M-o switches to the file clangd's switchSourceHeader response names",
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10564,8 +10564,8 @@ TEST_CASE("M-o falls back to the filesystem heuristic when the server reports no
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10671,8 +10671,8 @@ TEST_CASE("C-c C-M-r prompts for a new name, then applies a multi-file rename ac
     }
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -10740,7 +10740,7 @@ TEST_CASE("Paint() surfaces a status-message hint once an LSP error has been log
     ned::ui::BufferView view = fixture.View();
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
     view.SetLspManager(&manager);
 
     manager.LogError("test-lang", "boom");
@@ -10767,7 +10767,7 @@ TEST_CASE("The LSP-error status hint never clobbers an already-set status messag
     ned::ui::BufferView view = fixture.View();
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
     view.SetLspManager(&manager);
 
     fixture.statusMessage = "something the user is actively looking at";
@@ -11998,8 +11998,8 @@ namespace {
 struct QuickFixHarness {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager{fixture.bufferList, eventLoop};
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager{fixture.bufferList, eventLoop};
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server;
     ned::ui::BufferView          view;
     ned::text::Buffer*           buffer = nullptr;
@@ -12338,8 +12338,8 @@ TEST_CASE("C-x C-s formats via the language server before saving when lsp-format
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -12397,8 +12397,8 @@ TEST_CASE("C-x C-s prefers an external format command over lsp-format-on-save wh
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
@@ -12454,13 +12454,13 @@ TEST_CASE("Typing the server's declared trigger character sends textDocument/onT
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
     // SetClientForTesting bypasses the real initialize handshake entirely --
     // this is the test-only substitute for what a real server's response
     // would have populated (see SetOnTypeFormattingTriggersForTesting's own
-    // doc comment in LspManager.h).
+    // doc comment in Manager.h).
     manager.SetOnTypeFormattingTriggersForTesting("fundamental", ned::editor::lsp::OnTypeFormattingTriggers{.first = ";", .more = {}});
 
     ned::ui::BufferView view = fixture.View();
@@ -12516,8 +12516,8 @@ TEST_CASE("Typing a non-trigger character does not send an on-type-formatting re
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
     manager.SetOnTypeFormattingTriggersForTesting("fundamental", ned::editor::lsp::OnTypeFormattingTriggers{.first = ";", .more = {}});
 
@@ -12553,8 +12553,8 @@ TEST_CASE("Typing the server's declared trigger character sends nothing when lsp
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
     manager.SetOnTypeFormattingTriggersForTesting("fundamental", ned::editor::lsp::OnTypeFormattingTriggers{.first = ";", .more = {}});
 
@@ -12811,8 +12811,8 @@ TEST_CASE("Accepting a snippet-format LSP completion starts a tabstop session", 
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
     FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();

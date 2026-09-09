@@ -11,7 +11,7 @@ namespace ned::editor::acp {
 
 AcpClient::~AcpClient() {
     // lsp-use-after-free follow-up: must be the first statement -- see
-    // LspClient.h's own header comment on alive_.
+    // Client.h's own header comment on alive_.
     *alive_ = false;
 }
 
@@ -27,7 +27,7 @@ AcpClient::AcpClient(Transport transport, ned::ui::EventLoop& eventLoop) : trans
 }
 
 void AcpClient::StartWriteLoop() {
-    // async-write-queue follow-up -- identical to LspClient::StartWriteLoop,
+    // async-write-queue follow-up -- identical to Client::StartWriteLoop,
     // including the drain-on-stop policy -- see header comment.
     writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
         while (true) {
@@ -68,7 +68,7 @@ void AcpClient::PrepareForGracefulShutdown() {
 
 void AcpClient::StartReadLoop() {
     // transport_ is already fully constructed by the time this runs (called
-    // from the constructor *body*) -- see LspClient.cpp's identical comment
+    // from the constructor *body*) -- see Client.cpp's identical comment
     // for why readThread_ has to start out empty rather than being given
     // real work directly in the initializer list.
     // closed-connection-never-parks follow-up: the stop token is genuinely
@@ -87,7 +87,7 @@ void AcpClient::StartReadLoop() {
             }
             catch (const std::exception& e) {
                 // Malformed message, or (subprocess-hang-protection
-                // follow-up) a mid-message stall -- see LspClient.cpp's
+                // follow-up) a mid-message stall -- see Client.cpp's
                 // identical comment.
                 eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
                     if (!*alive) {
@@ -132,7 +132,7 @@ void AcpClient::StartReadLoop() {
 }
 
 void AcpClient::StartStderrReadLoop() {
-    // Identical to LspClient::StartStderrReadLoop -- see that function's own
+    // Identical to Client::StartStderrReadLoop -- see that function's own
     // doc comment for the full reasoning; only the log category differs.
     const int fd = transport_.StderrFd();
     if (fd < 0) {
@@ -271,7 +271,7 @@ void AcpClient::SendRequest(const std::string& method, Json params, ResponseCall
 }
 
 void AcpClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
-    // subprocess-hang-protection follow-up -- see LspClient::ExpireStaleRequests's
+    // subprocess-hang-protection follow-up -- see Client::ExpireStaleRequests's
     // identical reasoning/collect-then-invoke shape.
     const std::chrono::steady_clock::time_point now    = std::chrono::steady_clock::now();
     const std::chrono::steady_clock::time_point cutoff = now - maxAge;

@@ -6,7 +6,7 @@
 
 using ned::editor::CompletionSession;
 using ned::editor::lsp::CompletionItem;
-using ned::editor::lsp::LspPosition;
+using ned::editor::lsp::Position;
 using ned::editor::lsp::WorkspaceTextEdit;
 using ned::text::Buffer;
 using ned::text::Rope;
@@ -17,7 +17,7 @@ Buffer MakeBuffer(const std::string& content) {
     return Buffer("test", Rope(content));
 }
 
-// Mirrors what LspContent's own parsing guarantees (sortText/filterText
+// Mirrors what Content's own parsing guarantees (sortText/filterText
 // default to the label), so a test that doesn't care about them doesn't
 // have to keep restating it.
 CompletionItem Item(std::string label, std::string insertText = {}) {
@@ -47,8 +47,8 @@ TEST_CASE("A candidate's textEdit range start wins over the fallback prefix star
     const std::size_t point  = 8;
 
     CompletionItem item = Item("vector", "std::vector");
-    item.textEdit       = WorkspaceTextEdit{.start   = LspPosition{.line = 0, .character = 0},
-                                            .end     = LspPosition{.line = 0, .character = 8},
+    item.textEdit       = WorkspaceTextEdit{.start   = Position{.line = 0, .character = 0},
+                                            .end     = Position{.line = 0, .character = 8},
                                             .newText = "std::vector"};
 
     CompletionSession session({item}, false, buffer.Content(), point, /*fallbackPrefixStart=*/5);
@@ -67,8 +67,8 @@ TEST_CASE("A textEdit range starting after point degrades to an insert at point"
     const std::size_t point  = 3;
 
     CompletionItem item = Item("foo_thing");
-    item.textEdit       = WorkspaceTextEdit{.start   = LspPosition{.line = 0, .character = 5}, // past point
-                                            .end     = LspPosition{.line = 0, .character = 7},
+    item.textEdit       = WorkspaceTextEdit{.start   = Position{.line = 0, .character = 5}, // past point
+                                            .end     = Position{.line = 0, .character = 7},
                                             .newText = "foo_thing"};
 
     CompletionSession session({item}, false, buffer.Content(), point, 0);
@@ -165,7 +165,7 @@ TEST_CASE("Refilter narrows locally as the prefix grows, without a re-request", 
     // "foobar" and "food" score identically (both match "foo" as a
     // consecutive run at offset 0 -- FuzzyScore doesn't consider the
     // unmatched tail), so the tiebreak falls to sortText, which
-    // LspContent defaulted to the label. Server intent deliberately wins
+    // Content defaulted to the label. Server intent deliberately wins
     // over any shorter-is-better heuristic of ours.
     CHECK(session.Candidates()[0].item.label == "foobar");
     CHECK(session.Candidates()[1].item.label == "food");
@@ -264,8 +264,8 @@ TEST_CASE("ApplyResolution merges documentation/detail/additionalTextEdits and s
     CompletionItem resolved      = Item(session.Candidates()[0].item.label);
     resolved.documentation       = "Docs fetched on resolve.";
     resolved.detail              = "int(int)";
-    resolved.additionalTextEdits = {WorkspaceTextEdit{.start   = LspPosition{.line = 0, .character = 0},
-                                                      .end     = LspPosition{.line = 0, .character = 0},
+    resolved.additionalTextEdits = {WorkspaceTextEdit{.start   = Position{.line = 0, .character = 0},
+                                                      .end     = Position{.line = 0, .character = 0},
                                                       .newText = "#include <foo>\n"}};
     session.ApplyResolution(0, resolved);
 
@@ -310,8 +310,8 @@ TEST_CASE("ApplyResolution ignores an out-of-range index", "[CompletionSession]"
 TEST_CASE("PlanAccept carries the selected item's additionalTextEdits", "[CompletionSession]") {
     Buffer         buffer    = MakeBuffer("vec");
     CompletionItem item      = Item("vector", "std::vector");
-    item.additionalTextEdits = {WorkspaceTextEdit{.start   = LspPosition{.line = 0, .character = 0},
-                                                  .end     = LspPosition{.line = 0, .character = 0},
+    item.additionalTextEdits = {WorkspaceTextEdit{.start   = Position{.line = 0, .character = 0},
+                                                  .end     = Position{.line = 0, .character = 0},
                                                   .newText = "#include <vector>\n"}};
 
     CompletionSession session({item}, false, buffer.Content(), 3, 0);

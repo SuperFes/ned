@@ -21,9 +21,9 @@
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Acp/AcpPanelConfig.h"
 #include "Editor/Acp/Transport.h"
-#include "Editor/Lsp/LspClient.h"
-#include "Editor/Lsp/LspManager.h"
-#include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Lsp/Client.h"
+#include "Editor/Lsp/Manager.h"
+#include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/ProjectRoot.h"
 #include "TestEvents.h"
@@ -39,7 +39,7 @@ using ned::editor::acp::AcpManager;
 using ned::editor::acp::Json;
 using ned::editor::acp::Transport;
 using ned::editor::lsp::kProseLanguageKey;
-using ned::editor::lsp::LspManager;
+using ned::editor::lsp::Manager;
 using ned::ui::AcpPanel;
 using ned::ui::Box;
 using ned::ui::Canvas;
@@ -85,7 +85,7 @@ struct Fixture {
     ned::ui::EventLoop    eventLoop;
     ned::text::BufferList bufferList;
     AcpManager            manager{bufferList, eventLoop};
-    LspManager            lspManager{bufferList, eventLoop};
+    Manager            lspManager{bufferList, eventLoop};
     Theme                 theme = ned::ui::DarkTheme();
     AcpPanel              panel{theme};
     Screen                screen{kWidth, kHeight};
@@ -158,7 +158,7 @@ struct ProjectRootGuard {
     }
 };
 
-// Prose-check-the-composer follow-up. LspManagerTest.cpp's own WaitUntil,
+// Prose-check-the-composer follow-up. ManagerTest.cpp's own WaitUntil,
 // duplicated per this file's stated per-test-file fixture convention (see
 // MessageReader's own comment above) -- polls eventLoop's posted-work queue
 // until predicate is true, since CheckComposerProseText's debounce timer
@@ -172,7 +172,7 @@ void WaitUntil(ned::ui::EventLoop& eventLoop, Predicate predicate) {
     }
 }
 
-// LspManagerTest.cpp's own ReadRawFrame, duplicated here (same rationale).
+// ManagerTest.cpp's own ReadRawFrame, duplicated here (same rationale).
 std::string ReadRawFrame(int fd) {
     std::string all;
     char        buffer[512];
@@ -634,16 +634,16 @@ TEST_CASE("AcpPanel's composer grows past one row once typed text wraps, and kee
 // composer").
 TEST_CASE("AcpPanel underlines a prose diagnostic in the composer once the checker responds", "[AcpPanel]") {
     Fixture   fixture;
-    const int originalDebounceMs = ned::editor::lsp::LspDiagnosticsDebounceMs();
+    const int originalDebounceMs = ned::editor::lsp::DiagnosticsDebounceMs();
     ned::editor::lsp::SetLspDiagnosticsDebounceMs(50);
 
     int clientWritesHere[2];
     int clientReadsHere[2];
     REQUIRE(::pipe(clientWritesHere) == 0);
     REQUIRE(::pipe(clientReadsHere) == 0);
-    auto proseClientPtr = std::make_unique<ned::editor::lsp::LspClient>(
+    auto proseClientPtr = std::make_unique<ned::editor::lsp::Client>(
         ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), fixture.eventLoop);
-    ned::editor::lsp::LspClient& proseClient =
+    ned::editor::lsp::Client& proseClient =
         fixture.lspManager.SetClientForTesting(std::string(kProseLanguageKey), std::move(proseClientPtr));
 
     // "typo hear" -- byte offsets [5, 9) cover "hear".
@@ -673,7 +673,7 @@ TEST_CASE("AcpPanel underlines a prose diagnostic in the composer once the check
     proseClient.DispatchFrame(publish.dump());
 
     // The composer's own diagnostics member is only updated by the callback
-    // LspManager invokes -- repaint in the wait loop so a caught-up Paint()
+    // Manager invokes -- repaint in the wait loop so a caught-up Paint()
     // is what the predicate actually observes.
     WaitUntil(fixture.eventLoop, [&] {
         fixture.Paint();

@@ -3,7 +3,7 @@
 // (arbitrary, user-chosen, e.g. "claude-code") at the command+arguments to
 // launch it -- an ACP agent isn't tied to a buffer's language the way an LSP
 // server is, so this is keyed like Tasks/TaskConfig.h's task-name table, not
-// Lsp/LspServerConfig.h's per-language one.
+// Lsp/ServerConfig.h's per-language one.
 //
 // Mutex-guarded static state, same "you install/configure the tool, we shell
 // out to it" trust boundary and "re-registering overwrites, empty argv

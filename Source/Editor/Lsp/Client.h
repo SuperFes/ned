@@ -17,18 +17,18 @@
 // maps) and hands the *result* across via Post, never touching them itself.
 //
 // Lifetime (lsp-use-after-free follow-up, corrected 2026-08-26): the
-// paragraph this replaced claimed LspClient is only ever destroyed after
-// EventLoop::Run() has returned. That is false for LspManager's own
+// paragraph this replaced claimed Client is only ever destroyed after
+// EventLoop::Run() has returned. That is false for Manager's own
 // mid-session respawn path -- confirmed live via ASan (heap-use-after-free,
-// LspClient.cpp's own StartReadLoop lambda, one background thread's already-
+// Client.cpp's own StartReadLoop lambda, one background thread's already-
 // Post()ed callback still pending when a *different* Post()ed callback --
-// LspManager::ExpireStaleRequests's periodic retired_.clear() -- freed this
+// Manager::ExpireStaleRequests's periodic retired_.clear() -- freed this
 // same object first). Two independent background threads (or a background
 // thread and a periodic timer) Post() against EventLoop with no ordering
 // guarantee between them, so "wait one more tick before freeing" is not
 // actually safe. alive_ is what makes this safe regardless of timing: a
 // std::shared_ptr<bool>, flipped to false as literally the first statement
-// in ~LspClient(), captured *by value* (a second owning reference, so its
+// in ~Client(), captured *by value* (a second owning reference, so its
 // storage itself never dangles) alongside `this` in every eventLoop_.Post
 // lambda below. Each posted lambda checks `*alive` before touching `this`
 // at all -- false means the object is gone or going, and the lambda safely
@@ -61,7 +61,7 @@
 // ProtocolWriteStallTimeoutMs()) whenever a server's stdin pipe backs up. Two
 // real, gdb-confirmed live freezes traced to exactly this (a rapid-typing
 // didChange flood, and a periodic background-sync didOpen stall against a
-// slow server) -- see LspManager's own sync-debounce/background-sync
+// slow server) -- see Manager's own sync-debounce/background-sync
 // comments. Writes now go through EnqueueWrite -> writeQueue_, drained by a
 // dedicated writeThread_, so a stalled write only ever blocks that thread.
 // writeThread_ needs the *opposite* member-order relationship transport_ has
@@ -75,8 +75,8 @@
 // opposite for opposite reasons.
 //
 
-#ifndef NED_EDITOR_LSP_LSPCLIENT_H
-#define NED_EDITOR_LSP_LSPCLIENT_H
+#ifndef NED_EDITOR_LSP_CLIENT_H
+#define NED_EDITOR_LSP_CLIENT_H
 
 #include <atomic>
 #include <chrono>
@@ -104,8 +104,8 @@ using Json = nlohmann::json;
 
 // background-activity-spinner follow-up. The BackgroundActivity registry
 // name every LSP subsystem reports under -- one aggregate spinner, not
-// per-language entries. Shared between LspClient's own request tracking and
-// LspManager's $/progress handling, which is why it lives here (LspManager.h
+// per-language entries. Shared between Client's own request tracking and
+// Manager's $/progress handling, which is why it lives here (Manager.h
 // already includes this header, not the other way around).
 inline constexpr std::string_view kLspActivityName = "LSP";
 
@@ -117,7 +117,7 @@ inline constexpr std::string_view kLspActivityName = "LSP";
 // it. Generous on purpose: a slow rename/format-on-save on a huge file
 // should never hit this; it exists only to eventually resolve a request that
 // will truly never answer. ExpireStaleRequests takes this as a parameter
-// (not baked in) so LspManager's real sweep and this file's own tests can
+// (not baked in) so Manager's real sweep and this file's own tests can
 // use different values; real callers take ProcessTimeouts.h's
 // ProtocolRequestTimeoutMs() as their default below
 // (ChildProcess-hang-protection-round-2 follow-up: Janet-configurable,
@@ -134,21 +134,21 @@ using NotificationHandler = std::function<void(const Json& params)>;
 // prompt, and its result is simply null).
 using RequestHandler = std::function<Json(const Json& params)>;
 
-class LspClient {
+class Client {
   public:
     // Spawns argv as a new language server process. screen must outlive this
-    // LspClient (see this file's own header comment on lifetime).
+    // Client (see this file's own header comment on lifetime).
     //
     // handshake-ordering follow-up: this is the constructor real production
-    // spawns (LspManager::ClientForLanguage) always use, so it's the one
+    // spawns (Manager::ClientForLanguage) always use, so it's the one
     // that starts the SendRequest/SendNotification queue-until-initialized
     // gate closed -- see those methods' own doc comments.
-    LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop);
+    Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop);
 
     // Takes ownership of an already-open Transport directly -- for tests
     // driving a raw pipe pair with no real subprocess involved. The
     // handshake-ordering gate (see SendRequest/SendNotification) starts
-    // *open* by default -- a test-injected client (LspManager::
+    // *open* by default -- a test-injected client (Manager::
     // SetClientForTesting) never goes through a real initialize/initialized
     // exchange at all, by design, so gating it the same way production
     // clients are would silently queue and drop every existing test's
@@ -157,7 +157,7 @@ class LspClient {
     // SetClientForTesting/DispatchFrame's own precedent) for a test that
     // specifically wants to exercise the gating/queuing behavior itself
     // against a raw pipe pair, with no real subprocess.
-    LspClient(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete = true);
+    Client(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete = true);
 
     // Member destruction order does the real teardown work -- see header
     // comment. The body only balances the BackgroundActivity registry for
@@ -165,16 +165,16 @@ class LspClient {
     // documented as dropped uninvoked, so nothing else would ever End the
     // Begin each SendRequest recorded -- a server that died mid-request
     // would otherwise leave the mode-line spinner running forever.
-    ~LspClient();
+    ~Client();
 
-    LspClient(const LspClient&)            = delete;
-    LspClient& operator=(const LspClient&) = delete;
+    Client(const Client&)            = delete;
+    Client& operator=(const Client&) = delete;
     // Not movable: the background thread's lambda captures `this` directly.
-    LspClient(LspClient&&)            = delete;
-    LspClient& operator=(LspClient&&) = delete;
+    Client(Client&&)            = delete;
+    Client& operator=(Client&&) = delete;
 
     // Sends a JSON-RPC request with a freshly allocated id. callback runs on
-    // the main thread once the matching response arrives; if this LspClient
+    // the main thread once the matching response arrives; if this Client
     // is destroyed first, callback is simply dropped, uninvoked (matches
     // this class's own "abandoned at shutdown" convention -- see header
     // comment).
@@ -184,7 +184,7 @@ class LspClient {
     // before "initialized" has actually gone out over the wire is queued
     // and replayed, in order, right after it does -- not written
     // immediately. Per spec the client must not send anything but the
-    // initialize request itself before initialized; LspManager::
+    // initialize request itself before initialized; Manager::
     // ClientForLanguage fires initialize and returns the client
     // synchronously (the response only arrives on a later event-loop
     // iteration via Post), and every caller downstream (SyncBuffer's
@@ -246,19 +246,19 @@ class LspClient {
     // would use, so no existing caller needs new handling) and pairing
     // EndBackgroundActivity the same way DispatchFrame's own response path
     // already does. Public (not driven internally by a timer -- this class
-    // has no timer of its own) so LspManager's sweep, wired into
+    // has no timer of its own) so Manager's sweep, wired into
     // WindowManager's existing background tick, can call it, and so tests
     // can pass a much shorter maxAge than the real default.
     void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
     // async-write-queue follow-up: marks this client for graceful shutdown --
     // guarantees any currently-queued or subsequently-enqueued frame (in
-    // practice, LspManager::Shutdown()'s courtesy "shutdown" request + "exit"
+    // practice, Manager::Shutdown()'s courtesy "shutdown" request + "exit"
     // notification) is actually attempted by writeThread_ before it stops,
     // instead of the destructor's ordinary best-effort/no-drain policy (see
     // header comment). Call this immediately before those two calls. Not
     // meant for any other caller -- ordinary mid-session teardown
-    // (LspManager::ClientDisconnected) must NOT call this, since draining a
+    // (Manager::ClientDisconnected) must NOT call this, since draining a
     // queue against a connection that's already dying/dead is exactly the
     // main-thread stall this whole mechanism exists to avoid, and there's
     // nothing worth delivering to a dead connection anyway.
@@ -300,10 +300,10 @@ class LspClient {
     // never wakes on request_stop() alone -- only notify_one()/notify_all() wakes
     // it, and request_stop() calls neither. condition_variable_any's stop_token-aware
     // wait(lock, stopToken, predicate) overload registers its own internal
-    // stop_callback that does the notifying -- without this, ~LspClient()'s implicit
+    // stop_callback that does the notifying -- without this, ~Client()'s implicit
     // join() on writeThread_ hangs forever whenever the writer is idly waiting on an
     // empty queue at destruction time (confirmed live: nearly every existing
-    // LspClientTest.cpp test hung on this before the fix).
+    // ClientTest.cpp test hung on this before the fix).
     std::condition_variable_any writeCv_;
     std::deque<std::string>     writeQueue_;
     std::atomic<bool>           drainQueueOnStop_ = false; // see PrepareForGracefulShutdown
@@ -331,4 +331,4 @@ class LspClient {
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPCLIENT_H
+#endif // NED_EDITOR_LSP_CLIENT_H

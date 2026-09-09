@@ -5,7 +5,7 @@
 // initializers have already run).
 //
 // Necessary because ProseChecker.h auto-wires harper-ls when it's found on
-// $PATH -- and several existing test files (LspManagerTest.cpp,
+// $PATH -- and several existing test files (ManagerTest.cpp,
 // BufferViewTest.cpp, ModeLineTest.cpp) construct real LspManagers and call
 // SyncBuffer, which now also attempts to sync the prose-checker connection
 // independently of whatever they're actually testing. Without this guard,
@@ -17,7 +17,7 @@
 //
 // Test cases that specifically want to exercise prose-checker behavior
 // (Tests/ProseCheckerTest.cpp, the prose-specific cases in
-// LspManagerTest.cpp) re-enable it locally and restore this disabled
+// ManagerTest.cpp) re-enable it locally and restore this disabled
 // steady state before returning -- see RestoreProseCheckingDisabled in
 // ProseCheckerTest.cpp.
 

@@ -6,7 +6,7 @@
 // comment for the overall contract (a placeholder Buffer is created
 // synchronously and handed here to fill in over time).
 //
-// Threading model mirrors LspClient (Source/Editor/Lsp/LspClient.h) and
+// Threading model mirrors Client (Source/Editor/Lsp/Client.h) and
 // WindowManager::StartAutoSaveTimer exactly: one background std::jthread
 // does the actual file I/O and Rope building, and only ever touches shared
 // editor state (the target Buffer, by way of BufferList) via
@@ -38,7 +38,7 @@ class AsyncFileLoader {
     // OpenFile does this before calling the async-opener hook) and must
     // already be IsLoading(). bufferList and eventLoop must outlive this
     // loader -- both are process-lifetime objects owned by main.cpp, same
-    // assumption LspManager/LspClient already make about EventLoop.
+    // assumption Manager/Client already make about EventLoop.
     AsyncFileLoader(text::Buffer& placeholder, text::BufferList& bufferList, std::filesystem::path path, EventLoop& eventLoop);
     ~AsyncFileLoader();
 
@@ -70,7 +70,7 @@ class AsyncFileLoader {
 
     // Declared last so it's destroyed (and therefore stop_requested()+
     // joined) first, per the usual reverse-declaration-order rule -- unlike
-    // LspClient, nothing here needs the stronger "declared before an owned
+    // Client, nothing here needs the stronger "declared before an owned
     // resource whose destructor unblocks a stuck read" trick: this thread's
     // only blocking call is a plain regular-file read, which returns on its
     // own between chunks rather than needing to be interrupted, and the

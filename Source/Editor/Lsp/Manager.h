@@ -1,7 +1,7 @@
 //
 // LSP client follow-up. Owns every running language-server connection
-// (LspClient), keyed by language name -- one server process per language, per
-// resolved root (LSP multi-root follow-up: LspRootResolver.h's
+// (Client), keyed by language name -- one server process per language, per
+// resolved root (LSP multi-root follow-up: RootResolver.h's
 // ResolveLspRoot picks a buffer's own root, which may be more specific than
 // editor::ProjectRoot() when the buffer's language has configured root
 // markers -- e.g. the nearest package.json for a "javascript" buffer inside
@@ -30,13 +30,13 @@
 // same place Buffer::ContentGeneration() is already polled for the
 // highlight cache (see SyncBuffer's own doc comment). LSP-deliberate-cuts
 // follow-up: every *other* open buffer is now also synced, on a periodic
-// background tick instead of per-frame -- see LspBackgroundSync.h's
+// background tick instead of per-frame -- see BackgroundSync.h's
 // SyncBackgroundBuffers, wired from WindowManager's existing auto-save
 // timer. Both paths funnel through this same SyncBuffer method.
 //
 
-#ifndef NED_EDITOR_LSP_LSPMANAGER_H
-#define NED_EDITOR_LSP_LSPMANAGER_H
+#ifndef NED_EDITOR_LSP_MANAGER_H
+#define NED_EDITOR_LSP_MANAGER_H
 
 #include <chrono>
 #include <filesystem>
@@ -56,8 +56,8 @@
 #include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
-#include "LspClient.h"
-#include "LspContent.h"
+#include "Client.h"
+#include "Content.h"
 // prose-checking follow-up: diagnosticsBySource_ stores
 // std::vector<text::Buffer::Diagnostic> directly, which needs Buffer's full
 // definition to name that nested type -- a forward declaration is no longer
@@ -72,7 +72,7 @@ class BufferList;
 namespace ned::editor::lsp {
 
 // error-visibility follow-up. Name of the read-only, live-appended buffer
-// every LogError call streams into -- shared between LspManager::LogError
+// every LogError call streams into -- shared between Manager::LogError
 // (which finds-or-creates it) and BufferView's lsp-show-log command
 // (Commands.cpp/BufferView.cpp), which must resolve to the exact same
 // buffer rather than duplicating the literal.
@@ -111,21 +111,21 @@ inline constexpr std::string_view kProseLanguageKey = "prose";
 [[nodiscard]] Json BuildInitializeParams(const std::filesystem::path& projectRoot,
                                          const Json&                  initializationOptions = Json::object());
 
-class LspManager {
+class Manager {
   public:
     // bufferList (for resolving a publishDiagnostics notification's URI back
     // to an open Buffer, via BufferList::FindByPath) and screen must both
-    // outlive this LspManager. See LspClient.h's own header comment for why
+    // outlive this Manager. See Client.h's own header comment for why
     // that's the same requirement its background-thread-marshaling already
     // has.
-    LspManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop);
-    ~LspManager() = default;
+    Manager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop);
+    ~Manager() = default;
 
-    LspManager(const LspManager&)            = delete;
-    LspManager& operator=(const LspManager&) = delete;
+    Manager(const Manager&)            = delete;
+    Manager& operator=(const Manager&) = delete;
 
     // Lazily spawns (+ initialize/initialized-handshakes) a server for
-    // language if LspServerCommand(language) is configured and none is
+    // language if ServerCommand(language) is configured and none is
     // running yet; a no-op if nothing is configured for language, or if
     // buffer has no associated path (a scratch buffer has no URI to tell a
     // server about). Sends textDocument/didOpen the first time a given
@@ -135,7 +135,7 @@ class LspManager {
     // changed since I last looked."
     //
     // LSP multi-root follow-up: resolves (and caches -- see
-    // ResolveCachedRoot) buffer's own LSP root via LspRootResolver.h's
+    // ResolveCachedRoot) buffer's own LSP root via RootResolver.h's
     // ResolveLspRoot(*buffer.Path(), language), then uses that same resolved
     // root for both this sync and the prose-checker sync below, and (if
     // SyncEmbeddedDocuments is called for this buffer afterward) every
@@ -151,7 +151,7 @@ class LspManager {
     //
     // Called per-frame for the pane-active buffer (BufferView::Paint()) and,
     // separately, per-tick for every other open buffer
-    // (LspBackgroundSync.h's SyncBackgroundBuffers) -- either caller passes
+    // (BackgroundSync.h's SyncBackgroundBuffers) -- either caller passes
     // whatever language it already resolved, this method has no opinion
     // about how that resolution happened. The per-buffer ContentGeneration()
     // gate in SyncToServer is what makes calling this twice for the same
@@ -179,7 +179,7 @@ class LspManager {
     // HandlePublishDiagnostics' own early special case for that exact path)
     // -- so this carries none of a real registered Buffer's footprint
     // (switch-to-buffer, session persistence). Debounced
-    // (LspDiagnosticsDebounceMs()) at the call site itself, unlike
+    // (DiagnosticsDebounceMs()) at the call site itself, unlike
     // SyncBuffer/SyncToServer's own per-frame-call, always-immediate-didOpen
     // shape -- there's no Paint()-per-frame cadence driving this call the way
     // BufferView's does, so without debouncing here every keystroke would
@@ -196,7 +196,7 @@ class LspManager {
     // embedded-language-documents follow-up. One embedded language's
     // synthesized virtual document, ready to sync -- Editor/EmbeddedDocuments.h's
     // EmbeddedDocument, translated at the one BufferView.cpp call site into
-    // this small, Mode-agnostic struct so LspManager keeps its existing
+    // this small, Mode-agnostic struct so Manager keeps its existing
     // "plain language-key strings only" character rather than gaining a
     // dependency on Mode.h/tree-sitter. documentText is what actually gets
     // sent as didOpen/didChange's own "text" -- see EmbeddedDocument's own
@@ -243,7 +243,7 @@ class LspManager {
     // subprocess-hang-protection follow-up. Sweeps every running client's
     // own ExpireStaleRequests -- meant to be wired into a periodic
     // background tick (WindowManager::StartAutoSaveTimer), not called
-    // per-frame. See LspClient::ExpireStaleRequests's own doc comment for
+    // per-frame. See Client::ExpireStaleRequests's own doc comment for
     // what "stale" means and why. maxAge is forwarded as-is, defaulted the
     // same way, purely so tests can shorten it.
     void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
@@ -253,10 +253,10 @@ class LspManager {
     // than taking a language param -- a buffer with no sync state yet, or
     // no running client, resolves to "no results" immediately rather than
     // spawning a server just to answer one request. callback always runs on
-    // the main thread (see LspClient.h's own threading note) and is simply
-    // never invoked if this LspManager -- or the LspClient it was routed
+    // the main thread (see Client.h's own threading note) and is simply
+    // never invoked if this Manager -- or the Client it was routed
     // through -- is destroyed with the request still in flight, matching
-    // LspClient::SendRequest's own documented "abandoned at shutdown"
+    // Client::SendRequest's own documented "abandoned at shutdown"
     // convention.
     //
     // embedded-language-documents follow-up: serverKey routes to a specific
@@ -269,9 +269,9 @@ class LspManager {
     using HoverCallback = std::function<void(std::optional<std::string> text)>;
     void RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey = {});
 
-    // CompletionItem itself lives in LspContent.h, not nested here, so its
+    // CompletionItem itself lives in Content.h, not nested here, so its
     // parsing (ExtractCompletionItems) can be unit-tested directly against
-    // crafted JSON without needing an LspManager/live client at all.
+    // crafted JSON without needing an Manager/live client at all.
     // serverKey: see RequestHover's own doc comment above.
     // completion-fidelity follow-up: hands over the whole CompletionList,
     // not just its items -- isIncomplete decides whether the caller may
@@ -332,7 +332,7 @@ class LspManager {
     // action.raw verbatim (the LSP spec requires round-tripping the exact
     // original item back, including any opaque "data" it carried) --
     // called only when action.resolvable is true (see CodeAction's own doc
-    // comment in LspContent.h). callback receives the resolved CodeAction
+    // comment in Content.h). callback receives the resolved CodeAction
     // (hasEdit true if the server actually filled it in) or nullopt on any
     // failure (buffer never synced, no running client, or an error
     // response). serverKey: see RequestCodeActions's own doc comment above.
@@ -357,9 +357,9 @@ class LspManager {
     void ExecuteCommand(text::Buffer& buffer, const std::string& serverKey, const std::string& command, Json arguments,
                         ExecuteCommandCallback callback);
 
-    // go-to-definition follow-up. A DefinitionLocation (LspContent.h) with
+    // go-to-definition follow-up. A DefinitionLocation (Content.h) with
     // its uri already resolved to a real filesystem path -- BufferView has
-    // no reason to know about URIs at all, the same "LspManager owns the
+    // no reason to know about URIs at all, the same "Manager owns the
     // uri<->path boundary" split HandlePublishDiagnostics already
     // established for diagnostics. A location whose uri doesn't parse as a
     // file:// URI (UriToPath returning nullopt) is silently dropped rather
@@ -367,7 +367,7 @@ class LspManager {
     // ExtractDefinitionLocations' own "skip a malformed entry" convention.
     struct ResolvedLocation {
         std::filesystem::path path;
-        LspPosition           position;
+        Position           position;
     };
     using DefinitionCallback = std::function<void(std::vector<ResolvedLocation> locations)>;
     // Sent for lsp-goto-definition. Same "resolve purely from bufferState_"
@@ -382,7 +382,7 @@ class LspManager {
     // exact same Location | Location[] | LocationLink[] response shape as
     // /definition, which is why DefinitionLocation/ExtractDefinitionLocations
     // were already written to be reused here (see DefinitionLocation's own
-    // doc comment in LspContent.h). All three share RequestDefinition's
+    // doc comment in Content.h). All three share RequestDefinition's
     // private SendLocationRequest body.
     void RequestDeclaration(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback, const std::string& serverKey = {});
     void RequestTypeDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
@@ -402,7 +402,7 @@ class LspManager {
 
     // signature-help follow-up. Same "resolve purely from bufferState_"
     // shape as RequestHover, and the exact same callback shape too --
-    // ExtractSignatureHelp (LspContent.h) already reduces the response to
+    // ExtractSignatureHelp (Content.h) already reduces the response to
     // one status-line-ready string, the same "already the caller's whole
     // answer" contract ExtractHoverText follows. serverKey: see
     // RequestHover's own doc comment above.
@@ -448,7 +448,7 @@ class LspManager {
 
     // rename follow-up. One URI's worth of edits, uri already resolved to a
     // real filesystem path -- mirrors ResolvedLocation's own reasoning
-    // above. A RenameEdit (LspContent.h) whose uri doesn't resolve is
+    // above. A RenameEdit (Content.h) whose uri doesn't resolve is
     // dropped from the result entirely (not just that one entry silently
     // missing edits) -- ApplyRename (BufferView.cpp) needs every touched
     // file to be genuinely applicable before it applies any of them (see
@@ -461,7 +461,7 @@ class LspManager {
         std::vector<WorkspaceTextEdit> edits;
     };
 
-    // edit-application-gaps follow-up. DocumentChangeOp (LspContent.h) with
+    // edit-application-gaps follow-up. DocumentChangeOp (Content.h) with
     // its uri/oldUri resolved to real filesystem paths -- the same "resolve
     // once, refuse wholesale on any failure" contract ResolvedRenameEdit
     // already establishes. path is the EditFile/CreateFile/DeleteFile target,
@@ -480,12 +480,12 @@ class LspManager {
     struct ResolvedRename {
         std::vector<ResolvedRenameEdit>       edits;                          // "changes" form; empty when documentChangeOps below is populated instead
         std::vector<ResolvedDocumentChangeOp> documentChangeOps;              // "documentChanges" form, in order
-        bool                                  touchesUnsupportedForm = false; // see RenameResult's own doc comment in LspContent.h
+        bool                                  touchesUnsupportedForm = false; // see RenameResult's own doc comment in Content.h
         bool                                  hasEdit                = false;
     };
     using RenameCallback = std::function<void(std::optional<ResolvedRename> result)>;
 
-    // project-undo follow-up: resolves a CodeAction's own edits (LspContent.h's
+    // project-undo follow-up: resolves a CodeAction's own edits (Content.h's
     // CodeAction::edits, one RenameEdit per touched URI) to real filesystem
     // paths -- the same URI resolution just above does for ResolvedRename,
     // exposed here as a pure, synchronous, no-I/O conversion since (unlike a
@@ -537,7 +537,7 @@ class LspManager {
     // WorkspaceEdit at the client unprompted (e.g. in response to a
     // workspace/executeCommand the client itself just sent), which per spec
     // the client must answer with {applied: bool}. Parsing/resolving the
-    // pushed edit stays here (LspClient::RequestHandler is synchronous-only,
+    // pushed edit stays here (Client::RequestHandler is synchronous-only,
     // and the parse/resolve step already is), but actually applying it needs
     // real buffer mutation plus project-undo bookkeeping that only
     // Source/UI/'s BufferView owns -- applyEditHandler, set via
@@ -618,9 +618,9 @@ class LspManager {
     void RequestOnTypeFormatting(text::Buffer& buffer, std::size_t byteOffset, const std::string& ch, FormattingCallback callback,
                                  const std::string& serverKey = {});
 
-    // symbol-search follow-up. A SymbolEntry (LspContent.h) with its own uri
+    // symbol-search follow-up. A SymbolEntry (Content.h) with its own uri
     // already resolved to a real filesystem path -- mirrors ResolvedLocation's
-    // own reasoning (LspManager owns the uri<->path boundary, callers never
+    // own reasoning (Manager owns the uri<->path boundary, callers never
     // see a raw uri). A result whose uri doesn't resolve is dropped, not
     // kept with a nonsense path -- matches ResolvedLocation's own "skip a
     // malformed entry" convention rather than SendLocationRequest's stricter
@@ -632,7 +632,7 @@ class LspManager {
         std::string           containerName;
         int                   kind = 0;
         std::filesystem::path path;
-        LspPosition           position;
+        Position           position;
     };
     using SymbolCallback = std::function<void(std::vector<SymbolResult> symbols)>;
 
@@ -653,9 +653,9 @@ class LspManager {
     void RequestWorkspaceSymbols(text::Buffer& buffer, const std::string& query, SymbolCallback callback,
                                  const std::string& serverKey = {});
 
-    // call/type-hierarchy follow-up. A HierarchyItem (LspContent.h) with its
+    // call/type-hierarchy follow-up. A HierarchyItem (Content.h) with its
     // own uri resolved to a real filesystem path -- SymbolResult's own
-    // "LspManager owns the uri<->path boundary" reasoning applies verbatim.
+    // "Manager owns the uri<->path boundary" reasoning applies verbatim.
     // item.raw is kept as-is (untouched by path resolution) since it's what
     // a later incomingCalls/outgoingCalls/supertypes/subtypes request
     // replays back verbatim as its own "item" parameter -- the server-given
@@ -692,7 +692,7 @@ class LspManager {
 
     // call/type-hierarchy follow-up. One expand step of a call-hierarchy
     // tree session: item must be a ResolvedHierarchyItem this same
-    // LspManager already handed back (from RequestPrepareCallHierarchy or a
+    // Manager already handed back (from RequestPrepareCallHierarchy or a
     // prior RequestIncomingCalls/RequestOutgoingCalls call on the same
     // serverKey) -- its raw field is replayed verbatim as the request's own
     // "item" parameter, which is how a server correlates this call back to
@@ -716,7 +716,7 @@ class LspManager {
     // specific call site is a documented future refinement.
     struct ResolvedHierarchyCall {
         ResolvedHierarchyItem    item;
-        std::vector<LspPosition> callSites;
+        std::vector<Position> callSites;
     };
     using HierarchyCallsCallback = std::function<void(std::vector<ResolvedHierarchyCall> calls)>;
 
@@ -740,14 +740,14 @@ class LspManager {
                          const std::string& serverKey = {});
 
     // graceful-lsp-shutdown follow-up. Called once, synchronously, from
-    // main.cpp's post-Run() shutdown sequence, before this LspManager (and
-    // every LspClient it owns) is destroyed by ordinary local-variable
+    // main.cpp's post-Run() shutdown sequence, before this Manager (and
+    // every Client it owns) is destroyed by ordinary local-variable
     // teardown. For every *directly-spawned* running client (never a
     // broker-backed one -- see brokerBackedLanguages_'s own doc comment: a
     // broker-owned server is shared with other ned processes and the broker
     // daemon itself, and must outlive this one), sends a real LSP
     // "shutdown" request immediately followed by "exit", mirroring
-    // LspBroker::Shutdown()'s own TearDownEntry pattern exactly --
+    // Broker::Shutdown()'s own TearDownEntry pattern exactly --
     // including that v1 deliberately does not wait for the shutdown
     // response before also sending exit (see that method's own doc comment
     // for why: no live EventLoop::Run() is pumping Post-marshaled callbacks
@@ -756,20 +756,20 @@ class LspManager {
     // sending these two frames from ever hanging). The actual bounded wait
     // for the server to have genuinely exited comes from the same place it
     // always has: ChildProcess::~ChildProcess()'s close-stdin/poll/SIGKILL-
-    // escalation sequence, which fires the instant this LspManager's own
+    // escalation sequence, which fires the instant this Manager's own
     // clients_ map is destroyed right after this method returns -- this
     // method only adds the courtesy protocol goodbye in front of that
     // already-bounded, already-battle-tested teardown, it doesn't replace
     // or extend it.
     void Shutdown();
 
-    // Public primarily for tests -- mirrors LspClient::DispatchFrame's own
+    // Public primarily for tests -- mirrors Client::DispatchFrame's own
     // "public primarily for tests" precedent (see that method's doc comment
-    // in LspClient.h). Registers an already-constructed LspClient for
+    // in Client.h). Registers an already-constructed Client for
     // language directly, bypassing ClientForLanguage's normal subprocess-
     // spawn path, so a test can drive a fake server through the same
-    // Transport-based LspClient constructor (a raw pipe pair, no real
-    // subprocess) LspClientTest.cpp already uses, then call the returned
+    // Transport-based Client constructor (a raw pipe pair, no real
+    // subprocess) ClientTest.cpp already uses, then call the returned
     // reference's own DispatchFrame directly to deliver a canned response --
     // the same "no running ScreenInteractive::Loop() needed" reasoning
     // DispatchFrame's own doc comment explains. Production code
@@ -792,7 +792,7 @@ class LspManager {
     // to that same bare-language key whenever a buffer's resolved root is
     // editor::ProjectRoot() (see ConnectionKey), which is what every
     // existing SyncBuffer-driven test still resolves to.
-    LspClient& SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
+    Client& SetClientForTesting(std::string language, std::unique_ptr<Client> client,
                                    const Json& workspaceConfiguration = Json::object(), bool brokerBacked = false,
                                    std::optional<std::string> connectionKeyOverride = std::nullopt);
 
@@ -800,7 +800,7 @@ class LspManager {
     // real spawn/initialize/initialized handshake entirely, so a test
     // driving it never populates onTypeFormattingTriggers_/
     // semanticTokensLegend_ the way a real handshake does (see the
-    // `initialize` response lambda in LspManager.cpp) -- this is the same
+    // `initialize` response lambda in Manager.cpp) -- this is the same
     // "test-only, production code never calls this" injection point for
     // that one piece of state, mirroring SetClientForTesting's own
     // rationale exactly.
@@ -855,16 +855,16 @@ class LspManager {
         workspaceFoldersSupport_[std::move(connectionKey)] = support;
     }
 
-    // LspManagerTest-broker-hermeticity follow-up: routes ClientForLanguage's
+    // ManagerTest-broker-hermeticity follow-up: routes ClientForLanguage's
     // real spawn path's TryConnectToBroker call at a caller-chosen path
     // instead of the real BrokerSocketPath() -- lets a test that wants a
     // deterministic, synchronous spawn failure point at a path nothing is
     // (or ever will be) listening on, immune to a real broker daemon a
     // previous test run or another `ned` process happened to leave running
     // on this machine's real BrokerSocketPath(). Passing a nonexistent path
-    // also skips TryBecomeBrokerSpawner (see LspBrokerConnect.cpp), so this
+    // also skips TryBecomeBrokerSpawner (see BrokerConnect.cpp), so this
     // never forks a real daemon process either. Production code
-    // (LspManager's own constructor) never calls this.
+    // (Manager's own constructor) never calls this.
     void SetBrokerSocketPathOverrideForTesting(std::filesystem::path path) {
         brokerSocketPathOverrideForTesting_ = std::move(path);
     }
@@ -875,7 +875,7 @@ class LspManager {
     // message". Never throws. Every call site is already established to run
     // on the main thread (see this subsystem's own threading doc comments);
     // this method does not itself Post -- every real call site already runs
-    // from inside a Post-drained callback (LspClient's onDisconnected_/
+    // from inside a Post-drained callback (Client's onDisconnected_/
     // ResponseCallback, both only ever invoked that way), and
     // ned::ui::EventLoop::Run already repaints unconditionally once that
     // callback returns (see EventLoop.cpp's own needsRepaint comment), so
@@ -901,7 +901,7 @@ class LspManager {
     // reported separately via the shared BackgroundActivity "LSP" entry
     // (see kLspActivityName); ModeLine draws that on top of, and with
     // priority over, whatever this reports.
-    enum class LspStatus {
+    enum class Status {
         NotConfigured, // nothing registered for this language, or a client was never attempted
         Running,       // a client is currently spawned and connected
         SpawnFailed,   // the last spawn attempt for the currently-configured command failed
@@ -925,11 +925,11 @@ class LspManager {
     // when a specific buffer is in view. A bare server key still names the
     // editor::ProjectRoot()-scoped connection, which is the only one that
     // exists unless a buffer resolved a more specific root.
-    [[nodiscard]] LspStatus StatusForLanguage(const std::string& connectionKey) const;
+    [[nodiscard]] Status StatusForLanguage(const std::string& connectionKey) const;
 
     // mode-line-lsp-status-round-3 follow-up: the detail text behind a
     // SpawnFailed/Disconnected glyph -- the spawn exception's e.what() for
-    // the former, the disconnect reason LspClient::SetOnDisconnected
+    // the former, the disconnect reason Client::SetOnDisconnected
     // reported for the latter. "" when StatusForLanguage doesn't report the
     // matching state (nothing latched yet, or a later event already cleared
     // it) -- ModeLine is expected to call whichever one matches
@@ -942,7 +942,7 @@ class LspManager {
     // serverKey's own `initialize` response the moment it arrives (the one
     // place this class previously discarded that response entirely) --
     // nullopt if serverKey has never finished a handshake, or its server
-    // doesn't advertise the corresponding provider. See LspContent.h's
+    // doesn't advertise the corresponding provider. See Content.h's
     // ExtractSemanticTokensLegend/ExtractOnTypeFormattingTriggers for why
     // these two are stored as data a request needs to function, not as a
     // general capability-gating check (this class deliberately has none --
@@ -978,10 +978,10 @@ class LspManager {
     // Called once per Paint() for the active buffer (BufferView.cpp,
     // alongside the existing SyncBuffer call, not from inside
     // SyncBuffer/SyncToServer itself -- see this method's own definition
-    // comment for why keeping it out of LspManager's core sync path
+    // comment for why keeping it out of Manager's core sync path
     // matters, a real lesson learned fixing pull-diagnostics' own test
     // regression above). No-ops when semantic highlighting is disabled
-    // (LspSemanticHighlightingEnabled), when serverKey never advertised a
+    // (SemanticHighlightingEnabled), when serverKey never advertised a
     // legend (SemanticTokensLegendFor -- the response would be
     // undecodable), or when the exact same request would already be in
     // flight for the buffer's current content (a cursor-blink/scroll-only
@@ -1042,7 +1042,7 @@ class LspManager {
 
     // inlayHint follow-up. One applied hint, already resolved to a byte
     // offset -- label is the plain, already-flattened display text (see
-    // lsp::InlayHint's own doc comment in LspContent.h for how a
+    // lsp::InlayHint's own doc comment in Content.h for how a
     // richer InlayHintLabelPart[] response collapses to this).
     struct ResolvedInlayHint {
         std::size_t byteOffset;
@@ -1058,7 +1058,7 @@ class LspManager {
     // at once. No legend/data precondition to gate on (inlay hints aren't
     // index-encoded) -- this is a plain recurring background request, so
     // (matching RequestPullDiagnostics'/RequestSemanticTokens' own
-    // precedent) it no-ops when disabled (LspInlayHintsEnabled), when the
+    // precedent) it no-ops when disabled (InlayHintsEnabled), when the
     // exact same [buffer, viewport range, content generation] triple was
     // already requested (a cursor-blink/scroll-into-the-same-view repaint
     // must not resend), and latches a real error response into
@@ -1073,7 +1073,7 @@ class LspManager {
     [[nodiscard]] const std::vector<ResolvedInlayHint>& InlayHintSpans(const text::Buffer& buffer) const;
 
     // codeLens follow-up. One applied lens, already resolved to byte
-    // offsets -- see LspContent.h's CodeLens for what each field means;
+    // offsets -- see Content.h's CodeLens for what each field means;
     // raw is kept for a later codeLens/resolve if hasCommand is false.
     struct ResolvedCodeLens {
         std::size_t startByte;
@@ -1093,7 +1093,7 @@ class LspManager {
     // (codeLens ranges aren't index-encoded) -- a plain recurring
     // background request, so (matching RequestPullDiagnostics'/
     // RequestInlayHints' own precedent) it no-ops when disabled
-    // (LspCodeLensEnabled) and latches a real error response into
+    // (CodeLensEnabled) and latches a real error response into
     // codeLensUnsupported_ so a non-implementing server is never asked
     // again for this connection's lifetime.
     void RequestCodeLenses(text::Buffer& buffer, const std::string& serverKey);
@@ -1159,27 +1159,27 @@ class LspManager {
     // is running and none is configured -- never spawns one. Used by
     // NotifyBufferClosed, which has no reason to spawn a server just to
     // immediately tell it to close something.
-    [[nodiscard]] LspClient* ExistingClientForLanguage(const std::string& language) const;
+    [[nodiscard]] Client* ExistingClientForLanguage(const std::string& language) const;
 
     // Returns the running (lazily spawning one if needed) client for
     // serverKey against root, or nullptr if nothing is configured for it.
     // serverKey == kProseLanguageKey resolves its command via
-    // ProseCheckerCommand() instead of LspServerCommand(serverKey) -- the
+    // ProseCheckerCommand() instead of ServerCommand(serverKey) -- the
     // only place that distinction is made; everything else here treats it
     // like any other language key. LSP multi-root follow-up: root is what
     // actually gets sent as the "initialize" request's rootUri and threaded
     // into TryConnectToBroker's own (root, language) keying -- see
     // ConnectionKey for how it also (usually invisibly) affects clients_'s
     // own key.
-    LspClient* ClientForLanguage(const std::string& serverKey, const std::filesystem::path& root);
+    Client* ClientForLanguage(const std::string& serverKey, const std::filesystem::path& root);
 
     // LSP multi-root follow-up: clients_'s actual key for (root, serverKey)
     // -- collapses to serverKey unchanged when root equals
     // editor::ProjectRoot(), which is what keeps every pre-existing
-    // single-root behavior (including every LspManagerTest fixture, which
+    // single-root behavior (including every ManagerTest fixture, which
     // registers a test client under a bare serverKey string via
     // SetClientForTesting) byte-for-byte unchanged: only a buffer whose
-    // resolved root is genuinely more specific (LspRootResolver.h's marker
+    // resolved root is genuinely more specific (RootResolver.h's marker
     // tier actually matched) earns a distinct, composite connection
     // identity. '\x1f' separator mirrors activeProgress_'s own existing
     // composite-key convention below, not a new one.
@@ -1215,7 +1215,7 @@ class LspManager {
                                                                     const std::filesystem::path& root);
 
     // LSP multi-root follow-up: resolves and caches buffer's own LSP root
-    // (LspRootResolver.h's ResolveLspRoot), keyed by its containing
+    // (RootResolver.h's ResolveLspRoot), keyed by its containing
     // directory + language rather than by Buffer* -- so buffers sharing a
     // directory reuse one cached walk, and a buffer whose path changes (e.g.
     // save-as) naturally resolves fresh against the new directory's own
@@ -1376,7 +1376,7 @@ class LspManager {
     // pull-diagnostics follow-up. Called from SyncTextToServer right after
     // each real didOpen/didChange it sends -- no separate debounce timer,
     // since it rides that same cadence -- but only when
-    // LspServerConfig.h's LspPullDiagnosticsEnabled() is on (checked at
+    // ServerConfig.h's PullDiagnosticsEnabled() is on (checked at
     // that call site, not in here): unconditionally, this would mean one
     // extra request per content sync for every server, forever, which both
     // wastes round trips against a server that already pushes fine and
@@ -1434,11 +1434,11 @@ class LspManager {
     // deliberately-still-plain-keyed caches, see this class's own header
     // comment), connectionKey captures into the disconnect handler, which
     // must erase the exact same clients_ entry ClientForLanguage inserted.
-    void WireNotificationHandlers(LspClient& client, const std::string& serverKey, const std::string& connectionKey,
+    void WireNotificationHandlers(Client& client, const std::string& serverKey, const std::string& connectionKey,
                                   const Json& workspaceConfiguration = Json::object());
 
     // error-visibility follow-up. Called (on the main thread, via
-    // LspClient::SetOnDisconnected's own Post-marshaled callback) the
+    // Client::SetOnDisconnected's own Post-marshaled callback) the
     // moment a running server's connection ends for any reason. Erases the
     // client (a crash/disconnect is transient, unlike a permanently-missing
     // binary -- worth respawning on the next SyncBuffer, unlike
@@ -1462,7 +1462,7 @@ class LspManager {
     // comment above.
     ApplyEditHandler applyEditHandler_;
 
-    // LspManagerTest-broker-hermeticity follow-up: test-only override for
+    // ManagerTest-broker-hermeticity follow-up: test-only override for
     // the broker socket path ClientForLanguage's TryConnectToBroker call
     // resolves against -- nullopt (the real default) resolves the real
     // BrokerSocketPath(). Without this, a test asserting a spawn failure
@@ -1471,7 +1471,7 @@ class LspManager {
     // -- see SetBrokerSocketPathOverrideForTesting's own doc comment.
     std::optional<std::filesystem::path> brokerSocketPathOverrideForTesting_;
 
-    std::unordered_map<std::string, std::unique_ptr<LspClient>> clients_; // keyed by ConnectionKey (see its own doc comment)
+    std::unordered_map<std::string, std::unique_ptr<Client>> clients_; // keyed by ConnectionKey (see its own doc comment)
 
     // lsp-workspace-folders follow-up. The three maps behind "one server
     // process, several roots" -- all keyed by connection, all erased
@@ -1518,7 +1518,7 @@ class LspManager {
 
     // graceful-lsp-shutdown follow-up: languages whose current clients_
     // entry is a connection to an already-running LSP broker daemon rather
-    // than a subprocess this LspManager spawned itself -- Shutdown() must
+    // than a subprocess this Manager spawned itself -- Shutdown() must
     // never send "shutdown"/"exit" to one of these, since the broker (and
     // whichever other ned processes are also attached to it) still needs
     // that server running after this process exits. Stamped in
@@ -1578,7 +1578,7 @@ class LspManager {
     // pending publish -- HandlePublishDiagnostics (re)arms the buffer's
     // entry on every publish instead of pushing to buffer.SetDiagnostics
     // immediately, so a burst of publishes from rapid typing collapses into
-    // a single application once LspDiagnosticsDebounceMs() passes with no
+    // a single application once DiagnosticsDebounceMs() passes with no
     // further publish for that buffer. NotifyBufferClosed erases (and so
     // cancels) a buffer's entry before it can fire against a Buffer* that
     // may no longer be valid.
@@ -1586,7 +1586,7 @@ class LspManager {
 
     // prose-check-composer follow-up: CheckComposerProseText's own state --
     // composerProseBuffer_ is lazily constructed on first use and lives for
-    // this LspManager's whole lifetime (never added to bufferList_, never
+    // this Manager's whole lifetime (never added to bufferList_, never
     // closed the way NotifyBufferClosed closes a real buffer);
     // composerProseCallback_ is always the *latest* caller's callback (single
     // composer, single in-flight interest -- an older pending request's
@@ -1618,11 +1618,11 @@ class LspManager {
     // spawn -- lets
     // ClientForLanguage stop retrying (and re-logging) a known-bad command
     // every single frame, while still trying again once the user
-    // reconfigures LspServerCommand(language) to something different. No
+    // reconfigures ServerCommand(language) to something different. No
     // auto-retry/backoff beyond that: a binary that becomes available on
     // $PATH mid-session, with no reconfiguration, is not retried -- a known,
     // documented v1 limitation, matching this subsystem's existing "static
-    // config, no auto-retry" model (see LspServerConfig.h).
+    // config, no auto-retry" model (see ServerConfig.h).
     std::unordered_map<std::string, std::vector<std::string>> failedCommands_;
 
     // semantic-tokens/on-type-formatting follow-up. Keyed by serverKey,
@@ -1792,7 +1792,7 @@ class LspManager {
     std::unordered_set<std::string> disconnectedLanguages_;
 
     // mode-line-lsp-status-round-3 follow-up: the reason string
-    // LspClient::SetOnDisconnected reported, cleared wherever
+    // Client::SetOnDisconnected reported, cleared wherever
     // disconnectedLanguages_ itself is cleared.
     std::unordered_map<std::string, std::string> disconnectDetail_;
 
@@ -1811,4 +1811,4 @@ class LspManager {
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPMANAGER_H
+#endif // NED_EDITOR_LSP_MANAGER_H

@@ -10,12 +10,12 @@
 // genuinely needs a live window/pane and isn't duplicated here.
 //
 
-#ifndef NED_EDITOR_LSP_LSPEDITAPPLY_H
-#define NED_EDITOR_LSP_LSPEDITAPPLY_H
+#ifndef NED_EDITOR_LSP_EDITAPPLY_H
+#define NED_EDITOR_LSP_EDITAPPLY_H
 
 #include <vector>
 
-#include "LspContent.h"
+#include "Content.h"
 
 namespace ned::text {
 class Buffer;
@@ -23,7 +23,7 @@ class Buffer;
 
 namespace ned::editor::lsp {
 
-// Resolves each edit's LspPositions to byte offsets against buffer's CURRENT
+// Resolves each edit's Positions to byte offsets against buffer's CURRENT
 // content, sorts descending by start byte (keeps an edit not yet applied
 // valid as an earlier-in-the-buffer one shifts positions -- LSP guarantees
 // edits within one WorkspaceEdit/formatting response don't overlap, so a
@@ -56,4 +56,4 @@ void ApplyWorkspaceTextEdits(text::Buffer& buffer, const std::vector<WorkspaceTe
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPEDITAPPLY_H
+#endif // NED_EDITOR_LSP_EDITAPPLY_H

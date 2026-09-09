@@ -13,7 +13,7 @@
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Acp/Transport.h"
 #include "Editor/Dap/Manager.h"
-#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/Manager.h"
 #include "Editor/Mcp/BridgeServer.h"
 #include "Editor/Mcp/ToolRegistry.h"
 #include "Editor/TestRun/TestRunner.h"
@@ -138,7 +138,7 @@ TEST_CASE("AcpManager::StartSession advertises a stdio MCP server when a bridge 
     fixture.InjectClient();
 
     ned::text::BufferList             mcpBufferList;
-    ned::editor::lsp::LspManager      lspManager(mcpBufferList, fixture.eventLoop);
+    ned::editor::lsp::Manager      lspManager(mcpBufferList, fixture.eventLoop);
     ned::editor::vcs::VcsRunner       vcsRunner(fixture.eventLoop);
     ned::editor::testrun::TestRunner  testRunner(mcpBufferList, fixture.eventLoop);
     ned::editor::dap::Manager      dapManager(fixture.eventLoop);
@@ -498,7 +498,7 @@ TEST_CASE("AcpManager::StopSession sends session/close and reaches Inactive", "[
     // lsp-use-after-free follow-up: StopSession -> EndSession now destroys
     // the AcpClient directly (immediate destruction is safe now that
     // AcpClient itself guards against a stray Post()ed callback -- see
-    // LspClient.h's own header comment on alive_), which joins its
+    // Client.h's own header comment on alive_), which joins its
     // background read thread as part of destruction. That thread is
     // deliberately still blocked in a real blocking read on this fixture's
     // fake pipe (nothing ever sent it real EOF) -- fine for the rest of this

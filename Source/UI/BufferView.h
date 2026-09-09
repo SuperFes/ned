@@ -44,7 +44,7 @@
 #include "Editor/IncrementalSearch.h"
 #include "Editor/Link.h"
 #include "Editor/LinkedEditingSession.h"
-#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/Manager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Editor/Mode.h"
 #include "Editor/Multibuffer.h"
@@ -232,14 +232,14 @@ class BufferView : public Widget {
     // establish.
     void SetThemeApplier(std::function<void(const Theme&)> applier);
 
-    // LSP client follow-up: registers the shared LspManager so Paint() can
+    // LSP client follow-up: registers the shared Manager so Paint() can
     // call SyncBuffer for the active buffer every frame -- nullptr (the
     // default) means no-op, the same "unset is a safe no-op" convention
     // SetProjectSidebar/SetScrollBar already establish. Also every test-
     // constructed BufferView's own default: no test wires one in unless it
     // specifically wants to exercise LSP sync, so ordinary tests never touch
     // Lsp/ at all.
-    void SetLspManager(editor::lsp::LspManager* lspManager);
+    void SetLspManager(editor::lsp::Manager* lspManager);
 
     // embedded-language-documents follow-up: the embedded language governing
     // point right now (e.g. "javascript" while point sits inside an HTML
@@ -255,10 +255,10 @@ class BufferView : public Widget {
     // embedded-language-documents follow-up: EmbeddedLanguageAtPoint's
     // sibling for an arbitrary byte offset rather than point -- what
     // RequestCompletionAtPoint/RequestDefinitionAtPoint/RequestRenameAtPoint
-    // resolve before calling into LspManager, so a request issued inside an
+    // resolve before calling into Manager, so a request issued inside an
     // embedded region routes to that language's own server instead of the
     // host's. Returns "" (meaning "use the primary/host server," matching
-    // LspManager::ResolveSyncState's own empty-serverKey convention) when
+    // Manager::ResolveSyncState's own empty-serverKey convention) when
     // byteOffset isn't inside any embedded region.
     [[nodiscard]] std::string ResolvedLspServerKey(std::size_t byteOffset);
 
@@ -322,7 +322,7 @@ class BufferView : public Widget {
     // one -- default false, same "unset is a safe no-op" convention as every
     // other Set* hook here. Deliberately opt-in rather than always-on: that
     // flag is process-wide state (Editor/DiagnosticsLog.h), not a per-pane
-    // resource the way LspManager/TaskRunner/etc. are, so a bare
+    // resource the way Manager/TaskRunner/etc. are, so a bare
     // test-constructed BufferView must not read it by default -- doing so
     // unconditionally let an unrelated test's own LogMessage call leak into
     // any other test's Paint()-time statusMessage_ assertion, confirmed live
@@ -564,7 +564,7 @@ class BufferView : public Widget {
     void StartDeleteFileAt(const std::filesystem::path& path);
 
     // edit-application-gaps follow-up: entry point for a server-pushed
-    // workspace/applyEdit request (LspManager::SetApplyEditHandler,
+    // workspace/applyEdit request (Manager::SetApplyEditHandler,
     // WindowManager::ApplyServerPushedWorkspaceEdit) -- unlike ApplyRename/
     // ApplyCodeAction, there's no particular buffer/point this originates
     // from, so it's routed to whichever pane has focus, the same "no single
@@ -575,7 +575,7 @@ class BufferView : public Widget {
     // ApplyResolvedWorkspaceEdit helper) and returns whether it actually
     // applied, which the caller reports back to the server as the spec's
     // own {applied: bool} response.
-    [[nodiscard]] bool ApplyServerPushedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label);
+    [[nodiscard]] bool ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label);
 
     // session-persistence slice 3: asks the user whether to load a
     // project's own .ned/init.janet -- a y/n/a prompt in the
@@ -1451,7 +1451,7 @@ class BufferView : public Widget {
     // of HandleRenameFileKey so it can run after EndInteractiveSession()
     // clears renameSource_/renameStage_ -- source/destination are passed by
     // value rather than read back off those members, which an in-flight
-    // LspManager::RequestWillRenameFiles round trip (see its own doc
+    // Manager::RequestWillRenameFiles round trip (see its own doc
     // comment) could otherwise see reset out from under it by a
     // subsequently-started rename session. When lspManager_ is unset (most
     // tests) or nothing matches, RequestWillRenameFiles's callback fires
@@ -1484,7 +1484,7 @@ class BufferView : public Widget {
     // (same lookup lsp-show-diagnostic already does against
     // Buffer::Diagnostics()) or falls back to a zero-length range at point,
     // bumps codeActionRequest_, and calls
-    // LspManager::RequestCodeActions. The callback (capturing a raw
+    // Manager::RequestCodeActions. The callback (capturing a raw
     // Buffer* for pointer-value-only comparison, point, and generation --
     // same idiom RequestCompletionAtPoint already uses) discards a stale
     // response (generation moved, or buffer/point changed since the request
@@ -1535,9 +1535,9 @@ class BufferView : public Widget {
     // no non-LSP fallback exists for either, unlike project-find-references'
     // RE2 scan or format-buffer's separate FormatCommand()) are hidden when
     // there's no real connection for this buffer's own primary language --
-    // checked via LspManager::ActiveServerKeysForBuffer containing
+    // checked via Manager::ActiveServerKeysForBuffer containing
     // editor::LanguageKeyForMode(mode_) (ModeLine's own status-glyph source;
-    // PrimarySyncState itself is LspManager-private), not merely
+    // PrimarySyncState itself is Manager-private), not merely
     // lspManager_ being wired to this pane at all. context-aware-menu-
     // round-2 follow-up: the old standalone "Code Actions..." row is gone --
     // when connected, this instead fires RequestContextMenuCodeActions
@@ -1617,14 +1617,14 @@ class BufferView : public Widget {
     void HandleAcpPermissionPromptKey(const editor::KeyChord& chord);
     // Refuses (reports via statusMessage_, no buffer mutation) if
     // action.touchesUnsupportedForm (a "documentChanges" WorkspaceEdit --
-    // still unparsed, see LspContent.h) or it has no edit to apply.
+    // still unparsed, see Content.h) or it has no edit to apply.
     // Otherwise resolves action.edits' URIs to real paths
-    // (LspManager::ResolveCodeActionEdits, refusing wholesale on any
+    // (Manager::ResolveCodeActionEdits, refusing wholesale on any
     // unresolvable one) and opens/finds every touched buffer first, the
     // same all-or-nothing-open guarantee ApplyRename establishes -- a code
     // action's edit can touch more than one file exactly the way a rename
     // can. Hands the result to ApplyProjectEdit, which resolves each
-    // buffer's own WorkspaceTextEdit LspPositions to byte offsets against
+    // buffer's own WorkspaceTextEdit Positions to byte offsets against
     // its CURRENT content (safe without a fresh generation check -- the
     // modal Select/Confirm input modes already block ordinary
     // typing/editing for the whole exchange) and applies them.
@@ -1643,7 +1643,7 @@ class BufferView : public Widget {
     // only when no selector produces exactly one candidate.
     void RequestQuickFixAtPoint();
 
-    // codeLens follow-up. Runs the first code lens (LspManager::
+    // codeLens follow-up. Runs the first code lens (Manager::
     // CodeLensSpans, sorted by startByte) whose range covers point's own
     // line -- a deliberate v1 simplification, not a full disambiguation
     // picker: a line carrying more than one lens only ever runs the
@@ -1659,7 +1659,7 @@ class BufferView : public Widget {
     // declaration/typeDefinition/implementation follow-up: which LSP
     // location-request RequestDefinitionAtPoint sends -- the request/
     // response/jump/select-list handling below is identical for all four
-    // (LspManager::ResolvedLocation is the exact same shape every one of
+    // (Manager::ResolvedLocation is the exact same shape every one of
     // RequestDefinition/RequestDeclaration/RequestTypeDefinition/
     // RequestImplementation returns), only the wire method and the
     // human-facing "Requesting .../No ... found." wording differ.
@@ -1670,7 +1670,7 @@ class BufferView : public Widget {
 
     // go-to-definition follow-up. Mirrors RequestCodeActionsAtPoint's own
     // shape exactly: bumps definitionRequest_, calls
-    // LspManager::RequestDefinition, and discards a stale response (buffer/
+    // Manager::RequestDefinition, and discards a stale response (buffer/
     // point changed, or a newer request already superseded it) the same
     // way. Zero locations reports "No definition found." via
     // statusMessage_; exactly one jumps directly (JumpToDefinition, no
@@ -1679,7 +1679,7 @@ class BufferView : public Widget {
     // to confirm); more than one enters LspGotoDefinitionSelect the same
     // way multiple code actions enter LspCodeActionSelect. kind (declaration/
     // typeDefinition/implementation follow-up) selects which of the four
-    // LspManager requests above is sent and only changes the wording --
+    // Manager requests above is sent and only changes the wording --
     // pendingLocationLabel_ carries kind's own label through to the async
     // callback for that wording, since the request itself may still be in
     // flight when a *different* kind's request supersedes it.
@@ -1690,10 +1690,10 @@ class BufferView : public Widget {
     // VisitSearchResult's own precedent for jumping into a project file)
     // and moves point to location.position, resolved against the newly-
     // opened buffer's own content.
-    void JumpToDefinition(const editor::lsp::LspManager::ResolvedLocation& location);
+    void JumpToDefinition(const editor::lsp::Manager::ResolvedLocation& location);
 
     // peek-definition follow-up: JetBrains/VSCode-style "look without leaving" --
-    // requests LspManager::RequestDefinition the same way RequestDefinitionAtPoint
+    // requests Manager::RequestDefinition the same way RequestDefinitionAtPoint
     // does (LspLocationKind::Definition only, v1 scope -- declaration/type-
     // definition/implementation stay goto-only for now), but on response always
     // enters LspPeekDefinition and shows a source excerpt via onPeekChanged_
@@ -1711,7 +1711,7 @@ class BufferView : public Widget {
     void HandlePeekDefinitionKey(const editor::KeyChord& chord);
 
     // One browse session's state: the tree itself (Editor/ExpandableTree.h,
-    // NodeData = LspManager::ResolvedHierarchyItem so every node keeps both
+    // NodeData = Manager::ResolvedHierarchyItem so every node keeps both
     // the item to replay on its own next expand and the resolved path/
     // position to jump to), which of the four requests every expand in this
     // session sends, and the buffer/serverKey pair every request in this
@@ -1721,7 +1721,7 @@ class BufferView : public Widget {
     // (activeBuffer_ may have changed, or even be a different buffer
     // entirely, once keyboard focus has moved to the TreeView overlay).
     struct HierarchySession {
-        editor::ExpandableTree<editor::lsp::LspManager::ResolvedHierarchyItem> tree;
+        editor::ExpandableTree<editor::lsp::Manager::ResolvedHierarchyItem> tree;
         HierarchyDirection                                                     direction;
         text::Buffer*                                                          buffer;
         std::string                                                            serverKey;
@@ -1820,7 +1820,7 @@ class BufferView : public Widget {
     void EndPointerGraphSession();
 
     // symbol-search follow-up. Bumps documentSymbolRequest_ and
-    // calls LspManager::RequestDocumentSymbols; discards a stale response
+    // calls Manager::RequestDocumentSymbols; discards a stale response
     // the same way RequestDefinitionAtPoint does. Zero symbols reports "No
     // symbols found."; any other count (including one) opens the
     // fuzzy-narrowed InputMode::LspGotoSymbol picker (ProjectFindFile's own
@@ -1835,7 +1835,7 @@ class BufferView : public Widget {
     // immediately (StartInteractiveSession's own case) and fires the first
     // workspace/symbol request (an empty query) right away, mirroring
     // ExecuteCommand's "populate right away" precedent. Every subsequent
-    // keystroke re-arms workspaceSymbolDebounceTimer_ (LspCompletionDebounceMs(),
+    // keystroke re-arms workspaceSymbolDebounceTimer_ (CompletionDebounceMs(),
     // the same Janet-configurable debounce ghost-text completion already
     // uses -- no new setting for what's the same "don't hammer the server
     // every keystroke" need) rather than sending immediately; the timer's
@@ -1850,9 +1850,9 @@ class BufferView : public Widget {
     void HandleWorkspaceSymbolKey(const editor::KeyChord& chord);
 
     // header-source-switching follow-up. Bumps
-    // switchHeaderSourceRequest_ and calls LspManager::
+    // switchHeaderSourceRequest_ and calls Manager::
     // RequestSwitchSourceHeader (clangd's own custom LSP extension) when an
-    // LspManager is set; nullopt from that -- no client running, server has
+    // Manager is set; nullopt from that -- no client running, server has
     // no counterpart to offer, or LSP unavailable at all -- falls through to
     // OpenHeaderSourceCounterpartOrReport's Editor/HeaderSource.h filesystem
     // heuristic, unlike RequestDefinitionAtPoint's own LSP-required "No LSP
@@ -1910,7 +1910,7 @@ class BufferView : public Widget {
     // Thin wrapper over ApplyResolvedWorkspaceEdit below (statusMessage_-only
     // reporting, no return value -- callers driven from a rename response
     // don't need a bool the way the server-push path does).
-    void ApplyRename(const editor::lsp::LspManager::ResolvedRename& result);
+    void ApplyRename(const editor::lsp::Manager::ResolvedRename& result);
 
     // prepareRename follow-up. StartInteractiveSession's LspRename case
     // calls this instead of opening the "New name:" prompt directly: sends
@@ -1957,7 +1957,7 @@ class BufferView : public Widget {
     // affected buffer is left modified-but-unsaved like any other in-editor
     // edit -- no auto-save-across-files behavior, matching this codebase's
     // existing "saves are always user-initiated" convention.
-    bool ApplyResolvedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, std::string description);
+    bool ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, std::string description);
 
     // project-undo follow-up: applies one WorkspaceTextEdit list per buffer
     // (via the file-local ApplyWorkspaceTextEdits helper, one undo group
@@ -2567,7 +2567,7 @@ class BufferView : public Widget {
     // moved into OpenLinkAtPointWithoutLsp below and is re-entered from the
     // response callback whenever the server reports no link covering point
     // -- with no LSP manager wired up, or no server running for this buffer,
-    // LspManager::RequestDocumentLinks answers synchronously and the two
+    // Manager::RequestDocumentLinks answers synchronously and the two
     // paths collapse back into exactly the pre-existing behavior.
     void OpenLinkAtPoint();
     // The pre-LSP chain, unchanged: in an org-mode buffer, tries
@@ -2585,7 +2585,7 @@ class BufferView : public Widget {
     // that isn't there) falls back to OpenLinkAtPointWithoutLsp rather than
     // failing outright, so a stale/odd server answer never costs the user
     // the heuristic they'd have had otherwise.
-    void OpenResolvedDocumentLink(const editor::lsp::LspManager::ResolvedDocumentLink& link);
+    void OpenResolvedDocumentLink(const editor::lsp::Manager::ResolvedDocumentLink& link);
     // The shared open/report tail both OpenLinkAtPoint paths above funnel
     // into: a Url opens via editor::link::OpenUrl; a File is resolved via
     // editor::link::ResolveFileLink against the active buffer's own
@@ -2781,7 +2781,7 @@ class BufferView : public Widget {
     // DAP<->ACP debugging bridge follow-up: ShowDebugInfo's own stackTrace
     // -> scopes/watches -> variables fan-out, extracted so a second consumer
     // (SendDebugStateToAgent below) can reuse the exact same lines without
-    // duplicating the chained-async logic -- LspEditApply.h's own precedent
+    // duplicating the chained-async logic -- EditApply.h's own precedent
     // for pulling a BufferView-internal chain out once a second caller needs
     // it. onComplete gets an empty vector when there's no stack to show (no
     // stopped session), the same "graceful empty" signal ShowDebugInfo's own
@@ -3040,7 +3040,7 @@ class BufferView : public Widget {
     std::function<bool()>                 splitResizeQuery_;                  // see SetSplitResizeQuery
     Minimap*                              minimap_                 = nullptr; // see SetMinimap
     Widget*                               minimapScrollColumn_     = nullptr; // see SetMinimap
-    editor::lsp::LspManager*              lspManager_              = nullptr; // see SetLspManager
+    editor::lsp::Manager*              lspManager_              = nullptr; // see SetLspManager
     editor::tasks::TaskRunner*            taskRunner_              = nullptr; // see SetTaskRunner
     editor::ProjectUndoManager*           projectUndo_             = nullptr; // see SetProjectUndo
     editor::testrun::TestRunner*          testRunner_              = nullptr; // see SetTestRunner
@@ -3337,13 +3337,13 @@ class BufferView : public Widget {
     // same "cheap did-it-change counter" shape ContentGeneration() already
     // has.
 
-    // semanticTokens follow-up: LspManager::SemanticTokensGeneration(buffer)
+    // semanticTokens follow-up: Manager::SemanticTokensGeneration(buffer)
     // at the moment this cache entry was last built -- a third staleness
     // check alongside content/class generation, since an LSP response can
     // arrive (and change what should render) with no buffer edit at all.
-    // 0 (LspManager's own "never had a response applied" value) when
+    // 0 (Manager's own "never had a response applied" value) when
     // lspManager_ is unset, so every existing test/construction path that
-    // never wires it behaves exactly as before -- see LspManager-sourced
+    // never wires it behaves exactly as before -- see Manager-sourced
     // spans' own appending comment at this cache's build site.
 
     // per-buffer-highlight-cache follow-up: the three fields just above only
@@ -3375,7 +3375,7 @@ class BufferView : public Widget {
     // resolved documents per buffer, same staleness check/eviction shape as
     // HighlightCacheEntry above -- what EnsureEmbeddedDocumentCache
     // populates once per actually-changed Paint() call, consumed both by
-    // Paint()'s own LspManager::SyncEmbeddedDocuments call and by
+    // Paint()'s own Manager::SyncEmbeddedDocuments call and by
     // EmbeddedLanguageAtPoint()/ResolvedLspServerKey() below (a cheap lookup
     // into this cache, not a fresh tree-sitter walk per request/keystroke).
     // Empty (erased) whenever mode_.embeddedRegions itself is unset -- every
@@ -3580,7 +3580,7 @@ class BufferView : public Widget {
     // cache/generation-tracking was worth adding -- see this method's own
     // definition comment for why that's a deliberate deviation from
     // AnnotationRowsForLine's own EnsureInlineDiagnosticCache precedent).
-    // 0 while editor::lsp::LspCodeLensEnabled() is off or lspManager_ is
+    // 0 while editor::lsp::CodeLensEnabled() is off or lspManager_ is
     // unset.
     [[nodiscard]] std::size_t LeadingAnnotationRowsForLine(std::size_t line) const;
     // Paints one leading row for `line` at screen row `row`: every lens
@@ -3607,7 +3607,7 @@ class BufferView : public Widget {
 
     // prose-diagnostic-callout follow-up: the prose/spell/grammar checker's
     // own diagnostics (text::Buffer::Diagnostic::Origin::Prose -- harper-ls
-    // via Editor/Lsp/ProseChecker.h, see LspManager::kProseLanguageKey) get
+    // via Editor/Lsp/ProseChecker.h, see Manager::kProseLanguageKey) get
     // no code-style underline or PaintInlineDiagnosticRow annotation row
     // (see the origin filters at those two call sites) -- instead, a small
     // rounded callout brace grows in the pane's right margin, spanning
@@ -3704,7 +3704,7 @@ class BufferView : public Widget {
     // request, so unlike every other debounce here it's driven by the
     // selection moving, not by typing -- Up/Down/wheel/click all re-arm it,
     // and only the row that stops being cycled past long enough to settle
-    // ever costs a round trip. Reuses LspCompletionDebounceMs() rather than
+    // ever costs a round trip. Reuses CompletionDebounceMs() rather than
     // introducing a fourth timing knob, on the same "typing/motion just
     // settled" reasoning signature-help and document-highlight already use.
     // The generation counter is completionRequest_'s exact
@@ -3750,9 +3750,9 @@ class BufferView : public Widget {
     // Same debounce shape as completionDebounceTimer_/documentHighlightDebounceTimer_
     // above -- MaybeScheduleHover re-arms this on every qualifying mouse
     // move, so only the mouse's final resting spot ever fires a real
-    // textDocument/hover request. Reuses editor::lsp::LspCompletionDebounceMs()
+    // textDocument/hover request. Reuses editor::lsp::CompletionDebounceMs()
     // rather than a dedicated setting, the same "typing/motion just settled"
-    // heuristic LspSignatureHelpAutoTriggerEnabled's own doc comment already
+    // heuristic SignatureHelpAutoTriggerEnabled's own doc comment already
     // reuses it for.
     DeadlineTimer hoverDebounceTimer_;
     // Bumped by MaybeScheduleHover/DismissHover before every request or
@@ -3820,7 +3820,7 @@ class BufferView : public Widget {
 
     // completion-trigger-characters follow-up: triggerCharacter is the
     // server-declared character whose keystroke armed the debounce that
-    // fired this, threaded through to LspManager::RequestCompletion as the
+    // fired this, threaded through to Manager::RequestCompletion as the
     // LSP CompletionContext's triggerKind 2. Empty (the default) for the
     // M-x lsp-complete entry point and for a plain word-continuation
     // keystroke -- both are genuinely "Invoked", not trigger-character
@@ -3938,7 +3938,7 @@ class BufferView : public Widget {
     // to reason about between them).
     bufferview::RequestSlot contextMenuCodeActionRequest_;
 
-    // executeCommand/prose-code-actions follow-up: which LspManager
+    // executeCommand/prose-code-actions follow-up: which Manager
     // serverKey pendingCodeActions_ was requested from -- empty for the
     // primary language server (RequestCodeActions's own default), else
     // editor::lsp::kProseLanguageKey when point sat on a Prose-origin
@@ -3950,7 +3950,7 @@ class BufferView : public Widget {
     // go-to-definition follow-up: same staleness-guard/selection-list shape
     // as pendingCodeActions_/codeActionSelection_/codeActionRequest_
     // just above, valid only while inputMode_ == LspGotoDefinitionSelect.
-    std::vector<editor::lsp::LspManager::ResolvedLocation> pendingDefinitions_;
+    std::vector<editor::lsp::Manager::ResolvedLocation> pendingDefinitions_;
     std::size_t                                            definitionSelection_ = 0;
     bufferview::RequestSlot                                definitionRequest_;
 
@@ -3969,7 +3969,7 @@ class BufferView : public Widget {
     // separate set (not reusing pendingDefinitions_) since a peek session and a
     // goto-definition select session are never simultaneously live but do use
     // independently-generationed async requests.
-    std::vector<editor::lsp::LspManager::ResolvedLocation> pendingPeekDefinitions_;
+    std::vector<editor::lsp::Manager::ResolvedLocation> pendingPeekDefinitions_;
     std::size_t                                            peekDefinitionSelection_ = 0;
     bufferview::RequestSlot                                peekDefinitionRequest_;
 
@@ -3989,7 +3989,7 @@ class BufferView : public Widget {
     // picks whichever of them comes first -- a harmless degrade, not a
     // crash). documentSymbolSelection_/documentSymbolRequest_
     // mirror definitionSelection_/definitionRequest_'s own shape.
-    std::vector<editor::lsp::LspManager::SymbolResult> documentSymbolCandidates_;
+    std::vector<editor::lsp::Manager::SymbolResult> documentSymbolCandidates_;
     std::vector<std::string>                           documentSymbolLabels_;
     std::size_t                                        documentSymbolSelection_ = 0;
     bufferview::RequestSlot                            documentSymbolRequest_;
@@ -4000,12 +4000,12 @@ class BufferView : public Widget {
     // unlike documentSymbolCandidates_'s one-shot fetch), already in
     // server-ranked order, so no local FuzzyFilterAndRank runs over them at
     // all -- HandleWorkspaceSymbolKey's Up/Down navigate this list directly.
-    std::vector<editor::lsp::LspManager::SymbolResult> pendingWorkspaceSymbols_;
+    std::vector<editor::lsp::Manager::SymbolResult> pendingWorkspaceSymbols_;
     std::vector<std::string>                           workspaceSymbolLabels_;
     std::size_t                                        workspaceSymbolSelection_ = 0;
     bufferview::RequestSlot                            workspaceSymbolRequest_;
     // See completionDebounceTimer_'s own comment -- same DeadlineTimer-based
-    // debounce shape, reusing LspCompletionDebounceMs() rather than adding a
+    // debounce shape, reusing CompletionDebounceMs() rather than adding a
     // second, parallel Janet setting for what's the same underlying need.
     DeadlineTimer workspaceSymbolDebounceTimer_;
 

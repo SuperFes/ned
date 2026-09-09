@@ -11,19 +11,19 @@
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
-#include "Editor/Lsp/LspClient.h"
+#include "Editor/Lsp/Client.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
 using ned::editor::SetProtocolWriteStallTimeoutMs;
 using ned::editor::lsp::Json;
-using ned::editor::lsp::LspClient;
+using ned::editor::lsp::Client;
 using ned::editor::lsp::Transport;
 
 namespace {
 
-// One end of a pipe pair wrapped as a Transport for an LspClient under
+// One end of a pipe pair wrapped as a Transport for an Client under
 // test; the other end is left as raw fds the test itself reads/writes
 // directly, standing in for "the language server's own stdin/stdout." The
 // client's background read thread just blocks harmlessly on this pipe's
@@ -33,21 +33,21 @@ namespace {
 //
 // Explicit destructor, real (non-aggregate) constructor: closing
 // serverStdoutWrite -- the *test's* own reference to the pipe's write end --
-// before LspClient is destroyed is load-bearing, not cleanup-for-its-own-
-// sake. LspClient's destructor relies on Transport's own destructor closing
+// before Client is destroyed is load-bearing, not cleanup-for-its-own-
+// sake. Client's destructor relies on Transport's own destructor closing
 // the *client's* copy of that same pipe direction to unblock its background
 // read thread (EOF once no writer remains) -- true in production, where
 // killing the real child process closes every fd it held. Here there's no
 // child process; the only other reference to that write end is this
 // fixture's own serverStdoutWrite, so it has to be closed first or the
-// background thread's blocked read() (and therefore LspClient's own
+// background thread's blocked read() (and therefore Client's own
 // destructor, which joins that thread) would hang forever -- confirmed via
 // a real hung test run, not a defensive guess.
 // Notcurses' EventLoop constructor calls notcurses_core_init immediately,
 // entering the alternate screen buffer for real the instant one exists.
 // Owned here, by value, as this fixture's own
 // member instead -- constructed and torn down within one TEST_CASE's own
-// scope, the shortest window that still satisfies LspClient's constructor,
+// scope, the shortest window that still satisfies Client's constructor,
 // rather than shared process-wide (which would hijack the terminal for
 // every other, unrelated test's own Catch2 console output for the rest of
 // the whole binary's run -- unlike Janet's Environment, which
@@ -55,13 +55,13 @@ namespace {
 // terminal state at all). Never actually used for its own Post()-draining
 // Run() loop here -- these tests all call DispatchFrame directly instead,
 // exercising the exact same correlation/dispatch logic without needing a
-// live loop at all (see LspClient.h's own header comment on DispatchFrame
+// live loop at all (see Client.h's own header comment on DispatchFrame
 // for why).
 struct ClientFixture {
     ned::ui::EventLoop eventLoop;
     int                serverStdinRead;   // test reads what the client wrote (client's "stdout" from the server's perspective... see below)
     int                serverStdoutWrite; // test writes to feed the client's read thread, if a test ever wants to
-    LspClient          client;
+    Client          client;
 
     ClientFixture(int readFd, int writeFd, Transport transport, bool startHandshakeComplete) : serverStdinRead(readFd), serverStdoutWrite(writeFd), client(std::move(transport), eventLoop, startHandshakeComplete) {
     }
@@ -80,7 +80,7 @@ struct ClientFixture {
 
     // handshake-ordering follow-up: a fixture that starts *gated*, for tests
     // exercising SendRequest/SendNotification's own queue-until-initialized
-    // behavior directly -- see LspClient.h's own doc comment on the
+    // behavior directly -- see Client.h's own doc comment on the
     // startHandshakeComplete constructor parameter this threads through to.
     static ClientFixture CreateGated() {
         return CreateImpl(/*startHandshakeComplete=*/false);
@@ -199,7 +199,7 @@ struct ProtocolStallTimeoutGuard {
 
 } // namespace
 
-TEST_CASE("LspClient::SendRequest writes a well-formed JSON-RPC request frame", "[Lsp]") {
+TEST_CASE("Client::SendRequest writes a well-formed JSON-RPC request frame", "[Lsp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.SendRequest("initialize", Json{{"processId", nullptr}}, [](std::optional<Json>, std::optional<Json>) {});
@@ -215,7 +215,7 @@ TEST_CASE("LspClient::SendRequest writes a well-formed JSON-RPC request frame", 
     REQUIRE(message["params"]["processId"].is_null());
 }
 
-TEST_CASE("LspClient::SendNotification writes a frame with no id", "[Lsp]") {
+TEST_CASE("Client::SendNotification writes a frame with no id", "[Lsp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.SendNotification("initialized", Json::object());
@@ -229,7 +229,7 @@ TEST_CASE("LspClient::SendNotification writes a frame with no id", "[Lsp]") {
     REQUIRE_FALSE(message.contains("id"));
 }
 
-TEST_CASE("LspClient::DispatchFrame invokes the matching pending request's callback with the result", "[Lsp]") {
+TEST_CASE("Client::DispatchFrame invokes the matching pending request's callback with the result", "[Lsp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     bool                invoked = false;
@@ -257,7 +257,7 @@ TEST_CASE("LspClient::DispatchFrame invokes the matching pending request's callb
     REQUIRE((*gotResult)["capabilities"].is_object());
 }
 
-TEST_CASE("LspClient::DispatchFrame invokes the callback with the error, not the result, on a JSON-RPC error response",
+TEST_CASE("Client::DispatchFrame invokes the callback with the error, not the result, on a JSON-RPC error response",
           "[Lsp]") {
     ClientFixture fixture = ClientFixture::Create();
 
@@ -280,7 +280,7 @@ TEST_CASE("LspClient::DispatchFrame invokes the callback with the error, not the
     REQUIRE((*gotError)["message"] == "method not found");
 }
 
-TEST_CASE("LspClient::DispatchFrame with an unknown id is silently ignored, not a crash", "[Lsp]") {
+TEST_CASE("Client::DispatchFrame with an unknown id is silently ignored, not a crash", "[Lsp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     const Json response = {{"jsonrpc", "2.0"}, {"id", 999}, {"result", Json::object()}};
@@ -288,7 +288,7 @@ TEST_CASE("LspClient::DispatchFrame with an unknown id is silently ignored, not 
     SUCCEED();
 }
 
-TEST_CASE("LspClient::DispatchFrame routes a notification to its registered handler by method name", "[Lsp]") {
+TEST_CASE("Client::DispatchFrame routes a notification to its registered handler by method name", "[Lsp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     Json received;
@@ -309,7 +309,7 @@ TEST_CASE("LspClient::DispatchFrame routes a notification to its registered hand
     REQUIRE(received["uri"] == "file:///tmp/foo.c");
 }
 
-TEST_CASE("LspClient::DispatchFrame ignores a notification with no registered handler, not a crash", "[Lsp]") {
+TEST_CASE("Client::DispatchFrame ignores a notification with no registered handler, not a crash", "[Lsp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     const Json notification = {{"jsonrpc", "2.0"}, {"method", "window/logMessage"}, {"params", Json::object()}};
@@ -317,7 +317,7 @@ TEST_CASE("LspClient::DispatchFrame ignores a notification with no registered ha
     SUCCEED();
 }
 
-TEST_CASE("LspClient::DispatchFrame ignores malformed JSON without throwing", "[Lsp]") {
+TEST_CASE("Client::DispatchFrame ignores malformed JSON without throwing", "[Lsp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.DispatchFrame("{ this is not valid json");
@@ -337,7 +337,7 @@ TEST_CASE("SetNotificationHandler replaces a previous handler for the same metho
     REQUIRE(callCount == 1); // only the second (replacing) handler ran
 }
 
-TEST_CASE("LspClient::ExpireStaleRequests resolves a stuck request with a synthetic timeout error", "[Lsp]") {
+TEST_CASE("Client::ExpireStaleRequests resolves a stuck request with a synthetic timeout error", "[Lsp]") {
     // subprocess-hang-protection follow-up.
     ClientFixture fixture = ClientFixture::Create();
 
@@ -360,7 +360,7 @@ TEST_CASE("LspClient::ExpireStaleRequests resolves a stuck request with a synthe
     REQUIRE((*gotError)["code"] == -32001);
 }
 
-TEST_CASE("LspClient::ExpireStaleRequests leaves a request younger than maxAge untouched", "[Lsp]") {
+TEST_CASE("Client::ExpireStaleRequests leaves a request younger than maxAge untouched", "[Lsp]") {
     // subprocess-hang-protection follow-up.
     ClientFixture fixture = ClientFixture::Create();
 
@@ -372,7 +372,7 @@ TEST_CASE("LspClient::ExpireStaleRequests leaves a request younger than maxAge u
     REQUIRE_FALSE(invoked);
 }
 
-TEST_CASE("LspClient::ExpireStaleRequests ends the LSP background-activity spinner for an expired request", "[Lsp]") {
+TEST_CASE("Client::ExpireStaleRequests ends the LSP background-activity spinner for an expired request", "[Lsp]") {
     // subprocess-hang-protection follow-up: mirrors DispatchFrame's own
     // Begin/End pairing -- an expired request must not leave the mode-line
     // spinner running forever, same as a real response would.
@@ -399,7 +399,7 @@ TEST_CASE("LspClient::ExpireStaleRequests ends the LSP background-activity spinn
 // construction" shape SetNotificationHandler's own test just above
 // confirms; the actual spawn-failure and JSON-RPC-error paths (which DO run
 // entirely on the main thread, no Post needed) are covered end-to-end in
-// LspManagerTest.cpp instead.
+// ManagerTest.cpp instead.
 TEST_CASE("SetOnDisconnected replaces a previous handler, and unset is a safe no-op", "[Lsp]") {
     ClientFixture fixture = ClientFixture::Create();
 
@@ -409,19 +409,19 @@ TEST_CASE("SetOnDisconnected replaces a previous handler, and unset is a safe no
 }
 
 // lsp-use-after-free follow-up. Confirmed live via ASan: a real SIGSEGV/
-// heap-use-after-free with LspManager destroying an LspClient (on a
+// heap-use-after-free with Manager destroying an Client (on a
 // respawn-after-disconnect) while the background read thread's own already-
 // Post()ed disconnect notification for that exact instance was still
 // sitting in EventLoop's queue -- two independent background threads (this
-// one, and LspManager's periodic maintenance tick) Post() with no ordering
+// one, and Manager's periodic maintenance tick) Post() with no ordering
 // guarantee between them, so "destroy it a little later" is not actually
-// safe at any delay. The fix lives in LspClient itself (alive_, see its own
+// safe at any delay. The fix lives in Client itself (alive_, see its own
 // header comment) rather than in whoever owns it. This is the one test in
 // this file that runs a real background-read-loop -> Post() -> drain cycle
 // (see "SetOnDisconnected replaces a previous handler..." above for why
 // every other test here avoids it) -- specifically to prove this fix, not
 // just that the hook is replaceable.
-TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an already-destroyed LspClient", "[Lsp]") {
+TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an already-destroyed Client", "[Lsp]") {
     ned::ui::EventLoop eventLoop;
     int                clientWritesHere[2]; // client's write end -> test's read end
     int                clientReadsHere[2];  // test's write end -> client's read end
@@ -430,14 +430,14 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
     const int serverStdinRead   = clientWritesHere[0];
     const int serverStdoutWrite = clientReadsHere[1];
 
-    std::optional<LspClient> client;
+    std::optional<Client> client;
     client.emplace(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop, /*startHandshakeComplete=*/true);
     client->SetOnDisconnected([](std::string) {}); // present and callable, matching a real wired client
 
     ::close(serverStdoutWrite);                                 // EOF -- the read thread Post()s its disconnect notification, then exits
     std::this_thread::sleep_for(std::chrono::milliseconds(50)); // let the background thread actually post before destroying
 
-    client.reset(); // ~LspClient() flips alive_ to false as its first statement
+    client.reset(); // ~Client() flips alive_ to false as its first statement
 
     // The disconnect notification posted above is still queued. Draining it
     // must not crash or touch freed memory -- that's the entire point.
@@ -447,7 +447,7 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
     ::close(serverStdinRead);
 }
 
-TEST_CASE("LspClient counts an in-flight request as LSP background activity until its response dispatches", "[Lsp]") {
+TEST_CASE("Client counts an in-flight request as LSP background activity until its response dispatches", "[Lsp]") {
     auto fixture = ClientFixture::Create();
     REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
 
@@ -461,7 +461,7 @@ TEST_CASE("LspClient counts an in-flight request as LSP background activity unti
     REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
 }
 
-TEST_CASE("LspClient's destructor ends the LSP background activity of requests never answered", "[Lsp]") {
+TEST_CASE("Client's destructor ends the LSP background activity of requests never answered", "[Lsp]") {
     {
         auto fixture = ClientFixture::Create();
         fixture.client.SendRequest("textDocument/hover", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
@@ -471,7 +471,7 @@ TEST_CASE("LspClient's destructor ends the LSP background activity of requests n
     REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
 }
 
-TEST_CASE("LspClient answers a server-initiated request via its registered handler", "[Lsp]") {
+TEST_CASE("Client answers a server-initiated request via its registered handler", "[Lsp]") {
     auto fixture = ClientFixture::Create();
     fixture.client.SetRequestHandler("window/workDoneProgress/create", [](const Json&) { return Json(nullptr); });
 
@@ -485,7 +485,7 @@ TEST_CASE("LspClient answers a server-initiated request via its registered handl
     REQUIRE(response["result"].is_null());
 }
 
-TEST_CASE("LspClient answers an unhandled server-initiated request with MethodNotFound", "[Lsp]") {
+TEST_CASE("Client answers an unhandled server-initiated request with MethodNotFound", "[Lsp]") {
     auto fixture = ClientFixture::Create();
 
     const Json request = {{"jsonrpc", "2.0"}, {"id", 7}, {"method", "workspace/configuration"}, {"params", Json::object()}};
@@ -498,7 +498,7 @@ TEST_CASE("LspClient answers an unhandled server-initiated request with MethodNo
 }
 
 // handshake-ordering follow-up. Found live against a real harper-ls: a
-// caller (LspManager::SyncBuffer's didOpen chief among them) that calls
+// caller (Manager::SyncBuffer's didOpen chief among them) that calls
 // SendNotification/SendRequest on a freshly spawned client races ahead of
 // the initialize response, which only arrives on a later event-loop
 // iteration -- per spec nothing but the initialize request itself may be
@@ -508,7 +508,7 @@ TEST_CASE("LspClient answers an unhandled server-initiated request with MethodNo
 // These tests exercise the gate ClientFixture::CreateGated's own doc
 // comment describes.
 
-TEST_CASE("A gated LspClient queues SendNotification instead of writing it immediately", "[Lsp]") {
+TEST_CASE("A gated Client queues SendNotification instead of writing it immediately", "[Lsp]") {
     ClientFixture fixture = ClientFixture::CreateGated();
 
     fixture.client.SendNotification("textDocument/didOpen", Json{{"marker", "queued"}});
@@ -517,7 +517,7 @@ TEST_CASE("A gated LspClient queues SendNotification instead of writing it immed
     REQUIRE(::poll(&pfd, 1, 200) == 0); // nothing written yet -- still queued
 }
 
-TEST_CASE("A gated LspClient lets the initialize request itself through immediately", "[Lsp]") {
+TEST_CASE("A gated Client lets the initialize request itself through immediately", "[Lsp]") {
     ClientFixture fixture = ClientFixture::CreateGated();
 
     fixture.client.SendRequest("initialize", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
@@ -554,8 +554,8 @@ TEST_CASE("Once the gate is open, further calls write immediately with no more q
     REQUIRE(message["method"] == "textDocument/didOpen"); // arrived without needing another "initialized"
 }
 
-// async-write-queue follow-up: the tests below exercise LspClient's write
-// queue directly -- see LspClient.h's own header comment on writeThread_/
+// async-write-queue follow-up: the tests below exercise Client's write
+// queue directly -- see Client.h's own header comment on writeThread_/
 // EnqueueWrite/PrepareForGracefulShutdown for the design this verifies.
 
 TEST_CASE("SendNotification returns immediately even while the underlying pipe is stalled", "[Lsp]") {
@@ -658,18 +658,18 @@ TEST_CASE("Ordinary destruction (no PrepareForGracefulShutdown) does not hang", 
     REQUIRE(elapsed < std::chrono::seconds(2));
 }
 
-// closed-connection-never-parks follow-up. The LspClient twin of
+// closed-connection-never-parks follow-up. The Client twin of
 // Tests/AcpClientTest.cpp's own "Destroying an AcpClient before its read
 // thread has started doesn't deadlock" -- all three clients share this exact
-// threading/lifetime shape (see LspClient.h's own header comment), and all three
-// shared the deadlock: ~LspClient destroys transport_ before joining
+// threading/lifetime shape (see Client.h's own header comment), and all three
+// shared the deadlock: ~Client destroys transport_ before joining
 // readThread_ by design, since that fd close is what unblocks an in-flight
 // read, but a read thread the scheduler hasn't run *at all* yet reaches its
 // first read only after that teardown and used to park forever in poll() on
 // the resulting -1 fd, so the join never returned. Hammering
 // construct-then-immediately-destroy is what makes the scheduler land in
 // that window; the loop simply has to finish.
-TEST_CASE("Destroying a LspClient before its read thread has started doesn't deadlock", "[Lsp]") {
+TEST_CASE("Destroying a Client before its read thread has started doesn't deadlock", "[Lsp]") {
     ned::ui::EventLoop eventLoop;
 
     for (int iteration = 0; iteration < 200; ++iteration) {
@@ -679,7 +679,7 @@ TEST_CASE("Destroying a LspClient before its read thread has started doesn't dea
         REQUIRE(::pipe(clientReadsHere) == 0);
 
         {
-            LspClient client(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+            Client client(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
             // No I/O in between -- ClientFixture's own teardown order (peer
             // write end closed first, so a read thread already parked in
             // poll() wakes on EOF), but with nothing at all happening first.

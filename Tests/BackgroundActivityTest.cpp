@@ -12,7 +12,7 @@ using ned::editor::SetBackgroundActivityDetail;
 
 // The registry is process-wide state (the TabWidth.h/ProjectRoot.h pattern),
 // so every test here must leave it empty -- the same clean-up-after-yourself
-// convention LspManagerTest's SetLspServerCommand tests follow.
+// convention ManagerTest's SetLspServerCommand tests follow.
 
 TEST_CASE("BackgroundActivity begin/end pairs make a name active exactly while counted", "[BackgroundActivity]") {
     REQUIRE(ActiveBackgroundActivities().empty());

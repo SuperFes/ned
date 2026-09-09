@@ -1127,10 +1127,10 @@ void Manager::EndSession(std::string reason) {
     // instead of destroying in place, deferring to the next StartOrContinue
     // ("safe here: nothing of a previous session is on the stack" -- true,
     // but confirmed live elsewhere in this codebase that deferring isn't
-    // actually what makes this safe: LspClient's own identical pattern still
+    // actually what makes this safe: Client's own identical pattern still
     // raced a periodic tick against a background thread's own Post()ed
     // callback for the same object). The real fix now lives in Client
-    // itself (alive_, see LspClient.h's header comment) -- a stray Post()ed
+    // itself (alive_, see Client.h's header comment) -- a stray Post()ed
     // callback safely no-ops instead of touching freed memory regardless of
     // when this destroys the object, so plain immediate destruction is safe.
     client_.reset();
