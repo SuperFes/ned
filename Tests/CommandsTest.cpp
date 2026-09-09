@@ -2521,6 +2521,23 @@ TEST_CASE("kill-word and backward-kill-word kill into the kill ring", "[Commands
     REQUIRE(fixture.killRing.Current() == "world");
 }
 
+TEST_CASE("M-DELETE kills the next word, mirroring M-DEL backward", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(0);
+
+    dispatcher.Feed(ParseKeyChord("M-DELETE"), context);
+    REQUIRE(fixture.buffer.Text() == " world");
+    REQUIRE(fixture.killRing.Current() == "hello");
+}
+
 TEST_CASE("yank-pop replaces a just-yanked entry with the next-older one", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);

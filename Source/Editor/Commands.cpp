@@ -4037,6 +4037,11 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("ESC d"), "kill-word");
     keymap.Bind(ParseKeySequence("M-DEL"), "backward-kill-word");
     keymap.Bind(ParseKeySequence("ESC DEL"), "backward-kill-word");
+    // M-DEL's forward twin on the physical Delete key ("DELETE" here, since
+    // "DEL" is Emacs' name for Backspace). Real Emacs leaves M-<delete>
+    // unbound; this mirrors the backward binding rather than inventing one.
+    keymap.Bind(ParseKeySequence("M-DELETE"), "kill-word");
+    keymap.Bind(ParseKeySequence("ESC DELETE"), "kill-word");
     keymap.Bind(ParseKeySequence("C-x h"), "mark-whole-buffer");
     keymap.Bind(ParseKeySequence("C-t"), "transpose-chars");
     keymap.Bind(ParseKeySequence("M-t"), "transpose-words");
