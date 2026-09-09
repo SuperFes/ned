@@ -601,15 +601,16 @@ void BufferView::BeginVcsSwitchBranchPrompt() {
                 // applies to its own confirmation).
                 return;
             }
-            vcsBranchCandidates_.clear();
+            std::vector<std::string> branchNames;
             for (const editor::vcs::VcsBranchEntry& entry : entries) {
                 if (!entry.current) {
-                    vcsBranchCandidates_.push_back(entry.name);
+                    branchNames.push_back(entry.name);
                 }
             }
+            vcsBranchList_.Reset(std::move(branchNames));
             inputMode_ = InputMode::VcsSwitchBranch;
             prompt_.emplace("Switch to branch: ");
-            vcsSwitchBranchSelection_ = 0;
+            vcsBranchList_.SelectTop();
             RefreshVcsSwitchBranchStatus();
         },
         [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
@@ -1717,14 +1718,13 @@ void BufferView::HandleConfirmRevertHunkKey(const editor::KeyChord& chord) {
 }
 
 void BufferView::RefreshVcsSwitchBranchStatus() {
-    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(vcsBranchCandidates_, prompt_->Text());
-    vcsSwitchBranchSelection_ = ranked.empty() ? 0 : std::min(vcsSwitchBranchSelection_, ranked.size() - 1);
+    const std::vector<std::string>& ranked = vcsBranchList_.Refiltered(prompt_->Text());
 
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(
             ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, vcsSwitchBranchSelection_)));
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, vcsBranchList_.Selection())));
     }
 }
 
@@ -1732,14 +1732,14 @@ void BufferView::HandleVcsSwitchBranchKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
         promptHistory_.Record("vcs-switch-branch", prompt_->Text());
 
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(vcsBranchCandidates_, prompt_->Text());
+        const std::vector<std::string>& ranked = vcsBranchList_.Refiltered(prompt_->Text());
         if (ranked.empty()) {
             statusMessage_ = "No branch matching \"" + prompt_->Text() + "\"";
             EndInteractiveSession();
             return;
         }
 
-        const std::string selected = ranked[std::min(vcsSwitchBranchSelection_, ranked.size() - 1)];
+        const std::string selected = ranked[std::min(vcsBranchList_.Selection(), ranked.size() - 1)];
         EndInteractiveSession();
 
         if (!vcsRunner_) {
@@ -1769,17 +1769,15 @@ void BufferView::HandleVcsSwitchBranchKey(const editor::KeyChord& chord) {
     }
 
     if (TryNavigatePromptHistory(chord, "vcs-switch-branch")) {
-        vcsSwitchBranchSelection_ = 0;
+        vcsBranchList_.SelectTop();
         RefreshVcsSwitchBranchStatus();
         return;
     }
 
     if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(vcsBranchCandidates_, prompt_->Text());
+        const std::vector<std::string>& ranked = vcsBranchList_.Refiltered(prompt_->Text());
         if (!ranked.empty()) {
-            vcsSwitchBranchSelection_ = chord.Special == editor::SpecialKey::Down
-                                           ? (vcsSwitchBranchSelection_ + 1) % ranked.size()
-                                           : (vcsSwitchBranchSelection_ + ranked.size() - 1) % ranked.size();
+            chord.Special == editor::SpecialKey::Down ? vcsBranchList_.SelectNext() : vcsBranchList_.SelectPrevious();
         }
         RefreshVcsSwitchBranchStatus();
         return;
@@ -1787,7 +1785,7 @@ void BufferView::HandleVcsSwitchBranchKey(const editor::KeyChord& chord) {
 
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_       = kNoHistoryIndex;
-        vcsSwitchBranchSelection_ = 0;
+        vcsBranchList_.SelectTop();
         RefreshVcsSwitchBranchStatus();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
