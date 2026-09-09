@@ -2594,6 +2594,46 @@ class BufferView : public Widget {
     // Width in columns of the line-number gutter (digits needed for the
     // buffer's last line number, plus one separating column). Always
     // present -- there's no toggle to hide it yet.
+    // How a line differs from the version control baseline, for the diff column
+    // and the row tint. Declared here because the paint bundles below name it.
+    enum class DiffLineKind { Added,
+                              Modified,
+                              Removed };
+
+    // How far down the fold entries the gutter has streamed. Rows are painted
+    // top to bottom, and each fold column carries state from the row above --
+    // which block's header it is under, and where its guide line ends -- so
+    // this advances across rows rather than being recomputed per row.
+    struct FoldColumnStream {
+        std::size_t entryCursor = 0;
+        std::array<const bufferview::GutterModel::FoldGutterEntry*, bufferview::GutterModel::kMaxFoldDepthColumns>
+                                                                                            headerAtColumn{};
+        std::array<std::size_t, bufferview::GutterModel::kMaxFoldDepthColumns>              columnCursor{};
+        std::array<std::vector<std::size_t>, bufferview::GutterModel::kMaxFoldDepthColumns> columnOpenEnds;
+    };
+
+    // The facts that hold for a whole frame, gathered once so the per-row
+    // painting does not take a dozen separate arguments.
+    struct FramePaint {
+        text::Buffer&                                           buffer;
+        const text::ITextStorage&                               content;
+        const bufferview::GutterLayout&                         gutter;
+        std::size_t                                             totalLines = 0;
+        std::size_t                                             point      = 0;
+        std::size_t                                             pointLine  = 0;
+        const std::vector<editor::dap::DapManager::Breakpoint>& dapBreakpoints;
+        // Resolved once per frame rather than per row; both are stamp-checked
+        // accessors, but there is no reason to re-ask for every line.
+        const std::vector<std::pair<std::size_t, std::size_t>>&                        unsavedChangeLineRanges;
+        const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& diagnosticLineSeverities;
+    };
+
+    // Draws every gutter column for `line` on `row`. Called only for a line's
+    // first visual row -- a wrapped continuation row has no gutter of its own.
+    void PaintLineGutter(Canvas& c, int row, std::size_t line, std::size_t lineStart, std::size_t lineEnd,
+                         const FramePaint& frame, std::optional<DiffLineKind> lineDiffTint, bool isExecutionLine,
+                         FoldColumnStream& folds);
+
     // Where every gutter column sits this frame. GutterWidth is this layout's
     // totalWidth -- the two used to be computed separately and had to agree.
     [[nodiscard]] bufferview::GutterLayout ComputeGutterLayout(std::size_t totalLines) const;
@@ -3380,9 +3420,6 @@ class BufferView : public Widget {
     // Added/Modified; a Removed entry marks the single line immediately
     // after a pure deletion (a boundary, not a covered range) and is
     // rendered as a thin notch rather than a full swatch.
-    enum class DiffLineKind { Added,
-                              Modified,
-                              Removed };
     mutable std::vector<std::pair<std::size_t, DiffLineKind>> diffLineKinds_;
     // Hunk-navigation follow-up: one 0-indexed line per hunk -- its first
     // affected line for Added/Modified, the same boundary line a pure
