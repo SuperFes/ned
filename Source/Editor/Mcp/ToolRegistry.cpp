@@ -1,4 +1,4 @@
-#include "McpToolRegistry.h"
+#include "ToolRegistry.h"
 
 #include <algorithm>
 #include <cctype>

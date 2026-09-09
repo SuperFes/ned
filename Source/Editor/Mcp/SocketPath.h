@@ -21,21 +21,21 @@ namespace ned::editor::mcp {
 // $XDG_RUNTIME_DIR/ned, falling back to $XDG_STATE_HOME/ned/run, falling
 // back to $HOME/.local/state/ned/run if neither is set. Throws
 // std::runtime_error if none is usable. Pure path calculation -- does not
-// create the directory; see EnsureMcpRuntimeDirectory below for that.
-[[nodiscard]] std::filesystem::path McpRuntimeDirectory();
+// create the directory; see EnsureRuntimeDirectory below for that.
+[[nodiscard]] std::filesystem::path RuntimeDirectory();
 
-// Creates McpRuntimeDirectory() (and any missing parents) if it doesn't
+// Creates RuntimeDirectory() (and any missing parents) if it doesn't
 // already exist, with permissions restricted to the owner (0700) -- a
 // world-readable directory would let another local user on a shared machine
 // discover and connect to this process's live editing state. Safe to call
 // repeatedly. Throws std::runtime_error on failure.
-void EnsureMcpRuntimeDirectory();
+void EnsureRuntimeDirectory();
 
-// McpRuntimeDirectory() / "mcp-<pid>.sock" -- this `ned` process's own MCP
-// bridge socket, listened on by mcp::McpBridgeServer and connected to by the
+// RuntimeDirectory() / "mcp-<pid>.sock" -- this `ned` process's own MCP
+// bridge socket, listened on by mcp::BridgeServer and connected to by the
 // `ned --mcp-stdio-relay` subprocess the ACP agent spawns as its configured
 // stdio MCP server.
-[[nodiscard]] std::filesystem::path McpSocketPathForPid(int pid);
+[[nodiscard]] std::filesystem::path SocketPathForPid(int pid);
 
 } // namespace ned::editor::mcp
 

@@ -12,9 +12,9 @@
 
 #include "Editor/Dap/DapManager.h"
 #include "Editor/Lsp/LspManager.h"
-#include "Editor/Mcp/McpBridgeServer.h"
-#include "Editor/Mcp/McpToolRegistry.h"
-#include "Editor/Mcp/McpTransport.h"
+#include "Editor/Mcp/BridgeServer.h"
+#include "Editor/Mcp/ToolRegistry.h"
+#include "Editor/Mcp/Transport.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/Vcs/VcsRunner.h"
 #include "Text/Buffer.h"
@@ -24,7 +24,7 @@
 using ned::editor::dap::DapManager;
 using ned::editor::lsp::LspManager;
 using ned::editor::mcp::Json;
-using ned::editor::mcp::McpBridgeServer;
+using ned::editor::mcp::BridgeServer;
 using ned::editor::mcp::ToolRegistry;
 using ned::editor::mcp::Transport;
 using ned::editor::testrun::TestRunner;
@@ -43,7 +43,7 @@ struct Fixture {
     TestRunner         testRunner{bufferList, eventLoop};
     DapManager         dapManager{eventLoop};
     ToolRegistry       registry{bufferList, lspManager, vcsRunner, testRunner, dapManager};
-    McpBridgeServer    server{registry, eventLoop};
+    BridgeServer    server{registry, eventLoop};
 };
 
 // Real-socket integration layer, mirroring Tests/LspBrokerConnectTest.cpp's
@@ -51,7 +51,7 @@ struct Fixture {
 // relay's role) over a real connect()ed socket, while the main test thread
 // pumps eventLoop.DrainPosted_() -- the same real-timer/background-thread
 // idiom Tests/LspManagerTest.cpp's own WaitUntil uses -- since
-// McpBridgeServer::HandleFrame only ever runs there, never on the
+// BridgeServer::HandleFrame only ever runs there, never on the
 // background accept/read thread.
 void PumpUntil(ned::ui::EventLoop& eventLoop, const std::atomic<bool>& done) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -63,7 +63,7 @@ void PumpUntil(ned::ui::EventLoop& eventLoop, const std::atomic<bool>& done) {
 
 } // namespace
 
-TEST_CASE("McpBridgeServer serves initialize, tools/list, and tools/call over a real socket", "[Mcp]") {
+TEST_CASE("BridgeServer serves initialize, tools/list, and tools/call over a real socket", "[Mcp]") {
     Fixture fixture;
     fixture.server.Start();
     REQUIRE(fixture.server.IsListening());
@@ -142,7 +142,7 @@ TEST_CASE("McpBridgeServer serves initialize, tools/list, and tools/call over a 
     REQUIRE_FALSE(callResponse.at("result").value("isError", false));
 }
 
-TEST_CASE("McpBridgeServer answers an unknown tool name with a JSON-RPC error", "[Mcp]") {
+TEST_CASE("BridgeServer answers an unknown tool name with a JSON-RPC error", "[Mcp]") {
     Fixture fixture;
     fixture.server.Start();
 

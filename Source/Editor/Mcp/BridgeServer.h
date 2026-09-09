@@ -40,7 +40,7 @@
 
 #include "UI/EventLoop.h"
 
-#include "McpTransport.h"
+#include "Transport.h"
 
 namespace ned::editor::mcp {
 
@@ -48,11 +48,11 @@ class ToolRegistry;
 
 using Json = nlohmann::json;
 
-class McpBridgeServer {
+class BridgeServer {
   public:
-    // registry and eventLoop must both outlive this McpBridgeServer, same
+    // registry and eventLoop must both outlive this BridgeServer, same
     // requirement every sibling manager in this codebase documents.
-    McpBridgeServer(ToolRegistry& registry, ned::ui::EventLoop& eventLoop);
+    BridgeServer(ToolRegistry& registry, ned::ui::EventLoop& eventLoop);
 
     // Closes the listening socket and any live connection (unblocking the
     // background accept/read loop via shutdown(2), not a second close of an
@@ -60,12 +60,12 @@ class McpBridgeServer {
     // own destructor joins it -- the "close the fd the background thread is
     // blocked on" pattern LspClient's own transport_/readThread_ member
     // ordering already establishes.
-    ~McpBridgeServer();
+    ~BridgeServer();
 
-    McpBridgeServer(const McpBridgeServer&)            = delete;
-    McpBridgeServer& operator=(const McpBridgeServer&) = delete;
+    BridgeServer(const BridgeServer&)            = delete;
+    BridgeServer& operator=(const BridgeServer&) = delete;
 
-    // Binds and starts listening on McpSocketPathForPid(getpid()) -- a no-op
+    // Binds and starts listening on SocketPathForPid(getpid()) -- a no-op
     // if already listening. Throws std::runtime_error on failure (runtime
     // directory creation, socket/bind/listen syscall failure).
     void Start();
@@ -93,7 +93,7 @@ class McpBridgeServer {
     int                   listenFd_ = -1;
     std::atomic<int>      currentConnFd_{-1};
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
-    std::jthread          acceptThread_; // declared last: its destructor (auto stop+join) must run only after ~McpBridgeServer's body has already unblocked it
+    std::jthread          acceptThread_; // declared last: its destructor (auto stop+join) must run only after ~BridgeServer's body has already unblocked it
 };
 
 } // namespace ned::editor::mcp
