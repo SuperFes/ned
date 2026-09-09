@@ -1587,38 +1587,21 @@ void BufferView::RefreshDapThreadSelectStatus() {
 }
 
 void BufferView::HandleDapThreadSelectKey(const editor::KeyChord& chord) {
-    if (IsQuit(chord)) {
-        statusMessage_ = "Thread selection cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Down) {
-        dapThreadSelection_ = (dapThreadSelection_ + 1) % pendingDapThreads_.size();
-        RefreshDapThreadSelectStatus();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Up) {
-        dapThreadSelection_ = (dapThreadSelection_ + pendingDapThreads_.size() - 1) % pendingDapThreads_.size();
-        RefreshDapThreadSelectStatus();
-        return;
-    }
-    std::size_t chosen = dapThreadSelection_;
-    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
-        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
-        if (index >= pendingDapThreads_.size()) {
-            return; // out of range -- stay in the selection list
-        }
-        chosen = index;
-    }
-    else if (chord.Special != editor::SpecialKey::Enter) {
-        return; // anything else is ignored -- stay in the selection list
-    }
-
-    const editor::dap::DapManager::Thread thread = pendingDapThreads_[chosen];
-    dapManager_->SelectThread(thread.id, [this, name = thread.name](bool success) {
-        statusMessage_ = success ? ("Selected thread: " + name) : "Failed to select thread.";
-    });
-    EndInteractiveSession();
+    HandleChoicePromptKey({.count         = pendingDapThreads_.size(),
+                           .selection     = &dapThreadSelection_,
+                           .cancelMessage = "Thread selection cancelled.",
+                           .refresh       = [this] { RefreshDapThreadSelectStatus(); },
+                           .commit =
+                               [this, threads = pendingDapThreads_](std::size_t index) {
+                                   const editor::dap::DapManager::Thread thread = threads[index];
+                                   if (dapManager_ == nullptr) {
+                                       return;
+                                   }
+                                   dapManager_->SelectThread(thread.id, [this, name = thread.name](bool success) {
+                                       statusMessage_ = success ? ("Selected thread: " + name) : "Failed to select thread.";
+                                   });
+                               }},
+                          chord);
 }
 
 // DAP round 3: BeginDapThreadSelect's own shape, but a live/local toggle set

@@ -2798,6 +2798,43 @@ void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
     // Anything else is ignored -- stay in Confirming.
 }
 
+void BufferView::HandleChoicePromptKey(const bufferview::ChoicePrompt& prompt, const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        statusMessage_ = prompt.cancelMessage;
+        EndInteractiveSession();
+        return;
+    }
+    if (prompt.count == 0) {
+        return;
+    }
+    std::size_t& selection = *prompt.selection;
+
+    if (chord.Special == editor::SpecialKey::Down) {
+        selection = (selection + 1) % prompt.count;
+        prompt.refresh();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        selection = (selection + prompt.count - 1) % prompt.count;
+        prompt.refresh();
+        return;
+    }
+    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
+        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
+        if (index >= prompt.count) {
+            return; // no entry behind that digit -- stay, rather than committing the highlighted one
+        }
+        selection = index;
+    }
+    else if (chord.Special != editor::SpecialKey::Enter) {
+        return; // anything else is ignored -- stay in the list
+    }
+
+    const std::size_t chosen = selection;
+    EndInteractiveSession();
+    prompt.commit(chosen);
+}
+
 void BufferView::HandleConfirmPromptKey(const bufferview::ConfirmPrompt& prompt, const editor::KeyChord& chord) {
     if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
         EndInteractiveSession();
@@ -4064,42 +4101,20 @@ void BufferView::RefreshAcpPermissionPromptStatus() {
 }
 
 void BufferView::HandleAcpPermissionPromptKey(const editor::KeyChord& chord) {
-    if (IsQuit(chord)) {
-        if (acpManager_) {
-            acpManager_->CancelPermissionPrompt();
-        }
-        statusMessage_ = "Permission request cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Down) {
-        acpPermissionSelection_ = (acpPermissionSelection_ + 1) % pendingAcpPermissionOptions_.size();
-        RefreshAcpPermissionPromptStatus();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Up) {
-        acpPermissionSelection_ = (acpPermissionSelection_ + pendingAcpPermissionOptions_.size() - 1) % pendingAcpPermissionOptions_.size();
-        RefreshAcpPermissionPromptStatus();
-        return;
-    }
-    std::size_t chosen = acpPermissionSelection_;
-    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
-        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
-        if (index >= pendingAcpPermissionOptions_.size()) {
-            return; // out of range -- stay in the selection list
-        }
-        chosen = index;
-    }
-    else if (chord.Special != editor::SpecialKey::Enter) {
-        return; // anything else is ignored -- stay in the selection list
-    }
-
-    const editor::acp::AcpManager::PermissionOption& option = pendingAcpPermissionOptions_[chosen];
-    if (acpManager_) {
-        acpManager_->ResolvePermissionPrompt(option.optionId);
-    }
-    statusMessage_ = "Selected \"" + option.name + "\".";
-    EndInteractiveSession();
+    HandleChoicePromptKey({.count         = pendingAcpPermissionOptions_.size(),
+                           .selection     = &acpPermissionSelection_,
+                           .cancelMessage = "Permission request dismissed.",
+                           .refresh       = [this] { RefreshAcpPermissionPromptStatus(); },
+                           // Captured: ending the session clears the pending options.
+                           .commit =
+                               [this, options = pendingAcpPermissionOptions_](std::size_t index) {
+                                   const editor::acp::AcpManager::PermissionOption& option = options[index];
+                                   if (acpManager_) {
+                                       acpManager_->ResolvePermissionPrompt(option.optionId);
+                                   }
+                                   statusMessage_ = "Selected \"" + option.name + "\".";
+                               }},
+                          chord);
 }
 
 } // namespace ned::ui

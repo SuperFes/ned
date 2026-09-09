@@ -1063,35 +1063,13 @@ void BufferView::RefreshCodeActionSelectStatus() {
 }
 
 void BufferView::HandleCodeActionSelectKey(const editor::KeyChord& chord) {
-    if (IsQuit(chord)) {
-        statusMessage_ = "Code action cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Down) {
-        codeActionSelection_ = (codeActionSelection_ + 1) % pendingCodeActions_.size();
-        RefreshCodeActionSelectStatus();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Up) {
-        codeActionSelection_ = (codeActionSelection_ + pendingCodeActions_.size() - 1) % pendingCodeActions_.size();
-        RefreshCodeActionSelectStatus();
-        return;
-    }
-    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
-        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
-        if (index < pendingCodeActions_.size()) {
-            codeActionSelection_ = index;
-        }
-        // falls through to the same Confirm transition Enter performs below
-    }
-    else if (chord.Special != editor::SpecialKey::Enter) {
-        return; // anything else is ignored -- stay in the selection list
-    }
-
-    const editor::lsp::CodeAction action = pendingCodeActions_[codeActionSelection_];
-    EndInteractiveSession();
-    ResolveAndApplyCodeAction(action);
+    HandleChoicePromptKey({.count         = pendingCodeActions_.size(),
+                           .selection     = &codeActionSelection_,
+                           .cancelMessage = "Code action cancelled.",
+                           .refresh       = [this] { RefreshCodeActionSelectStatus(); },
+                           .commit        = [this, actions = pendingCodeActions_](
+                                                std::size_t index) { ResolveAndApplyCodeAction(actions[index]); }},
+                          chord);
 }
 
 void BufferView::ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action) {
@@ -1418,35 +1396,13 @@ void BufferView::RefreshDefinitionSelectStatus() {
 }
 
 void BufferView::HandleDefinitionSelectKey(const editor::KeyChord& chord) {
-    if (IsQuit(chord)) {
-        statusMessage_ = "Go to definition cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Down) {
-        definitionSelection_ = (definitionSelection_ + 1) % pendingDefinitions_.size();
-        RefreshDefinitionSelectStatus();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Up) {
-        definitionSelection_ = (definitionSelection_ + pendingDefinitions_.size() - 1) % pendingDefinitions_.size();
-        RefreshDefinitionSelectStatus();
-        return;
-    }
-    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
-        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
-        if (index < pendingDefinitions_.size()) {
-            definitionSelection_ = index;
-        }
-        // falls through to the same jump Enter performs below
-    }
-    else if (chord.Special != editor::SpecialKey::Enter) {
-        return; // anything else is ignored -- stay in the selection list
-    }
-
-    const editor::lsp::LspManager::ResolvedLocation location = pendingDefinitions_[definitionSelection_];
-    EndInteractiveSession();
-    JumpToDefinition(location);
+    HandleChoicePromptKey({.count         = pendingDefinitions_.size(),
+                           .selection     = &definitionSelection_,
+                           .cancelMessage = "Go to definition cancelled.",
+                           .refresh       = [this] { RefreshDefinitionSelectStatus(); },
+                           .commit        = [this, locations = pendingDefinitions_](
+                                                std::size_t index) { JumpToDefinition(locations[index]); }},
+                          chord);
 }
 
 void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocation& location) {
@@ -1540,36 +1496,13 @@ void BufferView::RefreshPeekDefinitionStatus() {
 }
 
 void BufferView::HandlePeekDefinitionKey(const editor::KeyChord& chord) {
-    if (IsQuit(chord)) {
-        statusMessage_ = "Peek cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Down) {
-        peekDefinitionSelection_ = (peekDefinitionSelection_ + 1) % pendingPeekDefinitions_.size();
-        RefreshPeekDefinitionStatus();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Up) {
-        peekDefinitionSelection_ =
-            (peekDefinitionSelection_ + pendingPeekDefinitions_.size() - 1) % pendingPeekDefinitions_.size();
-        RefreshPeekDefinitionStatus();
-        return;
-    }
-    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
-        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
-        if (index < pendingPeekDefinitions_.size()) {
-            peekDefinitionSelection_ = index;
-        }
-        // falls through to the same jump Enter performs below
-    }
-    else if (chord.Special != editor::SpecialKey::Enter) {
-        return; // anything else is ignored -- stay in the peek popup
-    }
-
-    const editor::lsp::LspManager::ResolvedLocation location = pendingPeekDefinitions_[peekDefinitionSelection_];
-    EndInteractiveSession();
-    JumpToDefinition(location);
+    HandleChoicePromptKey({.count         = pendingPeekDefinitions_.size(),
+                           .selection     = &peekDefinitionSelection_,
+                           .cancelMessage = "Peek definition cancelled.",
+                           .refresh       = [this] { RefreshPeekDefinitionStatus(); },
+                           .commit        = [this, locations = pendingPeekDefinitions_](
+                                                std::size_t index) { JumpToDefinition(locations[index]); }},
+                          chord);
 }
 
 void BufferView::SetOnPeekChanged(std::function<void(std::optional<ListPopupModel>)> handler) {
