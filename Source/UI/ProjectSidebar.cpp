@@ -1,5 +1,8 @@
 #include "ProjectSidebar.h"
 
+#include "Paint.h"
+#include "ThemePaints.h"
+
 #include <algorithm>
 #include <chrono>
 #include <exception>
@@ -183,16 +186,16 @@ namespace {
     // documents (a background wash was tried for the live gutter and
     // reverted for fighting syntax-highlight contrast). BrightCyan for
     // Untracked is the one new addition, since nothing existing covers it.
-    [[nodiscard]] std::optional<Color> VcsStatusColor(RowStatus status) {
+    [[nodiscard]] std::optional<Color> VcsStatusColor(RowStatus status, const Theme& theme) {
         switch (status) {
             case RowStatus::Deleted:
-                return Color::BrightRed;
+                return theme.diagnosticError;
             case RowStatus::Modified:
-                return Color::BrightBlue;
+                return theme.vcsModifiedForeground;
             case RowStatus::Added:
-                return Color::BrightGreen;
+                return theme.successForeground;
             case RowStatus::Untracked:
-                return Color::BrightCyan;
+                return theme.vcsUntrackedForeground;
             case RowStatus::None:
                 return std::nullopt;
         }
@@ -361,12 +364,22 @@ void ProjectSidebar::Paint(Canvas c) {
     // Confirmed live: repeated select-theme preview sessions left a
     // stale, unused foreground color baked into every blank row below the
     // tree, one popup session's leftover color replacing the last.
-    const Brush blankBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
+    //
+    // Translucency follow-up (Docs/Translucency.md phase 5): the blank fill
+    // is the "panel" Surface. Its derived default is exactly the flat
+    // theme background this used before, so an unthemed sidebar is
+    // unchanged; a theme can make it a gradient, give it an edge falloff
+    // toward the buffer, or make it translucent -- in which case the dither
+    // path carries whatever is behind the window through the gaps.
+    const Surface panel = SurfaceFor(theme_, "panel");
+    ClearCanvas(c, theme_.background);
+    Fill(c, panel.fill);
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
-            Cell& cell     = c[{.x = col, .y = row}];
-            cell.character = " ";
-            blankBrush.ApplyTo(cell);
+            const Point at{.x = col, .y = row};
+            Cell&       cell      = c[at];
+            cell.character        = " ";
+            cell.foreground_color = TextColourAt(panel, c, at, theme_.defaultForeground);
         }
     }
 
@@ -420,7 +433,7 @@ void ProjectSidebar::Paint(Canvas c) {
         // reads the same everywhere.
         const bool isSelected = focused && static_cast<int>(*index) == selectedIndex_;
 
-        const std::optional<Color> vcsColor = VcsStatusColor(LookupVcsStatus(vcsStatus_, entry.path));
+        const std::optional<Color> vcsColor = VcsStatusColor(LookupVcsStatus(vcsStatus_, entry.path), theme_);
 
         Brush brush =
             isActiveFile ? theme_.activeTab

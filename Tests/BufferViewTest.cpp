@@ -8687,14 +8687,14 @@ TEST_CASE("Arrowing through select-theme previews each highlighted theme live, a
 TEST_CASE("Enter commits the highlighted theme and typing narrows with live preview", "[BufferView]") {
     ThemePickerHarness h;
 
-    TypeText(h.view, "ansi-l");
-    REQUIRE(CandidateSelected(h.fixture.candidates, "ansi-light"));
+    TypeText(h.view, "gruvbox-l");
+    REQUIRE(CandidateSelected(h.fixture.candidates, "gruvbox-light"));
     REQUIRE_FALSE(h.applied.empty());
-    REQUIRE(h.applied.back() == "ansi-light");
+    REQUIRE(h.applied.back() == "gruvbox-light");
 
     h.view.OnEvent(ned::ui::test::Return());
-    REQUIRE(h.fixture.statusMessage == "Theme: ansi-light");
-    REQUIRE(h.applied.back() == "ansi-light");
+    REQUIRE(h.fixture.statusMessage == "Theme: gruvbox-light");
+    REQUIRE(h.applied.back() == "gruvbox-light");
 
     h.view.OnEvent(ned::ui::test::Character("z")); // back to normal editing
     REQUIRE(h.fixture.buffer.Text() == "z");
@@ -11844,8 +11844,9 @@ TEST_CASE("save-theme writes the active theme as runnable Janet to the XDG confi
         std::ostringstream content;
         content << in.rdbuf();
         // The fixture's theme is DarkTheme() -- spot-check one emitted call
-        // against a known value (keyword_foreground = Color::Blue = x:4).
-        REQUIRE(content.str().find("(ned/theme-set \"keyword_foreground\" \"x:4\")") != std::string::npos);
+        // against a known value (keyword_foreground, now a real RGB colour
+        // rather than an ANSI name resolving to xterm's flat #000080).
+        REQUIRE(content.str().find("(ned/theme-set \"keyword_foreground\" \"#61afef\")") != std::string::npos);
         REQUIRE(content.str().find("(ned/theme-set \"background\" \"default\")") != std::string::npos);
 
         view.OnEvent(ned::ui::test::Character("z")); // proves the one-shot returned to Normal mode

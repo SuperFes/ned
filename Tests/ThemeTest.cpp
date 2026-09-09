@@ -10,6 +10,7 @@
 #include "Editor/SyntaxTheme.h"
 #include "Editor/ThemeSetting.h"
 #include "ThemeTestSupport.h"
+#include "UI/Compositing.h"
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
 #include "UI/ThemeRegistry.h"
@@ -19,9 +20,6 @@ using ned::editor::SetSyntaxBold;
 using ned::editor::SetSyntaxForeground;
 using ned::editor::SetSyntaxItalic;
 using ned::editor::SyntaxClass;
-using ned::ui::AnsiDarkTheme;
-using ned::ui::AnsiFallbackFor;
-using ned::ui::AnsiLightTheme;
 using ned::ui::Color;
 using ned::ui::DarkTheme;
 using ned::ui::LightTheme;
@@ -140,67 +138,172 @@ TEST_CASE("Capture-aware BrushFor: capture chain beats class override beats buil
 
 namespace {
 
-// Walks every SerializeTheme'd color token and fails on anything outside
-// the ANSI themes' documented restriction (Theme.h): palette 0-7 or
-// "default", never a "#rrggbb" TrueColor and never the Bright 8-15 range.
-void RequireAnsiRestricted(const Theme& theme) {
-    std::istringstream in{ned::ui::SerializeTheme(theme)};
-    std::string        line;
-    while (std::getline(in, line)) {
-        const auto eq = line.find('=');
-        REQUIRE(eq != std::string::npos);
-        const std::string key = line.substr(0, eq);
-        // bold/italic-round-trip follow-up: SerializeTheme's Brush trait
-        // lines ("<prefix>_bold=true", etc., ThemeFile.cpp) aren't colors --
-        // this check is color-token-format-only, see ThemeTestSupport.h's
-        // IsBrushTraitKey for the same skip on the shared helper.
-        if (ned::tests::IsBrushTraitKey(key)) {
-            continue;
+// SerializeTheme covers every Color field via ThemeFile's shared key table,
+// so walking its output is the whole theme.
+std::vector<std::string> SerializedLines(const Theme& theme) {
+    std::vector<std::string> lines;
+    std::istringstream       stream(ned::ui::SerializeTheme(theme));
+    std::string              line;
+    while (std::getline(stream, line)) {
+        if (!line.empty()) {
+            lines.push_back(line);
         }
-        const std::string token = line.substr(eq + 1);
-        INFO(line);
-        if (token == "default") {
-            continue;
-        }
-        REQUIRE(token.starts_with("x:"));
-        REQUIRE(std::stoi(token.substr(2)) <= 7);
     }
+    return lines;
 }
 
 } // namespace
 
-TEST_CASE("ANSI fallback themes use only palette 0-7 and default colors", "[Theme]") {
-    // SerializeTheme covers every Color field since the theme-editing
-    // follow-up's shared key table, so the serialized walk alone is the
-    // whole theme now (was: markupMarkerForeground needed a separate direct
-    // check).
-    RequireAnsiRestricted(AnsiDarkTheme());
-    RequireAnsiRestricted(AnsiLightTheme());
-}
-
-TEST_CASE("ANSI fallback themes flatten both mode-line gradients", "[Theme]") {
-    for (const Theme& theme : {AnsiDarkTheme(), AnsiLightTheme()}) {
-        REQUIRE(theme.modeLineGradientStart == theme.modeLineGradientEnd);
-        REQUIRE(theme.modeLineFocusedGradientStart == theme.modeLineFocusedGradientEnd);
-    }
-}
-
 TEST_CASE("Interpolate returns equal endpoints unchanged, preserving their kind", "[Theme]") {
-    // The property the flattened gradients above rely on: a Palette16
-    // endpoint must not degrade to its TrueColor approximation.
+    // Default has no RGB to interpolate from, so an equal pair must pass
+    // through rather than collapsing to a mid-grey approximation.
     REQUIRE(Color::Interpolate(0.5F, Color::Blue, Color::Blue) == Color::Blue);
     REQUIRE(Color::Interpolate(0.0F, Color::Default, Color::Default) == Color::Default);
     // Distinct endpoints still blend to a real TrueColor.
     REQUIRE(Color::Interpolate(0.5F, Color::Blue, Color::Red).kind == Color::Kind::TrueColor);
 }
 
-TEST_CASE("AnsiFallbackFor picks the variant matching the theme's polarity", "[Theme]") {
-    REQUIRE(AnsiFallbackFor(DarkTheme()).name == "ansi-dark");   // Default background
-    REQUIRE(AnsiFallbackFor(LightTheme()).name == "ansi-light"); // light TrueColor background
+TEST_CASE("Every syntax colour clears a contrast floor against its own background", "[Theme]") {
+    // With the ANSI fallback gone, a theme owns its own legibility -- so the
+    // floor is checked rather than assumed. A theme whose background is the
+    // terminal's own has no RGB to measure against, so it is judged against
+    // an assumed backdrop of the same polarity: exactly the
+    // "assumedBackground" rule Docs/Translucency.md describes for
+    // compositing.
+    //
+    // Every violation is collected rather than asserted one at a time, so a
+    // run reports the whole picture instead of whichever theme happens to
+    // sort first -- and so removing a known deviation fails too, prompting
+    // the list below to shrink.
+    const ned::ui::Color assumedDark  = ned::ui::Color::RGB(0x14141c);
+    const ned::ui::Color assumedLight = ned::ui::Color::RGB(0xf0f0ec);
 
-    Theme detectedDark      = DarkTheme();
-    detectedDark.background = Color::RGB(0x1e1e2e); // a --detect-theme file from a dark terminal
-    REQUIRE(AnsiFallbackFor(detectedDark).name == "ansi-dark");
+    // Known, deliberate deviations: each is a *cloned* theme carrying the
+    // value its upstream palette actually specifies. A clone is a
+    // transcription, so these are recorded rather than "corrected" -- see
+    // Docs/Themes.md on what cloning means here.
+    //
+    // solarized-dark's is the one that is arguably ned's own bug rather than
+    // the palette's: upstream inverts the text for a search hit instead of
+    // painting the buffer's own foreground over the highlight, which is an
+    // argument for ned choosing an isearch *foreground*.
+    // All eight are the two famously low-contrast *light* clones plus
+    // solarized-dark's search highlight. Solarized's body text is 4.13:1
+    // against its own background -- below AA, and entirely on purpose: low
+    // contrast is that palette's whole thesis, not an oversight to correct
+    // in a transcription.
+    const std::vector<std::string> knownDeviations = {
+        "catppuccin-latte numberForeground",
+        "catppuccin-latte stringForeground",
+        "catppuccin-latte typeForeground",
+        "solarized-dark isearchMatchBackground",
+        "solarized-light defaultForeground:AA",
+        "solarized-light functionForeground",
+        "solarized-light stringForeground",
+        "solarized-light typeForeground",
+    };
+
+    std::vector<std::string> violations;
+    for (const std::string& name : ned::ui::ThemeNames()) {
+        const std::optional<Theme> theme = ned::ui::ThemeByName(name);
+        REQUIRE(theme.has_value());
+
+        // Polarity comes from the theme's own foreground when its background
+        // is the terminal's: light text means a dark backdrop.
+        ned::ui::Color background = theme->background;
+        if (!background.Composable()) {
+            background = ned::tests::Luma(theme->defaultForeground) >= 128 ? assumedDark : assumedLight;
+        }
+
+        // 3.0 is the floor for "meant to be read at a glance but allowed to
+        // recede" -- comments, line numbers and hints deliberately sit near
+        // it. Anything the eye tracks while reading code sits far above.
+        const std::pair<const char*, ned::ui::Color> againstBackground[] = {
+            {"defaultForeground", theme->defaultForeground},
+            {"stringForeground", theme->stringForeground},
+            {"keywordForeground", theme->keywordForeground},
+            {"numberForeground", theme->numberForeground},
+            {"typeForeground", theme->typeForeground},
+            {"functionForeground", theme->functionForeground},
+            {"operatorForeground", theme->operatorForeground},
+        };
+        // commentForeground is deliberately not here. A comment's job is to
+        // recede, and eleven of the bundled palettes -- nord, one-dark,
+        // tokyo-night, zenburn, solarized, catppuccin -- put theirs below
+        // 3:1 on purpose. A floor that fails all of them is measuring taste,
+        // not legibility.
+        //
+        // modeLineForeground is checked separately below: it sits on the
+        // mode line's own gradient, not on the buffer background, and
+        // measuring it against the wrong backdrop was this test's first bug.
+        for (const auto& [field, colour] : againstBackground) {
+            if (ned::ui::ContrastRatio(colour, background) < 3.0) {
+                violations.push_back(name + " " + field);
+            }
+        }
+
+        for (const auto& [field, against] :
+             {std::pair<const char*, ned::ui::Color>{"modeLineForeground:start", theme->modeLineGradientStart},
+              std::pair<const char*, ned::ui::Color>{"modeLineForeground:end", theme->modeLineGradientEnd}}) {
+            if (!against.Composable() || !theme->modeLineForeground.Composable()) {
+                continue;
+            }
+            if (ned::ui::ContrastRatio(theme->modeLineForeground, against) < 3.0) {
+                violations.push_back(name + " " + field);
+            }
+        }
+
+        // The two theme colours that are a *background* a foreground has to
+        // survive, which is why neither is simply the matching syntax hue.
+        const std::pair<const char*, ned::ui::Color> underForeground[] = {
+            {"selectionBackground", theme->selectionBackground},
+            {"isearchMatchBackground", theme->isearchMatchBackground},
+        };
+        for (const auto& [field, colour] : underForeground) {
+            if (!colour.Composable() || !theme->defaultForeground.Composable()) {
+                continue; // nothing to measure
+            }
+            if (ned::ui::ContrastRatio(theme->defaultForeground, colour) < 3.0) {
+                violations.push_back(name + " " + field);
+            }
+        }
+
+        // 4.5 is WCAG AA for body text, and body text is exactly what this
+        // is. AAA (7.0) was the first choice and is the wrong bar here: it
+        // fails one-dark at 6.6, and a floor that rejects one of the most
+        // widely used palettes in the world is measuring the wrong thing.
+        if (ned::ui::ContrastRatio(theme->defaultForeground, background) < 4.5) {
+            violations.push_back(name + " defaultForeground:AA");
+        }
+    }
+
+    std::sort(violations.begin(), violations.end());
+    for (const std::string& violation : violations) {
+        INFO(violation);
+    }
+    REQUIRE(violations == knownDeviations);
+}
+
+TEST_CASE("Every bundled theme is truecolor -- no palette indices survive", "[Theme]") {
+    // Phase 3 of Docs/Translucency.md: themes own their own contrast and
+    // Notcurses quantizes for a terminal that cannot render them, so a
+    // theme field must never be a palette index (it cannot be composited
+    // against, and it cannot carry alpha).
+    for (const std::string& name : ned::ui::ThemeNames()) {
+        const std::optional<Theme> theme = ned::ui::ThemeByName(name);
+        REQUIRE(theme.has_value());
+        INFO(name);
+        for (const std::string& line : SerializedLines(*theme)) {
+            const auto eq = line.find('=');
+            REQUIRE(eq != std::string::npos);
+            if (ned::tests::IsBrushTraitKey(line.substr(0, eq))) {
+                continue;
+            }
+            const std::string token = line.substr(eq + 1);
+            INFO(line);
+            REQUIRE_FALSE(token.starts_with("x:"));
+        }
+    }
 }
 
 // rich-theme-set follow-up (Phase 1): the name registry.
@@ -219,11 +322,15 @@ TEST_CASE("ThemeByName resolves every registered name to a theme carrying that e
     }
 }
 
-TEST_CASE("ThemeNames is sorted and covers the four built-ins; unknown names resolve to nullopt", "[Theme]") {
+TEST_CASE("ThemeNames is sorted and covers the hand-built pair; unknown names resolve to nullopt", "[Theme]") {
     const std::vector<std::string> names = ned::ui::ThemeNames();
     REQUIRE(std::is_sorted(names.begin(), names.end()));
-    for (const char* expected : {"dark", "light", "ansi-dark", "ansi-light"}) {
+    for (const char* expected : {"dark", "light"}) {
         REQUIRE(std::find(names.begin(), names.end(), expected) != names.end());
+    }
+    // The ANSI fallback pair is gone with the fallback path itself.
+    for (const char* removed : {"ansi-dark", "ansi-light"}) {
+        REQUIRE(std::find(names.begin(), names.end(), removed) == names.end());
     }
     REQUIRE_FALSE(ned::ui::ThemeByName("no-such-theme").has_value());
 }
@@ -231,8 +338,8 @@ TEST_CASE("ThemeNames is sorted and covers the four built-ins; unknown names res
 TEST_CASE("PreferredThemeName round-trips and clears via empty string", "[Theme]") {
     REQUIRE(ned::editor::PreferredThemeName().empty()); // default: no preference
 
-    ned::editor::SetPreferredThemeName("ansi-dark");
-    REQUIRE(ned::editor::PreferredThemeName() == "ansi-dark");
+    ned::editor::SetPreferredThemeName("gruvbox-dark");
+    REQUIRE(ned::editor::PreferredThemeName() == "gruvbox-dark");
 
     ned::editor::SetPreferredThemeName("");
     REQUIRE(ned::editor::PreferredThemeName().empty());

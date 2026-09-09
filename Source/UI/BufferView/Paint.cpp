@@ -265,7 +265,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     // computed just above), matching the diff gutter column's
     // own choice to give Removed a distinct glyph instead.
     const Color gutterForeground = lineDiffTint
-                                       ? (lineDiffTint == DiffLineKind::Added ? Color::BrightGreen : Color::BrightBlue)
+                                       ? (lineDiffTint == DiffLineKind::Added ? theme_.successForeground : theme_.vcsModifiedForeground)
                                    : (line == frame.pointLine) ? theme_.currentLineNumberForeground
                                                                : theme_.lineNumberForeground;
     // Digits+padding get the full selection background only when the
@@ -273,11 +273,13 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     // Partial too, so a partially-selected line still shows a thin
     // highlighted edge instead of no indication at all.
     const Brush gutterBrush{
-        .background = (gutterSelection == GutterSelection::Full) ? theme_.selectionBackground : theme_.background,
+        .background = (gutterSelection == GutterSelection::Full) ? OverlayBackground(theme_, theme_.selectionBackground)
+                                                                 : theme_.background,
         .foreground = gutterForeground,
     };
     const Brush gutterGapBrush{
-        .background = (gutterSelection != GutterSelection::None) ? theme_.selectionBackground : theme_.background,
+        .background = (gutterSelection != GutterSelection::None) ? OverlayBackground(theme_, theme_.selectionBackground)
+                                                                 : theme_.background,
         .foreground = gutterForeground,
     };
     // DAP client slice 2/4: the debug-marker column -- an
@@ -355,15 +357,15 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
             switch (it->second) {
                 case DiffLineKind::Added:
                     cell.character        = "+";
-                    cell.foreground_color = Color::BrightGreen;
+                    cell.foreground_color = theme_.successForeground;
                     break;
                 case DiffLineKind::Modified:
                     cell.character        = "~";
-                    cell.foreground_color = Color::BrightBlue;
+                    cell.foreground_color = theme_.vcsModifiedForeground;
                     break;
                 case DiffLineKind::Removed:
                     cell.character        = "▔"; // UPPER ONE EIGHTH BLOCK
-                    cell.foreground_color = Color::BrightRed;
+                    cell.foreground_color = theme_.diagnosticError;
                     break;
             }
         }
@@ -539,7 +541,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
         if (it != gutters_.TestEntries().end() && it->line == line) {
             Cell& cell            = c[{.x = static_cast<int>(frame.gutter.testStart), .y = row}];
             cell.character        = TestGlyphFor(it->status);
-            cell.foreground_color = TestStatusColor(it->status);
+            cell.foreground_color = TestStatusColor(theme_, it->status);
             cell.bold             = true;
         }
     }
@@ -569,20 +571,23 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
             Cell& cell = c[{.x = static_cast<int>(frame.gutter.coverageStart), .y = row}];
             if (it->second == editor::coverage::LineStatus::Uncovered && changed) {
                 cell.character        = "!";
-                cell.foreground_color = Color::BrightRed;
+                cell.foreground_color = theme_.diagnosticError;
                 cell.bold             = true;
             }
             else {
-                Color color = Color::Green;
+                // Coverage is the same three meanings the diagnostics
+                // already name: this is fine, this needs attention, this is
+                // wrong.
+                Color color = theme_.successForeground;
                 switch (it->second) {
                     case editor::coverage::LineStatus::Covered:
-                        color = Color::Green;
+                        color = theme_.successForeground;
                         break;
                     case editor::coverage::LineStatus::Partial:
-                        color = Color::BrightYellow;
+                        color = theme_.diagnosticWarning;
                         break;
                     case editor::coverage::LineStatus::Uncovered:
-                        color = Color::BrightRed;
+                        color = theme_.diagnosticError;
                         break;
                 }
                 cell.character        = " ";
@@ -661,7 +666,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
                                          [](const auto& entry, std::size_t l) { return entry.first < l; });
         if (it != blameLineInfo_.end() && it->first == line) {
             const std::string shortHash = it->second.commitHash.substr(0, std::min<std::size_t>(8, it->second.commitHash.size()));
-            const Color       hashColor = BlameHashColor(it->second.date);
+            const Color       hashColor = BlameHashColor(theme_, it->second.date);
             for (std::size_t i = 0; i < shortHash.size() && static_cast<int>(frame.gutter.blameStart + i) < c.size().width; ++i) {
                 Cell& cell            = c[{.x = static_cast<int>(frame.gutter.blameStart + i), .y = row}];
                 cell.character        = std::string(1, shortHash[i]);
@@ -1023,13 +1028,13 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         }
     }
     if (InIsearchMatch(offset)) {
-        brush.background = theme_.isearchMatchBackground;
+        brush.background = OverlayBackground(theme_, theme_.isearchMatchBackground);
     }
     else if (InActiveSnippetField(offset)) {
-        brush.background = theme_.snippetFieldBackground;
+        brush.background = OverlayBackground(theme_, theme_.snippetFieldBackground);
     }
     else if (InSelection(offset)) {
-        brush.background = theme_.selectionBackground;
+        brush.background = OverlayBackground(theme_, theme_.selectionBackground);
     }
     else if (InConflictOurs(offset)) {
         // Merge Conflict Resolution Mode: a persistent,

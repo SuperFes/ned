@@ -20,6 +20,7 @@
 
 #include "UI/BufferView.h"
 #include "UI/BufferView/RenderTypes.h"
+#include "UI/Compositing.h"
 
 #include <algorithm>
 #include <cctype>
@@ -998,19 +999,36 @@ inline const char* TestGlyphFor(const std::optional<editor::testrun::TestResult:
     return " "; // unreachable, same convention as DiagnosticGlyphFor above
 }
 
-inline Color TestStatusColor(const std::optional<editor::testrun::TestResult::Status>& status) {
+inline Color TestStatusColor(const Theme& theme, const std::optional<editor::testrun::TestResult::Status>& status) {
     if (!status) {
-        return Color::BrightBlack; // an affordance, not a result -- deliberately quiet
+        // An affordance, not a result -- deliberately quiet, so it takes the
+        // gutter's own recessive colour rather than a status hue.
+        return theme.lineNumberForeground;
     }
     switch (*status) {
         case editor::testrun::TestResult::Status::Passed:
-            return Color::BrightGreen;
+            return theme.successForeground;
         case editor::testrun::TestResult::Status::Failed:
-            return Color::BrightRed;
+            return theme.diagnosticError;
         case editor::testrun::TestResult::Status::Skipped:
-            return Color::BrightYellow;
+            return theme.diagnosticWarning;
     }
-    return Color::BrightGreen; // unreachable
+    return theme.successForeground; // unreachable
+}
+
+// An overlay background -- selection, isearch, a diff or conflict wash --
+// composited over the buffer's own background rather than replacing it, so a
+// theme can give any of them alpha and get a *tint* instead of a slab. An
+// opaque overlay passes through byte for byte, which is every built-in
+// theme's behaviour today.
+//
+// Over a theme whose background is the terminal's own there is nothing to
+// composite against, so a translucent overlay lands opaque (BlendOver's
+// documented rule). Making it dither instead needs the two-pass layering in
+// Docs/Translucency.md -- background wash first, text pass second -- which is
+// deliberately still open.
+inline Color OverlayBackground(const Theme& theme, const Color& overlay) {
+    return BlendOver(theme.background, overlay);
 }
 
 inline Color DiagnosticSeverityColor(const Theme& theme, text::Buffer::Diagnostic::Severity severity) {
@@ -1039,20 +1057,20 @@ inline Color DiagnosticSeverityColor(const Theme& theme, text::Buffer::Diagnosti
 // unparseable date (a plugin using a different format, or a genuinely
 // empty field) degrades to the oldest/dimmest color rather than
 // throwing -- this is purely cosmetic, never load-bearing.
-inline Color BlameHashColor(const std::string& date) {
+inline Color BlameHashColor(const Theme& theme, const std::string& date) {
     constexpr int kBlameMaxAgeDays = 365;
 
     std::istringstream    stream(date);
     std::chrono::sys_days parsed;
     stream >> std::chrono::parse("%Y-%m-%d", parsed);
     if (stream.fail()) {
-        return Color::BrightBlack;
+        return theme.blameOldForeground;
     }
 
     const auto  now     = std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now());
     const auto  ageDays = std::chrono::duration_cast<std::chrono::days>(now - parsed).count();
     const float t       = std::clamp(static_cast<float>(ageDays) / static_cast<float>(kBlameMaxAgeDays), 0.0f, 1.0f);
-    return Color::Interpolate(t, Color::BrightCyan, Color::BrightBlack);
+    return Color::Interpolate(t, theme.blameRecentForeground, theme.blameOldForeground);
 }
 
 // prose-diagnostic-callout follow-up: one Prose diagnostic reduced to

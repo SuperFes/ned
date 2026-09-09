@@ -34,6 +34,90 @@ Notcurses.
 
 ## Open Items
 
+### Translucent UI & Theme Engine v2
+
+Full design: `Docs/Translucency.md` (techniques, compositing rules, phasing, risks).
+Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlphaProbe.cpp`.
+
+- [ ] **Phase 1 — alpha in the compositor.** `Color` gains an alpha byte; `Screen::Blend`
+      implements the five resolution rules (known-bg lerp, dither, foreground tint, opaque
+      escape hatch). Headless unit tests; no visual change.
+- [ ] **Phase 2 — Paint/Surface types.** `Paint` (solid/linear/radial/blur), `Shadow`,
+      `Surface`, `Canvas::Fill(box, Paint)`, per-Paint `AlphaPolicy`, contrast guard.
+- [ ] **Phase 3 follow-up — migrate the last named-colour call sites into the theme.**
+      A handful of widgets still reach for `Color::BrightRed`/`BrightGreen`/`BrightBlack`
+      directly (test gutter marks in `BufferView/Internal.h`, `VcsDiffPreview`,
+      `ProjectSidebar`, the `JanetReplPanel`/`DebugConsolePanel` cursor cells). Those are
+      xterm's default RGB now rather than the user's palette, which is a behaviour change
+      worth finishing properly: they should be `Theme` fields like everything else.
+- [x] **Phase 4 — theme v2 (core).** Landed: `#rrggbbaa` tokens, the paint grammar and its
+      one-line string form (`Source/UI/PaintParse.h`), `$slot+8`-style references resolved
+      against the theme's own fields, named paints and per-surface overrides
+      (`Source/UI/ThemePaints.h`), the `ned/theme-gradient`/`ned/theme-surface` bindings
+      with the same deferred-until-a-real-Theme application `ned/theme-set` uses, and the
+      bundled `gradients.janet` presets plus its array sugar. Surfaces are *additive* over
+      Theme's flat colour fields rather than a replacement: every derived default is
+      byte-identical to what the widget paints today, so widgets migrate one at a time in
+      phases 5-7 instead of in one flag day.
+- [ ] **Phase 4 remainder.** `Shadow`/`elevation` are typed but deliberately not settable
+      from Janet yet — an authoring surface for something nothing paints is worse than none,
+      so they land with the popup phase that consumes them.
+- [ ] **Current-line highlight: try the two-pass layering first.** Paint washes (current
+      line, selection, diff tints) as a background pass, then the text pass writes only
+      foregrounds and leaves the background alone unless a span overrides it — no second
+      `Screen` needed, just the buffer's text pass not clobbering what the wash put down.
+      This is what makes a background-only current-line highlight work over a transparent
+      theme, where a single pass has to choose between tinting text and giving up
+      transparency. `buffer.current_line` exists and is empty until this is settled.
+- [ ] **Phase 4b — theme authoring loop.** `M-x reload-theme` (re-`dofile` theme.janet and
+      repaint) and `M-x theme-gallery` (every surface as a labelled swatch, redrawn on
+      reload, doubling as the contrast guard's reporting surface). Small, and it is what
+      makes gradient authoring bearable.
+- [x] **Phase 5 — chrome adoption (widgets).** `ModeLine`, `TabBar` and `ProjectSidebar`
+      paint through themed Surfaces; derived defaults are byte-identical to what they
+      painted before, pinned by `Tests/ChromeSurfaceTest.cpp`. Verified live: a theme
+      setting `modeline.fill` to `[:x "$spectrum"]` ramps blue→teal→yellow→magenta across
+      the row, text intact.
+- [ ] **Phase 5 remainder — focus scrim**, and the state-driven mode-line fills (LSP
+      indexing / test-run / load progress as a sweep across the bar). The scrim needs a
+      composition-root hook for "a docked panel or overlay holds focus", which is why it
+      is not in with the widget migrations.
+- [ ] **Surfaces do not carry traits.** `Brush` has bold/italic/underlined/strikethrough;
+      `Surface` has only paints, so `TabBar` still reads its traits from the Brush while
+      taking colours from the Surface. Either add trait fields to `Surface` (and a way to
+      set them from `ned/theme-surface`) or decide traits stay a Brush concern and say so.
+- [x] **`DarkTheme`'s ANSI colour names are real RGB now** (`LightTheme` never had any).
+      One colour per constant, so every equality the theme expressed survives; the two
+      *background* uses got purpose-chosen values instead, since a colour that reads as
+      text is not a colour text reads on. `Tests/ThemeTest.cpp` now enforces a contrast
+      floor across every bundled theme, with the eight known deviations (two low-contrast
+      light clones, plus solarized-dark's search highlight) listed by name.
+- [x] **No widget hard-codes a colour any more.** Audited and fixed: the sidebar and VCS
+      panel's status rows, `VcsDiffPreview`, the diff/coverage/test gutters, the blame age
+      ramp, and the REPL/ACP/debug-console caret cells. Five new semantic `Theme` fields
+      carry what the diagnostics did not (`successForeground`, `vcsModifiedForeground`,
+      `vcsUntrackedForeground`, `blameRecentForeground`, `blameOldForeground`); everything
+      else reuses an existing field whose meaning already matched — a failed test is
+      `diagnosticError`, an uncovered line is too, a dim gutter affordance is
+      `lineNumberForeground`. All five derive from the palette in `ThemeFromPalette`, so
+      every cloned theme got them for free.
+- [ ] **`BuildDetectedTheme` only maps seven ANSI slots.** Everything it does not map keeps
+      the *fallback* theme's value, which is how a stale `--detect-theme` cache ends up
+      holding `constant_foreground=x:13` — a legacy palette token that now resolves to
+      xterm's flat `#ff00ff` rather than the terminal's own magenta. Re-running
+      `--detect-theme` fixes an existing cache; mapping more slots (constants, types,
+      functions, operators) would stop the fallback showing through in the first place.
+- [ ] **Phase 6 — text-layer adoption.** Selection/isearch/diff/merge/DAP rows become tints
+      rather than background replacements (merge overlaps composite for free); current-line
+      gradient wash; recency glow driven by `UnsavedChangeRanges` + an `EventLoop` timer;
+      virtual text (inline diagnostics, blame, fold placeholders) at real alpha.
+- [ ] **Phase 7 — popups.** Transparent outer border, translucent or blurred body
+      (in-app blur: sample `Screen`, box-blur, use as fill), alpha-falloff shadow, one
+      `elevation` concept shared by completion/hover/TreeView/ListPopup/peek.
+- [ ] **Phase 8 (optional, separate).** iTerm2-protocol image layer for smooth true alpha
+      over the desktop, Konsole/iTerm2 only. Confirmed working live; the probe is the
+      reference implementation. Notcurses cannot drive this path at all.
+
 ### Embedded Language
 
 - [ ] **Jank replaces Janet** — replace the internal scripting representation with
@@ -1023,6 +1107,14 @@ As of 2026-09-08: `ctest -j8` is clean under the `default` preset, and so is the
 single-process `./build/ned_tests` (see the build/test note at the end of this file for
 why that is a separate check worth making). The `sanitize` preset has one reproducible
 failure, below. Two flakes and one documented behavioral limitation:
+
+- **`Symbol gutter remaps a huge buffer's window-relative offsets...` died with a bus
+  error once under `ctest -j8`** (2026-09-09), and passed both on its own immediately
+  afterwards and on the very next full `-j8` run, with no source change in between. SIGBUS
+  on a huge-file test points at the mmap path rather than the gutter logic: a page fault on
+  a mapping whose backing file could not be grown is exactly this signal, and these tests
+  write GB-scale files into a tmpfs `/tmp` that several parallel huge-file tests share. If
+  it recurs, check tmpfs headroom during the run before suspecting `MappedFile` itself.
 
 - **`ResolvePsr4Namespace strips a leading fully-qualified backslash` aborted once
   under `ctest -j8`** (seen 2026-09-09, passed on immediate rerun and on a full clean

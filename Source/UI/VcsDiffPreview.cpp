@@ -116,10 +116,10 @@ void VcsDiffPreview::Paint(Canvas c) {
         else {
             label = ToCodepoints(row.text);
             if (row.text.starts_with('+')) {
-                brush.foreground = Color::BrightGreen;
+                brush.foreground = theme_.successForeground;
             }
             else if (row.text.starts_with('-')) {
-                brush.foreground = Color::BrightRed;
+                brush.foreground = theme_.diagnosticError;
             }
             else {
                 brush.foreground = theme_.lineNumberForeground;
