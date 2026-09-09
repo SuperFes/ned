@@ -79,6 +79,7 @@
 #include "TreeView.h"
 #include "UI/BufferView/CacheStamp.h"
 #include "UI/BufferView/CandidateList.h"
+#include "UI/BufferView/ChoicePrompt.h"
 #include "UI/BufferView/ConfirmPrompt.h"
 #include "UI/BufferView/EditorContext.h"
 #include "UI/BufferView/FuzzyPrompt.h"
@@ -2020,6 +2021,10 @@ class BufferView : public Widget {
     [[nodiscard]] std::optional<bufferview::TextEntryPrompt> TextEntryPromptFor(InputMode mode) const;
     // What Tab means in the prompt currently up; None when nothing is.
     [[nodiscard]] bufferview::PromptCompletion PromptCompletionForCurrentMode() const;
+
+    // The behaviour every numbered-choice list shares; each caller supplies its
+    // count, highlight, messages and commit. See BufferView/ChoicePrompt.h.
+    void HandleChoicePromptKey(const bufferview::ChoicePrompt& prompt, const editor::KeyChord& chord);
 
     // The behaviour every yes/no confirmation shares; the builders below are the
     // parts that differ. See BufferView/ConfirmPrompt.h.
