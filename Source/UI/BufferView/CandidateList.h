@@ -47,6 +47,11 @@ class CandidateList {
     // Refilter, not Reset -- the pool is nominally the same one.
     void Refilter(std::vector<std::string> candidates, std::string_view query);
 
+    // Refilter and hand the result straight back, for the common case of
+    // wanting both in one expression.
+    const std::vector<std::string>& Refiltered(std::string_view query);
+    const std::vector<std::string>& Refiltered(std::vector<std::string> candidates, std::string_view query);
+
     [[nodiscard]] const std::vector<std::string>& Ranked() const {
         return ranked_;
     }

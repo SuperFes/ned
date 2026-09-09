@@ -30,6 +30,16 @@ void CandidateList::Refilter(std::vector<std::string> candidates, std::string_vi
     RankAgainst(query, /*keepSelection=*/true);
 }
 
+const std::vector<std::string>& CandidateList::Refiltered(std::string_view query) {
+    Refilter(query);
+    return ranked_;
+}
+
+const std::vector<std::string>& CandidateList::Refiltered(std::vector<std::string> candidates, std::string_view query) {
+    Refilter(std::move(candidates), query);
+    return ranked_;
+}
+
 void CandidateList::RankAgainst(std::string_view query, bool keepSelection) {
     ranked_ = editor::FuzzyFilterAndRank(source_, std::string(query));
     if (!keepSelection || ranked_.empty()) {

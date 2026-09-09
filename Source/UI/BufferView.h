@@ -30,6 +30,7 @@
 
 #include "ActiveBuffer.h"
 #include "UI/BufferView/CacheStamp.h"
+#include "UI/BufferView/CandidateList.h"
 #include "UI/BufferView/EditorContext.h"
 #include "UI/BufferView/GutterModel.h"
 #include "UI/BufferView/Viewport.h"
@@ -3057,47 +3058,15 @@ class BufferView : public Widget {
     std::vector<editor::BackupVersion> recoverVersions_;
     std::size_t                        recoverChoice_ = 0;
 
-    // execute-extended-command follow-up: index into the ranked candidate
-    // list FuzzyFilterAndRank produces fresh from prompt_->Text() on every
-    // keystroke/render -- the ranked list itself isn't cached as a member,
-    // it's cheap to recompute (a few dozen short strings), matching this
-    // codebase's established "recompute, don't cache" convention for cheap
-    // per-frame/per-keystroke work (e.g. ScrollArrowButton, WindowManager's
-    // own tree walks).
-    std::size_t executeCommandSelection_ = 0;
 
-    // project-find-file follow-up: mirrors executeCommandSelection_ above,
-    // but projectFindFileCandidates_ itself (project-relative file path
-    // strings, populated once by StartInteractiveSession's ProjectFindFile
-    // case) IS cached as a member, unlike dispatcher_.Registry().Names() --
-    // a real recursive directory walk (editor::BuildProjectTree) is too
-    // expensive to redo on every keystroke, unlike an in-memory registry
-    // lookup. Only the fuzzy filter/rank against this cached list re-runs
-    // per keystroke, matching FuzzyMatch.h's own "cheap to recompute, not
-    // cheap to re-enumerate" framing.
-    std::vector<std::string> projectFindFileCandidates_;
-    std::size_t              projectFindFileSelection_ = 0;
 
-    // editor-ergonomics follow-up: projectFindFileCandidates_'s own pair,
-    // populated from editor::RecentFilePaths() when the session starts.
-    std::vector<std::string> recentFileCandidates_;
-    std::size_t              recentFileSelection_ = 0;
 
     // named-projects follow-up: switch-project's own pair, populated from
     // editor::ListProjects() when the session starts -- entries, not
     // pre-formatted strings, since Enter needs the underlying root back,
     // not just the "name — root" display text FuzzyFilterAndRank ranks.
     std::vector<editor::ProjectRegistryEntry> switchProjectEntries_;
-    std::size_t                               switchProjectSelection_ = 0;
 
-    // dropdown-path-completion follow-up: selection index for each of the
-    // three newly-dedicated fuzzy-dropdown sessions -- switchProjectSelection_'s
-    // own shape, one member per mode since that's this file's established
-    // convention even though only one of these (or switchProjectSelection_
-    // itself) is ever live at a time.
-    std::size_t switchToBufferSelection_  = 0;
-    std::size_t vcsSwitchBranchSelection_ = 0;
-    std::size_t acpAgentNameSelection_    = 0;
     // dropdown-path-completion follow-up: shared across FindFile/
     // OpenProjectPath/FindScratch (see GatherPathCompletionCandidates'/
     // RefreshPathCompletionPopup's own doc comments) -- one member is enough
@@ -3110,20 +3079,8 @@ class BufferView : public Widget {
     // same session" shape above.
     std::filesystem::path pendingOpenProjectRoot_;
 
-    // editor-ergonomics follow-up: same pair again, over
-    // editor::BookmarkNames(); bookmarkPromptAction_ distinguishes
-    // bookmark-jump from bookmark-delete on the same InputMode::
-    // BookmarkJump session (TaskPromptAction's own precedent).
-    std::vector<std::string> bookmarkCandidates_;
-    std::size_t              bookmarkSelection_    = 0;
     BookmarkPromptAction     bookmarkPromptAction_ = BookmarkPromptAction::Jump;
 
-    // rich-theme-set follow-up (Phase 1): the select-theme session's own
-    // mirror of the projectFindFile pair above, plus the pre-preview Theme
-    // snapshot (see HandleSelectThemeKey's doc comment) and the applier
-    // callback (see SetThemeApplier's).
-    std::vector<std::string>          selectThemeCandidates_;
-    std::size_t                       selectThemeSelection_ = 0;
     std::optional<Theme>              themeBeforePreview_;
     std::function<void(const Theme&)> themeApplier_;
 
@@ -3409,12 +3366,6 @@ class BufferView : public Widget {
     // (see RunCommandAndHandleOutcome's own save-detection check).
     DeadlineTimer diffRefreshTimer_;
 
-    // VCS vocabulary-completion follow-up: the branch names Tab completes
-    // against during InputMode::VcsSwitchBranch -- parked here by
-    // BeginVcsSwitchBranchPrompt's branch-list callback (the current
-    // branch excluded; switching to it would be a no-op), valid only for
-    // that prompt session's lifetime.
-    std::vector<std::string> vcsBranchCandidates_;
 
 
     // line-wrap follow-up: see EnsureRowCountCache/RowsForLine's own doc
@@ -3963,6 +3914,19 @@ class BufferView : public Widget {
     // above, so every one of them must already exist when this is initialised.
     // The parts BufferView is being split into take this by reference rather
     // than a dozen separate arguments -- see BufferView/EditorContext.h.
+    // One per fuzzy prompt: the pool being filtered, the ranked result and the
+    // selection in it, which used to be a candidate vector plus a loose index
+    // each -- see BufferView/CandidateList.h.
+    bufferview::CandidateList executeCommandList_;
+    bufferview::CandidateList projectFindFileList_;
+    bufferview::CandidateList recentFileList_;
+    bufferview::CandidateList switchProjectList_;
+    bufferview::CandidateList switchToBufferList_;
+    bufferview::CandidateList acpAgentNameList_;
+    bufferview::CandidateList bookmarkList_;
+    bufferview::CandidateList selectThemeList_;
+    bufferview::CandidateList vcsBranchList_;
+
     bufferview::EditorContext context_;
 
     // After context_, which it holds by reference. The gutter columns' derived

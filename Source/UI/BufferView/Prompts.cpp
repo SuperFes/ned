@@ -276,7 +276,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::SwitchToBuffer:
             inputMode_ = InputMode::SwitchToBuffer;
             prompt_.emplace("Switch to buffer: ");
-            switchToBufferSelection_ = 0;
+            switchToBufferList_.SelectTop();
             RefreshSwitchToBufferStatus();
             return;
         case editor::InteractiveRequest::ProjectSearch:
@@ -986,7 +986,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::AcpStartSession:
             inputMode_ = InputMode::AcpAgentName;
             prompt_.emplace("ACP agent: ");
-            acpAgentNameSelection_ = 0;
+            acpAgentNameList_.SelectTop();
             RefreshAcpAgentNameStatus();
             return;
         case editor::InteractiveRequest::AcpSendPrompt:
@@ -1208,7 +1208,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // rather than just prompt_->StatusText().
             inputMode_ = InputMode::ExecuteCommand;
             prompt_.emplace("M-x ");
-            executeCommandSelection_ = 0;
+            executeCommandList_.SelectTop();
             RefreshExecuteCommandStatus();
             return;
         // project-find-file follow-up: same "populate and show the full
@@ -1221,20 +1221,21 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // pick from, so it's reported directly rather than opening a prompt
         // session over an empty list.
         case editor::InteractiveRequest::ProjectFindFile: {
-            projectFindFileCandidates_.clear();
+            std::vector<std::string>    projectFiles;
             const std::filesystem::path root = editor::ProjectRoot();
             for (const editor::ProjectTreeEntry& entry : editor::BuildProjectTree(root)) {
                 if (!entry.isDirectory) {
-                    projectFindFileCandidates_.push_back(std::filesystem::relative(entry.path, root).generic_string());
+                    projectFiles.push_back(std::filesystem::relative(entry.path, root).generic_string());
                 }
             }
-            if (projectFindFileCandidates_.empty()) {
+            projectFindFileList_.Reset(std::move(projectFiles));
+            if (projectFindFileList_.Empty()) {
                 statusMessage_ = "No files found under " + root.string();
                 return;
             }
             inputMode_ = InputMode::ProjectFindFile;
             prompt_.emplace("Find file (fuzzy): ");
-            projectFindFileSelection_ = 0;
+            projectFindFileList_.SelectTop();
             RefreshProjectFindFileStatus();
             return;
         }
@@ -1243,14 +1244,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // editor::RecentFilePaths() (a cheap in-memory read, not a
         // directory walk) instead of BuildProjectTree.
         case editor::InteractiveRequest::FindRecentFile: {
-            recentFileCandidates_ = editor::RecentFilePaths();
-            if (recentFileCandidates_.empty()) {
+            recentFileList_.Reset(editor::RecentFilePaths());
+            if (recentFileList_.Empty()) {
                 statusMessage_ = "No recently opened files";
                 return;
             }
             inputMode_ = InputMode::FindRecentFile;
             prompt_.emplace("Find recent file (fuzzy): ");
-            recentFileSelection_ = 0;
+            recentFileList_.SelectTop();
             RefreshFindRecentFileStatus();
             return;
         }
@@ -1264,7 +1265,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             inputMode_ = InputMode::SwitchProject;
             prompt_.emplace("Switch to project (fuzzy): ");
-            switchProjectSelection_ = 0;
+            switchProjectList_.SelectTop();
             RefreshSwitchProjectStatus();
             return;
         }
@@ -1295,15 +1296,15 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::BookmarkJump:
         case editor::InteractiveRequest::BookmarkDelete: {
             const bool isDelete = (request == editor::InteractiveRequest::BookmarkDelete);
-            bookmarkCandidates_ = editor::BookmarkNames();
-            if (bookmarkCandidates_.empty()) {
+            bookmarkList_.Reset(editor::BookmarkNames());
+            if (bookmarkList_.Empty()) {
                 statusMessage_ = "No bookmarks set";
                 return;
             }
             bookmarkPromptAction_ = isDelete ? BookmarkPromptAction::Delete : BookmarkPromptAction::Jump;
             inputMode_            = InputMode::BookmarkJump;
             prompt_.emplace(isDelete ? "Delete bookmark (fuzzy): " : "Jump to bookmark (fuzzy): ");
-            bookmarkSelection_ = 0;
+            bookmarkList_.SelectTop();
             RefreshBookmarkJumpStatus();
             return;
         }
@@ -1329,12 +1330,13 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "Theme switching is not wired up.";
                 return;
             }
-            selectThemeCandidates_ = ThemeNames();
-            selectThemeCandidates_.insert(selectThemeCandidates_.begin(), std::string(kCurrentThemeLabel));
+            std::vector<std::string> themeNames = ThemeNames();
+            themeNames.insert(themeNames.begin(), std::string(kCurrentThemeLabel));
+            selectThemeList_.Reset(std::move(themeNames));
             themeBeforePreview_    = theme_;
             inputMode_             = InputMode::SelectTheme;
             prompt_.emplace("Theme (fuzzy): ");
-            selectThemeSelection_ = 0;
+            selectThemeList_.SelectTop();
             RefreshSelectThemeStatus();
             return;
         }
@@ -1754,11 +1756,10 @@ void BufferView::EndInteractiveSession() {
     renameSource_.clear();
     propertyStage_ = PropertyPromptStage::EnteringName;
     pendingPropertyName_.clear();
-    executeCommandSelection_  = 0;
-    projectFindFileSelection_ = 0;
-    projectFindFileCandidates_.clear(); // cached only for the duration of one session -- see its own doc comment in BufferView.h
-    selectThemeSelection_ = 0;
-    selectThemeCandidates_.clear();
+    executeCommandList_.SelectTop();
+    // Both pools are cached only for the duration of one session.
+    projectFindFileList_.Clear();
+    selectThemeList_.Clear();
     // The cancel path re-applies this snapshot *before* calling here; the
     // commit path applies the selected theme instead and lets this drop.
     themeBeforePreview_.reset();
@@ -3441,15 +3442,13 @@ void BufferView::HandleOrgCaptureKey(const editor::KeyChord& chord) {
 }
 
 void BufferView::RefreshExecuteCommandStatus() {
-    const std::vector<std::string> ranked =
-        editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
-    executeCommandSelection_ = ranked.empty() ? 0 : std::min(executeCommandSelection_, ranked.size() - 1);
+    const std::vector<std::string>& ranked = executeCommandList_.Refiltered(dispatcher_.Registry().Names(), prompt_->Text());
 
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(
             ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, executeCommandSelection_)));
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, executeCommandList_.Selection())));
     }
 }
 
@@ -3457,8 +3456,7 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
         promptHistory_.Record("execute-command", prompt_->Text());
 
-        const std::vector<std::string> ranked =
-            editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
+        const std::vector<std::string>& ranked = executeCommandList_.Refiltered(dispatcher_.Registry().Names(), prompt_->Text());
 
         if (ranked.empty()) {
             statusMessage_ = "No command matching \"" + prompt_->Text() + "\"";
@@ -3466,7 +3464,7 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
             return;
         }
 
-        const std::string name = ranked[std::min(executeCommandSelection_, ranked.size() - 1)];
+        const std::string name = ranked[std::min(executeCommandList_.Selection(), ranked.size() - 1)];
         EndInteractiveSession();
 
         editor::CommandContext context = MakeContext();
@@ -3484,21 +3482,18 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
     }
 
     if (TryNavigatePromptHistory(chord, "execute-command")) {
-        executeCommandSelection_ = 0;
+        executeCommandList_.SelectTop();
         RefreshExecuteCommandStatus();
         return;
     }
 
     if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string> ranked =
-            editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
+        const std::vector<std::string>& ranked = executeCommandList_.Refiltered(dispatcher_.Registry().Names(), prompt_->Text());
         if (!ranked.empty()) {
             // Wraps at either end -- the list's own bottom/top -- rather
             // than sticking there, matching every ListPopup-driven focus
             // list's own navigation.
-            executeCommandSelection_ = chord.Special == editor::SpecialKey::Down
-                                          ? (executeCommandSelection_ + 1) % ranked.size()
-                                          : (executeCommandSelection_ + ranked.size() - 1) % ranked.size();
+            chord.Special == editor::SpecialKey::Down ? executeCommandList_.SelectNext() : executeCommandList_.SelectPrevious();
         }
         RefreshExecuteCommandStatus();
         return;
@@ -3515,22 +3510,21 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
     // re-snaps nothing -- the candidate list doesn't change.
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_      = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
-        executeCommandSelection_ = 0;
+        executeCommandList_.SelectTop();
         RefreshExecuteCommandStatus();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }
 
 void BufferView::RefreshProjectFindFileStatus() {
-    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
-    projectFindFileSelection_             = ranked.empty() ? 0 : std::min(projectFindFileSelection_, ranked.size() - 1);
+    const std::vector<std::string>& ranked = projectFindFileList_.Refiltered(prompt_->Text());
 
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(
             ranked.empty()
                 ? std::nullopt
-                : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, projectFindFileSelection_)));
+                : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, projectFindFileList_.Selection())));
     }
 }
 
@@ -3538,7 +3532,7 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
         promptHistory_.Record("project-find-file", prompt_->Text());
 
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
+        const std::vector<std::string>& ranked = projectFindFileList_.Refiltered(prompt_->Text());
 
         if (ranked.empty()) {
             statusMessage_ = "No file matching \"" + prompt_->Text() + "\"";
@@ -3546,7 +3540,7 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
             return;
         }
 
-        const std::filesystem::path selected = ranked[std::min(projectFindFileSelection_, ranked.size() - 1)];
+        const std::filesystem::path selected = ranked[std::min(projectFindFileList_.Selection(), ranked.size() - 1)];
         EndInteractiveSession();
 
         const std::filesystem::path absolutePath = editor::ProjectRoot() / selected;
@@ -3567,17 +3561,15 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
     }
 
     if (TryNavigatePromptHistory(chord, "project-find-file")) {
-        projectFindFileSelection_ = 0;
+        projectFindFileList_.SelectTop();
         RefreshProjectFindFileStatus();
         return;
     }
 
     if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
+        const std::vector<std::string>& ranked = projectFindFileList_.Refiltered(prompt_->Text());
         if (!ranked.empty()) {
-            projectFindFileSelection_ = chord.Special == editor::SpecialKey::Down
-                                           ? (projectFindFileSelection_ + 1) % ranked.size()
-                                           : (projectFindFileSelection_ + ranked.size() - 1) % ranked.size();
+            chord.Special == editor::SpecialKey::Down ? projectFindFileList_.SelectNext() : projectFindFileList_.SelectPrevious();
         }
         RefreshProjectFindFileStatus();
         return;
@@ -3587,7 +3579,7 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
     // HandleExecuteCommandKey above -- see that method's own comment.
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_       = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
-        projectFindFileSelection_ = 0;
+        projectFindFileList_.SelectTop();
         RefreshProjectFindFileStatus();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
@@ -3599,14 +3591,13 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
 // so Enter opens the selection directly with no ProjectRoot() join).
 
 void BufferView::RefreshFindRecentFileStatus() {
-    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(recentFileCandidates_, prompt_->Text());
-    recentFileSelection_                  = ranked.empty() ? 0 : std::min(recentFileSelection_, ranked.size() - 1);
+    const std::vector<std::string>& ranked = recentFileList_.Refiltered(prompt_->Text());
 
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(
             ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, recentFileSelection_)));
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, recentFileList_.Selection())));
     }
 }
 
@@ -3614,7 +3605,7 @@ void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
         promptHistory_.Record("find-recent-file", prompt_->Text());
 
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(recentFileCandidates_, prompt_->Text());
+        const std::vector<std::string>& ranked = recentFileList_.Refiltered(prompt_->Text());
 
         if (ranked.empty()) {
             statusMessage_ = "No recent file matching \"" + prompt_->Text() + "\"";
@@ -3622,7 +3613,7 @@ void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
             return;
         }
 
-        const std::filesystem::path selected = ranked[std::min(recentFileSelection_, ranked.size() - 1)];
+        const std::filesystem::path selected = ranked[std::min(recentFileList_.Selection(), ranked.size() - 1)];
         EndInteractiveSession();
 
         try {
@@ -3642,17 +3633,15 @@ void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
     }
 
     if (TryNavigatePromptHistory(chord, "find-recent-file")) {
-        recentFileSelection_ = 0;
+        recentFileList_.SelectTop();
         RefreshFindRecentFileStatus();
         return;
     }
 
     if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(recentFileCandidates_, prompt_->Text());
+        const std::vector<std::string>& ranked = recentFileList_.Refiltered(prompt_->Text());
         if (!ranked.empty()) {
-            recentFileSelection_ = chord.Special == editor::SpecialKey::Down
-                                      ? (recentFileSelection_ + 1) % ranked.size()
-                                      : (recentFileSelection_ + ranked.size() - 1) % ranked.size();
+            chord.Special == editor::SpecialKey::Down ? recentFileList_.SelectNext() : recentFileList_.SelectPrevious();
         }
         RefreshFindRecentFileStatus();
         return;
@@ -3660,7 +3649,7 @@ void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
 
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_  = kNoHistoryIndex;
-        recentFileSelection_ = 0;
+        recentFileList_.SelectTop();
         RefreshFindRecentFileStatus();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
@@ -3678,14 +3667,13 @@ void BufferView::RefreshSwitchProjectStatus() {
         candidates.push_back(FormatProjectEntry(entry));
     }
 
-    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
-    switchProjectSelection_ = ranked.empty() ? 0 : std::min(switchProjectSelection_, ranked.size() - 1);
+    const std::vector<std::string>& ranked = switchProjectList_.Refiltered(candidates, prompt_->Text());
 
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(
             ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, switchProjectSelection_)));
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, switchProjectList_.Selection())));
     }
 }
 
@@ -3699,14 +3687,14 @@ void BufferView::HandleSwitchProjectKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
         promptHistory_.Record("switch-project", prompt_->Text());
 
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        const std::vector<std::string>& ranked = switchProjectList_.Refiltered(candidates, prompt_->Text());
         if (ranked.empty()) {
             statusMessage_ = "No project matching \"" + prompt_->Text() + "\"";
             EndInteractiveSession();
             return;
         }
 
-        const std::string selected = ranked[std::min(switchProjectSelection_, ranked.size() - 1)];
+        const std::string selected = ranked[std::min(switchProjectList_.Selection(), ranked.size() - 1)];
         EndInteractiveSession();
 
         const auto it = std::find_if(switchProjectEntries_.begin(), switchProjectEntries_.end(),
@@ -3727,17 +3715,15 @@ void BufferView::HandleSwitchProjectKey(const editor::KeyChord& chord) {
     }
 
     if (TryNavigatePromptHistory(chord, "switch-project")) {
-        switchProjectSelection_ = 0;
+        switchProjectList_.SelectTop();
         RefreshSwitchProjectStatus();
         return;
     }
 
     if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        const std::vector<std::string>& ranked = switchProjectList_.Refiltered(candidates, prompt_->Text());
         if (!ranked.empty()) {
-            switchProjectSelection_ = chord.Special == editor::SpecialKey::Down
-                                         ? (switchProjectSelection_ + 1) % ranked.size()
-                                         : (switchProjectSelection_ + ranked.size() - 1) % ranked.size();
+            chord.Special == editor::SpecialKey::Down ? switchProjectList_.SelectNext() : switchProjectList_.SelectPrevious();
         }
         RefreshSwitchProjectStatus();
         return;
@@ -3745,7 +3731,7 @@ void BufferView::HandleSwitchProjectKey(const editor::KeyChord& chord) {
 
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_     = kNoHistoryIndex;
-        switchProjectSelection_ = 0;
+        switchProjectList_.SelectTop();
         RefreshSwitchProjectStatus();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
@@ -3761,14 +3747,13 @@ void BufferView::HandleSwitchProjectKey(const editor::KeyChord& chord) {
 
 void BufferView::RefreshSwitchToBufferStatus() {
     const std::vector<std::string> candidates = text::CompleteBufferNames(bufferList_, "");
-    const std::vector<std::string> ranked     = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
-    switchToBufferSelection_ = ranked.empty() ? 0 : std::min(switchToBufferSelection_, ranked.size() - 1);
+    const std::vector<std::string>& ranked = switchToBufferList_.Refiltered(candidates, prompt_->Text());
 
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(
             ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, switchToBufferSelection_)));
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, switchToBufferList_.Selection())));
     }
 }
 
@@ -3778,14 +3763,14 @@ void BufferView::HandleSwitchToBufferKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
         promptHistory_.Record("switch-to-buffer", prompt_->Text());
 
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        const std::vector<std::string>& ranked = switchToBufferList_.Refiltered(candidates, prompt_->Text());
         if (ranked.empty()) {
             statusMessage_ = "No buffer matching \"" + prompt_->Text() + "\"";
             EndInteractiveSession();
             return;
         }
 
-        const std::string selected = ranked[std::min(switchToBufferSelection_, ranked.size() - 1)];
+        const std::string selected = ranked[std::min(switchToBufferList_.Selection(), ranked.size() - 1)];
         EndInteractiveSession();
 
         if (text::Buffer* found = bufferList_.Find(selected)) {
@@ -3804,17 +3789,15 @@ void BufferView::HandleSwitchToBufferKey(const editor::KeyChord& chord) {
     }
 
     if (TryNavigatePromptHistory(chord, "switch-to-buffer")) {
-        switchToBufferSelection_ = 0;
+        switchToBufferList_.SelectTop();
         RefreshSwitchToBufferStatus();
         return;
     }
 
     if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        const std::vector<std::string>& ranked = switchToBufferList_.Refiltered(candidates, prompt_->Text());
         if (!ranked.empty()) {
-            switchToBufferSelection_ = chord.Special == editor::SpecialKey::Down
-                                          ? (switchToBufferSelection_ + 1) % ranked.size()
-                                          : (switchToBufferSelection_ + ranked.size() - 1) % ranked.size();
+            chord.Special == editor::SpecialKey::Down ? switchToBufferList_.SelectNext() : switchToBufferList_.SelectPrevious();
         }
         RefreshSwitchToBufferStatus();
         return;
@@ -3822,7 +3805,7 @@ void BufferView::HandleSwitchToBufferKey(const editor::KeyChord& chord) {
 
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_      = kNoHistoryIndex;
-        switchToBufferSelection_ = 0;
+        switchToBufferList_.SelectTop();
         RefreshSwitchToBufferStatus();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
@@ -3836,14 +3819,13 @@ void BufferView::HandleSwitchToBufferKey(const editor::KeyChord& chord) {
 
 void BufferView::RefreshAcpAgentNameStatus() {
     const std::vector<std::string> candidates = editor::acp::AcpAgentNames();
-    const std::vector<std::string> ranked      = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
-    acpAgentNameSelection_ = ranked.empty() ? 0 : std::min(acpAgentNameSelection_, ranked.size() - 1);
+    const std::vector<std::string>& ranked = acpAgentNameList_.Refiltered(candidates, prompt_->Text());
 
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(
             ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, acpAgentNameSelection_)));
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, acpAgentNameList_.Selection())));
     }
 }
 
@@ -3853,14 +3835,14 @@ void BufferView::HandleAcpAgentNameKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
         promptHistory_.Record("acp-agent-name", prompt_->Text());
 
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        const std::vector<std::string>& ranked = acpAgentNameList_.Refiltered(candidates, prompt_->Text());
         if (ranked.empty()) {
             statusMessage_ = "No agent matching \"" + prompt_->Text() + "\"";
             EndInteractiveSession();
             return;
         }
 
-        const std::string selected = ranked[std::min(acpAgentNameSelection_, ranked.size() - 1)];
+        const std::string selected = ranked[std::min(acpAgentNameList_.Selection(), ranked.size() - 1)];
         EndInteractiveSession();
 
         if (!acpManager_) {
@@ -3879,17 +3861,15 @@ void BufferView::HandleAcpAgentNameKey(const editor::KeyChord& chord) {
     }
 
     if (TryNavigatePromptHistory(chord, "acp-agent-name")) {
-        acpAgentNameSelection_ = 0;
+        acpAgentNameList_.SelectTop();
         RefreshAcpAgentNameStatus();
         return;
     }
 
     if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        const std::vector<std::string>& ranked = acpAgentNameList_.Refiltered(candidates, prompt_->Text());
         if (!ranked.empty()) {
-            acpAgentNameSelection_ = chord.Special == editor::SpecialKey::Down
-                                        ? (acpAgentNameSelection_ + 1) % ranked.size()
-                                        : (acpAgentNameSelection_ + ranked.size() - 1) % ranked.size();
+            chord.Special == editor::SpecialKey::Down ? acpAgentNameList_.SelectNext() : acpAgentNameList_.SelectPrevious();
         }
         RefreshAcpAgentNameStatus();
         return;
@@ -3897,7 +3877,7 @@ void BufferView::HandleAcpAgentNameKey(const editor::KeyChord& chord) {
 
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_     = kNoHistoryIndex;
-        acpAgentNameSelection_ = 0;
+        acpAgentNameList_.SelectTop();
         RefreshAcpAgentNameStatus();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
@@ -3941,14 +3921,13 @@ void BufferView::ActivateProjectAndReport(const std::filesystem::path& root) {
 // (bookmarkPromptAction_ == Jump) or deletes (== Delete) the selected name.
 
 void BufferView::RefreshBookmarkJumpStatus() {
-    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(bookmarkCandidates_, prompt_->Text());
-    bookmarkSelection_                    = ranked.empty() ? 0 : std::min(bookmarkSelection_, ranked.size() - 1);
+    const std::vector<std::string>& ranked = bookmarkList_.Refiltered(prompt_->Text());
 
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(
             ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, bookmarkSelection_)));
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, bookmarkList_.Selection())));
     }
 }
 
@@ -3958,7 +3937,7 @@ void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
         promptHistory_.Record("bookmark-jump", prompt_->Text());
 
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(bookmarkCandidates_, prompt_->Text());
+        const std::vector<std::string>& ranked = bookmarkList_.Refiltered(prompt_->Text());
 
         if (ranked.empty()) {
             statusMessage_ = "No bookmark matching \"" + prompt_->Text() + "\"";
@@ -3966,7 +3945,7 @@ void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
             return;
         }
 
-        const std::string selected = ranked[std::min(bookmarkSelection_, ranked.size() - 1)];
+        const std::string selected = ranked[std::min(bookmarkList_.Selection(), ranked.size() - 1)];
         EndInteractiveSession();
 
         if (isDelete) {
@@ -4000,17 +3979,15 @@ void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
     }
 
     if (TryNavigatePromptHistory(chord, "bookmark-jump")) {
-        bookmarkSelection_ = 0;
+        bookmarkList_.SelectTop();
         RefreshBookmarkJumpStatus();
         return;
     }
 
     if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(bookmarkCandidates_, prompt_->Text());
+        const std::vector<std::string>& ranked = bookmarkList_.Refiltered(prompt_->Text());
         if (!ranked.empty()) {
-            bookmarkSelection_ = chord.Special == editor::SpecialKey::Down
-                                    ? (bookmarkSelection_ + 1) % ranked.size()
-                                    : (bookmarkSelection_ + ranked.size() - 1) % ranked.size();
+            chord.Special == editor::SpecialKey::Down ? bookmarkList_.SelectNext() : bookmarkList_.SelectPrevious();
         }
         RefreshBookmarkJumpStatus();
         return;
@@ -4018,7 +3995,7 @@ void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
 
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_ = kNoHistoryIndex;
-        bookmarkSelection_  = 0;
+        bookmarkList_.SelectTop();
         RefreshBookmarkJumpStatus();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
@@ -4028,14 +4005,13 @@ void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
 // comments in BufferView.h for the session's overall shape.
 
 void BufferView::RefreshSelectThemeStatus() {
-    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
-    selectThemeSelection_                 = ranked.empty() ? 0 : std::min(selectThemeSelection_, ranked.size() - 1);
+    const std::vector<std::string>& ranked = selectThemeList_.Refiltered(prompt_->Text());
 
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(
             ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, selectThemeSelection_)));
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, selectThemeList_.Selection())));
     }
 }
 
@@ -4043,7 +4019,7 @@ void BufferView::ApplySelectedThemePreview() {
     if (!themeApplier_) {
         return;
     }
-    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
+    const std::vector<std::string>& ranked = selectThemeList_.Refiltered(prompt_->Text());
     if (ranked.empty()) {
         // Nothing highlighted to preview -- show what the session started
         // on rather than leaving whichever candidate was last previewed.
@@ -4052,7 +4028,7 @@ void BufferView::ApplySelectedThemePreview() {
         }
         return;
     }
-    const std::string& selected = ranked[std::min(selectThemeSelection_, ranked.size() - 1)];
+    const std::string& selected = ranked[std::min(selectThemeList_.Selection(), ranked.size() - 1)];
     if (selected == kCurrentThemeLabel) {
         // select-theme-current-row follow-up: resolved against the
         // snapshot, not ThemeByName() -- see kCurrentThemeLabel's own doc
@@ -4069,7 +4045,7 @@ void BufferView::ApplySelectedThemePreview() {
 
 void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
+        const std::vector<std::string>& ranked = selectThemeList_.Refiltered(prompt_->Text());
 
         if (ranked.empty()) {
             // No candidate was showing either (ApplySelectedThemePreview's
@@ -4084,7 +4060,7 @@ void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
         // selection/rank change previews), but not always: an immediate
         // Enter on a fresh session never previewed anything. Applying
         // explicitly covers that and is a no-op re-apply otherwise.
-        const std::string selected = ranked[std::min(selectThemeSelection_, ranked.size() - 1)];
+        const std::string selected = ranked[std::min(selectThemeList_.Selection(), ranked.size() - 1)];
         if (selected == kCurrentThemeLabel) {
             // select-theme-current-row follow-up: committing "Current
             // theme" leaves everything exactly as it already is -- no
@@ -4123,11 +4099,9 @@ void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
     }
 
     if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
+        const std::vector<std::string>& ranked = selectThemeList_.Refiltered(prompt_->Text());
         if (!ranked.empty()) {
-            selectThemeSelection_ = chord.Special == editor::SpecialKey::Down
-                                       ? (selectThemeSelection_ + 1) % ranked.size()
-                                       : (selectThemeSelection_ + ranked.size() - 1) % ranked.size();
+            chord.Special == editor::SpecialKey::Down ? selectThemeList_.SelectNext() : selectThemeList_.SelectPrevious();
         }
         RefreshSelectThemeStatus();
         ApplySelectedThemePreview();
@@ -4137,7 +4111,7 @@ void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
     // Same "typing re-snaps to the top match" reasoning as
     // HandleExecuteCommandKey -- see that method's own comment.
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
-        selectThemeSelection_ = 0;
+        selectThemeList_.SelectTop();
         RefreshSelectThemeStatus();
         ApplySelectedThemePreview();
     }
@@ -4159,34 +4133,33 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
 
     switch (inputMode_) {
         case InputMode::ExecuteCommand: {
-            const std::vector<std::string> ranked =
-                editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
-            const auto resolved = ResolveFuzzyCandidateRowIndex(index, executeCommandSelection_, ranked.size());
+            const std::vector<std::string>& ranked =
+                executeCommandList_.Refiltered(dispatcher_.Registry().Names(), prompt_->Text());
+            const auto resolved = ResolveFuzzyCandidateRowIndex(index, executeCommandList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
-            executeCommandSelection_ = *resolved;
+            executeCommandList_.SelectIndex(*resolved);
             HandleExecuteCommandKey(enter);
             return;
         }
         case InputMode::FindRecentFile: {
-            const std::vector<std::string> ranked   = editor::FuzzyFilterAndRank(recentFileCandidates_, prompt_->Text());
-            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, recentFileSelection_, ranked.size());
+            const std::vector<std::string>& ranked = recentFileList_.Refiltered(prompt_->Text());
+            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, recentFileList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
-            recentFileSelection_ = *resolved;
+            recentFileList_.SelectIndex(*resolved);
             HandleFindRecentFileKey(enter);
             return;
         }
         case InputMode::ProjectFindFile: {
-            const std::vector<std::string> ranked =
-                editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
-            const auto resolved = ResolveFuzzyCandidateRowIndex(index, projectFindFileSelection_, ranked.size());
+            const std::vector<std::string>& ranked = projectFindFileList_.Refiltered(prompt_->Text());
+            const auto resolved = ResolveFuzzyCandidateRowIndex(index, projectFindFileList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
-            projectFindFileSelection_ = *resolved;
+            projectFindFileList_.SelectIndex(*resolved);
             HandleProjectFindFileKey(enter);
             return;
         }
@@ -4196,53 +4169,53 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             for (const auto& entry : switchProjectEntries_) {
                 candidates.push_back(FormatProjectEntry(entry));
             }
-            const std::vector<std::string> ranked   = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
-            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, switchProjectSelection_, ranked.size());
+            const std::vector<std::string>& ranked = switchProjectList_.Refiltered(candidates, prompt_->Text());
+            const auto resolved = ResolveFuzzyCandidateRowIndex(index, switchProjectList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
-            switchProjectSelection_ = *resolved;
+            switchProjectList_.SelectIndex(*resolved);
             HandleSwitchProjectKey(enter);
             return;
         }
         case InputMode::SwitchToBuffer: {
             const std::vector<std::string> candidates = text::CompleteBufferNames(bufferList_, "");
-            const std::vector<std::string> ranked     = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
-            const auto                     resolved   = ResolveFuzzyCandidateRowIndex(index, switchToBufferSelection_, ranked.size());
+            const std::vector<std::string>& ranked = switchToBufferList_.Refiltered(candidates, prompt_->Text());
+            const auto resolved = ResolveFuzzyCandidateRowIndex(index, switchToBufferList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
-            switchToBufferSelection_ = *resolved;
+            switchToBufferList_.SelectIndex(*resolved);
             HandleSwitchToBufferKey(enter);
             return;
         }
         case InputMode::VcsSwitchBranch: {
-            const std::vector<std::string> ranked   = editor::FuzzyFilterAndRank(vcsBranchCandidates_, prompt_->Text());
-            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, vcsSwitchBranchSelection_, ranked.size());
+            const std::vector<std::string>& ranked = vcsBranchList_.Refiltered(prompt_->Text());
+            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, vcsBranchList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
-            vcsSwitchBranchSelection_ = *resolved;
+            vcsBranchList_.SelectIndex(*resolved);
             HandleVcsSwitchBranchKey(enter);
             return;
         }
         case InputMode::BookmarkJump: {
-            const std::vector<std::string> ranked   = editor::FuzzyFilterAndRank(bookmarkCandidates_, prompt_->Text());
-            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, bookmarkSelection_, ranked.size());
+            const std::vector<std::string>& ranked = bookmarkList_.Refiltered(prompt_->Text());
+            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, bookmarkList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
-            bookmarkSelection_ = *resolved;
+            bookmarkList_.SelectIndex(*resolved);
             HandleBookmarkJumpKey(enter);
             return;
         }
         case InputMode::SelectTheme: {
-            const std::vector<std::string> ranked   = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
-            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, selectThemeSelection_, ranked.size());
+            const std::vector<std::string>& ranked = selectThemeList_.Refiltered(prompt_->Text());
+            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, selectThemeList_.Selection(), ranked.size());
             if (!resolved) {
                 return;
             }
-            selectThemeSelection_ = *resolved;
+            selectThemeList_.SelectIndex(*resolved);
             HandleSelectThemeKey(enter);
             return;
         }
