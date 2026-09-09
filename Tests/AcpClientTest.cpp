@@ -9,17 +9,17 @@
 
 #include <unistd.h>
 
-#include "Editor/Acp/AcpClient.h"
+#include "Editor/Acp/Client.h"
 #include "Editor/Acp/Transport.h"
 #include "UI/EventLoop.h"
 
-using ned::editor::acp::AcpClient;
+using ned::editor::acp::Client;
 using ned::editor::acp::Json;
 using ned::editor::acp::Transport;
 
 namespace {
 
-// One end of a pipe pair wrapped as a Transport for an AcpClient under
+// One end of a pipe pair wrapped as a Transport for an Client under
 // test; the other end is left as raw fds the test itself reads/writes
 // directly, standing in for "the agent's own stdin/stdout." Mirrors
 // Tests/ClientTest.cpp's own ClientFixture, including its own comments'
@@ -30,7 +30,7 @@ struct ClientFixture {
     ned::ui::EventLoop eventLoop;
     int                serverStdinRead;   // test reads what the client wrote
     int                serverStdoutWrite; // test writes to feed the client's read thread, if a test ever wants to
-    AcpClient          client;
+    Client          client;
 
     ClientFixture(int readFd, int writeFd, Transport transport) : serverStdinRead(readFd), serverStdoutWrite(writeFd), client(std::move(transport), eventLoop) {
     }
@@ -74,7 +74,7 @@ std::string ReadRawMessage(int fd) {
 
 } // namespace
 
-TEST_CASE("AcpClient::SendRequest writes a well-formed, newline-terminated JSON-RPC request", "[Acp]") {
+TEST_CASE("Client::SendRequest writes a well-formed, newline-terminated JSON-RPC request", "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.SendRequest("initialize", Json{{"protocolVersion", 1}}, [](std::optional<Json>, std::optional<Json>) {});
@@ -90,7 +90,7 @@ TEST_CASE("AcpClient::SendRequest writes a well-formed, newline-terminated JSON-
     REQUIRE(message["params"]["protocolVersion"] == 1);
 }
 
-TEST_CASE("AcpClient::SendNotification writes a message with no id", "[Acp]") {
+TEST_CASE("Client::SendNotification writes a message with no id", "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.SendNotification("session/cancel", Json{{"sessionId", "abc"}});
@@ -102,7 +102,7 @@ TEST_CASE("AcpClient::SendNotification writes a message with no id", "[Acp]") {
     REQUIRE_FALSE(message.contains("id"));
 }
 
-TEST_CASE("AcpClient::DispatchFrame invokes the matching pending request's callback with the result", "[Acp]") {
+TEST_CASE("Client::DispatchFrame invokes the matching pending request's callback with the result", "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     bool                invoked = false;
@@ -127,7 +127,7 @@ TEST_CASE("AcpClient::DispatchFrame invokes the matching pending request's callb
     REQUIRE((*gotResult)["sessionId"] == "s1");
 }
 
-TEST_CASE("AcpClient::DispatchFrame invokes the callback with the error, not the result, on a JSON-RPC error response",
+TEST_CASE("Client::DispatchFrame invokes the callback with the error, not the result, on a JSON-RPC error response",
           "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
 
@@ -150,7 +150,7 @@ TEST_CASE("AcpClient::DispatchFrame invokes the callback with the error, not the
     REQUIRE((*gotError)["message"] == "method not found");
 }
 
-TEST_CASE("AcpClient::ExpireStaleRequests resolves a stuck request with a synthetic timeout error", "[Acp]") {
+TEST_CASE("Client::ExpireStaleRequests resolves a stuck request with a synthetic timeout error", "[Acp]") {
     // subprocess-hang-protection follow-up.
     ClientFixture fixture = ClientFixture::Create();
 
@@ -173,7 +173,7 @@ TEST_CASE("AcpClient::ExpireStaleRequests resolves a stuck request with a synthe
     REQUIRE((*gotError)["code"] == -32001);
 }
 
-TEST_CASE("AcpClient::ExpireStaleRequests leaves a request younger than maxAge untouched", "[Acp]") {
+TEST_CASE("Client::ExpireStaleRequests leaves a request younger than maxAge untouched", "[Acp]") {
     // subprocess-hang-protection follow-up.
     ClientFixture fixture = ClientFixture::Create();
 
@@ -185,7 +185,7 @@ TEST_CASE("AcpClient::ExpireStaleRequests leaves a request younger than maxAge u
     REQUIRE_FALSE(invoked);
 }
 
-TEST_CASE("AcpClient::DispatchFrame with an unknown id is silently ignored, not a crash", "[Acp]") {
+TEST_CASE("Client::DispatchFrame with an unknown id is silently ignored, not a crash", "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     const Json response = {{"jsonrpc", "2.0"}, {"id", 999}, {"result", Json::object()}};
@@ -193,7 +193,7 @@ TEST_CASE("AcpClient::DispatchFrame with an unknown id is silently ignored, not 
     SUCCEED();
 }
 
-TEST_CASE("AcpClient::DispatchFrame routes a notification to its registered handler by method name", "[Acp]") {
+TEST_CASE("Client::DispatchFrame routes a notification to its registered handler by method name", "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     Json received;
@@ -214,7 +214,7 @@ TEST_CASE("AcpClient::DispatchFrame routes a notification to its registered hand
     REQUIRE(received["sessionId"] == "s1");
 }
 
-TEST_CASE("AcpClient::DispatchFrame ignores a notification with no registered handler, not a crash", "[Acp]") {
+TEST_CASE("Client::DispatchFrame ignores a notification with no registered handler, not a crash", "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     const Json notification = {{"jsonrpc", "2.0"}, {"method", "elicitation/complete"}, {"params", Json::object()}};
@@ -222,7 +222,7 @@ TEST_CASE("AcpClient::DispatchFrame ignores a notification with no registered ha
     SUCCEED();
 }
 
-TEST_CASE("AcpClient::DispatchFrame ignores malformed JSON without throwing", "[Acp]") {
+TEST_CASE("Client::DispatchFrame ignores malformed JSON without throwing", "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.DispatchFrame("{ this is not valid json");
@@ -248,7 +248,7 @@ TEST_CASE("SetOnDisconnected replaces a previous handler, and unset is a safe no
     SUCCEED(); // nothing to assert beyond "doesn't crash" -- the read loop itself is covered by the disconnect-driven tests
 }
 
-TEST_CASE("AcpClient answers an agent-initiated request synchronously via its registered handler", "[Acp]") {
+TEST_CASE("Client answers an agent-initiated request synchronously via its registered handler", "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
     fixture.client.SetRequestHandler("fs/read_text_file", [](const Json&, auto respond) { respond(Json{{"content", "hi"}}, std::nullopt); });
 
@@ -261,7 +261,7 @@ TEST_CASE("AcpClient answers an agent-initiated request synchronously via its re
     REQUIRE(response["result"]["content"] == "hi");
 }
 
-TEST_CASE("AcpClient answers an agent-initiated request asynchronously once respond is finally invoked", "[Acp]") {
+TEST_CASE("Client answers an agent-initiated request asynchronously once respond is finally invoked", "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     // Simulates session/request_permission: the handler stashes `respond`
@@ -284,7 +284,7 @@ TEST_CASE("AcpClient answers an agent-initiated request asynchronously once resp
     REQUIRE(response["result"]["outcome"]["optionId"] == "allow-once");
 }
 
-TEST_CASE("AcpClient answers an unhandled agent-initiated request with MethodNotFound", "[Acp]") {
+TEST_CASE("Client answers an unhandled agent-initiated request with MethodNotFound", "[Acp]") {
     ClientFixture fixture = ClientFixture::Create();
 
     const Json request = {{"jsonrpc", "2.0"}, {"id", 9}, {"method", "terminal/create"}, {"params", Json::object()}};
@@ -298,15 +298,15 @@ TEST_CASE("AcpClient answers an unhandled agent-initiated request with MethodNot
 
 // lsp-use-after-free follow-up. Mirrors ClientTest.cpp's "A stray
 // Post()ed callback safely no-ops instead of touching an already-destroyed
-// Client" exactly -- AcpClient's threading/lifetime contract is an
+// Client" exactly -- Client's threading/lifetime contract is an
 // intentional mirror of Client's (see this class's own header comment),
 // so it shares the identical hazard: a background thread's own already-
 // Post()ed callback (the EOF/"agent exited" disconnect notification here)
-// must not touch `this` once the AcpClient has been destroyed. Not built
-// from ClientFixture -- that owns its AcpClient by value with no way to
+// must not touch `this` once the Client has been destroyed. Not built
+// from ClientFixture -- that owns its Client by value with no way to
 // destroy it independently of the fixture's own scope, which this test
 // needs to do explicitly.
-TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an already-destroyed AcpClient", "[Acp]") {
+TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an already-destroyed Client", "[Acp]") {
     ned::ui::EventLoop eventLoop;
     int                clientWritesHere[2];
     int                clientReadsHere[2];
@@ -315,14 +315,14 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
     const int agentStdinRead   = clientWritesHere[0];
     const int agentStdoutWrite = clientReadsHere[1];
 
-    std::optional<AcpClient> client;
+    std::optional<Client> client;
     client.emplace(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
     client->SetOnDisconnected([](std::string) {});
 
     ::close(agentStdoutWrite);                                  // EOF -- the read thread Post()s its disconnect notification, then exits
     std::this_thread::sleep_for(std::chrono::milliseconds(50)); // let the background thread actually post before destroying
 
-    client.reset(); // ~AcpClient() flips alive_ to false as its first statement
+    client.reset(); // ~Client() flips alive_ to false as its first statement
 
     eventLoop.DrainPosted_(); // must not crash or touch freed memory
     SUCCEED();
@@ -334,16 +334,16 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
 // Tests/ChildProcessTest.cpp's own "WaitReadable returns immediately on a
 // closed connection" pair, and the direct regression test for the flaky
 // protocol-client timeouts under `ctest -j8` (root-caused 2026-09-08 from a
-// core dump of a wedged run of the MethodNotFound case above): ~AcpClient
+// core dump of a wedged run of the MethodNotFound case above): ~Client
 // destroys transport_ before joining readThread_ by design -- that fd close
 // is what unblocks an in-flight ReadMessage() -- but a read thread the
 // scheduler hasn't run *at all* yet reaches its first read only after that
 // teardown, and used to park forever in poll() on the resulting -1 fd, so
 // the join never returned. Hammering construct-then-immediately-destroy is
 // what makes the scheduler land in that window; the loop simply has to
-// finish. Client/Client share this exact shape (see AcpClient.h's own
+// finish. Client/Client share this exact shape (see Client.h's own
 // header comment) and are fixed by the same shared ChildProcess guard.
-TEST_CASE("Destroying an AcpClient before its read thread has started doesn't deadlock", "[Acp]") {
+TEST_CASE("Destroying an Client before its read thread has started doesn't deadlock", "[Acp]") {
     ned::ui::EventLoop eventLoop;
 
     for (int iteration = 0; iteration < 200; ++iteration) {
@@ -353,7 +353,7 @@ TEST_CASE("Destroying an AcpClient before its read thread has started doesn't de
         REQUIRE(::pipe(clientReadsHere) == 0);
 
         {
-            AcpClient client(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+            Client client(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
             // No sleep, no I/O in between -- ClientFixture's own teardown
             // order (peer write end closed first, so a read thread already
             // parked in poll() wakes on EOF), but with nothing at all

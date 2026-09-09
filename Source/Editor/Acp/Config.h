@@ -10,8 +10,8 @@
 // clears" convention as every sibling config table in this codebase.
 //
 
-#ifndef NED_EDITOR_ACP_ACPCONFIG_H
-#define NED_EDITOR_ACP_ACPCONFIG_H
+#ifndef NED_EDITOR_ACP_CONFIG_H
+#define NED_EDITOR_ACP_CONFIG_H
 
 #include <optional>
 #include <string>
@@ -25,18 +25,18 @@ namespace ned::editor::acp {
 // registration for name.
 void SetAcpAgentCommand(const std::string& name, std::vector<std::string> argv);
 
-// std::nullopt if nothing is registered for name -- not an error; AcpManager
+// std::nullopt if nothing is registered for name -- not an error; Manager
 // treats this as "no such agent configured," reporting it rather than
 // crashing.
-[[nodiscard]] std::optional<std::vector<std::string>> AcpAgentCommand(const std::string& name);
+[[nodiscard]] std::optional<std::vector<std::string>> AgentCommand(const std::string& name);
 
 // Every currently-registered agent name, sorted -- ACP round-1-live-
 // validation follow-up: lets the "ACP agent:" prompt Tab-complete instead of
 // staying pure free text, the same way VcsSwitchBranch completes against a
 // fetched branch list. Cheap enough to call fresh on every keystroke (a
 // mutex-guarded in-memory map lookup, not an async fetch).
-[[nodiscard]] std::vector<std::string> AcpAgentNames();
+[[nodiscard]] std::vector<std::string> AgentNames();
 
 } // namespace ned::editor::acp
 
-#endif // NED_EDITOR_ACP_ACPCONFIG_H
+#endif // NED_EDITOR_ACP_CONFIG_H

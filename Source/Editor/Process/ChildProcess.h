@@ -107,7 +107,7 @@ class ChildProcess {
     // its owner was destroyed entered this method against the
     // already-closed transport and never came back, so the destructor's
     // own join() on that thread never returned either (found 2026-09-08 via
-    // a core dump of a wedged AcpClient test -- the flaky protocol-client
+    // a core dump of a wedged Client test -- the flaky protocol-client
     // timeouts under `ctest -j8`). A closed connection can never become
     // readable, so reporting that immediately is both correct and what
     // makes every caller's teardown path terminate.

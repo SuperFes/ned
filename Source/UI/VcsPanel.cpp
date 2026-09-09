@@ -107,12 +107,12 @@ namespace {
     struct TreeBuilderNode {
         std::filesystem::path                  fullPath;
         bool                                   isDirectory = false;
-        editor::vcs::VcsRowStatus              status      = editor::vcs::VcsRowStatus::None;
+        editor::vcs::RowStatus              status      = editor::vcs::RowStatus::None;
         std::map<std::string, TreeBuilderNode> children; // key = this child's own filename, sorted alphabetically
     };
 
     void InsertStatusPath(TreeBuilderNode& root, const std::filesystem::path& rootPath,
-                          const std::filesystem::path& absPath, editor::vcs::VcsRowStatus status) {
+                          const std::filesystem::path& absPath, editor::vcs::RowStatus status) {
         std::vector<std::filesystem::path> chain;
         std::filesystem::path              p = absPath;
         while (p != rootPath) {
@@ -145,7 +145,7 @@ namespace {
     // alphabetical" for free, matching BuildProjectTree's own documented
     // ordering.
     void FlattenNode(const TreeBuilderNode& node, int depth, std::vector<editor::ProjectTreeEntry>& out,
-                     std::unordered_map<std::filesystem::path, editor::vcs::VcsRowStatus>& statusOut) {
+                     std::unordered_map<std::filesystem::path, editor::vcs::RowStatus>& statusOut) {
         for (const auto& [key, child] : node.children) {
             if (!child.isDirectory) {
                 continue;
@@ -163,23 +163,23 @@ namespace {
     }
 
     // Builds a directory tree (ProjectSidebar's own BuildProjectTree shape)
-    // from a flat VcsStatusEntry list instead of a disk walk -- see this
+    // from a flat StatusEntry list instead of a disk walk -- see this
     // file's own header comment. Returns the flattened depth-first entry
     // list plus a per-file status lookup (directory entries have no
     // meaningful status of their own in this panel -- unlike ProjectSidebar,
     // core-slice v1 doesn't roll a directory's status up from its
     // descendants).
-    std::pair<std::vector<editor::ProjectTreeEntry>, std::unordered_map<std::filesystem::path, editor::vcs::VcsRowStatus>>
-    BuildStatusTree(const std::vector<editor::vcs::VcsStatusEntry>& entries, const std::filesystem::path& root) {
+    std::pair<std::vector<editor::ProjectTreeEntry>, std::unordered_map<std::filesystem::path, editor::vcs::RowStatus>>
+    BuildStatusTree(const std::vector<editor::vcs::StatusEntry>& entries, const std::filesystem::path& root) {
         TreeBuilderNode builderRoot;
         builderRoot.fullPath    = root;
         builderRoot.isDirectory = true;
-        for (const editor::vcs::VcsStatusEntry& entry : entries) {
+        for (const editor::vcs::StatusEntry& entry : entries) {
             const std::filesystem::path absPath = (root / entry.path).lexically_normal();
             InsertStatusPath(builderRoot, root, absPath, editor::vcs::ClassifyPorcelainStatus(entry.state));
         }
         std::vector<editor::ProjectTreeEntry>                                flat;
-        std::unordered_map<std::filesystem::path, editor::vcs::VcsRowStatus> status;
+        std::unordered_map<std::filesystem::path, editor::vcs::RowStatus> status;
         FlattenNode(builderRoot, 0, flat, status);
         return {std::move(flat), std::move(status)};
     }
@@ -195,18 +195,18 @@ namespace {
     // Same four-bucket coloring ProjectSidebar's own VcsStatusColor uses --
     // kept as a separate copy here rather than shared, since the two
     // widgets are free to diverge on presentation even though the
-    // classification underneath (Editor/Vcs/VcsRowStatus.h) is shared.
-    std::optional<Color> VcsStatusColor(editor::vcs::VcsRowStatus status) {
+    // classification underneath (Editor/Vcs/RowStatus.h) is shared.
+    std::optional<Color> VcsStatusColor(editor::vcs::RowStatus status) {
         switch (status) {
-            case editor::vcs::VcsRowStatus::Deleted:
+            case editor::vcs::RowStatus::Deleted:
                 return Color::BrightRed;
-            case editor::vcs::VcsRowStatus::Modified:
+            case editor::vcs::RowStatus::Modified:
                 return Color::BrightBlue;
-            case editor::vcs::VcsRowStatus::Added:
+            case editor::vcs::RowStatus::Added:
                 return Color::BrightGreen;
-            case editor::vcs::VcsRowStatus::Untracked:
+            case editor::vcs::RowStatus::Untracked:
                 return Color::BrightCyan;
-            case editor::vcs::VcsRowStatus::None:
+            case editor::vcs::RowStatus::None:
                 return std::nullopt;
         }
         return std::nullopt;
@@ -284,11 +284,11 @@ int VcsPanel::ContentHeight() const {
     return std::max(0, size().height - kHeaderHeight);
 }
 
-void VcsPanel::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
+void VcsPanel::SetVcsRunner(editor::vcs::Runner* vcsRunner) {
     vcsRunner_ = vcsRunner;
 }
 
-void VcsPanel::DispatchVcsStatusForTesting(const std::vector<editor::vcs::VcsStatusEntry>& entries) {
+void VcsPanel::DispatchVcsStatusForTesting(const std::vector<editor::vcs::StatusEntry>& entries) {
     sections_   = editor::vcs::PartitionVcsStatus(entries);
     haveStatus_ = true;
 }
@@ -302,9 +302,9 @@ void VcsPanel::RefreshStatus(bool force) {
         return;
     }
     // lastRefreshTime_ only advances on a real success (below), not here --
-    // confirmed live: ProjectSidebar polls VcsRunner::RequestStatus on its
+    // confirmed live: ProjectSidebar polls Runner::RequestStatus on its
     // own independent 500ms timer against the identical "status:"+root key
-    // VcsRunner (Editor/Vcs/VcsRunner.cpp) single-flights, and since
+    // Runner (Editor/Vcs/Runner.cpp) single-flights, and since
     // ProjectSidebar paints first in main.cpp's composition (ahead of this
     // widget in bufferRow's child order), it wins that race almost every
     // time a request actually gets attempted -- both widgets are painted
@@ -318,7 +318,7 @@ void VcsPanel::RefreshStatus(bool force) {
     // unadvanced on failure makes the very next Paint() retry immediately
     // instead, which is what actually converges in practice.
     vcsRunner_->RequestStatus(
-        [this](std::vector<editor::vcs::VcsStatusEntry> entries) {
+        [this](std::vector<editor::vcs::StatusEntry> entries) {
             sections_        = editor::vcs::PartitionVcsStatus(entries);
             haveStatus_      = true;
             lastRefreshTime_ = std::chrono::steady_clock::now();
@@ -326,8 +326,8 @@ void VcsPanel::RefreshStatus(bool force) {
         },
         [](const std::string&) {});
     vcsRunner_->RequestBranchList(
-        [this](std::vector<editor::vcs::VcsBranchEntry> entries) {
-            for (const editor::vcs::VcsBranchEntry& entry : entries) {
+        [this](std::vector<editor::vcs::BranchEntry> entries) {
+            for (const editor::vcs::BranchEntry& entry : entries) {
                 if (entry.current) {
                     currentBranch_ = entry.name;
                     return;
@@ -339,20 +339,20 @@ void VcsPanel::RefreshStatus(bool force) {
     // known contents on error (a provider without stash vocabulary just
     // never shows the section, ParseStashList/PartitionVcsStatus's own
     // "highlighting is only meaningful when it works" precedent).
-    vcsRunner_->RequestStashList([this](std::vector<editor::vcs::VcsStashEntry> entries) { stashes_ = std::move(entries); },
+    vcsRunner_->RequestStashList([this](std::vector<editor::vcs::StashEntry> entries) { stashes_ = std::move(entries); },
                                  [](const std::string&) {});
     // Ahead/behind summary: silently keeps the last-known value on error
     // (no upstream configured is the common, expected case for a repo with
     // no remote at all) -- same "highlighting is only meaningful when it
     // works" precedent as the rest of this refresh.
-    vcsRunner_->RequestAheadBehind([this](editor::vcs::VcsAheadBehind ab) { aheadBehind_ = ab; }, [](const std::string&) {});
+    vcsRunner_->RequestAheadBehind([this](editor::vcs::AheadBehind ab) { aheadBehind_ = ab; }, [](const std::string&) {});
 }
 
 void VcsPanel::RefreshConflictedPaths() {
     conflictedPaths_.clear();
     const std::filesystem::path root = editor::ProjectRoot();
-    const auto                  scan = [&](const std::vector<editor::vcs::VcsStatusEntry>& entries) {
-        for (const editor::vcs::VcsStatusEntry& entry : entries) {
+    const auto                  scan = [&](const std::vector<editor::vcs::StatusEntry>& entries) {
+        for (const editor::vcs::StatusEntry& entry : entries) {
             const std::filesystem::path absPath = (root / entry.path).lexically_normal();
             std::ifstream               file(absPath, std::ios::binary);
             if (!file) {
@@ -372,7 +372,7 @@ std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
     std::vector<Row>            rows;
     const std::filesystem::path root = editor::ProjectRoot();
 
-    const auto addSection = [&](VcsPanelSection section, const std::vector<editor::vcs::VcsStatusEntry>& entries) {
+    const auto addSection = [&](VcsPanelSection section, const std::vector<editor::vcs::StatusEntry>& entries) {
         Row header;
         header.kind      = Row::Kind::SectionHeader;
         header.section   = section;
@@ -395,7 +395,7 @@ std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
             row.treePrefix = TreePrefix(visible, i);
             if (!entry.isDirectory) {
                 const auto it  = statusByPath.find(entry.path);
-                row.status     = it != statusByPath.end() ? it->second : editor::vcs::VcsRowStatus::None;
+                row.status     = it != statusByPath.end() ? it->second : editor::vcs::RowStatus::None;
                 row.conflicted = conflictedPaths_.contains(entry.path);
             }
             rows.push_back(row);
@@ -417,7 +417,7 @@ std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
         header.fileCount = stashes_.size();
         rows.push_back(header);
         if (!collapsedSections_.contains(VcsPanelSection::Stash)) {
-            for (const editor::vcs::VcsStashEntry& entry : stashes_) {
+            for (const editor::vcs::StashEntry& entry : stashes_) {
                 Row row;
                 row.kind    = Row::Kind::StashEntry;
                 row.section = VcsPanelSection::Stash;

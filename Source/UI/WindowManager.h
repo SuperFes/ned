@@ -45,7 +45,7 @@
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/TestRun/TestRunner.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/Runner.h"
 #include "EventLoop.h"
 #include "HugeFileLoader.h"
 #include "Layout.h"
@@ -97,8 +97,8 @@ class Pane {
          const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
          std::string& statusMessage, const Theme& theme,
          ProjectSidebar* projectSidebar, editor::lsp::Manager* lspManager, editor::tasks::TaskRunner* taskRunner,
-         editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::Manager* dapManager,
-         editor::acp::AcpManager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
+         editor::testrun::TestRunner* testRunner, editor::vcs::Runner* vcsRunner, editor::dap::Manager* dapManager,
+         editor::acp::Manager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
          std::function<void(editor::InteractiveRequest)> onWindowRequest, std::function<void(text::Buffer&)> onBufferClosed);
 
     Pane(const Pane&)            = delete;
@@ -299,7 +299,7 @@ class WindowManager {
     // SetOnPermissionRequest wiring below know whether the OverlayHost-owned
     // AcpPanel (main.cpp's, not owned here either) currently has focus --
     // when it does, AcpPanel::OnEvent resolves the prompt itself (it already
-    // renders it read-only via AcpManager::PendingPermissionPrompt()), so the
+    // renders it read-only via Manager::PendingPermissionPrompt()), so the
     // existing focused-pane echo-area routing is skipped rather than fighting
     // over the same request. Unset is a safe no-op (checker treated as
     // "always false"), same convention as every other Set* hook -- existing
@@ -465,7 +465,7 @@ class WindowManager {
     // queries above.
     [[nodiscard]] bool HasFocusedPane();
 
-    void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
+    void SetVcsRunner(editor::vcs::Runner* vcsRunner);
 
     // DAP client slice 1: same "forwarded to every pane, present and
     // future" shape as SetLspManager/SetTaskRunner above -- plus this is
@@ -482,10 +482,10 @@ class WindowManager {
     // fresh when a permission request actually arrives, rather than
     // capturing some pane that may have been closed by then (identical
     // reasoning to SetDapManager's own SetOnStopped wiring).
-    void SetAcpManager(editor::acp::AcpManager* acpManager);
+    void SetAcpManager(editor::acp::Manager* acpManager);
 
     // ACP auto-reconnect follow-up: seeds SaveProjectSessionNow's own
-    // lastAcpAgent field for a run where AcpManager::AgentName() never gets
+    // lastAcpAgent field for a run where Manager::AgentName() never gets
     // set at all (ACP never touched this run) -- without this, a fresh
     // ProjectSessionData built from scratch every save would otherwise
     // silently clobber a previously remembered agent name back to nullopt.
@@ -684,7 +684,7 @@ class WindowManager {
 
     // vcs-diff-gutter-staleness follow-up: refreshes every live pane's own
     // diff gutter (BufferView::RefreshVcsDiff, silently no-op with no
-    // VcsRunner wired) -- the gutter's freshness is otherwise purely
+    // Runner wired) -- the gutter's freshness is otherwise purely
     // event-driven off things ned itself did (an edit, a buffer switch, a
     // save, ned's own vcs-commit/stage/unstage), so a commit/checkout run
     // from outside ned (another terminal, or the embedded TerminalPanel)
@@ -868,9 +868,9 @@ class WindowManager {
     editor::lsp::Manager*                           lspManager_     = nullptr;
     editor::tasks::TaskRunner*                         taskRunner_     = nullptr;
     editor::testrun::TestRunner*                       testRunner_     = nullptr; // see SetTestRunner
-    editor::vcs::VcsRunner*                            vcsRunner_      = nullptr;
+    editor::vcs::Runner*                            vcsRunner_      = nullptr;
     editor::dap::Manager*                           dapManager_     = nullptr;  // see SetDapManager
-    editor::acp::AcpManager*                           acpManager_     = nullptr;  // see SetAcpManager
+    editor::acp::Manager*                           acpManager_     = nullptr;  // see SetAcpManager
     std::optional<std::string>                         lastAcpAgentSeed_;          // see SetLastKnownAcpAgent
     editor::ProjectUndoManager*                        projectUndo_ = nullptr;     // see SetProjectUndo
     const janet::Environment*                          janetEnv_    = nullptr;     // see SetJanetEnvironment

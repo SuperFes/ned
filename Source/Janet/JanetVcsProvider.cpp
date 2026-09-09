@@ -85,8 +85,8 @@ namespace {
         return entries;
     }
 
-    editor::vcs::VcsCommandSpec ParseCommandSpec(Janet result) {
-        return editor::vcs::VcsCommandSpec{FromJanet<std::vector<std::string>>(result)};
+    editor::vcs::CommandSpec ParseCommandSpec(Janet result) {
+        return editor::vcs::CommandSpec{FromJanet<std::vector<std::string>>(result)};
     }
 
     // Same "degrade, don't crash" convention as StringField -- 0 if the key
@@ -110,19 +110,19 @@ namespace {
         return janet_checktype(value, JANET_BOOLEAN) && janet_unwrap_boolean(value);
     }
 
-    std::vector<editor::vcs::VcsDiffHunk> ParseDiffHunks(Janet result) {
+    std::vector<editor::vcs::DiffHunk> ParseDiffHunks(Janet result) {
         const Janet* items = nullptr;
         std::int32_t count = 0;
         if (!janet_indexed_view(result, &items, &count)) {
             throw std::runtime_error("ned: expected a vcs plugin parse-diff function to return an array of tables");
         }
-        std::vector<editor::vcs::VcsDiffHunk> hunks;
+        std::vector<editor::vcs::DiffHunk> hunks;
         hunks.reserve(static_cast<std::size_t>(count));
         for (std::int32_t i = 0; i < count; ++i) {
             if (!janet_checktype(items[i], JANET_TABLE) && !janet_checktype(items[i], JANET_STRUCT)) {
                 continue;
             }
-            hunks.push_back(editor::vcs::VcsDiffHunk{
+            hunks.push_back(editor::vcs::DiffHunk{
                 NumberField(items[i], "old-start"),
                 NumberField(items[i], "old-count"),
                 NumberField(items[i], "new-start"),
@@ -132,19 +132,19 @@ namespace {
         return hunks;
     }
 
-    std::vector<editor::vcs::VcsStatusEntry> ParseStatusEntries(Janet result) {
+    std::vector<editor::vcs::StatusEntry> ParseStatusEntries(Janet result) {
         const Janet* items = nullptr;
         std::int32_t count = 0;
         if (!janet_indexed_view(result, &items, &count)) {
             throw std::runtime_error("ned: expected a vcs plugin parse-status function to return an array of tables");
         }
-        std::vector<editor::vcs::VcsStatusEntry> entries;
+        std::vector<editor::vcs::StatusEntry> entries;
         entries.reserve(static_cast<std::size_t>(count));
         for (std::int32_t i = 0; i < count; ++i) {
             if (!janet_checktype(items[i], JANET_TABLE) && !janet_checktype(items[i], JANET_STRUCT)) {
                 continue;
             }
-            entries.push_back(editor::vcs::VcsStatusEntry{
+            entries.push_back(editor::vcs::StatusEntry{
                 StringField(items[i], "state"),
                 StringField(items[i], "path"),
             });
@@ -152,19 +152,19 @@ namespace {
         return entries;
     }
 
-    std::vector<editor::vcs::VcsBranchEntry> ParseBranchEntries(Janet result) {
+    std::vector<editor::vcs::BranchEntry> ParseBranchEntries(Janet result) {
         const Janet* items = nullptr;
         std::int32_t count = 0;
         if (!janet_indexed_view(result, &items, &count)) {
             throw std::runtime_error("ned: expected a vcs plugin parse-branch-list function to return an array of tables");
         }
-        std::vector<editor::vcs::VcsBranchEntry> entries;
+        std::vector<editor::vcs::BranchEntry> entries;
         entries.reserve(static_cast<std::size_t>(count));
         for (std::int32_t i = 0; i < count; ++i) {
             if (!janet_checktype(items[i], JANET_TABLE) && !janet_checktype(items[i], JANET_STRUCT)) {
                 continue;
             }
-            entries.push_back(editor::vcs::VcsBranchEntry{
+            entries.push_back(editor::vcs::BranchEntry{
                 StringField(items[i], "name"),
                 BoolField(items[i], "current"),
             });
@@ -172,19 +172,19 @@ namespace {
         return entries;
     }
 
-    std::vector<editor::vcs::VcsStashEntry> ParseStashEntries(Janet result) {
+    std::vector<editor::vcs::StashEntry> ParseStashEntries(Janet result) {
         const Janet* items = nullptr;
         std::int32_t count = 0;
         if (!janet_indexed_view(result, &items, &count)) {
             throw std::runtime_error("ned: expected a vcs plugin parse-stash-list function to return an array of tables");
         }
-        std::vector<editor::vcs::VcsStashEntry> entries;
+        std::vector<editor::vcs::StashEntry> entries;
         entries.reserve(static_cast<std::size_t>(count));
         for (std::int32_t i = 0; i < count; ++i) {
             if (!janet_checktype(items[i], JANET_TABLE) && !janet_checktype(items[i], JANET_STRUCT)) {
                 continue;
             }
-            entries.push_back(editor::vcs::VcsStashEntry{
+            entries.push_back(editor::vcs::StashEntry{
                 StringField(items[i], "ref"),
                 StringField(items[i], "message"),
             });
@@ -195,11 +195,11 @@ namespace {
     // Unlike every ParseX above (which return an array of entries), a
     // plugin's parse-ahead-behind returns one table directly -- there's
     // only ever one ahead/behind fact for the current branch.
-    editor::vcs::VcsAheadBehind ParseAheadBehindResult(Janet result) {
+    editor::vcs::AheadBehind ParseAheadBehindResult(Janet result) {
         if (!janet_checktype(result, JANET_TABLE) && !janet_checktype(result, JANET_STRUCT)) {
             throw std::runtime_error("ned: expected a vcs plugin parse-ahead-behind function to return a table");
         }
-        return editor::vcs::VcsAheadBehind{
+        return editor::vcs::AheadBehind{
             NumberField(result, "ahead"),
             NumberField(result, "behind"),
         };
@@ -271,264 +271,264 @@ bool JanetVcsProvider::Detect(const std::filesystem::path& root) const {
     return FromJanet<bool>(CallWithString(*InternalName("detect"), root.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::BlameArgv(const std::filesystem::path& path) const {
+editor::vcs::CommandSpec JanetVcsProvider::BlameArgv(const std::filesystem::path& path) const {
     const std::string* fn = InternalName("blame-argv");
     if (!fn) {
-        return VcsProvider::BlameArgv(path);
+        return Provider::BlameArgv(path);
     }
     return ParseCommandSpec(CallWithString(*fn, path.string()));
 }
 
-std::vector<editor::vcs::VcsBlameLine> JanetVcsProvider::ParseBlame(const std::string& stdout_) const {
+std::vector<editor::vcs::BlameLine> JanetVcsProvider::ParseBlame(const std::string& stdout_) const {
     const std::string* fn = InternalName("parse-blame");
     if (!fn) {
-        return VcsProvider::ParseBlame(stdout_);
+        return Provider::ParseBlame(stdout_);
     }
-    return ParseEntries<editor::vcs::VcsBlameLine>(CallWithString(*fn, stdout_));
+    return ParseEntries<editor::vcs::BlameLine>(CallWithString(*fn, stdout_));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::LogArgv(const std::filesystem::path& path) const {
+editor::vcs::CommandSpec JanetVcsProvider::LogArgv(const std::filesystem::path& path) const {
     const std::string* fn = InternalName("log-argv");
     if (!fn) {
-        return VcsProvider::LogArgv(path);
+        return Provider::LogArgv(path);
     }
     return ParseCommandSpec(CallWithString(*fn, path.string()));
 }
 
-std::vector<editor::vcs::VcsLogEntry> JanetVcsProvider::ParseLog(const std::string& stdout_) const {
+std::vector<editor::vcs::LogEntry> JanetVcsProvider::ParseLog(const std::string& stdout_) const {
     const std::string* fn = InternalName("parse-log");
     if (!fn) {
-        return VcsProvider::ParseLog(stdout_);
+        return Provider::ParseLog(stdout_);
     }
-    return ParseEntries<editor::vcs::VcsLogEntry>(CallWithString(*fn, stdout_));
+    return ParseEntries<editor::vcs::LogEntry>(CallWithString(*fn, stdout_));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::DiffArgv(const std::filesystem::path& path) const {
+editor::vcs::CommandSpec JanetVcsProvider::DiffArgv(const std::filesystem::path& path) const {
     const std::string* fn = InternalName("diff-argv");
     if (!fn) {
-        return VcsProvider::DiffArgv(path);
+        return Provider::DiffArgv(path);
     }
     return ParseCommandSpec(CallWithString(*fn, path.string()));
 }
 
-std::vector<editor::vcs::VcsDiffHunk> JanetVcsProvider::ParseDiff(const std::string& stdout_) const {
+std::vector<editor::vcs::DiffHunk> JanetVcsProvider::ParseDiff(const std::string& stdout_) const {
     const std::string* fn = InternalName("parse-diff");
     if (!fn) {
-        return VcsProvider::ParseDiff(stdout_);
+        return Provider::ParseDiff(stdout_);
     }
     return ParseDiffHunks(CallWithString(*fn, stdout_));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::WorkingDiffArgv(const std::filesystem::path& root) const {
+editor::vcs::CommandSpec JanetVcsProvider::WorkingDiffArgv(const std::filesystem::path& root) const {
     const std::string* fn = InternalName("working-diff-argv");
     if (!fn) {
-        return VcsProvider::WorkingDiffArgv(root);
+        return Provider::WorkingDiffArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::CommitDiffArgv(const std::filesystem::path& root, const std::string& commitHash) const {
+editor::vcs::CommandSpec JanetVcsProvider::CommitDiffArgv(const std::filesystem::path& root, const std::string& commitHash) const {
     const std::string* fn = InternalName("commit-diff-argv");
     if (!fn) {
-        return VcsProvider::CommitDiffArgv(root, commitHash);
+        return Provider::CommitDiffArgv(root, commitHash);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), commitHash));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::StatusArgv(const std::filesystem::path& root) const {
+editor::vcs::CommandSpec JanetVcsProvider::StatusArgv(const std::filesystem::path& root) const {
     const std::string* fn = InternalName("status-argv");
     if (!fn) {
-        return VcsProvider::StatusArgv(root);
+        return Provider::StatusArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
 }
 
-std::vector<editor::vcs::VcsStatusEntry> JanetVcsProvider::ParseStatus(const std::string& stdout_) const {
+std::vector<editor::vcs::StatusEntry> JanetVcsProvider::ParseStatus(const std::string& stdout_) const {
     const std::string* fn = InternalName("parse-status");
     if (!fn) {
-        return VcsProvider::ParseStatus(stdout_);
+        return Provider::ParseStatus(stdout_);
     }
     return ParseStatusEntries(CallWithString(*fn, stdout_));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::StageArgv(const std::filesystem::path& path) const {
+editor::vcs::CommandSpec JanetVcsProvider::StageArgv(const std::filesystem::path& path) const {
     const std::string* fn = InternalName("stage-argv");
     if (!fn) {
-        return VcsProvider::StageArgv(path);
+        return Provider::StageArgv(path);
     }
     return ParseCommandSpec(CallWithString(*fn, path.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::UnstageArgv(const std::filesystem::path& path) const {
+editor::vcs::CommandSpec JanetVcsProvider::UnstageArgv(const std::filesystem::path& path) const {
     const std::string* fn = InternalName("unstage-argv");
     if (!fn) {
-        return VcsProvider::UnstageArgv(path);
+        return Provider::UnstageArgv(path);
     }
     return ParseCommandSpec(CallWithString(*fn, path.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::StagedDiffArgv(const std::filesystem::path& path) const {
+editor::vcs::CommandSpec JanetVcsProvider::StagedDiffArgv(const std::filesystem::path& path) const {
     const std::string* fn = InternalName("staged-diff-argv");
     if (!fn) {
-        return VcsProvider::StagedDiffArgv(path);
+        return Provider::StagedDiffArgv(path);
     }
     return ParseCommandSpec(CallWithString(*fn, path.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::StagePatchArgv(const std::filesystem::path& root,
+editor::vcs::CommandSpec JanetVcsProvider::StagePatchArgv(const std::filesystem::path& root,
                                                              const std::filesystem::path& patchPath) const {
     const std::string* fn = InternalName("stage-patch-argv");
     if (!fn) {
-        return VcsProvider::StagePatchArgv(root, patchPath);
+        return Provider::StagePatchArgv(root, patchPath);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), patchPath.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::UnstagePatchArgv(const std::filesystem::path& root,
+editor::vcs::CommandSpec JanetVcsProvider::UnstagePatchArgv(const std::filesystem::path& root,
                                                                const std::filesystem::path& patchPath) const {
     const std::string* fn = InternalName("unstage-patch-argv");
     if (!fn) {
-        return VcsProvider::UnstagePatchArgv(root, patchPath);
+        return Provider::UnstagePatchArgv(root, patchPath);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), patchPath.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::RevertPatchArgv(const std::filesystem::path& root,
+editor::vcs::CommandSpec JanetVcsProvider::RevertPatchArgv(const std::filesystem::path& root,
                                                               const std::filesystem::path& patchPath) const {
     const std::string* fn = InternalName("revert-patch-argv");
     if (!fn) {
-        return VcsProvider::RevertPatchArgv(root, patchPath);
+        return Provider::RevertPatchArgv(root, patchPath);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), patchPath.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::CommitArgv(const std::filesystem::path& root,
+editor::vcs::CommandSpec JanetVcsProvider::CommitArgv(const std::filesystem::path& root,
                                                          const std::string&           message) const {
     const std::string* fn = InternalName("commit-argv");
     if (!fn) {
-        return VcsProvider::CommitArgv(root, message);
+        return Provider::CommitArgv(root, message);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), message));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::BranchListArgv(const std::filesystem::path& root) const {
+editor::vcs::CommandSpec JanetVcsProvider::BranchListArgv(const std::filesystem::path& root) const {
     const std::string* fn = InternalName("branch-list-argv");
     if (!fn) {
-        return VcsProvider::BranchListArgv(root);
+        return Provider::BranchListArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
 }
 
-std::vector<editor::vcs::VcsBranchEntry> JanetVcsProvider::ParseBranchList(const std::string& stdout_) const {
+std::vector<editor::vcs::BranchEntry> JanetVcsProvider::ParseBranchList(const std::string& stdout_) const {
     const std::string* fn = InternalName("parse-branch-list");
     if (!fn) {
-        return VcsProvider::ParseBranchList(stdout_);
+        return Provider::ParseBranchList(stdout_);
     }
     return ParseBranchEntries(CallWithString(*fn, stdout_));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::BranchSwitchArgv(const std::filesystem::path& root,
+editor::vcs::CommandSpec JanetVcsProvider::BranchSwitchArgv(const std::filesystem::path& root,
                                                                const std::string&           name) const {
     const std::string* fn = InternalName("branch-switch-argv");
     if (!fn) {
-        return VcsProvider::BranchSwitchArgv(root, name);
+        return Provider::BranchSwitchArgv(root, name);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), name));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::BranchCreateArgv(const std::filesystem::path& root,
+editor::vcs::CommandSpec JanetVcsProvider::BranchCreateArgv(const std::filesystem::path& root,
                                                                const std::string&           name) const {
     const std::string* fn = InternalName("branch-create-argv");
     if (!fn) {
-        return VcsProvider::BranchCreateArgv(root, name);
+        return Provider::BranchCreateArgv(root, name);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), name));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::RevertArgv(const std::filesystem::path& path) const {
+editor::vcs::CommandSpec JanetVcsProvider::RevertArgv(const std::filesystem::path& path) const {
     const std::string* fn = InternalName("revert-argv");
     if (!fn) {
-        return VcsProvider::RevertArgv(path);
+        return Provider::RevertArgv(path);
     }
     return ParseCommandSpec(CallWithString(*fn, path.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::StashListArgv(const std::filesystem::path& root) const {
+editor::vcs::CommandSpec JanetVcsProvider::StashListArgv(const std::filesystem::path& root) const {
     const std::string* fn = InternalName("stash-list-argv");
     if (!fn) {
-        return VcsProvider::StashListArgv(root);
+        return Provider::StashListArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
 }
 
-std::vector<editor::vcs::VcsStashEntry> JanetVcsProvider::ParseStashList(const std::string& stdout_) const {
+std::vector<editor::vcs::StashEntry> JanetVcsProvider::ParseStashList(const std::string& stdout_) const {
     const std::string* fn = InternalName("parse-stash-list");
     if (!fn) {
-        return VcsProvider::ParseStashList(stdout_);
+        return Provider::ParseStashList(stdout_);
     }
     return ParseStashEntries(CallWithString(*fn, stdout_));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::StashPushArgv(const std::filesystem::path& root, const std::string& message) const {
+editor::vcs::CommandSpec JanetVcsProvider::StashPushArgv(const std::filesystem::path& root, const std::string& message) const {
     const std::string* fn = InternalName("stash-push-argv");
     if (!fn) {
-        return VcsProvider::StashPushArgv(root, message);
+        return Provider::StashPushArgv(root, message);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), message));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::StashPopArgv(const std::filesystem::path& root, const std::string& stashRef) const {
+editor::vcs::CommandSpec JanetVcsProvider::StashPopArgv(const std::filesystem::path& root, const std::string& stashRef) const {
     const std::string* fn = InternalName("stash-pop-argv");
     if (!fn) {
-        return VcsProvider::StashPopArgv(root, stashRef);
+        return Provider::StashPopArgv(root, stashRef);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), stashRef));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::StashDropArgv(const std::filesystem::path& root, const std::string& stashRef) const {
+editor::vcs::CommandSpec JanetVcsProvider::StashDropArgv(const std::filesystem::path& root, const std::string& stashRef) const {
     const std::string* fn = InternalName("stash-drop-argv");
     if (!fn) {
-        return VcsProvider::StashDropArgv(root, stashRef);
+        return Provider::StashDropArgv(root, stashRef);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), stashRef));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::PushArgv(const std::filesystem::path& root) const {
+editor::vcs::CommandSpec JanetVcsProvider::PushArgv(const std::filesystem::path& root) const {
     const std::string* fn = InternalName("push-argv");
     if (!fn) {
-        return VcsProvider::PushArgv(root);
+        return Provider::PushArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::PullArgv(const std::filesystem::path& root) const {
+editor::vcs::CommandSpec JanetVcsProvider::PullArgv(const std::filesystem::path& root) const {
     const std::string* fn = InternalName("pull-argv");
     if (!fn) {
-        return VcsProvider::PullArgv(root);
+        return Provider::PullArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::FetchArgv(const std::filesystem::path& root) const {
+editor::vcs::CommandSpec JanetVcsProvider::FetchArgv(const std::filesystem::path& root) const {
     const std::string* fn = InternalName("fetch-argv");
     if (!fn) {
-        return VcsProvider::FetchArgv(root);
+        return Provider::FetchArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
 }
 
-editor::vcs::VcsCommandSpec JanetVcsProvider::AheadBehindArgv(const std::filesystem::path& root) const {
+editor::vcs::CommandSpec JanetVcsProvider::AheadBehindArgv(const std::filesystem::path& root) const {
     const std::string* fn = InternalName("ahead-behind-argv");
     if (!fn) {
-        return VcsProvider::AheadBehindArgv(root);
+        return Provider::AheadBehindArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
 }
 
-editor::vcs::VcsAheadBehind JanetVcsProvider::ParseAheadBehind(const std::string& stdout_) const {
+editor::vcs::AheadBehind JanetVcsProvider::ParseAheadBehind(const std::string& stdout_) const {
     const std::string* fn = InternalName("parse-ahead-behind");
     if (!fn) {
-        return VcsProvider::ParseAheadBehind(stdout_);
+        return Provider::ParseAheadBehind(stdout_);
     }
     return ParseAheadBehindResult(CallWithString(*fn, stdout_));
 }

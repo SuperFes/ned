@@ -1,4 +1,4 @@
-#include "AcpManager.h"
+#include "Manager.h"
 
 #include <algorithm>
 #include <fstream>
@@ -7,7 +7,7 @@
 #include <system_error>
 #include <utility>
 
-#include "AcpConfig.h"
+#include "Config.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
 #include "Editor/Mcp/BridgeServer.h"
@@ -22,7 +22,7 @@ namespace ned::editor::acp {
 
 namespace {
 
-    std::string AcpOutputBufferName(std::string_view agentName) {
+    std::string OutputBufferName(std::string_view agentName) {
         return "*acp: " + std::string(agentName) + "*";
     }
 
@@ -66,7 +66,7 @@ namespace {
         return path;
     }
 
-    // Mode-line spinner name for a prompt in flight -- see AcpManager::
+    // Mode-line spinner name for a prompt in flight -- see Manager::
     // PromptInFlight's doc comment. String, not string_view, to match
     // BackgroundActivity's own std::string parameters (Client.cpp's
     // kLspActivity does the same conversion for the same reason).
@@ -142,10 +142,10 @@ namespace {
 
 } // namespace
 
-AcpManager::AcpManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
+Manager::Manager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
 }
 
-AcpManager::~AcpManager() {
+Manager::~Manager() {
     // See the header's doc comment -- EndSession normally does this, but a
     // destructor that runs without one first (a session/prompt request
     // abandoned mid-flight, e.g. an owning panel torn down directly) must
@@ -155,32 +155,32 @@ AcpManager::~AcpManager() {
     }
 }
 
-AcpManager::SessionState AcpManager::State() const {
+Manager::SessionState Manager::State() const {
     return state_;
 }
 
-const std::string& AcpManager::AgentName() const {
+const std::string& Manager::AgentName() const {
     return agentName_;
 }
 
-const std::vector<AcpManager::TranscriptEntry>& AcpManager::Transcript() const {
+const std::vector<Manager::TranscriptEntry>& Manager::Transcript() const {
     return transcript_;
 }
 
-std::size_t AcpManager::TranscriptGeneration() const {
+std::size_t Manager::TranscriptGeneration() const {
     return transcriptGeneration_;
 }
 
-void AcpManager::SetOnTranscriptChanged(std::function<void()> handler) {
+void Manager::SetOnTranscriptChanged(std::function<void()> handler) {
     onTranscriptChanged_ = std::move(handler);
 }
 
-void AcpManager::SetMcpBridgeServer(mcp::BridgeServer* server) {
+void Manager::SetMcpBridgeServer(mcp::BridgeServer* server) {
     mcpBridgeServer_ = server;
 }
 
-text::Buffer& AcpManager::OutputBuffer(const std::string& agentName) {
-    const std::string bufferName = AcpOutputBufferName(agentName);
+text::Buffer& Manager::OutputBuffer(const std::string& agentName) {
+    const std::string bufferName = OutputBufferName(agentName);
     text::Buffer*     buffer     = bufferList_.Find(bufferName);
     if (!buffer) {
         buffer = &bufferList_.CreateBuffer(bufferName);
@@ -196,30 +196,30 @@ text::Buffer& AcpManager::OutputBuffer(const std::string& agentName) {
     return *buffer;
 }
 
-void AcpManager::AppendToOutputBuffer(std::string_view text) {
+void Manager::AppendToOutputBuffer(std::string_view text) {
     if (agentName_.empty()) {
         return; // no session has ever started -- nothing to append to
     }
     OutputBuffer(agentName_).AppendWhileReadOnly(text);
 }
 
-void AcpManager::PushTranscriptEntry(TranscriptEntry entry) {
+void Manager::PushTranscriptEntry(TranscriptEntry entry) {
     transcript_.push_back(std::move(entry));
     ++transcriptGeneration_;
     NotifyTranscriptChanged();
 }
 
-void AcpManager::PushSessionEvent(std::string text) {
+void Manager::PushSessionEvent(std::string text) {
     PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::SessionEvent, .text = std::move(text)});
 }
 
-void AcpManager::NotifyTranscriptChanged() {
+void Manager::NotifyTranscriptChanged() {
     if (onTranscriptChanged_) {
         onTranscriptChanged_();
     }
 }
 
-void AcpManager::PushOrAppendAgentText(TranscriptEntry::Kind kind, std::string_view text) {
+void Manager::PushOrAppendAgentText(TranscriptEntry::Kind kind, std::string_view text) {
     if (!transcript_.empty() && transcript_.back().kind == kind) {
         transcript_.back().text += text;
         ++transcriptGeneration_;
@@ -234,7 +234,7 @@ void AcpManager::PushOrAppendAgentText(TranscriptEntry::Kind kind, std::string_v
     PushTranscriptEntry(TranscriptEntry{.kind = kind, .text = std::string(text)});
 }
 
-void AcpManager::PushOrUpdateToolCall(const Json& update) {
+void Manager::PushOrUpdateToolCall(const Json& update) {
     // A real agent's tool_call_update frequently omits title/status entirely
     // (confirmed live against Claude Code's ACP adapter -- a follow-up update
     // often carries only content/rawOutput for an already-known toolCallId).
@@ -285,7 +285,7 @@ void AcpManager::PushOrUpdateToolCall(const Json& update) {
     });
 }
 
-void AcpManager::PushOrReplacePlan(const Json& update) {
+void Manager::PushOrReplacePlan(const Json& update) {
     std::vector<std::string> steps;
     if (update.contains("entries") && update["entries"].is_array()) {
         for (const Json& entryJson : update["entries"]) {
@@ -318,7 +318,7 @@ void AcpManager::PushOrReplacePlan(const Json& update) {
     PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::Plan, .planSteps = std::move(steps)});
 }
 
-text::Buffer* AcpManager::StartSession(const std::string& agentName) {
+text::Buffer* Manager::StartSession(const std::string& agentName) {
     text::Buffer& buffer = OutputBuffer(agentName);
 
     if (state_ != SessionState::Inactive) {
@@ -333,7 +333,7 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
     }
 
     if (!client_) {
-        const auto argv = AcpAgentCommand(agentName);
+        const auto argv = AgentCommand(agentName);
         if (!argv) {
             const std::string message = "No command configured for ACP agent \"" + agentName + "\" (see ned/set-acp-agent).";
             buffer.AppendWhileReadOnly("\n" + message + "\n");
@@ -341,7 +341,7 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
             return &buffer;
         }
         try {
-            client_ = std::make_unique<AcpClient>(*argv, eventLoop_);
+            client_ = std::make_unique<Client>(*argv, eventLoop_);
         }
         catch (const std::exception& e) {
             client_.reset();
@@ -382,7 +382,7 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
             agentSupportsEmbeddedContext_ = promptCaps.is_object() && promptCaps.value("embeddedContext", false);
 
             Json mcpServers = Json::array();
-            if (mcpBridgeServer_ && mcp::AcpMcpBridgeEnabled()) {
+            if (mcpBridgeServer_ && mcp::McpBridgeEnabled()) {
                 try {
                     mcpBridgeServer_->Start(); // idempotent -- a no-op if already listening
                     mcpServers.push_back(Json{
@@ -432,7 +432,7 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
     return &buffer;
 }
 
-std::string AcpManager::SendPrompt(const std::string& text, const std::vector<PromptAttachment>& attachments) {
+std::string Manager::SendPrompt(const std::string& text, const std::vector<PromptAttachment>& attachments) {
     if (state_ != SessionState::Active) {
         return "No active ACP session (see acp-start-session).";
     }
@@ -542,7 +542,7 @@ std::string AcpManager::SendPrompt(const std::string& text, const std::vector<Pr
     return "Sent.";
 }
 
-std::string AcpManager::StopSession() {
+std::string Manager::StopSession() {
     if (state_ == SessionState::Inactive) {
         return "No active ACP session.";
     }
@@ -565,7 +565,7 @@ std::string AcpManager::StopSession() {
     return "ACP session stopped.";
 }
 
-bool AcpManager::CancelPrompt() {
+bool Manager::CancelPrompt() {
     if (state_ != SessionState::Active || !promptInFlight_ || !client_) {
         return false;
     }
@@ -573,11 +573,11 @@ bool AcpManager::CancelPrompt() {
     return true;
 }
 
-bool AcpManager::PromptInFlight() const {
+bool Manager::PromptInFlight() const {
     return promptInFlight_;
 }
 
-void AcpManager::RecordCheckpointFileEdit(text::Buffer& buffer, const std::filesystem::path& path, std::size_t beforeSequence) {
+void Manager::RecordCheckpointFileEdit(text::Buffer& buffer, const std::filesystem::path& path, std::size_t beforeSequence) {
     if (!pendingCheckpoint_) {
         return;
     }
@@ -598,22 +598,22 @@ void AcpManager::RecordCheckpointFileEdit(text::Buffer& buffer, const std::files
     });
 }
 
-void AcpManager::FinalizePendingCheckpoint() {
+void Manager::FinalizePendingCheckpoint() {
     if (pendingCheckpoint_) {
         checkpoints_.push_back(std::move(*pendingCheckpoint_));
         pendingCheckpoint_.reset();
     }
 }
 
-std::size_t AcpManager::CheckpointCount() const {
+std::size_t Manager::CheckpointCount() const {
     return checkpoints_.size();
 }
 
-const AcpManager::Checkpoint& AcpManager::CheckpointAt(std::size_t index) const {
+const Manager::Checkpoint& Manager::CheckpointAt(std::size_t index) const {
     return checkpoints_.at(index);
 }
 
-AcpManager::RewindOutcome AcpManager::RewindTo(std::size_t index) {
+Manager::RewindOutcome Manager::RewindTo(std::size_t index) {
     RewindOutcome outcome;
     if (index >= checkpoints_.size()) {
         return outcome;
@@ -666,13 +666,13 @@ AcpManager::RewindOutcome AcpManager::RewindTo(std::size_t index) {
     return outcome;
 }
 
-void AcpManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     if (client_ && !pendingPermissionPrompt_) {
         client_->ExpireStaleRequests(maxAge);
     }
 }
 
-void AcpManager::WireClient(AcpClient& client) {
+void Manager::WireClient(Client& client) {
     client.SetNotificationHandler("session/update", [this](const Json& params) { HandleSessionUpdate(params); });
 
     client.SetRequestHandler("fs/read_text_file", [this](const Json& params, RespondFn respond) {
@@ -800,7 +800,7 @@ void AcpManager::WireClient(AcpClient& client) {
     client.SetOnDisconnected([this](std::string reason) { EndSession("ACP agent disconnected: " + reason); });
 }
 
-void AcpManager::HandleSessionUpdate(const Json& params) {
+void Manager::HandleSessionUpdate(const Json& params) {
     if (!params.contains("update") || !params["update"].is_object()) {
         return;
     }
@@ -840,7 +840,7 @@ void AcpManager::HandleSessionUpdate(const Json& params) {
     // header comment on why this isn't treated as an error.
 }
 
-void AcpManager::EndSession(std::string reason) {
+void Manager::EndSession(std::string reason) {
     if (state_ == SessionState::Inactive) {
         return; // e.g. disconnect EOF arriving after an explicit StopSession already tore down
     }
@@ -848,7 +848,7 @@ void AcpManager::EndSession(std::string reason) {
     if (promptInFlight_) {
         // A prompt was still outstanding when the session ended out from
         // under it (StopSession mid-turn, or the agent disconnecting) --
-        // its own SendRequest callback is now abandoned (AcpClient's
+        // its own SendRequest callback is now abandoned (Client's
         // documented "dropped, uninvoked" shutdown contract), so nothing
         // else would ever end this spinner.
         promptInFlight_ = false;
@@ -864,7 +864,7 @@ void AcpManager::EndSession(std::string reason) {
     // Confirmed live elsewhere in this codebase that deferring isn't what
     // actually makes this safe (Client's own identical pattern still
     // raced a periodic tick against a background thread's own Post()ed
-    // callback for the same object) -- the real fix now lives in AcpClient
+    // callback for the same object) -- the real fix now lives in Client
     // itself (alive_, see Client.h's header comment), so plain immediate
     // destruction is safe regardless of timing.
     client_.reset();
@@ -875,11 +875,11 @@ void AcpManager::EndSession(std::string reason) {
     }
 }
 
-void AcpManager::SetOnPermissionRequest(std::function<void(const PermissionPrompt&)> handler) {
+void Manager::SetOnPermissionRequest(std::function<void(const PermissionPrompt&)> handler) {
     onPermissionRequest_ = std::move(handler);
 }
 
-void AcpManager::ResolvePermissionPrompt(const std::string& optionId) {
+void Manager::ResolvePermissionPrompt(const std::string& optionId) {
     if (!pendingPermissionRespond_) {
         return;
     }
@@ -896,7 +896,7 @@ void AcpManager::ResolvePermissionPrompt(const std::string& optionId) {
     respond(Json{{"outcome", {{"outcome", "selected"}, {"optionId", optionIdCopy}}}}, std::nullopt);
 }
 
-void AcpManager::CancelPermissionPrompt() {
+void Manager::CancelPermissionPrompt() {
     if (!pendingPermissionRespond_) {
         return;
     }
@@ -907,15 +907,15 @@ void AcpManager::CancelPermissionPrompt() {
     respond(Json{{"outcome", {{"outcome", "cancelled"}}}}, std::nullopt);
 }
 
-const std::optional<AcpManager::PermissionPrompt>& AcpManager::PendingPermissionPrompt() const {
+const std::optional<Manager::PermissionPrompt>& Manager::PendingPermissionPrompt() const {
     return pendingPermissionPrompt_;
 }
 
-void AcpManager::SetOnSessionEnded(std::function<void(std::string)> handler) {
+void Manager::SetOnSessionEnded(std::function<void(std::string)> handler) {
     onSessionEnded_ = std::move(handler);
 }
 
-AcpClient& AcpManager::SetClientForTesting(std::unique_ptr<AcpClient> client) {
+Client& Manager::SetClientForTesting(std::unique_ptr<Client> client) {
     client_ = std::move(client);
     return *client_;
 }

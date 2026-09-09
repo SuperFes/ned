@@ -5,15 +5,15 @@
 // / tools/call, newline-delimited JSON-RPC via Transport) to serve one
 // connected client at a time -- the `ned --mcp-stdio-relay` subprocess the
 // ACP agent spawns as its configured stdio MCP server (see main.cpp and
-// AcpManager::StartSession's mcpServers payload). Real tool dispatch is
+// Manager::StartSession's mcpServers payload). Real tool dispatch is
 // delegated entirely to one injected ToolRegistry; this class is pure
 // protocol/transport plumbing.
 //
 // Threading shape mirrors every other background-I/O class in this codebase
-// (Client/Client/AcpClient's own read loops): a background jthread
+// (Client/Client/Client's own read loops): a background jthread
 // does blocking accept()/ReadMessage() calls only, marshaling each complete
 // line onto the main thread via EventLoop::Post before touching any real
-// state -- ToolRegistry::CallTool, and therefore every Manager/VcsRunner/
+// state -- ToolRegistry::CallTool, and therefore every Manager/Runner/
 // TestRunner call it makes, always runs on the main thread. A tool's
 // eventual response write (SendResult/SendError) also happens on the main
 // thread, synchronously via Transport::WriteMessage -- MCP tool results
@@ -22,7 +22,7 @@
 // a fix for a *measured* freeze on big workspace-wide operations, not a
 // speculative one; revisit only if the same is ever measured here).
 //
-// Only one connection is served at a time (AcpManager itself is a single
+// Only one connection is served at a time (Manager itself is a single
 // session, so at most one relay is ever expected live) -- the accept loop
 // simply waits for the next connection once the current one disconnects.
 //

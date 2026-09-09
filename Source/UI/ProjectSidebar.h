@@ -66,18 +66,18 @@
 
 #include "ActiveBuffer.h"
 #include "Editor/ProjectTree.h"
-#include "Editor/Vcs/VcsRowStatus.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/RowStatus.h"
+#include "Editor/Vcs/Runner.h"
 #include "Text/BufferList.h"
 #include "Theme.h"
 #include "Widget.h"
 
 namespace ned::ui {
 
-// changed-files-highlight follow-up: VcsRowStatus (how severe a row's git
-// status is) now lives in Editor/Vcs/VcsRowStatus.h, shared with VcsPanel
+// changed-files-highlight follow-up: RowStatus (how severe a row's git
+// status is) now lives in Editor/Vcs/RowStatus.h, shared with VcsPanel
 // (VCS side panel follow-up) rather than defined here alone.
-using editor::vcs::VcsRowStatus;
+using editor::vcs::RowStatus;
 
 class ProjectSidebar : public Widget {
   public:
@@ -201,17 +201,17 @@ class ProjectSidebar : public Widget {
     // changed-files-highlight follow-up: unset (the default, matching every
     // other Set* hook here) leaves every row rendered exactly as before --
     // no VCS provider ever resolving for the root behaves the same way
-    // (VcsRunner::RequestStatus's onError just fires, vcsStatus_ stays
+    // (Runner::RequestStatus's onError just fires, vcsStatus_ stays
     // empty). main.cpp wires this the same place it wires
     // WindowManager::SetVcsRunner.
-    void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
+    void SetVcsRunner(editor::vcs::Runner* vcsRunner);
 
     // Testing-only entry point, BufferView::DispatchStatusForTesting's own
     // precedent: builds vcsStatus_ directly from pre-parsed entries against
-    // the current editor::ProjectRoot(), bypassing VcsRunner/a real
+    // the current editor::ProjectRoot(), bypassing Runner/a real
     // subprocess entirely so a test can assert on Paint()'s resulting row
     // colors without a live git repo.
-    void DispatchVcsStatusForTesting(const std::vector<editor::vcs::VcsStatusEntry>& entries);
+    void DispatchVcsStatusForTesting(const std::vector<editor::vcs::StatusEntry>& entries);
 
     // sidebar-context-menu follow-up: a right-press on a tree row reports
     // that entry's path/isDirectory plus the click's absolute screen
@@ -320,8 +320,8 @@ class ProjectSidebar : public Widget {
     // second timer) -- deliberately not more eager than that: like the tree
     // walk itself, a git-status lag of up to kTreeCacheThrottle is an
     // accepted trade-off here, not a correctness requirement.
-    std::unordered_map<std::filesystem::path, VcsRowStatus> vcsStatus_;
-    editor::vcs::VcsRunner*                                 vcsRunner_ = nullptr;
+    std::unordered_map<std::filesystem::path, RowStatus> vcsStatus_;
+    editor::vcs::Runner*                                 vcsRunner_ = nullptr;
     void                                                    RefreshVcsStatus(const std::filesystem::path& root);
 };
 

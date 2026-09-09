@@ -8,8 +8,8 @@
 #include <utility>
 #include <vector>
 
-#include "Editor/Acp/AcpConfig.h"
-#include "Editor/Acp/AcpPanelConfig.h"
+#include "Editor/Acp/Config.h"
+#include "Editor/Acp/PanelConfig.h"
 #include "Editor/AutoMerge.h"
 #include "Editor/AutoPair.h"
 #include "Editor/AutoRevert.h"
@@ -60,11 +60,11 @@
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Terminal/Config.h"
 #include "Editor/TestRun/TestOutputParser.h"
-#include "Editor/TestRun/TestRunConfig.h"
+#include "Editor/TestRun/Config.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/TrimOnSave.h"
-#include "Editor/Vcs/VcsProviderRegistry.h"
+#include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vim/Settings.h"
 #include "Editor/WhichKeySettings.h"
 #include "Editor/WhitespaceSettings.h"
@@ -620,15 +620,15 @@ namespace {
         editor::coverage::SetFile(std::move(path));
     }
 
-    // Converts a Janet test parser's return value into a TestRunOutcome --
+    // Converts a Janet test parser's return value into a Outcome --
     // either a bare array of result tables, or a table {:results [...]
     // :failures-only true :passed n} for the metadata a failures-only
     // format needs. Field reading follows JanetVcsProvider.cpp's
     // "degrade, don't crash" convention: a malformed entry is skipped, a
     // missing field defaults, never a panic.
-    editor::testrun::TestRunOutcome JanetTestOutcome(Janet value, const std::string& formatName) {
+    editor::testrun::Outcome JanetTestOutcome(Janet value, const std::string& formatName) {
         using editor::testrun::TestResult;
-        editor::testrun::TestRunOutcome outcome;
+        editor::testrun::Outcome outcome;
         outcome.format   = formatName;
         outcome.parsedOk = true;
 

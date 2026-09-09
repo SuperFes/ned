@@ -28,7 +28,7 @@ namespace {
 // a later TEST_CASE's freshly allocated Buffer spuriously "inherits" if the
 // allocator reuses the same address, exactly the RegistryResetGuard
 // convention VcsRunnerTest.cpp/VcsProviderRegistryTest.cpp already use for
-// VcsProviderRegistry's own global static state.
+// ProviderRegistry's own global static state.
 struct RegistryResetGuard {
     RegistryResetGuard() {
         ClearRegistryForTesting();

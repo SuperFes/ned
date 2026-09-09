@@ -9,22 +9,22 @@
 
 #include <unistd.h>
 
-#include "Editor/Acp/AcpClient.h"
-#include "Editor/Acp/AcpManager.h"
+#include "Editor/Acp/Client.h"
+#include "Editor/Acp/Manager.h"
 #include "Editor/Acp/Transport.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Mcp/BridgeServer.h"
 #include "Editor/Mcp/ToolRegistry.h"
 #include "Editor/TestRun/TestRunner.h"
-#include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vcs/Runner.h"
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
 
-using ned::editor::acp::AcpClient;
-using ned::editor::acp::AcpManager;
+using ned::editor::acp::Client;
+using ned::editor::acp::Manager;
 using ned::editor::acp::Json;
 using ned::editor::acp::Transport;
 
@@ -62,16 +62,16 @@ std::string ResultFrame(const Json& id, const Json& result) {
     return Json{{"jsonrpc", "2.0"}, {"id", id}, {"result", result}}.dump();
 }
 
-// An AcpManager plus a pipe-backed injected AcpClient the test drives
+// An Manager plus a pipe-backed injected Client the test drives
 // directly -- mirrors DapManagerTest's ManagerFixture/InjectClient exactly,
 // adapted for ACP's newline framing and (agentName, not language) key.
 struct ManagerFixture {
     ned::ui::EventLoop    eventLoop;
     ned::text::BufferList bufferList;
-    AcpManager            manager{bufferList, eventLoop};
+    Manager            manager{bufferList, eventLoop};
     int                   agentStdinRead   = -1;
     int                   agentStdoutWrite = -1;
-    AcpClient*            client           = nullptr;
+    Client*            client           = nullptr;
     MessageReader         reader{-1};
     ned::text::Buffer*    outputBuffer = nullptr;
 
@@ -84,7 +84,7 @@ struct ManagerFixture {
         agentStdoutWrite = clientReadsHere[1];
         reader.fd        = agentStdinRead;
         client           = &manager.SetClientForTesting(
-            std::make_unique<AcpClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
+            std::make_unique<Client>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
     }
 
     // Runs StartSession through the initialize/session-new handshake against
@@ -101,7 +101,7 @@ struct ManagerFixture {
         REQUIRE(sessionNewRequest["method"] == "session/new");
         client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
 
-        REQUIRE(manager.State() == AcpManager::SessionState::Active);
+        REQUIRE(manager.State() == Manager::SessionState::Active);
     }
 
     ~ManagerFixture() {
@@ -116,15 +116,15 @@ struct ManagerFixture {
 
 } // namespace
 
-TEST_CASE("AcpManager::StartSession reports a clear error when nothing is configured for the agent name", "[Acp]") {
+TEST_CASE("Manager::StartSession reports a clear error when nothing is configured for the agent name", "[Acp]") {
     ManagerFixture     fixture;
     ned::text::Buffer* buffer = fixture.manager.StartSession("an-agent-nobody-configured");
     REQUIRE(buffer != nullptr);
     REQUIRE(buffer->Text().find("No command configured") != std::string::npos);
-    REQUIRE(fixture.manager.State() == AcpManager::SessionState::Inactive);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Inactive);
 }
 
-TEST_CASE("AcpManager::StartSession runs initialize then session/new and reaches Active", "[Acp]") {
+TEST_CASE("Manager::StartSession runs initialize then session/new and reaches Active", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -133,13 +133,13 @@ TEST_CASE("AcpManager::StartSession runs initialize then session/new and reaches
 }
 
 // ACP MCP tool-server bridge, slice 1.
-TEST_CASE("AcpManager::StartSession advertises a stdio MCP server when a bridge is wired", "[Acp][Mcp]") {
+TEST_CASE("Manager::StartSession advertises a stdio MCP server when a bridge is wired", "[Acp][Mcp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
 
     ned::text::BufferList             mcpBufferList;
     ned::editor::lsp::Manager      lspManager(mcpBufferList, fixture.eventLoop);
-    ned::editor::vcs::VcsRunner       vcsRunner(fixture.eventLoop);
+    ned::editor::vcs::Runner       vcsRunner(fixture.eventLoop);
     ned::editor::testrun::TestRunner  testRunner(mcpBufferList, fixture.eventLoop);
     ned::editor::dap::Manager      dapManager(fixture.eventLoop);
     ned::editor::mcp::ToolRegistry    registry(mcpBufferList, lspManager, vcsRunner, testRunner, dapManager);
@@ -164,15 +164,15 @@ TEST_CASE("AcpManager::StartSession advertises a stdio MCP server when a bridge 
     REQUIRE(bridge.IsListening());
 
     fixture.client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
-    REQUIRE(fixture.manager.State() == AcpManager::SessionState::Active);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Active);
 }
 
-TEST_CASE("AcpManager::SendPrompt with no active session reports that instead of sending anything", "[Acp]") {
+TEST_CASE("Manager::SendPrompt with no active session reports that instead of sending anything", "[Acp]") {
     ManagerFixture fixture;
     REQUIRE(fixture.manager.SendPrompt("hello") == "No active ACP session (see acp-start-session).");
 }
 
-TEST_CASE("AcpManager::SendPrompt sends session/prompt and streams the stop reason back into the output buffer", "[Acp]") {
+TEST_CASE("Manager::SendPrompt sends session/prompt and streams the stop reason back into the output buffer", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -191,13 +191,13 @@ TEST_CASE("AcpManager::SendPrompt sends session/prompt and streams the stop reas
 }
 
 // ACP context auto-attach follow-up.
-TEST_CASE("AcpManager::SendPrompt folds an attachment into the text block when the agent hasn't declared embeddedContext support",
+TEST_CASE("Manager::SendPrompt folds an attachment into the text block when the agent hasn't declared embeddedContext support",
           "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent"); // initialize result is Json::object() -- no promptCapabilities at all
 
-    const AcpManager::PromptAttachment attachment{.uri = "file:///tmp/foo.cpp", .name = "foo.cpp", .mimeType = "", .text = "int main() {}"};
+    const Manager::PromptAttachment attachment{.uri = "file:///tmp/foo.cpp", .name = "foo.cpp", .mimeType = "", .text = "int main() {}"};
     REQUIRE(fixture.manager.SendPrompt("what does this do?", {attachment}) == "Sent.");
 
     const Json promptRequest = fixture.reader.Next();
@@ -212,7 +212,7 @@ TEST_CASE("AcpManager::SendPrompt folds an attachment into the text block when t
     REQUIRE(fixture.outputBuffer->Text().find("[attached: foo.cpp]") != std::string::npos);
 }
 
-TEST_CASE("AcpManager::SendPrompt sends a real resource content block when the agent declares embeddedContext support", "[Acp]") {
+TEST_CASE("Manager::SendPrompt sends a real resource content block when the agent declares embeddedContext support", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
 
@@ -227,9 +227,9 @@ TEST_CASE("AcpManager::SendPrompt sends a real resource content block when the a
     const Json sessionNewRequest = fixture.reader.Next();
     REQUIRE(sessionNewRequest["method"] == "session/new");
     fixture.client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
-    REQUIRE(fixture.manager.State() == AcpManager::SessionState::Active);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Active);
 
-    const AcpManager::PromptAttachment attachment{
+    const Manager::PromptAttachment attachment{
         .uri = "file:///tmp/foo.cpp", .name = "foo.cpp", .mimeType = "text/x-c++", .text = "int main() {}"};
     REQUIRE(fixture.manager.SendPrompt("what does this do?", {attachment}) == "Sent.");
 
@@ -242,7 +242,7 @@ TEST_CASE("AcpManager::SendPrompt sends a real resource content block when the a
     REQUIRE(promptRequest["params"]["prompt"][1]["resource"]["mimeType"] == "text/x-c++");
 }
 
-TEST_CASE("AcpManager's output buffer opts into word-wrap despite having no on-disk path", "[Acp]") {
+TEST_CASE("Manager's output buffer opts into word-wrap despite having no on-disk path", "[Acp]") {
     // acp-panel-wrapping follow-up: the "*acp: <agent>*" buffer is pure
     // in-memory (never backed by a real file), so ModeForBuffer always
     // resolves FundamentalMode()/wrapLines=false for it unless something
@@ -256,7 +256,7 @@ TEST_CASE("AcpManager's output buffer opts into word-wrap despite having no on-d
     REQUIRE(ned::editor::WrapLinesForBufferNameOverride(fixture.outputBuffer->Name()) == std::optional<bool>(true));
 }
 
-TEST_CASE("AcpManager::PromptInFlight is true only while a session/prompt is outstanding", "[Acp]") {
+TEST_CASE("Manager::PromptInFlight is true only while a session/prompt is outstanding", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -272,7 +272,7 @@ TEST_CASE("AcpManager::PromptInFlight is true only while a session/prompt is out
     REQUIRE_FALSE(fixture.manager.PromptInFlight());
 }
 
-TEST_CASE("AcpManager::CancelPrompt sends session/cancel while a prompt is in flight, no-ops otherwise", "[Acp]") {
+TEST_CASE("Manager::CancelPrompt sends session/cancel while a prompt is in flight, no-ops otherwise", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -294,11 +294,11 @@ TEST_CASE("AcpManager::CancelPrompt sends session/cancel while a prompt is in fl
     REQUIRE(fixture.manager.PromptInFlight());
     fixture.client->DispatchFrame(ResultFrame(promptRequest["id"], Json{{"stopReason", "cancelled"}}));
     REQUIRE_FALSE(fixture.manager.PromptInFlight());
-    REQUIRE(fixture.manager.Transcript().back().kind == AcpManager::TranscriptEntry::Kind::SessionEvent);
+    REQUIRE(fixture.manager.Transcript().back().kind == Manager::TranscriptEntry::Kind::SessionEvent);
     REQUIRE(fixture.manager.Transcript().back().text == "cancelled");
 }
 
-TEST_CASE("AcpManager streams an agent_message_chunk session/update into the output buffer", "[Acp]") {
+TEST_CASE("Manager streams an agent_message_chunk session/update into the output buffer", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -315,7 +315,7 @@ TEST_CASE("AcpManager streams an agent_message_chunk session/update into the out
     REQUIRE(fixture.outputBuffer->Text().find("Hello there") != std::string::npos);
 }
 
-TEST_CASE("AcpManager answers fs/read_text_file from an open buffer's live content, not disk", "[Acp]") {
+TEST_CASE("Manager answers fs/read_text_file from an open buffer's live content, not disk", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
 
@@ -340,7 +340,7 @@ TEST_CASE("AcpManager answers fs/read_text_file from an open buffer's live conte
     std::filesystem::remove(tempPath);
 }
 
-TEST_CASE("AcpManager's fs/write_text_file writes to disk and merges into an open, unmodified buffer via Revert", "[Acp]") {
+TEST_CASE("Manager's fs/write_text_file writes to disk and merges into an open, unmodified buffer via Revert", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
 
@@ -369,7 +369,7 @@ TEST_CASE("AcpManager's fs/write_text_file writes to disk and merges into an ope
     std::filesystem::remove(tempPath);
 }
 
-TEST_CASE("AcpManager's fs/write_text_file preserves the written file's permissions", "[Acp]") {
+TEST_CASE("Manager's fs/write_text_file preserves the written file's permissions", "[Acp]") {
     // file-attribute-preservation follow-up: an agent writing on the user's
     // behalf is the last place a save should quietly drop a mode bit --
     // same temp-then-rename defect Buffer::SaveToFile had, see
@@ -401,14 +401,14 @@ TEST_CASE("AcpManager's fs/write_text_file preserves the written file's permissi
     std::filesystem::remove(tempPath);
 }
 
-TEST_CASE("AcpManager routes session/request_permission to the registered handler and answers a selected option", "[Acp]") {
+TEST_CASE("Manager routes session/request_permission to the registered handler and answers a selected option", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
 
-    AcpManager::PermissionPrompt captured;
+    Manager::PermissionPrompt captured;
     bool                         handlerCalled = false;
-    fixture.manager.SetOnPermissionRequest([&](const AcpManager::PermissionPrompt& prompt) {
+    fixture.manager.SetOnPermissionRequest([&](const Manager::PermissionPrompt& prompt) {
         handlerCalled = true;
         captured      = prompt;
     });
@@ -441,7 +441,7 @@ TEST_CASE("AcpManager routes session/request_permission to the registered handle
 
 // diff-preview-line-diff-utility follow-up (ROADMAP "Diff preview before an
 // agent edit's permission grant").
-TEST_CASE("AcpManager parses a permission request's own diff content, when the toolCall carries one", "[Acp]") {
+TEST_CASE("Manager parses a permission request's own diff content, when the toolCall carries one", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -464,7 +464,7 @@ TEST_CASE("AcpManager parses a permission request's own diff content, when the t
     REQUIRE(fixture.manager.PendingPermissionPrompt()->diffNewText == "b\n");
 }
 
-TEST_CASE("AcpManager leaves a permission request's diff fields unset when the toolCall carries no diff content", "[Acp]") {
+TEST_CASE("Manager leaves a permission request's diff fields unset when the toolCall carries no diff content", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -485,19 +485,19 @@ TEST_CASE("AcpManager leaves a permission request's diff fields unset when the t
     REQUIRE_FALSE(fixture.manager.PendingPermissionPrompt()->diffNewText.has_value());
 }
 
-TEST_CASE("AcpManager::StopSession tears the session down even with no active session", "[Acp]") {
+TEST_CASE("Manager::StopSession tears the session down even with no active session", "[Acp]") {
     ManagerFixture fixture;
     REQUIRE(fixture.manager.StopSession() == "No active ACP session.");
 }
 
-TEST_CASE("AcpManager::StopSession sends session/close and reaches Inactive", "[Acp]") {
+TEST_CASE("Manager::StopSession sends session/close and reaches Inactive", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
 
     // lsp-use-after-free follow-up: StopSession -> EndSession now destroys
-    // the AcpClient directly (immediate destruction is safe now that
-    // AcpClient itself guards against a stray Post()ed callback -- see
+    // the Client directly (immediate destruction is safe now that
+    // Client itself guards against a stray Post()ed callback -- see
     // Client.h's own header comment on alive_), which joins its
     // background read thread as part of destruction. That thread is
     // deliberately still blocked in a real blocking read on this fixture's
@@ -509,7 +509,7 @@ TEST_CASE("AcpManager::StopSession sends session/close and reaches Inactive", "[
     fixture.agentStdoutWrite = -1; // fixture's own destructor must not double-close
 
     REQUIRE(fixture.manager.StopSession() == "ACP session stopped.");
-    REQUIRE(fixture.manager.State() == AcpManager::SessionState::Inactive);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Inactive);
 
     const Json closeRequest = fixture.reader.Next();
     REQUIRE(closeRequest["method"] == "session/close");
@@ -536,7 +536,7 @@ Json AgentThoughtChunkUpdate(const std::string& text) {
 
 } // namespace
 
-TEST_CASE("AcpManager routes agent_thought_chunk into its own AgentThought entry, separate from AgentText", "[Acp]") {
+TEST_CASE("Manager routes agent_thought_chunk into its own AgentThought entry, separate from AgentText", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -547,13 +547,13 @@ TEST_CASE("AcpManager routes agent_thought_chunk into its own AgentThought entry
 
     const auto& transcript = fixture.manager.Transcript();
     REQUIRE(transcript.size() == baseline + 2);
-    REQUIRE(transcript[baseline].kind == AcpManager::TranscriptEntry::Kind::AgentThought);
+    REQUIRE(transcript[baseline].kind == Manager::TranscriptEntry::Kind::AgentThought);
     REQUIRE(transcript[baseline].text == "considering the question");
-    REQUIRE(transcript[baseline + 1].kind == AcpManager::TranscriptEntry::Kind::AgentText);
+    REQUIRE(transcript[baseline + 1].kind == Manager::TranscriptEntry::Kind::AgentText);
     REQUIRE(transcript[baseline + 1].text == "the answer is 42");
 }
 
-TEST_CASE("AcpManager coalesces consecutive agent_thought_chunk updates the same way agent_message_chunk does", "[Acp]") {
+TEST_CASE("Manager coalesces consecutive agent_thought_chunk updates the same way agent_message_chunk does", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -564,11 +564,11 @@ TEST_CASE("AcpManager coalesces consecutive agent_thought_chunk updates the same
 
     const auto& transcript = fixture.manager.Transcript();
     REQUIRE(transcript.size() == baseline + 1);
-    REQUIRE(transcript.back().kind == AcpManager::TranscriptEntry::Kind::AgentThought);
+    REQUIRE(transcript.back().kind == Manager::TranscriptEntry::Kind::AgentThought);
     REQUIRE(transcript.back().text == "first second");
 }
 
-TEST_CASE("AcpManager coalesces consecutive agent_message_chunk updates into one transcript entry", "[Acp]") {
+TEST_CASE("Manager coalesces consecutive agent_message_chunk updates into one transcript entry", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent"); // a successful start pushes no transcript event -- see StartSession
@@ -580,12 +580,12 @@ TEST_CASE("AcpManager coalesces consecutive agent_message_chunk updates into one
 
     const auto& transcript = fixture.manager.Transcript();
     REQUIRE(transcript.size() == baseline + 1);
-    REQUIRE(transcript.back().kind == AcpManager::TranscriptEntry::Kind::AgentText);
+    REQUIRE(transcript.back().kind == Manager::TranscriptEntry::Kind::AgentText);
     REQUIRE(transcript.back().text == "Hello there");
     REQUIRE(fixture.manager.TranscriptGeneration() == generationAfterStart + 2);
 }
 
-TEST_CASE("AcpManager's transcript entry count and text mirror a session/prompt exchange", "[Acp]") {
+TEST_CASE("Manager's transcript entry count and text mirror a session/prompt exchange", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -596,12 +596,12 @@ TEST_CASE("AcpManager's transcript entry count and text mirror a session/prompt 
 
     const auto& transcript = fixture.manager.Transcript();
     const auto  userEntry =
-        std::find_if(transcript.begin(), transcript.end(), [](const auto& e) { return e.kind == AcpManager::TranscriptEntry::Kind::UserMessage; });
+        std::find_if(transcript.begin(), transcript.end(), [](const auto& e) { return e.kind == Manager::TranscriptEntry::Kind::UserMessage; });
     REQUIRE(userEntry != transcript.end());
     REQUIRE(userEntry->text == "what does this do?");
 }
 
-TEST_CASE("AcpManager parses a plan session/update into one Plan transcript entry and replaces it on the next plan update", "[Acp]") {
+TEST_CASE("Manager parses a plan session/update into one Plan transcript entry and replaces it on the next plan update", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -621,7 +621,7 @@ TEST_CASE("AcpManager parses a plan session/update into one Plan transcript entr
 
     REQUIRE(fixture.manager.Transcript().size() == baseline + 1);
     const auto& planEntry = fixture.manager.Transcript().back();
-    REQUIRE(planEntry.kind == AcpManager::TranscriptEntry::Kind::Plan);
+    REQUIRE(planEntry.kind == Manager::TranscriptEntry::Kind::Plan);
     REQUIRE(planEntry.planSteps.size() == 2);
     REQUIRE(planEntry.planSteps[0] == "[x] Trim common suffix first");
     REQUIRE(planEntry.planSteps[1] == "[ ] Re-run LCS diff");
@@ -648,7 +648,7 @@ TEST_CASE("AcpManager parses a plan session/update into one Plan transcript entr
     REQUIRE(fixture.manager.TranscriptGeneration() > generationAfterFirstPlan);
 }
 
-TEST_CASE("AcpManager matches tool_call_update to its tool_call by toolCallId instead of appending a duplicate entry", "[Acp]") {
+TEST_CASE("Manager matches tool_call_update to its tool_call by toolCallId instead of appending a duplicate entry", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
@@ -679,7 +679,7 @@ TEST_CASE("AcpManager matches tool_call_update to its tool_call by toolCallId in
     REQUIRE(fixture.manager.Transcript().back().status == "completed");
 }
 
-TEST_CASE("AcpManager::SetOnTranscriptChanged fires on every transcript-affecting event", "[Acp]") {
+TEST_CASE("Manager::SetOnTranscriptChanged fires on every transcript-affecting event", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
 
@@ -710,7 +710,7 @@ void WriteFileViaAgent(ManagerFixture& fixture, const std::filesystem::path& pat
 
 // Runs one whole turn -- SendPrompt, an agent-initiated fs/write_text_file
 // mid-turn (the write has to land *before* the session/prompt response,
-// exactly like a real tool call would, so AcpManager's pendingCheckpoint_
+// exactly like a real tool call would, so Manager's pendingCheckpoint_
 // is still open to record it), then resolves session/prompt.
 void RunTurnWithFileWrite(ManagerFixture& fixture, const std::string& promptText, const std::filesystem::path& path,
                           const std::string& content, int requestId, const std::string& stopReason = "end_turn") {
@@ -722,7 +722,7 @@ void RunTurnWithFileWrite(ManagerFixture& fixture, const std::string& promptText
 
 } // namespace
 
-TEST_CASE("AcpManager checkpoints a turn's file edit and RewindTo reverts it, truncating the transcript", "[Acp]") {
+TEST_CASE("Manager checkpoints a turn's file edit and RewindTo reverts it, truncating the transcript", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
 
@@ -740,7 +740,7 @@ TEST_CASE("AcpManager checkpoints a turn's file edit and RewindTo reverts it, tr
     REQUIRE(fixture.manager.CheckpointAt(0).promptPreview == "please rewrite the file");
     REQUIRE(fixture.manager.CheckpointAt(0).fileRecords.size() == 1);
 
-    const AcpManager::RewindOutcome outcome = fixture.manager.RewindTo(0);
+    const Manager::RewindOutcome outcome = fixture.manager.RewindTo(0);
     REQUIRE(outcome.turnsRewound == 1);
     REQUIRE(outcome.revertedFiles == std::vector<std::string>{tempPath.string()});
     REQUIRE(outcome.divergedFiles.empty());
@@ -751,13 +751,13 @@ TEST_CASE("AcpManager checkpoints a turn's file edit and RewindTo reverts it, tr
     // The turn's own UserMessage entry is gone, replaced by exactly one
     // SessionEvent summarizing the rewind.
     REQUIRE(fixture.manager.Transcript().size() == 1);
-    REQUIRE(fixture.manager.Transcript().back().kind == AcpManager::TranscriptEntry::Kind::SessionEvent);
+    REQUIRE(fixture.manager.Transcript().back().kind == Manager::TranscriptEntry::Kind::SessionEvent);
     REQUIRE(fixture.manager.Transcript().back().text.find("rewound") != std::string::npos);
 
     std::filesystem::remove(tempPath);
 }
 
-TEST_CASE("AcpManager::RewindTo on a later checkpoint leaves an earlier turn's edit and transcript entry intact", "[Acp]") {
+TEST_CASE("Manager::RewindTo on a later checkpoint leaves an earlier turn's edit and transcript entry intact", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
 
@@ -776,25 +776,25 @@ TEST_CASE("AcpManager::RewindTo on a later checkpoint leaves an earlier turn's e
 
     // Rewind only the most recent checkpoint (index 1) -- the first turn's
     // own edit and UserMessage entry must survive untouched.
-    const AcpManager::RewindOutcome outcome = fixture.manager.RewindTo(1);
+    const Manager::RewindOutcome outcome = fixture.manager.RewindTo(1);
     REQUIRE(outcome.turnsRewound == 1);
     REQUIRE(buffer.Text() == "v1");
     REQUIRE(fixture.manager.CheckpointCount() == 1);
 
     const auto& transcript     = fixture.manager.Transcript();
     const auto  firstTurnEntry = std::find_if(transcript.begin(), transcript.end(), [](const auto& e) {
-        return e.kind == AcpManager::TranscriptEntry::Kind::UserMessage && e.text == "first turn";
+        return e.kind == Manager::TranscriptEntry::Kind::UserMessage && e.text == "first turn";
     });
     REQUIRE(firstTurnEntry != transcript.end());
     const auto secondTurnEntry = std::find_if(transcript.begin(), transcript.end(), [](const auto& e) {
-        return e.kind == AcpManager::TranscriptEntry::Kind::UserMessage && e.text == "second turn";
+        return e.kind == Manager::TranscriptEntry::Kind::UserMessage && e.text == "second turn";
     });
     REQUIRE(secondTurnEntry == transcript.end()); // truncated away
 
     std::filesystem::remove(tempPath);
 }
 
-TEST_CASE("AcpManager::RewindTo reports a file edited again since its turn as diverged, leaving it untouched", "[Acp]") {
+TEST_CASE("Manager::RewindTo reports a file edited again since its turn as diverged, leaving it untouched", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
 
@@ -814,7 +814,7 @@ TEST_CASE("AcpManager::RewindTo reports a file edited again since its turn as di
     buffer.InsertAtPoint("!");
     const std::string editedText = buffer.Text();
 
-    const AcpManager::RewindOutcome outcome = fixture.manager.RewindTo(0);
+    const Manager::RewindOutcome outcome = fixture.manager.RewindTo(0);
     REQUIRE(outcome.divergedFiles == std::vector<std::string>{tempPath.string()});
     REQUIRE(outcome.revertedFiles.empty());
     REQUIRE(buffer.Text() == editedText); // left alone, not force-reverted
@@ -822,7 +822,7 @@ TEST_CASE("AcpManager::RewindTo reports a file edited again since its turn as di
     std::filesystem::remove(tempPath);
 }
 
-TEST_CASE("AcpManager::RewindTo reports a file never open in ned as untracked, without touching it on disk", "[Acp]") {
+TEST_CASE("Manager::RewindTo reports a file never open in ned as untracked, without touching it on disk", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
 
@@ -839,7 +839,7 @@ TEST_CASE("AcpManager::RewindTo reports a file never open in ned as untracked, w
     REQUIRE(fixture.manager.CheckpointAt(0).fileRecords.empty());
     REQUIRE(fixture.manager.CheckpointAt(0).untrackedPaths == std::vector<std::filesystem::path>{tempPath});
 
-    const AcpManager::RewindOutcome outcome = fixture.manager.RewindTo(0);
+    const Manager::RewindOutcome outcome = fixture.manager.RewindTo(0);
     REQUIRE(outcome.untrackedFiles == std::vector<std::string>{tempPath.string()});
     REQUIRE(outcome.revertedFiles.empty());
 
@@ -850,13 +850,13 @@ TEST_CASE("AcpManager::RewindTo reports a file never open in ned as untracked, w
     std::filesystem::remove(tempPath);
 }
 
-TEST_CASE("AcpManager::RewindTo with an out-of-range index is a no-op", "[Acp]") {
+TEST_CASE("Manager::RewindTo with an out-of-range index is a no-op", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
 
     const std::size_t               transcriptSize = fixture.manager.Transcript().size();
-    const AcpManager::RewindOutcome outcome        = fixture.manager.RewindTo(0); // no checkpoints exist yet
+    const Manager::RewindOutcome outcome        = fixture.manager.RewindTo(0); // no checkpoints exist yet
     REQUIRE(outcome.turnsRewound == 0);
     REQUIRE(outcome.revertedFiles.empty());
     REQUIRE(fixture.manager.Transcript().size() == transcriptSize);

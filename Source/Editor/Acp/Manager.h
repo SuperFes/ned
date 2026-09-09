@@ -13,7 +13,7 @@
 //      client declares fs.readTextFile/fs.writeTextFile true, and
 //      deliberately leaves `terminal` and any elicitation capability
 //      undeclared: v1 has no handler for terminal/* or elicitation/create,
-//      and AcpClient answers an unhandled agent-initiated request with a
+//      and Client answers an unhandled agent-initiated request with a
 //      JSON-RPC MethodNotFound -- safe and spec-legal for any capability
 //      this client never claimed to support);
 //   2. on its response, send `session/new` (cwd = ProjectRoot()), storing
@@ -35,8 +35,8 @@
 // exercised against a real agent.
 //
 
-#ifndef NED_EDITOR_ACP_ACPMANAGER_H
-#define NED_EDITOR_ACP_ACPMANAGER_H
+#ifndef NED_EDITOR_ACP_MANAGER_H
+#define NED_EDITOR_ACP_MANAGER_H
 
 #include <chrono>
 #include <filesystem>
@@ -51,7 +51,7 @@
 #include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
-#include "AcpClient.h"
+#include "Client.h"
 
 namespace ned::text {
 class Buffer;
@@ -64,20 +64,20 @@ class BridgeServer;
 
 namespace ned::editor::acp {
 
-class AcpManager {
+class Manager {
   public:
-    // bufferList and eventLoop must both outlive this AcpManager -- same
+    // bufferList and eventLoop must both outlive this Manager -- same
     // requirement every sibling manager in this codebase documents.
-    AcpManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop);
+    Manager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop);
     // Ends the "ACP" background activity if a prompt is still in flight when
     // this is destroyed without ever going through EndSession -- mirrors
     // Client::~Client's identical cleanup for its own pending_ map
-    // (see that destructor's comment). A real ~AcpManager() rather than
+    // (see that destructor's comment). A real ~Manager() rather than
     // = default because of this.
-    ~AcpManager();
+    ~Manager();
 
-    AcpManager(const AcpManager&)            = delete;
-    AcpManager& operator=(const AcpManager&) = delete;
+    Manager(const Manager&)            = delete;
+    Manager& operator=(const Manager&) = delete;
 
     enum class SessionState { Inactive,
                               Starting,
@@ -342,7 +342,7 @@ class AcpManager {
 
     // ACP MCP tool-server bridge, slice 1. Connect-after-construction,
     // unset-is-safe-no-op, this class's usual convention -- wired from
-    // main.cpp right after constructing Manager/VcsRunner/TestRunner and
+    // main.cpp right after constructing Manager/Runner/TestRunner and
     // the BridgeServer itself. When set (and ned/set-acp-mcp-bridge, see
     // McpBridgeSetting.h, is on -- the default), StartSession starts the
     // bridge listening and advertises it to the agent as a stdio MCP server
@@ -350,14 +350,14 @@ class AcpManager {
     void SetMcpBridgeServer(mcp::BridgeServer* server);
 
     // Public primarily for tests -- mirrors Manager::SetClientForTesting
-    // exactly: registers an already-constructed AcpClient (typically
+    // exactly: registers an already-constructed Client (typically
     // pipe-backed, no real subprocess) as the session's client without
     // starting the handshake; the next StartSession(name) then runs the
     // real handshake against it instead of spawning.
-    AcpClient& SetClientForTesting(std::unique_ptr<AcpClient> client);
+    Client& SetClientForTesting(std::unique_ptr<Client> client);
 
   private:
-    void          WireClient(AcpClient& client);
+    void          WireClient(Client& client);
     void          HandleSessionUpdate(const Json& params);
     void          EndSession(std::string reason);
     void          AppendToOutputBuffer(std::string_view text);
@@ -385,7 +385,7 @@ class AcpManager {
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
 
-    std::unique_ptr<AcpClient> client_;
+    std::unique_ptr<Client> client_;
     mcp::BridgeServer*      mcpBridgeServer_ = nullptr;
     std::string                agentName_;
     std::string                sessionId_;
@@ -431,4 +431,4 @@ class AcpManager {
 
 } // namespace ned::editor::acp
 
-#endif // NED_EDITOR_ACP_ACPMANAGER_H
+#endif // NED_EDITOR_ACP_MANAGER_H

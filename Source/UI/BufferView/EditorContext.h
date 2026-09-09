@@ -47,7 +47,7 @@ class PromptHistory;
 class RegisterTable;
 struct Mode;
 namespace acp {
-    class AcpManager;
+    class Manager;
 }
 namespace dap {
     class Manager;
@@ -62,7 +62,7 @@ namespace testrun {
     class TestRunner;
 }
 namespace vcs {
-    class VcsRunner;
+    class Runner;
 }
 } // namespace ned::editor
 
@@ -93,8 +93,8 @@ struct EditorContext {
     // Wired later, and any of them may be null -- check before use.
     editor::lsp::Manager*&     lspManager;
     editor::dap::Manager*&     dapManager;
-    editor::acp::AcpManager*&     acpManager;
-    editor::vcs::VcsRunner*&      vcsRunner;
+    editor::acp::Manager*&     acpManager;
+    editor::vcs::Runner*&      vcsRunner;
     editor::tasks::TaskRunner*&   taskRunner;
     editor::testrun::TestRunner*& testRunner;
     editor::ProjectUndoManager*&  projectUndo;

@@ -628,7 +628,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "No test runner available.";
                 return;
             }
-            const std::optional<editor::testrun::TestRunOutcome>& outcome = testRunner_->LatestOutcome();
+            const std::optional<editor::testrun::Outcome>& outcome = testRunner_->LatestOutcome();
             if (!outcome) {
                 statusMessage_ = "No test results yet -- run-tests (C-c T t) first.";
                 return;
@@ -864,7 +864,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             else if (dapManager_->State() != editor::dap::Manager::SessionState::Stopped) {
                 statusMessage_ = "Debug session is not stopped.";
             }
-            else if (!acpManager_ || acpManager_->State() != editor::acp::AcpManager::SessionState::Active) {
+            else if (!acpManager_ || acpManager_->State() != editor::acp::Manager::SessionState::Active) {
                 statusMessage_ = "No active ACP session (see acp-start-session).";
             }
             else {
@@ -872,7 +872,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             return;
         case editor::InteractiveRequest::AcpAskAgentAboutLine:
-            if (!acpManager_ || acpManager_->State() != editor::acp::AcpManager::SessionState::Active) {
+            if (!acpManager_ || acpManager_->State() != editor::acp::Manager::SessionState::Active) {
                 statusMessage_ = "No active ACP session (see acp-start-session).";
             }
             else {
@@ -1044,7 +1044,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // VCS blame gutter follow-up: one-shot direct actions, same shape
         // as ProjectAgenda/LspGotoDefinition above -- doesn't touch
         // inputMode_, the async result (or a status-message error) arrives
-        // later via VcsRunner's own callback. VcsShowBlame stays on the
+        // later via Runner's own callback. VcsShowBlame stays on the
         // current buffer (see Command.h's own doc comment for why);
         // VcsBlameDetailAtPoint is synchronous, no async request at all.
         case editor::InteractiveRequest::VcsShowBlame:
@@ -1064,7 +1064,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         // VCS vocabulary-completion follow-up: status/stage/unstage/
         // branches are one-shot direct actions (async results via
-        // VcsRunner callbacks, same as VcsShowLog above); commit and
+        // Runner callbacks, same as VcsShowLog above); commit and
         // create-branch open a prompt directly; switch-branch defers its
         // prompt until the branch list arrives (see
         // BeginVcsSwitchBranchPrompt's own doc comment).
@@ -1084,7 +1084,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             StageOrUnstageHunkAtPoint(false);
             return;
         // Hunk-navigation follow-up: pure point motion against the
-        // already-cached diffHunkStartLines_, no VcsRunner round trip and
+        // already-cached diffHunkStartLines_, no Runner round trip and
         // no Modified() gate (see JumpToNextHunk/JumpToPreviousHunk's own
         // doc comments).
         case editor::InteractiveRequest::VcsNextHunk:
@@ -1114,7 +1114,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::VcsCommit:
             BeginVcsCommitMessage();
             return;
-        case editor::InteractiveRequest::VcsCommitFinish:
+        case editor::InteractiveRequest::CommitFinish:
             FinishVcsCommitMessage();
             return;
         case editor::InteractiveRequest::VcsCommitAbort:
@@ -2316,7 +2316,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
     else if (inputMode_ == InputMode::AcpPromptText) {
         // Fire-and-forget, same async shape as DapEvaluate below: the
         // reply streams into the output buffer asynchronously via
-        // AcpManager's own session/update handling, not through this
+        // Manager's own session/update handling, not through this
         // return value.
         statusMessage_ = acpManager_ ? acpManager_->SendPrompt(input) : "No ACP manager available.";
     }
@@ -3621,7 +3621,7 @@ bufferview::FuzzyPrompt BufferView::AcpAgentNamePrompt() {
             .historyKey    = "acp-agent-name",
             .cancelMessage = "Start ACP session cancelled.",
             .emptyMessage  = [](const std::string& query) { return "No agent matching \"" + query + "\""; },
-            .pool          = [] { return editor::acp::AcpAgentNames(); },
+            .pool          = [] { return editor::acp::AgentNames(); },
             .commit        = [this](const std::string& selected) {
                 if (!acpManager_) {
                     statusMessage_ = "No ACP manager available.";
@@ -4076,11 +4076,11 @@ void BufferView::SetThemeApplier(std::function<void(const Theme&)> applier) {
     themeApplier_ = std::move(applier);
 }
 
-void BufferView::SetAcpManager(editor::acp::AcpManager* acpManager) {
+void BufferView::SetAcpManager(editor::acp::Manager* acpManager) {
     acpManager_ = acpManager;
 }
 
-void BufferView::ShowAcpPermissionPrompt(const editor::acp::AcpManager::PermissionPrompt& prompt) {
+void BufferView::ShowAcpPermissionPrompt(const editor::acp::Manager::PermissionPrompt& prompt) {
     pendingAcpPermissionOptions_ = prompt.options;
     acpPermissionSelection_      = 0;
     inputMode_                   = InputMode::AcpPermissionPrompt;
@@ -4108,7 +4108,7 @@ void BufferView::HandleAcpPermissionPromptKey(const editor::KeyChord& chord) {
                            // Captured: ending the session clears the pending options.
                            .commit =
                                [this, options = pendingAcpPermissionOptions_](std::size_t index) {
-                                   const editor::acp::AcpManager::PermissionOption& option = options[index];
+                                   const editor::acp::Manager::PermissionOption& option = options[index];
                                    if (acpManager_) {
                                        acpManager_->ResolvePermissionPrompt(option.optionId);
                                    }

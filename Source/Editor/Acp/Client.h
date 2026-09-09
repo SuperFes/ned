@@ -15,9 +15,9 @@
 // header comment, corrected 2026-08-26) -- the earlier claim that this class
 // is "only ever destroyed after EventLoop::Run() has returned" was false for
 // Client's mid-session respawn path, confirmed live via ASan, and nothing
-// about AcpManager's own single-session model makes AcpClient immune to the
+// about Manager's own single-session model makes Client immune to the
 // same hazard (a Post()ed callback from readThread_/stderrThread_ that
-// outlives the object, freed by AcpManager::EndSession, whether immediately
+// outlives the object, freed by Manager::EndSession, whether immediately
 // or after some delay -- no delay is actually safe, only alive_ is).
 //
 // Two real differences from Client:
@@ -38,9 +38,9 @@
 //     BufferView) before it has an answer -- so this RequestHandler instead
 //     takes a `respond` continuation, callable either synchronously inline
 //     (fs/read_text_file) or much later (a permission prompt). See
-//     AcpManager.h for the lifetime contract that follows from "much
+//     Manager.h for the lifetime contract that follows from "much
 //     later": a `respond` continuation must never be invoked after the
-//     AcpClient that handed it out has been destroyed.
+//     Client that handed it out has been destroyed.
 //
 // lsp-stderr-capture follow-up (extended to ACP): stderrThread_ mirrors
 // Client's own stderrThread_ exactly -- a second blocking read loop over
@@ -52,7 +52,7 @@
 // async-write-queue follow-up (extended to ACP, for consistency -- no live
 // freeze reported against this client specifically): mirrors Client's own
 // writeThread_/EnqueueWrite/PrepareForGracefulShutdown exactly -- see
-// Client.h's own header comment for the full reasoning. AcpManager::
+// Client.h's own header comment for the full reasoning. Manager::
 // StopSession sends a best-effort "session/close" request immediately
 // before EndSession destroys the client (mirroring Manager::Shutdown's
 // own "shutdown"+"exit" courtesy pair) -- confirmed live by a real
@@ -69,8 +69,8 @@
 // writing directly).
 //
 
-#ifndef NED_EDITOR_ACP_ACPCLIENT_H
-#define NED_EDITOR_ACP_ACPCLIENT_H
+#ifndef NED_EDITOR_ACP_CLIENT_H
+#define NED_EDITOR_ACP_CLIENT_H
 
 #include <atomic>
 #include <chrono>
@@ -108,31 +108,31 @@ using NotificationHandler = std::function<void(const Json& params)>;
 using RespondFn      = std::function<void(std::optional<Json> result, std::optional<Json> error)>;
 using RequestHandler = std::function<void(const Json& params, RespondFn respond)>;
 
-class AcpClient {
+class Client {
   public:
     // Spawns argv as a new agent process. eventLoop must outlive this
-    // AcpClient (see header comment).
-    AcpClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop);
+    // Client (see header comment).
+    Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop);
 
     // Takes ownership of an already-open Transport directly -- for tests
     // driving a raw pipe pair with no real subprocess involved, mirroring
     // Client's own test constructor.
-    AcpClient(Transport transport, ned::ui::EventLoop& eventLoop);
+    Client(Transport transport, ned::ui::EventLoop& eventLoop);
 
     // lsp-use-after-free follow-up: no longer = default -- the body flips
     // alive_ to false as its first statement (see Client.h's own header
     // comment); member destruction order still does the rest of the real
     // teardown work, same as before.
-    ~AcpClient();
+    ~Client();
 
-    AcpClient(const AcpClient&)            = delete;
-    AcpClient& operator=(const AcpClient&) = delete;
+    Client(const Client&)            = delete;
+    Client& operator=(const Client&) = delete;
     // Not movable: the background thread's lambda captures `this` directly.
-    AcpClient(AcpClient&&)            = delete;
-    AcpClient& operator=(AcpClient&&) = delete;
+    Client(Client&&)            = delete;
+    Client& operator=(Client&&) = delete;
 
     // Sends a JSON-RPC request with a freshly allocated id. callback runs on
-    // the main thread once the matching response arrives; if this AcpClient
+    // the main thread once the matching response arrives; if this Client
     // is destroyed first, callback is simply dropped, uninvoked -- matches
     // Client::SendRequest's own "abandoned at shutdown" convention.
     void SendRequest(const std::string& method, Json params, ResponseCallback callback);
@@ -154,7 +154,7 @@ class AcpClient {
     // unhandled a safe, spec-legal no-op rather than a hang, *provided* that
     // capability was also left undeclared in this client's own "initialize"
     // params (an agent is expected not to invoke a method it wasn't told the
-    // client supports; AcpManager is what actually makes that declaration).
+    // client supports; Manager is what actually makes that declaration).
     void SetRequestHandler(std::string method, RequestHandler handler);
 
     // Invoked exactly once, on the main thread, the moment the background
@@ -186,8 +186,8 @@ class AcpClient {
 
     // async-write-queue follow-up: see Client::PrepareForGracefulShutdown's
     // identical doc comment -- call this immediately before a best-effort
-    // courtesy request (e.g. AcpManager::StopSession's "session/close") that
-    // must actually reach the wire before this AcpClient is destroyed.
+    // courtesy request (e.g. Manager::StopSession's "session/close") that
+    // must actually reach the wire before this Client is destroyed.
     void PrepareForGracefulShutdown();
 
   private:
@@ -238,4 +238,4 @@ class AcpClient {
 
 } // namespace ned::editor::acp
 
-#endif // NED_EDITOR_ACP_ACPCLIENT_H
+#endif // NED_EDITOR_ACP_CLIENT_H

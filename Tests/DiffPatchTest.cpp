@@ -107,7 +107,7 @@ TEST_CASE("ExtractHunkPatch keeps the no-newline marker and repairs a missing fi
 
 TEST_CASE("ExtractHunkPatch picks the right file's header block in a multi-file diff", "[DiffPatch]") {
     // Both files carry a hunk covering new line 1 -- a single-file diff is
-    // what VcsRunner actually feeds this, but a multi-file input must
+    // what Runner actually feeds this, but a multi-file input must
     // still pair each hunk with its own file header, not the first one.
     const std::string diff  = "diff --git a/a.txt b/a.txt\n"
                               "--- a/a.txt\n"

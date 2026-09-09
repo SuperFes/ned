@@ -1,4 +1,4 @@
-#include "TestRunConfig.h"
+#include "Config.h"
 
 #include <mutex>
 #include <unordered_map>

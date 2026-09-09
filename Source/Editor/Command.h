@@ -566,9 +566,9 @@ enum class InteractiveRequest { None,
                                 // stopped session's own stack/scopes/variables/watches
                                 // (BufferView::BuildDebugInfoLines, ShowDebugInfo's own fan-out
                                 // extracted into a shared helper) and sends them as one plain-text
-                                // prompt via AcpManager::SendPrompt, bypassing prompt_/InputMode
+                                // prompt via Manager::SendPrompt, bypassing prompt_/InputMode
                                 // entirely (AcpStopSession's own "call straight into the manager"
-                                // shape). AcpManager::SendPrompt does have a resource-attachment
+                                // shape). Manager::SendPrompt does have a resource-attachment
                                 // mechanism now (see ACP context auto-attach, PromptAttachment) --
                                 // not used here since debug state has no natural single-file
                                 // attachment target, just plain text as before. Requires both a
@@ -616,7 +616,7 @@ enum class InteractiveRequest { None,
                                 // switching to a synthesized "*vcs blame <file>*"/"*vcs log
                                 // <file>*" buffer once the (async) result arrives -- still
                                 // available, just no longer what a bare "show blame" reaches
-                                // for by default. See Editor/Vcs/VcsRunner.h for the actual
+                                // for by default. See Editor/Vcs/Runner.h for the actual
                                 // spawn/parse logic behind all of these.
                                 VcsShowBlame,
                                 VcsBlameDetailAtPoint,
@@ -644,17 +644,17 @@ enum class InteractiveRequest { None,
                                 // that opens/switches to the *vcs commit message* buffer
                                 // (BufferView::BeginVcsCommitMessage), a real,
                                 // multi-line-editable buffer rather than MinibufferPrompt
-                                // (which is single-line by construction). VcsCommitFinish
+                                // (which is single-line by construction). CommitFinish
                                 // (bound C-c C-c) and VcsCommitAbort (bound C-c C-k) are
                                 // that buffer's own Mode-local keymap, wired only while
                                 // it's the active buffer (see Commands.cpp's
-                                // RegisterBuiltinCommands and Editor/Vcs/VcsRunner.h's
+                                // RegisterBuiltinCommands and Editor/Vcs/Runner.h's
                                 // kVcsCommitMessageFilename).
                                 VcsStatus,
                                 VcsStageFile,
                                 VcsUnstageFile,
                                 VcsCommit,
-                                VcsCommitFinish,
+                                CommitFinish,
                                 VcsCommitAbort,
                                 VcsBranches,
                                 VcsSwitchBranch,
@@ -670,7 +670,7 @@ enum class InteractiveRequest { None,
                                 // Hunk-navigation follow-up: one-shot direct point motion to
                                 // the next/previous changed hunk in the *current* buffer
                                 // (gitsigns' ]c/[c convention) -- reads BufferView's own
-                                // diffHunkStartLines_ cache directly, no VcsRunner round trip,
+                                // diffHunkStartLines_ cache directly, no Runner round trip,
                                 // so (unlike VcsStageHunk/VcsUnstageHunk above) this never gates
                                 // on the buffer being saved/unmodified.
                                 VcsNextHunk,
@@ -679,7 +679,7 @@ enum class InteractiveRequest { None,
                                 // VcsBlameBuffer/VcsShowLog -- switches to a synthesized,
                                 // read-only "*vcs diff*" buffer stitching every changed file's
                                 // real diff hunks together (Editor/Multibuffer.h), once the
-                                // async VcsRunner::RequestFullDiff result arrives. Unlike those,
+                                // async Runner::RequestFullDiff result arrives. Unlike those,
                                 // its buffer also carries a MultibufferIndex, so
                                 // vcs-visit-result (VisitVcsResult) jumps to source from
                                 // anywhere inside an excerpt's body, not just a single
@@ -690,7 +690,7 @@ enum class InteractiveRequest { None,
                                 // "*diagnostics*" buffer stitching every open buffer's
                                 // Code-origin LSP diagnostics together (one composite source
                                 // line per diagnostic), built entirely synchronously
-                                // (BufferList::Buffers() is already in memory, no VcsRunner-
+                                // (BufferList::Buffers() is already in memory, no Runner-
                                 // style async round trip needed). Its buffer carries a
                                 // MultibufferIndex like VcsFullDiffBuffer's does, so
                                 // vcs-visit-result jumps to source from any excerpt, and it
@@ -730,16 +730,16 @@ enum class InteractiveRequest { None,
                                 ZapToChar,
                                 // ACP client slice 2: three prompt/one-shot requests, same "just
                                 // set interactiveRequest" shape as run-task/cancel-task/DapContinue
-                                // above -- BufferView holds the shared AcpManager (SetAcpManager,
+                                // above -- BufferView holds the shared Manager (SetAcpManager,
                                 // mirroring SetDapManager) and does the actual work.
                                 // AcpStartSession/AcpSendPrompt are prompt-shaped (HandlePromptKey
                                 // collects an agent name / message text); AcpStopSession is a
                                 // one-shot direct action. A session/request_permission prompt is
                                 // never reached through this enum at all -- it's agent-initiated,
                                 // not user-command-initiated, so BufferView::ShowAcpPermissionPrompt
-                                // is called directly by WindowManager's AcpManager wiring instead
+                                // is called directly by WindowManager's Manager wiring instead
                                 // (JumpToPathLine's own precedent for an externally-triggered
-                                // entry point). See Editor/Acp/AcpManager.h.
+                                // entry point). See Editor/Acp/Manager.h.
                                 AcpStartSession,
                                 AcpSendPrompt,
                                 AcpStopSession,
@@ -845,9 +845,9 @@ enum class InteractiveRequest { None,
                                 // AcpTogglePanel above -- BufferView forwards to
                                 // SetOnAcpRewindRequest (main.cpp wires it to show/focus the ACP
                                 // panel and open its rewind picker; AcpPanel::OnEvent then reads
-                                // AcpManager::CheckpointCount()/CheckpointAt() to render the list
-                                // and calls AcpManager::RewindTo() on a digit keystroke -- see
-                                // Editor/Acp/AcpManager.h for the checkpoint/rewind data model).
+                                // Manager::CheckpointCount()/CheckpointAt() to render the list
+                                // and calls Manager::RewindTo() on a digit keystroke -- see
+                                // Editor/Acp/Manager.h for the checkpoint/rewind data model).
                                 AcpRewind,
                                 // REPL-engine follow-up: ToggleJanetRepl is a one-shot direct
                                 // action, same shape as DapToggleConsole/ToggleTerminal above --

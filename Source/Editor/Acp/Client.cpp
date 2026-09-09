@@ -1,4 +1,4 @@
-#include "AcpClient.h"
+#include "Client.h"
 
 #include <cerrno>
 #include <utility>
@@ -9,24 +9,24 @@
 
 namespace ned::editor::acp {
 
-AcpClient::~AcpClient() {
+Client::~Client() {
     // lsp-use-after-free follow-up: must be the first statement -- see
     // Client.h's own header comment on alive_.
     *alive_ = false;
 }
 
-AcpClient::AcpClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
+Client::Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
     StartReadLoop();
     StartStderrReadLoop();
 }
 
-AcpClient::AcpClient(Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
+Client::Client(Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
     StartReadLoop();
     StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
     StartWriteLoop();
 }
 
-void AcpClient::StartWriteLoop() {
+void Client::StartWriteLoop() {
     // async-write-queue follow-up -- identical to Client::StartWriteLoop,
     // including the drain-on-stop policy -- see header comment.
     writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
@@ -54,7 +54,7 @@ void AcpClient::StartWriteLoop() {
     });
 }
 
-void AcpClient::EnqueueWrite(std::string frame) {
+void Client::EnqueueWrite(std::string frame) {
     {
         std::lock_guard<std::mutex> lock(writeMutex_);
         writeQueue_.push_back(std::move(frame));
@@ -62,11 +62,11 @@ void AcpClient::EnqueueWrite(std::string frame) {
     writeCv_.notify_one();
 }
 
-void AcpClient::PrepareForGracefulShutdown() {
+void Client::PrepareForGracefulShutdown() {
     drainQueueOnStop_ = true;
 }
 
-void AcpClient::StartReadLoop() {
+void Client::StartReadLoop() {
     // transport_ is already fully constructed by the time this runs (called
     // from the constructor *body*) -- see Client.cpp's identical comment
     // for why readThread_ has to start out empty rather than being given
@@ -91,7 +91,7 @@ void AcpClient::StartReadLoop() {
                 // identical comment.
                 eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
                     if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this AcpClient is gone
+                        return; // lsp-use-after-free follow-up -- this Client is gone
                     }
                     LogMessage(LogCategory::Acp, LogSeverity::Warning, reason);
                     if (onDisconnected_) {
@@ -101,7 +101,7 @@ void AcpClient::StartReadLoop() {
                 return;
             }
             if (!message) {
-                // EOF -- agent exited (or this AcpClient is being destroyed,
+                // EOF -- agent exited (or this Client is being destroyed,
                 // see header comment: Transport's destructor closing this
                 // end's fds is exactly what makes the blocking ReadMessage()
                 // call above finally return). alive_ (see header comment) is
@@ -109,7 +109,7 @@ void AcpClient::StartReadLoop() {
                 // callback runs relative to destruction.
                 eventLoop_.Post([this, alive = alive_] {
                     if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this AcpClient is gone
+                        return; // lsp-use-after-free follow-up -- this Client is gone
                     }
                     LogMessage(LogCategory::Acp, LogSeverity::Warning, "agent exited (EOF)");
                     if (onDisconnected_) {
@@ -123,7 +123,7 @@ void AcpClient::StartReadLoop() {
             }
             eventLoop_.Post([this, alive = alive_, frameText = std::move(*message)]() mutable {
                 if (!*alive) {
-                    return; // lsp-use-after-free follow-up -- this AcpClient is gone
+                    return; // lsp-use-after-free follow-up -- this Client is gone
                 }
                 DispatchFrame(frameText);
             });
@@ -131,7 +131,7 @@ void AcpClient::StartReadLoop() {
     });
 }
 
-void AcpClient::StartStderrReadLoop() {
+void Client::StartStderrReadLoop() {
     // Identical to Client::StartStderrReadLoop -- see that function's own
     // doc comment for the full reasoning; only the log category differs.
     const int fd = transport_.StderrFd();
@@ -152,7 +152,7 @@ void AcpClient::StartStderrReadLoop() {
                 return;
             }
             if (result == 0) {
-                return; // EOF -- agent exited, or this AcpClient is being destroyed
+                return; // EOF -- agent exited, or this Client is being destroyed
             }
             buffered.append(chunk, static_cast<std::size_t>(result));
 
@@ -187,7 +187,7 @@ void AcpClient::StartStderrReadLoop() {
     });
 }
 
-void AcpClient::DispatchFrame(const std::string& frameText) {
+void Client::DispatchFrame(const std::string& frameText) {
     Json message;
     try {
         message = Json::parse(frameText);
@@ -258,7 +258,7 @@ void AcpClient::DispatchFrame(const std::string& frameText) {
     }
 }
 
-void AcpClient::SendRequest(const std::string& method, Json params, ResponseCallback callback) {
+void Client::SendRequest(const std::string& method, Json params, ResponseCallback callback) {
     const int id       = nextRequestId_++;
     pending_[id]       = PendingRequest{std::move(callback), std::chrono::steady_clock::now()};
     const Json message = {
@@ -270,7 +270,7 @@ void AcpClient::SendRequest(const std::string& method, Json params, ResponseCall
     EnqueueWrite(message.dump());
 }
 
-void AcpClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+void Client::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     // subprocess-hang-protection follow-up -- see Client::ExpireStaleRequests's
     // identical reasoning/collect-then-invoke shape.
     const std::chrono::steady_clock::time_point now    = std::chrono::steady_clock::now();
@@ -298,7 +298,7 @@ void AcpClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     }
 }
 
-void AcpClient::SendNotification(const std::string& method, Json params) {
+void Client::SendNotification(const std::string& method, Json params) {
     const Json message = {
         {"jsonrpc", "2.0"},
         {"method", method},
@@ -307,15 +307,15 @@ void AcpClient::SendNotification(const std::string& method, Json params) {
     EnqueueWrite(message.dump());
 }
 
-void AcpClient::SetNotificationHandler(std::string method, NotificationHandler handler) {
+void Client::SetNotificationHandler(std::string method, NotificationHandler handler) {
     notificationHandlers_[std::move(method)] = std::move(handler);
 }
 
-void AcpClient::SetRequestHandler(std::string method, RequestHandler handler) {
+void Client::SetRequestHandler(std::string method, RequestHandler handler) {
     requestHandlers_[std::move(method)] = std::move(handler);
 }
 
-void AcpClient::SetOnDisconnected(std::function<void(std::string reason)> handler) {
+void Client::SetOnDisconnected(std::function<void(std::string reason)> handler) {
     onDisconnected_ = std::move(handler);
 }
 
