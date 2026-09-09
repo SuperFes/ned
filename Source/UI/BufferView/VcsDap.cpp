@@ -153,7 +153,7 @@ void BufferView::JumpToNextHunk() {
     }
     buffer.SetPoint(buffer.Content().LineToByteOffset(*it));
     statusMessage_.clear();
-    ScrollToShowPoint();
+    viewport_.ScrollToShowPoint();
 }
 
 void BufferView::JumpToPreviousHunk() {
@@ -170,7 +170,7 @@ void BufferView::JumpToPreviousHunk() {
     }
     buffer.SetPoint(buffer.Content().LineToByteOffset(*(it - 1)));
     statusMessage_.clear();
-    ScrollToShowPoint();
+    viewport_.ScrollToShowPoint();
 }
 
 void BufferView::RequestDiffForCurrentBuffer() {

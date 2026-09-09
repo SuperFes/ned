@@ -32,6 +32,7 @@
 #include "UI/BufferView/CacheStamp.h"
 #include "UI/BufferView/EditorContext.h"
 #include "UI/BufferView/GutterModel.h"
+#include "UI/BufferView/Viewport.h"
 #include "UI/BufferView/RequestSlot.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Backup.h"
@@ -153,11 +154,7 @@ class BufferView : public Widget {
     void SetMinimap(Minimap* minimap, Widget* scrollColumn);
 
     // line-wrap follow-up: horizontal counterpart to TopLine()/SetTopLine(),
-    // only ever meaningful for a buffer whose EffectiveWrapLines() is false
-    // -- a wrapped line, by construction, never exceeds the viewport width,
-    // so there is nothing left to horizontally scroll (see
-    // ScrollToShowPointHorizontally's own doc comment). Public for the same
-    // "externally observable scroll position" reason TopLine() is.
+    // for a horizontally scrolling caller. Only meaningful with wrapping off.
     [[nodiscard]] std::size_t LeftColumn() const;
     void                      SetLeftColumn(std::size_t column);
 
@@ -2532,19 +2529,7 @@ class BufferView : public Widget {
     // activeBuffer_.Set).
     void OpenDetectedLink(const editor::link::DetectedLink& detected);
 
-    // Adjusts the viewport (if needed) so point's line is visible. A thin
-    // wrapper over ScrollToShowOffset(activeBuffer_.Get().Point()) plus the
-    // horizontal counterpart below.
-    void ScrollToShowPoint();
 
-    // multi-cursor-round-2 follow-up: ScrollToShowPoint()'s real (vertical
-    // only -- no horizontal counterpart, a deliberate scope cut) logic,
-    // parameterized on an explicit byte offset instead of always reading
-    // activeBuffer_.Get().Point() -- lets RunCommandAndHandleOutcome scroll
-    // to a newly added secondary cursor (add-cursor-above/-below,
-    // select-next-occurrence) instead of the unmoved primary point, via
-    // context.newlyAddedCursorPoint.
-    void ScrollToShowOffset(std::size_t offset);
 
     // line-wrap follow-up: horizontal counterpart to ScrollToShowPoint(),
     // called alongside it -- a no-op whenever the active buffer's
@@ -2555,40 +2540,9 @@ class BufferView : public Widget {
     // ScrollToShowPoint() adjusts topLine_.
     void ScrollToShowPointHorizontally();
 
-    // Re-validates topLine_ via ScrollToShowPoint() whenever the active
-    // buffer's identity has changed since the last call -- see
-    // topLineValidatedBuffer_'s own doc comment for why this exists.
-    // Deliberately doesn't reset topLine_ to 0 first: ScrollToShowPoint()
-    // is already safe to call with a stale, possibly out-of-range topLine_
-    // left over from the previous buffer (its own "point is above topLine_"
-    // branch handles that unconditionally), and leaving topLine_ untouched
-    // when it happens to already show the new buffer's point is a nicer
-    // switch between two similarly long buffers than always jumping back to
-    // the top. Called first thing in Paint(), before topLine_ is used for
-    // anything.
-    void EnsureTopLineValidForActiveBuffer();
 
-    // The largest valid topLine_: the buffer's last line stops exactly at
-    // the bottom of the viewport rather than scrolling past it into blank
-    // filler rows. Used by both SetTopLine and Paint()'s scroll-bar sync, so
-    // wheel/scroll-bar-driven scrolling and the bar's own visual range agree
-    // on where "the bottom" is. narrow-to-region/widen follow-up: when the
-    // active buffer is narrowed, this is computed against the narrowed
-    // range's own line span instead of the whole buffer -- see
-    // NarrowedLineRange.
-    [[nodiscard]] std::size_t MaxTopLine() const;
 
-    // narrow-to-region/widen follow-up: {0, Content().LineCount()} if the
-    // active buffer isn't narrowed, otherwise the narrowed range's own
-    // [startLine, endLine) span (endLine exclusive) -- shared by MaxTopLine,
-    // SetTopLine, and Paint()'s own "blank past this line" cutoff so all
-    // three agree on exactly the same bounds.
-    [[nodiscard]] std::pair<std::size_t, std::size_t> NarrowedLineRange() const;
 
-    // Translates an on-screen (LOCAL to this widget) mouse position into a
-    // buffer byte offset, accounting for the current scroll position and the
-    // line-number gutter.
-    [[nodiscard]] std::size_t ByteOffsetForPoint(Point at) const;
 
     // Width in columns of the line-number gutter (digits needed for the
     // buffer's last line number, plus one separating column). Always
@@ -2781,40 +2735,6 @@ class BufferView : public Widget {
     // see ROADMAP.md. A no-op, effectively free, when the env var is unset.
     void LogMouseEvent(std::string_view event, const MouseEvent& mouse) const;
 
-    // Org-mode fold/unfold follow-up: everywhere in this class that used to
-    // reason in raw "buffer line" units now has to skip lines an active
-    // Org fold hides (org::FoldedLineRanges) -- these five are the single
-    // shared vocabulary for that, used by Paint()'s row loop, CursorPosition(),
-    // ScrollToShowPoint(), TopLine()/SetTopLine()/MaxTopLine(), and
-    // ByteOffsetForPoint() alike, so none of them can disagree about which
-    // lines are actually visible.
-    //
-    // EnsureHiddenLineRangesCache recomputes hiddenLineRanges_ via
-    // org::FoldedLineRanges only when the active buffer pointer, its
-    // ContentGeneration(), or its FoldGeneration() have changed since the
-    // last call -- and skips calling FoldedLineRanges entirely when
-    // buffer.FoldMarkers() is empty, so every buffer that's never had a
-    // fold touched (every non-Org buffer, and Org buffers before the first
-    // TAB) pays exactly zero extra cost, not just an amortized-cheap one.
-    // Marked const/mutable-backed since CursorPosition()/ByteOffsetForPoint()
-    // (both const) need a fresh cache just as much as Paint() (non-const)
-    // does, and all three can run in either order within a frame.
-    void EnsureHiddenLineRangesCache() const;
-    // huge-file-structural-gutters follow-up: [start, end) byte window
-    // EnsureFoldableBlocksCache/EnsureSymbolGutterCache/EnsureTestGutterCache
-    // should actually run mode_.fold/mode_.symbolKind/mode_.testDiscovery
-    // against -- {0, content.ByteLength()} (the whole buffer, unchanged
-    // behavior) for an ordinary buffer, or a bounded region around the
-    // currently-visible viewport (topLine_/size().height, expanded by
-    // editor::HugeStructuralWindowBytes() on each side) for a huge
-    // (ITextStorage::IsHuge()) one, so a multi-GB buffer's structural
-    // gutters never materialize/reparse the whole document. Mirrors
-    // Editor/HugeRegexScan.h's own windowing approach; a fold region/symbol/
-    // test whose start or end lies outside this window on a huge buffer
-    // simply isn't found until scrolling brings it closer -- the same
-    // accepted trade-off huge-file-regex-replace/huge-file-vim-search
-    // already documented for search.
-    [[nodiscard]] std::pair<std::size_t, std::size_t> HugeStructuralWindow(const text::ITextStorage& content) const;
     // test-runner-gaps follow-up: the three pieces run-test-at-point's
     // keyboard path and the test-gutter click both go through, so a click
     // can never drift from the command's own behaviour.
@@ -2841,15 +2761,6 @@ class BufferView : public Widget {
     // resynthesize it -- showing a blank column is the honest answer, not
     // silently-wrong attribution against since-edited line numbers.
     void               EnsureBlameGutterCache() const;
-    [[nodiscard]] bool IsLineHidden(std::size_t line) const;
-    // `line` if already visible, else the first visible line >= line
-    // (capped at limit).
-    [[nodiscard]] std::size_t NextVisibleLine(std::size_t line, std::size_t limit) const;
-    // Steps forward `count` visible lines from an already-visible `line`,
-    // capped at limit.
-    [[nodiscard]] std::size_t AdvanceVisibleLines(std::size_t line, std::size_t count, std::size_t limit) const;
-    // Count of visible (non-hidden) lines in [startLine, endLineExclusive).
-    [[nodiscard]] std::size_t VisibleLineCountBetween(std::size_t startLine, std::size_t endLineExclusive) const;
 
     // Highlight-overlay predicates used by Paint(); byteOffset is a byte
     // offset into the buffer's current content.
@@ -2906,7 +2817,6 @@ class BufferView : public Widget {
     // prompt -- see the poll's own comment in Paint().
     std::string autoDiagnosticMessage_;
 
-    std::size_t topLine_ = 0; // first visible buffer line (0-indexed)
     // main-editor-sticky-scroll follow-up: how many pinned breadcrumb rows
     // the MOST RECENT Paint() call reserved at the top of this pane -- live
     // state read back by CursorPosition()/ByteOffsetForPoint() so the
@@ -2918,34 +2828,7 @@ class BufferView : public Widget {
     // disabled, the mode has no tags query, or nothing is scrolled far
     // enough to pin anything yet.
     int stickyRowCount_ = 0;
-    // The buffer topLine_ was last validated against -- topLine_ itself is
-    // BufferView-level state, not per-buffer, so switching which buffer is
-    // active (TabBar's own click handler calls ActiveBuffer::Set() directly,
-    // with no relationship to BufferView at all, but every other switch path
-    // -- find-file, switch-to-buffer, ProjectSidebar's click-to-open, etc. --
-    // is exactly as disconnected from topLine_ in principle) can otherwise
-    // leave it pointing at a scroll position that doesn't exist in the newly
-    // active buffer at all -- a real reported bug (switching from a long
-    // file scrolled well past a short file's own last line rendered nothing
-    // but blank rows), not hypothetical. EnsureTopLineValidForActiveBuffer,
-    // called first thing in Paint() the same way highlightCacheBuffer_/
-    // hiddenLineRangesCacheStamp_/linkCacheStamp_ already detect "the
-    // active buffer changed since I last looked," re-validates topLine_ via
-    // ScrollToShowPoint() whenever this doesn't match the buffer Paint() is
-    // about to render -- see EnsureTopLineValidForActiveBuffer's own
-    // declaration below, alongside this class's other private methods, for
-    // why that's sufficient without also needing to reset topLine_ first.
-    // Seeded to the buffer active at construction time (not nullptr) so the
-    // very first Paint() call is never itself mistaken for a switch -- see
-    // the constructor's own comment for the real regression that caught.
-    text::Buffer* topLineValidatedBuffer_ = nullptr;
 
-    // line-wrap follow-up: horizontal counterpart to topLine_, only ever
-    // meaningful while the active buffer's EffectiveWrapLines() is false --
-    // left untouched (not reset) while wrap is active, the same "leave
-    // stale scroll state alone rather than force-reset it" precedent
-    // topLine_ itself already establishes across a buffer switch.
-    std::size_t leftColumn_ = 0;
 
     // per-buffer-mode follow-up: mirrors topLineValidatedBuffer_'s own
     // "seed at construction so the first Paint() is never mistaken for a
@@ -3533,13 +3416,6 @@ class BufferView : public Widget {
     // that prompt session's lifetime.
     std::vector<std::string> vcsBranchCandidates_;
 
-    // Org-mode fold/unfold follow-up: see EnsureHiddenLineRangesCache's own
-    // doc comment above. mutable because CursorPosition()/ByteOffsetForPoint()
-    // (both const) refresh it too, the same "cache read by const query
-    // methods" shape highlightCacheBuffer_ would also need if any const
-    // method ever read it (none currently do).
-    mutable bufferview::CacheStamp                           hiddenLineRangesCacheStamp_;
-    mutable std::vector<std::pair<std::size_t, std::size_t>> hiddenLineRanges_;
 
     // line-wrap follow-up: see EnsureRowCountCache/RowsForLine's own doc
     // comments above. rowCountPerLine_[line] holds only the segment
@@ -3552,64 +3428,9 @@ class BufferView : public Widget {
     // segment byte ranges anyway, not just a count) -- never eagerly for
     // the whole buffer, per this cache's own perf history.
     static constexpr std::size_t     kRowCountUnknown                = static_cast<std::size_t>(-1);
-    mutable bufferview::CacheStamp   rowCountCacheStamp_;
-    // Kept as its own member as well as a stamp value: RowsForLine reads the
-    // width back when it fills a line's memoized row count in lazily.
-    mutable int                      rowCountCacheContentWidth_ = 0;
-    mutable std::vector<std::size_t> rowCountPerLine_;
 
-    // Links follow-up: caches org::ParseLinks's result across Paint()/
-    // CursorPosition()/ByteOffsetForPoint() calls, same shape/reasoning as
-    // highlightCacheBuffer_ above. EnsureLinkCache clears linkCache_ and
-    // returns immediately whenever mode_.name != "org-mode" -- a single
-    // string compare, cheaper even than FoldMarkers().empty()'s check, so
-    // every non-Org buffer (the common case across the whole editor) never
-    // calls org::ParseLinks at all. Mutable for the same const-query-methods
-    // reason hiddenLineRangesCacheBuffer_ already is.
-    mutable bufferview::CacheStamp         linkCacheStamp_;
-    mutable std::vector<editor::org::Link> linkCache_;
 
-    void EnsureLinkCache() const;
 
-    // line-wrap follow-up. RowsForLine generalizes the "every visible line
-    // is exactly one canvas row" assumption the fold quartet above bakes
-    // in -- true for fold (collapse: 0 or 1 rows) but not for wrap
-    // (expansion: 1 or more). 0 if line IsLineHidden; else 1 when
-    // EffectiveWrapLines() is false; else ComputeWrapSegments(line).size()
-    // when true. Backed by rowCountPerLine_, populated LAZILY (one line's
-    // word-break scan computed and memoized the first time that specific
-    // line is actually asked about, not eagerly for the whole buffer) --
-    // a [Performance] test (Tests/PerformanceTest.cpp) caught a real
-    // regression from an earlier eager-whole-range version: MaxTopLine()/
-    // ScrollToShowPoint() run every Paint() call, and an eager version paid
-    // a real per-line word-break scan across the entire buffer up front,
-    // multi-second on a large wrapped document. EnsureRowCountCache only
-    // resets rowCountPerLine_'s sizing/keys (a cheap sentinel fill) when
-    // buffer identity + ContentGeneration() + content width + wrapLines
-    // itself change -- unlike hiddenLineRanges_, row counts genuinely
-    // depend on the latter two, which fold does not.
-    void                      EnsureRowCountCache() const;
-    [[nodiscard]] std::size_t RowsForLine(std::size_t line) const;
-    // Row-aware sibling of VisibleLineCountBetween -- sums RowsForLine
-    // instead of counting 1 per visible line. Still touches every line in
-    // the range (each RowsForLine call is now a cheap, memoized lookup
-    // after its first access, per the cache's own doc comment above), so
-    // this stays fine to call for a genuinely small range; MaxTopLine/
-    // ScrollToShowPoint's own "does everything already fit" checks use
-    // VisibleRowCountAtLeast below instead, specifically to avoid ever
-    // walking (and so ever computing) more of a huge document than the
-    // viewport itself could need.
-    [[nodiscard]] std::size_t VisibleRowCountBetween(std::size_t startLine, std::size_t endLineExclusive) const;
-    // True as soon as the running row total over [startLine, endLineExclusive)
-    // reaches limit -- stops walking (and therefore stops triggering any
-    // further RowsForLine word-break computation) the instant the answer is
-    // known, rather than always summing the whole range the way
-    // VisibleRowCountBetween does. This is what keeps a "does the whole
-    // document already fit in one viewport" check cheap regardless of
-    // document size: a huge wrapped document's answer is always "no,"
-    // discovered within the first `limit`-or-so lines, never by touching
-    // the rest of the buffer.
-    [[nodiscard]] bool VisibleRowCountAtLeast(std::size_t startLine, std::size_t endLineExclusive, std::size_t limit) const;
 
     // inline-diagnostics follow-up. Jank-compiler-style annotation rows: a
     // line carrying a diagnostic gets one extra virtual row directly below
@@ -4148,6 +3969,11 @@ class BufferView : public Widget {
     // per-line data lives here rather than as loose members -- see
     // BufferView/GutterModel.h.
     bufferview::GutterModel gutters_;
+
+    // After gutters_, which it asks for the foldable blocks and the gutter's
+    // width. Owns the scroll position and the line/row mapping -- see
+    // BufferView/Viewport.h.
+    bufferview::Viewport viewport_;
 
     // Aliases for the types and the depth cap that moved into GutterModel with
     // the caches. The painting and mouse code still names them unqualified;
