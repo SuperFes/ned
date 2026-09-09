@@ -30,8 +30,8 @@ namespace {
         std::size_t pos = 0;
         while (pos < text.size() && x < width - 1) {
             const std::size_t next = text::NextCodepointBoundary(text, pos);
-            Cell&              cell = c[{.x = x, .y = row}];
-            cell.character          = text.substr(pos, next - pos);
+            Cell&             cell = c[{.x = x, .y = row}];
+            cell.character         = text.substr(pos, next - pos);
             brush.ApplyTo(cell);
             ++x;
             pos = next;
@@ -198,7 +198,7 @@ void ListPopup::Paint(Canvas c) {
         if (row >= height - 1) {
             break; // more rows than fit -- truncated, same convention as EchoArea's own message overflow
         }
-        const bool  selected  = model_.selectedIndex && *model_.selectedIndex == i;
+        const bool   selected = model_.selectedIndex && *model_.selectedIndex == i;
         const Brush& left     = selected ? selectedChordBrush : chordBrush;
         const Brush& mainText = selected ? selectedLabelBrush : labelBrush;
 
@@ -298,7 +298,7 @@ bool ListPopup::HandleKeyEvent(const Event& event) {
     }
 
     std::size_t selected = model_.selectedIndex.value_or(0);
-    selected              = std::min(selected, model_.rows.size() - 1);
+    selected             = std::min(selected, model_.rows.size() - 1);
 
     const bool up   = chord->Special == editor::SpecialKey::Up || (chord->Control && chord->Codepoint == U'p');
     const bool down = chord->Special == editor::SpecialKey::Down || (chord->Control && chord->Codepoint == U'n');

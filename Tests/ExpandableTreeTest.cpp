@@ -13,7 +13,7 @@ namespace {
 // stay a pure test of the generic template.
 struct Item {
     std::string name;
-    bool operator==(const Item&) const = default;
+    bool        operator==(const Item&) const = default;
 };
 
 } // namespace

@@ -413,9 +413,9 @@ class AcpManager {
     // StartSession/EndSession, matching transcript_'s own "never cleared"
     // lifetime, so a rewind can still reach a turn from an earlier session
     // in this same process.
-    std::vector<Checkpoint>      checkpoints_;
-    std::optional<Checkpoint>    pendingCheckpoint_;
-    std::function<void()>        onTranscriptChanged_;
+    std::vector<Checkpoint>   checkpoints_;
+    std::optional<Checkpoint> pendingCheckpoint_;
+    std::function<void()>     onTranscriptChanged_;
     // ACP chat-feel round 2: coalesces the UI-facing onTranscriptChanged_
     // callback while a reply streams in token-by-token -- transcript_/
     // transcriptGeneration_ above stay synchronously correct on every single

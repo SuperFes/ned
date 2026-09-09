@@ -158,7 +158,7 @@ void                            SetMultibufferIndexFor(text::Buffer& buffer, Mul
 // buffer, via the same two CodeFold.h functions, with no multibuffer-
 // specific fold logic of their own.
 [[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> FoldableExcerptBlocks(const MultibufferIndex& index);
-void                            ClearMultibufferIndexFor(const text::Buffer& buffer);
+void                                                           ClearMultibufferIndexFor(const text::Buffer& buffer);
 
 // Test-only: drops every registered index, regardless of buffer. Needed
 // because the registry is keyed by raw Buffer* identity with no automatic

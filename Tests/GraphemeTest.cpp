@@ -29,7 +29,7 @@ TEST_CASE("Grapheme boundaries for plain ASCII are per-codepoint", "[Grapheme]")
 TEST_CASE("Combining accent forms a single grapheme cluster with its base character", "[Grapheme]") {
     // "e" (1 byte) + U+0301 COMBINING ACUTE ACCENT (2 bytes) = "é" as two codepoints, one cluster.
     const std::string text = "xe\xCC\x81y"; // x [e + combining acute] y
-    const RopeStorage  rope{Rope(text)};
+    const RopeStorage rope{Rope(text)};
 
     REQUIRE(rope.ByteLength() == 5); // 'x' + 'e' + 0xCC 0x81 + 'y'
 
@@ -49,13 +49,13 @@ TEST_CASE("Regional indicator pair (flag emoji) forms a single grapheme cluster"
     // 4 bytes each, 8 bytes total, one grapheme cluster per UAX #29 GB12/GB13.
     const std::string flag = "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8";
     const std::string text = "a" + flag + "b";
-    const RopeStorage  rope{Rope(text)};
+    const RopeStorage rope{Rope(text)};
 
     REQUIRE(rope.ByteLength() == 1 + 8 + 1);
 
-    REQUIRE(NextGraphemeBoundary(rope, 0) == 1);   // past 'a'
-    REQUIRE(NextGraphemeBoundary(rope, 1) == 9);   // whole flag in one step
-    REQUIRE(NextGraphemeBoundary(rope, 9) == 10);  // past 'b'
+    REQUIRE(NextGraphemeBoundary(rope, 0) == 1);  // past 'a'
+    REQUIRE(NextGraphemeBoundary(rope, 1) == 9);  // whole flag in one step
+    REQUIRE(NextGraphemeBoundary(rope, 9) == 10); // past 'b'
 
     REQUIRE(PreviousGraphemeBoundary(rope, 10) == 9);
     REQUIRE(PreviousGraphemeBoundary(rope, 9) == 1);
@@ -73,7 +73,7 @@ TEST_CASE("SnapToGraphemeBoundary lands on offset itself when it's already a bou
 
 TEST_CASE("SnapToGraphemeBoundary pulls a mid-cluster offset back to the cluster start", "[Grapheme]") {
     const std::string text = "xe\xCC\x81y"; // x [e + combining acute] y
-    const RopeStorage  rope{Rope(text)};
+    const RopeStorage rope{Rope(text)};
 
     // Byte 2 is the first byte of the combining accent, inside the "e + accent"
     // cluster that starts at byte 1. Byte 3 is mid-codepoint (a continuation

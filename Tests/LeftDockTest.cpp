@@ -52,8 +52,8 @@ class FakePanel : public Widget {
         ++focusPreemptedCount;
     }
 
-    int                     paintCount           = 0;
-    int                     focusPreemptedCount  = 0;
+    int                     paintCount          = 0;
+    int                     focusPreemptedCount = 0;
     std::vector<MouseEvent> localEvents;
 
   private:
@@ -187,8 +187,8 @@ TEST_CASE("SwitchTo repositions content but does not fire the commit callback", 
 }
 
 TEST_CASE("A no-op SwitchTo/CommitSwitchTo with an unregistered id changes nothing", "[LeftDock]") {
-    Fixture            f;
-    const std::size_t  filesId = f.dock.AddPanel(U'F', "Files", f.files);
+    Fixture           f;
+    const std::size_t filesId = f.dock.AddPanel(U'F', "Files", f.files);
     f.dock.AddPanel(U'V', "VCS", f.vcs);
 
     f.dock.SwitchTo(999);
@@ -247,7 +247,7 @@ TEST_CASE("PrepareForKeyboardFocus switches to the target panel if a different o
 
 TEST_CASE("Clicking the active panel's rail glyph collapses; clicking another expands and switches", "[LeftDock]") {
     Fixture f;
-    f.dock.AddPanel(U'F', "Files", f.files); // active by default, rail row 0
+    f.dock.AddPanel(U'F', "Files", f.files);                       // active by default, rail row 0
     const std::size_t vcsId = f.dock.AddPanel(U'V', "VCS", f.vcs); // rail row 1
 
     std::optional<bool> collapseCommitted;

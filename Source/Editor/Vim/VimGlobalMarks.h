@@ -26,7 +26,7 @@
 namespace ned::editor::vim {
 
 struct GlobalMark {
-    std::filesystem::path path; // already normalized (weakly_canonical) by the setter
+    std::filesystem::path path;       // already normalized (weakly_canonical) by the setter
     std::size_t           line   = 0; // 0-based
     std::size_t           column = 0; // 0-based visual column
 
@@ -36,7 +36,7 @@ struct GlobalMark {
 // name must be 'A'-'Z' -- callers (VimEngine::SetMarkAt/GotoMark) have already checked
 // this, matching every other process-wide setting module's own "no redundant
 // re-validation" convention.
-void SetGlobalMark(char32_t name, GlobalMark mark);
+void                                    SetGlobalMark(char32_t name, GlobalMark mark);
 [[nodiscard]] std::optional<GlobalMark> GetGlobalMark(char32_t name);
 
 // Test-only: clears every stored mark so one test's SetGlobalMark calls can't leak into

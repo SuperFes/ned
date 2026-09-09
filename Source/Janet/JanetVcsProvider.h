@@ -104,15 +104,15 @@ class JanetVcsProvider : public editor::vcs::VcsProvider {
 
     [[nodiscard]] editor::vcs::VcsCommandSpec             StashListArgv(const std::filesystem::path& root) const override;
     [[nodiscard]] std::vector<editor::vcs::VcsStashEntry> ParseStashList(const std::string& stdout_) const override;
-    [[nodiscard]] editor::vcs::VcsCommandSpec StashPushArgv(const std::filesystem::path& root, const std::string& message) const override;
-    [[nodiscard]] editor::vcs::VcsCommandSpec StashPopArgv(const std::filesystem::path& root, const std::string& stashRef) const override;
-    [[nodiscard]] editor::vcs::VcsCommandSpec StashDropArgv(const std::filesystem::path& root, const std::string& stashRef) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec             StashPushArgv(const std::filesystem::path& root, const std::string& message) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec             StashPopArgv(const std::filesystem::path& root, const std::string& stashRef) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec             StashDropArgv(const std::filesystem::path& root, const std::string& stashRef) const override;
 
     [[nodiscard]] editor::vcs::VcsCommandSpec PushArgv(const std::filesystem::path& root) const override;
     [[nodiscard]] editor::vcs::VcsCommandSpec PullArgv(const std::filesystem::path& root) const override;
     [[nodiscard]] editor::vcs::VcsCommandSpec FetchArgv(const std::filesystem::path& root) const override;
 
-    [[nodiscard]] editor::vcs::VcsCommandSpec  AheadBehindArgv(const std::filesystem::path& root) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec AheadBehindArgv(const std::filesystem::path& root) const override;
     [[nodiscard]] editor::vcs::VcsAheadBehind ParseAheadBehind(const std::string& stdout_) const override;
 
   private:

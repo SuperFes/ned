@@ -205,15 +205,15 @@ void                         SetHugeFileThreshold(std::uintmax_t bytes);
 // deliberate way to force the check to always fail, not a footgun, since
 // HugeFileDiskSpaceCheckEnabled() below is the real off-switch). Configured
 // from Janet via ned/set-huge-file-min-free-space-multiplier.
-void                    SetHugeFileMinFreeSpaceMultiplier(double multiplier);
-[[nodiscard]] double    HugeFileMinFreeSpaceMultiplier();
+void                 SetHugeFileMinFreeSpaceMultiplier(double multiplier);
+[[nodiscard]] double HugeFileMinFreeSpaceMultiplier();
 
 // Escape hatch: when false, Buffer::FromHugeFile never downgrades to
 // read-only for disk space and Buffer::SaveToFile never refuses a huge
 // save on this basis -- the check simply doesn't run. Default true.
 // Configured from Janet via ned/set-huge-file-disk-space-check-enabled.
-void                    SetHugeFileDiskSpaceCheckEnabled(bool enabled);
-[[nodiscard]] bool      HugeFileDiskSpaceCheckEnabled();
+void               SetHugeFileDiskSpaceCheckEnabled(bool enabled);
+[[nodiscard]] bool HugeFileDiskSpaceCheckEnabled();
 
 // Tab-completion candidates for find-file's prompt: directory entries under
 // the last '/'-separated path component of prefix, sorted, with a trailing

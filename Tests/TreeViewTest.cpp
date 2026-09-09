@@ -5,7 +5,7 @@
 #include "UI/TreeView.h"
 
 TEST_CASE("TreeView fills its entire interior with the theme background, leaving no stale cells", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{.title = "Callers", .rows = {{.label = "caller_fn"}}});
 
@@ -31,7 +31,7 @@ TEST_CASE("TreeView fills its entire interior with the theme background, leaving
 }
 
 TEST_CASE("TreeView degrades sanely for a zero-area canvas", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{.rows = {}});
 
@@ -41,12 +41,12 @@ TEST_CASE("TreeView degrades sanely for a zero-area canvas", "[TreeView]") {
 }
 
 TEST_CASE("TreeView indents a row by 2 columns per depth level, before the disclosure glyph", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{.rows = {
-                       {.label = "root", .depth = 0, .hasChildren = true, .expanded = true},
-                       {.label = "child", .depth = 1, .hasChildren = false},
-                   }});
+                                             {.label = "root", .depth = 0, .hasChildren = true, .expanded = true},
+                                             {.label = "child", .depth = 1, .hasChildren = false},
+                                         }});
 
     ned::ui::Screen screen = ned::ui::Screen(30, 5);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 4});
@@ -63,13 +63,13 @@ TEST_CASE("TreeView indents a row by 2 columns per depth level, before the discl
 }
 
 TEST_CASE("TreeView shows a collapsed glyph, a loading glyph, and a blank leaf glyph per row state", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{.rows = {
-                       {.label = "collapsed", .hasChildren = true, .expanded = false},
-                       {.label = "loading", .hasChildren = true, .expanded = false, .loading = true},
-                       {.label = "leaf", .hasChildren = false},
-                   }});
+                                             {.label = "collapsed", .hasChildren = true, .expanded = false},
+                                             {.label = "loading", .hasChildren = true, .expanded = false, .loading = true},
+                                             {.label = "leaf", .hasChildren = false},
+                                         }});
 
     ned::ui::Screen screen = ned::ui::Screen(30, 6);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
@@ -81,7 +81,7 @@ TEST_CASE("TreeView shows a collapsed glyph, a loading glyph, and a blank leaf g
 }
 
 TEST_CASE("TreeView paints a selection bar across the selected row only", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{.rows = {{.label = "one"}, {.label = "two"}, {.label = "three"}}, .selectedIndex = 1});
 
@@ -95,13 +95,13 @@ TEST_CASE("TreeView paints a selection bar across the selected row only", "[Tree
 }
 
 TEST_CASE("TreeView is always focusable, unlike ListPopup's opt-in", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     REQUIRE(tree.Focusable());
 }
 
 TEST_CASE("TreeView navigates with Up/Down (wrapping), activates on Enter, and cancels on Escape", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{.rows = {{.label = "one"}, {.label = "two"}, {.label = "three"}}, .selectedIndex = 0});
     tree.TakeFocus();
@@ -121,11 +121,10 @@ TEST_CASE("TreeView navigates with Up/Down (wrapping), activates on Enter, and c
 
 TEST_CASE("TreeView fires onToggleExpand on Right only for an unexpanded row with children, never while loading",
           "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{
-        .rows          = {{.label = "leaf", .hasChildren = false}, {.label = "loading", .hasChildren = true, .loading = true},
-                          {.label = "collapsed", .hasChildren = true, .expanded = false}},
+        .rows          = {{.label = "leaf", .hasChildren = false}, {.label = "loading", .hasChildren = true, .loading = true}, {.label = "collapsed", .hasChildren = true, .expanded = false}},
         .selectedIndex = 0,
     });
     tree.TakeFocus();
@@ -146,7 +145,7 @@ TEST_CASE("TreeView fires onToggleExpand on Right only for an unexpanded row wit
 }
 
 TEST_CASE("TreeView fires onSelectionChanged on Up/Down but not on a no-op single-row move", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{.rows = {{.label = "one"}, {.label = "two"}}, .selectedIndex = 0});
     tree.TakeFocus();
@@ -159,7 +158,7 @@ TEST_CASE("TreeView fires onSelectionChanged on Up/Down but not on a no-op singl
 }
 
 TEST_CASE("TreeView fires onCollapseRequested on Left only for an expanded row", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{
         .rows          = {{.label = "collapsed", .hasChildren = true, .expanded = false}, {.label = "expanded", .hasChildren = true, .expanded = true}},
@@ -179,7 +178,7 @@ TEST_CASE("TreeView fires onCollapseRequested on Left only for an expanded row",
 }
 
 TEST_CASE("TreeView does not handle keys when unfocused", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{.rows = {{.label = "a"}}});
 
@@ -190,7 +189,7 @@ TEST_CASE("TreeView does not handle keys when unfocused", "[TreeView]") {
 }
 
 TEST_CASE("TreeView activates a row on a left-click and updates the selection", "[TreeView]") {
-    ned::ui::Theme   theme = ned::ui::DarkTheme();
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{.rows = {{.label = "one"}, {.label = "two"}}, .selectedIndex = 0});
     tree.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});

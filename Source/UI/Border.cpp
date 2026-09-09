@@ -87,8 +87,8 @@ int PaintUtf8Row(Canvas& c, int x, int y, std::string_view text, const Brush& br
     std::size_t pos    = 0;
     while (pos < text.size() && column < maxColumns) {
         const std::size_t next = text::NextCodepointBoundary(text, pos);
-        Cell&              cell = c[{.x = x + column, .y = y}];
-        cell.character          = std::string(text.substr(pos, next - pos));
+        Cell&             cell = c[{.x = x + column, .y = y}];
+        cell.character         = std::string(text.substr(pos, next - pos));
         brush.ApplyTo(cell);
         pos = next;
         ++column;

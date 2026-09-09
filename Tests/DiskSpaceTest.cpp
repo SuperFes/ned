@@ -9,7 +9,7 @@ using ned::text::DiskSpaceCheck;
 
 TEST_CASE("CheckFreeSpaceForSave with an injected override: sufficient", "[DiskSpace]") {
     const DiskSpaceCheck check = CheckFreeSpaceForSave("/tmp/does-not-matter.txt", /*contentBytes=*/100, /*multiplier=*/2.0,
-                                                        /*availableBytesOverride=*/250);
+                                                       /*availableBytesOverride=*/250);
     REQUIRE(check.sufficient);
     REQUIRE(check.requiredBytes == 200);
     REQUIRE(check.availableBytes == 250);
@@ -17,7 +17,7 @@ TEST_CASE("CheckFreeSpaceForSave with an injected override: sufficient", "[DiskS
 
 TEST_CASE("CheckFreeSpaceForSave with an injected override: insufficient", "[DiskSpace]") {
     const DiskSpaceCheck check = CheckFreeSpaceForSave("/tmp/does-not-matter.txt", /*contentBytes=*/100, /*multiplier=*/2.0,
-                                                        /*availableBytesOverride=*/199);
+                                                       /*availableBytesOverride=*/199);
     REQUIRE_FALSE(check.sufficient);
     REQUIRE(check.requiredBytes == 200);
     REQUIRE(check.availableBytes == 199);

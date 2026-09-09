@@ -36,7 +36,7 @@ TEST_CASE("ParsePortalColorScheme returns nullopt for unparseable input", "[Desk
 TEST_CASE("ParsePortalAccentColor reads gdbus's comma-separated triple", "[DesktopThemeProbe]") {
     const auto color = ParsePortalAccentColor("(<(0.20000000000000001, 0.40000000000000002, 0.80000000000000004)>,)");
     REQUIRE(color.has_value());
-    REQUIRE(color->red == 51);   // round(0.2 * 255)
+    REQUIRE(color->red == 51);    // round(0.2 * 255)
     REQUIRE(color->green == 102); // round(0.4 * 255)
     REQUIRE(color->blue == 204);  // round(0.8 * 255)
 }
@@ -66,8 +66,8 @@ TEST_CASE("GnomeAccentColorFromName maps every documented Adwaita accent name", 
 }
 
 TEST_CASE("ParseKdeGlobals reads polarity from a ColorScheme name", "[DesktopThemeProbe]") {
-    const std::string content = "[General]\nColorScheme=BreezeDark\nName=Breeze Dark\n";
-    const KdeGlobalsInfo info = ParseKdeGlobals(content);
+    const std::string    content = "[General]\nColorScheme=BreezeDark\nName=Breeze Dark\n";
+    const KdeGlobalsInfo info    = ParseKdeGlobals(content);
     REQUIRE(info.preferDark == std::optional(true));
 }
 
@@ -116,8 +116,8 @@ TEST_CASE("BuildDesktopTheme applies a given accent to the accent-carrying field
 }
 
 TEST_CASE("BuildDesktopTheme without an accent leaves the base theme's accent fields untouched", "[DesktopThemeProbe]") {
-    const Theme base   = DarkTheme();
-    const auto  theme  = BuildDesktopTheme(DesktopThemeInfo{.preferDark = true});
+    const Theme base  = DarkTheme();
+    const auto  theme = BuildDesktopTheme(DesktopThemeInfo{.preferDark = true});
     REQUIRE(theme.borderAccent.foreground == base.borderAccent.foreground);
     REQUIRE(theme.keywordForeground == base.keywordForeground);
 }

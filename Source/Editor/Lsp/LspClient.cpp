@@ -29,8 +29,7 @@ LspClient::~LspClient() {
     }
 }
 
-LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop)
-    : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop), handshakeComplete_(false) {
+LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop), handshakeComplete_(false) {
     StartReadLoop();
     StartStderrReadLoop();
     StartWriteLoop();

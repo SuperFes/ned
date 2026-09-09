@@ -18,19 +18,19 @@ namespace {
 
 MassifProfile SampleProfile() {
     MassifProfile profile;
-    profile.cmd      = "./a.out";
-    profile.desc     = "--time-unit=B";
-    profile.timeUnit = "B";
+    profile.cmd       = "./a.out";
+    profile.desc      = "--time-unit=B";
+    profile.timeUnit  = "B";
     profile.snapshots = {
         MassifSnapshot{.index = 0, .time = 0, .heapBytes = 0, .heapExtraBytes = 0, .stacksBytes = 0},
         MassifSnapshot{.index = 1, .time = 1024, .heapBytes = 1000, .heapExtraBytes = 24, .stacksBytes = 0},
-        MassifSnapshot{.index      = 2,
-                        .time       = 40960,
-                        .heapBytes  = 40000,
-                        .heapExtraBytes = 960,
-                        .stacksBytes    = 0,
-                        .isDetailed = true,
-                        .isPeak     = true},
+        MassifSnapshot{.index          = 2,
+                       .time           = 40960,
+                       .heapBytes      = 40000,
+                       .heapExtraBytes = 960,
+                       .stacksBytes    = 0,
+                       .isDetailed     = true,
+                       .isPeak         = true},
     };
     return profile;
 }
@@ -66,7 +66,7 @@ TEST_CASE("RebuildMassifReportBuffer refreshes the same buffer in place", "[Mass
     Buffer&    first = RebuildMassifReportBuffer(bufferList, SampleProfile(), "/tmp/one.out");
 
     MassifProfile second;
-    second.cmd = "./other";
+    second.cmd        = "./other";
     Buffer& refreshed = RebuildMassifReportBuffer(bufferList, second, "/tmp/two.out");
 
     REQUIRE(&first == &refreshed);

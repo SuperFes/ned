@@ -59,7 +59,7 @@ struct ImportResolutionConfig {
 // (ProjectSettings::ImportResolutionOverride::searchPackageDirs is an
 // optional<bool> for exactly this "inherit unless overridden" reason).
 [[nodiscard]] ImportResolutionConfig ResolveImportResolutionConfig(const ProjectSettings& settings,
-                                                                    const std::string&      languageKey);
+                                                                   const std::string&     languageKey);
 
 } // namespace ned::editor
 

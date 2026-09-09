@@ -89,10 +89,10 @@ void TabBar::Paint(Canvas c) {
         // bold/etc. from a prior frame's cell here would otherwise linger
         // once whatever painted it (an overlay reaching this far up, or a
         // theme-preview session) stops.
-        Cell& cell             = c[{.x = x, .y = 0}];
-        cell                   = Cell{};
-        cell.character         = " ";
-        cell.background_color  = theme_.background;
+        Cell& cell            = c[{.x = x, .y = 0}];
+        cell                  = Cell{};
+        cell.character        = " ";
+        cell.background_color = theme_.background;
     }
 
     const text::Buffer*          active  = &activeBufferProvider_().Get();

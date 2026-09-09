@@ -40,7 +40,7 @@ namespace ned::editor::stickyscroll {
 // not -- is naturally excluded here too, with no fold-awareness of its own:
 // this function only ever sees byte ranges and one offset.
 [[nodiscard]] std::vector<SymbolMarker> StickyChainForViewportTop(const std::vector<SymbolMarker>& markers,
-                                                                    std::size_t                      viewportTopByte);
+                                                                  std::size_t                      viewportTopByte);
 
 } // namespace ned::editor::stickyscroll
 

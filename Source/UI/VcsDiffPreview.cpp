@@ -40,7 +40,7 @@ VcsDiffPreview::VcsDiffPreview(const Theme& theme) : theme_(theme) {
 }
 
 void VcsDiffPreview::SetModel(std::optional<VcsDiffPreviewModel> model) {
-    model_ = std::move(model);
+    model_        = std::move(model);
     scrollOffset_ = 0; // a new file's diff always starts scrolled to the top
 }
 
@@ -106,7 +106,7 @@ void VcsDiffPreview::Paint(Canvas c) {
         const int  y   = contentRow + kHeaderHeight;
 
         std::u32string label;
-        Brush           brush{.background = theme_.background, .foreground = theme_.defaultForeground};
+        Brush          brush{.background = theme_.background, .foreground = theme_.defaultForeground};
 
         if (row.isHeader) {
             label = ToCodepoints(model_->staged ? "[unstage] " : "[stage] ");
@@ -144,10 +144,10 @@ bool VcsDiffPreview::OnEvent(const Event& event) {
     }
 
     if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {
-        constexpr int    kWheelScrollLines = 3;
+        constexpr int     kWheelScrollLines = 3;
         const std::size_t rowCount          = BuildRows().size();
-        const int          contentHeight     = std::max(0, size().height - kHeaderHeight - kBottomBorderHeight);
-        const int          maxScroll         = std::max(0, static_cast<int>(rowCount) - contentHeight);
+        const int         contentHeight     = std::max(0, size().height - kHeaderHeight - kBottomBorderHeight);
+        const int         maxScroll         = std::max(0, static_cast<int>(rowCount) - contentHeight);
         if (mouse->button == MouseEvent::Button::WheelDown) {
             scrollOffset_ = std::min(scrollOffset_ + kWheelScrollLines, maxScroll);
         }

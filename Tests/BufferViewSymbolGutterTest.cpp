@@ -86,7 +86,7 @@ TEST_CASE("BufferView reserves a symbol column and renders the function glyph on
     view.Paint(canvas);
 
     const std::size_t totalLines  = fixture.buffer.Content().LineCount();
-    const int          symbolStart = GutterWidthWithSymbol(totalLines, true) - 1;
+    const int         symbolStart = GutterWidthWithSymbol(totalLines, true) - 1;
     REQUIRE(screen.PixelAt(symbolStart, 0).character == "ƒ");
     // Point sits right after the (now symbol-column-widened) gutter.
     REQUIRE(view.CursorPosition().has_value());
@@ -104,7 +104,7 @@ TEST_CASE("BufferView renders no symbol glyph on a line that isn't a definition 
     view.Paint(canvas);
 
     const std::size_t totalLines  = fixture.buffer.Content().LineCount();
-    const int          symbolStart = GutterWidthWithSymbol(totalLines, true) - 1;
+    const int         symbolStart = GutterWidthWithSymbol(totalLines, true) - 1;
     REQUIRE(screen.PixelAt(symbolStart, 0).character == " "); // comment line -- no marker
     REQUIRE(screen.PixelAt(symbolStart, 1).character == "ƒ"); // the function's own line
 }
@@ -150,6 +150,6 @@ TEST_CASE("Symbol gutter cache recomputes after an edit that adds a new definiti
     view.Paint(canvas);
 
     const std::size_t totalLines  = fixture.buffer.Content().LineCount();
-    const int          symbolStart = GutterWidthWithSymbol(totalLines, true) - 1;
+    const int         symbolStart = GutterWidthWithSymbol(totalLines, true) - 1;
     REQUIRE(screen.PixelAt(symbolStart, 2).character == "ƒ");
 }

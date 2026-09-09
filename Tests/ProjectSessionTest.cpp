@@ -100,9 +100,9 @@ ProjectSessionData SampleData() {
     leafB.kind = WindowLayoutNode::Kind::Leaf;
     leafB.file = "/project/b.h";
     WindowLayoutNode split;
-    split.kind   = WindowLayoutNode::Kind::SplitRight;
-    split.first  = 0;
-    split.second = 1;
+    split.kind           = WindowLayoutNode::Kind::SplitRight;
+    split.first          = 0;
+    split.second         = 1;
     data.windowLayout    = {leafA, leafB, split};
     data.focusedPanePath = {1}; // b.h (the split's "second") had focus
 

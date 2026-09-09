@@ -150,7 +150,7 @@ TEST_CASE("McpBridgeServer answers an unknown tool name with a JSON-RPC error", 
     std::string       errorLine;
 
     std::thread client([&] {
-        const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        const int   fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
         sockaddr_un addr{};
         addr.sun_family        = AF_UNIX;
         const std::string path = fixture.server.SocketPath().string();

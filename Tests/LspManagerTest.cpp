@@ -347,11 +347,11 @@ std::size_t CurrentRssKb() {
 TEST_CASE("LspManager::SyncBuffer does not materialize a huge buffer's content when no server is configured",
           "[Lsp][memory]") {
     constexpr std::size_t kFileSize = 200 * 1024 * 1024; // 200 MiB -- same "obviously wrong if resident" size the
-                                                          // sibling PieceTable/BufferHugeFile [memory] tests use
+                                                         // sibling PieceTable/BufferHugeFile [memory] tests use
 
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_lsp_manager_huge_nosync.txt";
     {
-        std::ofstream file(path, std::ios::binary);
+        std::ofstream     file(path, std::ios::binary);
         const std::string chunk(1024 * 1024, 'x');
         for (std::size_t written = 0; written < kFileSize; written += chunk.size()) {
             file.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
@@ -685,7 +685,7 @@ TEST_CASE("SyncBuffer's incremental diff snaps a diverging multi-byte character 
     Buffer&            buffer = bufferList.OpenOrCreateFile(
         std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-utf8-boundary-test.txt");
     buffer.InsertAtPoint("abc\xe2\x80\x9c"
-                          "def"); // "abc" + U+201C (“) + "def"
+                         "def"); // "abc" + U+201C (“) + "def"
 
     LspClient* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
@@ -2198,7 +2198,7 @@ TEST_CASE("LspManager::RequestPrepareCallHierarchy sends textDocument/prepareCal
     const std::string didOpen = ReadRawFrame(server.serverStdinRead);
     const std::string ownUri  = Json::parse(didOpen.substr(didOpen.find("\r\n\r\n") + 4))["params"]["textDocument"]["uri"].get<std::string>();
 
-    bool                                              invoked = false;
+    bool                                           invoked = false;
     std::vector<LspManager::ResolvedHierarchyItem> got;
     manager.RequestPrepareCallHierarchy(buffer, 0, [&](std::vector<LspManager::ResolvedHierarchyItem> items) {
         invoked = true;
@@ -2212,8 +2212,10 @@ TEST_CASE("LspManager::RequestPrepareCallHierarchy sends textDocument/prepareCal
     REQUIRE(request["params"]["position"]["line"] == 0);
 
     const Json itemJson = {
-        {"name", "call_site"},       {"kind", 12},
-        {"uri", ownUri},             {"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 9}}}}},
+        {"name", "call_site"},
+        {"kind", 12},
+        {"uri", ownUri},
+        {"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 9}}}}},
         {"selectionRange", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 9}}}}},
         {"data", {{"opaque", 1}}},
     };
@@ -2242,14 +2244,14 @@ TEST_CASE("LspManager::RequestIncomingCalls sends item.raw verbatim as \"item\" 
     const std::string didOpen = ReadRawFrame(server.serverStdinRead);
     const std::string ownUri  = Json::parse(didOpen.substr(didOpen.find("\r\n\r\n") + 4))["params"]["textDocument"]["uri"].get<std::string>();
 
-    const Json                  requestedItem = {{"name", "callee"},
-                                                 {"kind", 12},
-                                                 {"uri", ownUri},
-                                                 {"selectionRange", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 6}}}}},
-                                                 {"data", {{"opaque", 2}}}};
-    const ned::editor::lsp::HierarchyItem item = ned::editor::lsp::ExtractHierarchyItems(Json::array({requestedItem}))[0];
+    const Json                            requestedItem = {{"name", "callee"},
+                                                           {"kind", 12},
+                                                           {"uri", ownUri},
+                                                           {"selectionRange", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 6}}}}},
+                                                           {"data", {{"opaque", 2}}}};
+    const ned::editor::lsp::HierarchyItem item          = ned::editor::lsp::ExtractHierarchyItems(Json::array({requestedItem}))[0];
 
-    bool                                              invoked = false;
+    bool                                           invoked = false;
     std::vector<LspManager::ResolvedHierarchyCall> got;
     manager.RequestIncomingCalls(buffer, item, [&](std::vector<LspManager::ResolvedHierarchyCall> calls) {
         invoked = true;
@@ -2299,13 +2301,13 @@ TEST_CASE("LspManager::RequestSupertypes sends typeHierarchy/supertypes with ite
     const std::string didOpen = ReadRawFrame(server.serverStdinRead);
     const std::string ownUri  = Json::parse(didOpen.substr(didOpen.find("\r\n\r\n") + 4))["params"]["textDocument"]["uri"].get<std::string>();
 
-    const Json                             requestedItem = {{"name", "Derived"},
-                                                 {"kind", 5},
-                                                 {"uri", ownUri},
-                                                 {"selectionRange", {{"start", {{"line", 0}, {"character", 6}}}, {"end", {{"line", 0}, {"character", 13}}}}}};
+    const Json                            requestedItem = {{"name", "Derived"},
+                                                           {"kind", 5},
+                                                           {"uri", ownUri},
+                                                           {"selectionRange", {{"start", {{"line", 0}, {"character", 6}}}, {"end", {{"line", 0}, {"character", 13}}}}}};
     const ned::editor::lsp::HierarchyItem item          = ned::editor::lsp::ExtractHierarchyItems(Json::array({requestedItem}))[0];
 
-    bool                                              invoked = false;
+    bool                                           invoked = false;
     std::vector<LspManager::ResolvedHierarchyItem> got;
     manager.RequestSupertypes(buffer, item, [&](std::vector<LspManager::ResolvedHierarchyItem> items) {
         invoked = true;
@@ -2336,7 +2338,7 @@ TEST_CASE("LspManager::RequestPrepareCallHierarchy resolves an empty vector when
     LspManager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
-    bool                                              invoked = false;
+    bool                                           invoked = false;
     std::vector<LspManager::ResolvedHierarchyItem> got{LspManager::ResolvedHierarchyItem{}}; // pre-seeded, must be cleared
     manager.RequestPrepareCallHierarchy(buffer, 0, [&](std::vector<LspManager::ResolvedHierarchyItem> items) {
         invoked = true;
@@ -2413,7 +2415,7 @@ TEST_CASE("LspManager::RequestDocumentHighlight sends textDocument/documentHighl
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    bool                                          invoked = false;
+    bool                                             invoked = false;
     std::vector<ned::editor::lsp::DocumentHighlight> got;
     manager.RequestDocumentHighlight(buffer, buffer.Point(), [&](std::vector<ned::editor::lsp::DocumentHighlight> highlights) {
         invoked = true;
@@ -2444,7 +2446,7 @@ TEST_CASE("LspManager::RequestDocumentHighlight resolves an empty vector when th
     LspManager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
-    bool                                          invoked = false;
+    bool                                             invoked = false;
     std::vector<ned::editor::lsp::DocumentHighlight> got;
     manager.RequestDocumentHighlight(buffer, 0, [&](std::vector<ned::editor::lsp::DocumentHighlight> highlights) {
         invoked = true;
@@ -2468,7 +2470,7 @@ TEST_CASE("LspManager::RequestFormatting sends textDocument/formatting with tabS
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    bool                                                        invoked = false;
+    bool                                                            invoked = false;
     std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> got;
     manager.RequestFormatting(buffer, [&](std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> edits) {
         invoked = true;
@@ -2500,7 +2502,7 @@ TEST_CASE("LspManager::RequestFormatting resolves nullopt when the buffer was ne
     LspManager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
-    bool                                                        invoked = false;
+    bool                                                            invoked = false;
     std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> got;
     manager.RequestFormatting(buffer, [&](std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> edits) {
         invoked = true;
@@ -2524,7 +2526,7 @@ TEST_CASE("LspManager::RequestRangeFormatting sends textDocument/rangeFormatting
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    bool                                                        invoked = false;
+    bool                                                            invoked = false;
     std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> got;
     manager.RequestRangeFormatting(buffer, 0, 8, [&](std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> edits) {
         invoked = true;
@@ -2682,7 +2684,7 @@ TEST_CASE("LspManager::RequestRename sends newName and resolves a multi-file Wor
 }
 
 TEST_CASE("LspManager::RequestWillRenameFiles sends oldUri/newUri only to a server whose filter matches, and resolves its WorkspaceEdit",
-         "[Lsp]") {
+          "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
     LspManager         manager(bufferList, eventLoop);
@@ -2717,7 +2719,7 @@ TEST_CASE("LspManager::RequestWillRenameFiles sends oldUri/newUri only to a serv
         {"result",
          {{"changes",
            {{oldUri, Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 1}}}}},
-                                  {"newText", "x"}}})}}}}},
+                                   {"newText", "x"}}})}}}}},
     };
     client->DispatchFrame(response.dump());
 
@@ -3447,10 +3449,7 @@ TEST_CASE("A didOpen sync sends textDocument/diagnostic when lsp-pull-diagnostic
     const auto response = Json{
         {"jsonrpc", "2.0"},
         {"id", frames[1]["id"]},
-        {"result", {{"kind", "full"},
-                    {"items", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}},
-                                            {"severity", 1},
-                                            {"message", "pulled error"}}})}}},
+        {"result", {{"kind", "full"}, {"items", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}}, {"severity", 1}, {"message", "pulled error"}}})}}},
     };
     client->DispatchFrame(response.dump());
 
@@ -4298,8 +4297,8 @@ TEST_CASE("SyncBackgroundBuffers syncs every open, path-backed buffer, not just 
     ned::ui::EventLoop eventLoop;
     LspManager         manager(bufferList, eventLoop);
 
-    const std::filesystem::path cPath  = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-test.c";
-    const std::filesystem::path pyPath = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-test.py";
+    const std::filesystem::path cPath    = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-test.c";
+    const std::filesystem::path pyPath   = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-test.py";
     Buffer&                     cBuffer  = bufferList.OpenOrCreateFile(cPath);
     Buffer&                     pyBuffer = bufferList.OpenOrCreateFile(pyPath);
 
@@ -4343,9 +4342,9 @@ TEST_CASE("SyncBackgroundBuffers skips a buffer with no path and a buffer still 
 
 TEST_CASE("SyncBackgroundBuffers is a no-op entirely when disabled", "[Lsp]") {
     LspBackgroundSyncGuard guard;
-    BufferList              bufferList;
-    ned::ui::EventLoop      eventLoop;
-    LspManager              manager(bufferList, eventLoop);
+    BufferList             bufferList;
+    ned::ui::EventLoop     eventLoop;
+    LspManager             manager(bufferList, eventLoop);
 
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-disabled-test.c";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);

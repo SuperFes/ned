@@ -51,7 +51,7 @@ namespace ned::editor {
 // point, not behind it). Returns nullopt if no non-blank line exists at or
 // after point.
 [[nodiscard]] std::optional<std::pair<std::size_t, std::size_t>> FindParagraphRange(const text::ITextStorage& content,
-                                                                                     std::size_t point);
+                                                                                    std::size_t               point);
 
 // Re-wraps the paragraph at point to fillColumn codepoints, in place, as one
 // undo step. commentPrefix, if non-empty, is a per-line comment leader

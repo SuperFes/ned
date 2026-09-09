@@ -23,10 +23,10 @@ BufferView::ContextMenuEntry BufferView::ContextMenuCommandEntry(const std::stri
 }
 
 void BufferView::ShowContextMenuAt(Point localClick) {
-    text::Buffer&      buffer      = activeBuffer_.Get();
-    const std::size_t  gutterWidth = GutterWidth();
-    const bool         inGutter    = localClick.x <= static_cast<int>(gutterWidth); // mirrors
-                                      // ByteOffsetForPoint's own "x > gutterWidth is content" boundary
+    text::Buffer&     buffer      = activeBuffer_.Get();
+    const std::size_t gutterWidth = GutterWidth();
+    const bool        inGutter    = localClick.x <= static_cast<int>(gutterWidth); // mirrors
+                                                                                   // ByteOffsetForPoint's own "x > gutterWidth is content" boundary
 
     contextMenuEntries_.clear();
     bool        requestCodeActions = false;
@@ -108,8 +108,8 @@ void BufferView::ShowContextMenuAt(Point localClick) {
         bool hasLsp = false;
         if (lspManager_) {
             const std::string              primaryKey = editor::LanguageKeyForMode(mode_);
-            const std::vector<std::string> active      = lspManager_->ActiveServerKeysForBuffer(buffer);
-            hasLsp                                     = std::find(active.begin(), active.end(), primaryKey) != active.end();
+            const std::vector<std::string> active     = lspManager_->ActiveServerKeysForBuffer(buffer);
+            hasLsp                                    = std::find(active.begin(), active.end(), primaryKey) != active.end();
         }
         contextMenuEntries_.push_back(ContextMenuCommandEntry("kill-region"));
         contextMenuEntries_.push_back(ContextMenuCommandEntry("kill-ring-save"));
@@ -130,7 +130,7 @@ void BufferView::ShowContextMenuAt(Point localClick) {
         // comment.
         if (hasLsp) {
             requestCodeActions = true;
-            codeActionPoint     = offset;
+            codeActionPoint    = offset;
         }
     }
 
@@ -140,8 +140,8 @@ void BufferView::ShowContextMenuAt(Point localClick) {
 
     contextMenuSelection_ = 0;
     const Box& box        = Box_();
-    contextMenuAnchor_     = Point{.x = box.x_min + localClick.x, .y = box.y_min + localClick.y};
-    inputMode_             = InputMode::ContextMenu;
+    contextMenuAnchor_    = Point{.x = box.x_min + localClick.x, .y = box.y_min + localClick.y};
+    inputMode_            = InputMode::ContextMenu;
     RefreshContextMenuStatus();
 
     if (requestCodeActions) {
@@ -195,7 +195,7 @@ void BufferView::RequestContextMenuCodeActions(std::size_t point) {
             fixRows.reserve(actions.size() + 1);
             for (editor::lsp::CodeAction& action : actions) {
                 ContextMenuEntry entry;
-                entry.label = action.title;
+                entry.label      = action.title;
                 entry.codeAction = std::move(action);
                 fixRows.push_back(std::move(entry));
             }
@@ -226,16 +226,17 @@ void BufferView::RefreshContextMenuStatus() {
         model.rows.push_back({.left = std::to_string(ordinal) + ")", .main = entry.label});
     }
     model.selectedIndex = contextMenuSelection_;
-    model.anchor         = contextMenuAnchor_;
+    model.anchor        = contextMenuAnchor_;
     onContextMenuChanged_(std::move(model));
 }
 
 std::size_t BufferView::NextContextMenuIndex(std::size_t from, bool forward) const {
     const std::size_t count = contextMenuEntries_.size();
-    std::size_t        index = from;
+    std::size_t       index = from;
     do {
         index = forward ? (index + 1) % count : (index + count - 1) % count;
-    } while (contextMenuEntries_[index].isDivider);
+    }
+    while (contextMenuEntries_[index].isDivider);
     return index;
 }
 
@@ -623,14 +624,14 @@ bool BufferView::OnMouseEvent(const Event& event) {
         const std::size_t foldStart = GutterWidth() - foldColumnWidth - blameColumnWidth;
         if (foldColumnWidth > 0 && mouse->at.x >= static_cast<int>(foldStart) &&
             static_cast<std::size_t>(mouse->at.x) < foldStart + foldColumnWidth) {
-            text::Buffer&     buffer        = activeBuffer_.Get();
+            text::Buffer&             buffer        = activeBuffer_.Get();
             const text::ITextStorage& content       = buffer.Content();
-            const std::size_t totalLines    = content.LineCount();
-            const std::size_t line          = std::min(viewport_.AdvanceVisibleLines(viewport_.TopLine(), static_cast<std::size_t>(std::max(mouse->at.y, 0)), totalLines),
-                                                       totalLines - 1);
-            const int         clickedColumn = mouse->at.x - static_cast<int>(foldStart);
-            auto it = std::lower_bound(gutters_.FoldEntries().begin(), gutters_.FoldEntries().end(), line,
-                                       [](const FoldGutterEntry& entry, std::size_t targetLine) { return entry.headerLine < targetLine; });
+            const std::size_t         totalLines    = content.LineCount();
+            const std::size_t         line          = std::min(viewport_.AdvanceVisibleLines(viewport_.TopLine(), static_cast<std::size_t>(std::max(mouse->at.y, 0)), totalLines),
+                                                               totalLines - 1);
+            const int                 clickedColumn = mouse->at.x - static_cast<int>(foldStart);
+            auto                      it            = std::lower_bound(gutters_.FoldEntries().begin(), gutters_.FoldEntries().end(), line,
+                                                                       [](const FoldGutterEntry& entry, std::size_t targetLine) { return entry.headerLine < targetLine; });
             for (; it != gutters_.FoldEntries().end() && it->headerLine == line; ++it) {
                 if (it->column == clickedColumn) {
                     const bool collapsed = buffer.FoldMarkerAt(it->blockStart).has_value();
@@ -671,17 +672,17 @@ bool BufferView::OnMouseEvent(const Event& event) {
         // selects the whole line instead of re-selecting the word. Skipped
         // on a read-only ("tossable") results buffer, where a click's job is
         // visiting the result under it, not selecting text.
-        const auto now = std::chrono::steady_clock::now();
-        clickCount_     = (lastClickOffset_.has_value() && *lastClickOffset_ == offset && (now - lastClickTime_) < kDoubleClickWindow)
-                              ? (clickCount_ >= 3 ? 1 : clickCount_ + 1)
-                              : 1;
+        const auto now   = std::chrono::steady_clock::now();
+        clickCount_      = (lastClickOffset_.has_value() && *lastClickOffset_ == offset && (now - lastClickTime_) < kDoubleClickWindow)
+                               ? (clickCount_ >= 3 ? 1 : clickCount_ + 1)
+                               : 1;
         lastClickOffset_ = offset;
         lastClickTime_   = now;
 
         if (!buffer.ReadOnly() && clickCount_ >= 2) {
             const text::ITextStorage& content = buffer.Content();
-            std::size_t       start;
-            std::size_t       end;
+            std::size_t               start;
+            std::size_t               end;
             if (clickCount_ == 2) {
                 const auto [wordStart, wordEnd] = WordBoundsAtOffset(content, offset);
                 start                           = wordStart;
@@ -690,7 +691,7 @@ bool BufferView::OnMouseEvent(const Event& event) {
             else {
                 const std::size_t line = content.ByteOffsetToLine(offset);
                 start                  = content.LineToByteOffset(line);
-                end = line + 1 < content.LineCount() ? content.LineToByteOffset(line + 1) : content.ByteLength();
+                end                    = line + 1 < content.LineCount() ? content.LineToByteOffset(line + 1) : content.ByteLength();
             }
             buffer.SetMark(start);
             buffer.SetPoint(end);

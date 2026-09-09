@@ -8,8 +8,8 @@ namespace ned::editor::lsp {
 
 namespace {
 
-    std::mutex                                g_overrideMutex;
-    std::optional<std::vector<std::string>>   g_override; // nullopt -> auto-detect
+    std::mutex                              g_overrideMutex;
+    std::optional<std::vector<std::string>> g_override; // nullopt -> auto-detect
 
     std::mutex g_enabledMutex;
     bool       g_enabled = true;
@@ -17,9 +17,9 @@ namespace {
     // Memoized separately from g_override: an unset override should still
     // only scan $PATH once per process, not once per ProseCheckerCommand()
     // call.
-    std::mutex                                g_autoDetectMutex;
-    bool                                       g_autoDetectResolved = false;
-    std::optional<std::vector<std::string>>   g_autoDetected;
+    std::mutex                              g_autoDetectMutex;
+    bool                                    g_autoDetectResolved = false;
+    std::optional<std::vector<std::string>> g_autoDetected;
 
     std::optional<std::vector<std::string>> AutoDetect() {
         const std::lock_guard<std::mutex> lock(g_autoDetectMutex);

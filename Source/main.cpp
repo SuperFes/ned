@@ -810,7 +810,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // slot's border/width/collapse/resize-drag -- see LeftDock.h's own
     // header comment. VcsPanel joins as the second panel further below,
     // once it's constructed.
-    auto             leftDock    = std::make_shared<ned::ui::LeftDock>(theme);
+    auto leftDock = std::make_shared<ned::ui::LeftDock>(theme);
     // nerd-font-glyph follow-up: a Nerd Font glyph (folder, U+F07B) for
     // the rail, a deliberate exception to the plain-Unicode-only
     // convention this codebase otherwise sticks to elsewhere (see
@@ -1218,8 +1218,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // the bridge socket itself is only ever actually opened lazily, from
     // AcpManager::StartSession, and only when ned/set-acp-mcp-bridge (see
     // Editor/Mcp/McpBridgeSetting.h, default on) allows it.
-    ned::editor::mcp::ToolRegistry     mcpToolRegistry(bufferList, lspManager, vcsRunner, testRunner, dapManager);
-    ned::editor::mcp::McpBridgeServer  mcpBridgeServer(mcpToolRegistry, eventLoop);
+    ned::editor::mcp::ToolRegistry    mcpToolRegistry(bufferList, lspManager, vcsRunner, testRunner, dapManager);
+    ned::editor::mcp::McpBridgeServer mcpBridgeServer(mcpToolRegistry, eventLoop);
     acpManager.SetMcpBridgeServer(&mcpBridgeServer);
 
     // BufferView's completion-debounce/status-message-idle-timeout
@@ -1830,8 +1830,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             auto panel = std::make_shared<ned::ui::TerminalPanel>(theme, *argv, name);
             panel->SetEventLoop(&eventLoop);
             const std::size_t tabIndex =
-                panelDock.AddPanel(name, *panel, [panel] { return panel->TitleText(); },
-                                   &ned::editor::terminal::TerminalHeightPercent, &ned::editor::terminal::SetTerminalHeightPercent);
+                panelDock.AddPanel(name, *panel, [panel] { return panel->TitleText(); }, &ned::editor::terminal::TerminalHeightPercent, &ned::editor::terminal::SetTerminalHeightPercent);
             // toggleTerminal's own reserved-chord wiring: while this panel
             // itself has focus, TerminalPanel handles `` C-` `` internally
             // and calls this callback directly (bypassing the global
@@ -1843,8 +1842,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                 overlays.Hide(panelDock);
                 wm->TakeFocus();
             });
-            existing                = replPanels.emplace(name, std::move(panel)).first;
-            replTabIndices[name]    = tabIndex;
+            existing             = replPanels.emplace(name, std::move(panel)).first;
+            replTabIndices[name] = tabIndex;
         }
         existing->second->EnsureStarted();
         overlays.Show(panelDock);
@@ -2300,8 +2299,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             // giving New File/New Folder a route to create a top-level
             // entry with no existing row to right-click first.
             const bool isProjectRoot = isDirectory && path == ned::editor::ProjectRoot();
-            model.title  = isProjectRoot ? "Project Root" : (isDirectory ? "Directory" : "File");
-            model.anchor = anchor;
+            model.title              = isProjectRoot ? "Project Root" : (isDirectory ? "Directory" : "File");
+            model.anchor             = anchor;
             sidebarContextMenuActions.clear();
 
             auto addRow = [&](std::string label, std::function<void()> action) {

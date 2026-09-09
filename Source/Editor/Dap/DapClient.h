@@ -173,8 +173,8 @@ class DapClient {
     std::mutex                  writeMutex_;
     std::condition_variable_any writeCv_;
     std::deque<std::string>     writeQueue_;
-    std::atomic<bool>       drainQueueOnStop_ = false; // see PrepareForGracefulShutdown
-    std::jthread            writeThread_;
+    std::atomic<bool>           drainQueueOnStop_ = false; // see PrepareForGracefulShutdown
+    std::jthread                writeThread_;
 
     struct PendingRequest {
         ResponseCallback                      callback;

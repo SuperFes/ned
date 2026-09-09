@@ -48,7 +48,7 @@ namespace {
             }
 
             const std::filesystem::directory_entry& entry    = *it;
-            const std::filesystem::path              relative = std::filesystem::relative(entry.path(), absoluteRoot);
+            const std::filesystem::path             relative = std::filesystem::relative(entry.path(), absoluteRoot);
 
             if (entry.is_directory()) {
                 if (IsDotDirectory(entry) || gitIgnore.IsIgnored(relative, /*isDirectory=*/true)) {

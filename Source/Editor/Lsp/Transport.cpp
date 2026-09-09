@@ -39,7 +39,7 @@ namespace {
         line.clear();
         bool first = true;
         while (true) {
-            const bool             unbounded = first && waitFirstByteUnbounded;
+            const bool                      unbounded   = first && waitFirstByteUnbounded;
             const std::chrono::milliseconds waitTimeout = unbounded ? std::chrono::milliseconds(-1) : stallTimeout;
             if (!child.WaitReadable(waitTimeout)) {
                 if (unbounded) {
@@ -103,9 +103,8 @@ namespace {
 
 } // namespace
 
-Transport::Transport(const std::vector<std::string>& argv, bool captureStderr)
-    : child_(argv, captureStderr ? process::StderrMode::Capture : process::StderrMode::Discard),
-      processLabel_(argv.empty() ? std::string() : BaseName(argv[0])) {
+Transport::Transport(const std::vector<std::string>& argv, bool captureStderr) : child_(argv, captureStderr ? process::StderrMode::Capture : process::StderrMode::Discard),
+                                                                                 processLabel_(argv.empty() ? std::string() : BaseName(argv[0])) {
 }
 
 Transport::Transport(int readFd, int writeFd, pid_t pid) noexcept : child_(readFd, writeFd, pid) {

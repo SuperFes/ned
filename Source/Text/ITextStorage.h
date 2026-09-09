@@ -53,23 +53,23 @@ class ITextStorage {
     [[nodiscard]] virtual bool IsHuge() const = 0;
 
     [[nodiscard]] virtual bool        Empty() const           = 0;
-    [[nodiscard]] virtual std::size_t ByteLength() const       = 0;
-    [[nodiscard]] virtual std::size_t CodepointLength() const  = 0;
-    [[nodiscard]] virtual std::size_t LineCount() const        = 0; // newline count + 1
+    [[nodiscard]] virtual std::size_t ByteLength() const      = 0;
+    [[nodiscard]] virtual std::size_t CodepointLength() const = 0;
+    [[nodiscard]] virtual std::size_t LineCount() const       = 0; // newline count + 1
 
-    [[nodiscard]] virtual std::unique_ptr<ITextStorage> Inserted(std::size_t byteOffset, std::string_view text) const  = 0;
-    [[nodiscard]] virtual std::unique_ptr<ITextStorage> Erased(std::size_t byteOffset, std::size_t byteLength) const   = 0;
+    [[nodiscard]] virtual std::unique_ptr<ITextStorage> Inserted(std::size_t byteOffset, std::string_view text) const = 0;
+    [[nodiscard]] virtual std::unique_ptr<ITextStorage> Erased(std::size_t byteOffset, std::size_t byteLength) const  = 0;
 
-    [[nodiscard]] virtual std::string ToString() const                                                       = 0;
-    [[nodiscard]] virtual std::string Substring(std::size_t byteOffset, std::size_t byteLength) const         = 0;
+    [[nodiscard]] virtual std::string ToString() const                                                = 0;
+    [[nodiscard]] virtual std::string Substring(std::size_t byteOffset, std::size_t byteLength) const = 0;
 
     // 0-indexed line number containing byteOffset / byte offset where a
     // given 0-indexed line starts.
     [[nodiscard]] virtual std::size_t ByteOffsetToLine(std::size_t byteOffset) const = 0;
     [[nodiscard]] virtual std::size_t LineToByteOffset(std::size_t line) const       = 0;
 
-    [[nodiscard]] virtual std::size_t ByteOffsetToCodepointOffset(std::size_t byteOffset) const           = 0;
-    [[nodiscard]] virtual std::size_t CodepointOffsetToByteOffset(std::size_t codepointOffset) const      = 0;
+    [[nodiscard]] virtual std::size_t ByteOffsetToCodepointOffset(std::size_t byteOffset) const      = 0;
+    [[nodiscard]] virtual std::size_t CodepointOffsetToByteOffset(std::size_t codepointOffset) const = 0;
 
     struct DecodedCodepoint {
         char32_t    codepoint;
@@ -83,7 +83,7 @@ class ITextStorage {
     [[nodiscard]] virtual DecodedCodepoint CodepointAt(std::size_t byteOffset) const = 0;
 
     [[nodiscard]] virtual std::size_t PreviousCodepointBoundary(std::size_t byteOffset) const = 0;
-    [[nodiscard]] virtual std::size_t NextCodepointBoundary(std::size_t byteOffset) const      = 0;
+    [[nodiscard]] virtual std::size_t NextCodepointBoundary(std::size_t byteOffset) const     = 0;
 
     // huge-file-editing follow-up (streaming save): invokes sink once per
     // internal chunk, left to right, covering the whole content -- never

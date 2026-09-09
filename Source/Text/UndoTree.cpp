@@ -191,7 +191,7 @@ UndoTree UndoTree::Deserialize(const std::vector<SerializedNode>& nodes, std::si
     // nodes' own order.
     std::size_t nextSeq = 1;
     for (const auto& node : nodes) {
-        auto n             = std::make_unique<Node>();
+        auto n = std::make_unique<Node>();
         // Deserialize always reconstructs a Rope-backed snapshot -- see
         // SerializedNode's own doc comment on why that's always correct
         // here (a huge/piece-table-backed buffer never reaches this path
@@ -213,8 +213,8 @@ UndoTree UndoTree::Deserialize(const std::vector<SerializedNode>& nodes, std::si
     }
 
     UndoTree tree{std::make_unique<RopeStorage>()};
-    tree.root_    = std::move(owned.at(*rootId));
-    tree.current_ = live.at(currentId);
+    tree.root_         = std::move(owned.at(*rootId));
+    tree.current_      = live.at(currentId);
     tree.nextSequence_ = nextSeq;
     tree.bySequence_.clear();
     for (const auto& [id, node] : live) {

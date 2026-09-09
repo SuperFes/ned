@@ -74,9 +74,12 @@ std::string ApplyLineEnding(std::string_view lfContent, LineEnding ending) {
 
 const char* LineEndingName(LineEnding ending) {
     switch (ending) {
-        case LineEnding::LF: return "LF";
-        case LineEnding::CRLF: return "CRLF";
-        case LineEnding::CR: return "CR";
+        case LineEnding::LF:
+            return "LF";
+        case LineEnding::CRLF:
+            return "CRLF";
+        case LineEnding::CR:
+            return "CR";
     }
     return "LF";
 }

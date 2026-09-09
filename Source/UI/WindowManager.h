@@ -33,7 +33,6 @@
 
 #include "ActiveBuffer.h"
 #include "AsyncFileLoader.h"
-#include "HugeFileLoader.h"
 #include "BufferView.h"
 #include "Editor/Command.h"
 #include "Editor/Dispatcher.h"
@@ -48,18 +47,19 @@
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/Vcs/VcsRunner.h"
 #include "EventLoop.h"
+#include "HugeFileLoader.h"
 #include "Layout.h"
 #include "LeftDock.h"
 #include "Minimap.h"
 #include "ModeLine.h"
 #include "ProjectSidebar.h"
-#include "VcsPanel.h"
 #include "ScrollArrowButton.h"
 #include "ScrollBar.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 #include "Theme.h"
+#include "VcsPanel.h"
 
 namespace ned::ui {
 
@@ -853,46 +853,46 @@ class WindowManager {
     [[nodiscard]] Pane*              FocusedPane();
     [[nodiscard]] std::vector<Pane*> Leaves() const;
 
-    text::KillRing&                   killRing_;
-    editor::RegisterTable&            registers_;
-    editor::PromptHistory&            promptHistory_;
-    text::BufferList&                 bufferList_;
-    const editor::CommandRegistry&    registry_;
-    const editor::Keymap&             janetKeymap_;
-    const editor::Keymap&             globalKeymap_;
-    std::string&                      statusMessage_;
-    const Theme&                      theme_;
-    ProjectSidebar*                   projectSidebar_ = nullptr;
-    LeftDock*                         leftDock_       = nullptr;
-    VcsPanel*                         vcsPanel_       = nullptr;
-    editor::lsp::LspManager*          lspManager_     = nullptr;
-    editor::tasks::TaskRunner*        taskRunner_     = nullptr;
-    editor::testrun::TestRunner*      testRunner_     = nullptr; // see SetTestRunner
-    editor::vcs::VcsRunner*           vcsRunner_      = nullptr;
-    editor::dap::DapManager*                           dapManager_     = nullptr; // see SetDapManager
-    editor::acp::AcpManager*                           acpManager_     = nullptr; // see SetAcpManager
-    std::optional<std::string>                         lastAcpAgentSeed_;         // see SetLastKnownAcpAgent
-    editor::ProjectUndoManager*                        projectUndo_ = nullptr;    // see SetProjectUndo
-    const janet::Environment*                          janetEnv_    = nullptr;    // see SetJanetEnvironment
-    EventLoop*                                         eventLoop_   = nullptr;    // see SetEventLoop
-    std::function<void(const Theme&)>                  themeApplier_;             // see SetThemeApplier
-    std::function<void()>                              onTerminalToggle_;         // see SetOnTerminalToggle
-    std::function<void()>                              onNewTerminalRequest_;     // see SetOnNewTerminalRequest
-    std::function<void()>                              onAcpPanelToggle_;         // see SetOnAcpPanelToggle
-    std::function<void()>                              onAcpRewindRequest_;       // see SetOnAcpRewindRequest
-    std::function<bool()>             acpPanelFocused_;          // see SetAcpPanelFocusChecker
-    std::function<void()>             onDapConsoleToggle_;       // see SetOnDapConsoleToggle
-    std::function<void()>             onJanetReplToggle_;        // see SetOnJanetReplToggle
-    std::function<void(const std::string&)> onRunReplRequest_;   // see SetOnRunReplRequest
-    std::function<void()>                              onDapThreadsToggle_;       // see SetOnDapThreadsToggle
+    text::KillRing&                                    killRing_;
+    editor::RegisterTable&                             registers_;
+    editor::PromptHistory&                             promptHistory_;
+    text::BufferList&                                  bufferList_;
+    const editor::CommandRegistry&                     registry_;
+    const editor::Keymap&                              janetKeymap_;
+    const editor::Keymap&                              globalKeymap_;
+    std::string&                                       statusMessage_;
+    const Theme&                                       theme_;
+    ProjectSidebar*                                    projectSidebar_ = nullptr;
+    LeftDock*                                          leftDock_       = nullptr;
+    VcsPanel*                                          vcsPanel_       = nullptr;
+    editor::lsp::LspManager*                           lspManager_     = nullptr;
+    editor::tasks::TaskRunner*                         taskRunner_     = nullptr;
+    editor::testrun::TestRunner*                       testRunner_     = nullptr; // see SetTestRunner
+    editor::vcs::VcsRunner*                            vcsRunner_      = nullptr;
+    editor::dap::DapManager*                           dapManager_     = nullptr;  // see SetDapManager
+    editor::acp::AcpManager*                           acpManager_     = nullptr;  // see SetAcpManager
+    std::optional<std::string>                         lastAcpAgentSeed_;          // see SetLastKnownAcpAgent
+    editor::ProjectUndoManager*                        projectUndo_ = nullptr;     // see SetProjectUndo
+    const janet::Environment*                          janetEnv_    = nullptr;     // see SetJanetEnvironment
+    EventLoop*                                         eventLoop_   = nullptr;     // see SetEventLoop
+    std::function<void(const Theme&)>                  themeApplier_;              // see SetThemeApplier
+    std::function<void()>                              onTerminalToggle_;          // see SetOnTerminalToggle
+    std::function<void()>                              onNewTerminalRequest_;      // see SetOnNewTerminalRequest
+    std::function<void()>                              onAcpPanelToggle_;          // see SetOnAcpPanelToggle
+    std::function<void()>                              onAcpRewindRequest_;        // see SetOnAcpRewindRequest
+    std::function<bool()>                              acpPanelFocused_;           // see SetAcpPanelFocusChecker
+    std::function<void()>                              onDapConsoleToggle_;        // see SetOnDapConsoleToggle
+    std::function<void()>                              onJanetReplToggle_;         // see SetOnJanetReplToggle
+    std::function<void(const std::string&)>            onRunReplRequest_;          // see SetOnRunReplRequest
+    std::function<void()>                              onDapThreadsToggle_;        // see SetOnDapThreadsToggle
     std::function<void()>                              onDapThreadsRefreshNeeded_; // see SetOnDapThreadsRefreshNeeded
-    std::function<void()>             onBufferListToggle_;       // see SetOnBufferListToggle
-    std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_; // see SetOnPrefixHintChanged
-    std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
-    std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
-    std::function<void(std::optional<ListPopupModel>)> onHoverChanged_; // see SetOnHoverChanged
-    std::function<void(std::optional<ListPopupModel>)> onPeekChanged_; // see SetOnPeekChanged
-    std::function<void(std::optional<ListPopupModel>)> onContextMenuChanged_; // see SetOnContextMenuChanged
+    std::function<void()>                              onBufferListToggle_;        // see SetOnBufferListToggle
+    std::function<void(std::optional<WhichKeyHint>)>   onPrefixHintChanged_;       // see SetOnPrefixHintChanged
+    std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_;       // see SetOnCandidatesChanged
+    std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_;       // see SetOnCompletionChanged
+    std::function<void(std::optional<ListPopupModel>)> onHoverChanged_;            // see SetOnHoverChanged
+    std::function<void(std::optional<ListPopupModel>)> onPeekChanged_;             // see SetOnPeekChanged
+    std::function<void(std::optional<ListPopupModel>)> onContextMenuChanged_;      // see SetOnContextMenuChanged
 
     // call/type-hierarchy follow-up: onHierarchyChanged_ is the handler
     // main.cpp gave SetOnHierarchyChanged, called from inside each pane's
@@ -903,7 +903,7 @@ class WindowManager {
     // moment any pane hides it (nullopt model) -- see SetOnHierarchyChanged's
     // own doc comment for why FocusedPane() can't serve this role instead.
     std::function<void(std::optional<TreeViewModel>)> onHierarchyChanged_;
-    Pane*                                              hierarchyOwnerPane_ = nullptr;
+    Pane*                                             hierarchyOwnerPane_ = nullptr;
 
     // Builds the per-pane wrapper SetOnHierarchyChanged/MakePane both need
     // -- factored out so the two call sites can't drift apart.

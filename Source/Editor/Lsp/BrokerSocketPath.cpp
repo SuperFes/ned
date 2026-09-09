@@ -21,7 +21,7 @@ std::filesystem::path BrokerRuntimeDirectory() {
 
 void EnsureBrokerRuntimeDirectory() {
     const std::filesystem::path dir = BrokerRuntimeDirectory();
-    std::error_code              ec;
+    std::error_code             ec;
     std::filesystem::create_directories(dir, ec);
     if (ec) {
         throw std::runtime_error("ned: failed to create LSP broker runtime directory " + dir.string() + ": " + ec.message());

@@ -113,8 +113,8 @@ TEST_CASE("LeakSanitizer byte-count summary has no location but is still a findi
 
 TEST_CASE("Multiple independent reports in one blob each produce a finding", "[SanitizerOutputParser]") {
     const std::string output = "SUMMARY: AddressSanitizer: heap-use-after-free /a.cpp:1:1 in f\n"
-                                "some unrelated output in between\n"
-                                "SUMMARY: AddressSanitizer: stack-buffer-overflow /b.cpp:2:2 in g\n";
+                               "some unrelated output in between\n"
+                               "SUMMARY: AddressSanitizer: stack-buffer-overflow /b.cpp:2:2 in g\n";
 
     const std::vector<SanitizerFinding> findings = ParseSanitizerOutput(output);
     REQUIRE(findings.size() == 2);
@@ -123,7 +123,7 @@ TEST_CASE("Multiple independent reports in one blob each produce a finding", "[S
 }
 
 TEST_CASE("A file:line location without a column is parsed", "[SanitizerOutputParser]") {
-    const std::string output = "SUMMARY: AddressSanitizer: heap-buffer-overflow /a/file.cpp:42 in main\n";
+    const std::string                   output   = "SUMMARY: AddressSanitizer: heap-buffer-overflow /a/file.cpp:42 in main\n";
     const std::vector<SanitizerFinding> findings = ParseSanitizerOutput(output);
     REQUIRE(findings.size() == 1);
     CHECK(findings[0].file == "/a/file.cpp");

@@ -1434,13 +1434,13 @@ namespace {
     }
 
     struct ParsedClockLine {
-        OrgTimestamp                 start;
+        OrgTimestamp                start;
         std::optional<OrgTimestamp> end;
     };
 
     std::optional<ParsedClockLine> ParseClockLine(std::string_view line) {
         const std::string lineStr(line);
-        std::smatch        match;
+        std::smatch       match;
         if (!std::regex_match(lineStr, match, ClockLinePattern()))
             return std::nullopt;
 
@@ -1466,7 +1466,7 @@ namespace {
         std::string text = "CLOCK: " + FormatTimestamp(start);
         if (end) {
             text += "--" + FormatTimestamp(*end);
-            const long long totalMinutes = duration.value_or(std::chrono::minutes{0}).count();
+            const long long    totalMinutes = duration.value_or(std::chrono::minutes{0}).count();
             std::ostringstream out;
             out << " =>  " << (totalMinutes / 60) << ':' << std::setfill('0') << std::setw(2) << (totalMinutes % 60);
             text += out.str();
@@ -1825,7 +1825,7 @@ std::optional<LogbookDrawer> ParseLogbookDrawer(std::string_view bufferText, con
 
     LogbookDrawer drawer;
     drawer.startByte = lineStart;
-    lineStart         = newlinePos + 1;
+    lineStart        = newlinePos + 1;
 
     while (lineStart <= bufferText.size()) {
         newlinePos                  = bufferText.find('\n', lineStart);
@@ -1906,7 +1906,7 @@ ClockOutStatus ClockOut(text::Buffer& buffer, std::chrono::system_clock::time_po
     for (const ClockEntry& entry : drawer->entries) {
         if (entry.end)
             continue;
-        const OrgTimestamp        end      = TimestampFromTimePoint(now);
+        const OrgTimestamp         end      = TimestampFromTimePoint(now);
         const std::chrono::minutes duration = ClockDuration(entry.start, end);
         buffer.DeleteRange(entry.lineStartByte, entry.lineEndByte - entry.lineStartByte);
         buffer.InsertAt(entry.lineStartByte, FormatClockEntry(entry.start, end, duration));

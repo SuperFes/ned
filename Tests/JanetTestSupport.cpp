@@ -20,7 +20,7 @@
 namespace ned_tests {
 
 namespace {
-std::unique_ptr<ned::janet::Environment> g_environment;
+    std::unique_ptr<ned::janet::Environment> g_environment;
 }
 
 ned::janet::Environment& TestEnvironment() {
@@ -29,18 +29,18 @@ ned::janet::Environment& TestEnvironment() {
 
 namespace {
 
-class JanetGlobalFixture final : public Catch::EventListenerBase {
-  public:
-    using Catch::EventListenerBase::EventListenerBase;
+    class JanetGlobalFixture final : public Catch::EventListenerBase {
+      public:
+        using Catch::EventListenerBase::EventListenerBase;
 
-    void testRunStarting(const Catch::TestRunInfo&) override {
-        g_environment = std::make_unique<ned::janet::Environment>();
-    }
+        void testRunStarting(const Catch::TestRunInfo&) override {
+            g_environment = std::make_unique<ned::janet::Environment>();
+        }
 
-    void testRunEnded(const Catch::TestRunStats&) override {
-        g_environment.reset();
-    }
-};
+        void testRunEnded(const Catch::TestRunStats&) override {
+            g_environment.reset();
+        }
+    };
 
 } // namespace
 

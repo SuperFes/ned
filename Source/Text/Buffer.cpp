@@ -41,7 +41,8 @@ namespace {
         char             buffer[32];
         if (bytes >= static_cast<std::uintmax_t>(kGiB)) {
             std::snprintf(buffer, sizeof(buffer), "%.1f GiB", static_cast<double>(bytes) / kGiB);
-        } else {
+        }
+        else {
             std::snprintf(buffer, sizeof(buffer), "%.1f MiB", static_cast<double>(bytes) / kMiB);
         }
         return buffer;
@@ -73,8 +74,8 @@ namespace {
     // no second pass or full-content buffer needed.
     class StreamingSaveWriter {
       public:
-        StreamingSaveWriter(std::ofstream& file, LineEnding ending, bool trim, bool ensureFinalNewline)
-            : file_(file), ending_(ending), trim_(trim), ensureFinalNewline_(ensureFinalNewline) {}
+        StreamingSaveWriter(std::ofstream& file, LineEnding ending, bool trim, bool ensureFinalNewline) : file_(file), ending_(ending), trim_(trim), ensureFinalNewline_(ensureFinalNewline) {
+        }
 
         void operator()(std::string_view chunk) {
             for (char c : chunk) {
@@ -99,7 +100,8 @@ namespace {
             if (!trim_) {
                 if (c == '\n') {
                     WriteNewline();
-                } else {
+                }
+                else {
                     WriteByte(c);
                 }
                 return;
@@ -107,10 +109,12 @@ namespace {
 
             if (c == ' ' || c == '\t') {
                 pendingWhitespace_.push_back(c);
-            } else if (c == '\n') {
+            }
+            else if (c == '\n') {
                 pendingWhitespace_.clear(); // trailing on this line -- discard
                 ++pendingNewlineCount_;
-            } else {
+            }
+            else {
                 for (std::size_t i = 0; i < pendingNewlineCount_; ++i) {
                     WriteNewline();
                 }
@@ -133,9 +137,11 @@ namespace {
         void WriteNewline() {
             if (ending_ == LineEnding::CRLF) {
                 outBuffer_.append("\r\n");
-            } else if (ending_ == LineEnding::CR) {
+            }
+            else if (ending_ == LineEnding::CR) {
                 outBuffer_.push_back('\r');
-            } else {
+            }
+            else {
                 outBuffer_.push_back('\n');
             }
             wroteAnything_   = true;
@@ -338,9 +344,9 @@ namespace {
     // unavoidable for an exact-equality question, but still bounded-memory
     // streaming via Substring rather than one giant allocation-plus-compare.
     std::size_t CommonPrefixLength(const ITextStorage& a, const ITextStorage& b) {
-        const std::size_t maxLen = std::min(a.ByteLength(), b.ByteLength());
-        std::size_t        checked   = 0;
-        std::size_t        blockSize = 4096;
+        const std::size_t maxLen    = std::min(a.ByteLength(), b.ByteLength());
+        std::size_t       checked   = 0;
+        std::size_t       blockSize = 4096;
         while (checked < maxLen) {
             const std::size_t len    = std::min(blockSize, maxLen - checked);
             const std::string blockA = a.Substring(checked, len);
@@ -361,15 +367,15 @@ namespace {
     // minus whatever the prefix search already claimed, so the two scans
     // can never overlap into the same bytes).
     std::size_t CommonSuffixLength(const ITextStorage& a, const ITextStorage& b, std::size_t maxLen) {
-        const std::size_t aLen = a.ByteLength();
-        const std::size_t bLen = b.ByteLength();
-        std::size_t        checked   = 0;
-        std::size_t        blockSize = 4096;
+        const std::size_t aLen      = a.ByteLength();
+        const std::size_t bLen      = b.ByteLength();
+        std::size_t       checked   = 0;
+        std::size_t       blockSize = 4096;
         while (checked < maxLen) {
             const std::size_t len    = std::min(blockSize, maxLen - checked);
             const std::string blockA = a.Substring(aLen - checked - len, len);
             const std::string blockB = b.Substring(bLen - checked - len, len);
-            std::size_t        common = 0;
+            std::size_t       common = 0;
             while (common < len && blockA[len - 1 - common] == blockB[len - 1 - common]) {
                 ++common;
             }
@@ -390,8 +396,8 @@ namespace {
     }
 
     std::optional<ChangedSpan> ChangedByteRange(const ITextStorage& oldStorage, const ITextStorage& newStorage) {
-        const std::size_t oldLen = oldStorage.ByteLength();
-        const std::size_t newLen = newStorage.ByteLength();
+        const std::size_t oldLen    = oldStorage.ByteLength();
+        const std::size_t newLen    = newStorage.ByteLength();
         const std::size_t maxCommon = std::min(oldLen, newLen);
 
         const std::size_t prefix = CommonPrefixLength(oldStorage, newStorage);
@@ -815,7 +821,7 @@ void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding) 
     if (detectedEnding) {
         LineEnding_ = *detectedEnding;
     }
-    Loading_       = false;
+    Loading_ = false;
     LoadProgress_.reset();
     ++ContentGeneration_;
     // Stat-after-read here, unlike FromFile's stat-before -- the async
@@ -850,9 +856,9 @@ void Buffer::AppendHugeLoadChunk(PieceTable fragment) {
 }
 
 void Buffer::FinishHugeLoad() {
-    ReadOnly_      = false; // undoes MarkLoading(false)'s no-op here, but mirrors FinishLoad's own unconditional reset
-    LineEnding_    = LineEnding::LF; // always true for this path -- see FromHugeFile's own doc comment
-    Loading_       = false;
+    ReadOnly_   = false;          // undoes MarkLoading(false)'s no-op here, but mirrors FinishLoad's own unconditional reset
+    LineEnding_ = LineEnding::LF; // always true for this path -- see FromHugeFile's own doc comment
+    Loading_    = false;
     LoadProgress_.reset();
     ++ContentGeneration_;
     CaptureDiskTimestamp();
@@ -865,9 +871,9 @@ void Buffer::FinishHugeLoad() {
         const DiskSpaceCheck check = CheckFreeSpaceForSave(*Path_, Storage_->ByteLength(), HugeFileMinFreeSpaceMultiplier());
         if (!check.sufficient) {
             SetReadOnly(true, "not enough free disk space to safely save this file (need ~" +
-                                   FormatBytesHuman(check.requiredBytes) + " free, ~" +
-                                   FormatBytesHuman(check.availableBytes) +
-                                   " available) -- run toggle-read-only to edit anyway");
+                                  FormatBytesHuman(check.requiredBytes) + " free, ~" +
+                                  FormatBytesHuman(check.availableBytes) +
+                                  " available) -- run toggle-read-only to edit anyway");
         }
     }
 }
@@ -937,7 +943,7 @@ std::size_t Buffer::MergeExternalChanges() {
     const text::MergeResult result = text::ThreeWayMerge(base, ours, theirs);
 
     Storage_ = std::make_unique<RopeStorage>(Rope(result.mergedText));
-    Point_ = SnapToGraphemeBoundary(*Storage_, std::min(result.firstConflictOffset.value_or(Point_), Storage_->ByteLength()));
+    Point_   = SnapToGraphemeBoundary(*Storage_, std::min(result.firstConflictOffset.value_or(Point_), Storage_->ByteLength()));
     Mark_.reset();
     SecondaryCursors_.clear();
     AddedCursorOrder_.clear();
@@ -1010,7 +1016,7 @@ bool Buffer::HasConflictMarkers() const {
 
 void Buffer::RestoreContent(std::string_view content) {
     Storage_ = std::make_unique<RopeStorage>(Rope(content));
-    Point_ = SnapToGraphemeBoundary(*Storage_, std::min(Point_, Storage_->ByteLength()));
+    Point_   = SnapToGraphemeBoundary(*Storage_, std::min(Point_, Storage_->ByteLength()));
     Mark_.reset();
     SecondaryCursors_.clear();
     AddedCursorOrder_.clear();
@@ -1516,7 +1522,7 @@ void Buffer::MarkExcerptRangeCommitted(std::size_t start, std::size_t end, std::
                                        std::size_t newSourceStart, std::size_t newSourceEnd) {
     for (ExcerptRange& range : ExcerptRanges_) {
         if (range.start == start && range.end == end) {
-            range.originalText   = std::move(newOriginalText);
+            range.originalText    = std::move(newOriginalText);
             range.sourceStartByte = newSourceStart;
             range.sourceEndByte   = newSourceEnd;
             return;
@@ -1706,7 +1712,7 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
         return {};
     }
     std::string deleted = Storage_->Substring(byteOffset, byteLength);
-    Storage_             = Storage_->Erased(byteOffset, byteLength);
+    Storage_            = Storage_->Erased(byteOffset, byteLength);
 
     Point_ = RelocateForDelete(Point_, byteOffset, rangeEnd);
     if (Mark_) {

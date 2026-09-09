@@ -4,7 +4,8 @@
 
 namespace ned::editor {
 
-PromptHistory::PromptHistory(std::size_t capacityPerKind) : capacityPerKind_(capacityPerKind) {}
+PromptHistory::PromptHistory(std::size_t capacityPerKind) : capacityPerKind_(capacityPerKind) {
+}
 
 void PromptHistory::Record(std::string_view key, std::string entry) {
     if (entry.empty()) {

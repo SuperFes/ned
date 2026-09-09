@@ -91,13 +91,13 @@ TEST_CASE("VcsPanel groups files into staged/unstaged/untracked sections, each a
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
 
     panel.DispatchVcsStatusForTesting({
-        {"M ", "a.txt"    },
+        {"M ", "a.txt"},
         {" M", "sub/b.txt"},
-        {"??", "c.txt"    },
+        {"??", "c.txt"},
     });
 
     // Directories start collapsed (ProjectSidebar's own convention) --
@@ -131,7 +131,7 @@ TEST_CASE("A left or right press anywhere in the widget takes keyboard focus", "
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
 
     // A wheel event never grabs focus.
@@ -154,7 +154,7 @@ TEST_CASE("Clicking a section header collapses it, hiding its rows without touch
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
 
     panel.DispatchVcsStatusForTesting({
@@ -186,7 +186,7 @@ TEST_CASE("Space marks/unmarks the focused file for batch selection", "[VcsPanel
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
@@ -207,11 +207,13 @@ TEST_CASE("Space marks/unmarks the focused file for batch selection", "[VcsPanel
 }
 
 TEST_CASE("Clicking the checkbox glyph toggles selection; clicking elsewhere on the row opens the file",
-         "[VcsPanel]") {
+          "[VcsPanel]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_select_mouse";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
-    { std::ofstream(dir / "a.txt") << "hello"; }
+    {
+        std::ofstream(dir / "a.txt") << "hello";
+    }
     const CurrentPathGuard cwdGuard(dir);
 
     ned::text::BufferList list;
@@ -219,7 +221,7 @@ TEST_CASE("Clicking the checkbox glyph toggles selection; clicking elsewhere on 
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
@@ -254,7 +256,7 @@ TEST_CASE("Staging with no VcsRunner configured reports an error rather than cra
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
@@ -270,7 +272,7 @@ TEST_CASE("Staging with no VcsRunner configured reports an error rather than cra
 }
 
 TEST_CASE("Staging targets the selection set when non-empty, else falls back to the focused row", "[VcsPanel]") {
-    RegistryResetGuard guard;
+    RegistryResetGuard          guard;
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_stage_targets";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -285,7 +287,7 @@ TEST_CASE("Staging targets the selection set when non-empty, else falls back to 
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
     panel.SetVcsRunner(&runner);
     panel.DispatchVcsStatusForTesting({
@@ -293,7 +295,7 @@ TEST_CASE("Staging targets the selection set when non-empty, else falls back to 
         {"M ", "b.txt"},
     });
     panel.TakeFocus();
-    panel.OnEvent(ned::ui::test::ArrowDown()); // a.txt
+    panel.OnEvent(ned::ui::test::ArrowDown());    // a.txt
     panel.OnEvent(ned::ui::test::Character(' ')); // mark a.txt only
 
     panel.OnEvent(ned::ui::test::Character('a')); // stage -- ThrowingProvider's StageArgv default-throws synchronously
@@ -319,7 +321,7 @@ TEST_CASE("'c'/'w'/'n' fire SetOnAction with Commit/SwitchBranch/CreateBranch an
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
 
     std::vector<ned::ui::VcsPanelAction> firedActions;
@@ -353,7 +355,9 @@ TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jump
         std::ofstream out(dir / "a.txt");
         out << "line one\n<<<<<<< buffer\nours\n=======\ntheirs\n>>>>>>> disk\nline two\n";
     }
-    { std::ofstream(dir / "clean.txt") << "no conflict here\n"; }
+    {
+        std::ofstream(dir / "clean.txt") << "no conflict here\n";
+    }
     const CurrentPathGuard cwdGuard(dir);
 
     ned::text::BufferList list;
@@ -361,10 +365,10 @@ TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jump
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
     panel.DispatchVcsStatusForTesting({
-        {" M", "a.txt"    },
+        {" M", "a.txt"},
         {" M", "clean.txt"},
     });
     // DispatchVcsStatusForTesting only builds sections_ (ProjectSidebar's
@@ -396,7 +400,7 @@ TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jump
 }
 
 TEST_CASE("'x' enters a discard/revert confirm state that only 'y' actually confirms", "[VcsPanel]") {
-    RegistryResetGuard guard;
+    RegistryResetGuard          guard;
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_revert_confirm";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -411,7 +415,7 @@ TEST_CASE("'x' enters a discard/revert confirm state that only 'y' actually conf
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 50, 12); // wide enough for the confirm prompt's own text
     panel.SetVcsRunner(&runner);
     panel.DispatchVcsStatusForTesting({
@@ -446,7 +450,7 @@ TEST_CASE("'x' enters a discard/revert confirm state that only 'y' actually conf
 }
 
 TEST_CASE("Stash section is hidden when empty and shows entries when not, with push/pop/drop wired", "[VcsPanel]") {
-    RegistryResetGuard guard;
+    RegistryResetGuard          guard;
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_stash";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -461,7 +465,7 @@ TEST_CASE("Stash section is hidden when empty and shows entries when not, with p
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 40, 12);
     panel.SetVcsRunner(&runner);
 
@@ -504,7 +508,7 @@ TEST_CASE("Stash section is hidden when empty and shows entries when not, with p
 }
 
 TEST_CASE("'f'/'F'/'P' fire fetch/pull/push", "[VcsPanel]") {
-    RegistryResetGuard guard;
+    RegistryResetGuard          guard;
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_remote_actions";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -519,7 +523,7 @@ TEST_CASE("'f'/'F'/'P' fire fetch/pull/push", "[VcsPanel]") {
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 40, 12);
     panel.SetVcsRunner(&runner);
     panel.TakeFocus();
@@ -538,7 +542,6 @@ TEST_CASE("'f'/'F'/'P' fire fetch/pull/push", "[VcsPanel]") {
     std::filesystem::remove_all(dir);
 }
 
-
 TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_sticky_header";
     std::filesystem::remove_all(dir);
@@ -550,7 +553,7 @@ TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 6); // contentHeight == 4 (6 - border top/bottom - kHeaderHeight)
 
     // Rows: "Staged (5)" header, a..e.txt (5 files), "Unstaged (0)" header,
@@ -608,15 +611,15 @@ TEST_CASE("Right-click reports the target row and never toggles/opens it", "[Vcs
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
 
     // Rows: 0 border, 1 "Staged (1)", 2 a.txt, 3 "Unstaged (1)", 4 sub/
     // (collapsed dir), 5 "Untracked (1)", 6 c.txt.
     panel.DispatchVcsStatusForTesting({
-        {"M ", "a.txt"    },
+        {"M ", "a.txt"},
         {" M", "sub/b.txt"},
-        {"??", "c.txt"    },
+        {"??", "c.txt"},
     });
 
     std::vector<ned::ui::VcsPanelContextMenuTarget> requested;
@@ -673,7 +676,7 @@ TEST_CASE("Right-click on a stash row reports a StashEntry target", "[VcsPanel]"
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
     panel.DispatchStashesForTesting({
         {"stash@{0}", "WIP on main: a test stash"},
@@ -696,7 +699,7 @@ TEST_CASE("Right-click on a stash row reports a StashEntry target", "[VcsPanel]"
 
 TEST_CASE("RequestStageOrUnstage/RequestDiscardConfirm/PopStash/DropStash act on an explicit path/ref",
           "[VcsPanel]") {
-    RegistryResetGuard guard;
+    RegistryResetGuard          guard;
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_context_menu_actions";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -707,7 +710,7 @@ TEST_CASE("RequestStageOrUnstage/RequestDiscardConfirm/PopStash/DropStash act on
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 50, 12);
 
     // No VcsRunner yet -- same "report, don't crash" guard the keyboard path uses.
@@ -758,7 +761,9 @@ TEST_CASE("OpenFileEntry opens the given path without requiring focus", "[VcsPan
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_open_file_entry";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
-    { std::ofstream(dir / "a.txt") << "hello\n"; }
+    {
+        std::ofstream(dir / "a.txt") << "hello\n";
+    }
     const CurrentPathGuard cwdGuard(dir);
 
     ned::text::BufferList list;
@@ -766,7 +771,7 @@ TEST_CASE("OpenFileEntry opens the given path without requiring focus", "[VcsPan
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 12);
 
     panel.OpenFileEntry(dir / "a.txt");
@@ -781,8 +786,8 @@ TEST_CASE("Collapsing the dock while this panel is focused hands focus back via 
     ned::ui::ActiveBuffer activeBuffer(scratch);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    ned::ui::LeftDock      dock(theme);
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::LeftDock     dock(theme);
     dock.AddPanel(U'V', "VCS", panel);
 
     bool focusReturned = false;

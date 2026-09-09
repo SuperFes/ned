@@ -65,7 +65,7 @@ enum class PairAction {
     InsertPlain,        // ordinary self-insert, no pairing involved
     InsertPair,         // insert typed char + its matching close, point lands between them
     SkipOver,           // move point past the already-present matching close instead of inserting
-    WrapSelection,       // insert typed char before the region and its close after, point/mark cleared
+    WrapSelection,      // insert typed char before the region and its close after, point/mark cleared
     DeleteAdjacentPair, // backward-delete-char should remove both neighbors, not just the one before point
 };
 

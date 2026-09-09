@@ -8,19 +8,19 @@ namespace ned::editor {
 
 namespace {
 
-bool IsWordChar(char c) {
-    return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
-}
+    bool IsWordChar(char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+    }
 
-struct Match {
-    std::size_t start;
-    std::string text;
-};
+    struct Match {
+        std::size_t start;
+        std::string text;
+    };
 
 } // namespace
 
 std::vector<std::string> CollectDabbrevCandidates(std::string_view content, std::size_t point, std::string_view prefix,
-                                                    std::size_t maxCandidates) {
+                                                  std::size_t maxCandidates) {
     if (prefix.empty() || maxCandidates == 0) {
         return {};
     }
@@ -46,7 +46,8 @@ std::vector<std::string> CollectDabbrevCandidates(std::string_view content, std:
         if (wordLength > prefix.size() && content.compare(start, prefix.size(), prefix) == 0) {
             if (start < point) {
                 before.push_back({start, std::string(content.substr(start, wordLength))});
-            } else if (start > point) {
+            }
+            else if (start > point) {
                 after.push_back({start, std::string(content.substr(start, wordLength))});
             }
         }

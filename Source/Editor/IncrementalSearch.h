@@ -31,7 +31,8 @@ namespace ned::editor {
 
 class IncrementalSearch {
   public:
-    enum class Direction { Forward, Backward };
+    enum class Direction { Forward,
+                           Backward };
 
     IncrementalSearch(text::Buffer& buffer, Direction direction);
 
@@ -64,15 +65,15 @@ class IncrementalSearch {
     void Cancel(); // restore the original point, end the session
 
     [[nodiscard]] const std::string& Query() const;
-    [[nodiscard]] bool                Found() const;
+    [[nodiscard]] bool               Found() const;
     // "I-search: query" / "Failing I-search: query" (backward prepends "Backward").
-    [[nodiscard]] std::string         StatusText() const;
+    [[nodiscard]] std::string StatusText() const;
     // StatusText()'s own prefix, everything up to but not including the
     // query itself -- split out so a caller that wants to render the query
     // with its own byte-range styling (partial-match-highlighting follow-up:
     // the UI layer distinguishing a failing query's still-matching prefix
     // from the rest) doesn't have to duplicate this format string.
-    [[nodiscard]] std::string         StatusLabel() const;
+    [[nodiscard]] std::string StatusLabel() const;
 
     // Byte length of the longest prefix of Query() that still matches
     // somewhere in the buffer -- Query().size() itself whenever Found() is
@@ -84,7 +85,7 @@ class IncrementalSearch {
     // matching the existing reduced-feature-set precedent (SearchHuge()'s
     // own header comment): a caller sees "no shorter prefix info available"
     // and falls back to its plain, whole-query rendering.
-    [[nodiscard]] std::size_t         MatchedPrefixLength() const;
+    [[nodiscard]] std::size_t MatchedPrefixLength() const;
 
   private:
     void Search(std::size_t from);
@@ -103,12 +104,12 @@ class IncrementalSearch {
 
     text::Buffer& buffer_;
     Direction     direction_;
-    bool          huge_; // buffer_.Content().IsHuge(), cached -- decided once, at construction
+    bool          huge_;         // buffer_.Content().IsHuge(), cached -- decided once, at construction
     std::string   content_;      // buffer text, materialized once; empty when huge_
     std::string   contentLower_; // ASCII-lowercased content_, for case-insensitive matching; empty when huge_
     std::string   query_;
     std::size_t   originalPoint_;
-    bool          found_ = true;
+    bool          found_               = true;
     std::size_t   matchedPrefixLength_ = 0; // see MatchedPrefixLength()'s own doc comment
 };
 

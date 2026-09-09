@@ -364,11 +364,11 @@ TEST_CASE("CMode also gets the richer query -- an access specifier isn't valid C
 
 TEST_CASE("CppMode's lineInspect (Tier 2) finds identifiers and compound sub-expressions, deepest-in first",
           "[Mode]") {
-    const auto              mode = CppMode();
-    const std::string_view  text = "void f() {\n    total = price * qty + a.b.c[i];\n}\n";
-    const std::size_t       lineStart = text.find("total");
-    const std::size_t       lineEnd   = text.find(';', lineStart);
-    const auto candidates = mode.lineInspect(text, lineStart, lineEnd);
+    const auto             mode       = CppMode();
+    const std::string_view text       = "void f() {\n    total = price * qty + a.b.c[i];\n}\n";
+    const std::size_t      lineStart  = text.find("total");
+    const std::size_t      lineEnd    = text.find(';', lineStart);
+    const auto             candidates = mode.lineInspect(text, lineStart, lineEnd);
 
     // Bare identifiers -- Tier 1's own default, still present under Tier 2.
     REQUIRE(HasLineInspectRange(candidates, text, "total"));
@@ -386,10 +386,10 @@ TEST_CASE("CppMode's lineInspect (Tier 2) finds identifiers and compound sub-exp
 }
 
 TEST_CASE("CMode's lineInspect (Tier 2) works the same as CppMode's for plain C expressions", "[Mode]") {
-    const auto             mode      = CMode();
-    const std::string_view text      = "void f(void) {\n    total = a.b[i];\n}\n";
-    const std::size_t      lineStart = text.find("total");
-    const std::size_t      lineEnd   = text.find(';', lineStart);
+    const auto             mode       = CMode();
+    const std::string_view text       = "void f(void) {\n    total = a.b[i];\n}\n";
+    const std::size_t      lineStart  = text.find("total");
+    const std::size_t      lineEnd    = text.find(';', lineStart);
     const auto             candidates = mode.lineInspect(text, lineStart, lineEnd);
 
     REQUIRE(HasLineInspectRange(candidates, text, "total"));
@@ -399,9 +399,9 @@ TEST_CASE("CMode's lineInspect (Tier 2) works the same as CppMode's for plain C 
 
 TEST_CASE("PythonMode's lineInspect (Tier 1 only) finds identifiers but not the compound expression around them",
           "[Mode]") {
-    const auto             mode      = PythonMode();
-    const std::string_view text      = "total = price * qty\n";
-    const std::size_t      lineEnd   = text.find('\n');
+    const auto             mode       = PythonMode();
+    const std::string_view text       = "total = price * qty\n";
+    const std::size_t      lineEnd    = text.find('\n');
     const auto             candidates = mode.lineInspect(text, 0, lineEnd);
 
     REQUIRE(HasLineInspectRange(candidates, text, "total"));
@@ -411,9 +411,9 @@ TEST_CASE("PythonMode's lineInspect (Tier 1 only) finds identifiers but not the 
 }
 
 TEST_CASE("lineInspect returns nothing for a line with no identifiers on it", "[Mode]") {
-    const auto             mode      = CppMode();
-    const std::string_view text      = "void f() {\n    ;\n}\n";
-    const std::size_t      lineStart = text.find(';');
+    const auto             mode       = CppMode();
+    const std::string_view text       = "void f() {\n    ;\n}\n";
+    const std::size_t      lineStart  = text.find(';');
     const auto             candidates = mode.lineInspect(text, lineStart, lineStart + 1);
     REQUIRE(candidates.empty());
 }
@@ -425,9 +425,9 @@ TEST_CASE("lineInspect caps its result count on a dense line", "[Mode]") {
         text += " + a" + std::to_string(i);
     }
     text += ";\n}\n";
-    const std::size_t lineStart = text.find("a0");
-    const std::size_t lineEnd   = text.find(';', lineStart);
-    const auto         candidates = mode.lineInspect(text, lineStart, lineEnd);
+    const std::size_t lineStart  = text.find("a0");
+    const std::size_t lineEnd    = text.find(';', lineStart);
+    const auto        candidates = mode.lineInspect(text, lineStart, lineEnd);
     REQUIRE(candidates.size() == ned::editor::kMaxLineInspectExpressions);
 }
 
@@ -1035,9 +1035,9 @@ TEST_CASE("PythonMode's symbolKind classifies a function definition and a class 
 // these lock in that the definition's *whole* range is captured (not just
 // the identifier) and that the name text matches the identifier exactly.
 TEST_CASE("CMode's symbolKind captures each definition's full range and name", "[Mode]") {
-    const auto mode = CMode();
-    const std::string source = "int add(int a, int b) { return a + b; }\n";
-    const auto markers = mode.symbolKind(source);
+    const auto        mode    = CMode();
+    const std::string source  = "int add(int a, int b) { return a + b; }\n";
+    const auto        markers = mode.symbolKind(source);
     REQUIRE(markers.size() == 1);
     REQUIRE(markers[0].name == "add");
     REQUIRE(markers[0].startByte == 0);
@@ -1047,7 +1047,7 @@ TEST_CASE("CMode's symbolKind captures each definition's full range and name", "
 
 TEST_CASE("CppMode's symbolKind classifies a namespace definition distinctly from a class", "[Mode]") {
     using ned::editor::SymbolKind;
-    const auto mode = CppMode();
+    const auto mode    = CppMode();
     const auto markers = mode.symbolKind("namespace outer {\nnamespace inner {\nclass Widget {};\n}\n}\n");
     REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::Namespace, SymbolKind::Namespace, SymbolKind::TypeLike});
     REQUIRE(markers[0].name == "outer");
@@ -1077,9 +1077,9 @@ TEST_CASE("CppMode's symbolKind ranges nest properly -- a method's range sits in
 TEST_CASE("MarkdownMode's symbolKind synthesizes one marker per heading, properly nested by level",
           "[Mode]") {
     using ned::editor::SymbolKind;
-    const auto mode   = MarkdownMode();
+    const auto mode = MarkdownMode();
     REQUIRE(static_cast<bool>(mode.symbolKind));
-    const std::string source = "# H1\nintro\n## H2a\nbody a\n## H2b\nbody b\n# H1b\ntail\n";
+    const std::string source  = "# H1\nintro\n## H2a\nbody a\n## H2b\nbody b\n# H1b\ntail\n";
     const auto        markers = mode.symbolKind(source);
 
     // main-editor-sticky-scroll-markdown follow-up: every heading, of any
@@ -1111,8 +1111,8 @@ TEST_CASE("MarkdownMode's symbolKind synthesizes one marker per heading, properl
 
 TEST_CASE("MarkdownMode's symbolKind ignores a '#' that isn't a real heading (inside a fenced code block)",
           "[Mode]") {
-    const auto        mode   = MarkdownMode();
-    const std::string source = "# Real\n```\n# not a heading\n```\n";
+    const auto        mode    = MarkdownMode();
+    const std::string source  = "# Real\n```\n# not a heading\n```\n";
     const auto        markers = mode.symbolKind(source);
     REQUIRE(markers.size() == 1);
     REQUIRE(markers[0].startByte == 0);
@@ -1122,7 +1122,7 @@ TEST_CASE("OrgMode's symbolKind synthesizes one marker per headline, properly ne
     using ned::editor::SymbolKind;
     const auto mode = OrgMode();
     REQUIRE(static_cast<bool>(mode.symbolKind));
-    const std::string source = "* H1\nintro\n** H2a\nbody a\n** H2b\nbody b\n* H1b\ntail\n";
+    const std::string source  = "* H1\nintro\n** H2a\nbody a\n** H2b\nbody b\n* H1b\ntail\n";
     const auto        markers = mode.symbolKind(source);
 
     REQUIRE(KindsInOrder(markers) ==
@@ -1146,8 +1146,8 @@ TEST_CASE("OrgMode's symbolKind synthesizes one marker per headline, properly ne
 
 TEST_CASE("OrgMode's symbolKind doesn't mistake an indented '* not a headline' list item for a real headline",
           "[Mode]") {
-    const auto        mode   = OrgMode();
-    const std::string source = "* Real\n  * not a headline\n";
+    const auto        mode    = OrgMode();
+    const std::string source  = "* Real\n  * not a headline\n";
     const auto        markers = mode.symbolKind(source);
     REQUIRE(markers.size() == 1);
     REQUIRE(markers[0].startByte == 0);

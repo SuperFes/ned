@@ -18,7 +18,7 @@ TEST_CASE("BytePositionToLsp/LspPositionToByte round-trip over plain ASCII", "[L
 
     // Byte offset of 's' in "second" -- line 1, column 0.
     const std::size_t byteOffset = content.LineToByteOffset(1);
-    const LspPosition position  = BytePositionToLsp(content, byteOffset);
+    const LspPosition position   = BytePositionToLsp(content, byteOffset);
     REQUIRE(position.line == 1);
     REQUIRE(position.character == 0);
     REQUIRE(LspPositionToByte(content, position) == byteOffset);

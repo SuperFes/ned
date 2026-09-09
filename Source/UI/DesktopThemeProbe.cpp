@@ -111,8 +111,8 @@ namespace {
     // "r,g,b" (KDE's own on-disk color format, plain decimal, no spaces
     // required around the commas) -> Color. nullopt on anything else.
     std::optional<Color> ParseKdeRgbTriplet(std::string_view value) {
-        int                    channel[3] = {0, 0, 0};
-        std::size_t            start      = 0;
+        int         channel[3] = {0, 0, 0};
+        std::size_t start      = 0;
         for (int i = 0; i < 3; ++i) {
             const std::size_t comma = (i < 2) ? value.find(',', start) : value.size();
             if (comma == std::string_view::npos) {
@@ -131,7 +131,7 @@ namespace {
             }
         }
         return Color::RGB(static_cast<std::uint8_t>(channel[0]), static_cast<std::uint8_t>(channel[1]),
-                           static_cast<std::uint8_t>(channel[2]));
+                          static_cast<std::uint8_t>(channel[2]));
     }
 
     // GNOME/Adwaita's fixed accent palette (libadwaita's AdwAccentColor
@@ -139,10 +139,14 @@ namespace {
     // org.gnome.desktop.interface accent-color` can ever return.
     std::optional<Color> GnomeAccentTable(std::string_view name) {
         static const std::pair<std::string_view, Color> kTable[] = {
-            {"blue", Color::RGB(0x35, 0x84, 0xe4)},   {"teal", Color::RGB(0x21, 0x90, 0xa4)},
-            {"green", Color::RGB(0x3a, 0x94, 0x4a)},  {"yellow", Color::RGB(0xc8, 0x88, 0x00)},
-            {"orange", Color::RGB(0xed, 0x5b, 0x00)}, {"red", Color::RGB(0xe6, 0x2d, 0x42)},
-            {"pink", Color::RGB(0xd5, 0x61, 0x99)},   {"purple", Color::RGB(0x91, 0x41, 0xac)},
+            {"blue", Color::RGB(0x35, 0x84, 0xe4)},
+            {"teal", Color::RGB(0x21, 0x90, 0xa4)},
+            {"green", Color::RGB(0x3a, 0x94, 0x4a)},
+            {"yellow", Color::RGB(0xc8, 0x88, 0x00)},
+            {"orange", Color::RGB(0xed, 0x5b, 0x00)},
+            {"red", Color::RGB(0xe6, 0x2d, 0x42)},
+            {"pink", Color::RGB(0xd5, 0x61, 0x99)},
+            {"purple", Color::RGB(0x91, 0x41, 0xac)},
             {"slate", Color::RGB(0x6f, 0x83, 0x96)},
         };
         for (const auto& [candidate, color] : kTable) {
@@ -200,8 +204,8 @@ namespace {
                     std::string(key)};
         }
         else {
-            argv = {"busctl",       "--user", "call", "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
-                     "org.freedesktop.portal.Settings", "Read", "ss", std::string(namespaceName), std::string(key)};
+            argv = {"busctl", "--user", "call", "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                    "org.freedesktop.portal.Settings", "Read", "ss", std::string(namespaceName), std::string(key)};
         }
         return RunCapturingStdout(argv);
     }
@@ -212,7 +216,7 @@ std::optional<bool> ParsePortalColorScheme(std::string_view reply) {
     // gdbus: "<uint32 1>"; busctl: "u 1" -- both reduce to one
     // unambiguously-labeled integer token.
     static const std::regex kPattern(R"((?:uint32|\bu\b)\s+(\d+))");
-    std::cmatch              match;
+    std::cmatch             match;
     if (!std::regex_search(reply.data(), reply.data() + reply.size(), match, kPattern)) {
         return std::nullopt;
     }

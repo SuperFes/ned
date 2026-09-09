@@ -24,25 +24,25 @@ using ned::editor::lsp::TryConnectToBroker;
 
 namespace {
 
-    // A unique path per test run under /tmp -- short enough to stay well
-    // under sockaddr_un's sun_path limit even on a deep CI tmpdir, unlike
-    // this codebase's usual scratchpad convention.
-    std::filesystem::path UniqueSocketPath() {
-        return std::filesystem::path("/tmp") / ("ned-broker-connect-test-" + std::to_string(::getpid()) + ".sock");
-    }
+// A unique path per test run under /tmp -- short enough to stay well
+// under sockaddr_un's sun_path limit even on a deep CI tmpdir, unlike
+// this codebase's usual scratchpad convention.
+std::filesystem::path UniqueSocketPath() {
+    return std::filesystem::path("/tmp") / ("ned-broker-connect-test-" + std::to_string(::getpid()) + ".sock");
+}
 
-    // Same "real Notcurses context, scoped tightly to one TEST_CASE, never
-    // shared process-wide" reasoning LspClientTest.cpp's own ClientFixture
-    // documents -- see that file's header comment for why.
-    struct EventLoopFixture {
-        ned::ui::EventLoop eventLoop;
-    };
+// Same "real Notcurses context, scoped tightly to one TEST_CASE, never
+// shared process-wide" reasoning LspClientTest.cpp's own ClientFixture
+// documents -- see that file's header comment for why.
+struct EventLoopFixture {
+    ned::ui::EventLoop eventLoop;
+};
 
 } // namespace
 
 TEST_CASE("TryConnectToBroker returns nullptr when nothing is listening", "[LspBrokerConnect]") {
     EventLoopFixture fixture;
-    const auto        result = TryConnectToBroker("/some/project", "cpp", {"clangd"}, fixture.eventLoop, UniqueSocketPath());
+    const auto       result = TryConnectToBroker("/some/project", "cpp", {"clangd"}, fixture.eventLoop, UniqueSocketPath());
     REQUIRE(result == nullptr);
 }
 
@@ -64,9 +64,9 @@ TEST_CASE("TryConnectToBroker attaches over a real socket and sends a well-forme
         if (clientFd < 0) {
             return;
         }
-        const int      dupFd = ::dup(clientFd);
-        Transport      transport(clientFd, dupFd, -1);
-        const auto     frameText = transport.ReadFrame();
+        const int  dupFd = ::dup(clientFd);
+        Transport  transport(clientFd, dupFd, -1);
+        const auto frameText = transport.ReadFrame();
         if (!frameText) {
             return;
         }
@@ -88,7 +88,7 @@ TEST_CASE("TryConnectToBroker attaches over a real socket and sends a well-forme
     });
 
     EventLoopFixture fixture;
-    auto              result = TryConnectToBroker("/some/project", "cpp", {"clangd", "--foo"}, fixture.eventLoop, socketPath);
+    auto             result = TryConnectToBroker("/some/project", "cpp", {"clangd", "--foo"}, fixture.eventLoop, socketPath);
     REQUIRE(result != nullptr);
 
     fakeBroker.join();

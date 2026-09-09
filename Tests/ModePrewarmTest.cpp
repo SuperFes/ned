@@ -47,8 +47,8 @@ TEST_CASE("BuildWarmModeForPath skips the highlight/fold warm-up past MaxHighlig
 
 TEST_CASE("ModePrewarmer::ApplyPrewarmedMode installs the built Mode for a still-open buffer", "[ModePrewarm]") {
     ned::text::BufferList bufferList;
-    ned::ui::EventLoop     eventLoop;
-    ModePrewarmer          prewarmer(bufferList, eventLoop);
+    ned::ui::EventLoop    eventLoop;
+    ModePrewarmer         prewarmer(bufferList, eventLoop);
 
     ned::text::Buffer& buffer = bufferList.OpenOrCreateFile("/some/path/apply-test.apply-test-ext");
 
@@ -63,8 +63,8 @@ TEST_CASE("ModePrewarmer::ApplyPrewarmedMode installs the built Mode for a still
 TEST_CASE("ModePrewarmer::ApplyPrewarmedMode is a safe no-op for a buffer name that's no longer open",
           "[ModePrewarm]") {
     ned::text::BufferList bufferList;
-    ned::ui::EventLoop     eventLoop;
-    ModePrewarmer          prewarmer(bufferList, eventLoop);
+    ned::ui::EventLoop    eventLoop;
+    ModePrewarmer         prewarmer(bufferList, eventLoop);
 
     ned::editor::Mode fake;
     fake.name = "fake-orphaned-mode";
@@ -76,8 +76,8 @@ TEST_CASE("ModePrewarmer::ApplyPrewarmedMode is a safe no-op for a buffer name t
 
 TEST_CASE("ModePrewarmer::Prewarm is a no-op for a buffer with no path", "[ModePrewarm]") {
     ned::text::BufferList bufferList;
-    ned::ui::EventLoop     eventLoop;
-    ModePrewarmer          prewarmer(bufferList, eventLoop);
+    ned::ui::EventLoop    eventLoop;
+    ModePrewarmer         prewarmer(bufferList, eventLoop);
 
     ned::text::Buffer& scratch = bufferList.CreateBuffer("prewarm-scratch-test");
     REQUIRE_FALSE(scratch.Path().has_value());

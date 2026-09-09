@@ -91,7 +91,7 @@ int main() {
     Progress("render #1 done (banner)");
 
     const ncpixelimpl_e impl = notcurses_check_pixel_support(nc);
-    char line[256];
+    char                line[256];
     std::snprintf(line, sizeof(line), "Detected pixel implementation: %s", PixelImplName(impl));
     ncplane_putstr_yx(std_plane, y++, 2, line);
     y += 2;
@@ -110,8 +110,8 @@ int main() {
         // pixels each (R,G,B,A byte order in memory, not a packed native-
         // endian uint32) -- built as raw bytes to match that exactly rather
         // than risk an endianness-dependent packed-int layout.
-        constexpr int width  = 160;
-        constexpr int height = 80;
+        constexpr int             width  = 160;
+        constexpr int             height = 80;
         std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
         for (int py = 0; py < height; ++py) {
             for (int px = 0; px < width; ++px) {
@@ -124,10 +124,10 @@ int main() {
                     b = static_cast<std::uint8_t>(b / 2);
                 }
                 const std::size_t idx = (static_cast<std::size_t>(py) * width + px) * 4;
-                pixels[idx + 0]        = r;
-                pixels[idx + 1]        = g;
-                pixels[idx + 2]        = b;
-                pixels[idx + 3]        = 255; // fully opaque
+                pixels[idx + 0]       = r;
+                pixels[idx + 1]       = g;
+                pixels[idx + 2]       = b;
+                pixels[idx + 3]       = 255; // fully opaque
             }
         }
         Progress("test image buffer built, calling ncvisual_from_rgba");

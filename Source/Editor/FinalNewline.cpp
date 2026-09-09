@@ -6,15 +6,15 @@ namespace ned::editor {
 
 namespace {
 
-std::mutex& FinalNewlineMutex() {
-    static std::mutex mutex;
-    return mutex;
-}
+    std::mutex& FinalNewlineMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
 
-bool& FinalNewlineStorage() {
-    static bool enabled = true;
-    return enabled;
-}
+    bool& FinalNewlineStorage() {
+        static bool enabled = true;
+        return enabled;
+    }
 
 } // namespace
 

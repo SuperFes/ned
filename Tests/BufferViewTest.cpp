@@ -4,8 +4,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
-#include <functional>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <string>
@@ -575,9 +575,9 @@ std::vector<ned::editor::lsp::Json> ParseConcatenatedLspFrames(const std::string
 // blocking the suite forever.
 std::vector<ned::editor::lsp::Json> ReadLspFramesUntil(int fd, const std::function<bool(const std::vector<ned::editor::lsp::Json>&)>& done,
                                                        std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
-    std::string      all;
-    char             buffer[512];
-    const auto       deadline = std::chrono::steady_clock::now() + timeout;
+    std::string                         all;
+    char                                buffer[512];
+    const auto                          deadline = std::chrono::steady_clock::now() + timeout;
     std::vector<ned::editor::lsp::Json> frames;
     while (true) {
         frames = ParseConcatenatedLspFrames(all);
@@ -1838,22 +1838,22 @@ TEST_CASE("Right-click in the content area opens the context menu and moves poin
     // Actions...) are hidden -- see the dedicated "shows the LSP-only
     // rows" test below for the connected case.
     REQUIRE(ContextMenuLabels(fixture.contextMenu) ==
-           std::vector<std::string>{"Cut", "Copy", "Paste", "Find References", "Format Buffer"});
+            std::vector<std::string>{"Cut", "Copy", "Paste", "Find References", "Format Buffer"});
 }
 
 TEST_CASE("Right-click in the content area shows the LSP-only rows once this buffer has a real connection",
           "[BufferView][ContextMenu]") {
-    Fixture                     fixture;
-    fixture.mode                        = ned::editor::CMode();
-    const std::filesystem::path path    = std::filesystem::temp_directory_path() / "ned_context_menu_lsp_gate_test.c";
-    ned::text::Buffer&          buffer  = fixture.bufferList.OpenOrCreateFile(path);
+    Fixture fixture;
+    fixture.mode                       = ned::editor::CMode();
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_context_menu_lsp_gate_test.c";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x;");
     fixture.activeBuffer.Set(buffer);
 
-    ned::ui::EventLoop            eventLoop;
-    ned::editor::lsp::LspManager  manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient*  client = nullptr;
-    FakeLspServer                 server = FakeLspServer::Create(manager, "c", eventLoop, client);
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "c", eventLoop, client);
 
     ned::ui::BufferView view = fixture.View();
     CaptureContextMenu(view, fixture.contextMenu);
@@ -1874,15 +1874,15 @@ TEST_CASE("Right-click in the content area shows the LSP-only rows once this buf
     // RequestContextMenuCodeActions) simply never resolves within this
     // test, leaving the menu exactly as its static rows alone would show.
     REQUIRE(ContextMenuLabels(fixture.contextMenu) ==
-           std::vector<std::string>{"Cut", "Copy", "Paste", "Go to Definition", "Find References", "Rename Symbol",
-                                    "Format Buffer"});
+            std::vector<std::string>{"Cut", "Copy", "Paste", "Go to Definition", "Find References", "Rename Symbol",
+                                     "Format Buffer"});
 
     std::filesystem::remove(path);
 }
 
 TEST_CASE("Right-click in the content area auto-fills real LSP quick-fixes above a divider once they arrive",
           "[BufferView][ContextMenu]") {
-    Fixture                     fixture;
+    Fixture fixture;
     fixture.mode                       = ned::editor::CMode();
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_context_menu_code_action_test.c";
     ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
@@ -1907,8 +1907,8 @@ TEST_CASE("Right-click in the content area auto-fills real LSP quick-fixes above
     view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Right)); // fires RequestContextMenuCodeActions
     REQUIRE(fixture.contextMenu.has_value());
     REQUIRE(ContextMenuLabels(fixture.contextMenu) ==
-           std::vector<std::string>{"Cut", "Copy", "Paste", "Go to Definition", "Find References", "Rename Symbol",
-                                    "Format Buffer"}); // no fixes have arrived yet
+            std::vector<std::string>{"Cut", "Copy", "Paste", "Go to Definition", "Find References", "Rename Symbol",
+                                     "Format Buffer"}); // no fixes have arrived yet
 
     // didOpen and an unconditional per-Paint() inlayHint request both land
     // ahead of the codeAction request my right-click fires, and codeLens
@@ -1916,8 +1916,8 @@ TEST_CASE("Right-click in the content area auto-fills real LSP quick-fixes above
     // the burst is nondeterministic, so wait for codeAction by method rather
     // than reading a fixed frame count (see ReadLspFrameWithMethod's own doc
     // comment, which this test's own intermittent failure is what produced).
-    const ned::editor::lsp::Json request = ReadLspFrameWithMethod(server.serverStdinRead, "textDocument/codeAction");
-    const ned::editor::lsp::Json  response = {
+    const ned::editor::lsp::Json request  = ReadLspFrameWithMethod(server.serverStdinRead, "textDocument/codeAction");
+    const ned::editor::lsp::Json response = {
         {"jsonrpc", "2.0"},
         {"id", request["id"]},
         {"result", ned::editor::lsp::Json::array({{{"title", "Add missing semicolon"}}, {{"title", "Insert cast"}}})},
@@ -1934,8 +1934,8 @@ TEST_CASE("Right-click in the content area auto-fills real LSP quick-fixes above
     REQUIRE(labels[1] == "Insert cast");
     REQUIRE(labels[2].find("─") == 0); // the divider row
     REQUIRE(std::vector<std::string>(labels.begin() + 3, labels.end()) ==
-           std::vector<std::string>{"Cut", "Copy", "Paste", "Go to Definition", "Find References", "Rename Symbol",
-                                    "Format Buffer"});
+            std::vector<std::string>{"Cut", "Copy", "Paste", "Go to Definition", "Find References", "Rename Symbol",
+                                     "Format Buffer"});
     // Selection landed on the first (highest-priority) live fix, and the
     // divider itself carries no "N)" ordinal -- only the real rows do.
     REQUIRE(fixture.contextMenu->selectedIndex == 0u);
@@ -2057,8 +2057,8 @@ TEST_CASE("Right-click in the gutter offers only the active gutter actions, at t
           "[BufferView][ContextMenu]") {
     Fixture fixture;
     fixture.mode = ned::editor::CMode(); // gives FoldGutterActive() a real fold query -- Org's own headline
-                                          // fold/unfold is a separate, hand-rolled mechanism (Buffer::FoldMarker
-                                          // directly), OrgMode() sets no Mode::fold query at all.
+                                         // fold/unfold is a separate, hand-rolled mechanism (Buffer::FoldMarker
+                                         // directly), OrgMode() sets no Mode::fold query at all.
     fixture.buffer.InsertAtPoint("one\ntwo\nthree\n");
 
     ned::ui::BufferView view = fixture.View();
@@ -2094,7 +2094,7 @@ TEST_CASE("Right-click in the gutter offers fold/breakpoint/blame rows once all 
 
     REQUIRE(fixture.contextMenu.has_value());
     REQUIRE(ContextMenuLabels(fixture.contextMenu) ==
-           std::vector<std::string>{"Toggle Fold", "Toggle Breakpoint", "Show Blame"});
+            std::vector<std::string>{"Toggle Fold", "Toggle Breakpoint", "Show Blame"});
 }
 
 TEST_CASE("Right-click during an unrelated modal session is not consumed", "[BufferView][ContextMenu]") {
@@ -3495,7 +3495,7 @@ TEST_CASE("dap-toggle-hex-format toggles a watch line's display format and back"
     REQUIRE_FALSE(evaluateRequest["arguments"].contains("format"));
     client->DispatchFrame(DapResponseFrame(evaluateRequest["seq"].get<int>(), "evaluate", {{"result", "2"}}));
 
-    ned::text::Buffer& debugBuffer = fixture.activeBuffer.Get();
+    ned::text::Buffer& debugBuffer   = fixture.activeBuffer.Get();
     const std::size_t  watchLineByte = debugBuffer.Text().find("1 + 1 = 2");
     REQUIRE(watchLineByte != std::string::npos);
     debugBuffer.SetPoint(watchLineByte);
@@ -3531,8 +3531,8 @@ TEST_CASE("dap-toggle-hex-format toggles a watch line's display format and back"
 }
 
 TEST_CASE("dap-line-inspect refuses when the session is not stopped", "[BufferView]") {
-    Fixture                      fixture;
-    fixture.mode                 = ned::editor::PythonMode();
+    Fixture fixture;
+    fixture.mode = ned::editor::PythonMode();
     fixture.buffer.InsertAtPoint("total = x");
     fixture.buffer.SetPoint(0);
 
@@ -3554,15 +3554,15 @@ TEST_CASE("dap-line-inspect refuses when the session is not stopped", "[BufferVi
 // already covered directly against Mode::lineInspect in ModeTest.cpp.
 TEST_CASE("dap-line-inspect evaluates every identifier on the line, highlights them, and clears on edit",
           "[BufferView]") {
-    Fixture                      fixture;
-    fixture.mode                 = ned::editor::PythonMode();
+    Fixture fixture;
+    fixture.mode = ned::editor::PythonMode();
     fixture.buffer.InsertAtPoint("total = x");
     fixture.buffer.SetPoint(0);
 
     ned::ui::EventLoop           eventLoop;
     ned::editor::dap::DapManager manager(eventLoop);
     ned::editor::dap::DapClient* client  = nullptr;
-    FakeDapAdapter                adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
 
     ned::editor::dap::SetDapLaunchConfig("bufferview-dap-line-inspect", "{}");
     manager.StartOrContinue("bufferview-dap-line-inspect");
@@ -5440,11 +5440,11 @@ TEST_CASE("CloseOtherTabs closes every unmodified buffer except the kept one", "
 }
 
 TEST_CASE("CloseOtherTabs leaves modified buffers open and reports how many were skipped", "[BufferView]") {
-    Fixture               fixture;
-    ned::text::Buffer&    a = fixture.bufferList.CreateBuffer("a");
+    Fixture            fixture;
+    ned::text::Buffer& a = fixture.bufferList.CreateBuffer("a");
     a.InsertAtPoint("x");
-    ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
-    ned::text::Buffer&    c = fixture.bufferList.CreateBuffer("c");
+    ned::text::Buffer& b = fixture.bufferList.CreateBuffer("b");
+    ned::text::Buffer& c = fixture.bufferList.CreateBuffer("c");
     c.InsertAtPoint("y");
     ned::ui::ActiveBuffer activeBuffer(b);
     ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
@@ -5459,9 +5459,9 @@ TEST_CASE("CloseOtherTabs leaves modified buffers open and reports how many were
 }
 
 TEST_CASE("CloseTabsToTheRight closes only buffers positioned after the target in list order", "[BufferView]") {
-    Fixture               fixture;
-    ned::text::Buffer&    a = fixture.bufferList.CreateBuffer("a");
-    ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
+    Fixture            fixture;
+    ned::text::Buffer& a = fixture.bufferList.CreateBuffer("a");
+    ned::text::Buffer& b = fixture.bufferList.CreateBuffer("b");
     fixture.bufferList.CreateBuffer("c");
     fixture.bufferList.CreateBuffer("d");
     ned::ui::ActiveBuffer activeBuffer(a);
@@ -5479,7 +5479,7 @@ TEST_CASE("CloseTabsToTheRight closes only buffers positioned after the target i
 }
 
 TEST_CASE("CloseTabsToTheRight on the last tab reports nothing to close", "[BufferView]") {
-    Fixture               fixture;
+    Fixture fixture;
     fixture.bufferList.CreateBuffer("a");
     ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
     ned::ui::ActiveBuffer activeBuffer(b);
@@ -5713,7 +5713,9 @@ TEST_CASE("StartRenameFileAt skips straight to the destination prompt, prefilled
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
     const std::filesystem::path source = dir / "old.txt";
-    { std::ofstream(source) << "hello"; }
+    {
+        std::ofstream(source) << "hello";
+    }
 
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
@@ -5758,7 +5760,9 @@ TEST_CASE("StartRenameFileAt reports and refuses for a path that no longer exist
 
 TEST_CASE("StartDeleteFileAt skips straight to the y/n confirmation", "[BufferView]") {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_start_delete.txt";
-    { std::ofstream(path) << "x"; }
+    {
+        std::ofstream(path) << "x";
+    }
 
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
@@ -5796,7 +5800,9 @@ TEST_CASE("StartCreateFileAt/StartCreateDirectoryAt/StartRenameFileAt/StartDelet
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
     const std::filesystem::path existing = dir / "existing.txt";
-    { std::ofstream(existing) << "x"; }
+    {
+        std::ofstream(existing) << "x";
+    }
 
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
@@ -5938,7 +5944,7 @@ TEST_CASE("C-c C-p toggles the registered project sidebar's collapse state", "[B
         fixture.theme);
     ned::ui::LeftDock dock(fixture.theme);
     dock.AddPanel(U'F', "Files", sidebar);
-    REQUIRE_FALSE(dock.Collapsed()); // starts expanded
+    REQUIRE_FALSE(dock.Collapsed());  // starts expanded
     view.SetProjectSidebar(&sidebar); // unified-left-dock follow-up (step 3): ActivateOrToggle needs both
     view.SetLeftDock(&dock);
 
@@ -6086,7 +6092,7 @@ TEST_CASE("A file dragged from ProjectSidebar and released over BufferView opens
     }
     const CurrentPathGuard cwdGuard(dir); // ProjectSidebar resolves entries against ProjectRoot()/cwd
 
-    Fixture fixture;
+    Fixture                 fixture;
     ned::ui::ProjectSidebar sidebar(
         [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
         fixture.theme);
@@ -6130,7 +6136,7 @@ TEST_CASE("Only the pane whose box actually contains the drop opens the dragged 
     }
     const CurrentPathGuard cwdGuard(dir);
 
-    Fixture fixture;
+    Fixture                 fixture;
     ned::ui::ProjectSidebar sidebar(
         [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
         fixture.theme);
@@ -6141,13 +6147,13 @@ TEST_CASE("Only the pane whose box actually contains the drop opens the dragged 
     // SplitRight layout.
     ned::ui::ActiveBuffer activeBufferA(fixture.buffer);
     ned::ui::BufferView   paneA(activeBufferA, fixture.killRing, fixture.registers, fixture.promptHistory,
-                               fixture.bufferList, fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+                                fixture.bufferList, fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
     paneA.SetProjectSidebar(&sidebar);
     paneA.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 10});
 
     ned::ui::ActiveBuffer activeBufferB(fixture.buffer);
     ned::ui::BufferView   paneB(activeBufferB, fixture.killRing, fixture.registers, fixture.promptHistory,
-                               fixture.bufferList, fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+                                fixture.bufferList, fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
     paneB.SetProjectSidebar(&sidebar);
     paneB.SetBox_(ned::ui::Box{.x_min = 20, .x_max = 39, .y_min = 0, .y_max = 10});
 
@@ -6487,7 +6493,7 @@ TEST_CASE("rename-file notifies a matching LSP server via willRenameFiles/didRen
         std::ofstream(from) << "content";
     }
 
-    Fixture                     fixture;
+    Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;
     ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
     manager.SetFileOperationFiltersForTesting("fundamental", {.willRenameGlobs = {"**/*.ts"}, .didRenameGlobs = {"**/*.ts"}});
@@ -8816,8 +8822,8 @@ TEST_CASE("C-M-i (lsp-complete) shows a completion popup from a real completion 
     REQUIRE(fixture.completion->anchor->x == static_cast<int>(GutterWidth(1)) + 2); // right after "fo"
     REQUIRE(fixture.completion->anchor->y == 1);                                    // one row below point's own row (0)
     REQUIRE(ContentRowText(screenBuf, 0, 6, 1) == "fo\xc2\xac   ");                 // the buffer row itself is untouched
-                                                                                     // ("fo" has no trailing newline, so it
-                                                                                     // carries its own "¬" end-of-buffer marker)
+                                                                                    // ("fo" has no trailing newline, so it
+                                                                                    // carries its own "¬" end-of-buffer marker)
 
     view.OnEvent(ned::ui::test::Tab());
     REQUIRE(buffer.Text() == "foobar");
@@ -8857,9 +8863,9 @@ TEST_CASE("Accepting a completion whose insertText doesn't extend the typed pref
     client->DispatchFrame(ned::editor::lsp::Json{
         {"jsonrpc", "2.0"},
         {"id", LspRequestIdFromFrame(raw)},
-        {"result", {{"isIncomplete", false},
-                    {"items", ned::editor::lsp::Json::array({{{"label", "some_count"}, {"insertText", "some_count"}}})}}},
-    }.dump());
+        {"result", {{"isIncomplete", false}, {"items", ned::editor::lsp::Json::array({{{"label", "some_count"}, {"insertText", "some_count"}}})}}},
+    }
+                              .dump());
 
     REQUIRE(fixture.completion.has_value());
     view.OnEvent(ned::ui::test::Tab());
@@ -8907,9 +8913,9 @@ TEST_CASE("A server-supplied textEdit range replaces more than the typed word", 
          {{"isIncomplete", false},
           {"items", ned::editor::lsp::Json::array(
                         {{{"label", "vector"},
-                          {"textEdit", {{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}},
-                                        {"newText", "std::vector"}}}}})}}},
-    }.dump());
+                          {"textEdit", {{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}}, {"newText", "std::vector"}}}}})}}},
+    }
+                              .dump());
 
     REQUIRE(fixture.completion.has_value());
     view.OnEvent(ned::ui::test::Tab());
@@ -8946,9 +8952,9 @@ TEST_CASE("Typing narrows a complete completion list locally, with no second req
     client->DispatchFrame(ned::editor::lsp::Json{
         {"jsonrpc", "2.0"},
         {"id", LspRequestIdFromFrame(raw)},
-        {"result", {{"isIncomplete", false},
-                    {"items", ned::editor::lsp::Json::array({{{"label", "foobar"}}, {{"label", "fizz"}}, {{"label", "food"}}})}}},
-    }.dump());
+        {"result", {{"isIncomplete", false}, {"items", ned::editor::lsp::Json::array({{{"label", "foobar"}}, {{"label", "fizz"}}, {{"label", "food"}}})}}},
+    }
+                              .dump());
 
     REQUIRE(fixture.completion.has_value());
     REQUIRE(fixture.completion->rows.size() == 3);
@@ -9009,7 +9015,8 @@ TEST_CASE("A long completion list is windowed around the selection with scroll i
         {"jsonrpc", "2.0"},
         {"id", LspRequestIdFromFrame(raw)},
         {"result", {{"isIncomplete", false}, {"items", items}}},
-    }.dump());
+    }
+                              .dump());
 
     REQUIRE(fixture.completion.has_value());
     // Windowed, not all 30 -- and with nothing above the selection yet,
@@ -9113,8 +9120,8 @@ TEST_CASE("Any other key dismisses the completion popup instead of accepting it"
     client->DispatchFrame(response.dump());
     REQUIRE(fixture.completion.has_value());
 
-    view.OnEvent(ned::ui::test::ArrowRight()); // any other key -- dismisses, doesn't accept
-    REQUIRE(buffer.Text() == "fo");            // the suggestion was never actually inserted
+    view.OnEvent(ned::ui::test::ArrowRight());     // any other key -- dismisses, doesn't accept
+    REQUIRE(buffer.Text() == "fo");                // the suggestion was never actually inserted
     REQUIRE_FALSE(fixture.completion.has_value()); // ... and the popup is hidden
 
     view.OnEvent(ned::ui::test::Tab()); // Tab now, with no popup showing, does whatever it ordinarily does (self-insert)
@@ -9768,7 +9775,7 @@ TEST_CASE("M-x lsp-document-highlight paints every reported occurrence with the 
         {"jsonrpc", "2.0"},
         {"id", LspRequestIdFromFrame(raw)},
         {"result", ned::editor::lsp::Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}}},
-                                                   {{"range", {{"start", {{"line", 0}, {"character", 6}}}, {"end", {{"line", 0}, {"character", 9}}}}}}})},
+                                                  {{"range", {{"start", {{"line", 0}, {"character", 6}}}, {"end", {{"line", 0}, {"character", 9}}}}}}})},
     };
     client->DispatchFrame(response.dump());
 
@@ -10402,8 +10409,8 @@ TEST_CASE("Typing ( inside a call auto-triggers signature help after the debounc
           "[BufferView]") {
     const AutoCompleteDisabledGuard guard;
     Fixture                         fixture;
-    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_signature_help_auto_test.txt";
-    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    const std::filesystem::path     path   = std::filesystem::temp_directory_path() / "ned_bufferview_signature_help_auto_test.txt";
+    ned::text::Buffer&              buffer = fixture.bufferList.OpenOrCreateFile(path);
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
@@ -10424,16 +10431,16 @@ TEST_CASE("Typing ( inside a call auto-triggers signature help after the debounc
     TypeText(view, "foo("); // the trailing '(' is the trigger character
 
     std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past LspCompletionDebounceMs()'s default 500ms
-    REQUIRE(eventLoop.DrainPosted_()); // runs both debounce timers' posted callbacks -- signature help AND
-                                       // documentHighlight (which has no toggle to disable, see design decision
-                                       // 2 -- so its own request rides along here too)
+    REQUIRE(eventLoop.DrainPosted_());                           // runs both debounce timers' posted callbacks -- signature help AND
+                                                                 // documentHighlight (which has no toggle to disable, see design decision
+                                                                 // 2 -- so its own request rides along here too)
 
     // Both requests were queued back-to-back by the same DrainPosted_() call
     // -- find the signatureHelp one among them (order between the two isn't
     // guaranteed) and leave the other unanswered, which is harmless.
-    const std::vector<ned::editor::lsp::Json> requests = ReadLspFrames(server.serverStdinRead, 2);
-    const auto sigHelpRequest = std::find_if(requests.begin(), requests.end(),
-                                             [](const ned::editor::lsp::Json& r) { return r["method"] == "textDocument/signatureHelp"; });
+    const std::vector<ned::editor::lsp::Json> requests       = ReadLspFrames(server.serverStdinRead, 2);
+    const auto                                sigHelpRequest = std::find_if(requests.begin(), requests.end(),
+                                                                            [](const ned::editor::lsp::Json& r) { return r["method"] == "textDocument/signatureHelp"; });
     REQUIRE(sigHelpRequest != requests.end());
 
     const auto response = ned::editor::lsp::Json{
@@ -10450,8 +10457,8 @@ TEST_CASE("Typing ( inside a call auto-triggers signature help after the debounc
 TEST_CASE("Typing a non-trigger character does not schedule an automatic signature-help request", "[BufferView]") {
     const AutoCompleteDisabledGuard guard;
     Fixture                         fixture;
-    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_signature_help_no_trigger_test.txt";
-    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    const std::filesystem::path     path   = std::filesystem::temp_directory_path() / "ned_bufferview_signature_help_no_trigger_test.txt";
+    ned::text::Buffer&              buffer = fixture.bufferList.OpenOrCreateFile(path);
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
@@ -10830,7 +10837,7 @@ TEST_CASE("A pending prefix chord fires the which-key hint callback with the pos
 
     const auto find = [&](const std::string& chord) {
         return std::find_if(lastHint->bindings.begin(), lastHint->bindings.end(),
-                             [&](const auto& binding) { return binding.first == chord; });
+                            [&](const auto& binding) { return binding.first == chord; });
     };
     const auto it = find("C-f");
     REQUIRE(it != lastHint->bindings.end());
@@ -10849,8 +10856,8 @@ TEST_CASE("Completing a sequence (bound or not) clears the which-key hint", "[Bu
     view.OnEvent(ned::ui::test::Ctrl('z')); // C-x C-z is unbound -- resolves the pending sequence
 
     REQUIRE(hintPresentHistory.size() == 2);
-    REQUIRE(hintPresentHistory[0]);        // shown after C-x
-    REQUIRE_FALSE(hintPresentHistory[1]);  // cleared once C-x C-z resolves as Unbound
+    REQUIRE(hintPresentHistory[0]);       // shown after C-x
+    REQUIRE_FALSE(hintPresentHistory[1]); // cleared once C-x C-z resolves as Unbound
 }
 
 TEST_CASE("Disabling which-key suppresses the hint callback's populated case, without touching the status line",
@@ -12083,11 +12090,11 @@ TEST_CASE("a lone code action with multiple edits in one file applies and undoes
         {"edit",
          {{"changes",
            {{ownUri, ned::editor::lsp::Json::array({
-                          {{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}},
-                           {"newText", "BAD"}},
-                          {{"range", {{"start", {{"line", 0}, {"character", 4}}}, {"end", {{"line", 0}, {"character", 8}}}}},
-                           {"newText", "CODE"}},
-                      })}}}}},
+                         {{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}},
+                          {"newText", "BAD"}},
+                         {{"range", {{"start", {{"line", 0}, {"character", 4}}}, {"end", {{"line", 0}, {"character", 8}}}}},
+                          {"newText", "CODE"}},
+                     })}}}}},
     };
     const auto response = ned::editor::lsp::Json{
         {"jsonrpc", "2.0"}, {"id", LspRequestIdFromFrame(raw)}, {"result", ned::editor::lsp::Json::array({action})}};
@@ -12378,7 +12385,7 @@ TEST_CASE("C-x C-s formats via the language server before saving when lsp-format
 
 TEST_CASE("C-x C-s prefers an external format command over lsp-format-on-save when both are configured",
           "[BufferView]") {
-    const LspFormatOnSaveGuard  guard;
+    const LspFormatOnSaveGuard guard;
     ned::editor::SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_format_precedence_test.txt";
     {
@@ -12867,11 +12874,11 @@ TEST_CASE("Vim: jumping to an uppercase mark set in a different file opens it an
         std::ofstream(pathB) << "something else";
     }
 
-    Fixture                  fixture;
-    ned::text::Buffer&       openedA = fixture.bufferList.OpenOrCreateFile(pathA);
-    ned::ui::ActiveBuffer    activeBuffer(openedA);
-    ned::ui::BufferView      view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList,
-                                  fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+    Fixture               fixture;
+    ned::text::Buffer&    openedA = fixture.bufferList.OpenOrCreateFile(pathA);
+    ned::ui::ActiveBuffer activeBuffer(openedA);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList,
+                               fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
     TypeText(view, "llmB"); // mark 'B' at point 2 in a.txt ("hello world")
@@ -12897,8 +12904,8 @@ TEST_CASE("Vim: jumping to an uppercase mark set in a different file opens it an
 // actually parsed and routed there rather than the line silently matching
 // nothing (see RequestVcsFullDiffBuffer's own identical guard).
 TEST_CASE("vcs-visit-result on a *vcs log* line requests that commit's diff", "[BufferView]") {
-    Fixture             fixture;
-    ned::text::Buffer&  log = fixture.bufferList.CreateBuffer("*vcs log file.txt*");
+    Fixture            fixture;
+    ned::text::Buffer& log = fixture.bufferList.CreateBuffer("*vcs log file.txt*");
     log.InsertAtPoint("d6bb069 2026-09-04 Aaron Doom: Add VcsPanel right-click context menu\n");
     log.SetPoint(0);
     log.SetReadOnly(true);
@@ -12916,8 +12923,8 @@ TEST_CASE("vcs-visit-result on a *vcs log* line requests that commit's diff", "[
 }
 
 TEST_CASE("vcs-visit-result on a blank *vcs log* line is a safe no-op", "[BufferView]") {
-    Fixture             fixture;
-    ned::text::Buffer&  log = fixture.bufferList.CreateBuffer("*vcs log file.txt*");
+    Fixture            fixture;
+    ned::text::Buffer& log = fixture.bufferList.CreateBuffer("*vcs log file.txt*");
     log.InsertAtPoint("\n"); // BuildVcsLogBuffer never actually writes a blank line, but this must still degrade safely
     log.SetPoint(0);
     log.SetReadOnly(true);

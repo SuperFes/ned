@@ -20,8 +20,8 @@ namespace ned::ui {
 
 namespace {
 
-    constexpr int                       kMinPanelWidth = 4; // ProjectSidebar's own kMinSidebarWidth floor
-    constexpr std::chrono::milliseconds kRefreshThrottle{1000}; // own poll cadence, independent of ProjectSidebar's
+    constexpr int                       kMinPanelWidth = 4;      // ProjectSidebar's own kMinSidebarWidth floor
+    constexpr std::chrono::milliseconds kRefreshThrottle{1000};  // own poll cadence, independent of ProjectSidebar's
     constexpr std::chrono::milliseconds kDoubleClickWindow{400}; // ProjectSidebar's own kDoubleClickWindow
 
     constexpr int kHeaderHeight       = 1;
@@ -83,7 +83,7 @@ namespace {
     // only ever drops whole subtrees, never reorders or partially-drops a
     // directory's own direct children, so sibling order is preserved).
     std::vector<editor::ProjectTreeEntry> FilterCollapsed(const std::vector<editor::ProjectTreeEntry>& flat,
-                                                           const std::set<std::filesystem::path>& expandedDirs) {
+                                                          const std::set<std::filesystem::path>&       expandedDirs) {
         std::vector<editor::ProjectTreeEntry> visible;
         int                                   skipBelowDepth = -1;
         for (const editor::ProjectTreeEntry& entry : flat) {
@@ -129,9 +129,9 @@ namespace {
         for (std::size_t i = 0; i < chain.size(); ++i) {
             const std::filesystem::path& segPath = chain[i];
             const bool                   isLeaf  = (i + 1 == chain.size());
-            TreeBuilderNode&              child   = cur->children[segPath.filename().string()];
-            child.fullPath                        = segPath;
-            child.isDirectory                     = !isLeaf;
+            TreeBuilderNode&             child   = cur->children[segPath.filename().string()];
+            child.fullPath                       = segPath;
+            child.isDirectory                    = !isLeaf;
             if (isLeaf) {
                 child.status = status;
             }
@@ -178,16 +178,16 @@ namespace {
             const std::filesystem::path absPath = (root / entry.path).lexically_normal();
             InsertStatusPath(builderRoot, root, absPath, editor::vcs::ClassifyPorcelainStatus(entry.state));
         }
-        std::vector<editor::ProjectTreeEntry>                                  flat;
+        std::vector<editor::ProjectTreeEntry>                                flat;
         std::unordered_map<std::filesystem::path, editor::vcs::VcsRowStatus> status;
         FlattenNode(builderRoot, 0, flat, status);
         return {std::move(flat), std::move(status)};
     }
 
     std::string SectionLabel(VcsPanelSection section, std::size_t count) {
-        const char* name = section == VcsPanelSection::Staged     ? "Staged"
-                          : section == VcsPanelSection::Unstaged ? "Unstaged"
-                          : section == VcsPanelSection::Untracked ? "Untracked"
+        const char* name = section == VcsPanelSection::Staged      ? "Staged"
+                           : section == VcsPanelSection::Unstaged  ? "Unstaged"
+                           : section == VcsPanelSection::Untracked ? "Untracked"
                                                                    : "Stashes";
         return std::string(name) + " (" + std::to_string(count) + ")";
     }
@@ -226,7 +226,7 @@ namespace {
 
 VcsPanel::VcsPanel(std::function<ActiveBuffer&()> activeBufferProvider, text::BufferList& bufferList,
                    std::string& statusMessage, const Theme& theme) : activeBufferProvider_(std::move(activeBufferProvider)),
-                                                                       bufferList_(bufferList), statusMessage_(statusMessage), theme_(theme) {
+                                                                     bufferList_(bufferList), statusMessage_(statusMessage), theme_(theme) {
 }
 
 void VcsPanel::SetOnFocusReturn(std::function<void()> handler) {
@@ -253,7 +253,7 @@ void VcsPanel::NotifySelectionChanged() {
     if (!onSelectionChanged_) {
         return;
     }
-    const std::vector<Row> rows = BuildRows();
+    const std::vector<Row>                                rows = BuildRows();
     std::optional<std::pair<std::filesystem::path, bool>> current;
     if (static_cast<std::size_t>(selectedIndex_) < rows.size()) {
         const Row& row = rows[static_cast<std::size_t>(selectedIndex_)];
@@ -354,7 +354,7 @@ void VcsPanel::RefreshConflictedPaths() {
     const auto                  scan = [&](const std::vector<editor::vcs::VcsStatusEntry>& entries) {
         for (const editor::vcs::VcsStatusEntry& entry : entries) {
             const std::filesystem::path absPath = (root / entry.path).lexically_normal();
-            std::ifstream                file(absPath, std::ios::binary);
+            std::ifstream               file(absPath, std::ios::binary);
             if (!file) {
                 continue;
             }
@@ -383,7 +383,7 @@ std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
             return;
         }
 
-        const auto [flat, statusByPath] = BuildStatusTree(entries, root);
+        const auto [flat, statusByPath]                     = BuildStatusTree(entries, root);
         const std::vector<editor::ProjectTreeEntry> visible = FilterCollapsed(flat, expandedDirs_);
 
         for (std::size_t i = 0; i < visible.size(); ++i) {
@@ -394,7 +394,7 @@ std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
             row.entry      = entry;
             row.treePrefix = TreePrefix(visible, i);
             if (!entry.isDirectory) {
-                const auto it = statusByPath.find(entry.path);
+                const auto it  = statusByPath.find(entry.path);
                 row.status     = it != statusByPath.end() ? it->second : editor::vcs::VcsRowStatus::None;
                 row.conflicted = conflictedPaths_.contains(entry.path);
             }
@@ -495,8 +495,8 @@ void VcsPanel::Paint(Canvas c) {
     // Bold unconditionally -- ProjectSidebar::Paint's own doc comment on
     // why this widget's header row now carries that treatment always, not
     // just while Focused().
-    Brush headerBrush  = Focused() ? theme_.borderAccent : theme_.tabBar;
-    headerBrush.bold   = true;
+    Brush headerBrush = Focused() ? theme_.borderAccent : theme_.tabBar;
+    headerBrush.bold  = true;
     for (int col = 0; col < c.size().width; ++col) {
         headerBrush.ApplyTo(c[{.x = col, .y = 0}]);
     }
@@ -509,8 +509,8 @@ void VcsPanel::Paint(Canvas c) {
     if (!rows.empty()) {
         selectedIndex_ = std::clamp(selectedIndex_, 0, static_cast<int>(rows.size()) - 1);
     }
-    const bool                       focused      = Focused();
-    const std::optional<std::size_t> stickyHeader = StickyHeaderIndex(rows);
+    const bool                       focused        = Focused();
+    const std::optional<std::size_t> stickyHeader   = StickyHeaderIndex(rows);
     const int                        stickyRowCount = stickyHeader ? 1 : 0;
 
     for (int contentRow = 0; contentRow < contentHeight; ++contentRow) {
@@ -530,7 +530,7 @@ void VcsPanel::Paint(Canvas c) {
         const bool isSelectedRow = focused && static_cast<int>(index) == selectedIndex_;
 
         std::u32string label;
-        Brush           brush;
+        Brush          brush;
 
         if (row.kind == Row::Kind::SectionHeader) {
             // ToCodepoints treats its input as ASCII-ish (one byte, one
@@ -574,9 +574,9 @@ void VcsPanel::Paint(Canvas c) {
                 label += U" ⚠";
             }
             const std::optional<Color> statusColor = VcsStatusColor(row.status);
-            brush = Brush{.background = theme_.background,
-                          .foreground = statusColor.value_or(row.entry.isDirectory ? theme_.lineNumberForeground
-                                                                                    : theme_.defaultForeground)};
+            brush                                  = Brush{.background = theme_.background,
+                                                           .foreground = statusColor.value_or(row.entry.isDirectory ? theme_.lineNumberForeground
+                                                                                                                    : theme_.defaultForeground)};
         }
 
         if (isSelectedRow) {
@@ -615,9 +615,9 @@ bool VcsPanel::OnEvent(const Event& event) {
     }
 
     if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {
-        constexpr int    kWheelScrollLines = 3;
+        constexpr int     kWheelScrollLines = 3;
         const std::size_t rowCount          = BuildRows().size();
-        const int          maxScroll         = std::max(0, static_cast<int>(rowCount) - ContentHeight());
+        const int         maxScroll         = std::max(0, static_cast<int>(rowCount) - ContentHeight());
         if (mouse->button == MouseEvent::Button::WheelDown) {
             scrollOffset_ = std::min(scrollOffset_ + kWheelScrollLines, maxScroll);
         }
@@ -638,7 +638,7 @@ bool VcsPanel::OnEvent(const Event& event) {
         if (onContextMenuRequest_ && mouse->at.y >= kHeaderHeight) {
             const std::vector<Row>           rows         = BuildRows();
             const std::optional<std::size_t> stickyHeader = StickyHeaderIndex(rows);
-            const std::optional<std::size_t> index = RowIndexForContentRow(mouse->at.y - kHeaderHeight, rows, stickyHeader);
+            const std::optional<std::size_t> index        = RowIndexForContentRow(mouse->at.y - kHeaderHeight, rows, stickyHeader);
             if (index) {
                 const Row& row = rows[*index];
                 if (row.kind != Row::Kind::SectionHeader) {
@@ -679,7 +679,7 @@ bool VcsPanel::OnEvent(const Event& event) {
         return true;
     }
     const std::size_t index = *clickedIndex;
-    selectedIndex_           = static_cast<int>(index);
+    selectedIndex_          = static_cast<int>(index);
     NotifySelectionChanged();
     const Row& row = rows[index];
 
@@ -721,7 +721,7 @@ bool VcsPanel::OnEvent(const Event& event) {
 }
 
 std::optional<std::size_t> VcsPanel::RowIndexForContentRow(int contentRow, const std::vector<Row>& rows,
-                                                            std::optional<std::size_t> stickyHeader) const {
+                                                           std::optional<std::size_t> stickyHeader) const {
     std::size_t index;
     if (stickyHeader && contentRow == 0) {
         index = *stickyHeader; // the pinned header stands in for the real row it mirrors
@@ -929,9 +929,9 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
         // "are you sure" friction for the one destructive action in this
         // panel (matches the ROADMAP's own explicit call for this).
         // Anything else, including Escape/'n', cancels.
-        const bool confirmed = chord->Special == editor::SpecialKey::None && !chord->Control && !chord->Meta &&
-                               (chord->Codepoint == U'y' || chord->Codepoint == U'Y');
-        const std::filesystem::path target = *pendingRevertConfirm_;
+        const bool                  confirmed = chord->Special == editor::SpecialKey::None && !chord->Control && !chord->Meta &&
+                                                (chord->Codepoint == U'y' || chord->Codepoint == U'Y');
+        const std::filesystem::path target    = *pendingRevertConfirm_;
         pendingRevertConfirm_.reset();
         if (confirmed) {
             if (vcsRunner_) {
@@ -1071,7 +1071,7 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
             ReturnFocus();
             if (onAction_) {
                 onAction_(chord->Codepoint == U'c'   ? VcsPanelAction::Commit
-                         : chord->Codepoint == U'w' ? VcsPanelAction::SwitchBranch
+                          : chord->Codepoint == U'w' ? VcsPanelAction::SwitchBranch
                                                      : VcsPanelAction::CreateBranch);
             }
             return true;

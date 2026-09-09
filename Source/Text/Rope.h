@@ -27,7 +27,7 @@ class Rope {
     Rope();
     explicit Rope(std::string_view text);
 
-    [[nodiscard]] bool Empty() const;
+    [[nodiscard]] bool        Empty() const;
     [[nodiscard]] std::size_t ByteLength() const;
     [[nodiscard]] std::size_t CodepointLength() const;
     [[nodiscard]] std::size_t LineCount() const; // newline count + 1
@@ -66,21 +66,21 @@ class Rope {
 
     std::shared_ptr<const Node> root_;
 
-    static std::shared_ptr<const Node> MakeLeaf(std::string_view text);
-    static std::shared_ptr<const Node> MakeInternal(std::shared_ptr<const Node> left, std::shared_ptr<const Node> right);
-    static std::shared_ptr<const Node> Concat(std::shared_ptr<const Node> left, std::shared_ptr<const Node> right);
-    static std::shared_ptr<const Node> RotateLeft(const std::shared_ptr<const Node>& node);
-    static std::shared_ptr<const Node> RotateRight(const std::shared_ptr<const Node>& node);
-    static std::shared_ptr<const Node> Rebalance(std::shared_ptr<const Node> node);
-    static std::shared_ptr<const Node> BuildBalanced(std::string_view text);
-    static std::shared_ptr<const Node> BuildBalanced(std::vector<std::shared_ptr<const Node>> leaves);
+    static std::shared_ptr<const Node>                                         MakeLeaf(std::string_view text);
+    static std::shared_ptr<const Node>                                         MakeInternal(std::shared_ptr<const Node> left, std::shared_ptr<const Node> right);
+    static std::shared_ptr<const Node>                                         Concat(std::shared_ptr<const Node> left, std::shared_ptr<const Node> right);
+    static std::shared_ptr<const Node>                                         RotateLeft(const std::shared_ptr<const Node>& node);
+    static std::shared_ptr<const Node>                                         RotateRight(const std::shared_ptr<const Node>& node);
+    static std::shared_ptr<const Node>                                         Rebalance(std::shared_ptr<const Node> node);
+    static std::shared_ptr<const Node>                                         BuildBalanced(std::string_view text);
+    static std::shared_ptr<const Node>                                         BuildBalanced(std::vector<std::shared_ptr<const Node>> leaves);
     static std::pair<std::shared_ptr<const Node>, std::shared_ptr<const Node>> Split(const std::shared_ptr<const Node>& node, std::size_t byteOffset);
-    static void AppendToString(const std::shared_ptr<const Node>& node, std::string& out);
+    static void                                                                AppendToString(const std::shared_ptr<const Node>& node, std::string& out);
 
-    static std::size_t CountNewlinesBefore(const std::shared_ptr<const Node>& node, std::size_t byteOffset);
-    static std::size_t FindLineStart(const std::shared_ptr<const Node>& node, std::size_t line);
-    static std::size_t CountCodepointsBefore(const std::shared_ptr<const Node>& node, std::size_t byteOffset);
-    static std::size_t FindCodepointStart(const std::shared_ptr<const Node>& node, std::size_t codepointOffset);
+    static std::size_t  CountNewlinesBefore(const std::shared_ptr<const Node>& node, std::size_t byteOffset);
+    static std::size_t  FindLineStart(const std::shared_ptr<const Node>& node, std::size_t line);
+    static std::size_t  CountCodepointsBefore(const std::shared_ptr<const Node>& node, std::size_t byteOffset);
+    static std::size_t  FindCodepointStart(const std::shared_ptr<const Node>& node, std::size_t codepointOffset);
     static std::uint8_t ByteAt(const std::shared_ptr<const Node>& node, std::size_t byteOffset);
 };
 

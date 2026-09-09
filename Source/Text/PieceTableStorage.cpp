@@ -4,7 +4,8 @@
 
 namespace ned::text {
 
-PieceTableStorage::PieceTableStorage(PieceTable table) : table_(std::move(table)) {}
+PieceTableStorage::PieceTableStorage(PieceTable table) : table_(std::move(table)) {
+}
 
 const PieceTable& PieceTableStorage::Value() const {
     return table_;

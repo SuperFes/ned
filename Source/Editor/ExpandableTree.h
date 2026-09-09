@@ -36,12 +36,12 @@ template <typename NodeData>
 class ExpandableTree {
   public:
     struct Node {
-        NodeData                    data;
-        std::optional<std::size_t>  parent; // nullopt for a root
-        std::vector<std::size_t>    children;
-        bool                        expanded        = false;
-        bool                        loading         = false; // an Expand() request is in flight
-        bool                        childrenFetched = false; // Expand() has run at least once -- distinguishes "never asked" from "asked, server said none"
+        NodeData                   data;
+        std::optional<std::size_t> parent; // nullopt for a root
+        std::vector<std::size_t>   children;
+        bool                       expanded        = false;
+        bool                       loading         = false; // an Expand() request is in flight
+        bool                       childrenFetched = false; // Expand() has run at least once -- distinguishes "never asked" from "asked, server said none"
     };
 
     // Discards any existing nodes and seeds new roots (e.g. a fresh

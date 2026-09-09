@@ -79,7 +79,7 @@ namespace {
     // for reuse; this is a small enough duplicate to not warrant extracting).
     std::string FormatLogTimestamp(std::chrono::system_clock::time_point timestamp) {
         const std::time_t seconds = std::chrono::system_clock::to_time_t(timestamp);
-        std::tm            local{};
+        std::tm           local{};
         localtime_r(&seconds, &local);
         char buffer[32];
         std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &local);
@@ -98,7 +98,7 @@ namespace {
         if (path.is_relative()) {
             path = editor::ProjectRoot() / path;
         }
-        std::error_code ec;
+        std::error_code       ec;
         std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
         return ec ? path : canonical;
     }
@@ -280,9 +280,7 @@ void ToolRegistry::RegisterBuiltinTools() {
                             {"column", location.position.character + 1},
                         });
                     }
-                    callback(MakeTextToolResult(results.dump()));
-                },
-                std::string{});
+                    callback(MakeTextToolResult(results.dump())); }, std::string{});
             });
     };
     registerLocationTool("goto_definition", "Find the definition location(s) of the symbol at a position in a file already open in ned.",
@@ -342,8 +340,8 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult(std::string("Invalid search pattern: ") + e.what(), true));
                 return;
             }
-            const bool  truncated = matches.size() > kMaxSearchResults;
-            Json        results   = Json::array();
+            const bool truncated = matches.size() > kMaxSearchResults;
+            Json       results   = Json::array();
             for (std::size_t i = 0; i < matches.size() && i < kMaxSearchResults; ++i) {
                 results.push_back(Json{{"file", matches[i].file.string()}, {"line", matches[i].lineNumber}, {"text", matches[i].lineText}});
             }
@@ -378,7 +376,7 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("Test output did not parse as format \"" + outcome->format + "\".", true));
                 return;
             }
-            Json results    = Json::array();
+            Json       results   = Json::array();
             const bool truncated = outcome->results.size() > kMaxTestResults;
             for (std::size_t i = 0; i < outcome->results.size() && i < kMaxTestResults; ++i) {
                 const testrun::TestResult& result = outcome->results[i];
@@ -391,15 +389,15 @@ void ToolRegistry::RegisterBuiltinTools() {
                 });
             }
             callback(MakeTextToolResult(Json{
-                                             {"format", outcome->format},
-                                             {"passed", outcome->passed},
-                                             {"failed", outcome->failed},
-                                             {"skipped", outcome->skipped},
-                                             {"failuresOnly", outcome->failuresOnly},
-                                             {"results", results},
-                                             {"truncated", truncated},
-                                         }
-                                             .dump()));
+                {"format", outcome->format},
+                {"passed", outcome->passed},
+                {"failed", outcome->failed},
+                {"skipped", outcome->skipped},
+                {"failuresOnly", outcome->failuresOnly},
+                {"results", results},
+                {"truncated", truncated},
+            }
+                                            .dump()));
         });
 
     // acp-mcp-tool-bridge-remainder follow-up. Every tool below still reuses
@@ -540,12 +538,12 @@ void ToolRegistry::RegisterBuiltinTools() {
                     }
                     const vcs::VcsBlameLine& blameLine = lines[lineIndex];
                     callback(MakeTextToolResult(Json{
-                                                     {"commitHash", blameLine.commitHash},
-                                                     {"author", blameLine.author},
-                                                     {"date", blameLine.date},
-                                                     {"summary", blameLine.summary},
-                                                 }
-                                                     .dump()));
+                        {"commitHash", blameLine.commitHash},
+                        {"author", blameLine.author},
+                        {"date", blameLine.date},
+                        {"summary", blameLine.summary},
+                    }
+                                                    .dump()));
                 },
                 [callback](const std::string& error) { callback(MakeTextToolResult("git blame failed: " + error, true)); });
         });
@@ -756,8 +754,8 @@ void ToolRegistry::RegisterBuiltinTools() {
                     return;
                 }
             }
-            Json        results   = Json::array();
-            std::size_t total     = 0;
+            Json        results = Json::array();
+            std::size_t total   = 0;
             for (const LogEntry& entry : LogEntries()) {
                 if (filter && entry.category != *filter) {
                     continue;

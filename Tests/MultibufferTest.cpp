@@ -297,8 +297,8 @@ TEST_CASE("BuildMultibuffer resolves a byte-exact ExcerptRange for an editable e
     const Buffer::ExcerptRange& range = multibuffer.ExcerptRanges()[0];
     REQUIRE(range.editable);
     REQUIRE(range.sourcePath == source.path);
-    REQUIRE(range.sourceStartByte == 6);  // start of "line2" in "line1\nline2\nline3\n"
-    REQUIRE(range.sourceEndByte == 12);   // through its own trailing newline
+    REQUIRE(range.sourceStartByte == 6); // start of "line2" in "line1\nline2\nline3\n"
+    REQUIRE(range.sourceEndByte == 12);  // through its own trailing newline
     REQUIRE(range.originalText == "line2\n");
 
     // The range covers exactly the body, excluding the header line above it.
@@ -399,7 +399,7 @@ TEST_CASE("BuildMultibuffer with no editable excerpts leaves the composite buffe
 }
 
 TEST_CASE("A composite buffer with an editable excerpt accepts typing in the body and rejects it in the chrome",
-         "[Multibuffer]") {
+          "[Multibuffer]") {
     RegistryResetGuard guard;
     BufferList         bufferList;
     TempFile           source("ned-multibuffer-test-editable-typing.txt", "line1\nline2\nline3\n");
@@ -407,8 +407,8 @@ TEST_CASE("A composite buffer with an editable excerpt accepts typing in the bod
     std::vector<ExcerptSource> excerpts;
     excerpts.push_back(ExcerptSource{source.path, 2, 2, "a.cpp:2", "line2\n", {}, /*editable=*/true});
 
-    Buffer& multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*", excerpts);
-    const Buffer::ExcerptRange& range = multibuffer.ExcerptRanges()[0];
+    Buffer&                     multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*", excerpts);
+    const Buffer::ExcerptRange& range       = multibuffer.ExcerptRanges()[0];
 
     multibuffer.SetPoint(range.start);
     multibuffer.InsertAtPoint("X");
@@ -584,7 +584,7 @@ TEST_CASE("BuildMultibuffer auto-collapses an excerpt whose body passes the line
          ExcerptSource{"/repo/big.cpp", 1, 3, "big.cpp:1-3", "line1\nline2\nline3\n"}});
 
     const std::string text = multibuffer.Text();
-    REQUIRE_FALSE(multibuffer.FoldMarkerAt(text.find("small.cpp:1-2")).has_value()); // 2 lines, not > 2
+    REQUIRE_FALSE(multibuffer.FoldMarkerAt(text.find("small.cpp:1-2")).has_value());              // 2 lines, not > 2
     REQUIRE(multibuffer.FoldMarkerAt(text.find("big.cpp:1-3")) == Buffer::FoldMarker::Collapsed); // 3 lines > 2
 }
 
@@ -594,10 +594,10 @@ TEST_CASE("BuildMultibuffer auto-collapses an excerpt whose body passes the byte
     FoldSettingsResetGuard settingsGuard;
     ned::editor::SetMultibufferAutoCollapseByteThreshold(10);
 
-    BufferList         bufferList;
-    const std::string  longLine    = std::string(50, 'x') + "\n"; // one line, well past the byte threshold
-    Buffer&            multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
-                                                       {ExcerptSource{"/repo/min.js", 1, 1, "min.js:1", longLine}});
+    BufferList        bufferList;
+    const std::string longLine    = std::string(50, 'x') + "\n"; // one line, well past the byte threshold
+    Buffer&           multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
+                                                     {ExcerptSource{"/repo/min.js", 1, 1, "min.js:1", longLine}});
 
     REQUIRE(multibuffer.FoldMarkerAt(multibuffer.Text().find("min.js:1")) == Buffer::FoldMarker::Collapsed);
 }
@@ -614,7 +614,7 @@ TEST_CASE("BuildMultibuffer auto-collapses every excerpt past the excerpt-count 
                                                ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "x\n"}});
 
     const std::string text = multibuffer.Text();
-    REQUIRE_FALSE(multibuffer.FoldMarkerAt(text.find("a.cpp:1")).has_value()); // 1st excerpt, at the cap
+    REQUIRE_FALSE(multibuffer.FoldMarkerAt(text.find("a.cpp:1")).has_value());                // 1st excerpt, at the cap
     REQUIRE(multibuffer.FoldMarkerAt(text.find("b.cpp:1")) == Buffer::FoldMarker::Collapsed); // 2nd, past it
 }
 
@@ -636,8 +636,8 @@ TEST_CASE("FoldableExcerptBlocks excludes an excerpt with no header line", "[Mul
     RegistryResetGuard guard;
     BufferList         bufferList;
     Buffer&            multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
-                                                       {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "x\n"},
-                                                        ExcerptSource{"/repo/b.cpp", 1, 1, "", "y\n"}});
+                                                      {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "x\n"},
+                                                       ExcerptSource{"/repo/b.cpp", 1, 1, "", "y\n"}});
 
     auto* index = MultibufferIndexFor(multibuffer);
     REQUIRE(index != nullptr);

@@ -56,7 +56,7 @@ void EchoArea::Paint(Canvas c) {
     // column the way plain characters are, which is why the loop below
     // walks message_ by codepoint span rather than directly indexing it by
     // x the way the pre-sentinel version did.
-    const Color dimmedForeground   = Color::Interpolate(0.5F, theme_.echoArea.foreground, theme_.echoArea.background);
+    const Color dimmedForeground = Color::Interpolate(0.5F, theme_.echoArea.foreground, theme_.echoArea.background);
     // Faded further than plain dim (closer to the background) since ghost
     // text represents a hint, not real candidate-list content -- it should
     // read as clearly less present than DimForEchoArea's own text.

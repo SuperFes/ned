@@ -1,7 +1,7 @@
 #include "MassifOutputParser.h"
 
-#include <charconv>
 #include <cctype>
+#include <charconv>
 #include <optional>
 
 namespace ned::editor {
@@ -43,7 +43,7 @@ namespace {
     }
 
     std::optional<int> ParseInt(std::string_view s) {
-        int        value      = 0;
+        int value            = 0;
         const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
         if (ec != std::errc() || ptr != s.data() + s.size()) {
             return std::nullopt;
@@ -106,9 +106,9 @@ MassifProfile ParseMassifOutput(std::string_view output) {
         }
         else if (MatchField(line, "snapshot", value)) {
             commitPending(); // malformed input missing heap_tree= for the prior snapshot -- keep it anyway
-            current    = MassifSnapshot{};
+            current       = MassifSnapshot{};
             current.index = ParseInt(value).value_or(-1);
-            hasPending = true;
+            hasPending    = true;
         }
         else if (hasPending && MatchField(line, "time", value)) {
             current.time = ParseSize(value).value_or(0);

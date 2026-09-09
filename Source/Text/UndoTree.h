@@ -120,16 +120,16 @@ class UndoTree {
 
   private:
     struct Node {
-        std::unique_ptr<ITextStorage>       state;
-        Node*                                parent = nullptr; // non-owning; root_ keeps the tree alive
-        std::vector<std::unique_ptr<Node>>  children;
-        std::size_t                          mostRecentChild = 0;
-        std::size_t                          sequence        = 0; // see CurrentSequence()'s own doc comment
+        std::unique_ptr<ITextStorage>      state;
+        Node*                              parent = nullptr; // non-owning; root_ keeps the tree alive
+        std::vector<std::unique_ptr<Node>> children;
+        std::size_t                        mostRecentChild = 0;
+        std::size_t                        sequence        = 0; // see CurrentSequence()'s own doc comment
     };
 
     std::unique_ptr<Node> root_;
-    Node*                 current_ = nullptr; // non-owning observer into root_'s tree
-    std::size_t           nextSequence_ = 1;  // 0 is the root's; see CurrentSequence()
+    Node*                 current_      = nullptr; // non-owning observer into root_'s tree
+    std::size_t           nextSequence_ = 1;       // 0 is the root's; see CurrentSequence()
     // Populated alongside every Node's creation (constructor's root, Record(),
     // Deserialize()) -- a node's `sequence` is never reused, so this never
     // needs pruning.

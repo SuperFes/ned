@@ -26,7 +26,9 @@ TEST_CASE("MappedFile maps plain text content", "[MappedFile]") {
 
 TEST_CASE("MappedFile handles a zero-byte file without calling mmap", "[MappedFile]") {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_mapped_file_empty.txt";
-    { std::ofstream file(path, std::ios::binary); }
+    {
+        std::ofstream file(path, std::ios::binary);
+    }
 
     MappedFile mapped = MappedFile::Open(path);
     REQUIRE(mapped.Size() == 0);
@@ -92,7 +94,9 @@ TEST_CASE("MappedFile content survives Advise and ReleasePages", "[MappedFile]")
 
 TEST_CASE("MappedFile Advise/ReleasePages on an empty mapping are safe no-ops", "[MappedFile]") {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_mapped_file_advise_empty.txt";
-    { std::ofstream file(path, std::ios::binary); }
+    {
+        std::ofstream file(path, std::ios::binary);
+    }
 
     MappedFile mapped = MappedFile::Open(path);
     REQUIRE(mapped.Data() == nullptr);

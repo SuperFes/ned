@@ -1,7 +1,7 @@
 #include "HugeFileLoader.h"
 
-#include "EventLoop.h"
 #include "Editor/DiagnosticsLog.h"
+#include "EventLoop.h"
 #include "Text/LineEnding.h"
 #include "Text/MappedFile.h"
 #include "Text/PieceTable.h"
@@ -67,7 +67,7 @@ void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, 
     mappedFile->Advise(text::AccessPattern::kSequential);
 
     const std::size_t totalSize = mappedFile->Size();
-    std::size_t        offset    = 0;
+    std::size_t       offset    = 0;
 
     while (offset < totalSize && !stopToken.stop_requested()) {
         const std::size_t groupLength = std::min(kChunkGroupBytes, totalSize - offset);
@@ -107,7 +107,8 @@ void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, 
 
             if (!expectedByteLength_) {
                 buffer->ReplaceContentForHugeLoad(fragment);
-            } else if (buffer->Size() != *expectedByteLength_) {
+            }
+            else if (buffer->Size() != *expectedByteLength_) {
                 // See expectedByteLength_'s own doc comment in the header --
                 // the load frontier was undone out from under this loader.
                 editor::LogMessage(editor::LogCategory::General, editor::LogSeverity::Warning,
@@ -117,7 +118,8 @@ void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, 
                 thread_.request_stop();
                 done_ = true;
                 return;
-            } else {
+            }
+            else {
                 buffer->AppendHugeLoadChunk(fragment);
             }
             expectedByteLength_ = buffer->Size();

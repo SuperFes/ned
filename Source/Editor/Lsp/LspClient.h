@@ -284,8 +284,8 @@ class LspClient {
     // actual safety mechanism every Post() lambda below relies on.
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
-    std::jthread readThread_;       // declared before transport_ -- see header comment
-    std::jthread stderrThread_;     // ditto -- lsp-stderr-capture follow-up
+    std::jthread readThread_;   // declared before transport_ -- see header comment
+    std::jthread stderrThread_; // ditto -- lsp-stderr-capture follow-up
     Transport    transport_;
 
     ned::ui::EventLoop& eventLoop_;
@@ -306,8 +306,8 @@ class LspClient {
     // LspClientTest.cpp test hung on this before the fix).
     std::condition_variable_any writeCv_;
     std::deque<std::string>     writeQueue_;
-    std::atomic<bool>       drainQueueOnStop_ = false; // see PrepareForGracefulShutdown
-    std::jthread            writeThread_;
+    std::atomic<bool>           drainQueueOnStop_ = false; // see PrepareForGracefulShutdown
+    std::jthread                writeThread_;
 
     struct PendingRequest {
         ResponseCallback                      callback;

@@ -39,15 +39,15 @@
 namespace ned::editor {
 
 struct SanitizerFinding {
-    std::string tool; // "AddressSanitizer", "UndefinedBehaviorSanitizer", "ThreadSanitizer", "MemorySanitizer", "LeakSanitizer", ...
-                       // -- verbatim from the SUMMARY line, whatever the runtime itself named.
-    std::string message; // The UBSan "runtime error: ..." text when paired with a matching
-                          // preceding line sharing the same file:line, else the SUMMARY
-                          // line's own kind text ("heap-buffer-overflow", "data race", a
-                          // leak byte-count sentence, ...).
-    std::string symbol; // Trailing "in <symbol>" from the SUMMARY line; empty when absent
-                         // (a LeakSanitizer count summary has none).
-    std::string file;   // Empty when the report carries no location at all.
+    std::string tool;       // "AddressSanitizer", "UndefinedBehaviorSanitizer", "ThreadSanitizer", "MemorySanitizer", "LeakSanitizer", ...
+                            // -- verbatim from the SUMMARY line, whatever the runtime itself named.
+    std::string message;    // The UBSan "runtime error: ..." text when paired with a matching
+                            // preceding line sharing the same file:line, else the SUMMARY
+                            // line's own kind text ("heap-buffer-overflow", "data race", a
+                            // leak byte-count sentence, ...).
+    std::string symbol;     // Trailing "in <symbol>" from the SUMMARY line; empty when absent
+                            // (a LeakSanitizer count summary has none).
+    std::string file;       // Empty when the report carries no location at all.
     std::size_t line   = 0; // 1-based; 0 = unknown/absent
     std::size_t column = 0; // 1-based; 0 = unknown/absent
 

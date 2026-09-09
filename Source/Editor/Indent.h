@@ -65,10 +65,10 @@ namespace ned::editor {
 // resolved once at construction time), so a live ned/set-indent-style change
 // takes effect immediately, the same "read fresh each use" convention
 // TabWidth() already follows.
-[[nodiscard]] IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser>              parser,
-                                                 std::shared_ptr<treesitter::Query>               indentQuery,
+[[nodiscard]] IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser>                parser,
+                                                 std::shared_ptr<treesitter::Query>                 indentQuery,
                                                  std::shared_ptr<treesitter::IncrementalParseCache> sharedParse,
-                                                 std::string                                       modeName);
+                                                 std::string                                        modeName);
 
 // @aligned-paren-column-alignment follow-up: IndentLevelForLine's result is
 // tagged rather than a bare level, since an "@aligned" capture (see below)
@@ -76,7 +76,8 @@ namespace ned::editor {
 // level*width multiply entirely -- Level is the original, unchanged meaning
 // every other capture still produces.
 struct IndentComputation {
-    enum class Kind { Level, Column };
+    enum class Kind { Level,
+                      Column };
     Kind kind;
     int  value;
 };
@@ -111,11 +112,11 @@ struct IndentComputation {
 // counted strictly inside it (IndentColumnForLevel(level, style)), which is
 // why style is threaded in here rather than applied only afterward the way
 // a pure Level result still is (see BuildIndentFunction).
-[[nodiscard]] std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree,
-                                                                   std::string_view bufferText,
-                                                                   const treesitter::Query& indentQuery,
-                                                                   std::size_t lineStart, std::size_t lineEnd,
-                                                                   const IndentStyle& style);
+[[nodiscard]] std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree&  tree,
+                                                                  std::string_view         bufferText,
+                                                                  const treesitter::Query& indentQuery,
+                                                                  std::size_t lineStart, std::size_t lineEnd,
+                                                                  const IndentStyle& style);
 
 // level * style.width -- the only place an abstract indent LEVEL ever
 // becomes a real visual column (an IndentComputation::Kind::Column result

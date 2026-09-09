@@ -15,7 +15,9 @@ using ned::text::Buffer;
 using ned::text::Rope;
 
 namespace {
-    Buffer MakeBuffer(std::string_view text) { return Buffer("test", Rope(text)); }
+Buffer MakeBuffer(std::string_view text) {
+    return Buffer("test", Rope(text));
+}
 } // namespace
 
 TEST_CASE("ConflictHunkAtPoint finds the hunk containing point, else nullopt", "[ConflictResolution]") {
@@ -26,8 +28,8 @@ TEST_CASE("ConflictHunkAtPoint finds the hunk containing point, else nullopt", "
 }
 
 TEST_CASE("ResolveConflictHunk TakeOurs replaces the whole marked block with the ours side", "[ConflictResolution]") {
-    Buffer buffer = MakeBuffer("before\n<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\nafter\n");
-    const auto hunk = ConflictHunkAtPoint(buffer, buffer.Text().find("ours"));
+    Buffer     buffer = MakeBuffer("before\n<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\nafter\n");
+    const auto hunk   = ConflictHunkAtPoint(buffer, buffer.Text().find("ours"));
     REQUIRE(hunk.has_value());
     const std::size_t generationBefore = buffer.ContentGeneration();
     REQUIRE(ResolveConflictHunk(buffer, *hunk, ConflictResolution::TakeOurs));
@@ -38,38 +40,38 @@ TEST_CASE("ResolveConflictHunk TakeOurs replaces the whole marked block with the
 }
 
 TEST_CASE("ResolveConflictHunk TakeTheirs replaces the whole marked block with the theirs side", "[ConflictResolution]") {
-    Buffer buffer = MakeBuffer("<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
-    const auto hunk = ConflictHunkAtPoint(buffer, 0);
+    Buffer     buffer = MakeBuffer("<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
+    const auto hunk   = ConflictHunkAtPoint(buffer, 0);
     REQUIRE(hunk.has_value());
     REQUIRE(ResolveConflictHunk(buffer, *hunk, ConflictResolution::TakeTheirs));
     REQUIRE(buffer.Text() == "theirs\n");
 }
 
 TEST_CASE("ResolveConflictHunk TakeBoth concatenates ours then theirs", "[ConflictResolution]") {
-    Buffer buffer = MakeBuffer("<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
-    const auto hunk = ConflictHunkAtPoint(buffer, 0);
+    Buffer     buffer = MakeBuffer("<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
+    const auto hunk   = ConflictHunkAtPoint(buffer, 0);
     REQUIRE(ResolveConflictHunk(buffer, *hunk, ConflictResolution::TakeBoth));
     REQUIRE(buffer.Text() == "ours\ntheirs\n");
 }
 
 TEST_CASE("ResolveConflictHunk TakeNeither deletes the whole marked block", "[ConflictResolution]") {
-    Buffer buffer = MakeBuffer("before\n<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\nafter\n");
-    const auto hunk = ConflictHunkAtPoint(buffer, buffer.Text().find("ours"));
+    Buffer     buffer = MakeBuffer("before\n<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\nafter\n");
+    const auto hunk   = ConflictHunkAtPoint(buffer, buffer.Text().find("ours"));
     REQUIRE(ResolveConflictHunk(buffer, *hunk, ConflictResolution::TakeNeither));
     REQUIRE(buffer.Text() == "before\nafter\n");
 }
 
 TEST_CASE("ResolveConflictHunk KeepBase uses the diff3 base section", "[ConflictResolution]") {
-    Buffer buffer = MakeBuffer("<<<<<<< a\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> b\n");
-    const auto hunk = ConflictHunkAtPoint(buffer, 0);
+    Buffer     buffer = MakeBuffer("<<<<<<< a\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> b\n");
+    const auto hunk   = ConflictHunkAtPoint(buffer, 0);
     REQUIRE(hunk->baseRange.has_value());
     REQUIRE(ResolveConflictHunk(buffer, *hunk, ConflictResolution::KeepBase));
     REQUIRE(buffer.Text() == "base\n");
 }
 
 TEST_CASE("ResolveConflictHunk KeepBase on a hunk with no base section is a no-op", "[ConflictResolution]") {
-    Buffer buffer = MakeBuffer("<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
-    const auto hunk = ConflictHunkAtPoint(buffer, 0);
+    Buffer     buffer = MakeBuffer("<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
+    const auto hunk   = ConflictHunkAtPoint(buffer, 0);
     REQUIRE_FALSE(hunk->baseRange.has_value());
     const std::string before = buffer.Text();
     REQUIRE_FALSE(ResolveConflictHunk(buffer, *hunk, ConflictResolution::KeepBase));
@@ -77,10 +79,10 @@ TEST_CASE("ResolveConflictHunk KeepBase on a hunk with no base section is a no-o
 }
 
 TEST_CASE("Next/PreviousConflictHunkStart walk hunks in order and wrap", "[ConflictResolution]") {
-    const std::string text = "<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n"
-                              "middle\n"
-                              "<<<<<<< a\np\n=======\nq\n>>>>>>> b\n";
-    Buffer            buffer   = MakeBuffer(text);
+    const std::string text       = "<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n"
+                                   "middle\n"
+                                   "<<<<<<< a\np\n=======\nq\n>>>>>>> b\n";
+    Buffer            buffer     = MakeBuffer(text);
     const std::size_t firstHunk  = text.find("<<<<<<<");
     const std::size_t secondHunk = text.rfind("<<<<<<<");
 

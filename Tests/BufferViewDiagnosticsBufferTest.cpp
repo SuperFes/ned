@@ -9,10 +9,10 @@
 #include "Editor/Multibuffer.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
-#include "TestEvents.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
 #include "UI/Theme.h"
@@ -125,7 +125,7 @@ TEST_CASE("RequestDiagnosticsBuffer stitches every open buffer's Code diagnostic
     const std::string underlined = results->Content().Substring(first.startByte, first.endByte - first.startByte);
     REQUIRE(underlined == "bogus");
 
-    const Buffer::Diagnostic& second = results->Diagnostics()[1];
+    const Buffer::Diagnostic& second      = results->Diagnostics()[1];
     const std::string         underlinedX = results->Content().Substring(second.startByte, second.endByte - second.startByte);
     REQUIRE(underlinedX == "x");
 }

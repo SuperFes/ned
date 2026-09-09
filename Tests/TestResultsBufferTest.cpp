@@ -80,8 +80,8 @@ struct EmptyProjectRootGuard {
 
 TEST_CASE("RebuildTestResultsBuffer writes a summary, failures first, skips after, passes omitted", "[TestRun]") {
     const EmptyProjectRootGuard rootGuard;
-    BufferList bufferList;
-    Buffer&    buffer = RebuildTestResultsBuffer(bufferList, MixedOutcome());
+    BufferList                  bufferList;
+    Buffer&                     buffer = RebuildTestResultsBuffer(bufferList, MixedOutcome());
 
     REQUIRE(buffer.ReadOnly());
     const std::string text = buffer.Text();
@@ -102,8 +102,8 @@ TEST_CASE("RebuildTestResultsBuffer writes a summary, failures first, skips afte
 
 TEST_CASE("RebuildTestResultsBuffer attaches one severity-mapped diagnostic per listed line", "[TestRun]") {
     const EmptyProjectRootGuard rootGuard;
-    BufferList bufferList;
-    Buffer&    buffer = RebuildTestResultsBuffer(bufferList, MixedOutcome());
+    BufferList                  bufferList;
+    Buffer&                     buffer = RebuildTestResultsBuffer(bufferList, MixedOutcome());
 
     const auto& diagnostics = buffer.Diagnostics();
     REQUIRE(diagnostics.size() == 3); // 2 failed + 1 skipped
@@ -122,8 +122,8 @@ TEST_CASE("RebuildTestResultsBuffer attaches one severity-mapped diagnostic per 
 
 TEST_CASE("RebuildTestResultsBuffer refreshes the same buffer in place", "[TestRun]") {
     const EmptyProjectRootGuard rootGuard;
-    BufferList bufferList;
-    Buffer&    first = RebuildTestResultsBuffer(bufferList, MixedOutcome());
+    BufferList                  bufferList;
+    Buffer&                     first = RebuildTestResultsBuffer(bufferList, MixedOutcome());
 
     TestRunOutcome clean;
     clean.format   = "pytest";
@@ -141,8 +141,8 @@ TEST_CASE("RebuildTestResultsBuffer refreshes the same buffer in place", "[TestR
 
 TEST_CASE("RebuildTestResultsBuffer marks an unparsed outcome in the summary", "[TestRun]") {
     const EmptyProjectRootGuard rootGuard;
-    BufferList     bufferList;
-    TestRunOutcome unparsed;
+    BufferList                  bufferList;
+    TestRunOutcome              unparsed;
     unparsed.format = "ctest";
     Buffer& buffer  = RebuildTestResultsBuffer(bufferList, unparsed);
 

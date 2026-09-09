@@ -58,8 +58,8 @@ namespace {
     // unreadable (StartSession's own try/catch around this whole block
     // degrades to no MCP tools rather than propagating).
     std::filesystem::path SelfExecutablePath() {
-        std::error_code        ec;
-        std::filesystem::path  path = std::filesystem::read_symlink("/proc/self/exe", ec);
+        std::error_code       ec;
+        std::filesystem::path path = std::filesystem::read_symlink("/proc/self/exe", ec);
         if (ec || path.empty()) {
             throw std::runtime_error("cannot resolve /proc/self/exe: " + ec.message());
         }

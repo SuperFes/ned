@@ -719,13 +719,13 @@ TEST_CASE("StopSession sends a disconnect and tears down immediately", "[Dap]") 
 // DAP round 2 below.
 
 TEST_CASE("SetBreakpointCondition/LogMessage create-or-update and send the fields, verified updates from the response",
-         "[Dap]") {
+          "[Dap]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartRunningSession("dap-manager-test-condition");
 
-    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-condition.c";
-    const std::string status = fixture.manager.SetBreakpointCondition(path, 5, "x > 1");
+    const std::filesystem::path path   = std::filesystem::current_path() / "dap-test-condition.c";
+    const std::string           status = fixture.manager.SetBreakpointCondition(path, 5, "x > 1");
     REQUIRE(status.starts_with("Condition set at dap-test-condition.c:5"));
 
     const Json setBreakpoints = fixture.reader.Next();
