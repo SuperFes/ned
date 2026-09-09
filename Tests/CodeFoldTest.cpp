@@ -13,8 +13,10 @@ using ned::editor::CMode;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
 using ned::editor::GoMode;
+using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::JsonMode;
+using ned::editor::KotlinMode;
 using ned::editor::PythonMode;
 using ned::editor::TypeScriptMode;
 using ned::editor::codefold::FoldableBlocks;
@@ -78,6 +80,51 @@ TEST_CASE("FoldableBlocks finds a C# class body, a method body, and an initializ
                                              "    }\n"
                                              "}\n");
     REQUIRE(blocks.size() == 3);
+}
+
+TEST_CASE("FoldableBlocks finds a Java class body, an interface body, a method body, and an array initializer",
+          "[CodeFold]") {
+    const auto mode   = JavaMode();
+    const auto blocks = FoldableBlocks(mode, "interface Sized {\n"
+                                             "    int size();\n"
+                                             "}\n"
+                                             "\n"
+                                             "class Widget {\n"
+                                             "    int[] xs = { 1, 2, 3 };\n"
+                                             "    int size() {\n"
+                                             "        return 1;\n"
+                                             "    }\n"
+                                             "}\n");
+    REQUIRE(blocks.size() == 4);
+}
+
+TEST_CASE("FoldableBlocks finds a Kotlin class body, a braced function body, a lambda, and a when-expression",
+          "[CodeFold]") {
+    const auto mode   = KotlinMode();
+    const auto blocks = FoldableBlocks(mode, "class Widget {\n"
+                                             "    fun size(): Int {\n"
+                                             "        return listOf(1, 2).map { it + 1 }.first()\n"
+                                             "    }\n"
+                                             "\n"
+                                             "    fun kind(n: Int): String = when (n) {\n"
+                                             "        0 -> \"zero\"\n"
+                                             "        else -> \"many\"\n"
+                                             "    }\n"
+                                             "}\n");
+    REQUIRE(blocks.size() == 4);
+}
+
+TEST_CASE("FoldableBlocks offers no Kotlin fold for an expression-bodied function or a braceless if-branch",
+          "[CodeFold]") {
+    // kotlin-folds.scm matches function_body/control_structure_body only
+    // with an explicit "{" child -- this grammar's block braces inline into
+    // those parents from a hidden rule, so an unguarded capture would put a
+    // fold affordance on constructs that have no block at all.
+    const auto mode   = KotlinMode();
+    const auto blocks = FoldableBlocks(mode, "fun double(n: Int): Int = n * 2\n"
+                                             "\n"
+                                             "fun sign(n: Int): Int = if (n < 0) -1 else 1\n");
+    REQUIRE(blocks.empty());
 }
 
 TEST_CASE("FoldableBlocks returns nothing for a mode with no fold query", "[CodeFold]") {

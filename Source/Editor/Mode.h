@@ -636,6 +636,21 @@ struct Mode {
 // for why a namespace-based `using` directive can't be resolved by a
 // syntax-only query the way Rust's file-per-module "mod foo;" can).
 [[nodiscard]] Mode CSharpMode();
+// tree-sitter/tree-sitter-java -- the tree-sitter org's own official
+// grammar, same provenance bar as CSharpMode above. Ships a real
+// queries/highlights.scm and queries/tags.scm, both consumed unmodified. No
+// import-target support (see Queries.h's own comment beside kRustImports
+// for why a package-based `import` can't be resolved by a syntax-only query
+// the way Rust's file-per-module "mod foo;" can).
+[[nodiscard]] Mode JavaMode();
+// fwcd/tree-sitter-kotlin -- community-maintained, the same bar as
+// FishMode/XmlMode above rather than the tree-sitter org's own; see
+// CMakeLists.txt for why this repo over the tree-sitter-grammars fork.
+// Ships a real queries/highlights.scm but no tags.scm, so unlike every
+// other bundled language its symbol-kind query is repo-local
+// (queries/kotlin-tags.scm). No import-target support, same
+// package-not-a-file reasoning as JavaMode above.
+[[nodiscard]] Mode KotlinMode();
 // yaml/toml follow-up: tree-sitter-grammars/tree-sitter-yaml and
 // tree-sitter-grammars/tree-sitter-toml, both community-maintained, both
 // ship a pre-generated src/parser.c and a real queries/highlights.scm --

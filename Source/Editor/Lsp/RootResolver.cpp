@@ -72,6 +72,20 @@ namespace {
             // checked first since it's a cheap exists() rather than a
             // directory scan.
             {"csharp", {"global.json", "*.csproj", "*.sln"}},
+            // Java/Kotlin share one marker set -- both build with Maven or
+            // Gradle, and a mixed-language module carries the same files
+            // either way. Note the walk below is nearest-ancestor-first and
+            // the order within a list is irrelevant, so in a multi-module
+            // build (a Maven module's own pom.xml, a Gradle subproject's own
+            // build.gradle) each module resolves as its own root rather than
+            // the aggregator above it. That is the intended shape: jdtls and
+            // kotlin-language-server both advertise workspaceFolders, so
+            // LspManager joins those sibling roots into one connection
+            // instead of spawning a server per module (TryJoinWorkspaceFolder
+            // -- see LspManager.cpp), and a server that doesn't advertise it
+            // falls back to the pre-multi-root process-per-root behavior.
+            {"java", {"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}},
+            {"kotlin", {"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}},
         };
         return defaults;
     }

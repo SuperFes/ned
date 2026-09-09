@@ -86,6 +86,8 @@ namespace {
             {"rust-mode", RustMode},
             {"go-mode", GoMode},
             {"csharp-mode", CSharpMode},
+            {"java-mode", JavaMode},
+            {"kotlin-mode", KotlinMode},
         };
         return table;
     }
@@ -153,6 +155,12 @@ namespace {
             {".rs", "rust-mode"},
             {".go", "go-mode"},
             {".cs", "csharp-mode"},
+            {".java", "java-mode"},
+            // .kts is a Kotlin *script* (a Gradle build file, most often) --
+            // the same grammar and the same mode, no separate dialect, same
+            // reasoning .cljc/.bb share clojure-mode above.
+            {".kt", "kotlin-mode"},
+            {".kts", "kotlin-mode"},
         };
         return table;
     }

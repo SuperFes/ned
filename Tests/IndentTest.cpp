@@ -27,8 +27,10 @@ using ned::editor::IndentRegion;
 using ned::editor::IndentStyle;
 using ned::editor::JanetMode;
 using ned::editor::JankMode;
+using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::JsonMode;
+using ned::editor::KotlinMode;
 using ned::editor::MarkdownMode;
 using ned::editor::Mode;
 using ned::editor::OrgMode;
@@ -182,6 +184,64 @@ TEST_CASE("CSharpMode indentColumn aligns a wrapped call's continuation argument
     buffer.InsertAtPoint("var r = Foo(a,\n            b);\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b);"
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
+    REQUIRE(contColumn.has_value());
+    REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "("
+}
+
+TEST_CASE("JavaMode indentColumn indents a nested if-block and aligns its closing brace", "[Indent]") {
+    const auto mode = JavaMode();
+    REQUIRE(mode.indentColumn);
+    Buffer buffer("Test.java");
+    buffer.InsertAtPoint("class C {\n    void f() {\n        if (true) {\n            return;\n        }\n    }\n}\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 3); // "            return;"
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 12); // three levels deep, width 4
+
+    const auto [closeStart, closeEnd] = LineRange(buffer, 4); // "        }" -- closes the if-block
+    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd);
+    REQUIRE(closeColumn.has_value());
+    REQUIRE(*closeColumn == 8); // matches "if (true) {"'s own level, not one deeper
+}
+
+TEST_CASE("JavaMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
+          "[Indent]") {
+    const auto mode = JavaMode();
+    Buffer     buffer("Test.java");
+    buffer.InsertAtPoint("class C {\n    void f() {\n        var r = foo(a,\n                    b);\n    }\n}\n");
+
+    const auto [contStart, contEnd] = LineRange(buffer, 3); // "                    b);"
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
+    REQUIRE(contColumn.has_value());
+    REQUIRE(*contColumn == 20); // aligns under "a", the byte right after "("
+}
+
+TEST_CASE("KotlinMode indentColumn indents a nested braced body and aligns its closing brace", "[Indent]") {
+    const auto mode = KotlinMode();
+    REQUIRE(mode.indentColumn);
+    Buffer buffer("Test.kt");
+    buffer.InsertAtPoint("class C {\n    fun f() {\n        if (true) {\n            return\n        }\n    }\n}\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 3); // "            return"
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 12); // three levels deep, width 4
+
+    const auto [closeStart, closeEnd] = LineRange(buffer, 4); // "        }" -- closes the if-branch
+    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd);
+    REQUIRE(closeColumn.has_value());
+    REQUIRE(*closeColumn == 8);
+}
+
+TEST_CASE("KotlinMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
+          "[Indent]") {
+    const auto mode = KotlinMode();
+    Buffer     buffer("Test.kt");
+    buffer.InsertAtPoint("val r = foo(a,\n            b)\n");
+
+    const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b)"
     const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "("

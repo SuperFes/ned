@@ -52,6 +52,13 @@ extern const char* const kXml;
 extern const char* const kRust;   // tree-sitter/tree-sitter-rust's own real queries/highlights.scm, unmodified
 extern const char* const kGo;     // tree-sitter/tree-sitter-go's own real queries/highlights.scm, unmodified
 extern const char* const kCSharp; // tree-sitter/tree-sitter-c-sharp's own real queries/highlights.scm, unmodified
+extern const char* const kJava;   // tree-sitter/tree-sitter-java's own real queries/highlights.scm, unmodified
+// fwcd/tree-sitter-kotlin's own real queries/highlights.scm, unmodified -- itself
+// derived from nvim-treesitter's, with the #lua-match? patterns already removed
+// upstream (Query.h treats an unrecognized predicate as inert, so one that
+// survived would over-match rather than fail loudly). See CMakeLists.txt for why
+// this repo rather than the tree-sitter-grammars fork.
+extern const char* const kKotlin;
 
 // generic-code-folding follow-up: hand-written "@fold" queries, one per
 // in-scope language (Source/Editor/TreeSitter/queries/*-folds.scm) -- no
@@ -71,6 +78,10 @@ extern const char* const kClojureFolds; // shared by ClojureMode and JankMode, s
 extern const char* const kRustFolds;
 extern const char* const kGoFolds;
 extern const char* const kCSharpFolds;
+extern const char* const kJavaFolds;
+// kotlin-folds.scm keys on the PARENT of this grammar's hidden "_block" rule
+// rather than on its visible "statements" node -- see that file's own header.
+extern const char* const kKotlinFolds;
 
 // import-target-tree-sitter follow-up: hand-written "@import.target"/
 // "@import.module"/"@import.statement" queries, one per in-scope language
@@ -139,6 +150,12 @@ extern const char* const kPythonTags;
 extern const char* const kRustTags;   // tree-sitter/tree-sitter-rust's own real queries/tags.scm, unmodified
 extern const char* const kGoTags;     // tree-sitter/tree-sitter-go's own real queries/tags.scm, unmodified
 extern const char* const kCSharpTags; // tree-sitter/tree-sitter-c-sharp's own real queries/tags.scm, unmodified
+extern const char* const kJavaTags;   // tree-sitter/tree-sitter-java's own real queries/tags.scm, unmodified
+// Repo-local (Source/Editor/TreeSitter/queries/kotlin-tags.scm) -- fwcd/
+// tree-sitter-kotlin ships no tags.scm at all, so unlike kCTags/kCppTags (which
+// exist to correct an ambiguous upstream file) this one substitutes for an
+// absent one.
+extern const char* const kKotlinTags;
 
 // test-runner integration: repo-local test-discovery queries
 // (Source/Editor/TreeSitter/queries/*-tests.scm) using the ned-local
@@ -160,6 +177,10 @@ extern const char* const kPythonTests;
 extern const char* const kRustTests;   // #[test]/#[<framework>::test], rust-tests.scm's own header comment
 extern const char* const kGoTests;     // TestXxx/BenchmarkXxx/FuzzXxx/ExampleXxx, go-tests.scm's own header comment
 extern const char* const kCSharpTests; // [Fact]/[Theory]/[Test]/[TestMethod]/etc, csharp-tests.scm's own header comment
+extern const char* const kJavaTests;   // JUnit 4/5's @Test and its variants, java-tests.scm's own header comment
+// kotlin.test is a facade over JUnit on the JVM, so KotlinTests matches the same
+// annotation set JavaTests does -- see kotlin-tests.scm's own header comment.
+extern const char* const kKotlinTests;
 
 // smart-indentation follow-up: hand-written "indent"/"dedent" queries, one
 // per in-scope language (Source/Editor/TreeSitter/queries/*-indents.scm),
@@ -201,6 +222,8 @@ extern const char* const kTomlIndents;
 extern const char* const kRustIndents;
 extern const char* const kGoIndents;
 extern const char* const kCSharpIndents;
+extern const char* const kJavaIndents;
+extern const char* const kKotlinIndents;
 
 } // namespace ned::editor::treesitter::queries
 

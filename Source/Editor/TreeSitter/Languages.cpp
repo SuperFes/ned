@@ -33,6 +33,8 @@ const TSLanguage* tree_sitter_xml(void);
 const TSLanguage* tree_sitter_rust(void);
 const TSLanguage* tree_sitter_go(void);
 const TSLanguage* tree_sitter_c_sharp(void);
+const TSLanguage* tree_sitter_java(void);
+const TSLanguage* tree_sitter_kotlin(void);
 }
 
 namespace ned::editor::treesitter {
@@ -138,6 +140,19 @@ std::optional<Language> LanguageByName(std::string_view name) {
     // src/parser.c), not tree_sitter_csharp.
     if (name == "csharp") {
         return Language(tree_sitter_c_sharp());
+    }
+    // tree-sitter/tree-sitter-java -- the tree-sitter org's own official
+    // grammar, same provenance as csharp above.
+    if (name == "java") {
+        return Language(tree_sitter_java());
+    }
+    // fwcd/tree-sitter-kotlin -- community-maintained, the same bar as
+    // fish/yaml/toml/xml above rather than the tree-sitter org's own. See
+    // CMakeLists.txt's own comment beside ned_add_treesitter_grammar(
+    // tree-sitter-kotlin ...) for why this repo over the
+    // tree-sitter-grammars fork.
+    if (name == "kotlin") {
+        return Language(tree_sitter_kotlin());
     }
     return std::nullopt;
 }
