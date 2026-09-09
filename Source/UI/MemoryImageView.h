@@ -3,7 +3,7 @@
 // Data tab) -- dap-show-memory-image-at-point's display half. Same
 // TreeView-precedent OverlayHost shape as the pointer-graph/call-hierarchy
 // viewers (a pure renderer over repeated SetModel() calls, no session
-// state of its own; BufferView owns the DapManager::MemoryBlock fetch and
+// state of its own; BufferView owns the Manager::MemoryBlock fetch and
 // WindowManager routes Cancel to whichever pane's session is live), but a
 // read-only image instead of a navigable list -- no selection, no
 // activate/expand, just Escape/C-g/any-other-key to dismiss.

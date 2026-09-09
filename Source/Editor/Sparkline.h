@@ -1,7 +1,7 @@
 //
 // Debugging wishlist: watch-history sparkline / array-value graph (see
-// ROADMAP.md). A pure, buffer-free helper pair -- no DapManager/BufferView
-// dependency -- shared by DapManager::RefreshWatchHistory (numeric values
+// ROADMAP.md). A pure, buffer-free helper pair -- no Manager/BufferView
+// dependency -- shared by Manager::RefreshWatchHistory (numeric values
 // collected across successive stops) and BufferView::ToggleWatchGraphAtPoint
 // (a numeric array watch's current elements, one-shot). Renders as a
 // compact single-line Unicode block-glyph sparkline (the standard

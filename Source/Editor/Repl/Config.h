@@ -14,8 +14,8 @@
 // janet::Environment rather than spawning a subprocess.
 //
 
-#ifndef NED_EDITOR_REPL_REPLCONFIG_H
-#define NED_EDITOR_REPL_REPLCONFIG_H
+#ifndef NED_EDITOR_REPL_CONFIG_H
+#define NED_EDITOR_REPL_CONFIG_H
 
 #include <optional>
 #include <string>
@@ -26,12 +26,12 @@ namespace ned::editor::repl {
 // Registers argv (argv[0] the executable, remaining elements its arguments,
 // e.g. {"python3", "-i"}) as the command run for REPL name. Re-registering
 // overwrites. An empty argv clears any existing registration for name.
-void SetReplCommand(const std::string& name, std::vector<std::string> argv);
+void SetCommand(const std::string& name, std::vector<std::string> argv);
 
 // std::nullopt if nothing is registered for name -- not an error; run-repl
 // reports it via the shared status message rather than crashing.
-[[nodiscard]] std::optional<std::vector<std::string>> ReplCommand(const std::string& name);
+[[nodiscard]] std::optional<std::vector<std::string>> Command(const std::string& name);
 
 } // namespace ned::editor::repl
 
-#endif // NED_EDITOR_REPL_REPLCONFIG_H
+#endif // NED_EDITOR_REPL_CONFIG_H

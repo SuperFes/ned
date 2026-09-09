@@ -1,4 +1,4 @@
-#include "DapConfig.h"
+#include "Config.h"
 
 #include <mutex>
 #include <unordered_map>
@@ -15,7 +15,7 @@ namespace {
 
 } // namespace
 
-void SetDapAdapterCommand(const std::string& language, std::vector<std::string> argv) {
+void SetAdapterCommand(const std::string& language, std::vector<std::string> argv) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     if (argv.empty()) {
         g_adapterCommands.erase(language);
@@ -25,7 +25,7 @@ void SetDapAdapterCommand(const std::string& language, std::vector<std::string> 
     }
 }
 
-std::optional<std::vector<std::string>> DapAdapterCommand(const std::string& language) {
+std::optional<std::vector<std::string>> AdapterCommand(const std::string& language) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     const auto                        it = g_adapterCommands.find(language);
     if (it == g_adapterCommands.end()) {
@@ -34,7 +34,7 @@ std::optional<std::vector<std::string>> DapAdapterCommand(const std::string& lan
     return it->second;
 }
 
-void SetDapLaunchConfig(const std::string& language, std::string launchConfigJson) {
+void SetLaunchConfig(const std::string& language, std::string launchConfigJson) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     if (launchConfigJson.empty()) {
         g_launchConfigs.erase(language);
@@ -44,7 +44,7 @@ void SetDapLaunchConfig(const std::string& language, std::string launchConfigJso
     }
 }
 
-std::optional<std::string> DapLaunchConfig(const std::string& language) {
+std::optional<std::string> LaunchConfig(const std::string& language) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     const auto                        it = g_launchConfigs.find(language);
     if (it == g_launchConfigs.end()) {
@@ -53,7 +53,7 @@ std::optional<std::string> DapLaunchConfig(const std::string& language) {
     return it->second;
 }
 
-void SetDapAttachConfig(const std::string& language, std::string attachConfigJson) {
+void SetAttachConfig(const std::string& language, std::string attachConfigJson) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     if (attachConfigJson.empty()) {
         g_attachConfigs.erase(language);
@@ -63,7 +63,7 @@ void SetDapAttachConfig(const std::string& language, std::string attachConfigJso
     }
 }
 
-std::optional<std::string> DapAttachConfig(const std::string& language) {
+std::optional<std::string> AttachConfig(const std::string& language) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     const auto                        it = g_attachConfigs.find(language);
     if (it == g_attachConfigs.end()) {

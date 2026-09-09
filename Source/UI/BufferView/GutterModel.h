@@ -35,7 +35,7 @@
 #include <utility>
 #include <vector>
 
-#include "Editor/Coverage/CoverageReport.h"
+#include "Editor/Coverage/Report.h"
 #include "Editor/Mode.h"
 #include "Editor/TestRun/TestResult.h"
 #include "Text/Buffer.h"

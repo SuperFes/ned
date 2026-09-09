@@ -24,9 +24,9 @@
 // header comment, corrected 2026-08-26) -- the earlier claim that this class
 // is "only ever destroyed after EventLoop::Run() has returned" was false for
 // LspClient's mid-session respawn path, confirmed live via ASan, and nothing
-// about DapManager's own single-session model makes DapClient immune to the
+// about Manager's own single-session model makes Client immune to the
 // same hazard (a Post()ed callback from readThread_/stderrThread_ that
-// outlives the object, freed by DapManager::EndSession, whether immediately
+// outlives the object, freed by Manager::EndSession, whether immediately
 // or after some delay -- no delay is actually safe, only alive_ is).
 //
 // lsp-stderr-capture follow-up (extended to DAP): stderrThread_ mirrors
@@ -40,7 +40,7 @@
 // async-write-queue follow-up (extended to DAP, for consistency -- no live
 // freeze reported against this client specifically): mirrors LspClient's own
 // writeThread_/EnqueueWrite/PrepareForGracefulShutdown exactly -- see
-// LspClient.h's own header comment for the full reasoning. DapManager::
+// LspClient.h's own header comment for the full reasoning. Manager::
 // StopSession sends a best-effort "disconnect" request immediately before
 // EndSession destroys the client (mirroring LspManager::Shutdown's own
 // "shutdown"+"exit" courtesy pair) -- confirmed live by a real test failure
@@ -50,8 +50,8 @@
 // disconnect frame, silently dropping it more often than not.
 //
 
-#ifndef NED_EDITOR_DAP_DAPCLIENT_H
-#define NED_EDITOR_DAP_DAPCLIENT_H
+#ifndef NED_EDITOR_DAP_CLIENT_H
+#define NED_EDITOR_DAP_CLIENT_H
 
 #include <atomic>
 #include <chrono>
@@ -85,32 +85,32 @@ using Json = nlohmann::json;
 using ResponseCallback = std::function<void(bool success, Json body, std::string message)>;
 using EventHandler     = std::function<void(const Json& body)>;
 
-class DapClient {
+class Client {
   public:
     // Spawns argv as a new debug-adapter process. eventLoop must outlive
-    // this DapClient (see header comment).
-    DapClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop);
+    // this Client (see header comment).
+    Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop);
 
     // Takes ownership of an already-open Transport directly — for tests
     // driving a raw pipe pair with no real subprocess involved, mirroring
     // LspClient's own test constructor.
-    DapClient(lsp::Transport transport, ned::ui::EventLoop& eventLoop);
+    Client(lsp::Transport transport, ned::ui::EventLoop& eventLoop);
 
     // lsp-use-after-free follow-up: no longer = default -- the body flips
     // alive_ to false as its first statement (see LspClient.h's own header
     // comment); member destruction order still does the rest of the real
     // teardown work, same as before -- see LspClient.h.
-    ~DapClient();
+    ~Client();
 
-    DapClient(const DapClient&)            = delete;
-    DapClient& operator=(const DapClient&) = delete;
-    DapClient(DapClient&&)                 = delete;
-    DapClient& operator=(DapClient&&)      = delete;
+    Client(const Client&)            = delete;
+    Client& operator=(const Client&) = delete;
+    Client(Client&&)                 = delete;
+    Client& operator=(Client&&)      = delete;
 
     // Sends {"seq": <fresh>, "type": "request", "command": command,
     // "arguments": arguments}. callback runs on the main thread once the
     // matching response (by "request_seq") arrives; dropped uninvoked if
-    // this DapClient is destroyed first, matching LspClient::SendRequest's
+    // this Client is destroyed first, matching LspClient::SendRequest's
     // own "abandoned at shutdown" convention.
     void SendRequest(const std::string& command, Json arguments, ResponseCallback callback);
 
@@ -140,8 +140,8 @@ class DapClient {
 
     // async-write-queue follow-up: see LspClient::PrepareForGracefulShutdown's
     // identical doc comment -- call this immediately before a best-effort
-    // courtesy request (e.g. DapManager::StopSession's "disconnect") that
-    // must actually reach the wire before this DapClient is destroyed.
+    // courtesy request (e.g. Manager::StopSession's "disconnect") that
+    // must actually reach the wire before this Client is destroyed.
     void PrepareForGracefulShutdown();
 
   private:
@@ -189,4 +189,4 @@ class DapClient {
 
 } // namespace ned::editor::dap
 
-#endif // NED_EDITOR_DAP_DAPCLIENT_H
+#endif // NED_EDITOR_DAP_CLIENT_H

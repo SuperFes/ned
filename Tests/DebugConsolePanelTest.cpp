@@ -1,6 +1,6 @@
 //
 // DebugConsolePanel (Source/UI/DebugConsolePanel.h) -- headless coverage
-// over a real DapManager wired to a pipe-backed DapClient, mirroring
+// over a real Manager wired to a pipe-backed Client, mirroring
 // AcpPanelTest.cpp's own ManagerFixture/DispatchFrame pattern and
 // TerminalPanelTest's per-cell Screen::PixelAt painting convention. DAP
 // shares LSP's Content-Length framing (unlike ACP's newline-delimited
@@ -14,9 +14,9 @@
 
 #include <unistd.h>
 
-#include "Editor/Dap/DapClient.h"
-#include "Editor/Dap/DapConfig.h"
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Client.h"
+#include "Editor/Dap/Config.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/PromptHistory.h"
 #include "TestEvents.h"
@@ -26,10 +26,10 @@
 
 namespace {
 
-using ned::editor::dap::DapClient;
-using ned::editor::dap::DapManager;
+using ned::editor::dap::Client;
+using ned::editor::dap::Manager;
 using ned::editor::dap::Json;
-using ned::editor::dap::SetDapLaunchConfig;
+using ned::editor::dap::SetLaunchConfig;
 using ned::editor::lsp::Transport;
 using ned::ui::Box;
 using ned::ui::Canvas;
@@ -79,14 +79,14 @@ std::string ResponseFrame(int requestSeq, const std::string& command, bool succe
 
 struct Fixture {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager{eventLoop};
+    Manager         manager{eventLoop};
     Theme              theme = ned::ui::DarkTheme();
     DebugConsolePanel  panel{theme};
     Screen             screen{kWidth, kHeight};
 
     int         adapterStdinRead   = -1;
     int         adapterStdoutWrite = -1;
-    DapClient*  client             = nullptr;
+    Client*  client             = nullptr;
     FrameReader reader{-1};
 
     Fixture() {
@@ -103,18 +103,18 @@ struct Fixture {
         adapterStdoutWrite = clientReadsHere[1];
         reader.fd          = adapterStdinRead;
         client             = &manager.SetClientForTesting(
-            std::make_unique<DapClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
+            std::make_unique<Client>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
     }
 
     void StartRunningSession(const std::string& language) {
-        SetDapLaunchConfig(language, R"({"program": "./fake-program"})");
+        SetLaunchConfig(language, R"({"program": "./fake-program"})");
         manager.StartOrContinue(language);
         const Json initialize = reader.Next();
         client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true));
         const Json launch = reader.Next();
         client->DispatchFrame(ResponseFrame(launch["seq"].get<int>(), "launch", true));
-        REQUIRE(manager.State() == DapManager::SessionState::Running);
-        SetDapLaunchConfig(language, "");
+        REQUIRE(manager.State() == Manager::SessionState::Running);
+        SetLaunchConfig(language, "");
     }
 
     void Paint() {
@@ -208,7 +208,7 @@ TEST_CASE("DebugConsolePanel's Enter with no active session shows Evaluate's own
     REQUIRE(foundError);
 }
 
-TEST_CASE("DebugConsolePanel's Enter with no DapManager at all shows its own error line", "[DebugConsolePanel]") {
+TEST_CASE("DebugConsolePanel's Enter with no Manager at all shows its own error line", "[DebugConsolePanel]") {
     Theme             theme = ned::ui::DarkTheme();
     DebugConsolePanel panel{theme}; // SetDapManager deliberately never called
     Screen            screen{kWidth, kHeight};
@@ -231,7 +231,7 @@ TEST_CASE("DebugConsolePanel's Enter with no DapManager at all shows its own err
     REQUIRE(foundError);
 }
 
-TEST_CASE("DebugConsolePanel's Enter sends the typed expression through DapManager::Evaluate with repl context",
+TEST_CASE("DebugConsolePanel's Enter sends the typed expression through Manager::Evaluate with repl context",
           "[DebugConsolePanel]") {
     Fixture fixture;
     fixture.InjectClient();

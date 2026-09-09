@@ -8,17 +8,17 @@
 
 #include <unistd.h>
 
-#include "Editor/Dap/DapClient.h"
-#include "Editor/Dap/DapConfig.h"
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Client.h"
+#include "Editor/Dap/Config.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/Lsp/Transport.h"
 #include "UI/EventLoop.h"
 
-using ned::editor::dap::DapClient;
-using ned::editor::dap::DapManager;
+using ned::editor::dap::Client;
+using ned::editor::dap::Manager;
 using ned::editor::dap::Json;
-using ned::editor::dap::SetDapAttachConfig;
-using ned::editor::dap::SetDapLaunchConfig;
+using ned::editor::dap::SetAttachConfig;
+using ned::editor::dap::SetLaunchConfig;
 using ned::editor::lsp::Transport;
 
 namespace {
@@ -78,17 +78,17 @@ std::string EventFrame(const std::string& event, Json body = Json::object()) {
     return Json{{"seq", 999}, {"type", "event"}, {"event", event}, {"body", std::move(body)}}.dump();
 }
 
-// A DapManager plus a pipe-backed injected DapClient the test drives
+// A Manager plus a pipe-backed injected Client the test drives
 // directly -- mirrors LspManagerTest's SetClientForTesting approach and
 // DapClientTest's ClientFixture fd/lifetime discipline (write end closed in
 // the destructor BODY, before members -- and thus the client's read thread's
 // pipe -- are destroyed).
 struct ManagerFixture {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager{eventLoop};
+    Manager         manager{eventLoop};
     int                adapterStdinRead   = -1;
     int                adapterStdoutWrite = -1;
-    DapClient*         client             = nullptr;
+    Client*         client             = nullptr;
     FrameReader        reader{-1};
 
     void InjectClient() {
@@ -100,13 +100,13 @@ struct ManagerFixture {
         adapterStdoutWrite = clientReadsHere[1];
         reader.fd          = adapterStdinRead;
         client             = &manager.SetClientForTesting(
-            std::make_unique<DapClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
+            std::make_unique<Client>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
     }
 
     // Runs StartOrContinue through the initialize/launch handshake against
     // the fake adapter, leaving the session Running.
     void StartRunningSession(const std::string& language) {
-        SetDapLaunchConfig(language, R"({"program": "./fake-program"})");
+        SetLaunchConfig(language, R"({"program": "./fake-program"})");
         REQUIRE(manager.StartOrContinue(language) == "Starting debug session (" + language + ")...");
 
         const Json initialize = reader.Next();
@@ -117,13 +117,13 @@ struct ManagerFixture {
         REQUIRE(launch["command"] == "launch");
         REQUIRE(launch["arguments"]["program"] == "./fake-program");
         client->DispatchFrame(ResponseFrame(launch["seq"].get<int>(), "launch", true));
-        REQUIRE(manager.State() == DapManager::SessionState::Running);
+        REQUIRE(manager.State() == Manager::SessionState::Running);
     }
 
     // DAP round 3: StartRunningSession's own shape, but through
-    // DapManager::Attach -- an "attach" request instead of "launch".
+    // Manager::Attach -- an "attach" request instead of "launch".
     void StartAttachedSession(const std::string& language) {
-        SetDapAttachConfig(language, R"({"processId": 4242})");
+        SetAttachConfig(language, R"({"processId": 4242})");
         REQUIRE(manager.Attach(language) == "Starting debug session (" + language + ")...");
 
         const Json initialize = reader.Next();
@@ -134,7 +134,7 @@ struct ManagerFixture {
         REQUIRE(attach["command"] == "attach");
         REQUIRE(attach["arguments"]["processId"] == 4242);
         client->DispatchFrame(ResponseFrame(attach["seq"].get<int>(), "attach", true));
-        REQUIRE(manager.State() == DapManager::SessionState::Running);
+        REQUIRE(manager.State() == Manager::SessionState::Running);
     }
 
     ~ManagerFixture() {
@@ -151,7 +151,7 @@ struct ManagerFixture {
 
 TEST_CASE("ToggleBreakpoint sets, sorts, and removes breakpoints per normalized file", "[Dap]") {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager(eventLoop);
+    Manager         manager(eventLoop);
 
     const std::filesystem::path path = std::filesystem::current_path() / "dap-test-file.c";
     REQUIRE(manager.ToggleBreakpoint(path, 12));
@@ -169,18 +169,18 @@ TEST_CASE("ToggleBreakpoint sets, sorts, and removes breakpoints per normalized 
 
 TEST_CASE("StartOrContinue refuses to start without a launch configuration", "[Dap]") {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager(eventLoop);
+    Manager         manager(eventLoop);
 
     const std::string status = manager.StartOrContinue("dap-manager-test-unconfigured");
     REQUIRE(status == "No launch configuration for dap-manager-test-unconfigured (ned/set-dap-launch).");
-    REQUIRE(manager.State() == DapManager::SessionState::Inactive);
+    REQUIRE(manager.State() == Manager::SessionState::Inactive);
 }
 
 TEST_CASE("StartOrContinue runs the initialize/launch handshake and reaches Running", "[Dap]") {
     ManagerFixture fixture;
     fixture.InjectClient();
     fixture.StartRunningSession("dap-manager-test-handshake");
-    SetDapLaunchConfig("dap-manager-test-handshake", "");
+    SetLaunchConfig("dap-manager-test-handshake", "");
 }
 
 TEST_CASE("The initialized event pushes configured breakpoints then configurationDone", "[Dap]") {
@@ -212,7 +212,7 @@ TEST_CASE("The initialized event pushes configured breakpoints then configuratio
 
     const Json configurationDone = fixture.reader.Next();
     REQUIRE(configurationDone["command"] == "configurationDone");
-    SetDapLaunchConfig("dap-manager-test-breakpoints", "");
+    SetLaunchConfig("dap-manager-test-breakpoints", "");
 }
 
 TEST_CASE("Toggling a breakpoint mid-session pushes setBreakpoints immediately", "[Dap]") {
@@ -233,7 +233,7 @@ TEST_CASE("Toggling a breakpoint mid-session pushes setBreakpoints immediately",
     const Json cleared = fixture.reader.Next();
     REQUIRE(cleared["command"] == "setBreakpoints");
     REQUIRE(cleared["arguments"]["breakpoints"] == Json::array());
-    SetDapLaunchConfig("dap-manager-test-live-toggle", "");
+    SetLaunchConfig("dap-manager-test-live-toggle", "");
 }
 
 TEST_CASE("A stopped event fetches the top stack frame and reports its source location", "[Dap]") {
@@ -241,15 +241,15 @@ TEST_CASE("A stopped event fetches the top stack frame and reports its source lo
     fixture.InjectClient();
     fixture.StartRunningSession("dap-manager-test-stopped");
 
-    DapManager::StoppedInfo stopped;
+    Manager::StoppedInfo stopped;
     bool                    stoppedFired = false;
-    fixture.manager.SetOnStopped([&](const DapManager::StoppedInfo& info) {
+    fixture.manager.SetOnStopped([&](const Manager::StoppedInfo& info) {
         stopped      = info;
         stoppedFired = true;
     });
 
     fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 4}}));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Stopped);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Stopped);
 
     const Json stackTrace = fixture.reader.Next();
     REQUIRE(stackTrace["command"] == "stackTrace");
@@ -274,8 +274,8 @@ TEST_CASE("A stopped event fetches the top stack frame and reports its source lo
     REQUIRE(continueRequest["command"] == "continue");
     REQUIRE(continueRequest["arguments"]["threadId"] == 4);
     fixture.client->DispatchFrame(ResponseFrame(continueRequest["seq"].get<int>(), "continue", true));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Running);
-    SetDapLaunchConfig("dap-manager-test-stopped", "");
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Running);
+    SetLaunchConfig("dap-manager-test-stopped", "");
 }
 
 TEST_CASE("A stop records the normalized location and stepping clears it while resuming", "[Dap]") {
@@ -294,7 +294,7 @@ TEST_CASE("A stop records the normalized location and stepping clears it while r
 
     const auto stop = fixture.manager.CurrentStopKeyAndLine();
     REQUIRE(stop.has_value());
-    REQUIRE(stop->first == DapManager::NormalizePathKey("/tmp/dap-step-test.c"));
+    REQUIRE(stop->first == Manager::NormalizePathKey("/tmp/dap-step-test.c"));
     REQUIRE(stop->second == 7);
 
     REQUIRE(fixture.manager.StepOver() == "Stepping over...");
@@ -302,12 +302,12 @@ TEST_CASE("A stop records the normalized location and stepping clears it while r
     REQUIRE(next["command"] == "next");
     REQUIRE(next["arguments"]["threadId"] == 2);
     fixture.client->DispatchFrame(ResponseFrame(next["seq"].get<int>(), "next", true));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Running);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Running);
     REQUIRE_FALSE(fixture.manager.CurrentStopKeyAndLine().has_value());
 
     // Stepping while running is refused outright.
     REQUIRE(fixture.manager.StepInto() == "Not stopped (nothing to step).");
-    SetDapLaunchConfig("dap-manager-test-step", "");
+    SetLaunchConfig("dap-manager-test-step", "");
 }
 
 TEST_CASE("RunToCursor refuses when the session is not stopped", "[Dap]") {
@@ -318,7 +318,7 @@ TEST_CASE("RunToCursor refuses when the session is not stopped", "[Dap]") {
     const std::filesystem::path path = std::filesystem::current_path() / "dap-run-to-cursor-refuse.c";
     REQUIRE(fixture.manager.RunToCursor(path, 5) == "Not stopped (nothing to run to cursor from).");
     REQUIRE(fixture.manager.BreakpointsForFile(path).empty());
-    SetDapLaunchConfig("dap-manager-test-run-to-cursor-refuse", "");
+    SetLaunchConfig("dap-manager-test-run-to-cursor-refuse", "");
 }
 
 TEST_CASE("RunToCursor sets a temporary breakpoint, continues, and clears it on the next stop", "[Dap]") {
@@ -335,7 +335,7 @@ TEST_CASE("RunToCursor sets a temporary breakpoint, continues, and clears it on 
     fixture.client->DispatchFrame(ResponseFrame(
         firstStackTrace["seq"].get<int>(), "stackTrace", true,
         Json{{"stackFrames", Json::array({Json{{"id", 1}, {"name", "main"}, {"line", 3}, {"source", Json{{"path", path.string()}}}}})}}));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Stopped);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Stopped);
 
     REQUIRE(fixture.manager.RunToCursor(path, 10) == "Running to cursor...");
 
@@ -352,7 +352,7 @@ TEST_CASE("RunToCursor sets a temporary breakpoint, continues, and clears it on 
     REQUIRE(continueRequest["command"] == "continue");
     REQUIRE(continueRequest["arguments"]["threadId"] == 3);
     fixture.client->DispatchFrame(ResponseFrame(continueRequest["seq"].get<int>(), "continue", true));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Running);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Running);
 
     // The debuggee stops again (wherever it landed) -- the temporary
     // breakpoint is cleared right away, before the stackTrace request even
@@ -370,7 +370,7 @@ TEST_CASE("RunToCursor sets a temporary breakpoint, continues, and clears it on 
     fixture.client->DispatchFrame(
         ResponseFrame(secondStackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
 
-    SetDapLaunchConfig("dap-manager-test-run-to-cursor", "");
+    SetLaunchConfig("dap-manager-test-run-to-cursor", "");
 }
 
 TEST_CASE("RunToCursor leaves an already-existing breakpoint alone", "[Dap]") {
@@ -390,7 +390,7 @@ TEST_CASE("RunToCursor leaves an already-existing breakpoint alone", "[Dap]") {
     fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
     const Json stackTrace = fixture.reader.Next();
     fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Stopped);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Stopped);
 
     REQUIRE(fixture.manager.RunToCursor(path, 10) == "Running to cursor...");
 
@@ -399,7 +399,7 @@ TEST_CASE("RunToCursor leaves an already-existing breakpoint alone", "[Dap]") {
     const Json continueRequest = fixture.reader.Next();
     REQUIRE(continueRequest["command"] == "continue");
     fixture.client->DispatchFrame(ResponseFrame(continueRequest["seq"].get<int>(), "continue", true));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Running);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Running);
 
     // On the next stop, nothing is cleared -- the breakpoint the user
     // actually set survives (asserted by the very next frame being
@@ -411,7 +411,7 @@ TEST_CASE("RunToCursor leaves an already-existing breakpoint alone", "[Dap]") {
         ResponseFrame(secondStackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
     REQUIRE(fixture.manager.BreakpointsForFile(path) == std::vector<std::size_t>{10});
 
-    SetDapLaunchConfig("dap-manager-test-run-to-cursor-existing", "");
+    SetLaunchConfig("dap-manager-test-run-to-cursor-existing", "");
 }
 
 TEST_CASE("JumpToLine refuses when the session is not stopped", "[Dap]") {
@@ -430,7 +430,7 @@ TEST_CASE("JumpToLine refuses when the session is not stopped", "[Dap]") {
     REQUIRE(finished);
     REQUIRE_FALSE(success);
     REQUIRE(message == "Not stopped (nothing to jump from).");
-    SetDapLaunchConfig("dap-manager-test-jump-refuse", "");
+    SetLaunchConfig("dap-manager-test-jump-refuse", "");
 }
 
 TEST_CASE("JumpToLine sends gotoTargets then goto, landing via the adapter's returned target id", "[Dap]") {
@@ -443,7 +443,7 @@ TEST_CASE("JumpToLine sends gotoTargets then goto, landing via the adapter's ret
     fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 5}}));
     const Json stackTrace = fixture.reader.Next();
     fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Stopped);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Stopped);
 
     bool        finished = false;
     bool        success  = false;
@@ -475,7 +475,7 @@ TEST_CASE("JumpToLine sends gotoTargets then goto, landing via the adapter's ret
     REQUIRE(success);
     REQUIRE(message == "Jumped to line.");
 
-    SetDapLaunchConfig("dap-manager-test-jump-to-line", "");
+    SetLaunchConfig("dap-manager-test-jump-to-line", "");
 }
 
 TEST_CASE("JumpToLine reports failure when gotoTargets returns no targets", "[Dap]") {
@@ -501,7 +501,7 @@ TEST_CASE("JumpToLine reports failure when gotoTargets returns no targets", "[Da
     REQUIRE(finished);
     REQUIRE_FALSE(success);
     REQUIRE(message == "No jump target available at that line.");
-    SetDapLaunchConfig("dap-manager-test-jump-no-targets", "");
+    SetLaunchConfig("dap-manager-test-jump-no-targets", "");
 }
 
 TEST_CASE("JumpToLine's failure message notes when the adapter never advertised gotoTargets support", "[Dap]") {
@@ -528,7 +528,7 @@ TEST_CASE("JumpToLine's failure message notes when the adapter never advertised 
     REQUIRE(finished);
     REQUIRE_FALSE(success);
     REQUIRE(message.find("did not advertise jump-to-line support") != std::string::npos);
-    SetDapLaunchConfig("dap-manager-test-jump-unsupported", "");
+    SetLaunchConfig("dap-manager-test-jump-unsupported", "");
 }
 
 TEST_CASE("StepInto and StepOut send their own DAP request names", "[Dap]") {
@@ -548,7 +548,7 @@ TEST_CASE("StepInto and StepOut send their own DAP request names", "[Dap]") {
     // the manager knows), so stepping again is still legal.
     REQUIRE(fixture.manager.StepOut() == "Stepping out...");
     REQUIRE(fixture.reader.Next()["command"] == "stepOut");
-    SetDapLaunchConfig("dap-manager-test-step-kinds", "");
+    SetLaunchConfig("dap-manager-test-step-kinds", "");
 }
 
 TEST_CASE("RequestScopes and RequestVariables parse the adapter's response bodies", "[Dap]") {
@@ -561,8 +561,8 @@ TEST_CASE("RequestScopes and RequestVariables parse the adapter's response bodie
     fixture.client->DispatchFrame(ResponseFrame(stopTrace["seq"].get<int>(), "stackTrace", true,
                                                 Json{{"stackFrames", Json::array()}}));
 
-    std::vector<DapManager::Scope> scopes;
-    fixture.manager.RequestScopes(9, [&](std::vector<DapManager::Scope> result) { scopes = std::move(result); });
+    std::vector<Manager::Scope> scopes;
+    fixture.manager.RequestScopes(9, [&](std::vector<Manager::Scope> result) { scopes = std::move(result); });
     const Json scopesRequest = fixture.reader.Next();
     REQUIRE(scopesRequest["command"] == "scopes");
     REQUIRE(scopesRequest["arguments"]["frameId"] == 9);
@@ -574,8 +574,8 @@ TEST_CASE("RequestScopes and RequestVariables parse the adapter's response bodie
     REQUIRE(scopes[0].name == "Locals");
     REQUIRE(scopes[0].variablesReference == 100);
 
-    std::vector<DapManager::Variable> variables;
-    fixture.manager.RequestVariables(100, [&](std::vector<DapManager::Variable> result) { variables = std::move(result); });
+    std::vector<Manager::Variable> variables;
+    fixture.manager.RequestVariables(100, [&](std::vector<Manager::Variable> result) { variables = std::move(result); });
     const Json variablesRequest = fixture.reader.Next();
     REQUIRE(variablesRequest["command"] == "variables");
     REQUIRE(variablesRequest["arguments"]["variablesReference"] == 100);
@@ -588,7 +588,7 @@ TEST_CASE("RequestScopes and RequestVariables parse the adapter's response bodie
     REQUIRE(variables[0].type == "int");
     REQUIRE(variables[0].variablesReference == 0);
     REQUIRE(variables[1].variablesReference == 200);
-    SetDapLaunchConfig("dap-manager-test-scopes", "");
+    SetLaunchConfig("dap-manager-test-scopes", "");
 }
 
 TEST_CASE("Evaluate scopes the expression to the stopped top frame and reports the result", "[Dap]") {
@@ -617,7 +617,7 @@ TEST_CASE("Evaluate scopes the expression to the stopped top frame and reports t
     fixture.client->DispatchFrame(ResponseFrame(evaluate["seq"].get<int>(), "evaluate", true, Json{{"result", "2"}}));
     REQUIRE(ok);
     REQUIRE(text == "2");
-    SetDapLaunchConfig("dap-manager-test-evaluate", "");
+    SetLaunchConfig("dap-manager-test-evaluate", "");
 }
 
 TEST_CASE("RequestVariables/Evaluate's hex parameter sends DAP's format:{hex:true} hint, omitted by default",
@@ -633,11 +633,11 @@ TEST_CASE("RequestVariables/Evaluate's hex parameter sends DAP's format:{hex:tru
     // Default (hex=false, every pre-existing call site): no "format" field
     // at all, byte-for-byte the same request every prior test already
     // asserts.
-    fixture.manager.RequestVariables(100, [](std::vector<DapManager::Variable>) {});
+    fixture.manager.RequestVariables(100, [](std::vector<Manager::Variable>) {});
     const Json plainVariables = fixture.reader.Next();
     REQUIRE_FALSE(plainVariables["arguments"].contains("format"));
 
-    fixture.manager.RequestVariables(100, [](std::vector<DapManager::Variable>) {}, /*hex=*/true);
+    fixture.manager.RequestVariables(100, [](std::vector<Manager::Variable>) {}, /*hex=*/true);
     const Json hexVariables = fixture.reader.Next();
     REQUIRE(hexVariables["arguments"]["format"] == Json{{"hex", true}});
 
@@ -649,12 +649,12 @@ TEST_CASE("RequestVariables/Evaluate's hex parameter sends DAP's format:{hex:tru
     const Json hexEvaluate = fixture.reader.Next();
     REQUIRE(hexEvaluate["arguments"]["format"] == Json{{"hex", true}});
 
-    SetDapLaunchConfig("dap-manager-test-hex-format", "");
+    SetLaunchConfig("dap-manager-test-hex-format", "");
 }
 
 TEST_CASE("Evaluate without a session fails immediately", "[Dap]") {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager(eventLoop);
+    Manager         manager(eventLoop);
 
     bool        ok = true;
     std::string text;
@@ -674,8 +674,8 @@ TEST_CASE("A terminated event ends the session and reports it", "[Dap]") {
     std::string endedReason;
     fixture.manager.SetOnSessionEnded([&](std::string reason) { endedReason = std::move(reason); });
 
-    // lsp-use-after-free follow-up: EndSession now destroys the DapClient
-    // directly (immediate destruction is safe now that DapClient itself
+    // lsp-use-after-free follow-up: EndSession now destroys the Client
+    // directly (immediate destruction is safe now that Client itself
     // guards against a stray Post()ed callback -- see LspClient.h's own
     // header comment on alive_), which joins its background read thread as
     // part of destruction. That thread is deliberately still blocked in a
@@ -686,9 +686,9 @@ TEST_CASE("A terminated event ends the session and reports it", "[Dap]") {
     fixture.adapterStdoutWrite = -1; // fixture's own destructor must not double-close
 
     fixture.client->DispatchFrame(EventFrame("terminated"));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Inactive);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Inactive);
     REQUIRE(endedReason == "Debug session terminated.");
-    SetDapLaunchConfig("dap-manager-test-terminated", "");
+    SetLaunchConfig("dap-manager-test-terminated", "");
 }
 
 TEST_CASE("StopSession sends a disconnect and tears down immediately", "[Dap]") {
@@ -701,19 +701,19 @@ TEST_CASE("StopSession sends a disconnect and tears down immediately", "[Dap]") 
 
     // lsp-use-after-free follow-up: see "A terminated event ends the
     // session and reports it"'s identical comment just above -- StopSession
-    // -> EndSession destroying the DapClient directly would otherwise join
+    // -> EndSession destroying the Client directly would otherwise join
     // this fixture's deliberately-still-blocked read thread and hang.
     ::close(fixture.adapterStdoutWrite);
     fixture.adapterStdoutWrite = -1; // fixture's own destructor must not double-close
 
     REQUIRE(fixture.manager.StopSession() == "Debug session stopped.");
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Inactive);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Inactive);
     REQUIRE(endedReason == "Debug session stopped.");
 
     const Json disconnect = fixture.reader.Next();
     REQUIRE(disconnect["command"] == "disconnect");
     REQUIRE(disconnect["arguments"]["terminateDebuggee"] == true);
-    SetDapLaunchConfig("dap-manager-test-stop", "");
+    SetLaunchConfig("dap-manager-test-stop", "");
 }
 
 // DAP round 2 below.
@@ -732,14 +732,14 @@ TEST_CASE("SetBreakpointCondition/LogMessage create-or-update and send the field
     REQUIRE(setBreakpoints["command"] == "setBreakpoints");
     REQUIRE(setBreakpoints["arguments"]["breakpoints"] == Json::array({Json{{"line", 5}, {"condition", "x > 1"}}}));
 
-    const auto breakpoints = fixture.manager.BreakpointsForKey(DapManager::NormalizePathKey(path));
+    const auto breakpoints = fixture.manager.BreakpointsForKey(Manager::NormalizePathKey(path));
     REQUIRE(breakpoints.size() == 1);
     REQUIRE(breakpoints[0].condition == "x > 1");
     REQUIRE(breakpoints[0].verified); // optimistic before any response
 
     fixture.client->DispatchFrame(ResponseFrame(setBreakpoints["seq"].get<int>(), "setBreakpoints", true,
                                                 Json{{"breakpoints", Json::array({Json{{"verified", false}}})}}));
-    REQUIRE_FALSE(fixture.manager.BreakpointsForKey(DapManager::NormalizePathKey(path))[0].verified);
+    REQUIRE_FALSE(fixture.manager.BreakpointsForKey(Manager::NormalizePathKey(path))[0].verified);
 
     // A log message on the same line, and clearing the condition -- both go
     // through the same find-or-create/send path.
@@ -751,13 +751,13 @@ TEST_CASE("SetBreakpointCondition/LogMessage create-or-update and send the field
     REQUIRE(cleared.starts_with("Condition cleared"));
     const Json afterClear = fixture.reader.Next();
     REQUIRE(afterClear["arguments"]["breakpoints"] == Json::array({Json{{"line", 5}, {"logMessage", "hit: {x}"}}}));
-    SetDapLaunchConfig("dap-manager-test-condition", "");
+    SetLaunchConfig("dap-manager-test-condition", "");
 }
 
 TEST_CASE("StartOrContinue parses conditional/logpoint/setVariable capabilities from the initialize response", "[Dap]") {
     ManagerFixture fixture;
     fixture.InjectClient();
-    SetDapLaunchConfig("dap-manager-test-capabilities", R"({"program": "./fake"})");
+    SetLaunchConfig("dap-manager-test-capabilities", R"({"program": "./fake"})");
     fixture.manager.StartOrContinue("dap-manager-test-capabilities");
     const Json initialize = fixture.reader.Next();
     fixture.client->DispatchFrame(ResponseFrame(
@@ -771,12 +771,12 @@ TEST_CASE("StartOrContinue parses conditional/logpoint/setVariable capabilities 
     REQUIRE(fixture.manager.SetBreakpointCondition(path, 1, "true").find("did not advertise") == std::string::npos);
     fixture.reader.Next(); // setBreakpoints for the condition above
     REQUIRE(fixture.manager.SetBreakpointLogMessage(path, 1, "x").find("did not advertise logpoint") != std::string::npos);
-    SetDapLaunchConfig("dap-manager-test-capabilities", "");
+    SetLaunchConfig("dap-manager-test-capabilities", "");
 }
 
 TEST_CASE("Watches are added, evaluated with watch context, and removable by index", "[Dap]") {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager(eventLoop);
+    Manager         manager(eventLoop);
     REQUIRE(manager.Watches().empty());
     manager.AddWatch("x");
     manager.AddWatch("y");
@@ -797,7 +797,7 @@ TEST_CASE("Evaluate's context parameter defaults to repl and is overridable for 
     fixture.manager.Evaluate("y", [](bool, std::string) {}, "watch");
     const Json evaluate = fixture.reader.Next();
     REQUIRE(evaluate["arguments"]["context"] == "watch");
-    SetDapLaunchConfig("dap-manager-test-watch-context", "");
+    SetLaunchConfig("dap-manager-test-watch-context", "");
 }
 
 TEST_CASE("Watch history accumulates a numeric value per stop, skipping non-numeric evaluations", "[Dap]") {
@@ -844,7 +844,7 @@ TEST_CASE("Watch history accumulates a numeric value per stop, skipping non-nume
 
     REQUIRE(fixture.manager.WatchHistoryAt(99).empty()); // out-of-range index -- safe empty
 
-    SetDapLaunchConfig("dap-manager-test-watch-history", "");
+    SetLaunchConfig("dap-manager-test-watch-history", "");
 }
 
 TEST_CASE("RemoveWatchAt keeps watch history indices in sync with Watches()", "[Dap]") {
@@ -874,7 +874,7 @@ TEST_CASE("RemoveWatchAt keeps watch history indices in sync with Watches()", "[
     REQUIRE(fixture.manager.Watches() == std::vector<std::string>{"b"});
     REQUIRE(fixture.manager.WatchHistoryAt(0) == std::vector<double>{20.0}); // "b"'s own history, shifted down with it
 
-    SetDapLaunchConfig("dap-manager-test-watch-history-remove", "");
+    SetLaunchConfig("dap-manager-test-watch-history-remove", "");
 }
 
 TEST_CASE("A fresh session starts every watch with an empty history", "[Dap]") {
@@ -891,7 +891,7 @@ TEST_CASE("A fresh session starts every watch with an empty history", "[Dap]") {
     fixture.client->DispatchFrame(ResponseFrame(evaluate["seq"].get<int>(), "evaluate", true, Json{{"result", "1"}}));
     REQUIRE(fixture.manager.WatchHistoryAt(0) == std::vector<double>{1.0});
 
-    SetDapLaunchConfig("dap-manager-test-watch-history-fresh-session", "");
+    SetLaunchConfig("dap-manager-test-watch-history-fresh-session", "");
 }
 
 TEST_CASE("EvaluateWithReference exposes the response's variablesReference for graphable-value detection", "[Dap]") {
@@ -901,8 +901,8 @@ TEST_CASE("EvaluateWithReference exposes the response's variablesReference for g
     fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
     fixture.reader.Next(); // stackTrace, left unanswered -- frameId isn't under test here
 
-    DapManager::EvaluateResult result;
-    fixture.manager.EvaluateWithReference("arr", [&](DapManager::EvaluateResult r) { result = r; });
+    Manager::EvaluateResult result;
+    fixture.manager.EvaluateWithReference("arr", [&](Manager::EvaluateResult r) { result = r; });
     const Json evaluate = fixture.reader.Next();
     REQUIRE(evaluate["arguments"]["expression"] == "arr");
     REQUIRE(evaluate["arguments"]["context"] == "watch");
@@ -913,17 +913,17 @@ TEST_CASE("EvaluateWithReference exposes the response's variablesReference for g
     REQUIRE(result.text == "{...}");
     REQUIRE(result.variablesReference == 77);
 
-    SetDapLaunchConfig("dap-manager-test-evaluate-with-reference", "");
+    SetLaunchConfig("dap-manager-test-evaluate-with-reference", "");
 }
 
 TEST_CASE("EvaluateWithReference fails gracefully without a session", "[Dap]") {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager(eventLoop);
+    Manager         manager(eventLoop);
 
-    DapManager::EvaluateResult result;
+    Manager::EvaluateResult result;
     result.success            = true;
     result.variablesReference = 1;
-    manager.EvaluateWithReference("x", [&](DapManager::EvaluateResult r) { result = r; });
+    manager.EvaluateWithReference("x", [&](Manager::EvaluateResult r) { result = r; });
     REQUIRE_FALSE(result.success);
     REQUIRE(result.variablesReference == 0);
 }
@@ -935,8 +935,8 @@ TEST_CASE("RequestThreads parses the adapter's thread list", "[Dap]") {
     fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
     fixture.reader.Next(); // stackTrace
 
-    std::vector<DapManager::Thread> threads;
-    fixture.manager.RequestThreads([&](std::vector<DapManager::Thread> result) { threads = std::move(result); });
+    std::vector<Manager::Thread> threads;
+    fixture.manager.RequestThreads([&](std::vector<Manager::Thread> result) { threads = std::move(result); });
     const Json request = fixture.reader.Next();
     REQUIRE(request["command"] == "threads");
     fixture.client->DispatchFrame(ResponseFrame(
@@ -945,7 +945,7 @@ TEST_CASE("RequestThreads parses the adapter's thread list", "[Dap]") {
     REQUIRE(threads.size() == 2);
     REQUIRE(threads[1].id == 2);
     REQUIRE(threads[1].name == "worker");
-    SetDapLaunchConfig("dap-manager-test-threads", "");
+    SetLaunchConfig("dap-manager-test-threads", "");
 }
 
 TEST_CASE("SelectThread refocuses inspection/stepping/continue at the chosen thread", "[Dap]") {
@@ -969,12 +969,12 @@ TEST_CASE("SelectThread refocuses inspection/stepping/continue at the chosen thr
 
     // Subsequent requests target the newly focused thread, not the one that
     // originally reported `stopped`.
-    fixture.manager.RequestStackTrace([](std::vector<DapManager::StackFrame>) {});
+    fixture.manager.RequestStackTrace([](std::vector<Manager::StackFrame>) {});
     REQUIRE(fixture.reader.Next()["arguments"]["threadId"] == 2);
 
     REQUIRE(fixture.manager.StepOver() == "Stepping over...");
     REQUIRE(fixture.reader.Next()["arguments"]["threadId"] == 2);
-    SetDapLaunchConfig("dap-manager-test-select-thread", "");
+    SetLaunchConfig("dap-manager-test-select-thread", "");
 }
 
 TEST_CASE("SetVariable sends variablesReference/name/value and parses the result", "[Dap]") {
@@ -984,8 +984,8 @@ TEST_CASE("SetVariable sends variablesReference/name/value and parses the result
     fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
     fixture.reader.Next(); // stackTrace
 
-    DapManager::SetVariableResult result;
-    fixture.manager.SetVariable(100, "x", "42", [&](DapManager::SetVariableResult r) { result = std::move(r); });
+    Manager::SetVariableResult result;
+    fixture.manager.SetVariable(100, "x", "42", [&](Manager::SetVariableResult r) { result = std::move(r); });
     const Json request = fixture.reader.Next();
     REQUIRE(request["command"] == "setVariable");
     REQUIRE(request["arguments"]["variablesReference"] == 100);
@@ -997,14 +997,14 @@ TEST_CASE("SetVariable sends variablesReference/name/value and parses the result
     REQUIRE(result.value == "42");
     REQUIRE(result.type == "int");
 
-    DapManager::SetVariableResult failure;
-    fixture.manager.SetVariable(100, "bogus", "1", [&](DapManager::SetVariableResult r) { failure = std::move(r); });
+    Manager::SetVariableResult failure;
+    fixture.manager.SetVariable(100, "bogus", "1", [&](Manager::SetVariableResult r) { failure = std::move(r); });
     const Json failingRequest = fixture.reader.Next();
     fixture.client->DispatchFrame(
         ResponseFrame(failingRequest["seq"].get<int>(), "setVariable", false, Json::object(), "no such variable"));
     REQUIRE_FALSE(failure.success);
     REQUIRE(failure.errorMessage == "no such variable");
-    SetDapLaunchConfig("dap-manager-test-set-variable", "");
+    SetLaunchConfig("dap-manager-test-set-variable", "");
 }
 
 // DAP round 3 below.
@@ -1025,7 +1025,7 @@ TEST_CASE("SetBreakpointHitCondition create-or-updates and sends hitCondition, c
     REQUIRE(setBreakpoints["command"] == "setBreakpoints");
     REQUIRE(setBreakpoints["arguments"]["breakpoints"] == Json::array({Json{{"line", 9}, {"hitCondition", "> 5"}}}));
 
-    const auto breakpoints = fixture.manager.BreakpointsForKey(DapManager::NormalizePathKey(path));
+    const auto breakpoints = fixture.manager.BreakpointsForKey(Manager::NormalizePathKey(path));
     REQUIRE(breakpoints.size() == 1);
     REQUIRE(breakpoints[0].hitCondition == "> 5");
 
@@ -1033,7 +1033,7 @@ TEST_CASE("SetBreakpointHitCondition create-or-updates and sends hitCondition, c
     REQUIRE(cleared.starts_with("Hit condition cleared"));
     const Json afterClear = fixture.reader.Next();
     REQUIRE(afterClear["arguments"]["breakpoints"] == Json::array({Json{{"line", 9}}}));
-    SetDapLaunchConfig("dap-manager-test-hit-condition", "");
+    SetLaunchConfig("dap-manager-test-hit-condition", "");
 }
 
 TEST_CASE("ToggleFunctionBreakpoint adds/removes and pushes setFunctionBreakpoints immediately", "[Dap]") {
@@ -1054,14 +1054,14 @@ TEST_CASE("ToggleFunctionBreakpoint adds/removes and pushes setFunctionBreakpoin
     const Json removed = fixture.reader.Next();
     REQUIRE(removed["command"] == "setFunctionBreakpoints");
     REQUIRE(removed["arguments"]["breakpoints"] == Json::array());
-    SetDapLaunchConfig("dap-manager-test-function-breakpoint", "");
+    SetLaunchConfig("dap-manager-test-function-breakpoint", "");
 }
 
 TEST_CASE("Exception breakpoint filters seed from initialize defaults and SetExceptionBreakpointFilters pushes live",
           "[Dap]") {
     ManagerFixture fixture;
     fixture.InjectClient();
-    SetDapLaunchConfig("dap-manager-test-exception-filters", R"({"program": "./fake"})");
+    SetLaunchConfig("dap-manager-test-exception-filters", R"({"program": "./fake"})");
     fixture.manager.StartOrContinue("dap-manager-test-exception-filters");
     const Json initialize = fixture.reader.Next();
     fixture.client->DispatchFrame(ResponseFrame(
@@ -1081,13 +1081,13 @@ TEST_CASE("Exception breakpoint filters seed from initialize defaults and SetExc
     const std::set<std::string> sentIds(setExceptionBreakpoints["arguments"]["filters"].begin(),
                                         setExceptionBreakpoints["arguments"]["filters"].end());
     REQUIRE(sentIds == std::set<std::string>{"raised", "uncaught"});
-    SetDapLaunchConfig("dap-manager-test-exception-filters", "");
+    SetLaunchConfig("dap-manager-test-exception-filters", "");
 }
 
 TEST_CASE("StartOrContinue parses hit-conditional/function-breakpoint capabilities from the initialize response", "[Dap]") {
     ManagerFixture fixture;
     fixture.InjectClient();
-    SetDapLaunchConfig("dap-manager-test-caps-round3", R"({"program": "./fake"})");
+    SetLaunchConfig("dap-manager-test-caps-round3", R"({"program": "./fake"})");
     fixture.manager.StartOrContinue("dap-manager-test-caps-round3");
     const Json initialize = fixture.reader.Next();
     fixture.client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true,
@@ -1096,12 +1096,12 @@ TEST_CASE("StartOrContinue parses hit-conditional/function-breakpoint capabiliti
 
     const std::filesystem::path path = std::filesystem::current_path() / "dap-test-caps-round3.c";
     REQUIRE(fixture.manager.SetBreakpointHitCondition(path, 1, "> 1").find("did not advertise") == std::string::npos);
-    SetDapLaunchConfig("dap-manager-test-caps-round3", "");
+    SetLaunchConfig("dap-manager-test-caps-round3", "");
 }
 
 TEST_CASE("Attach refuses without an attach configuration", "[Dap]") {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager(eventLoop);
+    Manager         manager(eventLoop);
 
     const std::string status = manager.Attach("dap-manager-test-unconfigured-attach");
     REQUIRE(status == "No attach configuration for dap-manager-test-unconfigured-attach (ned/set-dap-attach).");
@@ -1122,7 +1122,7 @@ TEST_CASE("Attach sends an attach request (not launch) and StopSession never ter
     const Json disconnect = fixture.reader.Next();
     REQUIRE(disconnect["command"] == "disconnect");
     REQUIRE(disconnect["arguments"]["terminateDebuggee"] == false); // attach never kills a process ned didn't start
-    SetDapAttachConfig("dap-manager-test-attach", "");
+    SetAttachConfig("dap-manager-test-attach", "");
 }
 
 TEST_CASE("A launched session's StopSession still terminates the debuggee", "[Dap]") {
@@ -1136,7 +1136,7 @@ TEST_CASE("A launched session's StopSession still terminates the debuggee", "[Da
     fixture.manager.StopSession();
     const Json disconnect = fixture.reader.Next();
     REQUIRE(disconnect["arguments"]["terminateDebuggee"] == true);
-    SetDapLaunchConfig("dap-manager-test-launch-terminate", "");
+    SetLaunchConfig("dap-manager-test-launch-terminate", "");
 }
 
 // DAP round 4 below.
@@ -1155,17 +1155,17 @@ TEST_CASE("RestartFrame sends restartFrame with the given frameId and resumes on
     REQUIRE(restart["command"] == "restartFrame");
     REQUIRE(restart["arguments"]["frameId"] == 7);
     fixture.client->DispatchFrame(ResponseFrame(restart["seq"].get<int>(), "restartFrame", true));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Running);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Running);
 
     // Refused outright while running -- same shape as StepInto's own guard.
     REQUIRE(fixture.manager.RestartFrame(7) == "Not stopped (nothing to restart).");
-    SetDapLaunchConfig("dap-manager-test-restart-frame", "");
+    SetLaunchConfig("dap-manager-test-restart-frame", "");
 }
 
 TEST_CASE("StartOrContinue parses restartFrame capability, dropping the warning suffix", "[Dap]") {
     ManagerFixture fixture;
     fixture.InjectClient();
-    SetDapLaunchConfig("dap-manager-test-restart-caps", R"({"program": "./fake"})");
+    SetLaunchConfig("dap-manager-test-restart-caps", R"({"program": "./fake"})");
     fixture.manager.StartOrContinue("dap-manager-test-restart-caps");
     const Json initialize = fixture.reader.Next();
     fixture.client->DispatchFrame(
@@ -1178,7 +1178,7 @@ TEST_CASE("StartOrContinue parses restartFrame capability, dropping the warning 
 
     REQUIRE(fixture.manager.RestartFrame(1) == "Restarting frame...");
     fixture.reader.Next(); // restartFrame
-    SetDapLaunchConfig("dap-manager-test-restart-caps", "");
+    SetLaunchConfig("dap-manager-test-restart-caps", "");
 }
 
 TEST_CASE("SendBreakpointsForFile's response records the adapter's snapped actualLine", "[Dap]") {
@@ -1191,16 +1191,16 @@ TEST_CASE("SendBreakpointsForFile's response records the adapter's snapped actua
 
     const Json setBreakpoints = fixture.reader.Next();
     REQUIRE(setBreakpoints["command"] == "setBreakpoints");
-    const auto beforeResponse = fixture.manager.BreakpointsForKey(DapManager::NormalizePathKey(path));
+    const auto beforeResponse = fixture.manager.BreakpointsForKey(Manager::NormalizePathKey(path));
     REQUIRE(beforeResponse[0].actualLine == 0); // not yet known
 
     // The adapter snaps it to line 5, the next real statement.
     fixture.client->DispatchFrame(ResponseFrame(setBreakpoints["seq"].get<int>(), "setBreakpoints", true,
                                                 Json{{"breakpoints", Json::array({Json{{"verified", true}, {"line", 5}}})}}));
-    const auto afterResponse = fixture.manager.BreakpointsForKey(DapManager::NormalizePathKey(path));
+    const auto afterResponse = fixture.manager.BreakpointsForKey(Manager::NormalizePathKey(path));
     REQUIRE(afterResponse[0].line == 3);       // the requested line -- edits still address this
     REQUIRE(afterResponse[0].actualLine == 5); // where it actually landed
-    SetDapLaunchConfig("dap-manager-test-actual-line", "");
+    SetLaunchConfig("dap-manager-test-actual-line", "");
 }
 
 TEST_CASE("StackTrace/Variables parse instructionPointerReference/memoryReference when the adapter sends them",
@@ -1216,8 +1216,8 @@ TEST_CASE("StackTrace/Variables parse instructionPointerReference/memoryReferenc
         Json{{"stackFrames", Json::array({Json{{"id", 1}, {"name", "main"}, {"instructionPointerReference", "0x1000"}},
                                           Json{{"id", 2}, {"name", "caller"}}})}}));
 
-    std::vector<DapManager::StackFrame> frames;
-    fixture.manager.RequestStackTrace([&](std::vector<DapManager::StackFrame> result) { frames = std::move(result); });
+    std::vector<Manager::StackFrame> frames;
+    fixture.manager.RequestStackTrace([&](std::vector<Manager::StackFrame> result) { frames = std::move(result); });
     const Json stackTrace = fixture.reader.Next();
     fixture.client->DispatchFrame(ResponseFrame(
         stackTrace["seq"].get<int>(), "stackTrace", true,
@@ -1227,8 +1227,8 @@ TEST_CASE("StackTrace/Variables parse instructionPointerReference/memoryReferenc
     REQUIRE(frames[0].instructionPointerReference == "0x1000");
     REQUIRE(frames[1].instructionPointerReference.empty()); // adapter sent none for this frame
 
-    std::vector<DapManager::Variable> variables;
-    fixture.manager.RequestVariables(100, [&](std::vector<DapManager::Variable> result) { variables = std::move(result); });
+    std::vector<Manager::Variable> variables;
+    fixture.manager.RequestVariables(100, [&](std::vector<Manager::Variable> result) { variables = std::move(result); });
     const Json variablesRequest = fixture.reader.Next();
     fixture.client->DispatchFrame(ResponseFrame(
         variablesRequest["seq"].get<int>(), "variables", true,
@@ -1237,13 +1237,13 @@ TEST_CASE("StackTrace/Variables parse instructionPointerReference/memoryReferenc
     REQUIRE(variables.size() == 2);
     REQUIRE(variables[0].memoryReference == "0x2000");
     REQUIRE(variables[1].memoryReference.empty()); // adapter sent none for this variable
-    SetDapLaunchConfig("dap-manager-test-round5-references", "");
+    SetLaunchConfig("dap-manager-test-round5-references", "");
 }
 
 TEST_CASE("StartOrContinue parses disassemble/readMemory capabilities from the initialize response", "[Dap]") {
     ManagerFixture fixture;
     fixture.InjectClient();
-    SetDapLaunchConfig("dap-manager-test-round5-capabilities", R"({"program": "./fake"})");
+    SetLaunchConfig("dap-manager-test-round5-capabilities", R"({"program": "./fake"})");
     fixture.manager.StartOrContinue("dap-manager-test-round5-capabilities");
     const Json initialize = fixture.reader.Next();
     fixture.client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true,
@@ -1252,7 +1252,7 @@ TEST_CASE("StartOrContinue parses disassemble/readMemory capabilities from the i
     // No public accessor exists for these (same as setVariable/
     // functionBreakpoints capabilities) -- this test only pins that parsing
     // the two new fields doesn't throw/crash on a well-formed response.
-    SetDapLaunchConfig("dap-manager-test-round5-capabilities", "");
+    SetLaunchConfig("dap-manager-test-round5-capabilities", "");
 }
 
 TEST_CASE("RequestDisassembly sends disassemble with the given window and parses instructions", "[Dap]") {
@@ -1264,9 +1264,9 @@ TEST_CASE("RequestDisassembly sends disassemble with the given window and parses
     fixture.client->DispatchFrame(
         ResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
 
-    std::vector<DapManager::DisassembledInstruction> instructions;
+    std::vector<Manager::DisassembledInstruction> instructions;
     fixture.manager.RequestDisassembly("0x1000", -2, 4,
-                                       [&](std::vector<DapManager::DisassembledInstruction> result) { instructions = std::move(result); });
+                                       [&](std::vector<Manager::DisassembledInstruction> result) { instructions = std::move(result); });
     const Json disassemble = fixture.reader.Next();
     REQUIRE(disassemble["command"] == "disassemble");
     REQUIRE(disassemble["arguments"]["memoryReference"] == "0x1000");
@@ -1288,14 +1288,14 @@ TEST_CASE("RequestDisassembly sends disassemble with the given window and parses
     REQUIRE(instructions[1].path.has_value());
     REQUIRE(*instructions[1].path == std::filesystem::path("/tmp/dap-test.c"));
     REQUIRE(instructions[1].line == 12);
-    SetDapLaunchConfig("dap-manager-test-disassemble", "");
+    SetLaunchConfig("dap-manager-test-disassemble", "");
 }
 
 TEST_CASE("RequestDisassembly is a graceful no-op without a stopped session", "[Dap]") {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager(eventLoop);
+    Manager         manager(eventLoop);
     bool               called = false;
-    manager.RequestDisassembly("0x1000", 0, 4, [&](std::vector<DapManager::DisassembledInstruction> result) {
+    manager.RequestDisassembly("0x1000", 0, 4, [&](std::vector<Manager::DisassembledInstruction> result) {
         called = true;
         REQUIRE(result.empty());
     });
@@ -1312,8 +1312,8 @@ TEST_CASE("RequestMemory sends readMemory and base64-decodes the response data",
         ResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
 
     bool                    called = false;
-    DapManager::MemoryBlock block;
-    fixture.manager.RequestMemory("0x2000", 0, 4, [&](bool success, DapManager::MemoryBlock result) {
+    Manager::MemoryBlock block;
+    fixture.manager.RequestMemory("0x2000", 0, 4, [&](bool success, Manager::MemoryBlock result) {
         called = true;
         REQUIRE(success);
         block = std::move(result);
@@ -1331,7 +1331,7 @@ TEST_CASE("RequestMemory sends readMemory and base64-decodes the response data",
     REQUIRE(block.address == "0x2000");
     REQUIRE(block.data == std::vector<std::uint8_t>{1, 2, 3, 4});
     REQUIRE(block.unreadableBytes == 0);
-    SetDapLaunchConfig("dap-manager-test-read-memory", "");
+    SetLaunchConfig("dap-manager-test-read-memory", "");
 }
 
 TEST_CASE("RequestMemory reports a fully-unreadable range as success with empty data", "[Dap]") {
@@ -1344,8 +1344,8 @@ TEST_CASE("RequestMemory reports a fully-unreadable range as success with empty 
         ResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
 
     bool                    called = false;
-    DapManager::MemoryBlock block;
-    fixture.manager.RequestMemory("0xdead", 0, 8, [&](bool success, DapManager::MemoryBlock result) {
+    Manager::MemoryBlock block;
+    fixture.manager.RequestMemory("0xdead", 0, 8, [&](bool success, Manager::MemoryBlock result) {
         called = true;
         REQUIRE(success);
         block = std::move(result);
@@ -1356,14 +1356,14 @@ TEST_CASE("RequestMemory reports a fully-unreadable range as success with empty 
     REQUIRE(called);
     REQUIRE(block.data.empty());
     REQUIRE(block.unreadableBytes == 8);
-    SetDapLaunchConfig("dap-manager-test-read-memory-unreadable", "");
+    SetLaunchConfig("dap-manager-test-read-memory-unreadable", "");
 }
 
 TEST_CASE("RequestMemory is a graceful failure without a stopped session", "[Dap]") {
     ned::ui::EventLoop eventLoop;
-    DapManager         manager(eventLoop);
+    Manager         manager(eventLoop);
     bool               called = false;
-    manager.RequestMemory("0x1000", 0, 4, [&](bool success, DapManager::MemoryBlock result) {
+    manager.RequestMemory("0x1000", 0, 4, [&](bool success, Manager::MemoryBlock result) {
         called = true;
         REQUIRE_FALSE(success);
         REQUIRE(result.data.empty());
@@ -1397,7 +1397,7 @@ TEST_CASE("ReverseContinue sends reverseContinue and resumes on success, warning
     REQUIRE(reverseContinue["command"] == "reverseContinue");
     REQUIRE(reverseContinue["arguments"]["threadId"] == 1);
     fixture.client->DispatchFrame(ResponseFrame(reverseContinue["seq"].get<int>(), "reverseContinue", true));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Running);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Running);
 }
 
 TEST_CASE("StepBack sends stepBack and resumes on success", "[Dap]") {
@@ -1414,13 +1414,13 @@ TEST_CASE("StepBack sends stepBack and resumes on success", "[Dap]") {
     REQUIRE(stepBack["command"] == "stepBack");
     REQUIRE(stepBack["arguments"]["threadId"] == 1);
     fixture.client->DispatchFrame(ResponseFrame(stepBack["seq"].get<int>(), "stepBack", true));
-    REQUIRE(fixture.manager.State() == DapManager::SessionState::Running);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Running);
 }
 
 TEST_CASE("StartOrContinue parses supportsStepBack, dropping the warning suffix for both requests", "[Dap]") {
     ManagerFixture fixture;
     fixture.InjectClient();
-    SetDapLaunchConfig("dap-manager-test-stepback-caps", R"({"program": "./fake"})");
+    SetLaunchConfig("dap-manager-test-stepback-caps", R"({"program": "./fake"})");
     fixture.manager.StartOrContinue("dap-manager-test-stepback-caps");
     const Json initialize = fixture.reader.Next();
     fixture.client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true, Json{{"supportsStepBack", true}}));
@@ -1432,5 +1432,5 @@ TEST_CASE("StartOrContinue parses supportsStepBack, dropping the warning suffix 
 
     REQUIRE(fixture.manager.StepBack() == "Stepping back...");
     fixture.reader.Next(); // stepBack
-    SetDapLaunchConfig("dap-manager-test-stepback-caps", "");
+    SetLaunchConfig("dap-manager-test-stepback-caps", "");
 }

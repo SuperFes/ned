@@ -17,8 +17,8 @@
 #include "Editor/BlankLineCleanup.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
-#include "Editor/Coverage/CoverageConfig.h"
-#include "Editor/Dap/DapConfig.h"
+#include "Editor/Coverage/Config.h"
+#include "Editor/Dap/Config.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/FileWatch.h"
@@ -48,7 +48,7 @@
 #include "Editor/ProjectSwitch.h"
 #include "Editor/ProjectTrust.h"
 #include "Editor/RelativeLineNumberSettings.h"
-#include "Editor/Repl/ReplConfig.h"
+#include "Editor/Repl/Config.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/SearchSettings.h"
@@ -212,7 +212,7 @@ namespace {
     // Vim-mode follow-up: same process-wide-bool-toggle shape as
     // NedSetLspAutoComplete -- default false, see Editor/Vim/Settings.h.
     void NedSetVimMode(bool enabled) {
-        editor::vim::SetVimModeEnabled(enabled);
+        editor::vim::SetModeEnabled(enabled);
     }
 
     void NedSetProjectSearchThreads(std::int64_t threads) {
@@ -547,19 +547,19 @@ namespace {
     // adapter subprocess; the launch config stays an opaque JSON string on
     // purpose -- it's the DAP `launch` request's own adapter-specific
     // arguments object, whose keys differ per adapter (see
-    // Editor/Dap/DapConfig.h).
+    // Editor/Dap/Config.h).
     void NedSetDapAdapter(std::string language, std::vector<std::string> argv) {
-        editor::dap::SetDapAdapterCommand(language, std::move(argv));
+        editor::dap::SetAdapterCommand(language, std::move(argv));
     }
 
     void NedSetDapLaunch(std::string language, std::string launchConfigJson) {
-        editor::dap::SetDapLaunchConfig(language, std::move(launchConfigJson));
+        editor::dap::SetLaunchConfig(language, std::move(launchConfigJson));
     }
 
     // DAP round 3: same opaque-JSON shape as NedSetDapLaunch, for
-    // DapManager::Attach's `attach` request instead of the launch path.
+    // Manager::Attach's `attach` request instead of the launch path.
     void NedSetDapAttach(std::string language, std::string attachConfigJson) {
-        editor::dap::SetDapAttachConfig(language, std::move(attachConfigJson));
+        editor::dap::SetAttachConfig(language, std::move(attachConfigJson));
     }
 
     // task-runner follow-up: argv[0] is the task's executable, remaining
@@ -577,7 +577,7 @@ namespace {
     // interactive CLI REPL as-is -- readline/completion/history/coloring all
     // come from the process itself, same as running it in any terminal.
     void NedSetReplCommand(std::string name, std::vector<std::string> argv) {
-        editor::repl::SetReplCommand(name, std::move(argv));
+        editor::repl::SetCommand(name, std::move(argv));
     }
 
     // named-projects follow-up: the escape hatch in switch-project/
@@ -617,7 +617,7 @@ namespace {
     // (ned/set-coverage-file "coverage.info"), paired with the
     // load-coverage-report command (Commands.cpp). Empty clears.
     void NedSetCoverageFile(std::string path) {
-        editor::coverage::SetCoverageFile(std::move(path));
+        editor::coverage::SetFile(std::move(path));
     }
 
     // Converts a Janet test parser's return value into a TestRunOutcome --

@@ -147,7 +147,7 @@ void BufferView::EnsureDapPathKey() const {
     }
     dapPathKeyBuffer_  = &buffer;
     dapPathKeyRawPath_ = buffer.Path();
-    dapPathKey_        = buffer.Path() ? editor::dap::DapManager::NormalizePathKey(*buffer.Path()) : std::string();
+    dapPathKey_        = buffer.Path() ? editor::dap::Manager::NormalizePathKey(*buffer.Path()) : std::string();
 }
 
 } // namespace ned::ui

@@ -5,7 +5,7 @@
 #include <fstream>
 #include <string>
 
-#include "Editor/Dap/DapManager.h"
+#include "Editor/Dap/Manager.h"
 #include "Editor/ProjectSession.h"
 #include "UI/EventLoop.h"
 
@@ -257,9 +257,9 @@ TEST_CASE("SaveActiveProjectSession skips rewriting unchanged data", "[ProjectSe
     REQUIRE(std::filesystem::exists(file));
 }
 
-TEST_CASE("DapManager exports and restores its breakpoint store", "[ProjectSession][Dap]") {
+TEST_CASE("Manager exports and restores its breakpoint store", "[ProjectSession][Dap]") {
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::Manager manager(eventLoop);
 
     const std::filesystem::path fileA = std::filesystem::current_path() / "session-bp-a.c";
     manager.ToggleBreakpoint(fileA, 12);
@@ -271,14 +271,14 @@ TEST_CASE("DapManager exports and restores its breakpoint store", "[ProjectSessi
     const auto exported = manager.AllBreakpoints();
     REQUIRE(exported.size() == 1);
 
-    ned::editor::dap::DapManager restored(eventLoop);
+    ned::editor::dap::Manager restored(eventLoop);
     restored.RestoreBreakpoints(exported);
     REQUIRE(restored.BreakpointsForFile(fileA) == std::vector<std::size_t>{3, 12});
     // condition/logMessage/hitCondition round-trip too (session-persistence
     // round 2) -- verified/actualLine deliberately don't, but there's
     // nothing to observe there since a restored breakpoint never pushed to
     // a live adapter.
-    const auto restoredDetails = restored.BreakpointsForKey(ned::editor::dap::DapManager::NormalizePathKey(fileA));
+    const auto restoredDetails = restored.BreakpointsForKey(ned::editor::dap::Manager::NormalizePathKey(fileA));
     REQUIRE(restoredDetails.size() == 2);
     REQUIRE(restoredDetails[0].line == 3);
     REQUIRE(restoredDetails[0].condition == "n > 5");
@@ -290,19 +290,19 @@ TEST_CASE("DapManager exports and restores its breakpoint store", "[ProjectSessi
     REQUIRE(restored.BreakpointsForFile(fileA) == std::vector<std::size_t>{3});
 
     // Unsorted/duplicated/empty session-file data is normalized on the way in.
-    ned::editor::dap::DapManager scrubbed(eventLoop);
+    ned::editor::dap::Manager scrubbed(eventLoop);
     scrubbed.RestoreBreakpoints({{"/x.c", {{.line = 9}, {.line = 2}, {.line = 9}}}, {"/empty.c", {}}});
     REQUIRE(scrubbed.BreakpointsForFile("/x.c") == std::vector<std::size_t>{2, 9});
     REQUIRE(scrubbed.AllBreakpoints().size() == 1);
 }
 
-TEST_CASE("DapManager exports and restores its watch list", "[ProjectSession][Dap]") {
+TEST_CASE("Manager exports and restores its watch list", "[ProjectSession][Dap]") {
     ned::ui::EventLoop           eventLoop;
-    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::Manager manager(eventLoop);
     manager.AddWatch("x");
     manager.AddWatch("y + 1");
 
-    ned::editor::dap::DapManager restored(eventLoop);
+    ned::editor::dap::Manager restored(eventLoop);
     restored.RestoreWatches(manager.Watches());
     REQUIRE(restored.Watches() == std::vector<std::string>{"x", "y + 1"});
 }

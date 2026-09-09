@@ -687,7 +687,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         }
         // DAP client slice 1: one-shot direct actions, same shape as
         // VcsShowBlame just below -- the synchronous half of each answer
-        // (DapManager's returned status string) lands in statusMessage_
+        // (Manager's returned status string) lands in statusMessage_
         // immediately; async outcomes (a breakpoint hit, the session
         // ending) arrive later through the WindowManager-wired
         // SetOnStopped/SetOnSessionEnded callbacks, not here.
@@ -781,7 +781,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             return;
         // Debugging wishlist: run-to-cursor -- same path/line resolution as
-        // DapToggleBreakpoint above, forwarded straight to DapManager (no
+        // DapToggleBreakpoint above, forwarded straight to Manager (no
         // InputMode session, same as every other one-shot Dap* case).
         case editor::InteractiveRequest::DapRunToCursor: {
             if (!dapManager_) {
@@ -798,7 +798,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         }
         // Debugging wishlist: jump-to-line -- same path/line resolution as
-        // DapRunToCursor above, but async (DapManager::JumpToLine chains
+        // DapRunToCursor above, but async (Manager::JumpToLine chains
         // gotoTargets/goto): an immediate placeholder status, then the real
         // outcome lands in the callback, same shape as DapEvaluate/
         // ShowDebugInfo's own async status updates.
@@ -861,7 +861,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
             }
-            else if (dapManager_->State() != editor::dap::DapManager::SessionState::Stopped) {
+            else if (dapManager_->State() != editor::dap::Manager::SessionState::Stopped) {
                 statusMessage_ = "Debug session is not stopped.";
             }
             else if (!acpManager_ || acpManager_->State() != editor::acp::AcpManager::SessionState::Active) {
@@ -2302,7 +2302,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
         if (input.empty()) {
             statusMessage_ = "No REPL name given.";
         }
-        else if (!editor::repl::ReplCommand(input).has_value()) {
+        else if (!editor::repl::Command(input).has_value()) {
             statusMessage_ = "No REPL command configured for \"" + input + "\" (see ned/set-repl-command).";
         }
         else if (!onRunReplRequest_) {
@@ -2392,7 +2392,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             statusMessage_                = "Setting " + name + "...";
             dapManager_->SetVariable(
                 ownerRef, name, input,
-                [this, bufferPtr, line, lineText, name](editor::dap::DapManager::SetVariableResult result) {
+                [this, bufferPtr, line, lineText, name](editor::dap::Manager::SetVariableResult result) {
                     if (bufferPtr != &activeBuffer_.Get()) {
                         return; // switched away while the request was in flight
                     }
@@ -2422,7 +2422,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
                     while (indent < lineText.size() && lineText[indent] == ' ') {
                         ++indent;
                     }
-                    editor::dap::DapManager::Variable variable;
+                    editor::dap::Manager::Variable variable;
                     variable.name                 = name;
                     variable.value                = result.value;
                     variable.type                 = result.type;
@@ -2464,7 +2464,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             statusMessage_                    = "Fetching memory...";
             dapManager_->RequestMemory(
                 memoryReference, 0, count,
-                [this, memoryReference, asImage](bool success, editor::dap::DapManager::MemoryBlock block) {
+                [this, memoryReference, asImage](bool success, editor::dap::Manager::MemoryBlock block) {
                     if (!success) {
                         statusMessage_ = "Read memory failed (adapter may not support readMemory).";
                         return;

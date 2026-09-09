@@ -1,10 +1,10 @@
-#include "DapManager.h"
+#include "Manager.h"
 
 #include <algorithm>
 #include <exception>
 #include <utility>
 
-#include "DapConfig.h"
+#include "Config.h"
 #include "Editor/Sparkline.h"
 
 namespace ned::editor::dap {
@@ -63,14 +63,14 @@ namespace {
 
 } // namespace
 
-DapManager::DapManager(ned::ui::EventLoop& eventLoop) : eventLoop_(eventLoop) {
+Manager::Manager(ned::ui::EventLoop& eventLoop) : eventLoop_(eventLoop) {
 }
 
-DapManager::SessionState DapManager::State() const {
+Manager::SessionState Manager::State() const {
     return state_;
 }
 
-std::string DapManager::NormalizePathKey(const std::filesystem::path& path) {
+std::string Manager::NormalizePathKey(const std::filesystem::path& path) {
     std::error_code ec;
     // weakly_canonical (same choice HandleRenameFileKey already made): a
     // breakpoint can be toggled in a buffer whose file the debugger will
@@ -83,7 +83,7 @@ std::string DapManager::NormalizePathKey(const std::filesystem::path& path) {
     return std::filesystem::absolute(path).string();
 }
 
-bool DapManager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t line) {
+bool Manager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t line) {
     const std::string        key         = NormalizePathKey(path);
     std::vector<Breakpoint>& breakpoints = breakpoints_[key];
     const auto               it          = std::find_if(breakpoints.begin(), breakpoints.end(), [line](const Breakpoint& bp) { return bp.line == line; });
@@ -114,7 +114,7 @@ bool DapManager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t
     return nowSet;
 }
 
-std::string DapManager::SetBreakpointCondition(const std::filesystem::path& path, std::size_t line, std::string condition) {
+std::string Manager::SetBreakpointCondition(const std::filesystem::path& path, std::size_t line, std::string condition) {
     const std::string        key   = NormalizePathKey(path);
     std::vector<Breakpoint>& lines = breakpoints_[key];
     auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
@@ -135,7 +135,7 @@ std::string DapManager::SetBreakpointCondition(const std::filesystem::path& path
     return status;
 }
 
-std::string DapManager::SetBreakpointLogMessage(const std::filesystem::path& path, std::size_t line, std::string logMessage) {
+std::string Manager::SetBreakpointLogMessage(const std::filesystem::path& path, std::size_t line, std::string logMessage) {
     const std::string        key   = NormalizePathKey(path);
     std::vector<Breakpoint>& lines = breakpoints_[key];
     auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
@@ -156,7 +156,7 @@ std::string DapManager::SetBreakpointLogMessage(const std::filesystem::path& pat
     return status;
 }
 
-std::string DapManager::SetBreakpointHitCondition(const std::filesystem::path& path, std::size_t line, std::string hitCondition) {
+std::string Manager::SetBreakpointHitCondition(const std::filesystem::path& path, std::size_t line, std::string hitCondition) {
     const std::string        key   = NormalizePathKey(path);
     std::vector<Breakpoint>& lines = breakpoints_[key];
     auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
@@ -177,7 +177,7 @@ std::string DapManager::SetBreakpointHitCondition(const std::filesystem::path& p
     return status;
 }
 
-bool DapManager::ToggleFunctionBreakpoint(std::string name) {
+bool Manager::ToggleFunctionBreakpoint(std::string name) {
     const auto it = std::find(functionBreakpoints_.begin(), functionBreakpoints_.end(), name);
     bool       nowSet;
     if (it != functionBreakpoints_.end()) {
@@ -195,26 +195,26 @@ bool DapManager::ToggleFunctionBreakpoint(std::string name) {
     return nowSet;
 }
 
-const std::vector<std::string>& DapManager::FunctionBreakpoints() const {
+const std::vector<std::string>& Manager::FunctionBreakpoints() const {
     return functionBreakpoints_;
 }
 
-const std::vector<DapManager::ExceptionFilter>& DapManager::AvailableExceptionFilters() const {
+const std::vector<Manager::ExceptionFilter>& Manager::AvailableExceptionFilters() const {
     return exceptionFilters_;
 }
 
-const std::set<std::string>& DapManager::EnabledExceptionFilters() const {
+const std::set<std::string>& Manager::EnabledExceptionFilters() const {
     return enabledExceptionFilters_;
 }
 
-void DapManager::SetExceptionBreakpointFilters(std::set<std::string> ids) {
+void Manager::SetExceptionBreakpointFilters(std::set<std::string> ids) {
     enabledExceptionFilters_ = std::move(ids);
     if (client_ && state_ != SessionState::Inactive) {
         SendExceptionBreakpoints();
     }
 }
 
-std::vector<std::size_t> DapManager::BreakpointsForFile(const std::filesystem::path& path) const {
+std::vector<std::size_t> Manager::BreakpointsForFile(const std::filesystem::path& path) const {
     const auto               it = breakpoints_.find(NormalizePathKey(path));
     std::vector<std::size_t> lines;
     if (it != breakpoints_.end()) {
@@ -225,7 +225,7 @@ std::vector<std::size_t> DapManager::BreakpointsForFile(const std::filesystem::p
     return lines;
 }
 
-std::map<std::string, std::vector<DapManager::PersistedBreakpoint>> DapManager::AllBreakpoints() const {
+std::map<std::string, std::vector<Manager::PersistedBreakpoint>> Manager::AllBreakpoints() const {
     std::map<std::string, std::vector<PersistedBreakpoint>> persisted;
     for (const auto& [key, breakpoints] : breakpoints_) {
         std::vector<PersistedBreakpoint>& entries = persisted[key];
@@ -241,7 +241,7 @@ std::map<std::string, std::vector<DapManager::PersistedBreakpoint>> DapManager::
     return persisted;
 }
 
-void DapManager::RestoreBreakpoints(std::map<std::string, std::vector<PersistedBreakpoint>> breakpoints) {
+void Manager::RestoreBreakpoints(std::map<std::string, std::vector<PersistedBreakpoint>> breakpoints) {
     // Union of old and new keys first, so a live adapter (the robustness
     // guard case -- see the header) also hears about files whose set just
     // became empty, same reasoning as ToggleBreakpoint's erase path.
@@ -290,13 +290,13 @@ void DapManager::RestoreBreakpoints(std::map<std::string, std::vector<PersistedB
     }
 }
 
-void DapManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     if (client_) {
         client_->ExpireStaleRequests(maxAge);
     }
 }
 
-std::string DapManager::StartOrContinue(const std::string& language) {
+std::string Manager::StartOrContinue(const std::string& language) {
     if (state_ == SessionState::Stopped) {
         client_->SendRequest("continue", Json{{"threadId", CurrentThreadId()}},
                              [this](bool success, const Json&, const std::string& message) {
@@ -312,23 +312,23 @@ std::string DapManager::StartOrContinue(const std::string& language) {
     if (state_ != SessionState::Inactive) {
         return "Debug session already running.";
     }
-    if (!DapLaunchConfig(language)) {
+    if (!LaunchConfig(language)) {
         return "No launch configuration for " + language + " (ned/set-dap-launch).";
     }
     return BeginSession(language, /*attach=*/false);
 }
 
-std::string DapManager::Attach(const std::string& language) {
+std::string Manager::Attach(const std::string& language) {
     if (state_ != SessionState::Inactive) {
         return "Debug session already running.";
     }
-    if (!DapAttachConfig(language)) {
+    if (!AttachConfig(language)) {
         return "No attach configuration for " + language + " (ned/set-dap-attach).";
     }
     return BeginSession(language, /*attach=*/true);
 }
 
-std::string DapManager::BeginSession(const std::string& language, bool attach) {
+std::string Manager::BeginSession(const std::string& language, bool attach) {
     capabilities_ = Capabilities{}; // fresh adapter, fresh capabilities -- see the header's own doc comment
     exceptionFilters_.clear();
     enabledExceptionFilters_.clear();
@@ -339,12 +339,12 @@ std::string DapManager::BeginSession(const std::string& language, bool attach) {
     watchHistory_.assign(watches_.size(), {});
 
     if (!client_) {
-        const auto argv = DapAdapterCommand(language);
+        const auto argv = AdapterCommand(language);
         if (!argv) {
             return "No debug adapter configured for " + language + " (ned/set-dap-adapter).";
         }
         try {
-            client_ = std::make_unique<DapClient>(*argv, eventLoop_);
+            client_ = std::make_unique<Client>(*argv, eventLoop_);
         }
         catch (const std::exception& e) {
             client_.reset();
@@ -424,8 +424,8 @@ std::string DapManager::BeginSession(const std::string& language, bool attach) {
     return std::string("Starting debug session (") + language + ")...";
 }
 
-void DapManager::SendLaunchOrAttach() {
-    const auto config    = isAttach_ ? DapAttachConfig(language_) : DapLaunchConfig(language_);
+void Manager::SendLaunchOrAttach() {
+    const auto config    = isAttach_ ? AttachConfig(language_) : LaunchConfig(language_);
     Json       arguments = Json::object();
     if (config) {
         try {
@@ -448,7 +448,7 @@ void DapManager::SendLaunchOrAttach() {
     });
 }
 
-void DapManager::WireClient(DapClient& client) {
+void Manager::WireClient(Client& client) {
     client.SetEventHandler("initialized", [this](const Json&) { HandleInitializedEvent(); });
     client.SetEventHandler("stopped", [this](const Json& body) { HandleStoppedEvent(body); });
     client.SetEventHandler("terminated", [this](const Json&) { EndSession("Debug session terminated."); });
@@ -459,7 +459,7 @@ void DapManager::WireClient(DapClient& client) {
     client.SetOnDisconnected([this](std::string reason) { EndSession("Debug adapter disconnected: " + std::move(reason)); });
 }
 
-void DapManager::HandleInitializedEvent() {
+void Manager::HandleInitializedEvent() {
     for (const auto& [pathKey, lines] : breakpoints_) {
         (void)lines;
         SendBreakpointsForFile(pathKey);
@@ -475,7 +475,7 @@ void DapManager::HandleInitializedEvent() {
     });
 }
 
-void DapManager::SendFunctionBreakpoints() {
+void Manager::SendFunctionBreakpoints() {
     Json breakpointsJson = Json::array();
     for (const std::string& name : functionBreakpoints_) {
         breakpointsJson.push_back(Json{{"name", name}});
@@ -489,7 +489,7 @@ void DapManager::SendFunctionBreakpoints() {
                          });
 }
 
-void DapManager::SendExceptionBreakpoints() {
+void Manager::SendExceptionBreakpoints() {
     Json filtersJson = Json::array();
     for (const std::string& id : enabledExceptionFilters_) {
         filtersJson.push_back(id);
@@ -500,7 +500,7 @@ void DapManager::SendExceptionBreakpoints() {
                          });
 }
 
-void DapManager::SendBreakpointsForFile(const std::string& pathKey) {
+void Manager::SendBreakpointsForFile(const std::string& pathKey) {
     Json breakpointsJson = Json::array();
     if (const auto it = breakpoints_.find(pathKey); it != breakpoints_.end()) {
         for (const Breakpoint& bp : it->second) {
@@ -551,7 +551,7 @@ void DapManager::SendBreakpointsForFile(const std::string& pathKey) {
                          });
 }
 
-void DapManager::HandleStoppedEvent(const Json& body) {
+void Manager::HandleStoppedEvent(const Json& body) {
     // Run-to-cursor's temporary breakpoint (if any) is cleared on the very
     // next stop for any reason -- only one continue was ever issued for it.
     ClearPendingRunToCursor(/*pushToAdapter=*/true);
@@ -592,7 +592,7 @@ void DapManager::HandleStoppedEvent(const Json& body) {
                          });
 }
 
-void DapManager::RefreshWatchHistory() {
+void Manager::RefreshWatchHistory() {
     for (std::size_t i = 0; i < watches_.size(); ++i) {
         Evaluate(
             watches_[i],
@@ -614,7 +614,7 @@ void DapManager::RefreshWatchHistory() {
     }
 }
 
-std::string DapManager::Pause() {
+std::string Manager::Pause() {
     if (state_ == SessionState::Inactive || state_ == SessionState::Starting) {
         return "No debug session.";
     }
@@ -628,7 +628,7 @@ std::string DapManager::Pause() {
     return "Pause requested.";
 }
 
-std::string DapManager::StopSession() {
+std::string Manager::StopSession() {
     if (state_ == SessionState::Inactive) {
         return "No debug session.";
     }
@@ -638,7 +638,7 @@ std::string DapManager::StopSession() {
     // before this SendRequest -- without it, EndSession destroying client_
     // right below could race the write thread's own stop and silently drop
     // this "disconnect" frame before it ever reaches the wire (see
-    // DapClient.h's own header comment).
+    // Client.h's own header comment).
     try {
         client_->PrepareForGracefulShutdown();
         // DAP round 3: an attached session never kills a process ned didn't
@@ -652,14 +652,14 @@ std::string DapManager::StopSession() {
     return "Debug session stopped.";
 }
 
-void DapManager::MarkResumed() {
+void Manager::MarkResumed() {
     state_ = SessionState::Running;
     currentStop_.reset();
     stoppedFrameId_.reset();
     focusedThreadId_.reset();
 }
 
-std::string DapManager::SendStep(const std::string& command, const std::string& label) {
+std::string Manager::SendStep(const std::string& command, const std::string& label) {
     if (state_ != SessionState::Stopped) {
         return "Not stopped (nothing to step).";
     }
@@ -675,19 +675,19 @@ std::string DapManager::SendStep(const std::string& command, const std::string& 
     return label + "...";
 }
 
-std::string DapManager::StepOver() {
+std::string Manager::StepOver() {
     return SendStep("next", "Stepping over");
 }
 
-std::string DapManager::StepInto() {
+std::string Manager::StepInto() {
     return SendStep("stepIn", "Stepping into");
 }
 
-std::string DapManager::StepOut() {
+std::string Manager::StepOut() {
     return SendStep("stepOut", "Stepping out");
 }
 
-std::string DapManager::ReverseContinue() {
+std::string Manager::ReverseContinue() {
     std::string status = SendStep("reverseContinue", "Reverse-continuing");
     if (!capabilities_.stepBack && status == "Reverse-continuing...") {
         status += " (adapter did not advertise reverse-debugging support -- may be ignored)";
@@ -695,7 +695,7 @@ std::string DapManager::ReverseContinue() {
     return status;
 }
 
-std::string DapManager::StepBack() {
+std::string Manager::StepBack() {
     std::string status = SendStep("stepBack", "Stepping back");
     if (!capabilities_.stepBack && status == "Stepping back...") {
         status += " (adapter did not advertise reverse-debugging support -- may be ignored)";
@@ -703,7 +703,7 @@ std::string DapManager::StepBack() {
     return status;
 }
 
-std::string DapManager::RunToCursor(const std::filesystem::path& path, std::size_t line) {
+std::string Manager::RunToCursor(const std::filesystem::path& path, std::size_t line) {
     if (state_ != SessionState::Stopped) {
         return "Not stopped (nothing to run to cursor from).";
     }
@@ -727,7 +727,7 @@ std::string DapManager::RunToCursor(const std::filesystem::path& path, std::size
     return "Running to cursor...";
 }
 
-void DapManager::ClearPendingRunToCursor(bool pushToAdapter) {
+void Manager::ClearPendingRunToCursor(bool pushToAdapter) {
     if (!pendingRunToCursor_) {
         return;
     }
@@ -750,7 +750,7 @@ void DapManager::ClearPendingRunToCursor(bool pushToAdapter) {
     }
 }
 
-void DapManager::JumpToLine(const std::filesystem::path& path, std::size_t line, std::function<void(bool, std::string)> callback) {
+void Manager::JumpToLine(const std::filesystem::path& path, std::size_t line, std::function<void(bool, std::string)> callback) {
     if (state_ != SessionState::Stopped) {
         callback(false, "Not stopped (nothing to jump from).");
         return;
@@ -791,7 +791,7 @@ void DapManager::JumpToLine(const std::filesystem::path& path, std::size_t line,
         });
 }
 
-std::string DapManager::RestartFrame(int frameId) {
+std::string Manager::RestartFrame(int frameId) {
     if (state_ != SessionState::Stopped) {
         return "Not stopped (nothing to restart).";
     }
@@ -811,11 +811,11 @@ std::string DapManager::RestartFrame(int frameId) {
     return status;
 }
 
-std::optional<std::pair<std::string, std::size_t>> DapManager::CurrentStopKeyAndLine() const {
+std::optional<std::pair<std::string, std::size_t>> Manager::CurrentStopKeyAndLine() const {
     return currentStop_;
 }
 
-std::vector<std::size_t> DapManager::BreakpointLinesForKey(const std::string& key) const {
+std::vector<std::size_t> Manager::BreakpointLinesForKey(const std::string& key) const {
     std::vector<std::size_t> lines;
     const auto               it = breakpoints_.find(key);
     if (it != breakpoints_.end()) {
@@ -826,16 +826,16 @@ std::vector<std::size_t> DapManager::BreakpointLinesForKey(const std::string& ke
     return lines;
 }
 
-std::vector<DapManager::Breakpoint> DapManager::BreakpointsForKey(const std::string& key) const {
+std::vector<Manager::Breakpoint> Manager::BreakpointsForKey(const std::string& key) const {
     const auto it = breakpoints_.find(key);
     return it != breakpoints_.end() ? it->second : std::vector<Breakpoint>{};
 }
 
-int DapManager::CurrentThreadId() const {
+int Manager::CurrentThreadId() const {
     return focusedThreadId_.value_or(stoppedThreadId_);
 }
 
-void DapManager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> callback) {
+void Manager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> callback) {
     if (!client_ || state_ != SessionState::Stopped) {
         callback({});
         return;
@@ -865,7 +865,7 @@ void DapManager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> 
                          });
 }
 
-void DapManager::RequestScopes(int frameId, std::function<void(std::vector<Scope>)> callback) {
+void Manager::RequestScopes(int frameId, std::function<void(std::vector<Scope>)> callback) {
     if (!client_ || state_ != SessionState::Stopped) {
         callback({});
         return;
@@ -885,7 +885,7 @@ void DapManager::RequestScopes(int frameId, std::function<void(std::vector<Scope
                          });
 }
 
-void DapManager::RequestVariables(int variablesReference, std::function<void(std::vector<Variable>)> callback, bool hex) {
+void Manager::RequestVariables(int variablesReference, std::function<void(std::vector<Variable>)> callback, bool hex) {
     if (!client_ || state_ != SessionState::Stopped) {
         callback({});
         return;
@@ -912,7 +912,7 @@ void DapManager::RequestVariables(int variablesReference, std::function<void(std
                          });
 }
 
-void DapManager::RequestDisassembly(const std::string& memoryReference, long instructionOffset, int instructionCount,
+void Manager::RequestDisassembly(const std::string& memoryReference, long instructionOffset, int instructionCount,
                                     std::function<void(std::vector<DisassembledInstruction>)> callback) {
     if (!client_ || state_ != SessionState::Stopped || memoryReference.empty()) {
         callback({});
@@ -947,7 +947,7 @@ void DapManager::RequestDisassembly(const std::string& memoryReference, long ins
                          });
 }
 
-void DapManager::RequestMemory(const std::string& memoryReference, long offset, std::size_t count,
+void Manager::RequestMemory(const std::string& memoryReference, long offset, std::size_t count,
                                std::function<void(bool success, MemoryBlock)> callback) {
     if (!client_ || state_ != SessionState::Stopped || memoryReference.empty()) {
         callback(false, MemoryBlock{});
@@ -973,7 +973,7 @@ void DapManager::RequestMemory(const std::string& memoryReference, long offset, 
                          });
 }
 
-void DapManager::Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback, std::string context,
+void Manager::Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback, std::string context,
                           bool hex) {
     if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting) {
         callback(false, "No debug session.");
@@ -997,7 +997,7 @@ void DapManager::Evaluate(const std::string& expression, std::function<void(bool
                          });
 }
 
-void DapManager::EvaluateWithReference(const std::string& expression, std::function<void(EvaluateResult)> callback,
+void Manager::EvaluateWithReference(const std::string& expression, std::function<void(EvaluateResult)> callback,
                                        std::string context) {
     if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting) {
         callback(EvaluateResult{});
@@ -1017,33 +1017,33 @@ void DapManager::EvaluateWithReference(const std::string& expression, std::funct
                          });
 }
 
-void DapManager::AddWatch(std::string expression) {
+void Manager::AddWatch(std::string expression) {
     watches_.push_back(std::move(expression));
     watchHistory_.emplace_back();
 }
 
-void DapManager::RemoveWatchAt(std::size_t index) {
+void Manager::RemoveWatchAt(std::size_t index) {
     if (index < watches_.size()) {
         watches_.erase(watches_.begin() + static_cast<std::ptrdiff_t>(index));
         watchHistory_.erase(watchHistory_.begin() + static_cast<std::ptrdiff_t>(index));
     }
 }
 
-const std::vector<std::string>& DapManager::Watches() const {
+const std::vector<std::string>& Manager::Watches() const {
     return watches_;
 }
 
-void DapManager::RestoreWatches(std::vector<std::string> watches) {
+void Manager::RestoreWatches(std::vector<std::string> watches) {
     watches_ = std::move(watches);
     watchHistory_.assign(watches_.size(), {});
 }
 
-const std::vector<double>& DapManager::WatchHistoryAt(std::size_t index) const {
+const std::vector<double>& Manager::WatchHistoryAt(std::size_t index) const {
     static const std::vector<double> kEmpty;
     return index < watchHistory_.size() ? watchHistory_[index] : kEmpty;
 }
 
-void DapManager::RequestThreads(std::function<void(std::vector<Thread>)> callback) {
+void Manager::RequestThreads(std::function<void(std::vector<Thread>)> callback) {
     if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting) {
         callback({});
         return;
@@ -1063,7 +1063,7 @@ void DapManager::RequestThreads(std::function<void(std::vector<Thread>)> callbac
                          });
 }
 
-void DapManager::SelectThread(int threadId, std::function<void(bool)> callback) {
+void Manager::SelectThread(int threadId, std::function<void(bool)> callback) {
     if (!client_ || state_ != SessionState::Stopped) {
         callback(false);
         return;
@@ -1080,7 +1080,7 @@ void DapManager::SelectThread(int threadId, std::function<void(bool)> callback) 
                          });
 }
 
-void DapManager::SetVariable(int variablesReference, const std::string& name, const std::string& value,
+void Manager::SetVariable(int variablesReference, const std::string& name, const std::string& value,
                              std::function<void(SetVariableResult)> callback) {
     if (!client_ || state_ != SessionState::Stopped) {
         callback(SetVariableResult{.success = false, .errorMessage = "No debug session."});
@@ -1102,7 +1102,7 @@ void DapManager::SetVariable(int variablesReference, const std::string& name, co
                          });
 }
 
-void DapManager::EndSession(std::string reason) {
+void Manager::EndSession(std::string reason) {
     if (state_ == SessionState::Inactive) {
         return; // e.g. disconnect EOF arriving after an explicit StopSession already tore down
     }
@@ -1129,7 +1129,7 @@ void DapManager::EndSession(std::string reason) {
     // but confirmed live elsewhere in this codebase that deferring isn't
     // actually what makes this safe: LspClient's own identical pattern still
     // raced a periodic tick against a background thread's own Post()ed
-    // callback for the same object). The real fix now lives in DapClient
+    // callback for the same object). The real fix now lives in Client
     // itself (alive_, see LspClient.h's header comment) -- a stray Post()ed
     // callback safely no-ops instead of touching freed memory regardless of
     // when this destroys the object, so plain immediate destruction is safe.
@@ -1139,15 +1139,15 @@ void DapManager::EndSession(std::string reason) {
     }
 }
 
-void DapManager::SetOnStopped(std::function<void(const StoppedInfo&)> handler) {
+void Manager::SetOnStopped(std::function<void(const StoppedInfo&)> handler) {
     onStopped_ = std::move(handler);
 }
 
-void DapManager::SetOnSessionEnded(std::function<void(std::string)> handler) {
+void Manager::SetOnSessionEnded(std::function<void(std::string)> handler) {
     onSessionEnded_ = std::move(handler);
 }
 
-DapClient& DapManager::SetClientForTesting(std::unique_ptr<DapClient> client) {
+Client& Manager::SetClientForTesting(std::unique_ptr<Client> client) {
     client_ = std::move(client);
     return *client_;
 }

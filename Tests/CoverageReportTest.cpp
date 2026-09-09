@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "Editor/Coverage/CoverageReport.h"
+#include "Editor/Coverage/Report.h"
 
-using ned::editor::coverage::CoverageReport;
+using ned::editor::coverage::Report;
 using ned::editor::coverage::FileCoverage;
 using ned::editor::coverage::FindFileCoverage;
 using ned::editor::coverage::LineCoverage;
@@ -20,7 +20,7 @@ TEST_CASE("LineCoverage::Status derives Covered/Partial/Uncovered", "[Coverage]"
 }
 
 TEST_CASE("FindFileCoverage matches an absolute SF: path exactly", "[Coverage]") {
-    CoverageReport report;
+    Report report;
     report.push_back(FileCoverage{.path = "/project/src/foo.cpp", .lines = {}});
     const FileCoverage* match = FindFileCoverage(report, "/project/src/foo.cpp", "/project");
     REQUIRE(match != nullptr);
@@ -28,7 +28,7 @@ TEST_CASE("FindFileCoverage matches an absolute SF: path exactly", "[Coverage]")
 }
 
 TEST_CASE("FindFileCoverage resolves a relative SF: path against projectRoot", "[Coverage]") {
-    CoverageReport report;
+    Report report;
     report.push_back(FileCoverage{.path = "src/foo.cpp", .lines = {}});
     const FileCoverage* match = FindFileCoverage(report, "/project/src/foo.cpp", "/project");
     REQUIRE(match != nullptr);
@@ -36,7 +36,7 @@ TEST_CASE("FindFileCoverage resolves a relative SF: path against projectRoot", "
 }
 
 TEST_CASE("FindFileCoverage falls back to a unique basename match", "[Coverage]") {
-    CoverageReport report;
+    Report report;
     report.push_back(FileCoverage{.path = "/build/obj/some/weird/path/foo.cpp", .lines = {}});
     const FileCoverage* match = FindFileCoverage(report, "/project/src/foo.cpp", "/project");
     REQUIRE(match != nullptr);
@@ -44,19 +44,19 @@ TEST_CASE("FindFileCoverage falls back to a unique basename match", "[Coverage]"
 }
 
 TEST_CASE("FindFileCoverage returns nullptr for an ambiguous basename", "[Coverage]") {
-    CoverageReport report;
+    Report report;
     report.push_back(FileCoverage{.path = "/a/foo.cpp", .lines = {}});
     report.push_back(FileCoverage{.path = "/b/foo.cpp", .lines = {}});
     REQUIRE(FindFileCoverage(report, "/project/src/foo.cpp", "/project") == nullptr);
 }
 
 TEST_CASE("FindFileCoverage returns nullptr when nothing matches at all", "[Coverage]") {
-    CoverageReport report;
+    Report report;
     report.push_back(FileCoverage{.path = "/other/bar.cpp", .lines = {}});
     REQUIRE(FindFileCoverage(report, "/project/src/foo.cpp", "/project") == nullptr);
 }
 
 TEST_CASE("FindFileCoverage on an empty report returns nullptr", "[Coverage]") {
-    const CoverageReport report;
+    const Report report;
     REQUIRE(FindFileCoverage(report, "/project/src/foo.cpp", "/project") == nullptr);
 }
