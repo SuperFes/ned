@@ -6,7 +6,7 @@
 
 #include <unistd.h>
 
-#include "Editor/Mcp/McpTransport.h"
+#include "Editor/Mcp/Transport.h"
 
 using ned::editor::mcp::Transport;
 

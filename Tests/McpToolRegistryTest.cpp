@@ -8,7 +8,7 @@
 #include "Editor/Dap/DapManager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Lsp/LspManager.h"
-#include "Editor/Mcp/McpToolRegistry.h"
+#include "Editor/Mcp/ToolRegistry.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/TestRun/TestRunner.h"

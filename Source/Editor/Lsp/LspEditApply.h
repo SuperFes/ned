@@ -2,7 +2,7 @@
 // LSP client follow-up (extracted for acp-mcp-tool-bridge's format_buffer
 // tool). The single-buffer half of applying a server-returned edit list --
 // shared by BufferView's ApplyCodeAction/ApplyRename/lsp-format-buffer call
-// sites and Editor/Mcp/McpToolRegistry.h's format_buffer tool, so both go
+// sites and Editor/Mcp/ToolRegistry.h's format_buffer tool, so both go
 // through the exact same tested sort/apply/undo-grouping logic rather than
 // forking a second copy. The multi-file transaction wrapper
 // (BufferView::ApplyProjectEdit, ProjectUndoManager-recording, file create/

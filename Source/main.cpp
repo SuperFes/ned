@@ -44,8 +44,8 @@
 #include "Editor/Lsp/LspBrokerMain.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/Transport.h"
-#include "Editor/Mcp/McpBridgeServer.h"
-#include "Editor/Mcp/McpToolRegistry.h"
+#include "Editor/Mcp/BridgeServer.h"
+#include "Editor/Mcp/ToolRegistry.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
@@ -199,7 +199,7 @@ int RunLspBrokerStop() {
 }
 
 // `ned --mcp-stdio-relay <socket-path>`: the ACP MCP tool-server bridge's
-// relay subprocess (Editor/Mcp/McpBridgeServer.h) -- the "command" the live
+// relay subprocess (Editor/Mcp/BridgeServer.h) -- the "command" the live
 // `ned` process hands the ACP agent as its configured stdio MCP server (see
 // AcpManager::StartSession's mcpServers payload). This process is not the
 // live editor; it has no access to any buffer/manager. It's a dumb byte
@@ -1217,9 +1217,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // (just builds the name->schema->handler table), so it's always built;
     // the bridge socket itself is only ever actually opened lazily, from
     // AcpManager::StartSession, and only when ned/set-acp-mcp-bridge (see
-    // Editor/Mcp/McpBridgeSetting.h, default on) allows it.
+    // Editor/Mcp/BridgeSetting.h, default on) allows it.
     ned::editor::mcp::ToolRegistry    mcpToolRegistry(bufferList, lspManager, vcsRunner, testRunner, dapManager);
-    ned::editor::mcp::McpBridgeServer mcpBridgeServer(mcpToolRegistry, eventLoop);
+    ned::editor::mcp::BridgeServer mcpBridgeServer(mcpToolRegistry, eventLoop);
     acpManager.SetMcpBridgeServer(&mcpBridgeServer);
 
     // BufferView's completion-debounce/status-message-idle-timeout
