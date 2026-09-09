@@ -31,6 +31,7 @@
 #include "ActiveBuffer.h"
 #include "UI/BufferView/CacheStamp.h"
 #include "UI/BufferView/CandidateList.h"
+#include "UI/BufferView/FuzzyPrompt.h"
 #include "UI/BufferView/EditorContext.h"
 #include "UI/BufferView/GutterModel.h"
 #include "UI/BufferView/Viewport.h"
@@ -2001,6 +2002,21 @@ class BufferView : public Widget {
     // and back several sessions, including the right-click context menu
     // below, so the "no floating/popup widget concept" claim this comment
     // used to make no longer holds.)
+    // The behaviour every fuzzy prompt shares; the eight builders below are the
+    // parts that differ. See BufferView/FuzzyPrompt.h.
+    void RefreshFuzzyPrompt(const bufferview::FuzzyPrompt& prompt);
+    void HandleFuzzyPromptKey(const bufferview::FuzzyPrompt& prompt, const editor::KeyChord& chord);
+
+    [[nodiscard]] bufferview::FuzzyPrompt ExecuteCommandPrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt ProjectFindFilePrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt FindRecentFilePrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt SwitchProjectPrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt SwitchToBufferPrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt AcpAgentNamePrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt BookmarkJumpPrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt SelectThemePrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt VcsSwitchBranchPrompt();
+
     void HandleExecuteCommandKey(const editor::KeyChord& chord);
 
     // Refreshes statusMessage_ from the current prompt_ text and

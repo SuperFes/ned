@@ -3441,148 +3441,292 @@ void BufferView::HandleOrgCaptureKey(const editor::KeyChord& chord) {
     EndInteractiveSession();
 }
 
-void BufferView::RefreshExecuteCommandStatus() {
-    const std::vector<std::string>& ranked = executeCommandList_.Refiltered(dispatcher_.Registry().Names(), prompt_->Text());
+void BufferView::RefreshFuzzyPrompt(const bufferview::FuzzyPrompt& prompt) {
+    bufferview::CandidateList& list = *prompt.list;
+    if (prompt.pool) {
+        list.Refilter(prompt.pool(), prompt_->Text());
+    }
+    else {
+        list.Refilter(prompt_->Text());
+    }
 
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
-        onCandidatesChanged_(
-            ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, executeCommandList_.Selection())));
+        onCandidatesChanged_(list.Empty() ? std::nullopt
+                                          : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(),
+                                                                                        list.Ranked(), list.Selection())));
     }
+}
+
+void BufferView::HandleFuzzyPromptKey(const bufferview::FuzzyPrompt& prompt, const editor::KeyChord& chord) {
+    bufferview::CandidateList& list   = *prompt.list;
+    const auto                 rerank = [&]() {
+        if (prompt.pool) {
+            list.Refilter(prompt.pool(), prompt_->Text());
+        }
+        else {
+            list.Refilter(prompt_->Text());
+        }
+    };
+
+    if (chord.Special == editor::SpecialKey::Enter) {
+        if (!prompt.historyKey.empty()) {
+            promptHistory_.Record(prompt.historyKey, prompt_->Text());
+        }
+        rerank();
+        if (list.Empty()) {
+            statusMessage_ = prompt.emptyMessage(prompt_->Text());
+            EndInteractiveSession();
+            return;
+        }
+        // Read before ending the session: ending it clears the list.
+        const std::string selected = list.Selected();
+        EndInteractiveSession();
+        prompt.commit(selected);
+        return;
+    }
+    if (IsQuit(chord)) {
+        // Before the status message, so a prompt that previews live puts back
+        // what it was showing and then reports the cancellation over the top.
+        if (prompt.onCancel) {
+            prompt.onCancel();
+        }
+        statusMessage_ = prompt.cancelMessage;
+        EndInteractiveSession();
+        return;
+    }
+
+    if (!prompt.historyKey.empty() && TryNavigatePromptHistory(chord, prompt.historyKey)) {
+        list.SelectTop();
+        RefreshFuzzyPrompt(prompt);
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
+        rerank();
+        if (chord.Special == editor::SpecialKey::Down) {
+            list.SelectNext();
+        }
+        else {
+            list.SelectPrevious();
+        }
+        RefreshFuzzyPrompt(prompt);
+        if (prompt.onSelectionChanged) {
+            prompt.onSelectionChanged();
+        }
+        return;
+    }
+
+    // Typing re-snaps to the top match: the ranking just put the best answer for
+    // what was typed at the top, so keeping a stale selection would fight it.
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
+        promptHistoryIndex_ = kNoHistoryIndex; // editing exits history browsing
+        list.SelectTop();
+        RefreshFuzzyPrompt(prompt);
+        if (prompt.onSelectionChanged) {
+            prompt.onSelectionChanged();
+        }
+    }
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+}
+
+bufferview::FuzzyPrompt BufferView::ExecuteCommandPrompt() {
+    return {.list          = &executeCommandList_,
+            .historyKey    = "execute-command",
+            .cancelMessage = "Command cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No command matching \"" + query + "\""; },
+            .pool          = [this] { return dispatcher_.Registry().Names(); },
+            .commit        = [this](const std::string& name) {
+                editor::CommandContext context = MakeContext();
+                context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+                RunCommandAndHandleOutcome(context, [&] {
+                    dispatcher_.Registry().Invoke(name, context);
+                    return true; // Invoke() always runs the command directly -- no Pending concept here
+                }); }};
+}
+
+bufferview::FuzzyPrompt BufferView::ProjectFindFilePrompt() {
+    return {.list          = &projectFindFileList_,
+            .historyKey    = "project-find-file",
+            .cancelMessage = "Project find file cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No file matching \"" + query + "\""; },
+            .commit        = [this](const std::string& selected) {
+                const std::filesystem::path absolutePath = editor::ProjectRoot() / selected;
+                try {
+                    text::Buffer& opened = bufferList_.OpenOrCreateFile(absolutePath);
+                    activeBuffer_.Set(opened);
+                    statusMessage_ = "Opened " + opened.Name();
+                }
+                catch (const std::exception& e) {
+                    ReportError(e.what());
+                } }};
+}
+
+bufferview::FuzzyPrompt BufferView::FindRecentFilePrompt() {
+    // Unlike ProjectFindFile's project-relative entries, these are already
+    // absolute, so committing opens the selection directly.
+    return {.list          = &recentFileList_,
+            .historyKey    = "find-recent-file",
+            .cancelMessage = "Find recent file cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No recent file matching \"" + query + "\""; },
+            .commit        = [this](const std::string& selected) {
+                try {
+                    text::Buffer& opened = bufferList_.OpenOrCreateFile(std::filesystem::path(selected));
+                    activeBuffer_.Set(opened);
+                    statusMessage_ = "Opened " + opened.Name();
+                }
+                catch (const std::exception& e) {
+                    ReportError(e.what());
+                } }};
+}
+
+bufferview::FuzzyPrompt BufferView::SwitchProjectPrompt() {
+    return {.list          = &switchProjectList_,
+            .historyKey    = "switch-project",
+            .cancelMessage = "Switch project cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No project matching \"" + query + "\""; },
+            .pool          = [this] {
+                std::vector<std::string> candidates;
+                candidates.reserve(switchProjectEntries_.size());
+                for (const auto& entry : switchProjectEntries_) {
+                    candidates.push_back(FormatProjectEntry(entry));
+                }
+                return candidates; },
+            .commit        = [this](const std::string& selected) {
+                const auto it = std::find_if(switchProjectEntries_.begin(), switchProjectEntries_.end(),
+                                             [&selected](const editor::ProjectRegistryEntry& entry) {
+                                                 return FormatProjectEntry(entry) == selected;
+                                             });
+                if (it == switchProjectEntries_.end()) {
+                    ReportError("Internal error resolving the selected project.");
+                    return;
+                }
+                ActivateProjectAndReport(it->root); }};
+}
+
+bufferview::FuzzyPrompt BufferView::SwitchToBufferPrompt() {
+    return {.list          = &switchToBufferList_,
+            .historyKey    = "switch-to-buffer",
+            .cancelMessage = "Switch to buffer cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No buffer matching \"" + query + "\""; },
+            .pool          = [this] { return text::CompleteBufferNames(bufferList_, ""); },
+            .commit        = [this](const std::string& selected) {
+                if (text::Buffer* found = bufferList_.Find(selected)) {
+                    activeBuffer_.Set(*found);
+                    statusMessage_.clear();
+                }
+                else {
+                    ReportError("Internal error resolving the selected buffer.");
+                } }};
+}
+
+bufferview::FuzzyPrompt BufferView::AcpAgentNamePrompt() {
+    return {.list          = &acpAgentNameList_,
+            .historyKey    = "acp-agent-name",
+            .cancelMessage = "Start ACP session cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No agent matching \"" + query + "\""; },
+            .pool          = [] { return editor::acp::AcpAgentNames(); },
+            .commit        = [this](const std::string& selected) {
+                if (!acpManager_) {
+                    statusMessage_ = "No ACP manager available.";
+                }
+                else if (text::Buffer* buffer = acpManager_->StartSession(selected)) {
+                    activeBuffer_.Set(*buffer);
+                    statusMessage_.clear();
+                } }};
+}
+
+bufferview::FuzzyPrompt BufferView::BookmarkJumpPrompt() {
+    const bool isDelete = (bookmarkPromptAction_ == BookmarkPromptAction::Delete);
+    return {.list          = &bookmarkList_,
+            .historyKey    = "bookmark-jump",
+            .cancelMessage = std::string(isDelete ? "Delete bookmark" : "Jump to bookmark") + " cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No bookmark matching \"" + query + "\""; },
+            .commit        = [this, isDelete](const std::string& selected) {
+                if (isDelete) {
+                    editor::DeleteBookmark(selected);
+                    editor::SaveBookmarks();
+                    statusMessage_ = "Deleted bookmark: " + selected;
+                    return;
+                }
+                const std::optional<editor::Bookmark> mark = editor::FindBookmark(selected);
+                if (!mark) {
+                    statusMessage_ = "Bookmark \"" + selected + "\" no longer exists";
+                    return;
+                }
+                try {
+                    text::Buffer& opened = bufferList_.OpenOrCreateFile(mark->path);
+                    PushJumpMark();
+                    activeBuffer_.Set(opened);
+                    opened.SetPoint(opened.ByteOffsetForLineAndColumn(mark->line, mark->column,
+                                                                      static_cast<std::size_t>(editor::TabWidth())));
+                    statusMessage_ = "Bookmark: " + selected;
+                }
+                catch (const std::exception& e) {
+                    ReportError(e.what());
+                } }};
+}
+
+bufferview::FuzzyPrompt BufferView::SelectThemePrompt() {
+    // The snapshot is captured here rather than read inside commit, because the
+    // driver ends the session -- which clears themeBeforePreview_ -- before
+    // commit runs.
+    return {.list          = &selectThemeList_,
+            .historyKey    = {}, // a fixed list of names; nothing gained by remembering what was typed
+            .cancelMessage = "Theme selection cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No theme matching \"" + query + "\""; },
+            .commit =
+                [this, snapshot = themeBeforePreview_](const std::string& selected) {
+                    // Usually the highlighted candidate is already applied (every
+                    // selection change previews), but an immediate Enter on a fresh
+                    // session never previewed anything; applying explicitly covers
+                    // that and is a no-op re-apply otherwise.
+                    if (selected == kCurrentThemeLabel) {
+                        // Committing "Current theme" leaves everything as it is: no
+                        // ThemeByName() lookup (there is no registry entry by this
+                        // name) and no variables.json write, since the persisted base
+                        // theme name already describes what is active and overwriting
+                        // it with this synthetic label would break the next launch's
+                        // own theme resolution.
+                        if (themeApplier_ && snapshot) {
+                            themeApplier_(*snapshot);
+                        }
+                        statusMessage_ = "Theme unchanged.";
+                        return;
+                    }
+                    if (themeApplier_) {
+                        if (const auto named = ThemeByName(selected)) {
+                            themeApplier_(*named);
+                        }
+                    }
+                    // A committed pick is remembered across runs as the *base* theme;
+                    // preview and cancel deliberately never persist anything, and
+                    // init.janet's own (ned/theme-set ...) overrides still apply over
+                    // it at startup.
+                    editor::SetVariable("theme", selected);
+                    statusMessage_ = "Theme: " + selected;
+                },
+            .onSelectionChanged = [this] { ApplySelectedThemePreview(); },
+            .onCancel           = [this] {
+                if (themeApplier_ && themeBeforePreview_) {
+                    themeApplier_(*themeBeforePreview_);
+                } }};
+}
+
+void BufferView::RefreshExecuteCommandStatus() {
+    RefreshFuzzyPrompt(ExecuteCommandPrompt());
 }
 
 void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
-    if (chord.Special == editor::SpecialKey::Enter) {
-        promptHistory_.Record("execute-command", prompt_->Text());
-
-        const std::vector<std::string>& ranked = executeCommandList_.Refiltered(dispatcher_.Registry().Names(), prompt_->Text());
-
-        if (ranked.empty()) {
-            statusMessage_ = "No command matching \"" + prompt_->Text() + "\"";
-            EndInteractiveSession();
-            return;
-        }
-
-        const std::string name = ranked[std::min(executeCommandList_.Selection(), ranked.size() - 1)];
-        EndInteractiveSession();
-
-        editor::CommandContext context = MakeContext();
-        context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
-        RunCommandAndHandleOutcome(context, [&] {
-            dispatcher_.Registry().Invoke(name, context);
-            return true; // Invoke() always runs the command directly -- no Pending concept here
-        });
-        return;
-    }
-    if (IsQuit(chord)) {
-        statusMessage_ = "Command cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-
-    if (TryNavigatePromptHistory(chord, "execute-command")) {
-        executeCommandList_.SelectTop();
-        RefreshExecuteCommandStatus();
-        return;
-    }
-
-    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string>& ranked = executeCommandList_.Refiltered(dispatcher_.Registry().Names(), prompt_->Text());
-        if (!ranked.empty()) {
-            // Wraps at either end -- the list's own bottom/top -- rather
-            // than sticking there, matching every ListPopup-driven focus
-            // list's own navigation.
-            chord.Special == editor::SpecialKey::Down ? executeCommandList_.SelectNext() : executeCommandList_.SelectPrevious();
-        }
-        RefreshExecuteCommandStatus();
-        return;
-    }
-
-    // Typing always re-snaps the selection back to the top-ranked match
-    // (index 0) -- preserving a numeric index across a re-sorted candidate
-    // list would silently select an unrelated command, the same footgun
-    // VSCode/Sublime-style command palettes avoid by resetting to the top
-    // match on every keystroke. Tab is deliberately not bound to anything
-    // here: since typing already re-snaps to the top match, Enter with no
-    // arrow presses already invokes it directly -- a Tab-jumps-to-top-match
-    // affordance would be redundant. Pure cursor movement (CursorMoved)
-    // re-snaps nothing -- the candidate list doesn't change.
-    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
-        promptHistoryIndex_      = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
-        executeCommandList_.SelectTop();
-        RefreshExecuteCommandStatus();
-    }
-    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+    HandleFuzzyPromptKey(ExecuteCommandPrompt(), chord);
 }
 
 void BufferView::RefreshProjectFindFileStatus() {
-    const std::vector<std::string>& ranked = projectFindFileList_.Refiltered(prompt_->Text());
-
-    statusMessage_ = prompt_->StatusText();
-    if (onCandidatesChanged_) {
-        onCandidatesChanged_(
-            ranked.empty()
-                ? std::nullopt
-                : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, projectFindFileList_.Selection())));
-    }
+    RefreshFuzzyPrompt(ProjectFindFilePrompt());
 }
 
 void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
-    if (chord.Special == editor::SpecialKey::Enter) {
-        promptHistory_.Record("project-find-file", prompt_->Text());
-
-        const std::vector<std::string>& ranked = projectFindFileList_.Refiltered(prompt_->Text());
-
-        if (ranked.empty()) {
-            statusMessage_ = "No file matching \"" + prompt_->Text() + "\"";
-            EndInteractiveSession();
-            return;
-        }
-
-        const std::filesystem::path selected = ranked[std::min(projectFindFileList_.Selection(), ranked.size() - 1)];
-        EndInteractiveSession();
-
-        const std::filesystem::path absolutePath = editor::ProjectRoot() / selected;
-        try {
-            text::Buffer& opened = bufferList_.OpenOrCreateFile(absolutePath);
-            activeBuffer_.Set(opened);
-            statusMessage_ = "Opened " + opened.Name();
-        }
-        catch (const std::exception& e) {
-            ReportError(e.what());
-        }
-        return;
-    }
-    if (IsQuit(chord)) {
-        statusMessage_ = "Project find file cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-
-    if (TryNavigatePromptHistory(chord, "project-find-file")) {
-        projectFindFileList_.SelectTop();
-        RefreshProjectFindFileStatus();
-        return;
-    }
-
-    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string>& ranked = projectFindFileList_.Refiltered(prompt_->Text());
-        if (!ranked.empty()) {
-            chord.Special == editor::SpecialKey::Down ? projectFindFileList_.SelectNext() : projectFindFileList_.SelectPrevious();
-        }
-        RefreshProjectFindFileStatus();
-        return;
-    }
-
-    // Same "typing re-snaps to the top match" reasoning as
-    // HandleExecuteCommandKey above -- see that method's own comment.
-    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
-        promptHistoryIndex_       = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
-        projectFindFileList_.SelectTop();
-        RefreshProjectFindFileStatus();
-    }
-    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+    HandleFuzzyPromptKey(ProjectFindFilePrompt(), chord);
 }
 
 // editor-ergonomics follow-up: HandleProjectFindFileKey/
@@ -3591,68 +3735,11 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
 // so Enter opens the selection directly with no ProjectRoot() join).
 
 void BufferView::RefreshFindRecentFileStatus() {
-    const std::vector<std::string>& ranked = recentFileList_.Refiltered(prompt_->Text());
-
-    statusMessage_ = prompt_->StatusText();
-    if (onCandidatesChanged_) {
-        onCandidatesChanged_(
-            ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, recentFileList_.Selection())));
-    }
+    RefreshFuzzyPrompt(FindRecentFilePrompt());
 }
 
 void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
-    if (chord.Special == editor::SpecialKey::Enter) {
-        promptHistory_.Record("find-recent-file", prompt_->Text());
-
-        const std::vector<std::string>& ranked = recentFileList_.Refiltered(prompt_->Text());
-
-        if (ranked.empty()) {
-            statusMessage_ = "No recent file matching \"" + prompt_->Text() + "\"";
-            EndInteractiveSession();
-            return;
-        }
-
-        const std::filesystem::path selected = ranked[std::min(recentFileList_.Selection(), ranked.size() - 1)];
-        EndInteractiveSession();
-
-        try {
-            text::Buffer& opened = bufferList_.OpenOrCreateFile(selected);
-            activeBuffer_.Set(opened);
-            statusMessage_ = "Opened " + opened.Name();
-        }
-        catch (const std::exception& e) {
-            ReportError(e.what());
-        }
-        return;
-    }
-    if (IsQuit(chord)) {
-        statusMessage_ = "Find recent file cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-
-    if (TryNavigatePromptHistory(chord, "find-recent-file")) {
-        recentFileList_.SelectTop();
-        RefreshFindRecentFileStatus();
-        return;
-    }
-
-    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string>& ranked = recentFileList_.Refiltered(prompt_->Text());
-        if (!ranked.empty()) {
-            chord.Special == editor::SpecialKey::Down ? recentFileList_.SelectNext() : recentFileList_.SelectPrevious();
-        }
-        RefreshFindRecentFileStatus();
-        return;
-    }
-
-    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
-        promptHistoryIndex_  = kNoHistoryIndex;
-        recentFileList_.SelectTop();
-        RefreshFindRecentFileStatus();
-    }
-    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+    HandleFuzzyPromptKey(FindRecentFilePrompt(), chord);
 }
 
 
@@ -3661,80 +3748,11 @@ void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
 // list) formatted via FormatProjectEntry.
 
 void BufferView::RefreshSwitchProjectStatus() {
-    std::vector<std::string> candidates;
-    candidates.reserve(switchProjectEntries_.size());
-    for (const auto& entry : switchProjectEntries_) {
-        candidates.push_back(FormatProjectEntry(entry));
-    }
-
-    const std::vector<std::string>& ranked = switchProjectList_.Refiltered(candidates, prompt_->Text());
-
-    statusMessage_ = prompt_->StatusText();
-    if (onCandidatesChanged_) {
-        onCandidatesChanged_(
-            ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, switchProjectList_.Selection())));
-    }
+    RefreshFuzzyPrompt(SwitchProjectPrompt());
 }
 
 void BufferView::HandleSwitchProjectKey(const editor::KeyChord& chord) {
-    std::vector<std::string> candidates;
-    candidates.reserve(switchProjectEntries_.size());
-    for (const auto& entry : switchProjectEntries_) {
-        candidates.push_back(FormatProjectEntry(entry));
-    }
-
-    if (chord.Special == editor::SpecialKey::Enter) {
-        promptHistory_.Record("switch-project", prompt_->Text());
-
-        const std::vector<std::string>& ranked = switchProjectList_.Refiltered(candidates, prompt_->Text());
-        if (ranked.empty()) {
-            statusMessage_ = "No project matching \"" + prompt_->Text() + "\"";
-            EndInteractiveSession();
-            return;
-        }
-
-        const std::string selected = ranked[std::min(switchProjectList_.Selection(), ranked.size() - 1)];
-        EndInteractiveSession();
-
-        const auto it = std::find_if(switchProjectEntries_.begin(), switchProjectEntries_.end(),
-                                      [&selected](const editor::ProjectRegistryEntry& entry) {
-                                          return FormatProjectEntry(entry) == selected;
-                                      });
-        if (it == switchProjectEntries_.end()) {
-            ReportError("Internal error resolving the selected project.");
-            return;
-        }
-        ActivateProjectAndReport(it->root);
-        return;
-    }
-    if (IsQuit(chord)) {
-        statusMessage_ = "Switch project cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-
-    if (TryNavigatePromptHistory(chord, "switch-project")) {
-        switchProjectList_.SelectTop();
-        RefreshSwitchProjectStatus();
-        return;
-    }
-
-    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string>& ranked = switchProjectList_.Refiltered(candidates, prompt_->Text());
-        if (!ranked.empty()) {
-            chord.Special == editor::SpecialKey::Down ? switchProjectList_.SelectNext() : switchProjectList_.SelectPrevious();
-        }
-        RefreshSwitchProjectStatus();
-        return;
-    }
-
-    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
-        promptHistoryIndex_     = kNoHistoryIndex;
-        switchProjectList_.SelectTop();
-        RefreshSwitchProjectStatus();
-    }
-    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+    HandleFuzzyPromptKey(SwitchProjectPrompt(), chord);
 }
 
 // dropdown-path-completion follow-up: HandleSwitchProjectKey's own shape,
@@ -3746,69 +3764,11 @@ void BufferView::HandleSwitchProjectKey(const editor::KeyChord& chord) {
 // resolves the highlighted ranked candidate instead of literal prompt text.
 
 void BufferView::RefreshSwitchToBufferStatus() {
-    const std::vector<std::string> candidates = text::CompleteBufferNames(bufferList_, "");
-    const std::vector<std::string>& ranked = switchToBufferList_.Refiltered(candidates, prompt_->Text());
-
-    statusMessage_ = prompt_->StatusText();
-    if (onCandidatesChanged_) {
-        onCandidatesChanged_(
-            ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, switchToBufferList_.Selection())));
-    }
+    RefreshFuzzyPrompt(SwitchToBufferPrompt());
 }
 
 void BufferView::HandleSwitchToBufferKey(const editor::KeyChord& chord) {
-    const std::vector<std::string> candidates = text::CompleteBufferNames(bufferList_, "");
-
-    if (chord.Special == editor::SpecialKey::Enter) {
-        promptHistory_.Record("switch-to-buffer", prompt_->Text());
-
-        const std::vector<std::string>& ranked = switchToBufferList_.Refiltered(candidates, prompt_->Text());
-        if (ranked.empty()) {
-            statusMessage_ = "No buffer matching \"" + prompt_->Text() + "\"";
-            EndInteractiveSession();
-            return;
-        }
-
-        const std::string selected = ranked[std::min(switchToBufferList_.Selection(), ranked.size() - 1)];
-        EndInteractiveSession();
-
-        if (text::Buffer* found = bufferList_.Find(selected)) {
-            activeBuffer_.Set(*found);
-            statusMessage_.clear();
-        }
-        else {
-            ReportError("Internal error resolving the selected buffer.");
-        }
-        return;
-    }
-    if (IsQuit(chord)) {
-        statusMessage_ = "Switch to buffer cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-
-    if (TryNavigatePromptHistory(chord, "switch-to-buffer")) {
-        switchToBufferList_.SelectTop();
-        RefreshSwitchToBufferStatus();
-        return;
-    }
-
-    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string>& ranked = switchToBufferList_.Refiltered(candidates, prompt_->Text());
-        if (!ranked.empty()) {
-            chord.Special == editor::SpecialKey::Down ? switchToBufferList_.SelectNext() : switchToBufferList_.SelectPrevious();
-        }
-        RefreshSwitchToBufferStatus();
-        return;
-    }
-
-    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
-        promptHistoryIndex_      = kNoHistoryIndex;
-        switchToBufferList_.SelectTop();
-        RefreshSwitchToBufferStatus();
-    }
-    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+    HandleFuzzyPromptKey(SwitchToBufferPrompt(), chord);
 }
 
 // dropdown-path-completion follow-up: RefreshSwitchToBufferStatus's own
@@ -3818,69 +3778,11 @@ void BufferView::HandleSwitchToBufferKey(const editor::KeyChord& chord) {
 // handled here -- it stays on HandlePromptKey's own literal-text path.
 
 void BufferView::RefreshAcpAgentNameStatus() {
-    const std::vector<std::string> candidates = editor::acp::AcpAgentNames();
-    const std::vector<std::string>& ranked = acpAgentNameList_.Refiltered(candidates, prompt_->Text());
-
-    statusMessage_ = prompt_->StatusText();
-    if (onCandidatesChanged_) {
-        onCandidatesChanged_(
-            ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, acpAgentNameList_.Selection())));
-    }
+    RefreshFuzzyPrompt(AcpAgentNamePrompt());
 }
 
 void BufferView::HandleAcpAgentNameKey(const editor::KeyChord& chord) {
-    const std::vector<std::string> candidates = editor::acp::AcpAgentNames();
-
-    if (chord.Special == editor::SpecialKey::Enter) {
-        promptHistory_.Record("acp-agent-name", prompt_->Text());
-
-        const std::vector<std::string>& ranked = acpAgentNameList_.Refiltered(candidates, prompt_->Text());
-        if (ranked.empty()) {
-            statusMessage_ = "No agent matching \"" + prompt_->Text() + "\"";
-            EndInteractiveSession();
-            return;
-        }
-
-        const std::string selected = ranked[std::min(acpAgentNameList_.Selection(), ranked.size() - 1)];
-        EndInteractiveSession();
-
-        if (!acpManager_) {
-            statusMessage_ = "No ACP manager available.";
-        }
-        else if (text::Buffer* buffer = acpManager_->StartSession(selected)) {
-            activeBuffer_.Set(*buffer);
-            statusMessage_.clear();
-        }
-        return;
-    }
-    if (IsQuit(chord)) {
-        statusMessage_ = "Start ACP session cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-
-    if (TryNavigatePromptHistory(chord, "acp-agent-name")) {
-        acpAgentNameList_.SelectTop();
-        RefreshAcpAgentNameStatus();
-        return;
-    }
-
-    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string>& ranked = acpAgentNameList_.Refiltered(candidates, prompt_->Text());
-        if (!ranked.empty()) {
-            chord.Special == editor::SpecialKey::Down ? acpAgentNameList_.SelectNext() : acpAgentNameList_.SelectPrevious();
-        }
-        RefreshAcpAgentNameStatus();
-        return;
-    }
-
-    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
-        promptHistoryIndex_     = kNoHistoryIndex;
-        acpAgentNameList_.SelectTop();
-        RefreshAcpAgentNameStatus();
-    }
-    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+    HandleFuzzyPromptKey(AcpAgentNamePrompt(), chord);
 }
 
 // named-projects follow-up: the shared tail of switch-project/open-project
@@ -3921,98 +3823,18 @@ void BufferView::ActivateProjectAndReport(const std::filesystem::path& root) {
 // (bookmarkPromptAction_ == Jump) or deletes (== Delete) the selected name.
 
 void BufferView::RefreshBookmarkJumpStatus() {
-    const std::vector<std::string>& ranked = bookmarkList_.Refiltered(prompt_->Text());
-
-    statusMessage_ = prompt_->StatusText();
-    if (onCandidatesChanged_) {
-        onCandidatesChanged_(
-            ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, bookmarkList_.Selection())));
-    }
+    RefreshFuzzyPrompt(BookmarkJumpPrompt());
 }
 
 void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
-    const bool isDelete = (bookmarkPromptAction_ == BookmarkPromptAction::Delete);
-
-    if (chord.Special == editor::SpecialKey::Enter) {
-        promptHistory_.Record("bookmark-jump", prompt_->Text());
-
-        const std::vector<std::string>& ranked = bookmarkList_.Refiltered(prompt_->Text());
-
-        if (ranked.empty()) {
-            statusMessage_ = "No bookmark matching \"" + prompt_->Text() + "\"";
-            EndInteractiveSession();
-            return;
-        }
-
-        const std::string selected = ranked[std::min(bookmarkList_.Selection(), ranked.size() - 1)];
-        EndInteractiveSession();
-
-        if (isDelete) {
-            editor::DeleteBookmark(selected);
-            editor::SaveBookmarks();
-            statusMessage_ = "Deleted bookmark: " + selected;
-            return;
-        }
-
-        const std::optional<editor::Bookmark> mark = editor::FindBookmark(selected);
-        if (!mark) {
-            statusMessage_ = "Bookmark \"" + selected + "\" no longer exists";
-            return;
-        }
-        try {
-            text::Buffer& opened = bufferList_.OpenOrCreateFile(mark->path);
-            PushJumpMark();
-            activeBuffer_.Set(opened);
-            opened.SetPoint(opened.ByteOffsetForLineAndColumn(mark->line, mark->column, static_cast<std::size_t>(editor::TabWidth())));
-            statusMessage_ = "Bookmark: " + selected;
-        }
-        catch (const std::exception& e) {
-            ReportError(e.what());
-        }
-        return;
-    }
-    if (IsQuit(chord)) {
-        statusMessage_ = std::string(isDelete ? "Delete bookmark" : "Jump to bookmark") + " cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-
-    if (TryNavigatePromptHistory(chord, "bookmark-jump")) {
-        bookmarkList_.SelectTop();
-        RefreshBookmarkJumpStatus();
-        return;
-    }
-
-    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string>& ranked = bookmarkList_.Refiltered(prompt_->Text());
-        if (!ranked.empty()) {
-            chord.Special == editor::SpecialKey::Down ? bookmarkList_.SelectNext() : bookmarkList_.SelectPrevious();
-        }
-        RefreshBookmarkJumpStatus();
-        return;
-    }
-
-    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
-        promptHistoryIndex_ = kNoHistoryIndex;
-        bookmarkList_.SelectTop();
-        RefreshBookmarkJumpStatus();
-    }
-    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+    HandleFuzzyPromptKey(BookmarkJumpPrompt(), chord);
 }
 
 // rich-theme-set follow-up (Phase 1) -- see the declarations' own doc
 // comments in BufferView.h for the session's overall shape.
 
 void BufferView::RefreshSelectThemeStatus() {
-    const std::vector<std::string>& ranked = selectThemeList_.Refiltered(prompt_->Text());
-
-    statusMessage_ = prompt_->StatusText();
-    if (onCandidatesChanged_) {
-        onCandidatesChanged_(
-            ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, selectThemeList_.Selection())));
-    }
+    RefreshFuzzyPrompt(SelectThemePrompt());
 }
 
 void BufferView::ApplySelectedThemePreview() {
@@ -4044,78 +3866,7 @@ void BufferView::ApplySelectedThemePreview() {
 }
 
 void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
-    if (chord.Special == editor::SpecialKey::Enter) {
-        const std::vector<std::string>& ranked = selectThemeList_.Refiltered(prompt_->Text());
-
-        if (ranked.empty()) {
-            // No candidate was showing either (ApplySelectedThemePreview's
-            // own empty-ranked branch already restored the snapshot when
-            // the list emptied), so this is a plain report-and-leave.
-            statusMessage_ = "No theme matching \"" + prompt_->Text() + "\"";
-            EndInteractiveSession();
-            return;
-        }
-
-        // Usually the highlighted candidate is already applied (every
-        // selection/rank change previews), but not always: an immediate
-        // Enter on a fresh session never previewed anything. Applying
-        // explicitly covers that and is a no-op re-apply otherwise.
-        const std::string selected = ranked[std::min(selectThemeList_.Selection(), ranked.size() - 1)];
-        if (selected == kCurrentThemeLabel) {
-            // select-theme-current-row follow-up: committing "Current
-            // theme" leaves everything exactly as it already is -- no
-            // ThemeByName() lookup (there's no registry entry by this
-            // name), and no variables.json write, since the persisted
-            // base theme name (if any) already correctly describes what's
-            // active; overwriting it with this synthetic label would
-            // break next launch's own theme resolution.
-            if (themeBeforePreview_) {
-                themeApplier_(*themeBeforePreview_);
-            }
-            statusMessage_ = "Theme unchanged.";
-            EndInteractiveSession();
-            return;
-        }
-        if (const auto named = ThemeByName(selected)) {
-            themeApplier_(*named);
-        }
-        // variables-store follow-up: a committed pick is remembered across
-        // runs ($XDG_STATE_HOME/ned/variables.json) as the *base* theme --
-        // preview and cancel deliberately never persist anything, and
-        // init.janet's (ned/theme-set ...) overrides still apply over this
-        // at startup (see main.cpp's precedence comment).
-        editor::SetVariable("theme", selected);
-        statusMessage_ = "Theme: " + selected;
-        EndInteractiveSession();
-        return;
-    }
-    if (IsQuit(chord)) {
-        if (themeApplier_ && themeBeforePreview_) {
-            themeApplier_(*themeBeforePreview_);
-        }
-        statusMessage_ = "Theme selection cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-
-    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string>& ranked = selectThemeList_.Refiltered(prompt_->Text());
-        if (!ranked.empty()) {
-            chord.Special == editor::SpecialKey::Down ? selectThemeList_.SelectNext() : selectThemeList_.SelectPrevious();
-        }
-        RefreshSelectThemeStatus();
-        ApplySelectedThemePreview();
-        return;
-    }
-
-    // Same "typing re-snaps to the top match" reasoning as
-    // HandleExecuteCommandKey -- see that method's own comment.
-    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
-        selectThemeList_.SelectTop();
-        RefreshSelectThemeStatus();
-        ApplySelectedThemePreview();
-    }
-    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+    HandleFuzzyPromptKey(SelectThemePrompt(), chord);
 }
 
 // ListPopup-mouse-support-remainder follow-up: see this method's own doc

@@ -1717,78 +1717,38 @@ void BufferView::HandleConfirmRevertHunkKey(const editor::KeyChord& chord) {
     // MinibufferPrompt-less y/n InputMode, not a locally-tracked bool).
 }
 
-void BufferView::RefreshVcsSwitchBranchStatus() {
-    const std::vector<std::string>& ranked = vcsBranchList_.Refiltered(prompt_->Text());
+bufferview::FuzzyPrompt BufferView::VcsSwitchBranchPrompt() {
+    return {.list          = &vcsBranchList_,
+            .historyKey    = "vcs-switch-branch",
+            .cancelMessage = "Switch branch cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No branch matching \"" + query + "\""; },
+            .commit        = [this](const std::string& selected) {
+                if (!vcsRunner_) {
+                    statusMessage_ = "no vcs runner configured";
+                    return;
+                }
+                // A branch switch rewrites the working tree underneath any open
+                // buffer. Unmodified buffers catch up on the next auto-revert
+                // tick; a *modified* buffer is left alone, its save hitting the
+                // supersession y/n rather than a confusing stale-content
+                // overwrite.
+                statusMessage_ = "Switching to " + selected + "...";
+                vcsRunner_->RequestBranchSwitch(
+                    selected,
+                    [this, selected] {
+                        statusMessage_ = "Switched to " + selected + " (modified buffers not reloaded)";
+                        RefreshVcsStatusBuffer();
+                        RequestDiffForCurrentBuffer();
+                    },
+                    [this](std::string error) { statusMessage_ = "vcs branch: " + error; }); }};
+}
 
-    statusMessage_ = prompt_->StatusText();
-    if (onCandidatesChanged_) {
-        onCandidatesChanged_(
-            ranked.empty() ? std::nullopt
-                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, vcsBranchList_.Selection())));
-    }
+void BufferView::RefreshVcsSwitchBranchStatus() {
+    RefreshFuzzyPrompt(VcsSwitchBranchPrompt());
 }
 
 void BufferView::HandleVcsSwitchBranchKey(const editor::KeyChord& chord) {
-    if (chord.Special == editor::SpecialKey::Enter) {
-        promptHistory_.Record("vcs-switch-branch", prompt_->Text());
-
-        const std::vector<std::string>& ranked = vcsBranchList_.Refiltered(prompt_->Text());
-        if (ranked.empty()) {
-            statusMessage_ = "No branch matching \"" + prompt_->Text() + "\"";
-            EndInteractiveSession();
-            return;
-        }
-
-        const std::string selected = ranked[std::min(vcsBranchList_.Selection(), ranked.size() - 1)];
-        EndInteractiveSession();
-
-        if (!vcsRunner_) {
-            statusMessage_ = "no vcs runner configured";
-            return;
-        }
-        // A branch switch rewrites the working tree underneath any open
-        // buffer. Unmodified buffers catch up on the next auto-revert tick
-        // (external-modification-safety follow-up, Editor/AutoRevert.h);
-        // a *modified* buffer is left alone, its save hitting the
-        // supersession y/n rather than a confusing stale-content overwrite.
-        statusMessage_ = "Switching to " + selected + "...";
-        vcsRunner_->RequestBranchSwitch(
-            selected,
-            [this, selected] {
-                statusMessage_ = "Switched to " + selected + " (modified buffers not reloaded)";
-                RefreshVcsStatusBuffer();
-                RequestDiffForCurrentBuffer();
-            },
-            [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
-        return;
-    }
-    if (IsQuit(chord)) {
-        statusMessage_ = "Switch branch cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-
-    if (TryNavigatePromptHistory(chord, "vcs-switch-branch")) {
-        vcsBranchList_.SelectTop();
-        RefreshVcsSwitchBranchStatus();
-        return;
-    }
-
-    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
-        const std::vector<std::string>& ranked = vcsBranchList_.Refiltered(prompt_->Text());
-        if (!ranked.empty()) {
-            chord.Special == editor::SpecialKey::Down ? vcsBranchList_.SelectNext() : vcsBranchList_.SelectPrevious();
-        }
-        RefreshVcsSwitchBranchStatus();
-        return;
-    }
-
-    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
-        promptHistoryIndex_       = kNoHistoryIndex;
-        vcsBranchList_.SelectTop();
-        RefreshVcsSwitchBranchStatus();
-    }
-    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+    HandleFuzzyPromptKey(VcsSwitchBranchPrompt(), chord);
 }
 
 // dropdown-path-completion follow-up: RefreshSwitchToBufferStatus's own
