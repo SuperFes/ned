@@ -2692,6 +2692,15 @@ class BufferView : public Widget {
                             const text::ITextStorage::DecodedCodepoint& decoded, const Brush& brush,
                             bool secondaryCaretHere, const LineRenderState& lineState, std::size_t offset) const;
 
+    // Draws the collapsed Org link starting at `offset`, if one does. Returns
+    // true when it drew one, meaning the bytes it replaced must not also be
+    // rendered.
+    [[nodiscard]] bool EmitCollapsedLink(Canvas& c, int row, int& col, std::size_t& offset,
+                                         const LineRenderState& lineState) const;
+    // Draws the inlay hint anchored at `offset`, if any. Virtual text alongside
+    // the real byte, not a replacement, so the caller still renders that byte.
+    void EmitInlayHint(Canvas& c, int row, int& col, std::size_t offset, const LineRenderState& lineState) const;
+
     // Draws every gutter column for `line` on `row`. Called only for a line's
     // first visual row -- a wrapped continuation row has no gutter of its own.
     void PaintLineGutter(Canvas& c, int row, std::size_t line, std::size_t lineStart, std::size_t lineEnd,

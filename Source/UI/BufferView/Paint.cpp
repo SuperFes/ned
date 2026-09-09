@@ -1217,6 +1217,102 @@ void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const buffervi
     }
 }
 
+// Draws the inlay hint anchored at `offset`, if there is one, advancing col
+// past it. Unlike a collapsed link this is virtual text *alongside* the real
+// byte still at `offset`, not a replacement for it, so the caller goes on to
+// render that byte afterwards. Deliberately not routed through the syntax
+// brush: a hint gets a fixed dimmed brush, since it is synthetic text rather
+// than anything the grammar saw.
+void BufferView::EmitInlayHint(Canvas& c, int row, int& col, std::size_t offset,
+                               const LineRenderState& lineState) const {
+    // inlayHint follow-up: unlike the link branch above, this
+    // does NOT `continue` -- a hint is virtual text alongside
+    // the real byte still at offset, not a replacement for it,
+    // so rendering falls through to the ordinary per-character
+    // path right after. Deliberately not routed through
+    // SpanAtOffset/ResolvedBrush -- a fixed dimmed/italic brush
+    // (theme_.ghostTextForeground, named for this: synthetic
+    // virtual text, not a real SyntaxClass). Never emits a
+    // raw control byte, matching every other glyph-writing loop
+    // in this function.
+    if (const RenderedInlayHint* hint = InlayHintStartingAt(lineState.inlayHints, offset)) {
+        const Brush      hintBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
+        std::size_t      hintTextOffset = 0;
+        const text::Rope hintRope(hint->label);
+        while (hintTextOffset < hintRope.ByteLength() && col < c.size().width) {
+            const auto glyph = hintRope.CodepointAt(hintTextOffset);
+            if (glyph.codepoint >= 0x20 && glyph.codepoint != 0x7F) {
+                Cell& cell     = c[{.x = col, .y = row}];
+                cell.character = text::EncodeCodepointUtf8(glyph.codepoint);
+                hintBrush.ApplyTo(cell);
+                ++col;
+            }
+            hintTextOffset += glyph.byteLength;
+        }
+    }
+}
+
+// Draws the collapsed Org link starting at `offset`, if one does, advancing col
+// past its display text and `offset` past the markup it stands in for.
+// Returns true when it drew one, in which case the bytes it replaced must not
+// also be rendered.
+bool BufferView::EmitCollapsedLink(Canvas& c, int row, int& col, std::size_t& offset,
+                                   const LineRenderState& lineState) const {
+    if (const RenderedLink* link = LinkStartingAt(lineState.links, offset)) {
+        // Links follow-up: real Org's own "descriptive links" --
+        // the raw "[[target][description]]" markup collapses down
+        // to just its own displayText on screen, whole-hog (never
+        // truncated mid-glyph the way an ordinary too-wide line
+        // gets clipped at the viewport edge -- Org links are
+        // short enough in practice that this isn't worth the
+        // extra bookkeeping a partial-clip would need). Tab/
+        // control-byte glyphs within displayText (a realistic
+        // edge case, not assumed impossible) still go through the
+        // same expand-or-hex-placeholder treatment as ordinary
+        // buffer text -- CodepointColumns/DisplayColumns already
+        // account for their wider column cost, so the actual
+        // glyphs written here have to match or the two would
+        // silently disagree about layout.
+        const Brush      linkBrush{.background = theme_.background, .foreground = theme_.linkForeground, .bold = true};
+        std::size_t      textOffset = 0;
+        const text::Rope displayRope(link->displayText);
+        while (textOffset < displayRope.ByteLength() && col < c.size().width) {
+            const auto glyph = displayRope.CodepointAt(textOffset);
+            if (glyph.codepoint == U'\t') {
+                const int tabWidth = editor::TabWidth();
+                for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
+                    Cell& cell     = c[{.x = col, .y = row}];
+                    cell.character = " ";
+                    linkBrush.ApplyTo(cell);
+                    ++col;
+                }
+            }
+            else if (IsUnprintableControl(glyph.codepoint)) {
+                const char32_t glyphs[4] = {kBinaryOpen, HexDigit((glyph.codepoint >> 4) & 0xF),
+                                            HexDigit(glyph.codepoint & 0xF), kBinaryClose};
+                for (const char32_t hexGlyph : glyphs) {
+                    if (col >= c.size().width)
+                        break;
+                    Cell& cell     = c[{.x = col, .y = row}];
+                    cell.character = text::EncodeCodepointUtf8(hexGlyph);
+                    linkBrush.ApplyTo(cell);
+                    ++col;
+                }
+            }
+            else {
+                Cell& cell     = c[{.x = col, .y = row}];
+                cell.character = text::EncodeCodepointUtf8(glyph.codepoint);
+                linkBrush.ApplyTo(cell);
+                ++col;
+            }
+            textOffset += glyph.byteLength;
+        }
+        offset = link->endByte;
+        return true;
+    }
+    return false;
+}
+
 void BufferView::Paint(Canvas paneCanvas) {
     viewport_.EnsureTopLineValidForActiveBuffer();
     EnsureStatusMessageFreshness();
@@ -1519,84 +1615,11 @@ void BufferView::Paint(Canvas paneCanvas) {
             }
             int col = static_cast<int>(gutter.totalWidth);
             while (offset < currentSegment.endByte && col < c.size().width) {
-                if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
-                    // Links follow-up: real Org's own "descriptive links" --
-                    // the raw "[[target][description]]" markup collapses down
-                    // to just its own displayText on screen, whole-hog (never
-                    // truncated mid-glyph the way an ordinary too-wide line
-                    // gets clipped at the viewport edge -- Org links are
-                    // short enough in practice that this isn't worth the
-                    // extra bookkeeping a partial-clip would need). Tab/
-                    // control-byte glyphs within displayText (a realistic
-                    // edge case, not assumed impossible) still go through the
-                    // same expand-or-hex-placeholder treatment as ordinary
-                    // buffer text -- CodepointColumns/DisplayColumns already
-                    // account for their wider column cost, so the actual
-                    // glyphs written here have to match or the two would
-                    // silently disagree about layout.
-                    const Brush      linkBrush{.background = theme_.background, .foreground = theme_.linkForeground, .bold = true};
-                    std::size_t      textOffset = 0;
-                    const text::Rope displayRope(link->displayText);
-                    while (textOffset < displayRope.ByteLength() && col < c.size().width) {
-                        const auto glyph = displayRope.CodepointAt(textOffset);
-                        if (glyph.codepoint == U'\t') {
-                            const int tabWidth = editor::TabWidth();
-                            for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
-                                Cell& cell     = c[{.x = col, .y = row}];
-                                cell.character = " ";
-                                linkBrush.ApplyTo(cell);
-                                ++col;
-                            }
-                        }
-                        else if (IsUnprintableControl(glyph.codepoint)) {
-                            const char32_t glyphs[4] = {kBinaryOpen, HexDigit((glyph.codepoint >> 4) & 0xF),
-                                                        HexDigit(glyph.codepoint & 0xF), kBinaryClose};
-                            for (const char32_t hexGlyph : glyphs) {
-                                if (col >= c.size().width)
-                                    break;
-                                Cell& cell     = c[{.x = col, .y = row}];
-                                cell.character = text::EncodeCodepointUtf8(hexGlyph);
-                                linkBrush.ApplyTo(cell);
-                                ++col;
-                            }
-                        }
-                        else {
-                            Cell& cell     = c[{.x = col, .y = row}];
-                            cell.character = text::EncodeCodepointUtf8(glyph.codepoint);
-                            linkBrush.ApplyTo(cell);
-                            ++col;
-                        }
-                        textOffset += glyph.byteLength;
-                    }
-                    offset = link->endByte;
-                    continue;
+                if (EmitCollapsedLink(c, row, col, offset, lineState)) {
+                    continue; // the link stood in for these bytes
                 }
 
-                // inlayHint follow-up: unlike the link branch above, this
-                // does NOT `continue` -- a hint is virtual text alongside
-                // the real byte still at offset, not a replacement for it,
-                // so rendering falls through to the ordinary per-character
-                // path right after. Deliberately not routed through
-                // SpanAtOffset/ResolvedBrush -- a fixed dimmed/italic brush
-                // (theme_.ghostTextForeground, named for this: synthetic
-                // virtual text, not a real SyntaxClass). Never emits a
-                // raw control byte, matching every other glyph-writing loop
-                // in this function.
-                if (const RenderedInlayHint* hint = InlayHintStartingAt(lineState.inlayHints, offset)) {
-                    const Brush      hintBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
-                    std::size_t      hintTextOffset = 0;
-                    const text::Rope hintRope(hint->label);
-                    while (hintTextOffset < hintRope.ByteLength() && col < c.size().width) {
-                        const auto glyph = hintRope.CodepointAt(hintTextOffset);
-                        if (glyph.codepoint >= 0x20 && glyph.codepoint != 0x7F) {
-                            Cell& cell     = c[{.x = col, .y = row}];
-                            cell.character = text::EncodeCodepointUtf8(glyph.codepoint);
-                            hintBrush.ApplyTo(cell);
-                            ++col;
-                        }
-                        hintTextOffset += glyph.byteLength;
-                    }
-                }
+                EmitInlayHint(c, row, col, offset, lineState);
 
                 const auto decoded = content.CodepointAt(offset);
 
