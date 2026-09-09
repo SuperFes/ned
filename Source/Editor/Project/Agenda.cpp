@@ -1,10 +1,10 @@
-#include "ProjectAgenda.h"
+#include "Agenda.h"
 
 #include <algorithm>
 #include <fstream>
 #include <sstream>
 
-#include "ProjectTree.h"
+#include "Tree.h"
 
 namespace ned::editor {
 

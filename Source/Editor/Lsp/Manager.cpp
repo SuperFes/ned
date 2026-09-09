@@ -10,8 +10,8 @@
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
-#include "Editor/ProjectRoot.h"
-#include "Editor/ProjectSettings.h"
+#include "Editor/Project/Root.h"
+#include "Editor/Project/Settings.h"
 #include "Editor/TabWidth.h"
 #include "BrokerConnect.h"
 #include "Position.h"

@@ -36,7 +36,7 @@
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Mode.h"
 #include "Editor/Multibuffer.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/ScratchPad.h"

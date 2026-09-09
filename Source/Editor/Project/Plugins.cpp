@@ -1,4 +1,4 @@
-#include "ProjectPlugins.h"
+#include "Plugins.h"
 
 #include <algorithm>
 #include <system_error>

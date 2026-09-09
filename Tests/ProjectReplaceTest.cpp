@@ -4,7 +4,7 @@
 #include <fstream>
 #include <string_view>
 
-#include "Editor/ProjectReplace.h"
+#include "Editor/Project/Replace.h"
 #include "Editor/RegexPattern.h"
 
 using ned::editor::ProjectReplace;

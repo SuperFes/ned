@@ -12,8 +12,8 @@
 // as a separate command wouldn't add anything.
 //
 
-#ifndef NED_EDITOR_PROJECTFILEOPS_H
-#define NED_EDITOR_PROJECTFILEOPS_H
+#ifndef NED_EDITOR_PROJECT_FILEOPS_H
+#define NED_EDITOR_PROJECT_FILEOPS_H
 
 #include <filesystem>
 
@@ -41,4 +41,4 @@ void RenameProjectPath(const std::filesystem::path& from, const std::filesystem:
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTFILEOPS_H
+#endif // NED_EDITOR_PROJECT_FILEOPS_H

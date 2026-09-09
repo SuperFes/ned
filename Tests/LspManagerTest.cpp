@@ -20,7 +20,7 @@
 #include "Editor/Lsp/RootResolver.h"
 #include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Lsp/Transport.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"

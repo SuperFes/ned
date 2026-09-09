@@ -1,4 +1,4 @@
-#include "ProjectSearch.h"
+#include "Search.h"
 
 #include <algorithm>
 #include <atomic>
@@ -7,8 +7,8 @@
 
 #include <re2/re2.h>
 
-#include "GitIgnore.h"
-#include "SearchSettings.h"
+#include "Editor/GitIgnore.h"
+#include "Editor/SearchSettings.h"
 #include "Text/BinaryDetect.h"
 
 namespace ned::editor {

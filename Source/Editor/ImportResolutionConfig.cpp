@@ -2,7 +2,7 @@
 
 #include <unordered_map>
 
-#include "ProjectSettings.h"
+#include "Editor/Project/Settings.h"
 
 namespace ned::editor {
 

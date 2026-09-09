@@ -6,7 +6,7 @@
 #include <string>
 
 #include "Editor/Dap/Manager.h"
-#include "Editor/ProjectSession.h"
+#include "Editor/Project/Session.h"
 #include "UI/EventLoop.h"
 
 using ned::editor::ActiveProjectSessionRoot;

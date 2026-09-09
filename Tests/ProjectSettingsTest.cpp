@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Editor/ProjectSettings.h"
+#include "Editor/Project/Settings.h"
 
 using ned::editor::ImportResolutionOverrideForLanguage;
 using ned::editor::IncludePathsForMode;

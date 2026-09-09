@@ -4,8 +4,8 @@
 // see Source/UI/ProjectSidebar.h/.cpp for the widget that renders this.
 //
 
-#ifndef NED_EDITOR_PROJECTTREE_H
-#define NED_EDITOR_PROJECTTREE_H
+#ifndef NED_EDITOR_PROJECT_TREE_H
+#define NED_EDITOR_PROJECT_TREE_H
 
 #include <filesystem>
 #include <functional>
@@ -47,4 +47,4 @@ struct ProjectTreeEntry {
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTTREE_H
+#endif // NED_EDITOR_PROJECT_TREE_H

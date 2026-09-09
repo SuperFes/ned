@@ -701,16 +701,16 @@ add_library(ned_lib STATIC
         Source/Editor/WhitespaceSettings.cpp
         Source/Editor/GitIgnore.cpp
         Source/Editor/SearchSettings.cpp
-        Source/Editor/ProjectSearch.cpp
-        Source/Editor/ProjectAgenda.cpp
-        Source/Editor/ProjectReplace.cpp
-        Source/Editor/ProjectTree.cpp
-        Source/Editor/ProjectRoot.cpp
-        Source/Editor/ProjectSettings.cpp
+        Source/Editor/Project/Search.cpp
+        Source/Editor/Project/Agenda.cpp
+        Source/Editor/Project/Replace.cpp
+        Source/Editor/Project/Tree.cpp
+        Source/Editor/Project/Root.cpp
+        Source/Editor/Project/Settings.cpp
         Source/Editor/ToolchainIncludePaths.cpp
         Source/Editor/NodeModules.cpp
         Source/Editor/ImportResolutionConfig.cpp
-        Source/Editor/ProjectFileOps.cpp
+        Source/Editor/Project/FileOps.cpp
         Source/Editor/AutoRevert.cpp
         Source/Editor/AutoMerge.cpp
         Source/Editor/FileWatch.cpp
@@ -720,7 +720,7 @@ add_library(ned_lib STATIC
         Source/Editor/Backup.cpp
         Source/Editor/BufferSave.cpp
         Source/Editor/PersistentUndo.cpp
-        Source/Editor/ProjectUndo.cpp
+        Source/Editor/Project/Undo.cpp
         Source/Editor/DiagnosticsLog.cpp
         Source/Editor/SanitizerOutputParser.cpp
         Source/Editor/ValgrindOutputParser.cpp
@@ -729,13 +729,13 @@ add_library(ned_lib STATIC
         Source/Editor/Session.cpp
         Source/Editor/RecentFiles.cpp
         Source/Editor/Bookmark.cpp
-        Source/Editor/ProjectSession.cpp
-        Source/Editor/ProjectTrust.cpp
-        Source/Editor/ProjectRegistry.cpp
+        Source/Editor/Project/Session.cpp
+        Source/Editor/Project/Trust.cpp
+        Source/Editor/Project/Registry.cpp
         Source/Editor/PendingReExec.cpp
         Source/Editor/TerminalTabLauncher.cpp
-        Source/Editor/ProjectSwitch.cpp
-        Source/Editor/ProjectPlugins.cpp
+        Source/Editor/Project/Switch.cpp
+        Source/Editor/Project/Plugins.cpp
         Source/Editor/Vim/Settings.cpp
         Source/Editor/Vim/Motion.cpp
         Source/Editor/Vim/TextObject.cpp

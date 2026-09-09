@@ -40,7 +40,7 @@
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Mode.h"
-#include "Editor/ProjectSession.h"
+#include "Editor/Project/Session.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"

@@ -1,4 +1,4 @@
-#include "ProjectRegistry.h"
+#include "Registry.h"
 
 #include <algorithm>
 #include <chrono>
@@ -10,7 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "Session.h"
+#include "Editor/Session.h"
 
 namespace ned::editor {
 

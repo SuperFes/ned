@@ -11,7 +11,7 @@
 #include <unistd.h>
 
 #include "NodeModules.h"
-#include "ProjectRoot.h"
+#include "Editor/Project/Root.h"
 
 namespace ned::editor::link {
 

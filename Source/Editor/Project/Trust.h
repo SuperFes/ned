@@ -23,8 +23,8 @@
 // ProjectTrustStore plus mutex-guarded process-wide accessors.
 //
 
-#ifndef NED_EDITOR_PROJECTTRUST_H
-#define NED_EDITOR_PROJECTTRUST_H
+#ifndef NED_EDITOR_PROJECT_TRUST_H
+#define NED_EDITOR_PROJECT_TRUST_H
 
 #include <cstdint>
 #include <filesystem>
@@ -117,4 +117,4 @@ void ResetProjectTrustForTesting();
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTTRUST_H
+#endif // NED_EDITOR_PROJECT_TRUST_H

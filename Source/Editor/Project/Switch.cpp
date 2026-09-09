@@ -1,14 +1,14 @@
-#include "ProjectSwitch.h"
+#include "Switch.h"
 
 #include <mutex>
 #include <system_error>
 
 #include <unistd.h>
 
-#include "PendingReExec.h"
-#include "Process/ChildProcess.h"
-#include "ProjectRegistry.h"
-#include "TerminalTabLauncher.h"
+#include "Editor/PendingReExec.h"
+#include "Editor/Process/ChildProcess.h"
+#include "Registry.h"
+#include "Editor/TerminalTabLauncher.h"
 
 namespace ned::editor {
 

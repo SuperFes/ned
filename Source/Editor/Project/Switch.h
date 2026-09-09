@@ -17,8 +17,8 @@
 // the exact same call HandleConfirmQuitKey's 'y' branch already makes.
 //
 
-#ifndef NED_EDITOR_PROJECTSWITCH_H
-#define NED_EDITOR_PROJECTSWITCH_H
+#ifndef NED_EDITOR_PROJECT_SWITCH_H
+#define NED_EDITOR_PROJECT_SWITCH_H
 
 #include <filesystem>
 #include <optional>
@@ -69,4 +69,4 @@ void ResetProjectOpenCommandForTesting();
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTSWITCH_H
+#endif // NED_EDITOR_PROJECT_SWITCH_H

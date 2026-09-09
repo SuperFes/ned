@@ -12,8 +12,8 @@
 // Environment::DoFile on it.
 //
 
-#ifndef NED_EDITOR_PROJECTPLUGINS_H
-#define NED_EDITOR_PROJECTPLUGINS_H
+#ifndef NED_EDITOR_PROJECT_PLUGINS_H
+#define NED_EDITOR_PROJECT_PLUGINS_H
 
 #include <filesystem>
 #include <vector>
@@ -28,4 +28,4 @@ namespace ned::editor {
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTPLUGINS_H
+#endif // NED_EDITOR_PROJECT_PLUGINS_H

@@ -22,7 +22,7 @@
 #include "Editor/Lsp/ServerConfig.h"
 #include "Editor/MultibufferFoldSettings.h"
 #include "Editor/PageScroll.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/SnippetRegistry.h"

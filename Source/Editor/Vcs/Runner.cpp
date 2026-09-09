@@ -7,7 +7,7 @@
 
 #include "DiffPatch.h"
 #include "Editor/DiagnosticsLog.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Editor/Tasks/TaskProcess.h"
 #include "Text/Buffer.h"
 #include "ProviderRegistry.h"

@@ -10,7 +10,7 @@
 
 #include "Border.h"
 #include "Editor/Key.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
 #include "Text/ThreeWayMerge.h"

@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <vector>
 
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "TestSourceResolver.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"

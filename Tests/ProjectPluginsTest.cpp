@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Editor/ProjectPlugins.h"
+#include "Editor/Project/Plugins.h"
 
 using ned::editor::ProjectPluginFiles;
 

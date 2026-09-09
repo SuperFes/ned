@@ -13,8 +13,8 @@
 // owned it).
 //
 
-#ifndef NED_EDITOR_PROJECTUNDO_H
-#define NED_EDITOR_PROJECTUNDO_H
+#ifndef NED_EDITOR_PROJECT_UNDO_H
+#define NED_EDITOR_PROJECT_UNDO_H
 
 #include <cstddef>
 #include <deque>
@@ -97,4 +97,4 @@ class ProjectUndoManager {
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTUNDO_H
+#endif // NED_EDITOR_PROJECT_UNDO_H

@@ -10,7 +10,7 @@
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
 #include "Editor/Mode.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/Vcs/Provider.h"

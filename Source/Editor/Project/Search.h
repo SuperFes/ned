@@ -22,8 +22,8 @@
 // function's output is deterministic and independent of thread scheduling.
 //
 
-#ifndef NED_EDITOR_PROJECTSEARCH_H
-#define NED_EDITOR_PROJECTSEARCH_H
+#ifndef NED_EDITOR_PROJECT_SEARCH_H
+#define NED_EDITOR_PROJECT_SEARCH_H
 
 #include <cstddef>
 #include <filesystem>
@@ -62,4 +62,4 @@ class SearchPatternError : public std::runtime_error {
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTSEARCH_H
+#endif // NED_EDITOR_PROJECT_SEARCH_H

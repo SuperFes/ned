@@ -31,9 +31,9 @@
 #include "Multibuffer.h"
 #include "Org.h"
 #include "PageScroll.h"
-#include "ProjectRoot.h"
-#include "ProjectSession.h"
-#include "ProjectUndo.h"
+#include "Editor/Project/Root.h"
+#include "Editor/Project/Session.h"
+#include "Editor/Project/Undo.h"
 #include "SnippetRegistry.h"
 #include "TabWidth.h"
 #include "Text/Grapheme.h"
@@ -348,7 +348,7 @@ namespace {
     }
 
     // ned-init-project follow-up. .ned/session.json is per-machine window/
-    // buffer-layout state (see ProjectSession.h's own header comment), not
+    // buffer-layout state (see Editor/Project/Session.h's own header comment), not
     // shared project config like .ned/init.janet -- committing it would just
     // have each developer's local layout clobber the next one's on every
     // commit. Returns true if the entry was newly appended (for the

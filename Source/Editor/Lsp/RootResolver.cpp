@@ -4,7 +4,7 @@
 #include <system_error>
 #include <unordered_map>
 
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 
 namespace ned::editor::lsp {
 
