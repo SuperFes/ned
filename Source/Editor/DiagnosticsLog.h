@@ -144,7 +144,7 @@ void              SetLogMaxAgeDays(int days);
 // -- see ROADMAP.md). True once a Warning-or-Error entry has been recorded in
 // a currently-visible category (SetLogCategoryVisible) and no caller has yet
 // acknowledged it -- a single, process-wide "something happened" flag, not a
-// per-entry/per-pane unread count, mirroring LspManager::HasUnseenLogEntry/
+// per-entry/per-pane unread count, mirroring Manager::HasUnseenLogEntry/
 // AcknowledgeLogEntry's exact shape. That older mechanism is narrower (LSP
 // request-level errors only, its own separate "*lsp log*" buffer); this one
 // covers everything that reaches the shared *Messages* log, including every

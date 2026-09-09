@@ -4,34 +4,34 @@
 // sits on top of).
 //
 // Threading, lifetime, and member-declaration order all mirror
-// Lsp/LspClient.h exactly (background jthread read loop marshaling onto the
+// Lsp/Client.h exactly (background jthread read loop marshaling onto the
 // main thread via ned::ui::EventLoop::Post; transport_ declared after
 // readThread_ so its destructor's fd close is what unblocks the background
 // thread's in-flight blocking Transport::ReadMessage()) -- see that file's
 // own header comment for the full reasoning, none of which differs here and
 // none of which is repeated.
 //
-// lsp-use-after-free follow-up: that includes alive_ (see LspClient.h's own
+// lsp-use-after-free follow-up: that includes alive_ (see Client.h's own
 // header comment, corrected 2026-08-26) -- the earlier claim that this class
 // is "only ever destroyed after EventLoop::Run() has returned" was false for
-// LspClient's mid-session respawn path, confirmed live via ASan, and nothing
+// Client's mid-session respawn path, confirmed live via ASan, and nothing
 // about AcpManager's own single-session model makes AcpClient immune to the
 // same hazard (a Post()ed callback from readThread_/stderrThread_ that
 // outlives the object, freed by AcpManager::EndSession, whether immediately
 // or after some delay -- no delay is actually safe, only alive_ is).
 //
-// Two real differences from LspClient:
+// Two real differences from Client:
 //
 //   - No handshake-ordering gate. LSP has a hard rule (nothing but
 //     "initialize" itself may be sent before "initialized" goes out) that
-//     bit a real server (harper-ls) in practice, which is why LspClient
+//     bit a real server (harper-ls) in practice, which is why Client
 //     queues calls until that gate opens. ACP's "initialize" has no such
 //     restriction on this client's own subsequent calls, so there is nothing
 //     to gate.
 //
 //   - RequestHandler is async-capable. LSP's server-initiated requests
 //     (window/workDoneProgress/create, the only one this codebase answers)
-//     always resolve synchronously, so LspClient::RequestHandler is a plain
+//     always resolve synchronously, so Client::RequestHandler is a plain
 //     Json(const Json&). ACP's agent-initiated requests include
 //     session/request_permission, which genuinely needs to wait on a live
 //     user keystroke (a whole InteractiveRequest round-trip through
@@ -43,18 +43,18 @@
 //     AcpClient that handed it out has been destroyed.
 //
 // lsp-stderr-capture follow-up (extended to ACP): stderrThread_ mirrors
-// LspClient's own stderrThread_ exactly -- a second blocking read loop over
+// Client's own stderrThread_ exactly -- a second blocking read loop over
 // Transport::StderrFd(), declared alongside readThread_ before transport_
 // for the same destruction-order reason. The real-subprocess constructor
 // passes captureStderr=true; the Transport-taking test constructor never
 // captures (StartStderrReadLoop is a no-op when StderrFd() < 0).
 //
 // async-write-queue follow-up (extended to ACP, for consistency -- no live
-// freeze reported against this client specifically): mirrors LspClient's own
+// freeze reported against this client specifically): mirrors Client's own
 // writeThread_/EnqueueWrite/PrepareForGracefulShutdown exactly -- see
-// LspClient.h's own header comment for the full reasoning. AcpManager::
+// Client.h's own header comment for the full reasoning. AcpManager::
 // StopSession sends a best-effort "session/close" request immediately
-// before EndSession destroys the client (mirroring LspManager::Shutdown's
+// before EndSession destroys the client (mirroring Manager::Shutdown's
 // own "shutdown"+"exit" courtesy pair) -- confirmed live by a real
 // DapManagerTest.cpp test failure during this transplant (Client hit the
 // identical race first): without PrepareForGracefulShutdown, that
@@ -74,7 +74,7 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable> // condition_variable_any -- see LspClient.h's own comment on writeCv_
+#include <condition_variable> // condition_variable_any -- see Client.h's own comment on writeCv_
 #include <deque>
 #include <functional>
 #include <memory>
@@ -116,11 +116,11 @@ class AcpClient {
 
     // Takes ownership of an already-open Transport directly -- for tests
     // driving a raw pipe pair with no real subprocess involved, mirroring
-    // LspClient's own test constructor.
+    // Client's own test constructor.
     AcpClient(Transport transport, ned::ui::EventLoop& eventLoop);
 
     // lsp-use-after-free follow-up: no longer = default -- the body flips
-    // alive_ to false as its first statement (see LspClient.h's own header
+    // alive_ to false as its first statement (see Client.h's own header
     // comment); member destruction order still does the rest of the real
     // teardown work, same as before.
     ~AcpClient();
@@ -134,7 +134,7 @@ class AcpClient {
     // Sends a JSON-RPC request with a freshly allocated id. callback runs on
     // the main thread once the matching response arrives; if this AcpClient
     // is destroyed first, callback is simply dropped, uninvoked -- matches
-    // LspClient::SendRequest's own "abandoned at shutdown" convention.
+    // Client::SendRequest's own "abandoned at shutdown" convention.
     void SendRequest(const std::string& method, Json params, ResponseCallback callback);
 
     // Sends a JSON-RPC notification (no "id", no response expected) -- e.g.
@@ -161,16 +161,16 @@ class AcpClient {
     // read loop stops running for any reason -- clean EOF (the agent process
     // exited) or a malformed message. reason is a short, human-readable
     // cause. Unset by default, a safe no-op -- mirrors
-    // LspClient::SetOnDisconnected exactly.
+    // Client::SetOnDisconnected exactly.
     void SetOnDisconnected(std::function<void(std::string reason)> handler);
 
-    // Public primarily for tests -- mirrors LspClient::DispatchFrame's own
+    // Public primarily for tests -- mirrors Client::DispatchFrame's own
     // "public primarily for tests" precedent (see that method's doc comment)
     // for exactly the same reason: EventLoop::Post only enqueues, so a test
     // with no running EventLoop::Run() loop calls this directly instead.
     void DispatchFrame(const std::string& frameText);
 
-    // subprocess-hang-protection follow-up -- see LspClient::ExpireStaleRequests's
+    // subprocess-hang-protection follow-up -- see Client::ExpireStaleRequests's
     // identical doc comment. Real callers take ProcessTimeouts.h's
     // ProtocolRequestTimeoutMs() as their default (ChildProcess-hang-
     // protection-round-2 follow-up).
@@ -184,7 +184,7 @@ class AcpClient {
     // been outstanding that long -- see lastActivityAt_/DispatchFrame.
     void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
-    // async-write-queue follow-up: see LspClient::PrepareForGracefulShutdown's
+    // async-write-queue follow-up: see Client::PrepareForGracefulShutdown's
     // identical doc comment -- call this immediately before a best-effort
     // courtesy request (e.g. AcpManager::StopSession's "session/close") that
     // must actually reach the wire before this AcpClient is destroyed.
@@ -202,7 +202,7 @@ class AcpClient {
     // enqueue order is call order is on-wire order.
     void EnqueueWrite(std::string frame);
 
-    // lsp-use-after-free follow-up: see LspClient.h's own header comment on
+    // lsp-use-after-free follow-up: see Client.h's own header comment on
     // alive_ and this file's header comment above.
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
@@ -214,7 +214,7 @@ class AcpClient {
 
     // async-write-queue follow-up: writeThread_ is declared *after*
     // transport_ (opposite of readThread_/stderrThread_ above) so it
-    // destructs *before* transport_ -- see LspClient.h's own header comment.
+    // destructs *before* transport_ -- see Client.h's own header comment.
     // writeMutex_/writeCv_/writeQueue_ must outlive writeThread_, so they're
     // declared ahead of it here.
     std::mutex                  writeMutex_;

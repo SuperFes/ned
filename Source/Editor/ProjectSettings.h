@@ -23,11 +23,11 @@
 //
 // lspInitializationOptions -- an arbitrary, per-language JSON blob merged into the
 // "initializationOptions" field of that language's LSP "initialize" request
-// (Lsp/LspManager.cpp's BuildInitializeParams) -- e.g. a project that always
+// (Lsp/Manager.cpp's BuildInitializeParams) -- e.g. a project that always
 // preloads a bootstrap/autoload file before any real request, and needs its
 // language server told about that file so it stops reporting every function or
 // require() the bootstrap defines as unresolved. Keyed by the same language string
-// LspServerConfig.h/LanguageKeyForMode already use (e.g. "php", "cpp" -- no
+// ServerConfig.h/LanguageKeyForMode already use (e.g. "php", "cpp" -- no
 // "-mode" suffix, unlike includePathsByMode above), since this rides the same
 // per-language LSP config surface. The shape inside each entry is entirely up to
 // whatever the target language server's own initializationOptions schema expects
@@ -39,12 +39,12 @@
 //   - the "pull" model (workspace/configuration): the server sends a request with
 //     a dotted-path "section" per item (e.g. "phpactor", "intelephense.environment"),
 //     and the client answers with whatever's configured for that section, or null
-//     ("use your own defaults") -- LspManager.cpp's workspace/configuration handler
+//     ("use your own defaults") -- Manager.cpp's workspace/configuration handler
 //     now resolves each requested section against this tree instead of always
 //     answering null.
 //   - the "push" model (workspace/didChangeConfiguration): the client proactively
 //     notifies the server of its full settings tree right after the handshake --
-//     LspManager.cpp sends this (once, at spawn) with {"settings": <this tree>}
+//     Manager.cpp sends this (once, at spawn) with {"settings": <this tree>}
 //     whenever it's non-empty.
 // Deliberately one flat, language-agnostic JSON object (not keyed by our own
 // language string the way the other two fields are) -- a real section name is
@@ -102,7 +102,7 @@ struct ProjectSettings {
 // Convenience accessor: settings.lspInitializationOptionsByLanguage[language], or an
 // empty JSON object if language has no entry. language is typically
 // Editor/Mode.h's LanguageKeyForMode(mode).
-[[nodiscard]] const nlohmann::json& LspInitializationOptionsForLanguage(const ProjectSettings& settings,
+[[nodiscard]] const nlohmann::json& InitializationOptionsForLanguage(const ProjectSettings& settings,
                                                                         const std::string&     language);
 
 // Convenience accessor: settings.importResolutionByLanguage[language], or a

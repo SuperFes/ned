@@ -11,9 +11,9 @@
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
-#include "Editor/Lsp/LspClient.h"
-#include "Editor/Lsp/LspManager.h"
-#include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Lsp/Client.h"
+#include "Editor/Lsp/Manager.h"
+#include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Mode.h"
 #include "Text/Buffer.h"
@@ -38,23 +38,23 @@ ned::ui::Screen MakeScreen(int width, int height) {
 }
 
 // mode-line-lsp-indicator follow-up: registers a fake, already-"running"
-// client for language via LspManager::SetClientForTesting, mirroring
-// LspManagerTest.cpp's own FakeServer -- a raw pipe pair standing in for a
+// client for language via Manager::SetClientForTesting, mirroring
+// ManagerTest.cpp's own FakeServer -- a raw pipe pair standing in for a
 // real language server, with nothing read from or written to it here (these
-// tests only care that LspManager::StatusForLanguage reports Running, not
+// tests only care that Manager::StatusForLanguage reports Running, not
 // about any real request/response traffic). Closing the "server" side's write end
 // (clientReadsHere[1]) right away, same as FakeServer's own destructor,
 // matters even though nothing is read from it in these tests: without an
 // EOF, the client's background read thread blocks in Transport::ReadFrame
-// forever, and LspClient's destructor -- which joins that thread -- then
-// hangs the whole test binary at LspManager's teardown (confirmed: this
+// forever, and Client's destructor -- which joins that thread -- then
+// hangs the whole test binary at Manager's teardown (confirmed: this
 // exact omission hung ned_tests with zero output).
-void RegisterFakeRunningClient(ned::editor::lsp::LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop) {
+void RegisterFakeRunningClient(ned::editor::lsp::Manager& manager, const std::string& language, ned::ui::EventLoop& eventLoop) {
     int clientWritesHere[2];
     int clientReadsHere[2];
     REQUIRE(::pipe(clientWritesHere) == 0);
     REQUIRE(::pipe(clientReadsHere) == 0);
-    auto client = std::make_unique<ned::editor::lsp::LspClient>(
+    auto client = std::make_unique<ned::editor::lsp::Client>(
         ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
     manager.SetClientForTesting(language, std::move(client));
     ::close(clientReadsHere[1]);
@@ -67,7 +67,7 @@ void RegisterFakeRunningClient(ned::editor::lsp::LspManager& manager, const std:
 // client send a real textDocument/didOpen notification -- writing into a
 // pipe whose read end RegisterFakeRunningClient already closed raises
 // SIGPIPE and kills the whole test binary (confirmed live: this exact
-// mismatch did precisely that). Mirrors LspManagerTest.cpp's own FakeServer:
+// mismatch did precisely that). Mirrors ManagerTest.cpp's own FakeServer:
 // keeps both fds open (RAII-closed on destruction) so a real didOpen write
 // has somewhere to land.
 struct FakeServer {
@@ -84,12 +84,12 @@ struct FakeServer {
     FakeServer& operator=(const FakeServer&) = delete;
     FakeServer(FakeServer&&)                 = default;
 
-    static FakeServer Create(ned::editor::lsp::LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop) {
+    static FakeServer Create(ned::editor::lsp::Manager& manager, const std::string& language, ned::ui::EventLoop& eventLoop) {
         int clientWritesHere[2];
         int clientReadsHere[2];
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
-        auto client = std::make_unique<ned::editor::lsp::LspClient>(
+        auto client = std::make_unique<ned::editor::lsp::Client>(
             ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
         manager.SetClientForTesting(language, std::move(client));
         return FakeServer(clientWritesHere[0], clientReadsHere[1]);
@@ -326,7 +326,7 @@ TEST_CASE("ModeLine shows a static idle indicator for a running LSP client with 
           "[ModeLine]") {
     ned::text::BufferList        bufferList;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(bufferList, eventLoop);
+    ned::editor::lsp::Manager manager(bufferList, eventLoop);
     RegisterFakeRunningClient(manager, "c", eventLoop);
 
     ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
@@ -360,7 +360,7 @@ TEST_CASE("ModeLine shows no LSP indicator when SetLspManager was never called, 
           "[ModeLine]") {
     ned::text::BufferList        bufferList;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(bufferList, eventLoop);
+    ned::editor::lsp::Manager manager(bufferList, eventLoop);
     RegisterFakeRunningClient(manager, "python", eventLoop); // a different language than the buffer below
 
     ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
@@ -386,17 +386,17 @@ TEST_CASE("ModeLine shows no LSP indicator when SetLspManager was never called, 
 TEST_CASE("ModeLine shows a distinct glyph for a spawn failure, not the running dot", "[ModeLine]") {
     ned::text::BufferList        bufferList;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(bufferList, eventLoop);
-    // LspManagerTest-broker-hermeticity follow-up: without this, ClientForLanguage's
+    ned::editor::lsp::Manager manager(bufferList, eventLoop);
+    // ManagerTest-broker-hermeticity follow-up: without this, ClientForLanguage's
     // real spawn path tries the real broker socket first, and a broker daemon left
     // running from an earlier `ned`/test run makes the expected synchronous spawn
-    // failure below flaky -- see LspManagerTest.cpp's matching tests for the full
+    // failure below flaky -- see ManagerTest.cpp's matching tests for the full
     // explanation.
     manager.SetBrokerSocketPathOverrideForTesting(std::filesystem::temp_directory_path() / "ned-modeline-test-no-broker.sock");
     ned::editor::lsp::SetLspServerCommand("modeline-spawn-fail-lang", {"/definitely/does/not/exist/ned-fake-lsp"});
     ned::text::Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-modeline-spawn-fail-test.txt");
     manager.SyncBuffer(buffer, "modeline-spawn-fail-lang"); // must not throw; latches the failure
-    REQUIRE(manager.StatusForLanguage("modeline-spawn-fail-lang") == ned::editor::lsp::LspManager::LspStatus::SpawnFailed);
+    REQUIRE(manager.StatusForLanguage("modeline-spawn-fail-lang") == ned::editor::lsp::Manager::Status::SpawnFailed);
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
     // A stand-in mode whose name -- and so LanguageKeyForMode's result, no
@@ -435,7 +435,7 @@ TEST_CASE("ModeLine renders the single-glyph indicator unchanged when only one s
     // "ModeLine shows a static idle indicator..." above.
     ned::text::BufferList        bufferList;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(bufferList, eventLoop);
+    ned::editor::lsp::Manager manager(bufferList, eventLoop);
     FakeServer                   server = FakeServer::Create(manager, "c", eventLoop);
 
     ned::text::Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-modeline-single-server-test.c");
@@ -464,14 +464,14 @@ TEST_CASE("ModeLine shows one glyph per active server when more than one is sync
           "[ModeLine][EmbeddedDocuments]") {
     ned::text::BufferList        bufferList;
     ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(bufferList, eventLoop);
+    ned::editor::lsp::Manager manager(bufferList, eventLoop);
     FakeServer                   htmlServer = FakeServer::Create(manager, "html", eventLoop);
     FakeServer                   jsServer   = FakeServer::Create(manager, "javascript", eventLoop);
 
     ned::text::Buffer& buffer =
         bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-modeline-multi-server-test.html");
     manager.SyncBuffer(buffer, "html");
-    manager.SyncEmbeddedDocuments(buffer, {ned::editor::lsp::LspManager::EmbeddedDocumentSync{
+    manager.SyncEmbeddedDocuments(buffer, {ned::editor::lsp::Manager::EmbeddedDocumentSync{
                                               .language = "javascript", .documentText = "x", .ownedRanges = {{0, 1}}}});
 
     ned::ui::ActiveBuffer activeBuffer(buffer);

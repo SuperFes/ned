@@ -79,7 +79,7 @@ std::string EventFrame(const std::string& event, Json body = Json::object()) {
 }
 
 // A Manager plus a pipe-backed injected Client the test drives
-// directly -- mirrors LspManagerTest's SetClientForTesting approach and
+// directly -- mirrors ManagerTest's SetClientForTesting approach and
 // DapClientTest's ClientFixture fd/lifetime discipline (write end closed in
 // the destructor BODY, before members -- and thus the client's read thread's
 // pipe -- are destroyed).
@@ -676,7 +676,7 @@ TEST_CASE("A terminated event ends the session and reports it", "[Dap]") {
 
     // lsp-use-after-free follow-up: EndSession now destroys the Client
     // directly (immediate destruction is safe now that Client itself
-    // guards against a stray Post()ed callback -- see LspClient.h's own
+    // guards against a stray Post()ed callback -- see Client.h's own
     // header comment on alive_), which joins its background read thread as
     // part of destruction. That thread is deliberately still blocked in a
     // real blocking read on this fixture's fake pipe (nothing ever sent it

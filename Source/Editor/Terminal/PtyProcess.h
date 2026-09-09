@@ -2,7 +2,7 @@
 // Terminal-panel follow-up. Owns one shell subprocess running on a real pty
 // (forkpty) and streams the master side's raw output to a caller-supplied
 // callback -- deliberately a near-copy of Tasks/TaskProcess (read that file's
-// and Lsp/LspClient.h's header comments for the full threading/lifetime
+// and Lsp/Client.h's header comments for the full threading/lifetime
 // reasoning; none of it is repeated here because almost none of it differs),
 // the same "mirror exactly, differ only where it must" convention
 // Dap/Client.h already established. The differences that must exist:
@@ -53,7 +53,7 @@ class PtyProcess {
                std::function<void(std::string_view chunk)> onOutput, std::function<void(std::optional<int> exitCode)> onExit);
 
     // Marks alive_ false before member destruction does the real teardown
-    // work (see header comment) -- unlike TaskProcess/LspClient, a
+    // work (see header comment) -- unlike TaskProcess/Client, a
     // PtyProcess is genuinely destroyed *mid-run* (TerminalPanel's [×]
     // close button, respawn after exit), so read-loop callbacks already
     // sitting in the EventLoop's queue would otherwise be drained against a

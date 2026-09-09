@@ -15,7 +15,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include "Editor/Lsp/LspBrokerDaemon.h"
+#include "Editor/Lsp/BrokerDaemon.h"
 #include "Editor/Lsp/Transport.h"
 
 // broker-reader-deadlock follow-up. A live regression harness for the
@@ -144,7 +144,7 @@ struct DaemonHarness {
 
 // One client connection to the daemon, closed on scope exit. Deliberately
 // raw (a socket plus a Transport) rather than TryConnectToBroker, which
-// would drag an EventLoop/LspClient in for no benefit here.
+// would drag an EventLoop/Client in for no benefit here.
 struct ClientConnection {
     int                        fd = -1;
     std::unique_ptr<Transport> transport;
@@ -192,7 +192,7 @@ bool LogContains(const std::string& log, const std::string& needle) {
 
 } // namespace
 
-TEST_CASE("The broker daemon still exits on its own after an idle sweep tears down a spawned server", "[LspBrokerDaemon]") {
+TEST_CASE("The broker daemon still exits on its own after an idle sweep tears down a spawned server", "[BrokerDaemon]") {
     // The exact production freeze: a client attaches (spawning a real
     // subprocess whose reader thread then blocks in ReadFrame), the client
     // goes away, and the per-entry idle sweep tears the entry down. Before
@@ -217,7 +217,7 @@ TEST_CASE("The broker daemon still exits on its own after an idle sweep tears do
     REQUIRE(LogContains(log, "whole-daemon idle timeout reached")); // ...and the sweep thread was still alive afterwards
 }
 
-TEST_CASE("The broker daemon survives repeated attach/spawn/idle-teardown cycles", "[LspBrokerDaemon]") {
+TEST_CASE("The broker daemon survives repeated attach/spawn/idle-teardown cycles", "[BrokerDaemon]") {
     // The deadlock was a race (it lost about 40% of the time in production),
     // so one cycle is a weak probe. Three consecutive cycles in one daemon
     // lifetime also prove the reaper keeps up: a reader handle that is never
@@ -241,8 +241,8 @@ TEST_CASE("The broker daemon survives repeated attach/spawn/idle-teardown cycles
     REQUIRE(LogContains(log, "whole-daemon idle timeout reached"));
 }
 
-TEST_CASE("The broker daemon shuts down promptly on a ned/broker-shutdown control frame", "[LspBrokerDaemon]") {
-    // Guards the extraction of BrokerDaemon out of LspBrokerMain.cpp: the
+TEST_CASE("The broker daemon shuts down promptly on a ned/broker-shutdown control frame", "[BrokerDaemon]") {
+    // Guards the extraction of BrokerDaemon out of BrokerMain.cpp: the
     // control-connection path (never attached, so it has no entry to erase)
     // still ends the process, and does it well inside the whole-daemon idle
     // timeout that would otherwise take over.

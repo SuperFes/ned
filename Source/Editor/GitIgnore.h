@@ -71,7 +71,7 @@ class GitIgnoreMatcher {
     // .gitignore files are loaded lazily on first query touching their
     // directory. A missing file anywhere just contributes no rules, the
     // same "absent means nothing configured" convention this codebase uses
-    // elsewhere (e.g. LspServerCommand's own std::nullopt).
+    // elsewhere (e.g. ServerCommand's own std::nullopt).
     explicit GitIgnoreMatcher(const std::filesystem::path& root);
 
     // relativePath is root-relative, using '/' separators regardless of

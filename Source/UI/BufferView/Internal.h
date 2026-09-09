@@ -53,9 +53,9 @@
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/JanetSymbolComplete.h"
 #include "Editor/Link.h"
-#include "Editor/Lsp/LspEditApply.h"
-#include "Editor/Lsp/LspManager.h"
-#include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Lsp/EditApply.h"
+#include "Editor/Lsp/Manager.h"
+#include "Editor/Lsp/ServerConfig.h"
 #include "Editor/MassifOutputParser.h"
 #include "Editor/MassifReportBuffer.h"
 #include "Editor/ModeOverrides.h"
@@ -375,7 +375,7 @@ inline std::string MaskPathCandidateToLastSegment(const std::string& candidate) 
 // includePath is only true for workspace/symbol results, which span
 // multiple files and need one to disambiguate; a document-symbol result
 // is always the current buffer, so a repeated path would be noise.
-inline std::string BuildSymbolLabel(const editor::lsp::LspManager::SymbolResult& symbol, bool includePath) {
+inline std::string BuildSymbolLabel(const editor::lsp::Manager::SymbolResult& symbol, bool includePath) {
     std::string label(editor::lsp::SymbolKindLabel(symbol.kind));
     label += " ";
     label += symbol.name;
@@ -400,7 +400,7 @@ inline std::string BuildSymbolLabel(const editor::lsp::LspManager::SymbolResult&
 // here (HierarchyItem carries none), so this is the includePath=true
 // branch of BuildSymbolLabel with the containerName segment dropped
 // rather than a parallel near-duplicate.
-inline std::string BuildHierarchyRowLabel(const editor::lsp::LspManager::ResolvedHierarchyItem& resolved) {
+inline std::string BuildHierarchyRowLabel(const editor::lsp::Manager::ResolvedHierarchyItem& resolved) {
     std::string label(editor::lsp::SymbolKindLabel(resolved.item.kind));
     label += " ";
     label += resolved.item.name;
@@ -562,10 +562,10 @@ inline const RenderedLink* LinkStartingAt(const std::vector<RenderedLink>& links
 }
 
 
-inline std::vector<RenderedInlayHint> InlayHintsForLine(const std::vector<editor::lsp::LspManager::ResolvedInlayHint>& hints,
+inline std::vector<RenderedInlayHint> InlayHintsForLine(const std::vector<editor::lsp::Manager::ResolvedInlayHint>& hints,
                                                         std::size_t lineStart, std::size_t lineEnd) {
     std::vector<RenderedInlayHint> rendered;
-    for (const editor::lsp::LspManager::ResolvedInlayHint& hint : hints) {
+    for (const editor::lsp::Manager::ResolvedInlayHint& hint : hints) {
         if (hint.byteOffset >= lineStart && hint.byteOffset < lineEnd) {
             rendered.push_back(RenderedInlayHint{.byteOffset = hint.byteOffset, .label = hint.label});
         }

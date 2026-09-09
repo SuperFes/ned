@@ -1,4 +1,4 @@
-#include "LspManager.h"
+#include "Manager.h"
 
 #include <algorithm>
 #include <chrono>
@@ -13,10 +13,10 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSettings.h"
 #include "Editor/TabWidth.h"
-#include "LspBrokerConnect.h"
-#include "LspPosition.h"
-#include "LspRootResolver.h"
-#include "LspServerConfig.h"
+#include "BrokerConnect.h"
+#include "Position.h"
+#include "RootResolver.h"
+#include "ServerConfig.h"
 #include "ProseChecker.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
@@ -27,7 +27,7 @@ namespace ned::editor::lsp {
 
 namespace {
 
-    // crash-loop-respawn-guard follow-up: see LspManager.h's disconnectBurst_
+    // crash-loop-respawn-guard follow-up: see Manager.h's disconnectBurst_
     // doc comment for why this exists at all. Thresholds, not Janet-
     // configurable -- proportionate to closing a real resource-exhaustion
     // bug, not a tunable feature.
@@ -153,10 +153,10 @@ namespace {
             const Json& end   = range.value("end", Json::object());
 
             const std::size_t startByte =
-                LspPositionToByte(content, LspPosition{.line      = start.value("line", static_cast<std::size_t>(0)),
+                PositionToByte(content, Position{.line      = start.value("line", static_cast<std::size_t>(0)),
                                                        .character = start.value("character", static_cast<std::size_t>(0))});
             const std::size_t endByte =
-                LspPositionToByte(content, LspPosition{.line      = end.value("line", static_cast<std::size_t>(0)),
+                PositionToByte(content, Position{.line      = end.value("line", static_cast<std::size_t>(0)),
                                                        .character = end.value("character", static_cast<std::size_t>(0))});
 
             diagnostics.push_back(text::Buffer::Diagnostic{
@@ -290,12 +290,12 @@ namespace {
     }
 
     // background-activity-spinner follow-up: same std::string materialization
-    // of the shared constant LspClient.cpp's own copy makes.
+    // of the shared constant Client.cpp's own copy makes.
     const std::string kLspActivity{kLspActivityName};
 
     Json DiagnosticToLsp(const text::Buffer::Diagnostic& diagnostic, const text::ITextStorage& content) {
-        const LspPosition start = BytePositionToLsp(content, diagnostic.startByte);
-        const LspPosition end   = BytePositionToLsp(content, diagnostic.endByte);
+        const Position start = BytePositionToLsp(content, diagnostic.startByte);
+        const Position end   = BytePositionToLsp(content, diagnostic.endByte);
         return Json{
             {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
             {"severity", SeverityToLsp(diagnostic.severity)},
@@ -320,7 +320,7 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
     // spec a server may only return edit-carrying CodeAction literals to a
     // client that advertises it, and must fall back to bare Command objects
     // otherwise (executeCommand follow-up: now runnable via
-    // LspManager::ExecuteCommand/workspace/executeCommand, but a client
+    // Manager::ExecuteCommand/workspace/executeCommand, but a client
     // that doesn't advertise this still gets the plain-Command fallback
     // form regardless). clangd honors codeActionLiteralSupport exactly --
     // without it, its "fix available" quickfixes (e.g. "remove #include
@@ -364,7 +364,7 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
            // capabilities-hygiene follow-up: hover/definition/declaration/
            // typeDefinition/implementation/references/rename/signatureHelp/
            // publishDiagnostics are all requests or notifications this
-           // client already sends/handles (see LspManager's own Request*
+           // client already sends/handles (see Manager's own Request*
            // methods and HandlePublishDiagnostics) but never previously
            // declared -- bare {} advertises plain support with no optional
            // refinement (no tagSupport/relatedInformation on
@@ -480,7 +480,7 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
             // handed several folders at initialize time and send
             // workspace/didChangeWorkspaceFolders afterwards. Without it a
             // conforming server has no reason to advertise its own
-            // workspaceFolders support back, so LspManager would never find a
+            // workspaceFolders support back, so Manager would never find a
             // connection worth joining.
             {"workspaceFolders", true},
             {"fileOperations", {{"willRename", true}, {"didRename", true}}}}},
@@ -492,15 +492,15 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
     return params;
 }
 
-LspManager::LspManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
+Manager::Manager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
 }
 
-LspClient* LspManager::ExistingClientForLanguage(const std::string& language) const {
+Client* Manager::ExistingClientForLanguage(const std::string& language) const {
     const auto it = clients_.find(language);
     return it != clients_.end() ? it->second.get() : nullptr;
 }
 
-void LspManager::WireNotificationHandlers(LspClient& client, const std::string& serverKey, const std::string& connectionKey,
+void Manager::WireNotificationHandlers(Client& client, const std::string& serverKey, const std::string& connectionKey,
                                           const Json& workspaceConfiguration) {
     client.SetNotificationHandler("textDocument/publishDiagnostics",
                                   [this, serverKey](const Json& params) { HandlePublishDiagnostics(params, serverKey); });
@@ -589,25 +589,25 @@ void LspManager::WireNotificationHandlers(LspClient& client, const std::string& 
     });
 }
 
-std::string LspManager::ConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const {
+std::string Manager::ConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const {
     if (root == editor::ProjectRoot()) {
         return serverKey;
     }
     return root.string() + '\x1f' + serverKey;
 }
 
-std::string LspManager::ConnectionKeyForBuffer(const text::Buffer& buffer, const std::string& serverKey) const {
+std::string Manager::ConnectionKeyForBuffer(const text::Buffer& buffer, const std::string& serverKey) const {
     const auto it = bufferResolvedRoot_.find(const_cast<text::Buffer*>(&buffer));
     return ResolvedConnectionKey(it != bufferResolvedRoot_.end() ? it->second : editor::ProjectRoot(), serverKey);
 }
 
-std::string LspManager::ResolvedConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const {
+std::string Manager::ResolvedConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const {
     const std::string key = ConnectionKey(root, serverKey);
     const auto        it  = joinedConnection_.find(key);
     return it != joinedConnection_.end() ? it->second : key;
 }
 
-std::vector<std::string> LspManager::ConnectionKeysForServer(const std::string& serverKey) const {
+std::vector<std::string> Manager::ConnectionKeysForServer(const std::string& serverKey) const {
     const std::string        suffix = '\x1f' + serverKey;
     std::vector<std::string> keys;
     for (const auto& [key, client] : clients_) {
@@ -618,7 +618,7 @@ std::vector<std::string> LspManager::ConnectionKeysForServer(const std::string& 
     return keys;
 }
 
-std::optional<std::string> LspManager::TryJoinWorkspaceFolder(const std::string& serverKey, const std::filesystem::path& root) {
+std::optional<std::string> Manager::TryJoinWorkspaceFolder(const std::string& serverKey, const std::filesystem::path& root) {
     std::string joinable;
     for (const std::string& candidate : ConnectionKeysForServer(serverKey)) {
         if (handshakePending_.contains(candidate)) {
@@ -634,7 +634,7 @@ std::optional<std::string> LspManager::TryJoinWorkspaceFolder(const std::string&
         return std::nullopt;
     }
 
-    LspClient* client = ExistingClientForLanguage(joinable);
+    Client* client = ExistingClientForLanguage(joinable);
     if (!client) {
         return std::nullopt; // died between the scan above and here
     }
@@ -646,7 +646,7 @@ std::optional<std::string> LspManager::TryJoinWorkspaceFolder(const std::string&
     return joinable;
 }
 
-std::filesystem::path LspManager::ResolveCachedRoot(const std::filesystem::path& bufferPath, const std::string& language) {
+std::filesystem::path Manager::ResolveCachedRoot(const std::filesystem::path& bufferPath, const std::string& language) {
     const std::string cacheKey = bufferPath.parent_path().string() + '\x1f' + language;
     if (const auto it = resolvedRootCache_.find(cacheKey); it != resolvedRootCache_.end()) {
         return it->second;
@@ -654,12 +654,12 @@ std::filesystem::path LspManager::ResolveCachedRoot(const std::filesystem::path&
     return resolvedRootCache_.emplace(cacheKey, ResolveLspRoot(bufferPath, language)).first->second;
 }
 
-LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std::filesystem::path& root) {
+Client* Manager::ClientForLanguage(const std::string& serverKey, const std::filesystem::path& root) {
     // lsp-workspace-folders follow-up: resolved, not raw -- a root that
     // previously joined another process's folder set must keep landing on
     // that same client rather than spawning its own on the next sync.
     std::string connectionKey = ResolvedConnectionKey(root, serverKey);
-    if (LspClient* existing = ExistingClientForLanguage(connectionKey)) {
+    if (Client* existing = ExistingClientForLanguage(connectionKey)) {
         return existing;
     }
     if (connectionKey != ConnectionKey(root, serverKey)) {
@@ -674,13 +674,13 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
     // anything, see whether an already-running server for this same language
     // can simply be handed this root as an additional workspace folder -- one
     // process serving a monorepo's subpackages instead of one per subpackage.
-    // Deliberately ahead of the LspServerCommand lookup below: joining an
+    // Deliberately ahead of the ServerCommand lookup below: joining an
     // existing process needs no argv of its own, and a language whose command
     // was cleared after its server came up should still be able to serve a
     // newly-opened sibling root from it. Only ever reachable in a genuine
     // multi-root session -- in the single-root case the exact-key lookup at
     // the top of this function already returned.
-    if (LspWorkspaceFoldersEnabled() && !ConnectionKeysForServer(serverKey).empty()) {
+    if (WorkspaceFoldersEnabled() && !ConnectionKeysForServer(serverKey).empty()) {
         if (const std::optional<std::string> joined = TryJoinWorkspaceFolder(serverKey, root)) {
             return ExistingClientForLanguage(*joined);
         }
@@ -702,7 +702,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
     // ProseCheckerCommand()'s auto-detect/override/enabled-toggle
     // resolution instead of the plain per-language table.
     const std::optional<std::vector<std::string>> command =
-        (serverKey == kProseLanguageKey) ? ProseCheckerCommand() : LspServerCommand(serverKey);
+        (serverKey == kProseLanguageKey) ? ProseCheckerCommand() : ServerCommand(serverKey);
     if (!command) {
         return nullptr;
     }
@@ -739,25 +739,25 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
     }
 
     // lsp-broker follow-up. Try attaching to an already-running LSP broker
-    // daemon before spawning our own subprocess -- see LspBrokerConnect.h's
+    // daemon before spawning our own subprocess -- see BrokerConnect.h's
     // own header comment for exactly why this is always safe to attempt
     // (nullptr on any failure, never throws) and why nothing downstream of
-    // this needs to know the difference: the returned LspClient still
+    // this needs to know the difference: the returned Client still
     // genuinely performs the real initialize/initialized handshake below,
     // just over a socket to the broker instead of a pipe to a directly-
     // spawned process. LSP multi-root follow-up: root (the buffer's own
     // resolved root, not unconditionally editor::ProjectRoot() anymore) is
     // what actually exercises the broker's own pre-existing (root,
-    // language) keying -- see LspBrokerConnect.h.
-    std::unique_ptr<LspClient> client =
+    // language) keying -- see BrokerConnect.h.
+    std::unique_ptr<Client> client =
         TryConnectToBroker(root, serverKey, *command, eventLoop_, brokerSocketPathOverrideForTesting_);
     // graceful-lsp-shutdown follow-up: stamped here, the one place this
     // distinction is actually made -- see brokerBackedLanguages_'s own doc
-    // comment in LspManager.h.
+    // comment in Manager.h.
     const bool brokerBacked = (client != nullptr);
     if (!client) {
         try {
-            client = std::make_unique<LspClient>(*command, eventLoop_);
+            client = std::make_unique<Client>(*command, eventLoop_);
         }
         catch (const std::exception& e) {
             // Previously uncaught -- Transport's constructor throws
@@ -779,7 +779,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
     const editor::ProjectSettings projectSettings = editor::LoadProjectSettings(root);
     WireNotificationHandlers(*client, serverKey, connectionKey, projectSettings.lspWorkspaceConfiguration);
 
-    LspClient* rawClient = client.get();
+    Client* rawClient = client.get();
     // project-settings-lsp-init-options follow-up: initializationOptions
     // covers servers that only read config at handshake time;
     // workspace/didChangeConfiguration (sent right after "initialized",
@@ -787,7 +787,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
     // model some servers expect instead -- see ProjectSettings.h's own doc
     // comment on lspWorkspaceConfiguration for why both exist side by side.
     rawClient->SendRequest(
-        "initialize", BuildInitializeParams(root, editor::LspInitializationOptionsForLanguage(projectSettings, serverKey)),
+        "initialize", BuildInitializeParams(root, editor::InitializationOptionsForLanguage(projectSettings, serverKey)),
         [this, rawClient, serverKey, connectionKey, workspaceConfiguration = projectSettings.lspWorkspaceConfiguration](
             std::optional<Json> result, std::optional<Json> error) {
             // hang-on-timed-out-initialize follow-up: ExpireStaleRequests
@@ -808,7 +808,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
             // semantic-tokens/on-type-formatting follow-up: the only two
             // pieces of this response this class keeps -- see
             // SemanticTokensLegendFor/OnTypeFormattingTriggersFor's own doc
-            // comment in LspManager.h for why. Absent means whatever result
+            // comment in Manager.h for why. Absent means whatever result
             // is present, the provider just isn't advertised.
             if (result) {
                 if (const auto legend = ExtractSemanticTokensLegend(*result)) {
@@ -860,7 +860,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
     return rawClient;
 }
 
-void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
+void Manager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
     if (!buffer.Path()) {
         return; // a scratch buffer has no URI to tell a server about
     }
@@ -890,14 +890,14 @@ void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
     SyncToServer(buffer, std::string(kProseLanguageKey), language, root); // prose checker, independent of the above
 }
 
-void LspManager::CheckComposerProseText(const std::string& text, ComposerProseCallback callback) {
+void Manager::CheckComposerProseText(const std::string& text, ComposerProseCallback callback) {
     composerProseCallback_ = std::move(callback);
     // Debounces the send itself, not just applying the eventual publish
     // (diagnosticsDebounceTimers_'s own job) -- see this method's own doc
     // comment in the header for why. `text` is captured by value into the
     // timer's callback since prompt_'s own text may have changed again by
     // the time this fires.
-    composerProseDebounceTimer_.Arm(eventLoop_, std::chrono::milliseconds(LspDiagnosticsDebounceMs()), [this, text] {
+    composerProseDebounceTimer_.Arm(eventLoop_, std::chrono::milliseconds(DiagnosticsDebounceMs()), [this, text] {
         if (!composerProseBuffer_) {
             text::Buffer created = text::Buffer::NewFile(ComposerProseScratchPath());
             composerProseBuffer_ = std::make_unique<text::Buffer>(std::move(created));
@@ -907,7 +907,7 @@ void LspManager::CheckComposerProseText(const std::string& text, ComposerProseCa
     });
 }
 
-void LspManager::SyncEmbeddedDocuments(text::Buffer& buffer, const std::vector<EmbeddedDocumentSync>& documents) {
+void Manager::SyncEmbeddedDocuments(text::Buffer& buffer, const std::vector<EmbeddedDocumentSync>& documents) {
     if (!buffer.Path()) {
         return; // a scratch buffer has no URI to tell a server about
     }
@@ -942,7 +942,7 @@ void LspManager::SyncEmbeddedDocuments(text::Buffer& buffer, const std::vector<E
         if (const auto bufferIt = bufferState_.find(&buffer); bufferIt != bufferState_.end()) {
             if (const auto stateIt = bufferIt->second.find(key); stateIt != bufferIt->second.end()) {
                 if (stateIt->second.opened) {
-                    if (LspClient* client = ExistingClientForLanguage(stateIt->second.connectionKey)) {
+                    if (Client* client = ExistingClientForLanguage(stateIt->second.connectionKey)) {
                         client->SendNotification("textDocument/didClose", {{"textDocument", {{"uri", stateIt->second.uri}}}});
                     }
                 }
@@ -968,7 +968,7 @@ void LspManager::SyncEmbeddedDocuments(text::Buffer& buffer, const std::vector<E
     }
 }
 
-std::vector<std::string> LspManager::ActiveServerKeysForBuffer(const text::Buffer& buffer) const {
+std::vector<std::string> Manager::ActiveServerKeysForBuffer(const text::Buffer& buffer) const {
     std::vector<std::string> keys;
     const auto               it = bufferState_.find(const_cast<text::Buffer*>(&buffer));
     if (it == bufferState_.end()) {
@@ -981,7 +981,7 @@ std::vector<std::string> LspManager::ActiveServerKeysForBuffer(const text::Buffe
     return keys;
 }
 
-void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
+void Manager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
                               const std::filesystem::path& root) {
     // progressive-huge-file-load follow-up: checked here, ahead of the
     // buffer.Text() argument below, rather than relying solely on
@@ -1031,7 +1031,7 @@ void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey
     // the actual textDocument/didChange send instead of materializing
     // buffer.Text() and sending synchronously right here. A real,
     // gdb-confirmed live freeze traced to exactly this send happening on
-    // every single keystroke (see LspServerConfig.h's LspSyncDebounceMs
+    // every single keystroke (see ServerConfig.h's SyncDebounceMs
     // doc comment): the main thread blocked inside ChildProcess::WriteAll,
     // stuck writing a full-document sync to a server whose stdin pipe
     // couldn't drain fast enough. See BufferSyncState::pendingSyncGeneration's
@@ -1044,7 +1044,7 @@ void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey
 
     text::Buffer* const bufferPtr = &buffer;
     syncDebounceTimers_[&buffer][serverKey].Arm(
-        eventLoop_, std::chrono::milliseconds(LspSyncDebounceMs()), [this, bufferPtr, serverKey, languageId, root] {
+        eventLoop_, std::chrono::milliseconds(SyncDebounceMs()), [this, bufferPtr, serverKey, languageId, root] {
             // Re-reads buffer.Text() fresh here, not at arm time -- more
             // edits may have landed during the debounce window, and this
             // must send the *latest* content, not a stale snapshot.
@@ -1052,9 +1052,9 @@ void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey
         });
 }
 
-void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
+void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
                                   const std::string& documentText, const std::filesystem::path& root) {
-    LspClient* client = ClientForLanguage(serverKey, root);
+    Client* client = ClientForLanguage(serverKey, root);
     if (!client) {
         return; // nothing configured/running for this server
     }
@@ -1097,11 +1097,11 @@ void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serve
         state.lastSyncedText       = documentText; // incremental-sync follow-up: baseline for the first didChange's diff
         // pull-diagnostics follow-up: same cadence as didOpen/didChange
         // itself, no separate debounce timer -- see RequestPullDiagnostics'
-        // own doc comment in LspManager.h. Opt-in (LspPullDiagnosticsEnabled,
+        // own doc comment in Manager.h. Opt-in (PullDiagnosticsEnabled,
         // default false): unconditionally, this would mean one extra
         // request per content sync for every server, forever, whether or
         // not it actually needs pull diagnostics at all.
-        if (LspPullDiagnosticsEnabled()) {
+        if (PullDiagnosticsEnabled()) {
             RequestPullDiagnostics(buffer, serverKey);
         }
         return;
@@ -1156,7 +1156,7 @@ void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serve
         std::size_t       newEndByte   = documentText.size() - (oldText.size() - oldEndByte);
         newEndByte                     = std::max(newEndByte, newStartByte);
 
-        const LspRange    range       = ByteRangeToLspRange(oldText, oldStartByte, oldEndByte);
+        const Range    range       = ByteRangeToLspRange(oldText, oldStartByte, oldEndByte);
         const std::size_t rangeLength = Utf16LengthOfByteRange(oldText, oldStartByte, oldEndByte);
         const std::string changedText = documentText.substr(newStartByte, newEndByte - newStartByte);
 
@@ -1181,12 +1181,12 @@ void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serve
     }
     state.lastSyncedGeneration = buffer.ContentGeneration();
     state.lastSyncedText       = documentText;
-    if (LspPullDiagnosticsEnabled()) {
+    if (PullDiagnosticsEnabled()) {
         RequestPullDiagnostics(buffer, serverKey);
     }
 }
 
-LspManager::BufferSyncState* LspManager::PrimarySyncState(text::Buffer& buffer) {
+Manager::BufferSyncState* Manager::PrimarySyncState(text::Buffer& buffer) {
     const auto keyIt = primaryServerKey_.find(&buffer);
     if (keyIt == primaryServerKey_.end()) {
         return nullptr;
@@ -1199,7 +1199,7 @@ LspManager::BufferSyncState* LspManager::PrimarySyncState(text::Buffer& buffer) 
     return stateIt != bufferIt->second.end() ? &stateIt->second : nullptr;
 }
 
-LspManager::BufferSyncState* LspManager::ResolveSyncState(text::Buffer& buffer, const std::string& serverKey) {
+Manager::BufferSyncState* Manager::ResolveSyncState(text::Buffer& buffer, const std::string& serverKey) {
     if (serverKey.empty()) {
         return PrimarySyncState(buffer);
     }
@@ -1211,12 +1211,12 @@ LspManager::BufferSyncState* LspManager::ResolveSyncState(text::Buffer& buffer, 
     return stateIt != it->second.end() ? &stateIt->second : nullptr;
 }
 
-LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
+Client& Manager::SetClientForTesting(std::string language, std::unique_ptr<Client> client,
                                            const Json& workspaceConfiguration, bool brokerBacked,
                                            std::optional<std::string> connectionKeyOverride) {
     // LSP multi-root follow-up: nullopt (every pre-existing call site)
     // registers under language itself, unchanged -- see this method's own
-    // doc comment in LspManager.h.
+    // doc comment in Manager.h.
     const std::string connectionKey = connectionKeyOverride.value_or(language);
     WireNotificationHandlers(*client, language, connectionKey, workspaceConfiguration); // same wiring ClientForLanguage's real spawn path applies
     disconnectedLanguages_.erase(connectionKey);                                        // an injected client is "running," same as a real successful spawn
@@ -1228,13 +1228,13 @@ LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr
     else {
         brokerBackedLanguages_.erase(connectionKey);
     }
-    LspClient& ref          = *client;
+    Client& ref          = *client;
     clients_[connectionKey] = std::move(client);
     return ref;
 }
 
-void LspManager::ClientDisconnected(const std::string& serverKey, const std::string& connectionKey) {
-    // Both may be references into the very LspClient (and its
+void Manager::ClientDisconnected(const std::string& serverKey, const std::string& connectionKey) {
+    // Both may be references into the very Client (and its
     // OnDisconnected closure) this function destroys below -- copy them
     // first so the rest of this function isn't reading freed memory.
     const std::string serverKeyCopy     = serverKey;
@@ -1243,12 +1243,12 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     // vector instead of erasing immediately, on the theory that "wait for
     // the next periodic tick before actually freeing" gave any in-flight
     // Post()ed callback time to drain first. Confirmed live via ASan that
-    // this isn't actually safe -- LspClient::ExpireStaleRequests's own
+    // this isn't actually safe -- Client::ExpireStaleRequests's own
     // periodic tick and a client's background thread both Post() against
     // EventLoop independently, with no ordering guarantee between them, so
     // the tick can free a just-retired client while another callback for
     // that exact object is still queued. The real fix now lives in
-    // LspClient itself (see its header comment on alive_) -- a stray
+    // Client itself (see its header comment on alive_) -- a stray
     // Post()ed callback safely no-ops instead of touching freed memory
     // regardless of when this destroys the object, so plain immediate
     // erase() is safe again and retired_ is gone.
@@ -1286,7 +1286,7 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     disconnectedLanguages_.insert(connectionKeyCopy);
 
     // crash-loop-respawn-guard follow-up: see disconnectBurst_'s own doc
-    // comment in LspManager.h. Must run before this function returns (every
+    // comment in Manager.h. Must run before this function returns (every
     // exit path below still respawns on the next SyncBuffer otherwise).
     const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
     lastDisconnectAt_[connectionKeyCopy]            = now; // respawn-debounce follow-up
@@ -1304,7 +1304,7 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
         // (bufferState_/diagnosticsBySource_/activeProgress_) still runs
         // exactly as it would for any other disconnect.
         const std::optional<std::vector<std::string>> command =
-            (serverKeyCopy == kProseLanguageKey) ? ProseCheckerCommand() : LspServerCommand(serverKeyCopy);
+            (serverKeyCopy == kProseLanguageKey) ? ProseCheckerCommand() : ServerCommand(serverKeyCopy);
         if (command) {
             failedCommands_[connectionKeyCopy] = *command;
         }
@@ -1354,7 +1354,7 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     }
     // workDoneProgress-support follow-up: a dying server never sends "end"
     // for its live progress sessions -- End them here or the spinner runs
-    // forever (the request-count half of the same problem is ~LspClient's
+    // forever (the request-count half of the same problem is ~Client's
     // own responsibility; see its destructor comment).
     const std::string keyPrefix = connectionKeyCopy + '\x1f';
     for (auto it = activeProgress_.begin(); it != activeProgress_.end();) {
@@ -1371,7 +1371,7 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     }
 }
 
-void LspManager::LogError(std::string_view language, std::string_view message) {
+void Manager::LogError(std::string_view language, std::string_view message) {
     text::Buffer* log = bufferList_.Find(std::string(kLspLogBufferName));
     if (!log) {
         log = &bufferList_.CreateBuffer(std::string(kLspLogBufferName));
@@ -1381,58 +1381,58 @@ void LspManager::LogError(std::string_view language, std::string_view message) {
     hasUnseenLogEntry_ = true;
 }
 
-bool LspManager::HasUnseenLogEntry() const {
+bool Manager::HasUnseenLogEntry() const {
     return hasUnseenLogEntry_;
 }
 
-void LspManager::AcknowledgeLogEntry() {
+void Manager::AcknowledgeLogEntry() {
     hasUnseenLogEntry_ = false;
 }
 
-LspManager::LspStatus LspManager::StatusForLanguage(const std::string& connectionKey) const {
+Manager::Status Manager::StatusForLanguage(const std::string& connectionKey) const {
     if (ExistingClientForLanguage(connectionKey) != nullptr) {
-        return LspStatus::Running;
+        return Status::Running;
     }
     if (failedCommands_.contains(connectionKey)) {
-        return LspStatus::SpawnFailed;
+        return Status::SpawnFailed;
     }
     if (disconnectedLanguages_.contains(connectionKey)) {
-        return LspStatus::Disconnected;
+        return Status::Disconnected;
     }
-    return LspStatus::NotConfigured;
+    return Status::NotConfigured;
 }
 
-std::string LspManager::SpawnFailureDetail(const std::string& connectionKey) const {
+std::string Manager::SpawnFailureDetail(const std::string& connectionKey) const {
     const auto it = spawnFailureDetail_.find(connectionKey);
     return it != spawnFailureDetail_.end() ? it->second : std::string();
 }
 
-std::string LspManager::DisconnectReason(const std::string& connectionKey) const {
+std::string Manager::DisconnectReason(const std::string& connectionKey) const {
     const auto it = disconnectDetail_.find(connectionKey);
     return it != disconnectDetail_.end() ? it->second : std::string();
 }
 
-std::optional<SemanticTokensLegend> LspManager::SemanticTokensLegendFor(const std::string& connectionKey) const {
+std::optional<SemanticTokensLegend> Manager::SemanticTokensLegendFor(const std::string& connectionKey) const {
     const auto it = semanticTokensLegend_.find(connectionKey);
     return it != semanticTokensLegend_.end() ? std::optional(it->second) : std::nullopt;
 }
 
-std::optional<CompletionProviderInfo> LspManager::CompletionProviderFor(const std::string& connectionKey) const {
+std::optional<CompletionProviderInfo> Manager::CompletionProviderFor(const std::string& connectionKey) const {
     const auto it = completionProvider_.find(connectionKey);
     return it != completionProvider_.end() ? std::optional(it->second) : std::nullopt;
 }
 
-std::optional<OnTypeFormattingTriggers> LspManager::OnTypeFormattingTriggersFor(const std::string& connectionKey) const {
+std::optional<OnTypeFormattingTriggers> Manager::OnTypeFormattingTriggersFor(const std::string& connectionKey) const {
     const auto it = onTypeFormattingTriggers_.find(connectionKey);
     return it != onTypeFormattingTriggers_.end() ? std::optional(it->second) : std::nullopt;
 }
 
-TextDocumentSyncKind LspManager::TextDocumentSyncKindFor(const std::string& connectionKey) const {
+TextDocumentSyncKind Manager::TextDocumentSyncKindFor(const std::string& connectionKey) const {
     const auto it = textDocumentSyncKind_.find(connectionKey);
     return it != textDocumentSyncKind_.end() ? it->second : TextDocumentSyncKind::Full;
 }
 
-void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
+void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     const auto it = bufferState_.find(&buffer);
     if (it != bufferState_.end()) {
         // prose-checking follow-up: buffer may have up to two sync states
@@ -1441,7 +1441,7 @@ void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
         for (const auto& perServer : it->second) {
             const BufferSyncState& state = perServer.second;
             if (state.opened) {
-                if (LspClient* client = ExistingClientForLanguage(state.connectionKey)) {
+                if (Client* client = ExistingClientForLanguage(state.connectionKey)) {
                     client->SendNotification("textDocument/didClose", {{"textDocument", {{"uri", state.uri}}}});
                 }
             }
@@ -1470,7 +1470,7 @@ void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     codeLensSpans_.erase(&buffer);
 }
 
-void LspManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     // reentrant-expiry-during-iteration follow-up: a stale *initialize*
     // request's synthesized-timeout callback (SpawnClient's own lambda,
     // above) calls ClientDisconnected on error, which erases the client
@@ -1482,7 +1482,7 @@ void LspManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     // ++it (or a later entry sharing a since-invalidated bucket) then reads
     // freed map-node memory -- confirmed live via a real SIGSEGV, and
     // reproduced deterministically under ASan (heap-use-after-free, this
-    // exact line) once the fix below was reverted. LspClient::
+    // exact line) once the fix below was reverted. Client::
     // ExpireStaleRequests already guards its own pending_ map this same way
     // (see its own comment); this is that same fix one level up. Snapshot
     // the keys first, then re-resolve each via a fresh find() right before
@@ -1501,7 +1501,7 @@ void LspManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     }
 }
 
-void LspManager::HandlePublishDiagnostics(const Json& params, const std::string& language) {
+void Manager::HandlePublishDiagnostics(const Json& params, const std::string& language) {
     if (!params.contains("uri")) {
         return;
     }
@@ -1551,11 +1551,11 @@ void LspManager::HandlePublishDiagnostics(const Json& params, const std::string&
     // content-generation bump) -- (re)arm buffer's own debounce timer
     // instead, collapsing a rapid-typing burst of publishes into one
     // application once the buffer goes quiet for a beat.
-    diagnosticsDebounceTimers_[buffer].Arm(eventLoop_, std::chrono::milliseconds(LspDiagnosticsDebounceMs()),
+    diagnosticsDebounceTimers_[buffer].Arm(eventLoop_, std::chrono::milliseconds(DiagnosticsDebounceMs()),
                                            [this, buffer] { PushMergedDiagnostics(*buffer); });
 }
 
-void LspManager::FilterToOwnedRanges(text::Buffer* buffer, const std::string& language,
+void Manager::FilterToOwnedRanges(text::Buffer* buffer, const std::string& language,
                                      std::vector<text::Buffer::Diagnostic>& diagnostics) const {
     // embedded-language-documents follow-up: an embedded server (one with an
     // owned-ranges record) only ever legitimately reports within its own
@@ -1585,7 +1585,7 @@ void LspManager::FilterToOwnedRanges(text::Buffer* buffer, const std::string& la
     });
 }
 
-void LspManager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& serverKey) {
+void Manager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         return;
@@ -1596,7 +1596,7 @@ void LspManager::RequestPullDiagnostics(text::Buffer& buffer, const std::string&
     if (pullDiagnosticsUnsupported_.contains(state->connectionKey)) {
         return; // learned once that this server doesn't support textDocument/diagnostic
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         return;
     }
@@ -1641,8 +1641,8 @@ void LspManager::RequestPullDiagnostics(text::Buffer& buffer, const std::string&
             diagnostics.reserve(items->size());
             for (const PullDiagnosticItem& item : *items) {
                 diagnostics.push_back(text::Buffer::Diagnostic{
-                    .startByte = LspPositionToByte(content, item.start),
-                    .endByte   = LspPositionToByte(content, item.end),
+                    .startByte = PositionToByte(content, item.start),
+                    .endByte   = PositionToByte(content, item.end),
                     .severity  = SeverityFromLsp(item.severity),
                     .origin    = (sourceKey == kProseLanguageKey) ? text::Buffer::Diagnostic::Origin::Prose
                                                                   : text::Buffer::Diagnostic::Origin::Code,
@@ -1651,14 +1651,14 @@ void LspManager::RequestPullDiagnostics(text::Buffer& buffer, const std::string&
             }
             FilterToOwnedRanges(buffer, sourceKey, diagnostics);
             // Same source-key slot HandlePublishDiagnostics writes into --
-            // see this method's own doc comment in LspManager.h for why
+            // see this method's own doc comment in Manager.h for why
             // that's the deliberate choice here.
             diagnosticsBySource_[buffer][sourceKey] = std::move(diagnostics);
             PushMergedDiagnostics(*buffer);
         });
 }
 
-void LspManager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector<SemanticToken>& tokens,
+void Manager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector<SemanticToken>& tokens,
                                             const SemanticTokensLegend& legend) {
     const text::ITextStorage&          content = buffer.Content();
     std::vector<editor::HighlightSpan> spans;
@@ -1673,10 +1673,10 @@ void LspManager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vec
         }
         // A semantic token never spans multiple lines (per spec) -- its end
         // is always {start.line, start.character + length}.
-        const LspPosition end{.line = token.start.line, .character = token.start.character + token.length};
+        const Position end{.line = token.start.line, .character = token.start.character + token.length};
         spans.push_back(editor::HighlightSpan{
-            .startByte   = LspPositionToByte(content, token.start),
-            .endByte     = LspPositionToByte(content, end),
+            .startByte   = PositionToByte(content, token.start),
+            .endByte     = PositionToByte(content, end),
             .syntaxClass = *syntaxClass,
         });
     }
@@ -1684,9 +1684,9 @@ void LspManager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vec
     ++semanticTokensGeneration_[&buffer];
 }
 
-void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
                                        const std::string& serverKey) {
-    if (!LspSemanticHighlightingEnabled()) {
+    if (!SemanticHighlightingEnabled()) {
         return;
     }
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
@@ -1695,7 +1695,7 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
     }
     // sync-debounce follow-up: the server may not have this generation's
     // content yet -- SyncToServer's own didChange send is now debounced
-    // (LspSyncDebounceMs), so a Paint() can reach here before it's landed.
+    // (SyncDebounceMs), so a Paint() can reach here before it's landed.
     // Retried on the next Paint() once it does (see SyncToServer's own doc
     // comment for why that's guaranteed to happen without extra plumbing).
     if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
@@ -1705,7 +1705,7 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
     if (!legend) {
         return; // server never advertised a legend -- any of the three responses would be undecodable anyway
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         return;
     }
@@ -1732,8 +1732,8 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
         const std::size_t requestedGeneration  = buffer.ContentGeneration();
 
         const text::ITextStorage& content = buffer.Content();
-        const LspPosition         start   = BytePositionToLsp(content, viewportStartByte);
-        const LspPosition         end     = BytePositionToLsp(content, viewportEndByte);
+        const Position         start   = BytePositionToLsp(content, viewportStartByte);
+        const Position         end     = BytePositionToLsp(content, viewportEndByte);
         const Json                params  = {
             {"textDocument", {{"uri", state->uri}}},
             {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
@@ -1807,7 +1807,7 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
                 if (!result) {
                     return;
                 }
-                // stale-position-race follow-up: the response's LspPosition
+                // stale-position-race follow-up: the response's Position
                 // values were computed by the server against the document as
                 // it stood AT REQUEST TIME -- if a local edit landed while
                 // this was in flight, bufferPtr->Content() below is already
@@ -1880,20 +1880,20 @@ void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewpor
         });
 }
 
-const std::vector<editor::HighlightSpan>& LspManager::SemanticTokenSpans(const text::Buffer& buffer) const {
+const std::vector<editor::HighlightSpan>& Manager::SemanticTokenSpans(const text::Buffer& buffer) const {
     static const std::vector<editor::HighlightSpan> kEmpty;
     const auto                                      it = semanticTokenSpans_.find(const_cast<text::Buffer*>(&buffer));
     return it != semanticTokenSpans_.end() ? it->second : kEmpty;
 }
 
-std::size_t LspManager::SemanticTokensGeneration(const text::Buffer& buffer) const {
+std::size_t Manager::SemanticTokensGeneration(const text::Buffer& buffer) const {
     const auto it = semanticTokensGeneration_.find(const_cast<text::Buffer*>(&buffer));
     return it != semanticTokensGeneration_.end() ? it->second : 0;
 }
 
-void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
                                    const std::string& serverKey) {
-    if (!LspInlayHintsEnabled()) {
+    if (!InlayHintsEnabled()) {
         return;
     }
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
@@ -1912,7 +1912,7 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
     if (const auto it = inlayHintsRequestedRange_.find(&buffer); it != inlayHintsRequestedRange_.end() && it->second == requestedRange) {
         return; // already requested for this exact (content, viewport) -- a cursor-blink/scroll-into-the-same-view repaint
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         return;
     }
@@ -1922,8 +1922,8 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
     const std::size_t requestedGeneration = buffer.ContentGeneration();
 
     const text::ITextStorage& content       = buffer.Content();
-    const LspPosition         start         = BytePositionToLsp(content, viewportStartByte);
-    const LspPosition         end           = BytePositionToLsp(content, viewportEndByte);
+    const Position         start         = BytePositionToLsp(content, viewportStartByte);
+    const Position         end           = BytePositionToLsp(content, viewportEndByte);
     text::Buffer* const       bufferPtr     = &buffer;
     const std::string         connectionKey = state->connectionKey; // per-connection latch, see RequestSemanticTokens
     const Json                params        = {
@@ -1963,7 +1963,7 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
             std::vector<ResolvedInlayHint> resolved;
             resolved.reserve(hints.size());
             for (const InlayHint& hint : hints) {
-                resolved.push_back(ResolvedInlayHint{.byteOffset = LspPositionToByte(content, hint.position), .label = hint.label});
+                resolved.push_back(ResolvedInlayHint{.byteOffset = PositionToByte(content, hint.position), .label = hint.label});
             }
             std::sort(resolved.begin(), resolved.end(),
                       [](const ResolvedInlayHint& a, const ResolvedInlayHint& b) { return a.byteOffset < b.byteOffset; });
@@ -1971,14 +1971,14 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
         });
 }
 
-const std::vector<LspManager::ResolvedInlayHint>& LspManager::InlayHintSpans(const text::Buffer& buffer) const {
+const std::vector<Manager::ResolvedInlayHint>& Manager::InlayHintSpans(const text::Buffer& buffer) const {
     static const std::vector<ResolvedInlayHint> kEmpty;
     const auto                                  it = inlayHintSpans_.find(const_cast<text::Buffer*>(&buffer));
     return it != inlayHintSpans_.end() ? it->second : kEmpty;
 }
 
-void LspManager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverKey) {
-    if (!LspCodeLensEnabled()) {
+void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverKey) {
+    if (!CodeLensEnabled()) {
         return;
     }
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
@@ -1997,7 +1997,7 @@ void LspManager::RequestCodeLenses(text::Buffer& buffer, const std::string& serv
         it != codeLensRequestedGeneration_.end() && it->second == buffer.ContentGeneration()) {
         return; // already requested for this exact content
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         return;
     }
@@ -2028,8 +2028,8 @@ void LspManager::RequestCodeLenses(text::Buffer& buffer, const std::string& serv
             resolved.reserve(lenses.size());
             for (const CodeLens& lens : lenses) {
                 resolved.push_back(ResolvedCodeLens{
-                    .startByte        = LspPositionToByte(content, lens.start),
-                    .endByte          = LspPositionToByte(content, lens.end),
+                    .startByte        = PositionToByte(content, lens.start),
+                    .endByte          = PositionToByte(content, lens.end),
                     .title            = lens.title,
                     .commandName      = lens.commandName,
                     .commandArguments = lens.commandArguments,
@@ -2043,20 +2043,20 @@ void LspManager::RequestCodeLenses(text::Buffer& buffer, const std::string& serv
         });
 }
 
-const std::vector<LspManager::ResolvedCodeLens>& LspManager::CodeLensSpans(const text::Buffer& buffer) const {
+const std::vector<Manager::ResolvedCodeLens>& Manager::CodeLensSpans(const text::Buffer& buffer) const {
     static const std::vector<ResolvedCodeLens> kEmpty;
     const auto                                 it = codeLensSpans_.find(const_cast<text::Buffer*>(&buffer));
     return it != codeLensSpans_.end() ? it->second : kEmpty;
 }
 
-void LspManager::ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& lens, ResolveCodeLensCallback callback,
+void Manager::ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& lens, ResolveCodeLensCallback callback,
                                  const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
@@ -2091,7 +2091,7 @@ namespace {
     // file:// URI but doesn't parse (UriToPath returning nullopt) is left
     // with neither field set rather than passed to OpenUrl as a URL, which
     // it isn't.
-    void ApplyDocumentLinkTarget(LspManager::ResolvedDocumentLink& out, const DocumentLink& link) {
+    void ApplyDocumentLinkTarget(Manager::ResolvedDocumentLink& out, const DocumentLink& link) {
         out.needsResolve = !link.hasTarget;
         if (!link.hasTarget) {
             return;
@@ -2106,7 +2106,7 @@ namespace {
     }
 } // namespace
 
-void LspManager::RequestDocumentLinks(text::Buffer& buffer, DocumentLinkCallback callback, const std::string& serverKey) {
+void Manager::RequestDocumentLinks(text::Buffer& buffer, DocumentLinkCallback callback, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
@@ -2116,7 +2116,7 @@ void LspManager::RequestDocumentLinks(text::Buffer& buffer, DocumentLinkCallback
         callback({}); // learned once that this server doesn't support textDocument/documentLink
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
@@ -2149,8 +2149,8 @@ void LspManager::RequestDocumentLinks(text::Buffer& buffer, DocumentLinkCallback
                             std::vector<ResolvedDocumentLink> resolved;
                             for (const DocumentLink& link : ExtractDocumentLinks(*result)) {
                                 ResolvedDocumentLink entry{
-                                    .startByte = LspPositionToByte(content, link.start),
-                                    .endByte   = LspPositionToByte(content, link.end),
+                                    .startByte = PositionToByte(content, link.start),
+                                    .endByte   = PositionToByte(content, link.end),
                                     .raw       = link.raw,
                                 };
                                 ApplyDocumentLinkTarget(entry, link);
@@ -2164,14 +2164,14 @@ void LspManager::RequestDocumentLinks(text::Buffer& buffer, DocumentLinkCallback
                         });
 }
 
-void LspManager::ResolveDocumentLink(text::Buffer& buffer, const ResolvedDocumentLink& link, ResolveDocumentLinkCallback callback,
+void Manager::ResolveDocumentLink(text::Buffer& buffer, const ResolvedDocumentLink& link, ResolveDocumentLinkCallback callback,
                                      const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
@@ -2196,7 +2196,7 @@ void LspManager::ResolveDocumentLink(text::Buffer& buffer, const ResolvedDocumen
                         });
 }
 
-void LspManager::PushMergedDiagnostics(text::Buffer& buffer) {
+void Manager::PushMergedDiagnostics(text::Buffer& buffer) {
     std::vector<text::Buffer::Diagnostic> merged;
     if (const auto it = diagnosticsBySource_.find(&buffer); it != diagnosticsBySource_.end()) {
         for (const auto& perSource : it->second) {
@@ -2206,7 +2206,7 @@ void LspManager::PushMergedDiagnostics(text::Buffer& buffer) {
     buffer.SetDiagnostics(std::move(merged));
 }
 
-void LspManager::HandleProgress(const std::string& connectionKey, const Json& params) {
+void Manager::HandleProgress(const std::string& connectionKey, const Json& params) {
     if (!params.contains("token") || !params.contains("value") || !params["value"].is_object()) {
         return;
     }
@@ -2252,20 +2252,20 @@ void LspManager::HandleProgress(const std::string& connectionKey, const Json& pa
     SetBackgroundActivityDetail(kLspActivity, std::move(detail));
 }
 
-void LspManager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey) {
+void Manager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt); // never synced to a server -- nothing to ask
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
     }
 
     const std::string language = state->connectionKey;
-    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Position position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
@@ -2285,21 +2285,21 @@ void LspManager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, Hove
                         });
 }
 
-void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback, const std::string& serverKey,
+void Manager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback, const std::string& serverKey,
                                    const std::string& triggerCharacter) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
     }
 
     const std::string language = state->connectionKey;
-    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Position position = BytePositionToLsp(buffer.Content(), byteOffset);
     // completion-context follow-up, corrected by completion-trigger-characters:
     // triggerKind was hardcoded to 1 (Invoked) for every request, including
     // the ones a real server-declared trigger character caused -- a server
@@ -2318,7 +2318,7 @@ void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset,
     };
     // completion-resolve follow-up: an item that declared no
     // commitCharacters of its own inherits the server's list-wide
-    // allCommitCharacters. Applied here rather than in LspContent because
+    // allCommitCharacters. Applied here rather than in Content because
     // that layer only ever sees one response, never the initialize
     // capabilities this tier comes from -- and applied at receipt so every
     // consumer downstream reads one already-resolved field.
@@ -2350,7 +2350,7 @@ void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset,
                         });
 }
 
-void LspManager::ResolveCompletionItem(text::Buffer& buffer, const CompletionItem& item, ResolveCompletionCallback callback,
+void Manager::ResolveCompletionItem(text::Buffer& buffer, const CompletionItem& item, ResolveCompletionCallback callback,
                                        const std::string& serverKey) {
     if (item.raw.is_null()) {
         callback(std::nullopt); // synthesized (dabbrev/Janet) item -- there is nothing to hand back
@@ -2361,7 +2361,7 @@ void LspManager::ResolveCompletionItem(text::Buffer& buffer, const CompletionIte
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
@@ -2388,22 +2388,22 @@ void LspManager::ResolveCompletionItem(text::Buffer& buffer, const CompletionIte
                         });
 }
 
-void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte, CodeActionCallback callback,
+void Manager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte, CodeActionCallback callback,
                                     const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
     }
 
     const text::ITextStorage& content = buffer.Content();
-    const LspPosition         start   = BytePositionToLsp(content, rangeStartByte);
-    const LspPosition         end     = BytePositionToLsp(content, rangeEndByte);
+    const Position         start   = BytePositionToLsp(content, rangeStartByte);
+    const Position         end     = BytePositionToLsp(content, rangeEndByte);
 
     Json diagnostics = Json::array();
     for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
@@ -2435,13 +2435,13 @@ void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStart
                         });
 }
 
-void LspManager::ResolveCodeAction(text::Buffer& buffer, const CodeAction& action, ResolveCallback callback, const std::string& serverKey) {
+void Manager::ResolveCodeAction(text::Buffer& buffer, const CodeAction& action, ResolveCallback callback, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
@@ -2464,14 +2464,14 @@ void LspManager::ResolveCodeAction(text::Buffer& buffer, const CodeAction& actio
                         });
 }
 
-void LspManager::ExecuteCommand(text::Buffer& buffer, const std::string& serverKey, const std::string& command, Json arguments,
+void Manager::ExecuteCommand(text::Buffer& buffer, const std::string& serverKey, const std::string& command, Json arguments,
                                 ExecuteCommandCallback callback) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(false);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(false);
         return;
@@ -2481,7 +2481,7 @@ void LspManager::ExecuteCommand(text::Buffer& buffer, const std::string& serverK
     const Json        params   = {{"command", command}, {"arguments", std::move(arguments)}};
     client->SendRequest("workspace/executeCommand", params,
                         [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
-                            (void)result; // discarded -- see this method's own doc comment in LspManager.h
+                            (void)result; // discarded -- see this method's own doc comment in Manager.h
                             if (error) {
                                 LogError(language, ExtractErrorMessage(*error));
                                 callback(false);
@@ -2491,21 +2491,21 @@ void LspManager::ExecuteCommand(text::Buffer& buffer, const std::string& serverK
                         });
 }
 
-void LspManager::SendLocationRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset,
+void Manager::SendLocationRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset,
                                      DefinitionCallback callback, const std::string& serverKey, const Json& extraParams) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
     }
 
     const std::string language = state->connectionKey;
-    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Position position = BytePositionToLsp(buffer.Content(), byteOffset);
     Json              params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
@@ -2539,45 +2539,45 @@ void LspManager::SendLocationRequest(const std::string& method, text::Buffer& bu
                         });
 }
 
-void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback, const std::string& serverKey) {
+void Manager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback, const std::string& serverKey) {
     SendLocationRequest("textDocument/definition", buffer, byteOffset, std::move(callback), serverKey);
 }
 
-void LspManager::RequestDeclaration(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+void Manager::RequestDeclaration(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
                                     const std::string& serverKey) {
     SendLocationRequest("textDocument/declaration", buffer, byteOffset, std::move(callback), serverKey);
 }
 
-void LspManager::RequestTypeDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+void Manager::RequestTypeDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
                                        const std::string& serverKey) {
     SendLocationRequest("textDocument/typeDefinition", buffer, byteOffset, std::move(callback), serverKey);
 }
 
-void LspManager::RequestImplementation(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+void Manager::RequestImplementation(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
                                        const std::string& serverKey) {
     SendLocationRequest("textDocument/implementation", buffer, byteOffset, std::move(callback), serverKey);
 }
 
-void LspManager::RequestReferences(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+void Manager::RequestReferences(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
                                    const std::string& serverKey) {
     SendLocationRequest("textDocument/references", buffer, byteOffset, std::move(callback), serverKey,
                         Json{{"context", {{"includeDeclaration", true}}}});
 }
 
-void LspManager::RequestSignatureHelp(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey) {
+void Manager::RequestSignatureHelp(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
     }
 
     const std::string language = state->connectionKey;
-    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Position position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
@@ -2597,21 +2597,21 @@ void LspManager::RequestSignatureHelp(text::Buffer& buffer, std::size_t byteOffs
                         });
 }
 
-void LspManager::RequestDocumentHighlight(text::Buffer& buffer, std::size_t byteOffset, DocumentHighlightCallback callback,
+void Manager::RequestDocumentHighlight(text::Buffer& buffer, std::size_t byteOffset, DocumentHighlightCallback callback,
                                           const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
     }
 
     const std::string language = state->connectionKey;
-    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Position position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
@@ -2631,21 +2631,21 @@ void LspManager::RequestDocumentHighlight(text::Buffer& buffer, std::size_t byte
                         });
 }
 
-void LspManager::RequestLinkedEditingRange(text::Buffer& buffer, std::size_t byteOffset, LinkedEditingRangeCallback callback,
+void Manager::RequestLinkedEditingRange(text::Buffer& buffer, std::size_t byteOffset, LinkedEditingRangeCallback callback,
                                            const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
     }
 
     const std::string language = state->connectionKey;
-    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Position position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
@@ -2665,13 +2665,13 @@ void LspManager::RequestLinkedEditingRange(text::Buffer& buffer, std::size_t byt
                         });
 }
 
-void LspManager::RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCallback callback) {
+void Manager::RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCallback callback) {
     BufferSyncState* state = PrimarySyncState(buffer);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
@@ -2694,21 +2694,21 @@ void LspManager::RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCal
                         });
 }
 
-void LspManager::RequestPrepareRename(text::Buffer& buffer, std::size_t byteOffset, PrepareRenameCallback callback,
+void Manager::RequestPrepareRename(text::Buffer& buffer, std::size_t byteOffset, PrepareRenameCallback callback,
                                       const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
     }
 
     const std::string language = state->connectionKey;
-    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Position position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
@@ -2728,21 +2728,21 @@ void LspManager::RequestPrepareRename(text::Buffer& buffer, std::size_t byteOffs
                         });
 }
 
-void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback,
+void Manager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback,
                                const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
     }
 
     const std::string language = state->connectionKey;
-    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Position position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
@@ -2787,8 +2787,8 @@ void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, con
                         });
 }
 
-void LspManager::RequestWillRenameFiles(const std::vector<FileRenameEntry>& files, RenameCallback callback) {
-    std::vector<std::pair<std::string, LspClient*>> targets;
+void Manager::RequestWillRenameFiles(const std::vector<FileRenameEntry>& files, RenameCallback callback) {
+    std::vector<std::pair<std::string, Client*>> targets;
     for (const auto& [serverKey, client] : clients_) {
         const auto capsIt = fileOperationFilters_.find(serverKey);
         if (capsIt == fileOperationFilters_.end() || capsIt->second.willRenameGlobs.empty()) {
@@ -2880,7 +2880,7 @@ void LspManager::RequestWillRenameFiles(const std::vector<FileRenameEntry>& file
     }
 }
 
-void LspManager::NotifyFilesRenamed(const std::vector<FileRenameEntry>& files) {
+void Manager::NotifyFilesRenamed(const std::vector<FileRenameEntry>& files) {
     Json fileList = Json::array();
     for (const FileRenameEntry& entry : files) {
         fileList.push_back({{"oldUri", PathToUri(entry.oldPath)}, {"newUri", PathToUri(entry.newPath)}});
@@ -2900,7 +2900,7 @@ void LspManager::NotifyFilesRenamed(const std::vector<FileRenameEntry>& files) {
     }
 }
 
-std::optional<std::vector<LspManager::ResolvedRenameEdit>> LspManager::ResolveCodeActionEdits(const CodeAction& action) {
+std::optional<std::vector<Manager::ResolvedRenameEdit>> Manager::ResolveCodeActionEdits(const CodeAction& action) {
     if (action.touchesUnsupportedForm || !action.hasEdit) {
         return std::nullopt;
     }
@@ -2916,8 +2916,8 @@ std::optional<std::vector<LspManager::ResolvedRenameEdit>> LspManager::ResolveCo
     return resolved;
 }
 
-std::optional<std::vector<LspManager::ResolvedDocumentChangeOp>>
-LspManager::ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops) {
+std::optional<std::vector<Manager::ResolvedDocumentChangeOp>>
+Manager::ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops) {
     std::vector<ResolvedDocumentChangeOp> resolved;
     resolved.reserve(ops.size());
     for (const DocumentChangeOp& op : ops) {
@@ -2956,13 +2956,13 @@ namespace {
     }
 } // namespace
 
-void LspManager::RequestFormatting(text::Buffer& buffer, FormattingCallback callback, const std::string& serverKey) {
+void Manager::RequestFormatting(text::Buffer& buffer, FormattingCallback callback, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
@@ -2988,22 +2988,22 @@ void LspManager::RequestFormatting(text::Buffer& buffer, FormattingCallback call
                         });
 }
 
-void LspManager::RequestRangeFormatting(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte,
+void Manager::RequestRangeFormatting(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte,
                                         FormattingCallback callback, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
     }
 
     const text::ITextStorage& content  = buffer.Content();
-    const LspPosition         start    = BytePositionToLsp(content, rangeStartByte);
-    const LspPosition         end      = BytePositionToLsp(content, rangeEndByte);
+    const Position         start    = BytePositionToLsp(content, rangeStartByte);
+    const Position         end      = BytePositionToLsp(content, rangeEndByte);
     const std::string         language = state->connectionKey;
     const Json                params   = {
         {"textDocument", {{"uri", state->uri}}},
@@ -3025,21 +3025,21 @@ void LspManager::RequestRangeFormatting(text::Buffer& buffer, std::size_t rangeS
                         });
 }
 
-void LspManager::RequestOnTypeFormatting(text::Buffer& buffer, std::size_t byteOffset, const std::string& ch, FormattingCallback callback,
+void Manager::RequestOnTypeFormatting(text::Buffer& buffer, std::size_t byteOffset, const std::string& ch, FormattingCallback callback,
                                          const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback(std::nullopt);
         return;
     }
 
     const std::string language = state->connectionKey;
-    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Position position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
@@ -3061,13 +3061,13 @@ void LspManager::RequestOnTypeFormatting(text::Buffer& buffer, std::size_t byteO
                         });
 }
 
-void LspManager::RequestDocumentSymbols(text::Buffer& buffer, SymbolCallback callback, const std::string& serverKey) {
+void Manager::RequestDocumentSymbols(text::Buffer& buffer, SymbolCallback callback, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
@@ -3101,14 +3101,14 @@ void LspManager::RequestDocumentSymbols(text::Buffer& buffer, SymbolCallback cal
                         });
 }
 
-void LspManager::RequestWorkspaceSymbols(text::Buffer& buffer, const std::string& query, SymbolCallback callback,
+void Manager::RequestWorkspaceSymbols(text::Buffer& buffer, const std::string& query, SymbolCallback callback,
                                          const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
@@ -3148,12 +3148,12 @@ namespace {
     // RequestIncomingCalls/RequestOutgoingCalls/RequestSupertypes/
     // RequestSubtypes' own -- SymbolResult's own "drop, don't keep with a
     // nonsense path" convention.
-    std::vector<LspManager::ResolvedHierarchyItem> ResolveHierarchyItems(std::vector<HierarchyItem> items) {
-        std::vector<LspManager::ResolvedHierarchyItem> resolved;
+    std::vector<Manager::ResolvedHierarchyItem> ResolveHierarchyItems(std::vector<HierarchyItem> items) {
+        std::vector<Manager::ResolvedHierarchyItem> resolved;
         resolved.reserve(items.size());
         for (HierarchyItem& item : items) {
             if (const std::optional<std::filesystem::path> path = UriToPath(item.uri)) {
-                resolved.push_back(LspManager::ResolvedHierarchyItem{.item = std::move(item), .path = *path});
+                resolved.push_back(Manager::ResolvedHierarchyItem{.item = std::move(item), .path = *path});
             }
         }
         return resolved;
@@ -3161,21 +3161,21 @@ namespace {
 
 } // namespace
 
-void LspManager::SendHierarchyPrepareRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset,
+void Manager::SendHierarchyPrepareRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset,
                                              HierarchyItemsCallback callback, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
     }
 
     const std::string language = state->connectionKey;
-    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Position position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
@@ -3195,24 +3195,24 @@ void LspManager::SendHierarchyPrepareRequest(const std::string& method, text::Bu
                         });
 }
 
-void LspManager::RequestPrepareCallHierarchy(text::Buffer& buffer, std::size_t byteOffset, HierarchyItemsCallback callback,
+void Manager::RequestPrepareCallHierarchy(text::Buffer& buffer, std::size_t byteOffset, HierarchyItemsCallback callback,
                                              const std::string& serverKey) {
     SendHierarchyPrepareRequest("textDocument/prepareCallHierarchy", buffer, byteOffset, std::move(callback), serverKey);
 }
 
-void LspManager::RequestPrepareTypeHierarchy(text::Buffer& buffer, std::size_t byteOffset, HierarchyItemsCallback callback,
+void Manager::RequestPrepareTypeHierarchy(text::Buffer& buffer, std::size_t byteOffset, HierarchyItemsCallback callback,
                                              const std::string& serverKey) {
     SendHierarchyPrepareRequest("textDocument/prepareTypeHierarchy", buffer, byteOffset, std::move(callback), serverKey);
 }
 
-void LspManager::RequestIncomingCalls(text::Buffer& buffer, const HierarchyItem& item, HierarchyCallsCallback callback,
+void Manager::RequestIncomingCalls(text::Buffer& buffer, const HierarchyItem& item, HierarchyCallsCallback callback,
                                       const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
@@ -3243,14 +3243,14 @@ void LspManager::RequestIncomingCalls(text::Buffer& buffer, const HierarchyItem&
                         });
 }
 
-void LspManager::RequestOutgoingCalls(text::Buffer& buffer, const HierarchyItem& item, HierarchyCallsCallback callback,
+void Manager::RequestOutgoingCalls(text::Buffer& buffer, const HierarchyItem& item, HierarchyCallsCallback callback,
                                       const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
@@ -3281,14 +3281,14 @@ void LspManager::RequestOutgoingCalls(text::Buffer& buffer, const HierarchyItem&
                         });
 }
 
-void LspManager::SendTypeHierarchyStepRequest(const std::string& method, text::Buffer& buffer, const HierarchyItem& item,
+void Manager::SendTypeHierarchyStepRequest(const std::string& method, text::Buffer& buffer, const HierarchyItem& item,
                                               HierarchyItemsCallback callback, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         callback({});
         return;
@@ -3311,30 +3311,30 @@ void LspManager::SendTypeHierarchyStepRequest(const std::string& method, text::B
                         });
 }
 
-void LspManager::RequestSupertypes(text::Buffer& buffer, const HierarchyItem& item, HierarchyItemsCallback callback,
+void Manager::RequestSupertypes(text::Buffer& buffer, const HierarchyItem& item, HierarchyItemsCallback callback,
                                    const std::string& serverKey) {
     SendTypeHierarchyStepRequest("typeHierarchy/supertypes", buffer, item, std::move(callback), serverKey);
 }
 
-void LspManager::RequestSubtypes(text::Buffer& buffer, const HierarchyItem& item, HierarchyItemsCallback callback,
+void Manager::RequestSubtypes(text::Buffer& buffer, const HierarchyItem& item, HierarchyItemsCallback callback,
                                  const std::string& serverKey) {
     SendTypeHierarchyStepRequest("typeHierarchy/subtypes", buffer, item, std::move(callback), serverKey);
 }
 
-void LspManager::Shutdown() {
+void Manager::Shutdown() {
     for (const auto& [language, client] : clients_) {
         if (brokerBackedLanguages_.contains(language)) {
             continue; // broker-owned -- must outlive this process, see brokerBackedLanguages_'s own doc comment
         }
-        // Mirrors LspBroker::Shutdown()'s own TearDownEntry pattern exactly
+        // Mirrors Broker::Shutdown()'s own TearDownEntry pattern exactly
         // -- fire both frames, don't wait for the shutdown response (no
         // live EventLoop::Run() left to wait with; see this method's own
-        // doc comment in LspManager.h). The callback is never expected to
+        // doc comment in Manager.h). The callback is never expected to
         // run; passed only because SendRequest requires one.
         //
         // async-write-queue follow-up: PrepareForGracefulShutdown must be
         // called before these two sends, since the actual write is now
-        // async (queued, not synchronous) -- it's what makes ~LspClient()
+        // async (queued, not synchronous) -- it's what makes ~Client()
         // (run moments from now, when clients_ itself is destroyed as part
         // of this process's normal teardown) drain the queue instead of
         // applying its ordinary best-effort/no-drain policy.

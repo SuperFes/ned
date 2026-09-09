@@ -7,17 +7,17 @@
 // already-correct subsystems -- LSP, VCS, project search, the test runner --
 // as real MCP tools instead of the agent having to shell out blind).
 //
-// Not a fully pure router like Lsp/LspBroker.h's BrokerRouter -- a tool
-// handler genuinely calls into a live async manager (LspManager/VcsRunner)
+// Not a fully pure router like Lsp/Broker.h's BrokerRouter -- a tool
+// handler genuinely calls into a live async manager (Manager/VcsRunner)
 // rather than just describing an action to carry out elsewhere -- but the
 // name/schema/dispatch bookkeeping here is unit-testable the same way with
 // stub handlers. Every dependency is injected by reference at construction
-// (LspManager&/VcsRunner&/TestRunner&/Manager&/text::BufferList&),
+// (Manager&/VcsRunner&/TestRunner&/Manager&/text::BufferList&),
 // matching this codebase's "Set*/register-then-connect" cross-manager wiring
 // convention rather than a god-object reaching for process-wide statics.
 //
 // Every manager call here already resolves/responds on the main thread
-// (LspManager/VcsRunner/TestRunner all marshal their own async I/O onto the
+// (Manager/VcsRunner/TestRunner all marshal their own async I/O onto the
 // main thread via EventLoop::Post before invoking a caller's callback -- see
 // each header's own doc comments) -- so CallTool's own `callback` always
 // fires on the main thread too, synchronously for a handler with no
@@ -43,7 +43,7 @@ class BufferList;
 } // namespace ned::text
 
 namespace ned::editor::lsp {
-class LspManager;
+class Manager;
 } // namespace ned::editor::lsp
 
 namespace ned::editor::vcs {
@@ -79,7 +79,7 @@ struct ToolDescriptor {
 
 class ToolRegistry {
   public:
-    ToolRegistry(text::BufferList& bufferList, lsp::LspManager& lspManager, vcs::VcsRunner& vcsRunner, testrun::TestRunner& testRunner,
+    ToolRegistry(text::BufferList& bufferList, lsp::Manager& lspManager, vcs::VcsRunner& vcsRunner, testrun::TestRunner& testRunner,
                  dap::Manager& dapManager);
 
     [[nodiscard]] std::vector<ToolDescriptor> ListTools() const;
@@ -112,7 +112,7 @@ class ToolRegistry {
     void RegisterBuiltinTools();
 
     text::BufferList&    bufferList_;
-    lsp::LspManager&     lspManager_;
+    lsp::Manager&     lspManager_;
     vcs::VcsRunner&      vcsRunner_;
     testrun::TestRunner& testRunner_;
     dap::Manager&     dapManager_;

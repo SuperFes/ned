@@ -13,7 +13,7 @@ using ned::editor::dap::SetAttachConfig;
 using ned::editor::dap::SetLaunchConfig;
 
 // Config is process-wide state (mutex-guarded statics, same as
-// LspServerConfig) -- every test here uses its own unique language key and
+// ServerConfig) -- every test here uses its own unique language key and
 // clears it on the way out, so tests can't contaminate each other.
 
 TEST_CASE("AdapterCommand returns nullopt for an unconfigured language", "[Dap]") {

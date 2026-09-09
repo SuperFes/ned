@@ -14,7 +14,7 @@
 #include "Editor/Bookmark.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
-#include "Editor/Lsp/LspBackgroundSync.h"
+#include "Editor/Lsp/BackgroundSync.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
@@ -182,7 +182,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
            editor::PromptHistory& promptHistory, text::BufferList& bufferList, const editor::CommandRegistry& registry,
            const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
            std::string& statusMessage, const Theme& theme, ProjectSidebar* projectSidebar,
-           editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
+           editor::lsp::Manager* lspManager, editor::tasks::TaskRunner* taskRunner,
            editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::Manager* dapManager,
            editor::acp::AcpManager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
            std::function<void(editor::InteractiveRequest)> onWindowRequest,
@@ -570,7 +570,7 @@ void WindowManager::SetVcsPanel(VcsPanel* panel) {
     }
 }
 
-void WindowManager::SetLspManager(editor::lsp::LspManager* lspManager) {
+void WindowManager::SetLspManager(editor::lsp::Manager* lspManager) {
     lspManager_ = lspManager;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetLspManager(lspManager);
@@ -578,10 +578,10 @@ void WindowManager::SetLspManager(editor::lsp::LspManager* lspManager) {
     }
     // edit-application-gaps follow-up: wires a server-pushed
     // workspace/applyEdit request through to whichever pane has focus, once
-    // per LspManager (not per-pane -- the handler itself is one std::function
-    // owned by LspManager, no pane-specific state to re-wire on split/close).
+    // per Manager (not per-pane -- the handler itself is one std::function
+    // owned by Manager, no pane-specific state to re-wire on split/close).
     if (lspManager_) {
-        lspManager_->SetApplyEditHandler([this](const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label) {
+        lspManager_->SetApplyEditHandler([this](const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
             return ApplyServerPushedWorkspaceEdit(edit, label);
         });
     }
@@ -1031,7 +1031,7 @@ void WindowManager::StartDeleteFileAt(const std::filesystem::path& path) {
     }
 }
 
-bool WindowManager::ApplyServerPushedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label) {
+bool WindowManager::ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
     if (Pane* pane = FocusedPane()) {
         return pane->Buffer().ApplyServerPushedWorkspaceEdit(edit, label);
     }
@@ -1149,7 +1149,7 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                     // background tab's diagnostics/completions stay current
                     // without the user ever switching to it. Toggle-gated
                     // (ned/set-lsp-sync-background-buffers, default on); see
-                    // LspBackgroundSync.h for why this can't just be another
+                    // BackgroundSync.h for why this can't just be another
                     // per-frame BufferView call.
                     editor::lsp::SyncBackgroundBuffers(bufferList_, *lspManager_);
                 }

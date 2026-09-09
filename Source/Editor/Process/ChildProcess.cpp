@@ -198,7 +198,7 @@ void ChildProcess::CloseConnection() noexcept {
     // another dup keeps it alive, and even the final close() can't unblock a
     // different thread already parked in a blocking read() on it, since that
     // in-flight syscall holds its own reference until it returns -- exactly
-    // the close()-vs-shutdown() gotcha LspBrokerMain.cpp's own
+    // the close()-vs-shutdown() gotcha BrokerMain.cpp's own
     // listen-socket/accept() teardown comment documents for the daemon side.
     // shutdown(SHUT_RDWR) changes the socket's protocol state directly,
     // unblocking a concurrent reader in any thread regardless of remaining

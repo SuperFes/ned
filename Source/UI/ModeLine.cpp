@@ -186,7 +186,7 @@ void ModeLine::Paint(Canvas c) {
     // takes priority over any of these, same entry, no duplicate); "not
     // configured" draws nothing, unchanged from before this follow-up.
     if (!lspActivityShown && lspManager_) {
-        using Status = editor::lsp::LspManager::LspStatus;
+        using Status = editor::lsp::Manager::Status;
         // mode-line-lsp-status-round-3 follow-up: same "detail text after a
         // space" shape reused by both the single-glyph and multi-glyph
         // branches below.
@@ -302,7 +302,7 @@ void ModeLine::SetFocusProvider(std::function<bool()> provider) {
     focusProvider_ = std::move(provider);
 }
 
-void ModeLine::SetLspManager(editor::lsp::LspManager* lspManager) {
+void ModeLine::SetLspManager(editor::lsp::Manager* lspManager) {
     lspManager_ = lspManager;
 }
 

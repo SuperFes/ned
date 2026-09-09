@@ -1,4 +1,4 @@
-#include "LspBroker.h"
+#include "Broker.h"
 
 namespace ned::editor::lsp {
 
@@ -8,9 +8,9 @@ namespace {
     // (Internal error) covers every failure shape this file synthesizes
     // (spawn failure, real-handshake error); a client receiving this
     // behaves exactly as it would against a real server that rejected
-    // initialize, which LspManager.cpp's own initialize callback already
+    // initialize, which Manager.cpp's own initialize callback already
     // tolerates (it unconditionally sends "initialized" regardless of the
-    // response's success/error shape -- an existing, unrelated LspManager
+    // response's success/error shape -- an existing, unrelated Manager
     // quirk, not something this file works around).
     Json ErrorResponse(const Json& id, const std::string& message) {
         return Json{{"jsonrpc", "2.0"}, {"id", id}, {"error", Json{{"code", -32603}, {"message", message}}}};
@@ -192,7 +192,7 @@ std::vector<BrokerAction> BrokerRouter::ClientFrame(ConnectionId conn, const Jso
         // out exactly once, when this entry first became Ready (see
         // ServerFrame). Only actually marks the client attached when the
         // entry really is Ready; if it's Failed (this client's own
-        // "initialize" already got an error reply, but LspManager.cpp's
+        // "initialize" already got an error reply, but Manager.cpp's
         // callback sends "initialized" regardless -- see this file's
         // ErrorResponse comment), there's nothing further for this
         // connection to do here.
@@ -206,7 +206,7 @@ std::vector<BrokerAction> BrokerRouter::ClientFrame(ConnectionId conn, const Jso
     // reached Ready and completed its own "initialized" is allowed through
     // -- anything else (including a Failed entry a client somehow still
     // has open) is treated the same as a disconnected server: close it,
-    // letting the editor-side LspManager's own existing crash-recovery path
+    // letting the editor-side Manager's own existing crash-recovery path
     // take over on its next SyncBuffer attempt.
     if (state.attached.find(conn) == state.attached.end() || state.status != BrokerLanguageStatus::Ready) {
         actions.push_back(BrokerAction{.kind = BrokerAction::Kind::CloseClient, .connection = conn});

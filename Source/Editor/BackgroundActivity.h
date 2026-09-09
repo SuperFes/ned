@@ -9,7 +9,7 @@
 // end count (three in-flight LSP requests = one spinner until the last
 // resolves). Every BeginBackgroundActivity must be paired with exactly one
 // EndBackgroundActivity -- an owner that can drop work without a response
-// (LspClient's pending_ map at destruction) is responsible for ending what
+// (Client's pending_ map at destruction) is responsible for ending what
 // it began. End without a matching begin clamps at zero rather than going
 // negative, so a confused server (e.g. a duplicate $/progress "end") can't
 // wedge the count below empty.

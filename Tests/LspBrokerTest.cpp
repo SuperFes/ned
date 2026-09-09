@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "Editor/Lsp/LspBroker.h"
+#include "Editor/Lsp/Broker.h"
 
 using ned::editor::lsp::BrokerAction;
 using ned::editor::lsp::BrokerLanguageStatus;
@@ -52,7 +52,7 @@ void BringToReady(BrokerRouter& router, ConnectionId conn, const std::string& ro
 
 } // namespace
 
-TEST_CASE("BrokerRouter spawns on first attach, ignores argv on later attaches", "[LspBroker]") {
+TEST_CASE("BrokerRouter spawns on first attach, ignores argv on later attaches", "[Broker]") {
     BrokerRouter router;
     auto         first = router.ClientAttached(1, "/proj", "cpp", {"clangd"});
     REQUIRE(CountKind(first, BrokerAction::Kind::SpawnServer) == 1);
@@ -64,7 +64,7 @@ TEST_CASE("BrokerRouter spawns on first attach, ignores argv on later attaches",
     REQUIRE(CountKind(second, BrokerAction::Kind::SpawnServer) == 0);
 }
 
-TEST_CASE("BrokerRouter drives one real handshake and answers every waiting client from cache", "[LspBroker]") {
+TEST_CASE("BrokerRouter drives one real handshake and answers every waiting client from cache", "[Broker]") {
     BrokerRouter router;
     (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
     (void)router.ClientAttached(2, "/proj", "cpp", {});
@@ -107,7 +107,7 @@ TEST_CASE("BrokerRouter drives one real handshake and answers every waiting clie
     }
 }
 
-TEST_CASE("BrokerRouter answers a client that attaches after the entry is already Ready", "[LspBroker]") {
+TEST_CASE("BrokerRouter answers a client that attaches after the entry is already Ready", "[Broker]") {
     BrokerRouter router;
     BringToReady(router, 1, "/proj", "cpp");
 
@@ -120,7 +120,7 @@ TEST_CASE("BrokerRouter answers a client that attaches after the entry is alread
     REQUIRE(lateInit[0].frame.contains("result"));
 }
 
-TEST_CASE("BrokerRouter rewrites request ids and routes the response back to the right client", "[LspBroker]") {
+TEST_CASE("BrokerRouter rewrites request ids and routes the response back to the right client", "[Broker]") {
     BrokerRouter router;
     BringToReady(router, 1, "/proj", "cpp");
 
@@ -137,7 +137,7 @@ TEST_CASE("BrokerRouter rewrites request ids and routes the response back to the
     REQUIRE(response[0].frame.at("id") == 42); // restored to the client's own original id
 }
 
-TEST_CASE("BrokerRouter broadcasts a server notification to every attached client", "[LspBroker]") {
+TEST_CASE("BrokerRouter broadcasts a server notification to every attached client", "[Broker]") {
     BrokerRouter router;
     (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
     (void)router.ClientAttached(2, "/proj", "cpp", {});
@@ -154,7 +154,7 @@ TEST_CASE("BrokerRouter broadcasts a server notification to every attached clien
     REQUIRE(CountKind(diagnostics, BrokerAction::Kind::SendToClient) == 2);
 }
 
-TEST_CASE("BrokerRouter auto-acknowledges a server-initiated request without routing it to any client", "[LspBroker]") {
+TEST_CASE("BrokerRouter auto-acknowledges a server-initiated request without routing it to any client", "[Broker]") {
     BrokerRouter router;
     BringToReady(router, 1, "/proj", "cpp");
 
@@ -166,7 +166,7 @@ TEST_CASE("BrokerRouter auto-acknowledges a server-initiated request without rou
     REQUIRE(progressCreate[0].frame.at("result").is_null());
 }
 
-TEST_CASE("BrokerRouter flushes queued clients with an error when the real spawn fails", "[LspBroker]") {
+TEST_CASE("BrokerRouter flushes queued clients with an error when the real spawn fails", "[Broker]") {
     BrokerRouter router;
     (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
     (void)router.ClientAttached(2, "/proj", "cpp", {});
@@ -187,7 +187,7 @@ TEST_CASE("BrokerRouter flushes queued clients with an error when the real spawn
     REQUIRE(lateInit[0].frame.contains("error"));
 }
 
-TEST_CASE("BrokerRouter flushes queued clients with an error when the real handshake itself errors", "[LspBroker]") {
+TEST_CASE("BrokerRouter flushes queued clients with an error when the real handshake itself errors", "[Broker]") {
     BrokerRouter router;
     (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
     (void)router.ClientFrame(1, InitializeFrame(1));
@@ -199,7 +199,7 @@ TEST_CASE("BrokerRouter flushes queued clients with an error when the real hands
     REQUIRE(errored[0].frame.at("error").at("message") == "boom");
 }
 
-TEST_CASE("BrokerRouter disconnecting mid-handshake doesn't affect a later client sharing the same handshake", "[LspBroker]") {
+TEST_CASE("BrokerRouter disconnecting mid-handshake doesn't affect a later client sharing the same handshake", "[Broker]") {
     BrokerRouter router;
     (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
     (void)router.ClientAttached(2, "/proj", "cpp", {});
@@ -218,7 +218,7 @@ TEST_CASE("BrokerRouter disconnecting mid-handshake doesn't affect a later clien
     REQUIRE(FindKind(response, BrokerAction::Kind::SendToClient)->connection == 2);
 }
 
-TEST_CASE("BrokerRouter closes every attached client and resets state when the real server disconnects", "[LspBroker]") {
+TEST_CASE("BrokerRouter closes every attached client and resets state when the real server disconnects", "[Broker]") {
     BrokerRouter router;
     (void)router.ClientAttached(1, "/proj", "cpp", {"clangd"});
     (void)router.ClientAttached(2, "/proj", "cpp", {});
@@ -241,7 +241,7 @@ TEST_CASE("BrokerRouter closes every attached client and resets state when the r
     REQUIRE(CountKind(respawn, BrokerAction::Kind::SpawnServer) == 1);
 }
 
-TEST_CASE("BrokerRouter's Shutdown sends a real LSP shutdown/exit and closes every client, across every project", "[LspBroker]") {
+TEST_CASE("BrokerRouter's Shutdown sends a real LSP shutdown/exit and closes every client, across every project", "[Broker]") {
     BrokerRouter router;
     BringToReady(router, 1, "/proj-a", "cpp");
     BringToReady(router, 2, "/proj-b", "python");
@@ -256,13 +256,13 @@ TEST_CASE("BrokerRouter's Shutdown sends a real LSP shutdown/exit and closes eve
     REQUIRE(router.StatusFor("/proj-b", "python") == BrokerLanguageStatus::NotStarted);
 }
 
-TEST_CASE("BrokerRouter ignores a frame from a connection that never attached", "[LspBroker]") {
+TEST_CASE("BrokerRouter ignores a frame from a connection that never attached", "[Broker]") {
     BrokerRouter router;
     auto         actions = router.ClientFrame(42, InitializeFrame(1));
     REQUIRE(actions.empty());
 }
 
-TEST_CASE("BrokerRouter keeps two different projects' same-language entries fully independent", "[LspBroker]") {
+TEST_CASE("BrokerRouter keeps two different projects' same-language entries fully independent", "[Broker]") {
     BrokerRouter router;
     BringToReady(router, 1, "/proj-a", "cpp", 100);
     BringToReady(router, 2, "/proj-b", "cpp", 200);
@@ -277,7 +277,7 @@ TEST_CASE("BrokerRouter keeps two different projects' same-language entries full
     REQUIRE(diagnostics[0].connection == 1);
 }
 
-TEST_CASE("BrokerRouter's LRU eviction picks the oldest idle entry under pressure, never a busy one", "[LspBroker]") {
+TEST_CASE("BrokerRouter's LRU eviction picks the oldest idle entry under pressure, never a busy one", "[Broker]") {
     using Clock = std::chrono::steady_clock;
     BrokerRouter router(/*maxConcurrentServers=*/2);
     const auto   t0 = Clock::now();
@@ -302,7 +302,7 @@ TEST_CASE("BrokerRouter's LRU eviction picks the oldest idle entry under pressur
     REQUIRE(router.StatusFor("/proj-c", "rust") == BrokerLanguageStatus::SpawningProcess);
 }
 
-TEST_CASE("BrokerRouter exceeds the cap rather than disrupting anything when every entry is busy", "[LspBroker]") {
+TEST_CASE("BrokerRouter exceeds the cap rather than disrupting anything when every entry is busy", "[Broker]") {
     BrokerRouter router(/*maxConcurrentServers=*/1);
     BringToReady(router, 1, "/proj-a", "cpp"); // stays attached -- busy
     REQUIRE(router.ConnectionCount() == 1);
@@ -312,7 +312,7 @@ TEST_CASE("BrokerRouter exceeds the cap rather than disrupting anything when eve
     REQUIRE(router.StatusFor("/proj-a", "cpp") == BrokerLanguageStatus::Ready); // untouched
 }
 
-TEST_CASE("BrokerRouter's IdleSweep tears down only entries idle past the timeout with no live clients", "[LspBroker]") {
+TEST_CASE("BrokerRouter's IdleSweep tears down only entries idle past the timeout with no live clients", "[Broker]") {
     using Clock = std::chrono::steady_clock;
     BrokerRouter router;
     const auto   t0 = Clock::now();

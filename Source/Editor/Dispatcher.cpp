@@ -10,7 +10,7 @@ namespace {
     // prefix-argument follow-up: a short, explicit list of direction-symmetric
     // motion commands a negative prefix argument (C-u -, M-- once that entry
     // point exists) flips to the opposite command -- hand-curated, same idiom
-    // as LspServerConfig's argv table, not a general mechanism. A command not
+    // as ServerConfig's argv table, not a general mechanism. A command not
     // in this table just runs abs(value) times regardless of sign.
     const std::unordered_map<std::string, std::string>& DirectionPairs() {
         static const std::unordered_map<std::string, std::string> pairs = {

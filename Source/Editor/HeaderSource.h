@@ -3,7 +3,7 @@
 // "jump to the other half of this file" when no LSP client is running, or
 // the running one has no answer of its own (see BufferView::SwitchHeaderSource,
 // which tries clangd's textDocument/switchSourceHeader extension first --
-// LspManager.h/.cpp -- and only reaches this when that's unavailable). C/C++
+// Manager.h/.cpp -- and only reaches this when that's unavailable). C/C++
 // (and Objective-C/C++) only: no other bundled language has an equivalent
 // split-file convention.
 //

@@ -17,7 +17,7 @@ using ned::editor::terminal::PtyProcess;
 // Same fixture rationale as TaskProcessTest.cpp: a real ned::ui::EventLoop
 // is constructed but Run() never starts; the Dispatch* seams are driven
 // directly, and the round-trip test below drains the Post queue by hand via
-// DrainPosted_. One pty-specific caveat inherited from LspClientTest.cpp's
+// DrainPosted_. One pty-specific caveat inherited from ClientTest.cpp's
 // documented EOF gotcha, in a worse form: a pty master never reports EOF
 // while any slave fd is open, so the only thing that ever unblocks the
 // background read loop is the child actually dying -- every fixture here

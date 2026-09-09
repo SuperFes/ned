@@ -53,7 +53,7 @@ namespace ned::editor {
 class LinkedEditingSession {
   public:
     // ranges: byte [start,end) pairs already resolved against buffer's
-    // current content (LspPositionToByte -- BufferView's own job, this class
+    // current content (PositionToByte -- BufferView's own job, this class
     // stays LSP-agnostic the same way SnippetSession stays snippet-syntax-
     // agnostic once past ParseSnippet). Returns nullopt when there are fewer
     // than 2 ranges (nothing to mirror) or none of them contains point

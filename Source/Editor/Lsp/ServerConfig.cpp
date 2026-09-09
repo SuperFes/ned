@@ -1,4 +1,4 @@
-#include "LspServerConfig.h"
+#include "ServerConfig.h"
 
 #include <mutex>
 #include <unordered_map>
@@ -65,7 +65,7 @@ void SetLspServerCommand(const std::string& language, std::vector<std::string> a
     }
 }
 
-std::optional<std::vector<std::string>> LspServerCommand(const std::string& language) {
+std::optional<std::vector<std::string>> ServerCommand(const std::string& language) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     const auto                        it = g_commands.find(language);
     if (it == g_commands.end()) {
@@ -79,7 +79,7 @@ void SetLspAutoCompleteEnabled(bool enabled) {
     g_autoCompleteEnabled = enabled;
 }
 
-bool LspAutoCompleteEnabled() {
+bool AutoCompleteEnabled() {
     const std::lock_guard<std::mutex> lock(g_autoCompleteMutex);
     return g_autoCompleteEnabled;
 }
@@ -89,7 +89,7 @@ void SetLspCompletionDebounceMs(int milliseconds) {
     g_completionDebounceMs = (milliseconds > 0) ? milliseconds : 1;
 }
 
-int LspCompletionDebounceMs() {
+int CompletionDebounceMs() {
     const std::lock_guard<std::mutex> lock(g_debounceMutex);
     return g_completionDebounceMs;
 }
@@ -99,7 +99,7 @@ void SetLspDiagnosticsDebounceMs(int milliseconds) {
     g_diagnosticsDebounceMs = (milliseconds > 0) ? milliseconds : 1;
 }
 
-int LspDiagnosticsDebounceMs() {
+int DiagnosticsDebounceMs() {
     const std::lock_guard<std::mutex> lock(g_diagnosticsDebounceMutex);
     return g_diagnosticsDebounceMs;
 }
@@ -109,7 +109,7 @@ void SetLspSyncDebounceMs(int milliseconds) {
     g_syncDebounceMs = (milliseconds > 0) ? milliseconds : 1;
 }
 
-int LspSyncDebounceMs() {
+int SyncDebounceMs() {
     const std::lock_guard<std::mutex> lock(g_syncDebounceMutex);
     return g_syncDebounceMs;
 }
@@ -119,7 +119,7 @@ void SetLspSignatureHelpAutoTriggerEnabled(bool enabled) {
     g_signatureHelpAutoTriggerEnabled = enabled;
 }
 
-bool LspSignatureHelpAutoTriggerEnabled() {
+bool SignatureHelpAutoTriggerEnabled() {
     const std::lock_guard<std::mutex> lock(g_signatureHelpAutoTriggerMutex);
     return g_signatureHelpAutoTriggerEnabled;
 }
@@ -129,7 +129,7 @@ void SetLspCommitCharactersEnabled(bool enabled) {
     g_commitCharactersEnabled = enabled;
 }
 
-bool LspCommitCharactersEnabled() {
+bool CommitCharactersEnabled() {
     const std::lock_guard<std::mutex> lock(g_commitCharactersMutex);
     return g_commitCharactersEnabled;
 }
@@ -139,7 +139,7 @@ void SetLspHoverOnMouseMoveEnabled(bool enabled) {
     g_hoverOnMouseMoveEnabled = enabled;
 }
 
-bool LspHoverOnMouseMoveEnabled() {
+bool HoverOnMouseMoveEnabled() {
     const std::lock_guard<std::mutex> lock(g_hoverOnMouseMoveMutex);
     return g_hoverOnMouseMoveEnabled;
 }
@@ -149,7 +149,7 @@ void SetLspFormatOnSaveEnabled(bool enabled) {
     g_formatOnSaveEnabled = enabled;
 }
 
-bool LspFormatOnSaveEnabled() {
+bool FormatOnSaveEnabled() {
     const std::lock_guard<std::mutex> lock(g_formatOnSaveMutex);
     return g_formatOnSaveEnabled;
 }
@@ -159,7 +159,7 @@ void SetLspOnTypeFormattingEnabled(bool enabled) {
     g_onTypeFormattingEnabled = enabled;
 }
 
-bool LspOnTypeFormattingEnabled() {
+bool OnTypeFormattingEnabled() {
     const std::lock_guard<std::mutex> lock(g_onTypeFormattingMutex);
     return g_onTypeFormattingEnabled;
 }
@@ -169,7 +169,7 @@ void SetLspPullDiagnosticsEnabled(bool enabled) {
     g_pullDiagnosticsEnabled = enabled;
 }
 
-bool LspPullDiagnosticsEnabled() {
+bool PullDiagnosticsEnabled() {
     const std::lock_guard<std::mutex> lock(g_pullDiagnosticsMutex);
     return g_pullDiagnosticsEnabled;
 }
@@ -179,7 +179,7 @@ void SetLspSemanticHighlightingEnabled(bool enabled) {
     g_semanticHighlightingEnabled = enabled;
 }
 
-bool LspSemanticHighlightingEnabled() {
+bool SemanticHighlightingEnabled() {
     const std::lock_guard<std::mutex> lock(g_semanticHighlightingMutex);
     return g_semanticHighlightingEnabled;
 }
@@ -189,7 +189,7 @@ void SetLspWorkspaceFoldersEnabled(bool enabled) {
     g_workspaceFoldersEnabled = enabled;
 }
 
-bool LspWorkspaceFoldersEnabled() {
+bool WorkspaceFoldersEnabled() {
     const std::lock_guard<std::mutex> lock(g_workspaceFoldersMutex);
     return g_workspaceFoldersEnabled;
 }
@@ -199,7 +199,7 @@ void SetLspInlayHintsEnabled(bool enabled) {
     g_inlayHintsEnabled = enabled;
 }
 
-bool LspInlayHintsEnabled() {
+bool InlayHintsEnabled() {
     const std::lock_guard<std::mutex> lock(g_inlayHintsMutex);
     return g_inlayHintsEnabled;
 }
@@ -209,7 +209,7 @@ void SetLspCodeLensEnabled(bool enabled) {
     g_codeLensEnabled = enabled;
 }
 
-bool LspCodeLensEnabled() {
+bool CodeLensEnabled() {
     const std::lock_guard<std::mutex> lock(g_codeLensMutex);
     return g_codeLensEnabled;
 }

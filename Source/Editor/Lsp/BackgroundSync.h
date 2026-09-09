@@ -1,5 +1,5 @@
 //
-// LSP-deliberate-cuts follow-up: widens LspManager::SyncBuffer -- previously
+// LSP-deliberate-cuts follow-up: widens Manager::SyncBuffer -- previously
 // only ever called for the single active/visible buffer, once per frame from
 // BufferView::Paint() -- to every open buffer, via a periodic background
 // tick instead of a per-frame one. Deliberately a widening of the existing
@@ -9,10 +9,10 @@
 // second call is a cheap no-op (ContentGeneration() unchanged since the
 // Paint()-driven sync already ran).
 //
-// Deliberately lives beside LspManager rather than inside it: resolving a
+// Deliberately lives beside Manager rather than inside it: resolving a
 // background buffer's language needs its Mode (LanguageKeyForMode), and
-// LspManager itself is kept Mode/tree-sitter-agnostic by design (see
-// EmbeddedDocumentSync's own doc comment in LspManager.h for the same
+// Manager itself is kept Mode/tree-sitter-agnostic by design (see
+// EmbeddedDocumentSync's own doc comment in Manager.h for the same
 // split). BufferView.cpp already pays this same Mode-resolution cost for
 // the active buffer inline; this file is that same translation step
 // widened to every buffer in the list, using the cached (not raw) mode
@@ -20,8 +20,8 @@
 // switch.
 //
 
-#ifndef NED_EDITOR_LSP_LSPBACKGROUNDSYNC_H
-#define NED_EDITOR_LSP_LSPBACKGROUNDSYNC_H
+#ifndef NED_EDITOR_LSP_BACKGROUNDSYNC_H
+#define NED_EDITOR_LSP_BACKGROUNDSYNC_H
 
 namespace ned::text {
 class BufferList;
@@ -29,13 +29,13 @@ class BufferList;
 
 namespace ned::editor::lsp {
 
-class LspManager;
+class Manager;
 
 // Process-wide toggle (mutex-guarded static state, TabWidth.h/AutoRevert.h's
 // exact pattern), default on. Configured from Janet via
 // ned/set-lsp-sync-background-buffers.
 void               SetLspBackgroundSyncEnabled(bool enabled);
-[[nodiscard]] bool LspBackgroundSyncEnabled();
+[[nodiscard]] bool BackgroundSyncEnabled();
 
 // Calls manager.SyncBuffer for every buffer in bufferList that has a path
 // and isn't mid-async-load (the same two guards AutoRevertBuffers/
@@ -46,8 +46,8 @@ void               SetLspBackgroundSyncEnabled(bool enabled);
 // mode override/bundled mode for its extension still routes through
 // SyncBuffer's own "nothing configured for this language" no-op guard
 // exactly as it would if it were the active buffer.
-void SyncBackgroundBuffers(text::BufferList& bufferList, LspManager& manager);
+void SyncBackgroundBuffers(text::BufferList& bufferList, Manager& manager);
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPBACKGROUNDSYNC_H
+#endif // NED_EDITOR_LSP_BACKGROUNDSYNC_H

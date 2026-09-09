@@ -3,7 +3,7 @@
 #include <algorithm>
 
 #include "FuzzyMatch.h"
-#include "Lsp/LspPosition.h"
+#include "Lsp/Position.h"
 #include "Text/ITextStorage.h"
 
 namespace ned::editor {
@@ -21,7 +21,7 @@ namespace {
         if (!item.textEdit) {
             return std::min(fallbackPrefixStart, point);
         }
-        return std::min(lsp::LspPositionToByte(content, item.textEdit->start), point);
+        return std::min(lsp::PositionToByte(content, item.textEdit->start), point);
     }
 
 } // namespace
@@ -71,7 +71,7 @@ void CompletionSession::Rank(std::string_view prefix) {
                          // sortText is the server's own intended ordering and
                          // beats the label for equally good matches -- it's
                          // how a server surfaces "this overload first" or
-                         // "deprecated last". LspContent already defaulted it
+                         // "deprecated last". Content already defaulted it
                          // to the label, so this never compares empties.
                          if (lhs.second->item.sortText != rhs.second->item.sortText) {
                              return lhs.second->item.sortText < rhs.second->item.sortText;

@@ -20,8 +20,8 @@
 // reason to change this file's own scope.
 //
 
-#ifndef NED_EDITOR_LSP_LSPSERVERCONFIG_H
-#define NED_EDITOR_LSP_LSPSERVERCONFIG_H
+#ifndef NED_EDITOR_LSP_SERVERCONFIG_H
+#define NED_EDITOR_LSP_SERVERCONFIG_H
 
 #include <optional>
 #include <string>
@@ -37,27 +37,27 @@ namespace ned::editor::lsp {
 void SetLspServerCommand(const std::string& language, std::vector<std::string> argv);
 
 // std::nullopt if nothing is registered for language -- not an error;
-// callers (LspManager) treat this as "no LSP support configured for this
+// callers (Manager) treat this as "no LSP support configured for this
 // language," the same way Mode::expandSelection being an empty function
 // means "not configured" rather than a failure.
-[[nodiscard]] std::optional<std::vector<std::string>> LspServerCommand(const std::string& language);
+[[nodiscard]] std::optional<std::vector<std::string>> ServerCommand(const std::string& language);
 
 // hover/completion follow-up. Mutex-guarded process-wide scalars, mirroring
 // Editor/TabWidth.h's exact shape -- unlike the per-language map above,
 // automatic-completion behavior is a single, editor-wide preference, not a
 // per-language one.
 void               SetLspAutoCompleteEnabled(bool enabled); // default true
-[[nodiscard]] bool LspAutoCompleteEnabled();
+[[nodiscard]] bool AutoCompleteEnabled();
 
 // Non-positive values are clamped to 1ms rather than rejected -- same
 // "don't throw over a config value, just make it sane" convention
 // TabWidth::SetTabWidth already established.
 void              SetLspCompletionDebounceMs(int milliseconds); // default 500
-[[nodiscard]] int LspCompletionDebounceMs();
+[[nodiscard]] int CompletionDebounceMs();
 
-// diagnostics-debounce follow-up: how long LspManager waits, after the most
+// diagnostics-debounce follow-up: how long Manager waits, after the most
 // recently received publishDiagnostics for a buffer, before actually
-// applying the merged result to it (see LspManager::HandlePublishDiagnostics).
+// applying the merged result to it (see Manager::HandlePublishDiagnostics).
 // A server re-analyzes and republishes after every didChange -- which
 // SyncBuffer sends on every keystroke's content generation bump -- so
 // without this, inline diagnostic squiggles/callouts churn on essentially
@@ -65,9 +65,9 @@ void              SetLspCompletionDebounceMs(int milliseconds); // default 500
 // pauses. Same non-positive-clamped-to-1ms convention as the completion
 // debounce above.
 void              SetLspDiagnosticsDebounceMs(int milliseconds); // default 500
-[[nodiscard]] int LspDiagnosticsDebounceMs();
+[[nodiscard]] int DiagnosticsDebounceMs();
 
-// sync-debounce follow-up: how long LspManager::SyncTextToServer waits, after
+// sync-debounce follow-up: how long Manager::SyncTextToServer waits, after
 // a buffer's most recent edit, before actually sending the resulting
 // textDocument/didChange -- a real, reproduced live freeze (gdb-confirmed:
 // the main thread blocked inside ChildProcess::WriteAll's WaitWritable,
@@ -75,7 +75,7 @@ void              SetLspDiagnosticsDebounceMs(int milliseconds); // default 500
 // couldn't drain fast enough) traced directly to SyncBuffer sending one
 // full-document sync per keystroke, with no debounce at all, to *two*
 // servers (the primary language server and the prose checker) every single
-// Paint(). Deliberately kept shorter than LspCompletionDebounceMs() (and so
+// Paint(). Deliberately kept shorter than CompletionDebounceMs() (and so
 // than signature-help/document-highlight, which reuse that same value) --
 // this must land server-side *before* those feature debounces elapse and
 // fire their own requests, or they'd race ahead of a server that doesn't
@@ -84,15 +84,15 @@ void              SetLspDiagnosticsDebounceMs(int milliseconds); // default 500
 // completion/hover/etc. Same non-positive-clamped-to-1ms convention as the
 // other debounces above.
 void              SetLspSyncDebounceMs(int milliseconds); // default 150
-[[nodiscard]] int LspSyncDebounceMs();
+[[nodiscard]] int SyncDebounceMs();
 
 // signature-help-auto-trigger follow-up. Same shape as
-// SetLspAutoCompleteEnabled/LspAutoCompleteEnabled above -- a single
-// editor-wide toggle, not per-language. Reuses LspCompletionDebounceMs()
+// SetLspAutoCompleteEnabled/AutoCompleteEnabled above -- a single
+// editor-wide toggle, not per-language. Reuses CompletionDebounceMs()
 // rather than a separate debounce value: both fire off the same
 // "typing/motion just settled" heuristic.
 void               SetLspSignatureHelpAutoTriggerEnabled(bool enabled); // default true
-[[nodiscard]] bool LspSignatureHelpAutoTriggerEnabled();
+[[nodiscard]] bool SignatureHelpAutoTriggerEnabled();
 
 // completion-trigger-characters follow-up. Whether typing a character a
 // server declared as one of a completion item's commitCharacters accepts
@@ -109,7 +109,7 @@ void               SetLspSignatureHelpAutoTriggerEnabled(bool enabled); // defau
 // That's the standard behavior, and also the exact thing someone may want
 // off (VS Code exposes the same switch as editor.acceptSuggestionOnCommitCharacter).
 void               SetLspCommitCharactersEnabled(bool enabled); // default true
-[[nodiscard]] bool LspCommitCharactersEnabled();
+[[nodiscard]] bool CommitCharactersEnabled();
 
 // hover-tooltips follow-up. Same shape as SetLspSignatureHelpAutoTriggerEnabled
 // immediately above (a single editor-wide toggle, not per-language) --
@@ -118,7 +118,7 @@ void               SetLspCommitCharactersEnabled(bool enabled); // default true
 // wasted textDocument/hover requests either). Keyboard-triggered lsp-hover
 // (C-c C-j) is unaffected either way -- this only gates the mouse-move path.
 void               SetLspHoverOnMouseMoveEnabled(bool enabled); // default true
-[[nodiscard]] bool LspHoverOnMouseMoveEnabled();
+[[nodiscard]] bool HoverOnMouseMoveEnabled();
 
 // lsp-format-on-save follow-up. Opt-in (default false): turning this on
 // silently for every existing installation would be a surprise behavior
@@ -128,14 +128,14 @@ void               SetLspHoverOnMouseMoveEnabled(bool enabled); // default true
 // specific, deliberately hand-configured choice; see save-buffer's own
 // shouldDeferToLspFormat helper in Commands.cpp.
 void               SetLspFormatOnSaveEnabled(bool enabled); // default false
-[[nodiscard]] bool LspFormatOnSaveEnabled();
+[[nodiscard]] bool FormatOnSaveEnabled();
 
 // on-type-formatting follow-up. Same shape/reasoning as
 // SetLspFormatOnSaveEnabled above -- opt-in (default false), since this
 // mutates buffer content as you type, not just a passive UI cue. Gated
 // separately from format-on-save: a user may want one without the other.
 void               SetLspOnTypeFormattingEnabled(bool enabled); // default false
-[[nodiscard]] bool LspOnTypeFormattingEnabled();
+[[nodiscard]] bool OnTypeFormattingEnabled();
 
 // pull-diagnostics follow-up. Opt-in (default false), same reasoning as
 // SetLspFormatOnSaveEnabled above: enabled, this sends an extra
@@ -144,9 +144,9 @@ void               SetLspOnTypeFormattingEnabled(bool enabled); // default false
 // lifetime, or until it proves unsupported -- a real recurring side effect,
 // not passive UI, even though a supporting server would otherwise get no
 // diagnostics at all without it (see RequestPullDiagnostics' own doc
-// comment in LspManager.h).
+// comment in Manager.h).
 void               SetLspPullDiagnosticsEnabled(bool enabled); // default false
-[[nodiscard]] bool LspPullDiagnosticsEnabled();
+[[nodiscard]] bool PullDiagnosticsEnabled();
 
 // semanticTokens follow-up. Same shape as SetLspSignatureHelpAutoTriggerEnabled
 // above -- default true, since this is read-only decoration (server-informed
@@ -154,7 +154,7 @@ void               SetLspPullDiagnosticsEnabled(bool enabled); // default false
 // no editing-flow risk, the same reasoning documentHighlight's own toggle
 // already established.
 void               SetLspSemanticHighlightingEnabled(bool enabled); // default true
-[[nodiscard]] bool LspSemanticHighlightingEnabled();
+[[nodiscard]] bool SemanticHighlightingEnabled();
 
 // lsp-workspace-folders follow-up. Whether a buffer whose resolved LSP root
 // differs from an already-running same-language connection's may *join* that
@@ -171,19 +171,19 @@ void               SetLspSemanticHighlightingEnabled(bool enabled); // default t
 // cross-folder scoping can leak completions/symbols between roots that
 // separate processes would keep apart.
 void               SetLspWorkspaceFoldersEnabled(bool enabled); // default true
-[[nodiscard]] bool LspWorkspaceFoldersEnabled();
+[[nodiscard]] bool WorkspaceFoldersEnabled();
 
 // inlayHint follow-up. Same reasoning as SetLspSemanticHighlightingEnabled
 // above -- default true, read-only decoration, no editing-flow risk.
 void               SetLspInlayHintsEnabled(bool enabled); // default true
-[[nodiscard]] bool LspInlayHintsEnabled();
+[[nodiscard]] bool InlayHintsEnabled();
 
 // codeLens follow-up. Same reasoning as SetLspInlayHintsEnabled above --
 // default true, read-only annotation until explicitly invoked
 // (lsp-run-code-lens-at-point), no editing-flow risk.
 void               SetLspCodeLensEnabled(bool enabled); // default true
-[[nodiscard]] bool LspCodeLensEnabled();
+[[nodiscard]] bool CodeLensEnabled();
 
 } // namespace ned::editor::lsp
 
-#endif // NED_EDITOR_LSP_LSPSERVERCONFIG_H
+#endif // NED_EDITOR_LSP_SERVERCONFIG_H

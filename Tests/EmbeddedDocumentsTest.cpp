@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "Editor/EmbeddedDocuments.h"
-#include "Editor/Lsp/LspPosition.h"
+#include "Editor/Lsp/Position.h"
 #include "Editor/Mode.h"
 #include "Text/Rope.h"
 #include "Text/RopeStorage.h"

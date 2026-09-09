@@ -10,15 +10,15 @@
 // protocol/transport plumbing.
 //
 // Threading shape mirrors every other background-I/O class in this codebase
-// (LspClient/Client/AcpClient's own read loops): a background jthread
+// (Client/Client/AcpClient's own read loops): a background jthread
 // does blocking accept()/ReadMessage() calls only, marshaling each complete
 // line onto the main thread via EventLoop::Post before touching any real
-// state -- ToolRegistry::CallTool, and therefore every LspManager/VcsRunner/
+// state -- ToolRegistry::CallTool, and therefore every Manager/VcsRunner/
 // TestRunner call it makes, always runs on the main thread. A tool's
 // eventual response write (SendResult/SendError) also happens on the main
 // thread, synchronously via Transport::WriteMessage -- MCP tool results
 // here are small single-line JSON blobs, so this deliberately skips the
-// async-write-queue treatment LspClient needed for large payloads (that was
+// async-write-queue treatment Client needed for large payloads (that was
 // a fix for a *measured* freeze on big workspace-wide operations, not a
 // speculative one; revisit only if the same is ever measured here).
 //
@@ -58,7 +58,7 @@ class BridgeServer {
     // background accept/read loop via shutdown(2), not a second close of an
     // fd Transport's own destructor still owns) before the jthread member's
     // own destructor joins it -- the "close the fd the background thread is
-    // blocked on" pattern LspClient's own transport_/readThread_ member
+    // blocked on" pattern Client's own transport_/readThread_ member
     // ordering already establishes.
     ~BridgeServer();
 

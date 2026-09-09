@@ -53,7 +53,7 @@ namespace dap {
     class Manager;
 }
 namespace lsp {
-    class LspManager;
+    class Manager;
 }
 namespace tasks {
     class TaskRunner;
@@ -91,7 +91,7 @@ struct EditorContext {
     const Theme&           theme;
 
     // Wired later, and any of them may be null -- check before use.
-    editor::lsp::LspManager*&     lspManager;
+    editor::lsp::Manager*&     lspManager;
     editor::dap::Manager*&     dapManager;
     editor::acp::AcpManager*&     acpManager;
     editor::vcs::VcsRunner*&      vcsRunner;

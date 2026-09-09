@@ -20,7 +20,7 @@
 // that rolls the load frontier back mid-load is detected instead of
 // silently spliced past.
 //
-// Threading model mirrors AsyncFileLoader/LspClient exactly: one background
+// Threading model mirrors AsyncFileLoader/Client exactly: one background
 // std::jthread does the actual file I/O and PieceTable fragment building,
 // and only ever touches shared editor state (the target Buffer, by way of
 // BufferList) via ned::ui::EventLoop::Post -- never directly. The
@@ -53,7 +53,7 @@ class HugeFileLoader {
     // must already be IsLoading() -- MarkLoading(false) specifically, so it
     // stays editable. bufferList and eventLoop must outlive this loader --
     // both are process-lifetime objects owned by main.cpp, same assumption
-    // AsyncFileLoader/LspManager make. allowBinary is the same explicit
+    // AsyncFileLoader/Manager make. allowBinary is the same explicit
     // override BufferList::OpenFile/Buffer::FromHugeFile already take --
     // when set, this loader skips the CR/CRLF-refusal scan entirely (see
     // Run()'s own comment), matching the already-shipped FromHugeFile fix
