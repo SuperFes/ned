@@ -222,10 +222,8 @@ class BufferView : public Widget {
     // rich-theme-set follow-up (Phase 1): registers the callback the
     // select-theme picker applies a Theme through -- wired by main.cpp (via
     // WindowManager::SetThemeApplier) to an in-place assignment of the one
-    // Theme local every widget holds `const Theme&` into, the exact swap
-    // mechanism the ANSI fallback established there (and the applier is
-    // also where the limited-terminal AnsiFallbackFor gate stays in the
-    // loop -- this widget never needs to know about it). Unset (every
+    // Theme local every widget holds `const Theme&` into, which is safe
+    // because every widget repaints fresh each frame. Unset (every
     // test-constructed BufferView that doesn't wire one) makes select-theme
     // report via statusMessage_ instead of opening a session -- the same
     // "unset is a safe no-op" convention SetProjectSidebar/SetLspManager

@@ -1102,7 +1102,7 @@ void AcpPanel::Paint(Canvas canvas) {
     if (caretRow >= inputWindowStart && caretRow < inputWindowStart + allottedInputRows && caretColInRow < width) {
         const int screenRow = height - allottedInputRows + (caretRow - inputWindowStart);
         Cell&     cell      = canvas[{.x = caretColInRow, .y = screenRow}];
-        Brush{.background = inputBrush.foreground, .foreground = Color::Black}.ApplyTo(cell);
+        Brush{.background = inputBrush.foreground, .foreground = theme_.background}.ApplyTo(cell);
     }
 }
 

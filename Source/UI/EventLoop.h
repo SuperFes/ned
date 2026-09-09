@@ -106,7 +106,7 @@ struct EventLoopCallbacks {
 // Tests/TerminalOutputTestGuard.cpp forces it on once for the whole binary.
 //
 // It also makes the suite deterministic across environments: Notcurses'
-// capability probes (CanTrueColor/PaletteSize/CanPixelBlit below) otherwise
+// capability probes (CanPixelGraphics below) otherwise
 // answer differently depending on whether stdout happened to be a real tty
 // or a ctest pipe.
 void               SetHeadlessOutputForTesting(bool headless);
@@ -123,22 +123,13 @@ class EventLoop {
     [[nodiscard]] ncplane* StdPlane() const;
     [[nodiscard]] Size     TerminalSize() const;
 
-    // ansi-fallback-theme follow-up: Notcurses' own view of what the
-    // terminal can actually display (notcurses_cantruecolor /
-    // notcurses_palette_size) -- main.cpp checks these once, right after
-    // construction, to decide whether the TrueColor-heavy built-in/detected
-    // Theme must be swapped for an AnsiFallbackFor() one (Theme.h). Lives
-    // here because the queries need the live notcurses context this class
-    // owns; the swap decision itself stays in the composition root.
-    [[nodiscard]] bool     CanTrueColor() const;
-    [[nodiscard]] unsigned PaletteSize() const;
-
     // Pixel-blitter-minimap follow-up: whether this terminal can blit
     // real, pixel-accurate bitmaps (NCBLIT_PIXEL, via sixel/Kitty/iTerm2/
     // etc.) -- Minimap checks this once per Paint() to decide between the
-    // braille-glyph approximation and a real per-pixel raster, the same
-    // live-context capability-check shape CanTrueColor() already
-    // established for the ANSI-fallback-theme swap.
+    // braille-glyph approximation and a real per-pixel raster. The one
+    // remaining live-context capability check: colour capability is no
+    // longer probed at all, since themes are truecolor and Notcurses
+    // quantizes for a terminal that cannot keep up.
     [[nodiscard]] bool CanPixelGraphics() const;
 
     // Raw Notcurses context handle -- Minimap's pixel path needs this

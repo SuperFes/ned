@@ -445,6 +445,37 @@ TEST_CASE("ned/theme-set accumulates keyed overrides in insertion order", "[Edit
     ned::editor::ClearThemeColorOverrides();
 }
 
+// Translucency follow-up: paints accumulate exactly the same way, and for
+// the same reason -- a $slot reference cannot resolve until a real Theme
+// exists, which is main.cpp's business and not this layer's.
+TEST_CASE("ned/theme-gradient and ned/theme-surface accumulate specs verbatim", "[EditorBindings]") {
+    ned::janet::Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+    ned::editor::ClearNamedPaintOverrides();
+    ned::editor::ClearSurfacePaintOverrides();
+
+    env.DoString(R"((ned/theme-gradient "brand" "diag $accent 2 $keyword"))");
+    env.DoString(R"((ned/theme-gradient "brand" "x $accent $keyword"))"); // later call wins on application
+    env.DoString(R"((ned/theme-surface "popup" "fill" "y $bg/78 3 $bg/52"))");
+    env.DoString(R"((ned/theme-surface "popup" "border" "$brand"))");
+
+    const auto paints = ned::editor::NamedPaintOverrides();
+    REQUIRE(paints.size() == 2);
+    REQUIRE(paints[0] == std::pair<std::string, std::string>{"brand", "diag $accent 2 $keyword"});
+    REQUIRE(paints[1] == std::pair<std::string, std::string>{"brand", "x $accent $keyword"});
+
+    const auto surfaces = ned::editor::SurfacePaintOverrides();
+    REQUIRE(surfaces.size() == 2);
+    REQUIRE(surfaces[0].surface == "popup");
+    REQUIRE(surfaces[0].part == "fill");
+    REQUIRE(surfaces[0].spec == "y $bg/78 3 $bg/52");
+    REQUIRE(surfaces[1].part == "border");
+    REQUIRE(surfaces[1].spec == "$brand");
+
+    ned::editor::ClearNamedPaintOverrides();
+    ned::editor::ClearSurfacePaintOverrides();
+}
+
 // -- backup-and-recovery follow-up: settings + scriptable recovery -----------
 
 namespace {

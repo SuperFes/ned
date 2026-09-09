@@ -95,6 +95,7 @@
 #include "UI/Layout.h"
 #include "UI/ListPopup.h"
 #include "UI/Overlay.h"
+#include "UI/PaintParse.h"
 #include "UI/PanelDock.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/TabBar.h"
@@ -102,6 +103,7 @@
 #include "UI/TerminalPanel.h"
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
+#include "UI/ThemePaints.h"
 #include "UI/ThemeRegistry.h"
 #include "UI/VcsDiffPreview.h"
 #include "UI/VcsPanel.h"
@@ -722,6 +724,15 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         return ned::ui::DarkTheme();
     }();
 
+    // Translucency follow-up: remember the machine's own accent for the
+    // $desktop-accent paint slot, whichever theme won above -- a named theme
+    // or a saved theme file should not stop a paint asking for "the colour
+    // my desktop uses". A failed probe simply leaves the slot falling back
+    // to the active theme's own accent.
+    if (const auto desktopAccent = ned::ui::ProbeDesktopTheme()) {
+        ned::ui::SetDetectedAccent(desktopAccent->accent);
+    }
+
     // theme-editing follow-up: init.janet's accumulated (ned/theme-set ...)
     // overrides, applied on top of whichever base won above -- typically a
     // whole (dofile ".../theme.janet") worth from save-theme's output, which
@@ -740,6 +751,50 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         }
         if (rejected > 0) {
             statusMessage = std::to_string(rejected) + " unrecognized ned/theme-set key(s)/color(s) ignored";
+        }
+    }
+
+    // Translucency follow-up (Docs/Translucency.md phase 4): the same
+    // deferred-until-a-real-Theme-exists treatment for paints. Named paints
+    // go first, in insertion order, because a surface's spec may reference
+    // one by name -- and because a later registration of the same name
+    // wins, matching Janet's own sequential evaluation.
+    {
+        int rejected = 0;
+        for (const auto& [name, spec] : ned::editor::NamedPaintOverrides()) {
+            if (const auto paint = ned::ui::ParsePaint(spec, ned::ui::PaintContextFor(theme))) {
+                ned::ui::RegisterNamedPaint(name, *paint);
+            }
+            else {
+                ++rejected;
+            }
+        }
+        for (const auto& override : ned::editor::SurfacePaintOverrides()) {
+            const auto paint = ned::ui::ParsePaint(override.spec, ned::ui::PaintContextFor(theme));
+            if (!paint) {
+                ++rejected;
+                continue;
+            }
+            ned::ui::Surface surface = ned::ui::SurfaceFor(theme, override.surface);
+            if (override.part == "fill") {
+                surface.fill = *paint;
+            }
+            else if (override.part == "border") {
+                surface.border = *paint;
+            }
+            else if (override.part == "text") {
+                surface.text = *paint;
+            }
+            else {
+                ++rejected;
+                continue;
+            }
+            ned::ui::SetSurfaceOverride(override.surface, surface);
+        }
+        if (rejected > 0) {
+            const std::string note = std::to_string(rejected) + " unparseable ned/theme-gradient or "
+                                                                "ned/theme-surface spec(s) ignored";
+            statusMessage          = statusMessage.empty() ? note : statusMessage + "; " + note;
         }
     }
 
@@ -1091,35 +1146,18 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         modePrewarmer.Prewarm(opened);
     });
 
-    // ansi-fallback-theme follow-up: with neither truecolor nor a 256-color
-    // palette (e.g. the Linux framebuffer console, TERM=linux: 8 colors),
-    // every TrueColor field in the theme above gets quantized down to those
-    // 8 and washes out -- or lands black-on-black outright -- so swap in
-    // the curated Palette16-only fallback instead (Theme.h). Assigning the
-    // local in place, after every widget is already constructed, is
-    // deliberate and sufficient: they all hold `const Theme&` (or a
-    // `const Brush&` into it) bound to this same object and repaint fresh
-    // every frame. It couldn't happen any earlier -- the capability queries
-    // need the live notcurses context EventLoop's constructor just created.
-    // This also intentionally overrides a --detect-theme file, which is
-    // just as TrueColor as the built-ins and washes out the same way.
-    const bool limitedTerminal = !eventLoop.CanTrueColor() && eventLoop.PaletteSize() < 256;
-    if (limitedTerminal) {
-        theme = ned::ui::AnsiFallbackFor(theme);
-    }
-
-    // rich-theme-set follow-up (Phase 1): the select-theme picker's applier
-    // -- the same in-place assignment the ANSI fallback just above
-    // established as safe (every widget holds `const Theme&`, or a
-    // `const Brush&` into it, bound to this same local and repaints fresh
-    // every frame). Routing the limited-terminal gate through here too
-    // means a live-picked TrueColor theme still degrades to its ANSI
-    // counterpart on a terminal that can't show it, exactly like the
-    // startup path. `theme` outlives eventLoop.Run() below as a plain
-    // local, so the reference captures are safe for every event this
-    // applier could ever run from.
-    windowManager->SetThemeApplier([&theme, limitedTerminal](const ned::ui::Theme& next) -> void {
-        theme = limitedTerminal ? ned::ui::AnsiFallbackFor(next) : next;
+    // rich-theme-set follow-up (Phase 1): the select-theme picker's applier.
+    // Assigning the local in place is safe and sufficient -- every widget
+    // holds `const Theme&` (or a `const Brush&` into it) bound to this same
+    // object and repaints fresh every frame. `theme` outlives
+    // eventLoop.Run() below as a plain local, so the reference capture is
+    // safe for every event this applier could ever run from.
+    //
+    // Nothing degrades a theme any more: themes are truecolor and own their
+    // own contrast, and a terminal that cannot render one is Notcurses'
+    // problem to quantize (see Docs/Translucency.md's phase 3).
+    windowManager->SetThemeApplier([&theme](const ned::ui::Theme& next) -> void {
+        theme = next;
     });
 
     // LSP client follow-up: constructed here, not alongside bufferList/

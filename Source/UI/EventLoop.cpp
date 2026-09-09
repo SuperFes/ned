@@ -216,20 +216,12 @@ Size EventLoop::TerminalSize() const {
     return Size{static_cast<int>(x), static_cast<int>(y)};
 }
 
-bool EventLoop::CanTrueColor() const {
-    return notcurses_cantruecolor(nc_);
-}
-
 bool EventLoop::CanPixelGraphics() const {
     return notcurses_canpixel(nc_);
 }
 
 notcurses* EventLoop::NotcursesContext() const {
     return nc_;
-}
-
-unsigned EventLoop::PaletteSize() const {
-    return notcurses_palette_size(nc_);
 }
 
 void EventLoop::Wake_() {

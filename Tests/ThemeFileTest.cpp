@@ -213,14 +213,21 @@ TEST_CASE("Round-trip preserves the per-SyntaxClass colors the old serializer dr
     REQUIRE(restored.ghostTextForeground == original.ghostTextForeground);
 }
 
-TEST_CASE("Palette-index gradient endpoints round-trip since the hex-only restriction was dropped", "[ThemeFile]") {
-    // The ANSI fallback themes made a Palette16 gradient endpoint genuinely
-    // meaningful (equal endpoints pass through Interpolate unchanged).
-    const Theme original = ned::ui::AnsiDarkTheme();
-    const Theme restored = ParseTheme(SerializeTheme(original), DarkTheme());
+TEST_CASE("A legacy x:<n> token still loads, as real RGB", "[ThemeFile]") {
+    // Theme files written before themes went truecolor-only (the ANSI
+    // fallback pair, or a --detect-theme cache from that era) carry palette
+    // indices. They must keep loading -- but as RGB, since nothing puts a
+    // palette index back into a theme now.
+    Theme theme = DarkTheme();
 
-    REQUIRE(restored.modeLineGradientStart == original.modeLineGradientStart);
-    REQUIRE(restored.modeLineGradientEnd == original.modeLineGradientEnd);
+    REQUIRE(ned::ui::SetThemeColorByKey(theme, "border_accent_foreground", "x:5"));
+    REQUIRE(theme.borderAccent.foreground.kind == Color::Kind::TrueColor);
+    REQUIRE(theme.borderAccent.foreground == Color::RGB(0x800080)); // xterm's own magenta
+
+    REQUIRE(ned::ui::SetThemeColorByKey(theme, "border_accent_foreground", "x:244"));
+    REQUIRE(theme.borderAccent.foreground == Color::RGB(0x808080)); // the 232-255 grey ramp
+
+    REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "border_accent_foreground", "x:999"));
 }
 
 TEST_CASE("SetThemeColorByKey assigns known keys and rejects unknown keys or bad tokens", "[ThemeFile]") {
@@ -228,9 +235,6 @@ TEST_CASE("SetThemeColorByKey assigns known keys and rejects unknown keys or bad
 
     REQUIRE(ned::ui::SetThemeColorByKey(theme, "keyword_foreground", "#f042d6"));
     REQUIRE(theme.keywordForeground == Color::RGB(0xf042d6));
-
-    REQUIRE(ned::ui::SetThemeColorByKey(theme, "border_accent_foreground", "x:5"));
-    REQUIRE(theme.borderAccent.foreground == Color::Palette(5));
 
     REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "no_such_key", "#112233"));
     REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "keyword_foreground", "not-a-color"));

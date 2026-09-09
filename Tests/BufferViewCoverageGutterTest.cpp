@@ -135,9 +135,9 @@ TEST_CASE("Coverage gutter marks covered/partial/uncovered lines after a loaded 
     PaintInto(view, screen);
 
     const int x = CoverageColumnX(fixture.buffer.Content().LineCount());
-    CHECK(screen.PixelAt(x, 0).background_color == Color::Green);        // covered
-    CHECK(screen.PixelAt(x, 1).background_color == Color::BrightRed);    // uncovered
-    CHECK(screen.PixelAt(x, 2).background_color == Color::BrightYellow); // partial (one branch never taken)
+    CHECK(screen.PixelAt(x, 0).background_color == fixture.theme.successForeground); // covered
+    CHECK(screen.PixelAt(x, 1).background_color == fixture.theme.diagnosticError);   // uncovered
+    CHECK(screen.PixelAt(x, 2).background_color == fixture.theme.diagnosticWarning); // partial (one branch never taken)
 }
 
 TEST_CASE("Coverage gutter flags an uncovered line that's also newly changed", "[BufferView][Coverage]") {
@@ -162,7 +162,7 @@ TEST_CASE("Coverage gutter flags an uncovered line that's also newly changed", "
 
     const int x = CoverageColumnX(fixture.buffer.Content().LineCount(), /*diffActive=*/true);
     CHECK(screen.PixelAt(x, 1).character == "!");
-    CHECK(screen.PixelAt(x, 1).foreground_color == Color::BrightRed);
+    CHECK(screen.PixelAt(x, 1).foreground_color == fixture.theme.diagnosticError);
 }
 
 TEST_CASE("Coverage gutter cache refreshes when the report is reloaded", "[BufferView][Coverage]") {
@@ -181,11 +181,11 @@ TEST_CASE("Coverage gutter cache refreshes when the report is reloaded", "[Buffe
     ned::ui::Screen firstScreen(60, 5);
     PaintInto(view, firstScreen);
     const int x = CoverageColumnX(fixture.buffer.Content().LineCount());
-    REQUIRE(firstScreen.PixelAt(x, 0).background_color == Color::BrightRed);
+    REQUIRE(firstScreen.PixelAt(x, 0).background_color == fixture.theme.diagnosticError);
 
     WriteInfoFile(infoPath, "SF:" + bufferPath + "\nDA:1,5\nend_of_record\n");
     LoadCoverageReport();
     ned::ui::Screen secondScreen(60, 5);
     PaintInto(view, secondScreen);
-    REQUIRE(secondScreen.PixelAt(x, 0).background_color == Color::Green);
+    REQUIRE(secondScreen.PixelAt(x, 0).background_color == fixture.theme.successForeground);
 }

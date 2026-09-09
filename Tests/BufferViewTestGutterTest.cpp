@@ -143,11 +143,11 @@ TEST_CASE("Test gutter marks discovered tests with status glyphs after a parsed 
 
     const int testX = TestColumnX(fixture.buffer.Content().LineCount());
     CHECK(screen.PixelAt(testX, 0).character == "✓");
-    CHECK(screen.PixelAt(testX, 0).foreground_color == Color::BrightGreen);
+    CHECK(screen.PixelAt(testX, 0).foreground_color == fixture.theme.successForeground);
     CHECK(screen.PixelAt(testX, 1).character == "✗");
-    CHECK(screen.PixelAt(testX, 1).foreground_color == Color::BrightRed);
+    CHECK(screen.PixelAt(testX, 1).foreground_color == fixture.theme.diagnosticError);
     CHECK(screen.PixelAt(testX, 2).character == "−");
-    CHECK(screen.PixelAt(testX, 2).foreground_color == Color::BrightYellow);
+    CHECK(screen.PixelAt(testX, 2).foreground_color == fixture.theme.diagnosticWarning);
     CHECK(screen.PixelAt(testX, 3).character == " "); // helper() is not a test
 }
 
@@ -264,7 +264,7 @@ TEST_CASE("A configured filter command marks not-yet-run tests as runnable", "[B
 
     const int testX = TestColumnX(fixture.buffer.Content().LineCount());
     CHECK(screen.PixelAt(testX, 0).character == "▸");
-    CHECK(screen.PixelAt(testX, 0).foreground_color == Color::BrightBlack);
+    CHECK(screen.PixelAt(testX, 0).foreground_color == fixture.theme.lineNumberForeground);
     CHECK(screen.PixelAt(testX, 1).character == " "); // helper() is not a test
 }
 

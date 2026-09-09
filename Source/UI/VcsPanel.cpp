@@ -196,16 +196,16 @@ namespace {
     // kept as a separate copy here rather than shared, since the two
     // widgets are free to diverge on presentation even though the
     // classification underneath (Editor/Vcs/RowStatus.h) is shared.
-    std::optional<Color> VcsStatusColor(editor::vcs::RowStatus status) {
+    std::optional<Color> VcsStatusColor(editor::vcs::RowStatus status, const Theme& theme) {
         switch (status) {
             case editor::vcs::RowStatus::Deleted:
-                return Color::BrightRed;
+                return theme.diagnosticError;
             case editor::vcs::RowStatus::Modified:
-                return Color::BrightBlue;
+                return theme.vcsModifiedForeground;
             case editor::vcs::RowStatus::Added:
-                return Color::BrightGreen;
+                return theme.successForeground;
             case editor::vcs::RowStatus::Untracked:
-                return Color::BrightCyan;
+                return theme.vcsUntrackedForeground;
             case editor::vcs::RowStatus::None:
                 return std::nullopt;
         }
@@ -573,7 +573,7 @@ void VcsPanel::Paint(Canvas c) {
                 // regardless of conflict state.
                 label += U" ⚠";
             }
-            const std::optional<Color> statusColor = VcsStatusColor(row.status);
+            const std::optional<Color> statusColor = VcsStatusColor(row.status, theme_);
             brush                                  = Brush{.background = theme_.background,
                                                            .foreground = statusColor.value_or(row.entry.isDirectory ? theme_.lineNumberForeground
                                                                                                                     : theme_.defaultForeground)};
