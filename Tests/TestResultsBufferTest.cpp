@@ -4,7 +4,7 @@
 #include <fstream>
 #include <string>
 
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"

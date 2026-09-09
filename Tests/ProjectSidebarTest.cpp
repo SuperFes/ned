@@ -8,7 +8,7 @@
 #include <thread>
 #include <vector>
 
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"

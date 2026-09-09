@@ -28,8 +28,8 @@
 // new constructor plumbing.
 //
 
-#ifndef NED_EDITOR_PROJECTSESSION_H
-#define NED_EDITOR_PROJECTSESSION_H
+#ifndef NED_EDITOR_PROJECT_SESSION_H
+#define NED_EDITOR_PROJECT_SESSION_H
 
 #include <cstddef>
 #include <filesystem>
@@ -194,4 +194,4 @@ void ResetProjectSessionForTesting();
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTSESSION_H
+#endif // NED_EDITOR_PROJECT_SESSION_H

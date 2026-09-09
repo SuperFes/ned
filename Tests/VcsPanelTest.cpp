@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "TestEvents.h"
 #include "Text/BufferList.h"

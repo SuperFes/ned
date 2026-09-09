@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Editor/ProjectAgenda.h"
+#include "Editor/Project/Agenda.h"
 
 using ned::editor::AgendaItem;
 using ned::editor::AgendaSection;

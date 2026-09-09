@@ -19,7 +19,7 @@
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/PersistentUndo.h"
-#include "Editor/ProjectSession.h"
+#include "Editor/Project/Session.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"

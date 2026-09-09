@@ -5,7 +5,7 @@
 #include <fstream>
 #include <string>
 
-#include "Editor/ProjectSearch.h"
+#include "Editor/Project/Search.h"
 #include "Editor/SearchSettings.h"
 #include "EnvOverride.h"
 

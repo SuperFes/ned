@@ -10,7 +10,7 @@
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Mcp/ToolRegistry.h"
 #include "Editor/OrgCapture.h"
-#include "Editor/ProjectRoot.h"
+#include "Editor/Project/Root.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"

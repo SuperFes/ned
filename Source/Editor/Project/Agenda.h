@@ -10,8 +10,8 @@
 // parsing existed.
 //
 
-#ifndef NED_EDITOR_PROJECTAGENDA_H
-#define NED_EDITOR_PROJECTAGENDA_H
+#ifndef NED_EDITOR_PROJECT_AGENDA_H
+#define NED_EDITOR_PROJECT_AGENDA_H
 
 #include <chrono>
 #include <filesystem>
@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-#include "Org.h"
+#include "Editor/Org.h"
 
 namespace ned::editor {
 
@@ -92,4 +92,4 @@ CollectAgendaItems(const std::filesystem::path& root, const std::vector<std::str
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTAGENDA_H
+#endif // NED_EDITOR_PROJECT_AGENDA_H

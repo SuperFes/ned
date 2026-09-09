@@ -60,8 +60,8 @@
 // missing .gitignore, Mode::fold's empty function, ...).
 //
 
-#ifndef NED_EDITOR_PROJECTSETTINGS_H
-#define NED_EDITOR_PROJECTSETTINGS_H
+#ifndef NED_EDITOR_PROJECT_SETTINGS_H
+#define NED_EDITOR_PROJECT_SETTINGS_H
 
 #include <filesystem>
 #include <optional>
@@ -122,4 +122,4 @@ struct ProjectSettings {
 
 } // namespace ned::editor
 
-#endif // NED_EDITOR_PROJECTSETTINGS_H
+#endif // NED_EDITOR_PROJECT_SETTINGS_H
