@@ -20,6 +20,7 @@
 #include "Text/Rope.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/EchoArea.h"
+#include "UI/ListPopup.h"
 #include "UI/ModeLine.h"
 #include "UI/Paint.h"
 #include "UI/PaintParse.h"
@@ -499,4 +500,93 @@ TEST_CASE("A themed scroll bar paints the theme's own paint", "[ChromeSurface]")
     Screen screen = PaintScrollBar(theme, 10);
     REQUIRE_FALSE(screen.PixelAt(0, 0).background_color == screen.PixelAt(0, 9).background_color);
     REQUIRE(screen.PixelAt(0, 0).inverted); // thumb still distinguishable
+}
+
+// Translucency phase 7a: the popup body as a themed Surface. The interesting
+// one is blur -- an overlay paints after the tree beneath it, so the cells
+// under a popup already hold what it is covering, which is exactly what
+// FillBlur samples.
+
+namespace {
+
+Screen PaintPopupOver(const Theme& theme, const ned::ui::Color& beneath, int width, int height) {
+    Screen screen(width, height);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            // A hard split down the middle, so a blur has a real edge to
+            // smear and a uniform fill provably cannot reproduce it.
+            screen.PixelAt(x, y).background_color = (x < width / 2) ? beneath : ned::ui::Color::RGB(0xF0, 0xF0, 0xF0);
+        }
+    }
+
+    ned::ui::ListPopup popup(theme);
+    popup.SetModel(ned::ui::ListPopupModel{.title = "T", .rows = {{.main = "one"}, {.main = "two"}}});
+    const ned::ui::Box box{.x_min = 0, .x_max = width - 1, .y_min = 0, .y_max = height - 1};
+    popup.SetBox_(box);
+    Canvas canvas(screen, box);
+    popup.Paint(canvas);
+    return screen;
+}
+
+} // namespace
+
+TEST_CASE("An unthemed popup paints the flat background it always did", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    Theme              theme = DarkTheme();
+    theme.background         = ned::ui::Color::RGB(0x20, 0x20, 0x28);
+
+    Screen screen = PaintPopupOver(theme, ned::ui::Color::RGB(0x80, 0x00, 0x00), 20, 8);
+    for (int y = 1; y < 7; ++y) {
+        for (int x = 1; x < 19; ++x) {
+            INFO("cell (" << x << ", " << y << ")");
+            REQUIRE(screen.PixelAt(x, y).background_color == theme.background);
+        }
+    }
+    REQUIRE(screen.PixelAt(4, 1).character == "o"); // the row text is still there (left column empty -> main at 4)
+}
+
+TEST_CASE("A themed popup paints its own fill under the rows", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+
+    ned::ui::Surface popup;
+    popup.fill = ParseOrDie("x #400000 #004000", theme);
+    ned::ui::SetSurfaceOverride("popup", popup);
+
+    Screen screen = PaintPopupOver(theme, ned::ui::Color::RGB(0x80, 0x00, 0x00), 20, 8);
+    REQUIRE_FALSE(screen.PixelAt(1, 1).background_color == screen.PixelAt(18, 1).background_color);
+    // Row text survives the fill: the glyph pass no longer writes background.
+    REQUIRE(screen.PixelAt(4, 1).character == "o");
+    REQUIRE(screen.PixelAt(4, 2).character == "t");
+}
+
+TEST_CASE("A blurred popup samples what it is covering", "[ChromeSurface]") {
+    const SurfaceGuard   guard;
+    const Theme          theme   = DarkTheme();
+    const ned::ui::Color beneath = ned::ui::Color::RGB(0x80, 0x00, 0x00);
+
+    ned::ui::Surface popup;
+    popup.fill = ParseOrDie("blur 2", theme);
+    ned::ui::SetSurfaceOverride("popup", popup);
+
+    Screen screen = PaintPopupOver(theme, beneath, 20, 8);
+
+    // The interior is neither of the two colours it covered, and not uniform
+    // -- it is a smear of the edge between them. A fill that ignored the
+    // destination could produce neither.
+    const ned::ui::Color left  = screen.PixelAt(2, 3).background_color;
+    const ned::ui::Color right = screen.PixelAt(17, 3).background_color;
+    // Away from the edge a box blur of a uniform region *is* that region, so
+    // each side reproduces exactly what it covers -- which is the proof that
+    // the fill read the destination rather than painting a colour of its own.
+    REQUIRE(left == beneath);
+    REQUIRE(right == ned::ui::Color::RGB(0xF0, 0xF0, 0xF0));
+
+    // At the seam it is genuinely smeared: strictly between the two, on every
+    // channel. A fill ignoring the destination could produce neither result.
+    const ned::ui::Color seam = screen.PixelAt(10, 3).background_color;
+    REQUIRE(seam.red > left.red);
+    REQUIRE(seam.red < right.red);
+    REQUIRE(seam.green > left.green);
+    REQUIRE(seam.green < right.green);
 }

@@ -1,4 +1,5 @@
 #include "TreeView.h"
+#include "Paint.h"
 #include "ThemePaints.h"
 
 #include <algorithm>
@@ -21,13 +22,21 @@ namespace {
     // helper this size rather than add a new shared dependency for it.
     // Writes one codepoint per cell (not one byte per cell), and returns the
     // column x ended at.
+    // Translucency phase 7: writes glyph/foreground/traits but not the
+    // background, so the popup surface's fill survives underneath -- see
+    // ListPopup's own copy for the full reasoning.
     int PaintRowText(Canvas& c, int x, int width, int row, const std::string& text, const Brush& brush) {
         std::size_t pos = 0;
         while (pos < text.size() && x < width - 1) {
             const std::size_t next = text::NextCodepointBoundary(text, pos);
             Cell&             cell = c[{.x = x, .y = row}];
             cell.character         = text.substr(pos, next - pos);
-            brush.ApplyTo(cell);
+            cell.foreground_color  = brush.foreground;
+            cell.bold              = brush.bold;
+            cell.italic            = brush.italic;
+            cell.underlined        = brush.underlined;
+            cell.strikethrough     = brush.strikethrough;
+            cell.inverted          = false;
             ++x;
             pos = next;
         }
@@ -92,13 +101,53 @@ void TreeView::Paint(Canvas c) {
     // Fill the interior before drawing anything else -- ListPopup's own
     // "otherwise the pane underneath bleeds through empty cells" fix,
     // confirmed live for that widget, applies identically here.
+    // Reset the interior's glyphs and traits. The background is handled
+    // separately below, because whether it may be cleared depends on the
+    // fill: a blur *samples* what is already there.
     for (int y = 1; y < height - 1; ++y) {
         for (int x = 1; x < width - 1; ++x) {
-            Cell& cell     = c[{.x = x, .y = y}];
-            cell.character = " ";
-            labelBrush.ApplyTo(cell);
+            Cell& cell            = c[{.x = x, .y = y}];
+            cell.character        = " ";
+            cell.foreground_color = labelBrush.foreground;
+            cell.bold             = labelBrush.bold;
+            cell.italic           = labelBrush.italic;
+            cell.underlined       = labelBrush.underlined;
+            cell.strikethrough    = labelBrush.strikethrough;
+            cell.inverted         = false;
         }
     }
+
+    // Translucency phase 7: same themed Surface ListPopup's body uses, so the
+    // two popup shapes cannot drift apart. Derived default is the flat
+    // background the loop above just wrote.
+    const Surface surface = SurfaceFor(theme_, "popup");
+
+    // A blur reads the destination, so its cells must keep whatever the tree
+    // beneath this overlay painted this frame. Every other paint settles the
+    // background itself -- except that a paint contributing nothing (the
+    // derived default over a theme whose background is the terminal's own)
+    // would leave the previous frame's cells showing, which is the stale-cell
+    // bleed ListPopup's own interior fill has always existed to prevent.
+    // Clearing first covers both: it reproduces the old behaviour exactly,
+    // and a fill that does cover simply overwrites it.
+    //
+    // The cost is that a *translucent* fill composites against the theme's
+    // background rather than against what the popup covers. Phase 7's
+    // translucent-body step is where that gets revisited; blur is the case
+    // that actually needs the destination today.
+    const bool fillReadsDestination =
+        surface.fill.kind == PaintKind::Blur || surface.fill.kind == PaintKind::Stack;
+    if (!fillReadsDestination) {
+        for (int y = 1; y < height - 1; ++y) {
+            for (int x = 1; x < width - 1; ++x) {
+                c[{.x = x, .y = y}].background_color = theme_.background;
+            }
+        }
+    }
+    const Point origin = c.Origin();
+    Canvas      interior =
+        c.ForBox(Box{.x_min = origin.x + 1, .x_max = origin.x + width - 2, .y_min = origin.y + 1, .y_max = origin.y + height - 2});
+    Fill(interior, surface.fill);
 
     DrawBorder(c, theme_.border);
     DrawBorderTitle(c, model_.title, theme_.borderAccent);
