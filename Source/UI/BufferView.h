@@ -2848,7 +2848,24 @@ class BufferView : public Widget {
     // The brush one cell renders with -- syntax highlighting, a diagnostic
     // underline, and at most one background overlay chosen by precedence. See
     // the definition for the order.
-    [[nodiscard]] Brush BrushForCell(std::size_t offset, const LineRenderState& lineState) const;
+    // `c`/`col`/`row` are the cell this brush is for: the selection and
+    // search washes are themed Surfaces (Docs/Translucency.md phase 6), so a
+    // gradient or pattern one has to know where in the viewport it lands.
+    // Every other wash in the chain is a flat colour and ignores them.
+    [[nodiscard]] Brush BrushForCell(std::size_t offset, const LineRenderState& lineState, const Canvas& c, int col,
+                                     int row) const;
+
+    // The composited background for one of the buffer's own overlay
+    // Surfaces at one cell, falling back to `fallback` when the surface
+    // paints no colour there. Sampled across the whole viewport, so a
+    // gradient selection reads as one wash the selection reveals rather
+    // than as a separate ramp per run of selected cells.
+    //
+    // Blur and Stack are not sampleable per cell (they need the destination
+    // and only exist through Fill), so a selection paint is Solid, Gradient
+    // or Pattern; anything else falls back.
+    [[nodiscard]] Color OverlayWashAt(std::string_view surfaceName, const Color& fallback, const Canvas& c, int col,
+                                      int row) const;
 
     // Emits the cells one codepoint occupies, advancing col past them: a tab
     // expands to the next tab stop, a C0/DEL byte becomes a hex placeholder,

@@ -1028,7 +1028,23 @@ void BufferView::SyncBufferSwitch() {
 // document highlight, line inspect, execution line, multibuffer tint, and
 // finally trailing whitespace, which is purely cosmetic and always loses to
 // an overlay that means something.
-Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineState) const {
+Color BufferView::OverlayWashAt(std::string_view surfaceName, const Color& fallback, const Canvas& c, int col,
+                                int row) const {
+    const Surface surface = SurfaceFor(theme_, surfaceName);
+    if (!PaintsColour(surface.fill)) {
+        return OverlayBackground(theme_, fallback);
+    }
+
+    const Size&  size   = c.size();
+    const double u      = size.width > 1 ? static_cast<double>(col) / (size.width - 1) : 0.0;
+    const double v      = size.height > 1 ? static_cast<double>(row) / (size.height - 1) : 0.0;
+    const Point  origin = c.Origin();
+    const Color  colour = PaintColourAt(surface.fill, u, v, origin.x + col, origin.y + row);
+    return OverlayBackground(theme_, colour.alpha == 0 ? fallback : colour);
+}
+
+Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineState, const Canvas& c, int col,
+                               int row) const {
     const editor::HighlightSpan span  = SpanAtOffset(lineState.spans, offset);
     Brush                       brush = ResolvedBrush(span.syntaxClass, span.captureId);
     // diagnostics-UX follow-up: underline exactly the span the
@@ -1043,13 +1059,13 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         }
     }
     if (InIsearchMatch(offset)) {
-        brush.background = OverlayBackground(theme_, theme_.isearchMatchBackground);
+        brush.background = OverlayWashAt("buffer.search", theme_.isearchMatchBackground, c, col, row);
     }
     else if (InActiveSnippetField(offset)) {
         brush.background = OverlayBackground(theme_, theme_.snippetFieldBackground);
     }
     else if (InSelection(offset)) {
-        brush.background = OverlayBackground(theme_, SelectionFill(theme_));
+        brush.background = OverlayWashAt("buffer.selection", SelectionFill(theme_), c, col, row);
     }
     // Every wash from here down goes through OverlayBackground, the same way
     // isearch/snippet-field/selection above already do. These used to assign
@@ -1750,7 +1766,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // glyph (tab expansion, control placeholder) inverts.
                 const bool secondaryCaretHere = IsSecondaryCursorAt(offset);
 
-                Brush brush = BrushForCell(offset, lineState);
+                Brush brush = BrushForCell(offset, lineState, c, col, row);
 
                 EmitCodepointCells(c, row, col, gutter, decoded, brush, secondaryCaretHere, lineState, offset);
                 offset += decoded.byteLength;
