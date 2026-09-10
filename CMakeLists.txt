@@ -457,6 +457,7 @@ ned_add_treesitter_grammar(tree-sitter-janet-simple https://github.com/sogaiu/tr
 ned_embed_treesitter_query("${tree-sitter-janet-simple_SOURCE_DIR}/queries/highlights.scm" Janet)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/janet-imports.scm" JanetImports)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/janet-indents.scm" JanetIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/janet-locals.scm" JanetLocals)
 
 ned_add_treesitter_grammar(tree-sitter-markdown https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown)
 
@@ -504,6 +505,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-folds.scm" ClojureFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-imports.scm" ClojureImports)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-indents.scm" ClojureIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-locals.scm" ClojureLocals)
 
 # ram02z/tree-sitter-fish -- the grammar every real consumer (nvim-treesitter)
 # builds on, ships a pre-generated src/parser.c+scanner.c and a real
@@ -512,6 +514,7 @@ ned_add_treesitter_grammar(tree-sitter-fish https://github.com/ram02z/tree-sitte
 
 ned_embed_treesitter_query("${tree-sitter-fish_SOURCE_DIR}/queries/highlights.scm" Fish)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/fish-indents.scm" FishIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/fish-locals.scm" FishLocals)
 
 # tree-sitter-grammars/tree-sitter-xml -- the community-maintained XML+DTD
 # grammar (same org as yaml/toml above), ships a real, well-authored

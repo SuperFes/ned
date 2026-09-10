@@ -406,7 +406,14 @@ binding from the mode's own `locals.scm` with no server involved at all. What is
 missing is everything that should be reviewable before it lands, and the file/class
 relationship an IDE keeps in sync.
 
-Shipped here, one slug for `git log --grep=`: `scope-aware-rename` (`rename-symbol` on
+Shipped here, one slug each for `git log --grep=`: `lisp-shell-locals` (fish, janet and
+clojure/jank locals queries, closing the coverage gap `scope-aware-rename` left. HTML and
+CSS were dropped from that gap rather than filled: both have a binding construct, but a
+CSS custom property is scoped to matching elements *and their descendants*, which is DOM
+containment, so the byte containment `LocalScopes.h` resolves by would produce a rename
+that silently missed every descendant use. The full list of languages with no locals
+query, and why each is on it, is recorded beside the declarations in
+`Source/Editor/TreeSitter/Queries.h`) and `scope-aware-rename` (`rename-symbol` on
 `C-c C-M-r`, tiered -- a name that resolves to a binding this file wholly owns is renamed
 in-buffer as one undo step with no request sent, and anything else falls through to the
 `prepareRename`/`rename` flow, which `lsp-rename` still reaches directly from `M-x`.
@@ -414,11 +421,20 @@ Twelve hand-authored `*-locals.scm` queries, a `Mode::localScopes` capability, a
 `Editor/LocalScopes.h`'s pure resolver; `TreeSitterMode`'s six positional query-source
 parameters became a designated-initializer `TreeSitterQuerySources` on the way past).
 
-- [ ] Eight bundled modes have no `locals.scm`. Four of them never will -- JSON, YAML,
-      TOML and XML have no binding construct to resolve -- but fish, janet, and
-      clojure/jank do, and HTML/CSS have a narrow one (a CSS custom property, an `id`).
-      `rename-symbol` in those modes reports there is nothing scope-aware to offer and
-      hands off, which is correct but is not coverage (`scope-aware-rename`).
+- [ ] A Lisp binding vector's names are captured by unrolled per-pair-index patterns
+      (`clojure-locals.scm`, `janet-locals.scm`), because the whole-vector form a query
+      would naturally express captures a bare-symbol *value* as a definition and turns a
+      rename of the outer binding it names into a partial one. The unrolling stops at
+      eight pairs, and destructuring (`[{:keys [x y]} m]`) is not captured at all; both
+      degrade to "declines" rather than to a wrong rename. Lifting either needs something
+      the query language cannot say, so it would mean a capture kind `LocalScopes.h`
+      understands positionally -- not worth it until a real file hits the cap
+      (`lisp-shell-locals`).
+- [ ] Fish's `set -l -x count 0` (a scope flag not adjacent to its own target) and
+      `read -l line` are not captured as definitions -- the first because the pattern
+      anchors the name to the flag before it, the second because there is no `set`
+      command node to hang off. Both decline rather than mis-resolve
+      (`lisp-shell-locals`).
 - [ ] A use that textually precedes its own binding in a whole-scope-binding language
       (Python's function scope, JavaScript `var` hoisting) is detected and *declined*
       rather than resolved -- `LocalBinding::usedBeforeDefinition`, the one case where

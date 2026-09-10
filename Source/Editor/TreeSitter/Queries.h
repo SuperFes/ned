@@ -235,8 +235,16 @@ extern const char* const kKotlinIndents;
 // ship four patterns and two patterns respectively, neither enough to
 // resolve a binding. See c-locals.scm's header for the three rules every
 // file here follows, and Editor/LocalScopes.h for what consumes them.
-// kTypeScriptLocals is shared by TypeScriptMode and TsxMode, the same
-// sharing every other TypeScript query constant here already uses.
+// kTypeScriptLocals is shared by TypeScriptMode and TsxMode, and
+// kClojureLocals by ClojureMode and JankMode -- the same sharing every other
+// query constant for those pairs already uses.
+//
+// The languages with no locals query at all are a deliberate list, not a
+// backlog: json, yaml, toml and xml have no binding construct to resolve,
+// and html and css have one whose scoping is not lexical -- a CSS custom
+// property is scoped to matching elements AND THEIR DESCENDANTS, which is
+// DOM containment, so the byte containment this model resolves by would
+// produce a rename that silently missed every descendant use.
 extern const char* const kCLocals;
 extern const char* const kCppLocals;
 extern const char* const kPythonLocals;
@@ -249,6 +257,9 @@ extern const char* const kCSharpLocals;
 extern const char* const kKotlinLocals;
 extern const char* const kPhpLocals;
 extern const char* const kBashLocals;
+extern const char* const kFishLocals;
+extern const char* const kJanetLocals;
+extern const char* const kClojureLocals;
 
 } // namespace ned::editor::treesitter::queries
 

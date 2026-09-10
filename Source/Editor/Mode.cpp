@@ -1258,7 +1258,7 @@ Mode TreeSitterMode(std::string name, std::string_view languageName, const TreeS
 }
 
 Mode JanetMode() {
-    Mode mode              = TreeSitterMode("janet-mode", "janet", {.highlights = treesitter::queries::kJanet, .imports = treesitter::queries::kJanetImports, .indents = treesitter::queries::kJanetIndents});
+    Mode mode              = TreeSitterMode("janet-mode", "janet", {.highlights = treesitter::queries::kJanet, .imports = treesitter::queries::kJanetImports, .indents = treesitter::queries::kJanetIndents, .locals = treesitter::queries::kJanetLocals});
     mode.lineCommentPrefix = ";";             // Lisp-family convention
     mode.autoPairs         = LispAutoPairs(); // '(...) is the reader's quote macro, not a paired delimiter
     return mode;
@@ -1397,7 +1397,7 @@ Mode BashMode() {
 }
 
 Mode FishMode() {
-    Mode mode              = TreeSitterMode("fish-mode", "fish", {.highlights = treesitter::queries::kFish, .indents = treesitter::queries::kFishIndents});
+    Mode mode              = TreeSitterMode("fish-mode", "fish", {.highlights = treesitter::queries::kFish, .indents = treesitter::queries::kFishIndents, .locals = treesitter::queries::kFishLocals});
     mode.lineCommentPrefix = "#";
     return mode;
 }
@@ -1451,7 +1451,7 @@ Mode TomlMode() {
 }
 
 Mode ClojureMode() {
-    Mode mode              = TreeSitterMode("clojure-mode", "clojure", {.highlights = treesitter::queries::kClojure, .folds = treesitter::queries::kClojureFolds, .imports = treesitter::queries::kClojureImports, .indents = treesitter::queries::kClojureIndents});
+    Mode mode              = TreeSitterMode("clojure-mode", "clojure", {.highlights = treesitter::queries::kClojure, .folds = treesitter::queries::kClojureFolds, .imports = treesitter::queries::kClojureImports, .indents = treesitter::queries::kClojureIndents, .locals = treesitter::queries::kClojureLocals});
     mode.lineCommentPrefix = ";";             // Lisp-family convention, same as JanetMode
     mode.autoPairs         = LispAutoPairs(); // same reasoning as JanetMode
     return mode;
@@ -1459,7 +1459,7 @@ Mode ClojureMode() {
 
 Mode JankMode() {
     // Same grammar and query as ClojureMode, distinct name -- see Mode.h.
-    Mode mode              = TreeSitterMode("jank-mode", "clojure", {.highlights = treesitter::queries::kClojure, .folds = treesitter::queries::kClojureFolds, .imports = treesitter::queries::kClojureImports, .indents = treesitter::queries::kClojureIndents});
+    Mode mode              = TreeSitterMode("jank-mode", "clojure", {.highlights = treesitter::queries::kClojure, .folds = treesitter::queries::kClojureFolds, .imports = treesitter::queries::kClojureImports, .indents = treesitter::queries::kClojureIndents, .locals = treesitter::queries::kClojureLocals});
     mode.lineCommentPrefix = ";";
     mode.autoPairs         = LispAutoPairs(); // same reasoning as JanetMode
     return mode;

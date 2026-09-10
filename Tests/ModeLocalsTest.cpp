@@ -313,8 +313,135 @@ TEST_CASE("bash-mode binds a declared local but not a bare assignment", "[Mode][
     REQUIRE_FALSE(Resolve("bash-mode", source, "TOTAL", 1).has_value());
 }
 
+TEST_CASE("fish-mode binds a scoped set but not a bare one", "[Mode][LocalScopes]") {
+    const std::string source = "set -g total 0\n"
+                               "function tally --argument-names items\n"
+                               "    set -l count 0\n"
+                               "    for item in $items\n"
+                               "        set count (math $count + 1)\n"
+                               "    end\n"
+                               "    set total $count\n"
+                               "end\n";
+
+    // `set -l` declares; the later bare `set count` reassignment is a
+    // reference to it, which is the occurrence a rename must not leave
+    // behind. Four: the declaration, the reassignment target, and the two
+    // $count expansions.
+    const auto declared = Resolve("fish-mode", source, "count", 0);
+    REQUIRE(declared.has_value());
+    REQUIRE_FALSE(declared->scopeIsFile);
+    REQUIRE(declared->qualifier == "var");
+    REQUIRE(declared->occurrences.size() == 4);
+
+    // `set -g total 0` declares nothing function-local, so a reference to it
+    // resolves to no binding rather than to one scoped to this function.
+    REQUIRE_FALSE(Resolve("fish-mode", source, "total", 1).has_value());
+}
+
+TEST_CASE("fish-mode resolves an --argument-names parameter and a loop variable", "[Mode][LocalScopes]") {
+    // `entry`, not `item`: this file's Resolve() finds a name by substring,
+    // and "item" occurs inside "items" first.
+    const std::string source = "function tally --argument-names items prefix\n"
+                               "    for entry in $items\n"
+                               "        echo \"$prefix$entry\"\n"
+                               "    end\n"
+                               "end\n";
+
+    const auto param = Resolve("fish-mode", source, "items", 0);
+    REQUIRE(param.has_value());
+    REQUIRE(param->qualifier == "parameter");
+    REQUIRE(param->occurrences.size() == 2); // the argument name and its one expansion
+
+    // The for variable is function-scoped in fish, not loop-scoped
+    // (fish-locals.scm's own note), so the loop is not a scope of its own
+    // and both occurrences belong to one binding.
+    const auto loopVar = Resolve("fish-mode", source, "entry", 0);
+    REQUIRE(loopVar.has_value());
+    REQUIRE_FALSE(loopVar->scopeIsFile);
+    REQUIRE(OccurrenceTexts(*loopVar, source) == std::vector<std::string>{"entry", "entry"});
+}
+
+TEST_CASE("clojure-mode resolves a let binding without capturing a bare value symbol", "[Mode][LocalScopes]") {
+    const std::string source = "(defn greet [name greeting]\n"
+                               "  (let [msg (str greeting name)\n"
+                               "        alias name]\n"
+                               "    (println msg alias)))\n";
+
+    const auto binding = Resolve("clojure-mode", source, "alias", 0);
+    REQUIRE(binding.has_value());
+    REQUIRE_FALSE(binding->scopeIsFile);
+    REQUIRE(binding->occurrences.size() == 2);
+
+    // The regression this file's unrolled pair patterns exist for: `name` is
+    // the VALUE of the `alias` binding, not a name the let introduces, so it
+    // must still resolve to the parameter and carry all three occurrences.
+    const auto param = Resolve("clojure-mode", source, "name", 0);
+    REQUIRE(param.has_value());
+    REQUIRE(param->qualifier == "parameter");
+    REQUIRE(param->occurrences.size() == 3);
+}
+
+TEST_CASE("clojure-mode does not treat a namespaced symbol as a local reference", "[Mode][LocalScopes]") {
+    const std::string source = "(defn shout [msg]\n"
+                               "  (clojure.string/upper-case msg))\n";
+
+    const auto param = Resolve("clojure-mode", source, "msg", 0);
+    REQUIRE(param.has_value());
+    REQUIRE(param->occurrences.size() == 2); // the parameter and the one use
+
+    // `upper-case` is the name half of a qualified symbol; nothing binds it,
+    // so there is nothing to resolve rather than a same-named local.
+    REQUIRE_FALSE(Resolve("clojure-mode", source, "upper-case", 0).has_value());
+}
+
+TEST_CASE("jank-mode shares the clojure locals query", "[Mode][LocalScopes]") {
+    // `k`, not `n`: Resolve() searches by substring and "n" occurs in "defn".
+    const std::string source  = "(defn twice [k] (* k k))\n";
+    const auto        binding = Resolve("jank-mode", source, "k", 0);
+    REQUIRE(binding.has_value());
+    REQUIRE(binding->qualifier == "parameter");
+    REQUIRE(binding->occurrences.size() == 3);
+}
+
+TEST_CASE("janet-mode resolves def, parameters, and a let binding", "[Mode][LocalScopes]") {
+    const std::string source = "(defn greet [name greeting]\n"
+                               "  (def sep \" \")\n"
+                               "  (let [msg (string greeting sep name)\n"
+                               "        alias name]\n"
+                               "    (print msg alias)))\n";
+
+    const auto def = Resolve("janet-mode", source, "sep", 0);
+    REQUIRE(def.has_value());
+    REQUIRE_FALSE(def->scopeIsFile); // the enclosing defn owns it, not the file
+    REQUIRE(def->occurrences.size() == 2);
+
+    const auto binding = Resolve("janet-mode", source, "alias", 0);
+    REQUIRE(binding.has_value());
+    REQUIRE(binding->occurrences.size() == 2);
+
+    // Same regression as the Clojure case: the bare `name` value must stay
+    // the parameter's own occurrence.
+    const auto param = Resolve("janet-mode", source, "name", 0);
+    REQUIRE(param.has_value());
+    REQUIRE(param->qualifier == "parameter");
+    REQUIRE(param->occurrences.size() == 3);
+}
+
+TEST_CASE("janet-mode reports a module-level def as not local", "[Mode][LocalScopes]") {
+    const std::string source  = "(def limit 10)\n(defn under? [n] (< n limit))\n";
+    const auto        binding = Resolve("janet-mode", source, "limit", 0);
+    REQUIRE(binding.has_value());
+    REQUIRE(binding->scopeIsFile);
+}
+
 TEST_CASE("a mode with no locals query leaves the capability unset", "[Mode][LocalScopes]") {
-    const std::optional<Mode> json = ModeByName("json-mode");
-    REQUIRE(json.has_value());
-    REQUIRE_FALSE(static_cast<bool>(json->localScopes));
+    // A deliberate list rather than a backlog -- see Queries.h. json/yaml/
+    // toml/xml have no binding construct at all; html and css have one whose
+    // scoping is DOM containment rather than lexical, which this model
+    // cannot express without producing a rename that misses descendant uses.
+    for (const char* name : {"json-mode", "yaml-mode", "toml-mode", "xml-mode", "html-mode", "css-mode"}) {
+        const std::optional<Mode> mode = ModeByName(name);
+        REQUIRE(mode.has_value());
+        REQUIRE_FALSE(static_cast<bool>(mode->localScopes));
+    }
 }
