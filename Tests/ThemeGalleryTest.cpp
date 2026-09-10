@@ -128,9 +128,17 @@ TEST_CASE("Painting the gallery labels entries and paints a swatch beside each",
     ned::ui::ApplyPaintOverrides(theme);
 
     ThemeGallery gallery(theme);
-    const int    width  = 90;
-    const int    height = 20;
-    Screen       screen = PaintGallery(gallery, width, height);
+    const int    width = 90;
+    // Tall enough for "modeline" to be on screen unscrolled -- each entry is
+    // three rows, so adding a surface ahead of it in SurfaceNames pushes it
+    // down one entry. Sized from the list rather than pinned to a number, so
+    // the next addition does not fail here for the wrong reason.
+    const auto modelineIndex = [&] {
+        const std::vector<std::string> names = ned::ui::SurfaceNames();
+        return std::distance(names.begin(), std::find(names.begin(), names.end(), "modeline"));
+    }();
+    const int height = static_cast<int>(modelineIndex + 1) * 3 + 3;
+    Screen    screen = PaintGallery(gallery, width, height);
 
     REQUIRE(ScreenContains(screen, width, height, "modeline"));
     REQUIRE(ScreenContains(screen, width, height, "Theme gallery"));

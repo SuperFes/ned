@@ -674,6 +674,15 @@ void WindowManager::SetOnBufferListToggle(std::function<void()> onToggle) {
     }
 }
 
+bool WindowManager::AnyPaneHasLiveRecencyGlow() {
+    for (Pane* pane : Leaves()) {
+        if (pane->Buffer().HasLiveRecencyGlow()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void WindowManager::SetOnThemeGalleryToggle(std::function<void()> onToggle) {
     onThemeGalleryToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {

@@ -40,8 +40,8 @@
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/Keymap.h"
-#include "Editor/Lsp/BrokerSocketPath.h"
 #include "Editor/Lsp/BrokerMain.h"
+#include "Editor/Lsp/BrokerSocketPath.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Mcp/BridgeServer.h"
@@ -59,6 +59,7 @@
 #include "Editor/Project/Trust.h"
 #include "Editor/Project/Undo.h"
 #include "Editor/PromptHistory.h"
+#include "Editor/RecencyGlow.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/Register.h"
 #include "Editor/Repl/Config.h"
@@ -1316,6 +1317,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // re-runs render, which re-arms. Self-stopping: an idle frame doesn't
     // re-arm, so the chain ends one no-op repaint after the last activity.
     DeadlineTimer activityAnimationTimer;
+    DeadlineTimer recencyGlowTimer;
 
     // Terminal-panel follow-up: the floating-widget layer (see Overlay.h's
     // own header comment for the three hooks below and why keyboard needs
@@ -2639,6 +2641,15 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
         if (!ned::editor::ActiveBackgroundActivities().empty()) {
             activityAnimationTimer.Arm(eventLoop, ned::editor::kBackgroundActivitySpinnerInterval, [] {});
+        }
+
+        // Translucency phase 6: the recency glow's own animation, the
+        // spinner's exact shape above. Re-armed only while a glow is still
+        // fading and stopped the instant the last one expires, because this
+        // event loop has no free-running render tick and must not grow one:
+        // an idle editor costs zero wakeups, and a glow costs ten.
+        if (windowManager->AnyPaneHasLiveRecencyGlow()) {
+            recencyGlowTimer.Arm(eventLoop, ned::editor::kRecencyGlowInterval, [] {});
         }
 
         if (const Widget* focused = FocusedWidget()) {

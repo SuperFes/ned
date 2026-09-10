@@ -2855,6 +2855,44 @@ class BufferView : public Widget {
     [[nodiscard]] Brush BrushForCell(std::size_t offset, const LineRenderState& lineState, const Canvas& c, int col,
                                      int row) const;
 
+    // Translucency phase 6: the recency glow. A range that was just edited,
+    // and when -- BufferView's own state rather than Buffer's, because
+    // Text/ knows nothing above it and a timestamp is a UI concern.
+    //
+    // Derived by diffing Buffer::UnsavedChangeRanges() whenever
+    // ContentGeneration() moves: those ranges are merged, so continuous
+    // typing grows one rather than adding many, and the *newly covered*
+    // bytes are the edit. Bounded (kMaxRecencyGlows) and swept of expired
+    // entries every paint, so this cannot grow with the session.
+    struct RecencyGlow {
+        std::size_t                           start = 0;
+        std::size_t                           end   = 0;
+        std::chrono::steady_clock::time_point at;
+    };
+    static constexpr std::size_t kMaxRecencyGlows = 64;
+
+    std::vector<RecencyGlow>                         recencyGlows_;
+    std::vector<std::pair<std::size_t, std::size_t>> previousUnsavedRanges_;
+    std::uint64_t                                    recencyGlowGeneration_ = 0;
+    bool                                             recencyGlowSeeded_     = false;
+
+    // Called once per Paint: stamps whatever the last edit newly covered and
+    // drops anything that has finished fading.
+    void RefreshRecencyGlows();
+
+    // The glow's remaining strength at one byte offset, 0 when nothing is
+    // glowing there. Linear fade, deliberately -- it is the shape that is
+    // easiest to reason about while the timings are still being tuned.
+    [[nodiscard]] double RecencyGlowStrengthAt(std::size_t byteOffset) const;
+
+  public:
+    // Whether anything is still fading, so the composition root knows to
+    // re-arm the animation timer for another frame -- and, far more
+    // importantly, knows when to stop. See Editor/RecencyGlow.h on why an
+    // idle editor must cost zero wakeups.
+    [[nodiscard]] bool HasLiveRecencyGlow() const;
+
+  private:
     // The composited background for one of the buffer's own overlay
     // Surfaces at one cell, falling back to `fallback` when the surface
     // paints no colour there. Sampled across the whole viewport, so a

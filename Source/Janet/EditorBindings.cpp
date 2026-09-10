@@ -49,6 +49,7 @@
 #include "Editor/Project/Session.h"
 #include "Editor/Project/Switch.h"
 #include "Editor/Project/Trust.h"
+#include "Editor/RecencyGlow.h"
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/ScratchPad.h"
@@ -525,6 +526,10 @@ namespace {
 
     void NedSetInlineDiagnostics(bool enabled) {
         editor::SetInlineDiagnosticsEnabled(enabled);
+    }
+
+    void NedSetRecencyGlow(bool enabled) {
+        editor::SetRecencyGlowEnabled(enabled);
     }
 
     void NedRegisterLanguageGrammar(std::string name, std::string libraryPath, std::string queriesDir) {
@@ -1457,6 +1462,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-which-key-enabled",
         "Enable/disable the which-key popup listing possible next chords while a prefix key (C-x, C-c, ...) is "
         "pending (default true). The echo area's own \"C-x-\" pending-sequence text is unaffected either way.");
+    env.Register<&NedSetRecencyGlow>(
+        "ned", "set-recency-glow",
+        "Enable/disable the recency glow -- a brief accent wash over text that was just edited, fading out over "
+        "~600ms (default true). Retune its colour and peak with (ned/theme-surface \"buffer.recency\" \"fill\" ...); "
+        "the animation only runs while something is actually fading, so an idle editor does no work either way.");
     env.Register<&NedSetInlineDiagnostics>(
         "ned", "set-inline-diagnostics",
         "Enable/disable inline diagnostic annotation rows (carets + message under a line with an LSP diagnostic; "
