@@ -798,6 +798,7 @@ add_library(ned_lib STATIC
         Source/Editor/FileWatch.cpp
         Source/Editor/BackgroundActivity.cpp
         Source/Editor/InlineDiagnostics.cpp
+        Source/Editor/RecencyGlow.cpp
         Source/Editor/ScratchPad.cpp
         Source/Editor/Backup.cpp
         Source/Editor/BufferSave.cpp
@@ -1212,6 +1213,7 @@ if (NED_BUILD_TESTS)
             Tests/ThemeKeyDocsTest.cpp
             Tests/InitFileThemeWriteTest.cpp
             Tests/OverlayShadowTest.cpp
+            Tests/RecencyGlowTest.cpp
             Tests/BufferViewTintCompositingTest.cpp
             Tests/DesktopThemeProbeTest.cpp
             Tests/ActiveBufferTest.cpp
