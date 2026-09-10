@@ -3,7 +3,9 @@
 #include <algorithm>
 
 #include "Border.h"
+#include "Paint.h"
 #include "Text/Utf8.h"
+#include "ThemePaints.h"
 
 namespace ned::ui {
 
@@ -249,12 +251,27 @@ void LeftDock::Paint(Canvas c) {
     // so a stale cell from a previous, wider frame would otherwise bleed
     // through -- ProjectSidebar::Paint's own header comment, same
     // underlying Screen-reuse contract.
-    const Brush blankBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
+    //
+    // Through the "panel" Surface, the same one ProjectSidebar's own
+    // interior uses. It matters that the *dock* paints it and not only the
+    // hosted panel: the falloff is a function of distance from the buffer,
+    // so it has to run across the dock's full width -- rail, border columns
+    // and content alike -- or the rail would sit at one flat colour while
+    // the interior ramped away from it.
+    //
+    // Cleared to the theme's own background rather than ChromeBackdrop, for
+    // ProjectSidebar::Paint's own stated reason: a transparent theme means
+    // the dock shows the desktop through, and the assumed backdrop would
+    // make it opaque.
+    const Surface panel = SurfaceFor(theme_, "panel");
+    ClearCanvas(c, theme_.background);
+    Fill(c, panel.fill);
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
-            Cell& cell     = c[{.x = col, .y = row}];
-            cell.character = " ";
-            blankBrush.ApplyTo(cell);
+            const Point at{.x = col, .y = row};
+            Cell&       cell      = c[at];
+            cell.character        = " ";
+            cell.foreground_color = TextColourAt(panel, c, at, theme_.defaultForeground);
         }
     }
 

@@ -99,12 +99,13 @@
 #include "UI/PanelDock.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/TabBar.h"
-#include "UI/TerminalColorProbe.h"
 #include "UI/TerminalPanel.h"
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
+#include "UI/ThemeGallery.h"
 #include "UI/ThemePaints.h"
 #include "UI/ThemeRegistry.h"
+#include "UI/ThemeResolve.h"
 #include "UI/VcsDiffPreview.h"
 #include "UI/VcsPanel.h"
 #include "UI/WindowManager.h"
@@ -113,52 +114,12 @@ using namespace ned::ui;
 
 namespace {
 
-// `ned --detect-theme [--transparent] [output-path]`: probes the terminal's
-// actual configured colors (see UI/TerminalColorProbe.h for why this can't
-// just happen on every launch) and writes a Theme file, then exits without
-// starting the editor UI at all -- this must run and finish strictly before
-// any ned::ui::EventLoop is constructed, since EventLoop's constructor is
-// what calls notcurses_core_init, which is what starts reading stdin.
-//
-// startup-mode-unification follow-up: transparent/outputPath are already
-// parsed by main()'s own single CLI::App (see main() below) -- this used to
-// construct and re-parse argv through a second, private CLI::App (shifting
-// past the "--detect-theme" argument main() had already consumed to decide
-// to call this function at all), which is what kept this mode's own
-// --transparent/output-path options invisible to `ned --help`.
-int RunDetectTheme(bool transparent, const std::optional<std::string>& outputPath) {
-    const ned::ui::DetectedColors detected = ned::ui::ProbeTerminalColors();
-    ned::ui::Theme                theme    = ned::ui::BuildDetectedTheme(detected, ned::ui::DarkTheme());
-
-    if (transparent) {
-        theme.background          = ned::ui::Color::Default;
-        theme.echoArea.background = ned::ui::Color::Default;
-    }
-
-    try {
-        const std::filesystem::path path = outputPath ? std::filesystem::path(*outputPath) : ned::ui::ThemeFilePath();
-        ned::ui::SaveThemeFile(theme, path);
-
-        std::cout << "Wrote detected theme to " << path.string() << '\n';
-        if (!detected.background) {
-            std::cout << "Note: the terminal didn't respond to the background-color query in time; "
-                         "using defaults for anything not detected.\n";
-        }
-    }
-    catch (const std::exception& e) {
-        std::cerr << "ned: " << e.what() << '\n';
-        return 1;
-    }
-
-    return 0;
-}
-
 // `ned --lsp-broker-stop`: connects to the running LSP broker daemon (see
 // Editor/Lsp/BrokerMain.h) and sends it the ned/broker-shutdown control
 // message -- every real language-server subprocess gets a genuine LSP
 // shutdown/exit before the daemon exits (Editor/Lsp/Broker.h's own
 // Shutdown()), not a bare kill. Same early-return placement as
-// RunDetectTheme/the --lsp-broker dispatch below -- no EventLoop/Notcurses
+// the --lsp-broker dispatch below -- no EventLoop/Notcurses
 // needed for a one-shot control message. Deliberately idempotent: no
 // broker currently running is reported and treated as success (0), not an
 // error, so this is safe to call from a shell script or a systemd unit's
@@ -209,7 +170,7 @@ int RunLspBrokerStop() {
 // on it), then relay stdin -> socket and socket -> stdout until either side
 // hits EOF -- no JSON parsing at this layer at all, mirroring PtyProcess's
 // own raw ::read-loop precedent for "just move bytes." Same early-return
-// placement as RunLspBrokerStop/RunDetectTheme -- no EventLoop/Notcurses
+// placement as RunLspBrokerStop -- no EventLoop/Notcurses
 // needed.
 int RunMcpStdioRelay(const std::string& socketPathStr) {
     const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -297,7 +258,7 @@ int MinimapOverlayReserve() {
 }
 
 // Composition-root helper -- runs the interactive editor (everything past the
-// early --detect-theme/--lsp-broker/--lsp-broker-stop dispatch above) and
+// early --lsp-broker/--lsp-broker-stop dispatch above) and
 // returns once the user quits. Split out of main() so a switch-project-
 // triggered re-exec (see Editor/ProjectSwitch.h) can execv() *after* every
 // local here -- windowManager/bufferList/eventLoop included -- has already
@@ -567,10 +528,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     }
 
     // variables-store follow-up: editor-remembered key/value facts
-    // ($XDG_STATE_HOME/ned/variables.json) -- the "theme" variable
-    // participates in theme selection below, so this must load before it.
+    // ($XDG_STATE_HOME/ned/variables.json) -- UI state the editor picked up
+    // on its own (sidebar width and visibility, which left panel was
+    // showing, whether the minimap is on). Deliberately *not* the theme:
+    // that is an explicit setting and lives in init.janet, so nothing here
+    // can quietly overrule a ned/set-theme call.
     ned::editor::LoadVariables();
-    // Same precedence as the "theme" variable above: the last live C-c m
+    // The last live C-c m
     // toggle is a newer expression of intent than a static
     // ned/set-minimap-enabled default, so it wins if present.
     if (const auto remembered = ned::editor::Variable("minimap-enabled")) {
@@ -674,151 +638,21 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // viewed, not the pane; a pane's Mode is only ever "whatever its current
     // buffer resolves to."
     //
-    // Theme precedence (rich-theme-set follow-up, Phase 1; variables-store
-    // follow-up; theme-polish follow-up, Phase 4): the remembered "theme"
-    // variable (whatever the select-theme picker last committed) wins the
-    // *base* selection -- the newer expression of intent than init.janet's
-    // static (ned/set-theme ...) -- then that explicit set-theme name, then
-    // a previously `ned --detect-theme`-generated file if one exists (never
-    // probes the terminal on a normal launch -- see
-    // UI/TerminalColorProbe.h), then a live desktop-environment probe (see
-    // UI/DesktopThemeProbe.h -- GNOME/KDE light-vs-dark preference plus
-    // accent color, via the freedesktop portal or a DE-specific fallback;
-    // unlike the terminal probe this is cheap and side-effect-free, so it
-    // runs unconditionally rather than needing an explicit --detect-theme
-    // invocation), else the fixed DarkTheme() default. An unresolvable name
-    // at any step falls through to the next source rather than aborting,
-    // reported via the status line the same way a failed startup file open
-    // already is. And regardless of which base wins, the (ned/theme-set
-    // ...) overrides below apply last -- the user's explicit call: "the
-    // theme overrides should win out in the end," so a dofile'd theme.janet
-    // always determines the final look.
-    // Not const: the ansi-fallback-theme check below (which can't run until
-    // EventLoop exists) may swap the whole value in place, and the
-    // select-theme picker's applier (wired below) reassigns it live.
+    // The whole theme pipeline -- base precedence, the detected accent, the
+    // assumed background, then the accumulated (ned/theme-set ...) and
+    // (ned/theme-gradient ...)/(ned/theme-surface ...) overrides -- lives in
+    // UI/ThemeResolve.h, because the select-theme picker's applier runs its
+    // paint half again on every theme swap.
+    //
+    // Not const: the select-theme picker's applier (wired below) reassigns
+    // it live.
     ned::ui::Theme theme = [&statusMessage] {
-        if (const auto remembered = ned::editor::Variable("theme")) {
-            if (auto named = ned::ui::ThemeByName(*remembered)) {
-                return *std::move(named);
-            }
-            statusMessage = "Unknown remembered theme \"" + *remembered + "\" (variables.json)";
+        ned::ui::ResolvedTheme resolved = ned::ui::ResolveConfiguredTheme();
+        if (!resolved.message.empty()) {
+            statusMessage = statusMessage.empty() ? resolved.message : statusMessage + "; " + resolved.message;
         }
-        const std::string preferred = ned::editor::PreferredThemeName();
-        if (!preferred.empty()) {
-            if (auto named = ned::ui::ThemeByName(preferred)) {
-                return *std::move(named);
-            }
-            statusMessage = "Unknown theme \"" + preferred + "\" (ned/set-theme)";
-        }
-        try {
-            if (const auto loaded = ned::ui::LoadThemeFile(ned::ui::ThemeFilePath())) {
-                return *loaded;
-            }
-        }
-        catch (const std::exception&) {
-            // Missing XDG_CONFIG_HOME/HOME or an unreadable file -- fall back below.
-        }
-        if (const auto desktop = ned::ui::ProbeDesktopTheme()) {
-            return ned::ui::BuildDesktopTheme(*desktop);
-        }
-        return ned::ui::DarkTheme();
+        return std::move(resolved.theme);
     }();
-
-    // Translucency follow-up: remember the machine's own accent for the
-    // $desktop-accent paint slot, whichever theme won above -- a named theme
-    // or a saved theme file should not stop a paint asking for "the colour
-    // my desktop uses". A failed probe simply leaves the slot falling back
-    // to the active theme's own accent.
-    if (const auto desktopAccent = ned::ui::ProbeDesktopTheme()) {
-        ned::ui::SetDetectedAccent(desktopAccent->accent);
-    }
-
-    // What a translucent overlay composites against when the theme's own
-    // background is the terminal's (Docs/Translucency.md's assumedBackground
-    // rule). The theme deliberately keeps Color::Default there so the
-    // desktop shows through the buffer; a selection still needs *something*
-    // to tint, or it lands as the solid slab it exists to avoid.
-    if (theme.background.Composable()) {
-        ned::ui::SetAssumedBackground(theme.background);
-    }
-    else {
-        // Nothing to read here: the terminal's real background can only be
-        // probed before the event loop starts reading stdin (see
-        // TerminalColorProbe.h), and by now it has. Polarity from the
-        // theme's own foreground is enough -- light text means a dark
-        // backdrop -- and it only decides what a *translucent overlay*
-        // composites against, never what gets painted where nothing is.
-        const int  luma      = (299 * theme.defaultForeground.red + 587 * theme.defaultForeground.green +
-                                114 * theme.defaultForeground.blue) /
-                               1000;
-        const bool lightText = !theme.defaultForeground.Composable() || luma >= 128;
-        ned::ui::SetAssumedBackground(lightText ? ned::ui::Color::RGB(0x14141c) : ned::ui::Color::RGB(0xf0f0ec));
-    }
-
-    // theme-editing follow-up: init.janet's accumulated (ned/theme-set ...)
-    // overrides, applied on top of whichever base won above -- typically a
-    // whole (dofile ".../theme.janet") worth from save-theme's output, which
-    // sets every field and makes the base moot; a handful of targeted
-    // tweaks over a named theme works the same way. Insertion order, so a
-    // later call for the same key wins. Unknown keys/tokens are counted and
-    // reported once rather than silently dropped -- unlike a theme *file*'s
-    // forward-compatibility case, these were typed by the user against this
-    // exact build, so a typo'd key is worth a message.
-    {
-        int rejected = 0;
-        for (const auto& [key, token] : ned::editor::ThemeColorOverrides()) {
-            if (!ned::ui::SetThemeColorByKey(theme, key, token)) {
-                ++rejected;
-            }
-        }
-        if (rejected > 0) {
-            statusMessage = std::to_string(rejected) + " unrecognized ned/theme-set key(s)/color(s) ignored";
-        }
-    }
-
-    // Translucency follow-up (Docs/Translucency.md phase 4): the same
-    // deferred-until-a-real-Theme-exists treatment for paints. Named paints
-    // go first, in insertion order, because a surface's spec may reference
-    // one by name -- and because a later registration of the same name
-    // wins, matching Janet's own sequential evaluation.
-    {
-        int rejected = 0;
-        for (const auto& [name, spec] : ned::editor::NamedPaintOverrides()) {
-            if (const auto paint = ned::ui::ParsePaint(spec, ned::ui::PaintContextFor(theme))) {
-                ned::ui::RegisterNamedPaint(name, *paint);
-            }
-            else {
-                ++rejected;
-            }
-        }
-        for (const auto& override : ned::editor::SurfacePaintOverrides()) {
-            const auto paint = ned::ui::ParsePaint(override.spec, ned::ui::PaintContextFor(theme));
-            if (!paint) {
-                ++rejected;
-                continue;
-            }
-            ned::ui::Surface surface = ned::ui::SurfaceFor(theme, override.surface);
-            if (override.part == "fill") {
-                surface.fill = *paint;
-            }
-            else if (override.part == "border") {
-                surface.border = *paint;
-            }
-            else if (override.part == "text") {
-                surface.text = *paint;
-            }
-            else {
-                ++rejected;
-                continue;
-            }
-            ned::ui::SetSurfaceOverride(override.surface, surface);
-        }
-        if (rejected > 0) {
-            const std::string note = std::to_string(rejected) + " unparseable ned/theme-gradient or "
-                                                                "ned/theme-surface spec(s) ignored";
-            statusMessage          = statusMessage.empty() ? note : statusMessage + "; " + note;
-        }
-    }
 
     // Heap-allocated via shared_ptr -- ned::ui::Widget itself has no
     // ownership contract requiring this (see Widget.h's own header comment)
@@ -1107,7 +941,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // at startup.
     if (!deferredTrustPrompts.empty()) {
         auto promptNext = std::make_shared<std::function<void()>>();
-        *promptNext     = [wm = windowManager.get(), &janetEnv, &statusMessage, deferredTrustPrompts,
+        *promptNext     = [wm = windowManager.get(), &janetEnv, &statusMessage, &theme, deferredTrustPrompts,
                            promptNext]() mutable -> void {
             if (deferredTrustPrompts.empty()) {
                 return;
@@ -1115,7 +949,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             const std::filesystem::path path = deferredTrustPrompts.front();
             deferredTrustPrompts.pop_front();
             wm->RequestTrustProjectInit(
-                path, [&janetEnv, &statusMessage, promptNext](const std::filesystem::path& initPath, ned::editor::ProjectInitDecision decision) -> void {
+                path, [&janetEnv, &statusMessage, &theme, promptNext](const std::filesystem::path& initPath, ned::editor::ProjectInitDecision decision) -> void {
                     if (decision == ned::editor::ProjectInitDecision::Decline) {
                         statusMessage = initPath.string() + " not loaded.";
                     }
@@ -1129,6 +963,28 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                             janetEnv.DoFile(initPath);
                             ned::editor::TouchProjectTrust(initPath);
                             statusMessage = "Loaded " + initPath.string();
+
+                            // A project init that was already trusted loads
+                            // well before the theme is resolved, so its
+                            // ned/set-theme / ned/theme-set / ned/theme-gradient
+                            // calls are simply part of the startup pipeline. One
+                            // reaching this branch instead -- the *first* time a
+                            // project is opened, or any time its content hash
+                            // changes -- lands after that pipeline has already
+                            // run, so its calls sit in Editor/ThemeSetting.h's
+                            // override store with nothing to apply them.
+                            // Confirmed live before this line existed: a
+                            // .ned/init.janet setting a background did nothing on
+                            // the open that prompted for it, then worked on the
+                            // next launch, which reads as the trust prompt
+                            // silently ignoring half the file.
+                            //
+                            // Re-running the whole pipeline is the fix rather than
+                            // applying just the new calls: it rebuilds from the
+                            // same accumulated stores in the same order startup
+                            // uses, so the result cannot drift from what the next
+                            // launch will produce.
+                            theme = ned::ui::ResolveConfiguredTheme().theme;
                         }
                         catch (const std::exception& e) {
                             statusMessage = initPath.string() + " error: " + e.what();
@@ -1142,8 +998,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
     // EventLoop's constructor (notcurses_core_init) is what enters the
     // alternate screen buffer, places the cursor, and starts reading stdin
-    // (see the --detect-theme branch's own comment above for why
-    // RunDetectTheme must finish strictly before this point).
+    // (nothing may read stdin before this point -- EventLoop's constructor
+    // is what calls notcurses_core_init, which is what starts doing so).
     EventLoop eventLoop;
 
     // background-mode-prewarm follow-up: builds every already-open buffer's
@@ -1178,9 +1034,24 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // Nothing degrades a theme any more: themes are truecolor and own their
     // own contrast, and a terminal that cannot render one is Notcurses'
     // problem to quantize (see Docs/Translucency.md's phase 3).
+    //
+    // Phase 4b: swapping the base theme invalidates every named paint and
+    // surface override that referenced a slot of the old one ($bg, $accent,
+    // ...) -- those were resolved to concrete colours at startup against
+    // whatever theme was showing then. Re-running the paint half of the
+    // pipeline against `next` is what keeps a gradient following the theme
+    // it is being viewed under instead of the one it was parsed under.
     windowManager->SetThemeApplier([&theme](const ned::ui::Theme& next) -> void {
         theme = next;
+        ned::ui::ApplyPaintOverrides(theme);
     });
+
+    // The select-theme picker's "None (detect)" row: what a launch with
+    // nothing pinned in variables.json would resolve to. Runs the ordinary
+    // pipeline with only the remembered-name step skipped, so the row shows
+    // (and commits) exactly what the next launch will do.
+    windowManager->SetThemeDetector(
+        []() -> ned::ui::Theme { return ned::ui::ResolveConfiguredTheme(/*ignoreRememberedName=*/true).theme; });
 
     // LSP client follow-up: constructed here, not alongside bufferList/
     // killRing/registers above, since it needs a real EventLoop& to marshal
@@ -1974,6 +1845,32 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         }
         else {
             overlays.Hide(panel->Popup());
+        }
+    });
+
+    // Translucency phase 4b: M-x theme-gallery -- every themed surface and
+    // named paint as a live swatch, bufferListPanel's own centered,
+    // most-of-screen overlay shape. Wide on purpose: an X-axis gradient
+    // needs room to actually ramp, and the whole point is judging one by
+    // eye.
+    ned::ui::ThemeGallery themeGallery(theme);
+    overlays.Add(themeGallery, [](Size size) {
+        const int width  = std::clamp(size.width - 4, 30, 110);
+        const int height = std::clamp(size.height - 4, 8, 40);
+        const int xMin   = std::max(0, (size.width - width) / 2);
+        const int yMin   = std::max(0, (size.height - height) / 2);
+        return Box{.x_min = xMin, .x_max = xMin + width - 1, .y_min = yMin, .y_max = yMin + height - 1};
+    });
+    overlays.SetFocusReturn(themeGallery, [wm = windowManager.get()] { wm->TakeFocus(); });
+    themeGallery.SetOnCancel([&overlays, panel = &themeGallery] { overlays.Hide(*panel); });
+    windowManager->SetOnThemeGalleryToggle([&overlays, panel = &themeGallery] {
+        if (!overlays.IsVisible(*panel)) {
+            panel->ScrollToTop();
+            overlays.Show(*panel);
+            panel->TakeFocus();
+        }
+        else {
+            overlays.Hide(*panel);
         }
     });
 
@@ -2841,13 +2738,10 @@ auto main(int argc, char** argv) -> int {
     // not a new failure mode to plumb through.
     std::signal(SIGPIPE, SIG_IGN);
 
-    // startup-mode-unification follow-up: one CLI::App now owns every
-    // top-level flag ned recognizes, --detect-theme/--lsp-broker/
-    // --lsp-broker-stop included -- previously each was a hand-rolled
-    // `argv[1] == "..."` check run *before* any real parsing, so `ned
-    // --help` never documented them (and --detect-theme's own
-    // --transparent/output-path options, parsed by a second private
-    // CLI::App re-fed a shifted argv, weren't even reachable from here).
+    // startup-mode-unification follow-up: one CLI::App owns every top-level
+    // flag ned recognizes, --lsp-broker/--lsp-broker-stop included --
+    // previously each was a hand-rolled `argv[1] == "..."` check run
+    // *before* any real parsing, so `ned --help` never documented them.
     // They stay plain flags on this one App rather than becoming CLI11
     // subcommands specifically to keep the exact existing invocations
     // (`ned --lsp-broker`, notably self-exec'd by
@@ -2859,8 +2753,6 @@ auto main(int argc, char** argv) -> int {
     // whichever this code happened to check first win.
     CLI::App app{"Ned -- a terminal-based, Janet-scriptable text editor.", "ned"};
 
-    bool                     detectTheme   = false;
-    bool                     transparent   = false;
     bool                     lspBroker     = false;
     bool                     lspBrokerStop = false;
     bool                     forceBinary   = false;
@@ -2868,33 +2760,21 @@ auto main(int argc, char** argv) -> int {
     std::string              mcpStdioRelaySocketPath;
     std::vector<std::string> paths;
 
-    CLI::Option* detectThemeOpt = app.add_flag(
-                                         "--detect-theme", detectTheme,
-                                         "Probe the terminal's actual configured colors, write a Theme file, and exit")
-                                      ->group("Startup modes");
-    app.add_flag("--transparent", transparent,
-                 "With --detect-theme: treat the detected background as transparent instead of an opaque color")
-        ->needs(detectThemeOpt)
-        ->group("Startup modes");
     CLI::Option* lspBrokerOpt =
         app.add_flag("--lsp-broker", lspBroker, "Run the headless LSP broker daemon and exit")
-            ->excludes(detectThemeOpt)
             ->group("Startup modes");
     app.add_flag("--lsp-broker-stop", lspBrokerStop, "Stop a running LSP broker daemon and exit")
-        ->excludes(detectThemeOpt)
         ->excludes(lspBrokerOpt)
         ->group("Startup modes");
     app.add_option("--mcp-stdio-relay", mcpStdioRelaySocketPath,
                    "Relay stdio to a running ned process's ACP MCP bridge socket, then exit (spawned by an ACP agent, not meant to be run by hand)")
-        ->excludes(detectThemeOpt)
         ->excludes(lspBrokerOpt)
         ->group("Startup modes");
     app.add_flag("--force-binary", forceBinary,
                  "Open files that look binary anyway, without an interactive confirmation");
     app.add_flag("--no-restore", noRestore,
                  "Don't restore the project's saved session (open buffers, breakpoints, sidebar state)");
-    app.add_option("paths", paths,
-                   "Files or directories to open (or, with --detect-theme, an optional single output path)");
+    app.add_option("paths", paths, "Files or directories to open");
 
     try {
         app.parse(argc, argv);
@@ -2903,14 +2783,9 @@ auto main(int argc, char** argv) -> int {
         return app.exit(e);
     }
 
-    if (detectTheme) {
-        return RunDetectTheme(transparent, paths.empty() ? std::nullopt : std::optional(paths.front()));
-    }
-
     // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
     // Editor/Lsp/BrokerMain.h) instead of the interactive editor --
-    // dispatched here, strictly before EventLoop/Notcurses construct, same
-    // reasoning as --detect-theme above. This is what a `ned` process
+    // dispatched here, strictly before EventLoop/Notcurses construct. This is what a `ned` process
     // auto-forks-and-execve's into when no daemon is already reachable, and
     // is equally the right ExecStart line for a `systemd --user` unit that
     // starts it explicitly at login instead.

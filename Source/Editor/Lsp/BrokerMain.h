@@ -1,10 +1,9 @@
 //
 // lsp-broker follow-up. The imperative I/O shell around Broker.h's pure
 // BrokerRouter -- real sockets, real subprocesses, real threads. This is
-// `ned --lsp-broker`'s entire body (see main.cpp's own dispatch, mirroring
-// RunDetectTheme's early-return shape: parsed and run before
-// ned::ui::EventLoop/Notcurses ever construct, since this process is
-// headless).
+// `ned --lsp-broker`'s entire body (see main.cpp's own dispatch: parsed and
+// run before ned::ui::EventLoop/Notcurses ever construct, since this process
+// is headless).
 //
 
 #ifndef NED_EDITOR_LSP_BROKERMAIN_H

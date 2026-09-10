@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
+
 #include <string>
 #include <vector>
 
@@ -9,6 +11,7 @@
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
 #include "UI/ThemePaints.h"
+#include "UI/ThemeRegistry.h"
 
 using ned::ui::Color;
 using ned::ui::DarkTheme;
@@ -271,6 +274,82 @@ TEST_CASE("Surfaces default to what the widget paints today", "[PaintParse]") {
     }
 }
 
+TEST_CASE("Every surface a widget actually paints is one a theme can discover", "[PaintParse]") {
+    // SurfaceNames() is what M-x theme-gallery enumerates and what
+    // Docs/Themes.md lists, and it is a hand-maintained list parallel to
+    // DerivedSurface's hand-maintained if-chain. Nothing else makes the two
+    // agree: "tab.strip" was derived, and painted by TabBar, while being
+    // absent from SurfaceNames() -- so it worked if you already knew the
+    // name and was undiscoverable otherwise.
+    //
+    // Listed literally rather than scraped, because an if-chain cannot be
+    // enumerated; the point is that adding a SurfaceFor(...) call with a new
+    // name has to fail here until the name is published.
+    const std::vector<std::string> paintedByWidgets = {
+        "buffer.current_line", // BufferView/Paint.cpp
+        "modeline",            // ModeLine.cpp
+        "modeline.focused",    // ModeLine.cpp
+        "tab.strip",           // TabBar.cpp
+        "tab",                 // TabBar.cpp
+        "tab.active",          // TabBar.cpp
+        "tab.active.focused",  // TabBar.cpp
+        "panel",               // LeftDock.cpp, ProjectSidebar.cpp, VcsPanel.cpp
+    };
+
+    const std::vector<std::string> published = ned::ui::SurfaceNames();
+    for (const std::string& name : paintedByWidgets) {
+        INFO(name);
+        REQUIRE(std::find(published.begin(), published.end(), name) != published.end());
+    }
+}
+
+TEST_CASE("The left dock's panel surface falls off toward the buffer", "[PaintParse]") {
+    const PaintRegistryGuard guard;
+
+    SECTION("an opaque theme gets a horizontal walk that lands exactly on the buffer background") {
+        const Theme   theme = ned::ui::ThemeByName("gruvbox-light").value();
+        const Surface panel = ned::ui::SurfaceFor(theme, "panel");
+
+        REQUIRE(panel.fill.kind == PaintKind::Gradient);
+        REQUIRE(panel.fill.axis == ned::ui::PaintAxis::X);
+        REQUIRE(panel.fill.stops.size() == 2);
+
+        // The inner end has to be the buffer's own background, or the seam
+        // between dock and buffer gets a step in it -- which is the thing
+        // this exists to remove, not to add somewhere else.
+        REQUIRE(panel.fill.stops.back().colour == theme.background);
+        REQUIRE_FALSE(panel.fill.stops.front().colour == theme.background);
+    }
+
+    SECTION("the direction follows the background's own luminance") {
+        // Always-toward-white reads as elevation on a dark theme and as
+        // nothing on a light one, whose background has no headroom left.
+        const Theme light = ned::ui::ThemeByName("gruvbox-light").value();
+        const Theme dark  = ned::ui::ThemeByName("gruvbox-dark").value();
+
+        const Color lightOuter = ned::ui::SurfaceFor(light, "panel").fill.stops.front().colour;
+        const Color darkOuter  = ned::ui::SurfaceFor(dark, "panel").fill.stops.front().colour;
+
+        REQUIRE(ned::ui::RelativeLuminance(lightOuter) < ned::ui::RelativeLuminance(light.background));
+        REQUIRE(ned::ui::RelativeLuminance(darkOuter) > ned::ui::RelativeLuminance(dark.background));
+
+        // Present as a direction, not as a band: a step big enough to read
+        // but nowhere near a visible edge of its own.
+        REQUIRE(std::abs(static_cast<int>(lightOuter.red) - static_cast<int>(light.background.red)) < 24);
+        REQUIRE(std::abs(static_cast<int>(darkOuter.red) - static_cast<int>(dark.background.red)) < 24);
+    }
+
+    SECTION("a transparent theme keeps showing the desktop through, untouched") {
+        // DarkTheme's background is Color::Default on purpose. There is no
+        // RGB to walk, and imposing a dithered edge by *default* on a theme
+        // that exists to be seen through is not this feature's call to make
+        // -- a theme wanting one sets panel.fill itself.
+        const Theme theme = DarkTheme();
+        REQUIRE_FALSE(theme.background.Composable());
+        REQUIRE_FALSE(ned::ui::PaintsColour(ned::ui::SurfaceFor(theme, "panel").fill));
+    }
+}
+
 TEST_CASE("A surface override wins over the derived default", "[PaintParse]") {
     const PaintRegistryGuard guard;
     const Theme              theme = DarkTheme();
@@ -294,38 +373,6 @@ TEST_CASE("Every named surface resolves, and every slot names a real colour", "[
     for (const std::string& slot : ned::ui::ThemeSlots()) {
         INFO(slot);
         REQUIRE(ParseColorStop("$" + slot, context).has_value());
-    }
-}
-
-TEST_CASE("save-theme round-trips named paints and surface overrides", "[PaintParse]") {
-    const PaintRegistryGuard guard;
-    const Theme              theme = DarkTheme();
-
-    ned::ui::RegisterNamedPaint("brand", *Parse("diag #40c080 2 #2050c0"));
-
-    Surface popup;
-    popup.fill   = *Parse("y #1e1e2ec0 3 #1e1e2e80");
-    popup.border = *Parse("$brand");
-    ned::ui::SetSurfaceOverride("popup", popup);
-
-    const std::string janet = ned::ui::SerializeThemeJanet(theme);
-
-    REQUIRE(janet.find(R"((ned/theme-gradient "brand" "diag #40c080 2 #2050c0"))") != std::string::npos);
-    REQUIRE(janet.find(R"((ned/theme-surface "popup" "fill" "y #1e1e2ec0 3 #1e1e2e80"))") != std::string::npos);
-
-    SECTION("a part the theme never set is not written") {
-        REQUIRE(janet.find(R"((ned/theme-surface "popup" "text")") == std::string::npos);
-    }
-
-    SECTION("a stacked paint says so instead of emitting a call that would lie") {
-        ned::ui::ClearSurfaceOverrides();
-        Surface stacked;
-        stacked.fill = ned::ui::StackPaint({*Parse("#101010"), *Parse("#20202080")});
-        ned::ui::SetSurfaceOverride("panel", stacked);
-
-        const std::string withStack = ned::ui::SerializeThemeJanet(theme);
-        REQUIRE(withStack.find("# panel.fill: a stacked paint") != std::string::npos);
-        REQUIRE(withStack.find(R"((ned/theme-surface "panel" "fill")") == std::string::npos);
     }
 }
 

@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cctype>
+
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -163,4 +166,45 @@ TEST_CASE("Dark and light variants of each pair sit on opposite background polar
         REQUIRE(Luma(Resolve(family + "-dark").background) < 128);
         REQUIRE(Luma(Resolve(family + "-light").background) >= 128);
     }
+}
+
+TEST_CASE("Theme names resolve regardless of case, spaces or underscores", "[BundledThemes]") {
+    // What lets the picker show and persist "Gruvbox Dark" while every
+    // (ned/set-theme "gruvbox-dark") already written in an init.janet keeps
+    // resolving to the same theme.
+    for (const std::string& canonical : ThemeNames()) {
+        INFO(canonical);
+        const auto exact = ThemeByName(canonical);
+        REQUIRE(exact.has_value());
+
+        const auto display = ThemeByName(ned::ui::ThemeDisplayName(canonical));
+        REQUIRE(display.has_value());
+        REQUIRE(display->name == exact->name);
+
+        std::string shouty = canonical;
+        for (char& ch : shouty) {
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            if (ch == '-') {
+                ch = '_';
+            }
+        }
+        const auto loud = ThemeByName(shouty);
+        REQUIRE(loud.has_value());
+        REQUIRE(loud->name == exact->name);
+    }
+
+    REQUIRE_FALSE(ThemeByName("no such theme").has_value());
+}
+
+TEST_CASE("A display name is the canonical name title-cased", "[BundledThemes]") {
+    REQUIRE(ned::ui::ThemeDisplayName("gruvbox-dark") == "Gruvbox Dark");
+    REQUIRE(ned::ui::ThemeDisplayName("tokyo-night-storm") == "Tokyo Night Storm");
+    REQUIRE(ned::ui::ThemeDisplayName("nord") == "Nord");
+
+    // One display name per registered theme, and no two the same -- the picker
+    // resolves a row back to a theme by this string, so a collision would make
+    // one of them unreachable.
+    std::vector<std::string> display = ned::ui::ThemeDisplayNames();
+    REQUIRE(display.size() == ThemeNames().size());
+    REQUIRE(std::adjacent_find(display.begin(), display.end()) == display.end()); // sorted, so equal neighbours collide
 }

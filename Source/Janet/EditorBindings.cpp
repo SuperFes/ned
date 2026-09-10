@@ -1201,13 +1201,13 @@ void InstallEditorBindings(Environment& env) {
         "synthetic timeout failure (default 30000; non-positive values are clamped to 1).");
     env.Register<&NedSetTheme>(
         "ned", "set-theme",
-        "Select the startup theme by name (e.g. \"dark\", \"light\", \"gruvbox-dark\"). Overrides a saved --detect-theme "
-        "file; an unknown name is reported at startup and falls back. Empty string clears the preference.");
+        "Select the startup theme by name (e.g. \"dark\", \"light\", \"gruvbox-dark\"). Beats the desktop probe; "
+        "an unknown name is reported at startup and falls back. Empty string clears the preference.");
     env.Register<&NedThemeSet>(
         "ned", "theme-set",
         "Override one theme color or Brush trait by key (e.g. (ned/theme-set \"keyword_foreground\" \"#f042d6\") or "
         "(ned/theme-set \"active_tab_bold\" \"false\")) on top of the startup theme -- keys match the theme file's "
-        "own, trait values are \"true\"/\"false\"; the save-theme command writes a full theme.janet of these calls "
+        "own, trait values are \"true\"/\"false\"; Docs/Themes.md lists every key "
         "for hand-editing, loaded via (dofile ...) from init.janet.");
     env.Register<&NedThemeGradient>(
         "ned", "theme-gradient",

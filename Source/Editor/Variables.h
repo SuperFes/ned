@@ -1,19 +1,24 @@
 //
 // Editor-remembered variables -- small key/value facts the *editor* decides
-// to persist across runs (the first: which theme the select-theme picker
-// last committed), in $XDG_STATE_HOME/ned/variables.json.
+// to persist across runs, in $XDG_STATE_HOME/ned/variables.json. Currently:
+// sidebar width and visibility, which left-dock panel was showing, whether
+// the minimap is on.
 //
-// State, not config, on purpose: $XDG_CONFIG_HOME (init.janet, theme.janet)
-// is what the user writes, $XDG_STATE_HOME is what the editor writes --
-// the same line file-places.json/trusted.json already draw, and the reason
-// this isn't a machine-written variables.janet: auto-evaluating generated
-// code invites the Emacs custom-set-variables file-fighting problem, while
-// JSON state stays inert and mergeable. Precedence-wise a remembered
-// variable is a *base* selection input (it beats init.janet's own
-// ned/set-theme -- the picker choice is the newer expression of intent) but
-// the user's (ned/theme-set ...) color overrides still apply last, on top
-// of whatever base wins -- the user's explicit call: "the theme overrides
-// should win out in the end."
+// State, not config, on purpose: $XDG_CONFIG_HOME (init.janet) is what the
+// user writes, $XDG_STATE_HOME is what the editor writes -- the same line
+// file-places.json/trusted.json already draw, and the reason this isn't a
+// machine-written variables.janet: auto-evaluating generated code invites
+// the Emacs custom-set-variables file-fighting problem, while JSON state
+// stays inert and mergeable.
+//
+// What belongs here is a fact the editor *observed* -- you dragged the
+// sidebar wider, you switched panels. What does not is a setting the user
+// would state outright. The theme used to live here, written by the
+// select-theme picker, and it outranked init.janet's own ned/set-theme:
+// an implicit pin quietly overruling an explicit setting, with nothing on
+// screen to explain why the config file looked ignored. It is config now
+// (Docs/Themes.md), and the picker offers to write the line rather than
+// remembering it here.
 //
 // VariableStore is the pure, unit-testable core (JSON round-trip); the
 // process-wide accessors wrap one mutex-guarded static instance --
