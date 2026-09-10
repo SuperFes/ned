@@ -64,7 +64,7 @@ namespace {
         }
         const std::string querySource =
             std::string(treesitter::queries::kMarkdownInline) + "\n(strikethrough) @text.strikethrough\n";
-        Mode mode = TreeSitterModeFromLanguage("markdown-inline-injection", *language, querySource);
+        Mode mode = TreeSitterModeFromLanguage("markdown-inline-injection", *language, {.highlights = querySource});
         return mode.highlight;
     }
 

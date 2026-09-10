@@ -225,6 +225,31 @@ extern const char* const kCSharpIndents;
 extern const char* const kJavaIndents;
 extern const char* const kKotlinIndents;
 
+// scope-aware-rename follow-up: hand-written "@local.scope"/
+// "@local.definition*"/"@local.reference" queries, one per language whose
+// scoping is structural enough for a query to express
+// (Source/Editor/TreeSitter/queries/*-locals.scm). Unlike the indents/tests
+// queries beside them, this capture vocabulary IS an upstream tree-sitter/
+// Neovim convention -- but the queries themselves are ned's own: the two
+// bundled grammars that ship a locals.scm at all (javascript, typescript)
+// ship four patterns and two patterns respectively, neither enough to
+// resolve a binding. See c-locals.scm's header for the three rules every
+// file here follows, and Editor/LocalScopes.h for what consumes them.
+// kTypeScriptLocals is shared by TypeScriptMode and TsxMode, the same
+// sharing every other TypeScript query constant here already uses.
+extern const char* const kCLocals;
+extern const char* const kCppLocals;
+extern const char* const kPythonLocals;
+extern const char* const kJavaScriptLocals;
+extern const char* const kTypeScriptLocals;
+extern const char* const kRustLocals;
+extern const char* const kGoLocals;
+extern const char* const kJavaLocals;
+extern const char* const kCSharpLocals;
+extern const char* const kKotlinLocals;
+extern const char* const kPhpLocals;
+extern const char* const kBashLocals;
+
 } // namespace ned::editor::treesitter::queries
 
 #endif // NED_EDITOR_TREESITTER_QUERIES_H

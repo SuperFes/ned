@@ -35,6 +35,7 @@ namespace {
         std::string          querySource;
         std::string          foldQuerySource;
         std::string          importQuerySource;
+        std::string          localsQuerySource;
     };
     std::mutex                                        g_mutex;
     std::unordered_map<std::string, DynamicModeEntry> g_dynamicModes;
@@ -197,12 +198,14 @@ void RegisterDynamicMode(const std::string& name, const std::filesystem::path& l
     std::string                querySource       = ReadQueryIfPresent(queriesDir, "highlights.scm");
     std::string                foldQuerySource   = ReadQueryIfPresent(queriesDir, "folds.scm");
     std::string                importQuerySource = ReadQueryIfPresent(queriesDir, "imports.scm");
+    std::string                localsQuerySource = ReadQueryIfPresent(queriesDir, "locals.scm");
 
     const std::lock_guard lock(g_mutex);
     g_dynamicModes.insert_or_assign(name, DynamicModeEntry{.language          = language,
                                                            .querySource       = std::move(querySource),
                                                            .foldQuerySource   = std::move(foldQuerySource),
-                                                           .importQuerySource = std::move(importQuerySource)});
+                                                           .importQuerySource = std::move(importQuerySource),
+                                                           .localsQuerySource = std::move(localsQuerySource)});
     // A re-registration under a name some already-cached buffer resolved to
     // would otherwise never take effect for it -- see g_modeCache's own
     // comment. Registration is rare (init.janet load time, or an
@@ -238,8 +241,11 @@ std::optional<Mode> ModeByName(const std::string& name) {
         }
     }
     if (dynamicEntry) {
-        return TreeSitterModeFromLanguage(name, dynamicEntry->language, dynamicEntry->querySource, dynamicEntry->foldQuerySource,
-                                          dynamicEntry->importQuerySource);
+        return TreeSitterModeFromLanguage(name, dynamicEntry->language,
+                                          {.highlights = dynamicEntry->querySource,
+                                           .folds      = dynamicEntry->foldQuerySource,
+                                           .imports    = dynamicEntry->importQuerySource,
+                                           .locals     = dynamicEntry->localsQuerySource});
     }
     const auto& factories = BundledModeFactories();
     if (const auto it = factories.find(name); it != factories.end()) {

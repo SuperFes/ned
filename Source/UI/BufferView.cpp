@@ -283,6 +283,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
         case InputMode::DeleteProperty:
         case InputMode::GotoLine:
         case InputMode::LspRenameNewName:
+        case InputMode::RenameLocalNewName:
         case InputMode::OrgDeadline:
         case InputMode::OrgSchedule:
         case InputMode::ProjectSearch:
