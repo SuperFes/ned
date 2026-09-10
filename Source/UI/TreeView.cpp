@@ -150,6 +150,8 @@ void TreeView::Paint(Canvas c) {
     Fill(interior, surface.fill);
 
     DrawBorder(c, theme_.border);
+    // Between the frame and its title on purpose -- see RecolourBorder.
+    RecolourBorder(c, surface.border);
     DrawBorderTitle(c, model_.title, theme_.borderAccent);
 
     int row = 1;

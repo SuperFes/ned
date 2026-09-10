@@ -350,7 +350,16 @@ building blocks rather than terminal values:
 (ned/theme-surface "popup" "fill" "y $bg/78 3 $bg/52")    # one part, one line
 ```
 
-Parts are `fill`, `border` and `text`. Names: `buffer`, `buffer.current_line`,
+Parts are `fill`, `border` and `text`. A `border` paint recolours the frame's glyphs at
+each cell's own position, so the axis keywords mean what they look like -- `x` sweeps the
+top and bottom edges, `y` runs down the sides, `diag` goes corner to corner:
+
+```janet
+(ned/surface "popup" :fill [:blur 2] :border [:diag "$accent" 2 "$keyword"])
+```
+
+Only the frame's foreground is touched, so the body's fill runs underneath it, and the
+border title keeps its own accent rather than being swept through by the gradient. Names: `buffer`, `buffer.current_line`,
 `buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab.strip`, `tab`,
 `tab.active`, `tab.active.focused`, `echo`, `scrollbar`, `panel`, `popup`.
 
