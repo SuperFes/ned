@@ -11,14 +11,21 @@
 // the Emacs custom-set-variables file-fighting problem, while JSON state
 // stays inert and mergeable.
 //
-// What belongs here is a fact the editor *observed* -- you dragged the
-// sidebar wider, you switched panels. What does not is a setting the user
-// would state outright. The theme used to live here, written by the
-// select-theme picker, and it outranked init.janet's own ned/set-theme:
-// an implicit pin quietly overruling an explicit setting, with nothing on
-// screen to explain why the config file looked ignored. It is config now
-// (Docs/Themes.md), and the picker offers to write the line rather than
-// remembering it here.
+// The test for what belongs here is *how often you change it*, not whether
+// the user could also have written it down. Everything above is a thing you
+// flip in passing and expect to find where you left it: you drag the sidebar
+// wider, you toggle the minimap, you switch panels. Remembering the last
+// flip is the whole point, and it beating a ned/set-* default is right --
+// the flip is newer, and flipping back costs one keystroke.
+//
+// The theme failed that test, which is why it used to be here and no longer
+// is. You set a theme once and expect it to stay set, so a picker choice
+// silently outranking init.janet's own ned/set-theme just made the config
+// file look ignored, with nothing on screen to explain it and no cheap way
+// to undo it. It is config now (Docs/Themes.md), and the picker offers to
+// write the line rather than remembering it here.
+//
+// So: a live toggle belongs here. A thing you decide once does not.
 //
 // VariableStore is the pure, unit-testable core (JSON round-trip); the
 // process-wide accessors wrap one mutex-guarded static instance --

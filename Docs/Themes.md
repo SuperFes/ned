@@ -355,7 +355,7 @@ Parts are `fill`, `border` and `text`. Names: `buffer`, `buffer.current_line`,
 `tab.active`, `tab.active.focused`, `echo`, `scrollbar`, `panel`, `popup`.
 
 Not all of them are painted yet. Setting one no widget consumes parses and stores fine and
-then does nothing visible -- `buffer`, `buffer.selection`, `buffer.search` and `popup` are
+then does nothing visible -- `buffer`, `buffer.selection` and `buffer.search` are
 in that state today, waiting on the text-layer and popup phases in `ROADMAP.md`. `M-x theme-gallery` lists every name either way, since what it shows is
 what the surface *resolves to*, not whether anything draws it.
 

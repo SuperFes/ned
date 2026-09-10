@@ -205,25 +205,36 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       the gallery and the docs while working perfectly for anyone who knew the name.
       Published, and `PaintParseTest` now fails if a widget paints a surface the list does
       not carry.)
-- [ ] **Phase 7 — popups.** Transparent outer border, translucent or blurred body,
-      alpha-falloff shadow, one `elevation` concept shared by completion/hover/TreeView/
-      ListPopup/peek. Verified 2026-09-10: `ListPopup`/`TreeView` still paint from raw
-      `theme_.` fields and never call `SurfaceFor`, so this is genuinely unstarted — but
-      the in-app blur this entry describes as work is **already built and reachable**
-      (`FillBlur` in `Paint.cpp` samples the destination and box-blurs it; `PaintParse`
-      accepts `:blur`). Nothing constructs one, so it has never run outside its own tests.
-      The blocker for the rest is `Shadow`/`elevation`, which nothing paints — see the
-      Phase 4 remainder above; the two land together or not at all.
-- [x] **Phase 8 — settled by measurement, and it is a "no" for text rows.** Konsole does
-      honour a PNG's per-pixel alpha out to the desktop, but an image and a glyph are
-      mutually exclusive per cell: writing text into an image's cells removes the image, and
-      drawing the image afterwards covers the text. So it cannot back a current-line or
-      sticky-header band. It stays available for text-free regions (the minimap already
-      uses pixel blitting), and `Screen`'s backing layer is the answer for row highlights.
-      See `Docs/Translucency.md`.
-
-### Embedded Language
-
+- [ ] **Phase 7 remainder — popups.** 7a landed: `ListPopup` and `TreeView` paint their
+      bodies through the `popup` Surface, derived defaults byte-identical, and **blur works**
+      -- an overlay paints after the tree beneath it, so the cells under a popup already
+      hold what it covers, which is exactly what `FillBlur` samples. Confirmed live: an
+      M-x popup over code shows a range of backgrounds rather than one flat colour.
+      A blur must not have its destination cleared first, so the interior's background is
+      cleared only when the fill does *not* read it — which also keeps the transparent-theme
+      case (a derived fill that paints nothing) from bleeding stale cells, the bug the
+      pre-existing "leaves no stale cells" tests caught during this work.
+      Still open:
+      - **7b — border as a paint.** `DrawBorder` takes a `Brush`, so a gradient or
+        translucent border needs a recolour pass over the frame cells after drawing (less
+        invasive than an overload). A translucent border over a glyph cell tints via
+        `Screen::Blend`'s rule 4 rather than dithering, which is the right look for a frame.
+      - **7c — `Shadow` and `elevation`** (this is also the Phase 4 remainder; `elevation`
+        has exactly one mention in `Source/UI/*.cpp`, in a comment). The real problem: a drop
+        shadow falls *outside* the popup's own `Box_`, and `Canvas` clips to its box, so the
+        popup cannot paint it. `OverlayHost` should — it knows every overlay's box and the
+        `Screen`. That means `overlays.Add(...)` learning each overlay's surface name
+        (defaulting to `"popup"`), plus a Janet spec grammar for a shadow (dx/dy/radius/
+        colour). Decision to make first: elevation drives shadow depth only, or z-order too?
+        Sorting by elevation would change existing add/show stacking.
+      - **Translucent bodies.** A translucent fill currently composites against the theme's
+        background rather than against what the popup covers (see the clear-first note
+        above). Fixing that properly is the backing-plane approach, not another clear rule.
+      - **The other three popup-shaped widgets** (`ThemeGallery`, `MemoryImageView`,
+        `VcsDiffPreview`) still paint from raw `theme_.` fields.
+      - Deferred until someone wants it: per-popup surface names (`popup.completion` →
+        `popup`, dotted fallback like `SyntaxTheme`'s capture inheritance). One shared
+        `popup` is what the design doc asks for.
 - [ ] **Jank replaces Janet** — replace the internal scripting representation with
     [jank](https://github.com/jank-lang/jank). Feasibility was investigated against a
     real local install on 2026-09-08 (`jank-0.1-alpha`, `~/.local`, Clang/LLVM 23);

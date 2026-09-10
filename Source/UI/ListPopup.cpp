@@ -1,4 +1,5 @@
 #include "ListPopup.h"
+#include "Paint.h"
 #include "ThemePaints.h"
 
 #include <algorithm>
@@ -27,13 +28,25 @@ namespace {
     // accident; a multi-byte glyph (e.g. an arrow marking a candidate list's
     // scrolled-off boundary) split across cells as garbage bytes otherwise,
     // confirmed live. Returns the column x ended at.
+    //
+    // Translucency phase 7: writes the glyph, foreground and traits but
+    // deliberately *not* the background, so whatever the popup surface's
+    // fill put down survives underneath. Brush::ApplyTo would assign it.
+    // Every background this widget wants is painted as its own pass before
+    // the text -- the surface fill for the body, selectionFill for a
+    // selected row.
     int PaintRowText(Canvas& c, int x, int width, int row, const std::string& text, const Brush& brush) {
         std::size_t pos = 0;
         while (pos < text.size() && x < width - 1) {
             const std::size_t next = text::NextCodepointBoundary(text, pos);
             Cell&             cell = c[{.x = x, .y = row}];
             cell.character         = text.substr(pos, next - pos);
-            brush.ApplyTo(cell);
+            cell.foreground_color  = brush.foreground;
+            cell.bold              = brush.bold;
+            cell.italic            = brush.italic;
+            cell.underlined        = brush.underlined;
+            cell.strikethrough     = brush.strikethrough;
+            cell.inverted          = false; // ApplyTo's own reset, kept
             ++x;
             pos = next;
         }
@@ -184,13 +197,58 @@ void ListPopup::Paint(Canvas c) {
     // painted on a prior frame instead of a solid box (confirmed live
     // against the original which-key popup: buffer text bleeding through
     // its own "empty" cells).
+    // Reset the interior's glyphs and traits. The background is handled
+    // separately below, because whether it may be cleared depends on the
+    // fill: a blur *samples* what is already there.
     for (int y = 1; y < height - 1; ++y) {
         for (int x = 1; x < width - 1; ++x) {
-            Cell& cell     = c[{.x = x, .y = y}];
-            cell.character = " ";
-            labelBrush.ApplyTo(cell);
+            Cell& cell            = c[{.x = x, .y = y}];
+            cell.character        = " ";
+            cell.foreground_color = labelBrush.foreground;
+            cell.bold             = labelBrush.bold;
+            cell.italic           = labelBrush.italic;
+            cell.underlined       = labelBrush.underlined;
+            cell.strikethrough    = labelBrush.strikethrough;
+            cell.inverted         = false;
         }
     }
+
+    // Translucency phase 7: the body is a themed Surface. Its derived
+    // default is the flat theme background the loop above just wrote, so an
+    // unthemed popup is unchanged; a theme setting "popup" gets any paint at
+    // all, including a blur of whatever this popup is covering (the overlay
+    // paints after the tree beneath it, so those cells are already there).
+    //
+    // Filled over the interior only -- the border is drawn next and owns the
+    // frame cells.
+    const Surface surface = SurfaceFor(theme_, "popup");
+
+    // A blur reads the destination, so its cells must keep whatever the tree
+    // beneath this overlay painted this frame. Every other paint settles the
+    // background itself -- except that a paint contributing nothing (the
+    // derived default over a theme whose background is the terminal's own)
+    // would leave the previous frame's cells showing, which is the stale-cell
+    // bleed ListPopup's own interior fill has always existed to prevent.
+    // Clearing first covers both: it reproduces the old behaviour exactly,
+    // and a fill that does cover simply overwrites it.
+    //
+    // The cost is that a *translucent* fill composites against the theme's
+    // background rather than against what the popup covers. Phase 7's
+    // translucent-body step is where that gets revisited; blur is the case
+    // that actually needs the destination today.
+    const bool fillReadsDestination =
+        surface.fill.kind == PaintKind::Blur || surface.fill.kind == PaintKind::Stack;
+    if (!fillReadsDestination) {
+        for (int y = 1; y < height - 1; ++y) {
+            for (int x = 1; x < width - 1; ++x) {
+                c[{.x = x, .y = y}].background_color = theme_.background;
+            }
+        }
+    }
+    const Point origin = c.Origin();
+    Canvas      interior =
+        c.ForBox(Box{.x_min = origin.x + 1, .x_max = origin.x + width - 2, .y_min = origin.y + 1, .y_max = origin.y + height - 2});
+    Fill(interior, surface.fill);
 
     DrawBorder(c, theme_.border);
     DrawBorderTitle(c, model_.title, theme_.borderAccent);
@@ -248,7 +306,7 @@ void ListPopup::Paint(Canvas c) {
         if (!model_.rows.empty()) {
             for (int x = 1; x < width - 1; ++x) {
                 c[{.x = x, .y = row}].character = text::EncodeCodepointUtf8(RoundedBorderGlyphs().horizontal);
-                labelBrush.ApplyTo(c[{.x = x, .y = row}]);
+                labelBrush.ApplyTo(c[{.x = x, .y = row}]); // a real background pass, not text
             }
             ++row;
         }
