@@ -401,6 +401,15 @@ enum class InteractiveRequest { None,
                                 LspTypeHierarchySupertypes,
                                 LspTypeHierarchySubtypes,
                                 LspRename,
+                                // scope-aware-rename follow-up: rename-symbol, the tiered
+                                // entry point LspRename's own C-c C-M-r binding now points
+                                // at. BufferView::RequestRenameSymbolAtPoint resolves the
+                                // name at point against the mode's locals.scm first and
+                                // renames in-buffer when it resolves to a binding this file
+                                // wholly owns, falling through to the LspRename flow above
+                                // otherwise -- so a loop variable costs no round trip, and a
+                                // symbol other files can see still gets the server's answer.
+                                RenameSymbol,
                                 // prepareRename/linkedEditingRange follow-up: one more one-shot
                                 // async direct action, same "async request, own session" shape
                                 // as LspGotoSymbol above -- BufferView::

@@ -360,6 +360,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # confirmed against a real false positive (see BufferViewSymbolGutterTest.cpp).
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-tags.scm" CTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-indents.scm" CIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-locals.scm" CLocals)
 
 ned_add_treesitter_grammar(tree-sitter-cpp https://github.com/tree-sitter/tree-sitter-cpp.git v0.23.4)
 
@@ -370,6 +371,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-tags.scm" CppTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-tests.scm" CppTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-indents.scm" CppIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-locals.scm" CppLocals)
 
 ned_add_treesitter_grammar(tree-sitter-php https://github.com/tree-sitter/tree-sitter-php.git v0.24.2 php)
 
@@ -385,6 +387,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${tree-sitter-php_SOURCE_DIR}/queries/tags.scm" PhpTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-tests.scm" PhpTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-indents.scm" PhpIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-locals.scm" PhpLocals)
 
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
 
@@ -397,6 +400,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/tags.scm" JavaScriptTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-tests.scm" JavaScriptTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-indents.scm" JavaScriptIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-locals.scm" JavaScriptLocals)
 
 ned_fetch_treesitter_source(tree-sitter-typescript-src https://github.com/tree-sitter/tree-sitter-typescript.git v0.23.2)
 
@@ -414,6 +418,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${tree-sitter-typescript-src_SOURCE_DIR}/queries/tags.scm" TypeScriptTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-tests.scm" TypeScriptTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-indents.scm" TypeScriptIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-locals.scm" TypeScriptLocals)
 
 ned_add_treesitter_grammar(tree-sitter-html https://github.com/tree-sitter/tree-sitter-html.git v0.23.2)
 
@@ -438,12 +443,14 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${tree-sitter-python_SOURCE_DIR}/queries/tags.scm" PythonTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-tests.scm" PythonTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-indents.scm" PythonIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-locals.scm" PythonLocals)
 
 ned_add_treesitter_grammar(tree-sitter-bash https://github.com/tree-sitter/tree-sitter-bash.git v0.25.1)
 
 ned_embed_treesitter_query("${tree-sitter-bash_SOURCE_DIR}/queries/highlights.scm" Bash)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/bash-imports.scm" BashImports)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/bash-indents.scm" BashIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/bash-locals.scm" BashLocals)
 
 ned_add_treesitter_grammar(tree-sitter-janet-simple https://github.com/sogaiu/tree-sitter-janet-simple.git v0.0.7)
 
@@ -535,6 +542,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${tree-sitter-rust_SOURCE_DIR}/queries/tags.scm" RustTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-tests.scm" RustTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-indents.scm" RustIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-locals.scm" RustLocals)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/xml-indents.scm" XmlIndents)
 
 # Go bundled language support (2026-09-06 audit finding): tree-sitter/
@@ -562,6 +570,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${tree-sitter-go_SOURCE_DIR}/queries/tags.scm" GoTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/go-tests.scm" GoTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/go-indents.scm" GoIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/go-locals.scm" GoLocals)
 
 # C# bundled language support (raised 2026-09-06 -- no system tree-sitter-
 # csharp install available; the same fix as Java/Kotlin's own ROADMAP entry
@@ -591,6 +600,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${tree-sitter-c-sharp_SOURCE_DIR}/queries/tags.scm" CSharpTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/csharp-tests.scm" CSharpTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/csharp-indents.scm" CSharpIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/csharp-locals.scm" CSharpLocals)
 
 # Java & Kotlin bundled language support (raised 2026-09-03 -- user wants
 # broad, general-purpose Java support with Kotlin alongside it, and Android
@@ -621,6 +631,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${tree-sitter-java_SOURCE_DIR}/queries/tags.scm" JavaTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/java-tests.scm" JavaTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/java-indents.scm" JavaIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/java-locals.scm" JavaLocals)
 
 # Kotlin is the one bundled language with no obvious single upstream, so the
 # choice is recorded rather than left implicit. Two real candidates exist and
@@ -654,6 +665,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-tags.scm" KotlinTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-tests.scm" KotlinTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-indents.scm" KotlinIndents)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-locals.scm" KotlinLocals)
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -729,6 +741,7 @@ add_library(ned_lib STATIC
         Source/Editor/NextError.cpp
         Source/Editor/WrapOverrides.cpp
         Source/Editor/CodeFold.cpp
+        Source/Editor/LocalScopes.cpp
         Source/Editor/CodeFoldSettings.cpp
         Source/Editor/StickyScroll.cpp
         Source/Editor/StickyScrollSettings.cpp
@@ -903,6 +916,7 @@ add_library(ned_lib STATIC
         Source/UI/BufferView/Gutter.cpp
         Source/UI/BufferView/Prompts.cpp
         Source/UI/BufferView/Lsp.cpp
+        Source/UI/BufferView/Rename.cpp
         Source/UI/BufferView/VcsDap.cpp
         Source/UI/BufferView/Buffers.cpp
         Source/UI/BufferView/CandidateList.cpp
@@ -1094,6 +1108,9 @@ if (NED_BUILD_TESTS)
             Tests/CompletionSessionTest.cpp
             Tests/LspEditApplyTest.cpp
             Tests/DabbrevCompleteTest.cpp
+            Tests/LocalScopesTest.cpp
+            Tests/ModeLocalsTest.cpp
+            Tests/BufferViewRenameSymbolTest.cpp
             Tests/SnippetTest.cpp
             Tests/SnippetRegistryTest.cpp
             Tests/BundledSnippetsTest.cpp

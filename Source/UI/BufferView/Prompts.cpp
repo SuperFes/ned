@@ -575,6 +575,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::LspRename:
             RequestPrepareRenameAtPoint();
             return;
+        case editor::InteractiveRequest::RenameSymbol:
+            RequestRenameSymbolAtPoint();
+            return;
         case editor::InteractiveRequest::LspLinkedEditingRange:
             RequestLinkedEditingRangeAtPoint();
             return;
@@ -1872,6 +1875,12 @@ void BufferView::EndInteractiveSession() {
     pendingBinaryOpenPath_.clear();
     pendingOpenProjectRoot_.clear(); // session state, cleared with the rest of it
     pendingZapToCharAppend_ = false;
+    // scope-aware-rename follow-up: same reasoning -- ApplyLocalRename is
+    // only reachable while the RenameLocalNewName prompt is up, so a
+    // binding surviving an abandoned session could never be applied, but
+    // holding byte ranges resolved against a buffer the user is now free to
+    // edit is not a state worth keeping around either.
+    pendingLocalRename_.reset();
     pendingTrustInitPath_.clear();
     onTrustDecision_ = nullptr;
     deleteStage_     = DeleteFileStage::EnteringPath;
@@ -2051,6 +2060,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "org-deadline";
         case InputMode::LspRenameNewName:
             return "lsp-rename";
+        case InputMode::RenameLocalNewName:
+            return "rename-symbol";
         case InputMode::TaskName:
             return "task-name";
         case InputMode::ReplName:
@@ -2198,6 +2209,8 @@ std::optional<bufferview::TextEntryPrompt> BufferView::TextEntryPromptFor(InputM
         case InputMode::GotoLine:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Goto line"};
         case InputMode::LspRenameNewName:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Rename"};
+        case InputMode::RenameLocalNewName:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Rename"};
         case InputMode::OrgDeadline:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Deadline"};
@@ -2400,6 +2413,12 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
                 }
             }
         }
+    }
+    else if (inputMode_ == InputMode::RenameLocalNewName) {
+        // scope-aware-rename follow-up: unlike the LSP branch below this is
+        // fully synchronous -- the binding was already resolved before the
+        // prompt opened, so Enter is the whole rename.
+        ApplyLocalRename(input);
     }
     else if (inputMode_ == InputMode::LspRenameNewName) {
         // Fire-and-forget, same async shape as RequestCodeActionsAtPoint:

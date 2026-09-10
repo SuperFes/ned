@@ -44,6 +44,7 @@
 #include "Editor/IncrementalSearch.h"
 #include "Editor/Link.h"
 #include "Editor/LinkedEditingSession.h"
+#include "Editor/LocalScopes.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Editor/Mode.h"
@@ -1092,6 +1093,15 @@ class BufferView : public Widget {
                            // applies the result directly once the response arrives (from
                            // inside its own async callback), no separate y/n confirmation.
                            LspRenameNewName,
+                           // scope-aware-rename follow-up: LspRenameNewName's no-server
+                           // twin. rename-symbol resolves the name at point against the
+                           // mode's own locals.scm first (Editor/LocalScopes.h) and enters
+                           // THIS mode when that succeeds, so Enter rewrites the resolved
+                           // occurrences in this buffer as one undo step with no request
+                           // sent at all; it falls back to LspRenameNewName above when the
+                           // binding isn't file-local, or isn't resolvable without a
+                           // language server's wider view.
+                           RenameLocalNewName,
                            // open-binary-anyway follow-up: entered only from
                            // inside HandlePromptKey's FindFile branch, when
                            // BufferList::OpenOrCreateFile throws
@@ -1933,6 +1943,21 @@ class BufferView : public Widget {
     // guard shape once again, but resolves to a full ResolvedRename
     // (potentially many files) rather than a single buffer's edits.
     void RequestRenameAtPoint(const std::string& newName);
+    // scope-aware-rename follow-up (BufferView/Rename.cpp): rename-symbol's
+    // entry point. Resolves the name at point against the mode's own
+    // locals.scm and opens the RenameLocalNewName prompt when it is a
+    // binding this buffer wholly owns; otherwise falls through to
+    // RequestPrepareRenameAtPoint above unchanged.
+    void RequestRenameSymbolAtPoint();
+    // Runs the mode's locals query over the whole buffer and resolves point
+    // against it -- nullopt for a mode with no locals query, a huge buffer
+    // (a windowed answer would be a partial rename, not a partial display),
+    // or a name no binding in this file owns.
+    [[nodiscard]] std::optional<editor::locals::LocalBinding> ResolveLocalBindingAtPoint();
+    // Rewrites every occurrence of pendingLocalRename_'s binding as one undo
+    // step. Re-resolves first and refuses on any disagreement -- see its own
+    // comment in Rename.cpp.
+    void ApplyLocalRename(const std::string& newName);
     // Thin wrapper over ApplyResolvedWorkspaceEdit below (statusMessage_-only
     // reporting, no return value -- callers driven from a rename response
     // don't need a bool the way the server-push path does).
@@ -4141,6 +4166,13 @@ class BufferView : public Widget {
     // runs, applied with no separate confirmation step.
     std::string             renameTitle_;
     bufferview::RequestSlot renameRequest_;
+    // scope-aware-rename follow-up: the binding RequestRenameSymbolAtPoint
+    // resolved, held only while the RenameLocalNewName prompt is up.
+    // ApplyLocalRename re-resolves and compares against this rather than
+    // trusting it outright -- these are byte offsets, and being wrong about
+    // them rewrites the wrong text rather than merely showing something
+    // stale.
+    std::optional<editor::locals::LocalBinding> pendingLocalRename_;
     // prepareRename follow-up: same staleness-guard shape once more, for the
     // request RequestPrepareRenameAtPoint sends before lsp-rename opens its
     // prompt.
