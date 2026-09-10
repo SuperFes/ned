@@ -1644,6 +1644,10 @@ void BufferView::Paint(Canvas paneCanvas) {
             Cell& cell     = c[{.x = col, .y = row}];
             cell.character = " ";
             emptyBrush.ApplyTo(cell);
+            // The backing layer persists between frames exactly as the text
+            // one does, so last frame's highlight has to go before this
+            // frame's is decided.
+            c.Backing({.x = col, .y = row}) = Cell{};
         }
 
         if (pendingAnnotationLine) {
@@ -1864,6 +1868,8 @@ void BufferView::Paint(Canvas paneCanvas) {
         }
     }
 
+    PaintCurrentLineHighlight(c, rowLine);
+
     PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutter.totalWidth);
 
     // completion-popup follow-up: activeCompletion_ mutation sites already
@@ -1956,6 +1962,43 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
         cell.character = std::string(1, ch);
         messageBrush.ApplyTo(cell);
         ++col;
+    }
+}
+
+// The current line's own background, painted into the layer *below* the text
+// rather than into the text cells themselves. That is the whole point of the
+// backing plane: a wash here never has to choose between covering the
+// syntax colour and being visible, because it is not in the same cell as the
+// glyph at all.
+//
+// Empty by default -- ned has never highlighted the current line's row, only
+// its gutter number -- so a theme opts in by giving "buffer.current_line" a
+// fill. Alpha in that fill is resolved against the theme's own background
+// here, since the backing plane is a real plane and can only carry a real
+// colour.
+void BufferView::PaintCurrentLineHighlight(Canvas& c, const std::vector<std::size_t>& rowLine) const {
+    const Surface surface = SurfaceFor(theme_, "buffer.current_line");
+    if (!PaintsColour(surface.fill)) {
+        return;
+    }
+
+    const text::Buffer& buffer    = activeBuffer_.Get();
+    const std::size_t   pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+    const int           width     = c.size().width;
+    const Point         origin    = c.Origin();
+
+    for (int row = 0; row < c.size().height; ++row) {
+        if (row >= static_cast<int>(rowLine.size()) || rowLine[row] != pointLine) {
+            continue;
+        }
+        for (int col = 0; col < width; ++col) {
+            const double u      = width > 1 ? static_cast<double>(col) / (width - 1) : 0.0;
+            const Color  colour = PaintColourAt(surface.fill, u, 0.0, origin.x + col, origin.y + row);
+            if (colour.alpha == 0) {
+                continue;
+            }
+            c.Backing({.x = col, .y = row}).background_color = OverlayBackground(theme_, colour);
+        }
     }
 }
 

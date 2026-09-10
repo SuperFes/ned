@@ -3744,8 +3744,13 @@ class BufferView : public Widget {
     // origin-agnostic) to still carry the signal, matching this feature's
     // own "otherwise the bottom hint is enough" design.
     static constexpr std::size_t kNoRowLine = static_cast<std::size_t>(-1);
-    void                         PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
-                                                              const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
+    // Paints the "buffer.current_line" surface into the backing layer -- behind
+    // the glyphs rather than into their cells, so a wash never has to choose
+    // between covering the syntax colour and being visible. Empty by default.
+    void PaintCurrentLineHighlight(Canvas& c, const std::vector<std::size_t>& rowLine) const;
+
+    void PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
+                                      const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
 
     // hover/completion follow-up. See Command.h's InteractiveRequest::
     // LspComplete doc comment and completionDebounceTimer_ above for the

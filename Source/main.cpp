@@ -2727,7 +2727,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     callbacks.render = [&]() -> std::optional<Point> {
         head.Paint(Canvas(screenBuffer, head.Box_()));
         overlays.Paint(screenBuffer);
-        screenBuffer.Flush(eventLoop.StdPlane());
+        screenBuffer.Flush(eventLoop.StdPlane(), eventLoop.BackingPlane());
         emitTitleIfChanged();
 
         if (!ned::editor::ActiveBackgroundActivities().empty()) {
