@@ -215,10 +215,16 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       case (a derived fill that paints nothing) from bleeding stale cells, the bug the
       pre-existing "leaves no stale cells" tests caught during this work.
       Still open:
-      - **7b — border as a paint.** `DrawBorder` takes a `Brush`, so a gradient or
-        translucent border needs a recolour pass over the frame cells after drawing (less
-        invasive than an overload). A translucent border over a glyph cell tints via
-        `Screen::Blend`'s rule 4 rather than dithering, which is the right look for a frame.
+      - [x] **7b — border as a paint.** `Border.h`'s `RecolourBorder` walks the frame ring
+        after `DrawBorder` and re-samples each cell's *foreground* from the surface's border
+        paint, at that cell's own position in the canvas -- so `x` sweeps the top and bottom
+        edges, `y` runs down the sides, `diag` goes corner to corner. Foreground only: a
+        border is a line, and leaving the background lets a widget's fill run underneath the
+        frame. A translucent border tints the existing glyph colour rather than dithering,
+        since a frame cell already carries a glyph. Runs between `DrawBorder` and
+        `DrawBorderTitle`, so the title stays its own accent rather than being swept
+        through. The derived solid default recolours to the colour `DrawBorder` already
+        used, so an unthemed frame is byte-identical.
       - **7c — `Shadow` and `elevation`** (this is also the Phase 4 remainder; `elevation`
         has exactly one mention in `Source/UI/*.cpp`, in a comment). The real problem: a drop
         shadow falls *outside* the popup's own `Box_`, and `Canvas` clips to its box, so the
