@@ -28,6 +28,12 @@ namespace {
     // selection or a search hit has to win against it, not tie.
     constexpr std::uint8_t kCurrentLineAlpha = 40;
 
+    // How much of its own strength a selection keeps at the bottom of the
+    // viewport. 78% measured against the bundled themes as the point where
+    // the block gains depth while the weak end still reads unmistakably as
+    // selected; a theme wanting a flat bar sets buffer.selection itself.
+    constexpr double kSelectionLiftPercent = 78.0;
+
     // The left dock's edge falloff, in percent of the way toward white. See
     // the "panel" branch of DerivedSurface for why this exists and why it
     // runs on the panel's own side.
@@ -219,8 +225,18 @@ namespace {
             // and should set fill alone -- a current-line marker is a
             // background, and the rest of the line's colour is the theme's
             // own business.
+            //
+            // A left-anchored fade rather than a flat band: strongest at the
+            // gutter, where the caret and the accented line number already
+            // are, and gone by the right edge. That marks the line without
+            // drawing a slab the full width of the viewport across code that
+            // usually stops well short of it -- and it strictly *reduces*
+            // ink compared to the flat wash, so it cannot cost contrast
+            // anywhere. This is what the bundled `focus` preset was written
+            // for (gradients.janet, "current-line wash") and never wired to.
             const Color accent = DetectedAccent().value_or(theme.modeLineFocusedGradientStart);
-            surface.fill       = SolidPaint(accent.WithAlpha(kCurrentLineAlpha));
+            surface.fill       = GradientPaint(PaintAxis::X, {ColorStop{.colour = accent.WithAlpha(kCurrentLineAlpha)},
+                                                              ColorStop{.colour = accent.WithAlpha(0)}});
             return surface;
         }
         if (name == "buffer.selection") {
@@ -228,7 +244,25 @@ namespace {
             // is softened to a tint (see SelectionFill's own comment), and
             // the derived default has to be what the buffer actually paints
             // or the gallery shows a swatch nothing matches.
-            surface.fill = SolidOrNothing(SelectionFill(theme));
+            const Color fill = SelectionFill(theme);
+            if (!fill.Composable()) {
+                return surface;
+            }
+
+            // A slight vertical lift, top to bottom. Deliberately small:
+            // unlike the current line, a selection is a *functional*
+            // indicator, and it is sampled across the viewport, so any
+            // variation means the same selection looks different depending
+            // on where it sits on screen. kSelectionLiftPercent keeps the
+            // weak end well inside "obviously selected" -- enough to give a
+            // multi-line block some depth, not enough for a cell to read as
+            // unselected. Vertical rather than horizontal on purpose: a
+            // horizontal ramp would weaken the *end of a line*, which is
+            // exactly where a long selection needs to stay unambiguous.
+            const auto lowered =
+                static_cast<std::uint8_t>(std::lround(fill.alpha * (kSelectionLiftPercent / 100.0)));
+            surface.fill = GradientPaint(PaintAxis::Y, {ColorStop{.colour = fill},
+                                                        ColorStop{.colour = fill.WithAlpha(lowered)}});
             return surface;
         }
         if (name == "buffer.search") {

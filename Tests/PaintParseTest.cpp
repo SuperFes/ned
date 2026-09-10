@@ -267,6 +267,35 @@ TEST_CASE("Surfaces default to what the widget paints today", "[PaintParse]") {
         REQUIRE(ned::ui::PaintsColour(current.fill));
         REQUIRE(current.fill.stops.front().colour.alpha < 64); // a tint, not a band
         REQUIRE(current.text.stops.empty());                   // a marker is a background: it never recolours the code
+
+        // A left-anchored fade: strongest at the gutter, gone by the right
+        // edge. Horizontal, because PaintCurrentLineHighlight samples with
+        // v pinned to 0 -- a vertical ramp there would be a constant.
+        REQUIRE(current.fill.kind == PaintKind::Gradient);
+        REQUIRE(current.fill.axis == ned::ui::PaintAxis::X);
+        REQUIRE(current.fill.stops.size() == 2);
+        REQUIRE(current.fill.stops.back().colour.alpha == 0);
+        // Strictly less ink than the flat wash it replaced, so it cannot
+        // cost contrast anywhere.
+        REQUIRE(current.fill.stops.back().colour.alpha < current.fill.stops.front().colour.alpha);
+    }
+
+    SECTION("the selection defaults to a slight vertical lift, never a horizontal one") {
+        const Surface selection = ned::ui::SurfaceFor(theme, "buffer.selection");
+        REQUIRE(selection.fill.kind == PaintKind::Gradient);
+        // Vertical on purpose: a horizontal ramp would weaken the *end of a
+        // line*, which is where a long selection most needs to stay
+        // unambiguous.
+        REQUIRE(selection.fill.axis == ned::ui::PaintAxis::Y);
+        REQUIRE(selection.fill.stops.size() == 2);
+
+        const Color strong = selection.fill.stops.front().colour;
+        const Color weak   = selection.fill.stops.back().colour;
+        REQUIRE(strong == ned::ui::SelectionFill(theme)); // the strong end is what the buffer always painted
+        REQUIRE(weak.alpha < strong.alpha);
+        // Small: a selection is a functional indicator, so the weak end has
+        // to stay unmistakably selected rather than merely visible.
+        REQUIRE(weak.alpha > strong.alpha * 2 / 3);
     }
 
     SECTION("an unknown surface paints nothing") {

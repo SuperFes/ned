@@ -201,8 +201,10 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       mismatch on the way: `buffer.selection` derived from the raw `selectionBackground`
       while the buffer painted `SelectionFill`'s softened version, so the gallery had been
       showing a selection swatch nothing on screen matched.
-      Still open: the current-line *gradient* wash (the surface accepts one, no bundled
-      theme ships one -- a taste call, not code), recency glow driven by
+      The current-line gradient wash ships now, and so does a selection one -- see
+      `Docs/Themes.md`; the bundled `focus` preset had been written for exactly the former
+      ("current-line wash", in gradients.janet) and never wired to anything.
+      Still open: recency glow driven by
       `UnsavedChangeRanges` + an `EventLoop` timer (nothing exists; no `glow`/`recency`
       symbol anywhere), and virtual text (inline diagnostics, blame, fold placeholders) at
       real alpha. `buffer` is the last surface with no consumer.

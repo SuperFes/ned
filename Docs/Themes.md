@@ -398,6 +398,18 @@ overlay: it is up the whole time you are typing, so a selection or a search hit 
 against it rather than tie. It sets `fill` alone -- a current-line marker is a background,
 and the rest of the line's colour is the theme's own business.
 
+`buffer.current_line` and `buffer.selection` both ship as gradients rather than flat
+washes. The current line is a left-anchored fade -- the detected accent at ~16% by the
+gutter, gone by the right edge -- which marks the line without drawing a slab across code
+that usually stops well short of the viewport's width, and which uses strictly *less* ink
+than the flat band it replaced. The selection is a slight vertical lift, keeping 78% of its
+strength at the bottom of the viewport: enough to give a multi-line block depth, small
+enough that no cell reads as unselected. It is deliberately vertical -- a horizontal ramp
+would weaken the *end of a line*, which is where a long selection most needs to stay
+unambiguous. Measured on gruvbox-dark, the current line costs 0.6 of a contrast point
+(10.7 -> 10.1) and the selection lands at 8.7, both far above the 4.5 body-text floor;
+`M-x theme-gallery` reports the same numbers for whatever theme you are on.
+
 `panel` is the other derived default that is not simply the flat colour its widgets used
 to paint: it is a horizontal walk, ~4% lifted at the left dock's outer edge and settling to
 exactly the buffer background where the two meet. That gives the dock a direction without
