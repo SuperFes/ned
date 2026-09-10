@@ -152,9 +152,24 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
 
         // Translucency follow-up: a sticky header is a hint about where you
         // are, not a header bar, so it is a wash of the chrome tone rather
-        // than the chrome brush itself -- the same treatment the sidebar's
-        // pinned ancestors get, from the same helper.
-        const Brush stickyBrush{.background = StickyHighlight(theme_), .foreground = theme_.defaultForeground};
+        // than the chrome brush itself.
+        //
+        // Over a *transparent* theme it cannot be a wash at all. A cell holds
+        // one background, so tinting the band uniformly means painting every
+        // cell opaque -- and against a buffer that is showing the desktop,
+        // any opaque row reads as exactly the solid band this replaced.
+        // Coverage dithering is the only other translucency a cell has, and
+        // it fills the spaces *inside* the header text with dots. So on a
+        // transparent theme the band is marked the way a background cannot
+        // do it: the pinned text stays bold on the buffer's own backdrop,
+        // and the last pinned row is underlined to draw the boundary between
+        // frozen and live content.
+        const bool  opaqueTheme = theme_.background.Composable();
+        const bool  lastSticky  = i + 1 == chain.size();
+        const Brush stickyBrush{.background = opaqueTheme ? StickyHighlight(theme_) : theme_.background,
+                                .foreground = theme_.defaultForeground,
+                                .bold       = !opaqueTheme,
+                                .underlined = !opaqueTheme && lastSticky};
         for (int col = 0; col < width; ++col) {
             Cell& cell     = c[{.x = col, .y = row}];
             cell.character = " ";

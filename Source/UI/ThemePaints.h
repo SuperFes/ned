@@ -105,7 +105,14 @@ void                               SetAssumedBackground(std::optional<Color> bac
 // The wash behind a pinned row -- the sidebar's sticky ancestors and the
 // buffer's own sticky-scroll headers. A hint about where you are rather than
 // a header bar, so it is a fraction of the chrome tone rather than the
-// chrome itself, composited like any other overlay.
+// chrome itself.
+//
+// StickyTone is that colour *with its alpha intact*, for a caller that can
+// blend it itself (Screen::Blend will dither it over a transparent
+// background, which is the only way to stay see-through there).
+// StickyHighlight is the composited version, for a caller that just needs a
+// colour to assign.
+[[nodiscard]] Color StickyTone(const Theme& theme);
 [[nodiscard]] Color StickyHighlight(const Theme& theme);
 
 // The colour a glyph should take from a surface's text paint at one local
