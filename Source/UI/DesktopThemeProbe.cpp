@@ -370,7 +370,7 @@ Theme BuildDesktopTheme(const DesktopThemeInfo& info) {
         // a tint over whatever the line already is, not a slab that hides
         // it. Composited by OverlayBackground at paint time
         // (UI/BufferView/Internal.h).
-        result.selectionBackground = info.accent->WithAlpha(128);
+        result.selectionBackground = info.accent->WithAlpha(96);
         result.modeLineFocusedGradientStart =
             Color::Interpolate(0.6F, result.modeLineGradientStart, *info.accent);
         result.modeLineFocusedGradientEnd = Color::Interpolate(0.6F, result.modeLineGradientEnd, *info.accent);

@@ -372,6 +372,12 @@ void ProjectSidebar::Paint(Canvas c) {
     // toward the buffer, or make it translucent -- in which case the dither
     // path carries whatever is behind the window through the gaps.
     const Surface panel = SurfaceFor(theme_, "panel");
+    // Cleared to the theme's *own* background, not ChromeBackdrop: a
+    // transparent theme means this panel shows the desktop through, and
+    // painting the assumed backdrop here would make the whole sidebar
+    // opaque. The chrome bars (mode line, tab strip) are the opposite case
+    // -- they want a colour to fade into, and are not what the user is
+    // looking through.
     ClearCanvas(c, theme_.background);
     Fill(c, panel.fill);
     for (int row = 0; row < c.size().height; ++row) {
@@ -442,9 +448,9 @@ void ProjectSidebar::Paint(Canvas c) {
                                  .foreground = vcsColor.value_or(entry.isDirectory ? theme_.lineNumberForeground
                                                                                    : theme_.defaultForeground)};
         if (isSelected) {
-            brush.background = theme_.selectionBackground;
+            brush.background = OverlayBackground(theme_, SelectionFill(theme_));
             for (int x = 0; x < contentColumns; ++x) {
-                c[{.x = x, .y = row}].background_color = theme_.selectionBackground;
+                c[{.x = x, .y = row}].background_color = OverlayBackground(theme_, SelectionFill(theme_));
             }
         }
 

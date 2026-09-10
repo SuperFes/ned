@@ -84,18 +84,23 @@ void TabBar::Paint(Canvas c) {
     // own distinct block instead of the whole strip merging into one bar
     // (the original fill made tabs visually indistinguishable, a real
     // user report).
+    // generic-popup follow-up (Phase 3): a full reset, not just character +
+    // background_color -- same reasoning as the end-cap cell further down
+    // (see that one's own comment): the Screen buffer is reused across
+    // frames, so a stale foreground_color/bold/etc. from a prior frame's
+    // cell here would otherwise linger once whatever painted it (an overlay
+    // reaching this far up, or a theme-preview session) stops.
+    //
+    // Translucency follow-up: the strip itself is a Surface. Its derived
+    // default is still the buffer's own background -- so the gaps between
+    // tabs read as the buffer showing through -- except for a theme whose
+    // background *is* the terminal's, where there is nothing to show and the
+    // strip would be a hole rather than chrome (see ThemePaints.cpp).
+    const Surface strip = SurfaceFor(theme_, "tab.strip");
+    ClearCanvas(c, ChromeBackdrop(theme_));
+    Fill(c, strip.fill);
     for (int x = 0; x < c.size().width; ++x) {
-        // generic-popup follow-up (Phase 3): a full reset, not just
-        // character + background_color -- same reasoning as the end-cap
-        // cell further down (see that one's own comment): the Screen
-        // buffer is reused across frames, so a stale foreground_color/
-        // bold/etc. from a prior frame's cell here would otherwise linger
-        // once whatever painted it (an overlay reaching this far up, or a
-        // theme-preview session) stops.
-        Cell& cell            = c[{.x = x, .y = 0}];
-        cell                  = Cell{};
-        cell.character        = " ";
-        cell.background_color = theme_.background;
+        c[{.x = x, .y = 0}].character = " ";
     }
 
     const text::Buffer*          active  = &activeBufferProvider_().Get();
