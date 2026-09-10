@@ -236,8 +236,13 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       - **Translucent bodies.** A translucent fill currently composites against the theme's
         background rather than against what the popup covers (see the clear-first note
         above). Fixing that properly is the backing-plane approach, not another clear rule.
-      - **The other three popup-shaped widgets** (`ThemeGallery`, `MemoryImageView`,
-        `VcsDiffPreview`) still paint from raw `theme_.` fields.
+      - [x] **Every popup-shaped widget adopted.** `ThemeGallery`, `MemoryImageView` and
+        `VcsDiffPreview` join `ListPopup`/`TreeView` on the same `popup` Surface and the
+        same clear-unless-the-fill-reads-it rule, so one `ned/theme-surface "popup" ...`
+        reaches all five. `VcsDiffPreview`'s rows write foreground and traits only -- every
+        brush there varies only its foreground (added green, removed red, context dim), so
+        the fill is what the row sits on. The gallery now shows its own `popup` row applied
+        to itself, which is the most direct feedback it can give.
       - Deferred until someone wants it: per-popup surface names (`popup.completion` →
         `popup`, dotted fallback like `SyntaxTheme`'s capture inheritance). One shared
         `popup` is what the design doc asks for.
