@@ -4816,7 +4816,7 @@ TEST_CASE("SetScrollBar makes paint() keep the bar's scrollable_length/position/
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
 
-    ned::ui::ScrollBar scrollBar(fixture.theme.scrollBar);
+    ned::ui::ScrollBar scrollBar(fixture.theme);
     view.SetScrollBar(&scrollBar);
 
     ned::ui::Screen screen = ned::ui::Screen(40, 5);
