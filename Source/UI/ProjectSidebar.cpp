@@ -448,12 +448,13 @@ void ProjectSidebar::Paint(Canvas c) {
         // and left the panel looking washed out (reported live).
         //
         // A pinned ancestor is a hint about where you are, not a header bar,
-        // so it takes a wash at kStickyHighlightAlpha rather than the solid
-        // chrome brush it used to. Composited, so it tints whatever the
-        // panel is showing -- including the desktop, for a transparent theme.
+        // so it takes a wash rather than the solid chrome brush it used to.
+        // The wash lives on the backing layer and these cells stay
+        // Color::Default to let it through -- painted here instead, the row
+        // would have to be opaque, which is the solid band all over again.
         Brush brush =
             isActiveFile ? theme_.activeTab
-            : isSticky   ? Brush{.background = StickyHighlight(theme_),
+            : isSticky   ? Brush{.background = Color::Default,
                                  .foreground = vcsColor.value_or(theme_.defaultForeground),
                                  .bold       = true}
                          : Brush{.background = theme_.background,
@@ -468,6 +469,9 @@ void ProjectSidebar::Paint(Canvas c) {
         if (isSelected || isSticky) {
             for (int x = 0; x < contentColumns; ++x) {
                 c[{.x = x, .y = row}].background_color = brush.background;
+                if (isSticky && !isSelected) {
+                    c.Backing({.x = x, .y = row}).background_color = StickyHighlight(theme_);
+                }
             }
         }
 

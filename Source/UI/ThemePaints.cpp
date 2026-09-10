@@ -19,6 +19,11 @@ namespace {
     // A mode line's trailing colour and a stand-in tab strip both want to be
     // present but not solid.
     constexpr std::uint8_t kTranslucentChromeAlpha = 150;
+
+    // ~16%. The current line is the one wash that is up the whole time you
+    // are typing, so it sits below every other overlay's strength -- a
+    // selection or a search hit has to win against it, not tie.
+    constexpr std::uint8_t kCurrentLineAlpha       = 40;
     constexpr std::uint8_t kModeLineFadeAlpha      = 165;
 
     std::mutex& Lock() {
@@ -162,11 +167,17 @@ namespace {
             return surface;
         }
         if (name == "buffer.current_line") {
-            // Deliberately empty: ned has never highlighted the current
-            // line's row (only its gutter number), so the default keeps that
-            // exactly. A theme opts in, and when it does it should set fill
-            // alone -- a current-line marker is a background, and the rest
-            // of the line's colour is the theme's own business.
+            // The desktop's own accent, taken right down: enough tint to
+            // read as "you are here" without the row looking like a band
+            // drawn over the code. It lands on the backing layer, behind
+            // the glyphs, so the line keeps every syntax colour it had.
+            //
+            // A theme that wants something louder sets the surface itself,
+            // and should set fill alone -- a current-line marker is a
+            // background, and the rest of the line's colour is the theme's
+            // own business.
+            const Color accent = DetectedAccent().value_or(theme.modeLineFocusedGradientStart);
+            surface.fill       = SolidPaint(accent.WithAlpha(kCurrentLineAlpha));
             return surface;
         }
         if (name == "buffer.selection") {
@@ -361,15 +372,15 @@ Color SelectionFill(const Theme& theme) {
 }
 
 Color StickyTone(const Theme& theme) {
-    // ~18% against a known background. Over a transparent one the same
-    // colour is dithered instead, where coverage is the only translucency a
-    // cell has -- so it gets a heavier alpha there, since scattered dots
-    // read fainter than a flat tint of the same strength.
-    constexpr std::uint8_t kStickyAlpha       = 46;
-    constexpr std::uint8_t kStickyDitherAlpha = 72;
+    // ~18%, one figure for every theme. This used to carry a second, heavier
+    // alpha for transparent themes, where the band could only be expressed
+    // as coverage dithering and scattered dots read fainter than a flat tint
+    // of the same strength. The band is a real composite on the backing
+    // layer now, in both cases, so there is nothing left to compensate for.
+    constexpr std::uint8_t kStickyAlpha = 46;
 
     const Color tone = theme.tabBar.background.Composable() ? theme.tabBar.background : theme.modeLineGradientStart;
-    return tone.WithAlpha(theme.background.Composable() ? kStickyAlpha : kStickyDitherAlpha);
+    return tone.WithAlpha(kStickyAlpha);
 }
 
 Color StickyHighlight(const Theme& theme) {
