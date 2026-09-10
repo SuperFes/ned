@@ -34,193 +34,281 @@ Notcurses.
 
 ## Open Items
 
+### Translucent UI & Theme Engine v2
+
+Full design: `Docs/Translucency.md` (techniques, compositing rules, phasing, risks).
+Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlphaProbe.cpp`.
+
+- [ ] **Phase 1 — alpha in the compositor.** `Color` gains an alpha byte; `Screen::Blend`
+      implements the five resolution rules (known-bg lerp, dither, foreground tint, opaque
+      escape hatch). Headless unit tests; no visual change.
+- [ ] **Phase 2 — Paint/Surface types.** `Paint` (solid/linear/radial/blur), `Shadow`,
+      `Surface`, `Canvas::Fill(box, Paint)`, per-Paint `AlphaPolicy`, contrast guard.
+- [ ] **Phase 3 follow-up — migrate the last named-colour call sites into the theme.**
+      A handful of widgets still reach for `Color::BrightRed`/`BrightGreen`/`BrightBlack`
+      directly (test gutter marks in `BufferView/Internal.h`, `VcsDiffPreview`,
+      `ProjectSidebar`, the `JanetReplPanel`/`DebugConsolePanel` cursor cells). Those are
+      xterm's default RGB now rather than the user's palette, which is a behaviour change
+      worth finishing properly: they should be `Theme` fields like everything else.
+- [x] **Phase 4 — theme v2 (core).** Landed: `#rrggbbaa` tokens, the paint grammar and its
+      one-line string form (`Source/UI/PaintParse.h`), `$slot+8`-style references resolved
+      against the theme's own fields, named paints and per-surface overrides
+      (`Source/UI/ThemePaints.h`), the `ned/theme-gradient`/`ned/theme-surface` bindings
+      with the same deferred-until-a-real-Theme application `ned/theme-set` uses, and the
+      bundled `gradients.janet` presets plus its array sugar. Surfaces are *additive* over
+      Theme's flat colour fields rather than a replacement: every derived default is
+      byte-identical to what the widget paints today, so widgets migrate one at a time in
+      phases 5-7 instead of in one flag day.
+- [ ] **Phase 4 remainder.** `Shadow`/`elevation` are typed but deliberately not settable
+      from Janet yet — an authoring surface for something nothing paints is worse than none,
+      so they land with the popup phase that consumes them.
+- [ ] **Current-line highlight: try the two-pass layering first.** Paint washes (current
+      line, selection, diff tints) as a background pass, then the text pass writes only
+      foregrounds and leaves the background alone unless a span overrides it — no second
+      `Screen` needed, just the buffer's text pass not clobbering what the wash put down.
+      This is what makes a background-only current-line highlight work over a transparent
+      theme, where a single pass has to choose between tinting text and giving up
+      transparency. `buffer.current_line` exists and is empty until this is settled.
+- [ ] **Phase 4b — theme authoring loop.** `M-x reload-theme` (re-`dofile` theme.janet and
+      repaint) and `M-x theme-gallery` (every surface as a labelled swatch, redrawn on
+      reload, doubling as the contrast guard's reporting surface). Small, and it is what
+      makes gradient authoring bearable.
+- [x] **Phase 5 — chrome adoption (widgets).** `ModeLine`, `TabBar` and `ProjectSidebar`
+      paint through themed Surfaces; derived defaults are byte-identical to what they
+      painted before, pinned by `Tests/ChromeSurfaceTest.cpp`. Verified live: a theme
+      setting `modeline.fill` to `[:x "$spectrum"]` ramps blue→teal→yellow→magenta across
+      the row, text intact.
+- [ ] **Phase 5 remainder — focus scrim**, and the state-driven mode-line fills (LSP
+      indexing / test-run / load progress as a sweep across the bar). The scrim needs a
+      composition-root hook for "a docked panel or overlay holds focus", which is why it
+      is not in with the widget migrations.
+- [ ] **Surfaces do not carry traits.** `Brush` has bold/italic/underlined/strikethrough;
+      `Surface` has only paints, so `TabBar` still reads its traits from the Brush while
+      taking colours from the Surface. Either add trait fields to `Surface` (and a way to
+      set them from `ned/theme-surface`) or decide traits stay a Brush concern and say so.
+- [x] **`DarkTheme`'s ANSI colour names are real RGB now** (`LightTheme` never had any).
+      One colour per constant, so every equality the theme expressed survives; the two
+      *background* uses got purpose-chosen values instead, since a colour that reads as
+      text is not a colour text reads on. `Tests/ThemeTest.cpp` now enforces a contrast
+      floor across every bundled theme, with the eight known deviations (two low-contrast
+      light clones, plus solarized-dark's search highlight) listed by name.
+- [x] **No widget hard-codes a colour any more.** Audited and fixed: the sidebar and VCS
+      panel's status rows, `VcsDiffPreview`, the diff/coverage/test gutters, the blame age
+      ramp, and the REPL/ACP/debug-console caret cells. Five new semantic `Theme` fields
+      carry what the diagnostics did not (`successForeground`, `vcsModifiedForeground`,
+      `vcsUntrackedForeground`, `blameRecentForeground`, `blameOldForeground`); everything
+      else reuses an existing field whose meaning already matched — a failed test is
+      `diagnosticError`, an uncovered line is too, a dim gutter affordance is
+      `lineNumberForeground`. All five derive from the palette in `ThemeFromPalette`, so
+      every cloned theme got them for free.
+- [ ] **`BuildDetectedTheme` only maps seven ANSI slots.** Everything it does not map keeps
+      the *fallback* theme's value, which is how a stale `--detect-theme` cache ends up
+      holding `constant_foreground=x:13` — a legacy palette token that now resolves to
+      xterm's flat `#ff00ff` rather than the terminal's own magenta. Re-running
+      `--detect-theme` fixes an existing cache; mapping more slots (constants, types,
+      functions, operators) would stop the fallback showing through in the first place.
+- [ ] **Phase 6 — text-layer adoption.** Selection/isearch/diff/merge/DAP rows become tints
+      rather than background replacements (merge overlaps composite for free); current-line
+      gradient wash; recency glow driven by `UnsavedChangeRanges` + an `EventLoop` timer;
+      virtual text (inline diagnostics, blame, fold placeholders) at real alpha.
+- [ ] **Phase 7 — popups.** Transparent outer border, translucent or blurred body
+      (in-app blur: sample `Screen`, box-blur, use as fill), alpha-falloff shadow, one
+      `elevation` concept shared by completion/hover/TreeView/ListPopup/peek.
+- [x] **Phase 8 — settled by measurement, and it is a "no" for text rows.** Konsole does
+      honour a PNG's per-pixel alpha out to the desktop, but an image and a glyph are
+      mutually exclusive per cell: writing text into an image's cells removes the image, and
+      drawing the image afterwards covers the text. So it cannot back a current-line or
+      sticky-header band. It stays available for text-free regions (the minimap already
+      uses pixel blitting), and `Screen`'s backing layer is the answer for row highlights.
+      See `Docs/Translucency.md`.
+
 ### Embedded Language
 
 - [ ] **Jank replaces Janet** — replace the internal scripting representation with
-      [jank](https://github.com/jank-lang/jank). Feasibility was investigated against a
-      real local install on 2026-09-08 (`jank-0.1-alpha`, `~/.local`, Clang/LLVM 23);
-      everything below is measured on this machine, not read off documentation. **Verdict:
-      an embedded jank with a working JIT is real and already builds today** — a
-      from-scratch host program that initializes the runtime, loads `clojure.core`, evals
-      new source at runtime, and calls jank functions from C++ took an afternoon. The
-      blockers are not "can it be embedded"; they are memory footprint, a
-      garbage-collector/threading contract that ned currently violates 39 times over, and
-      0.1-alpha API ergonomics.
+    [jank](https://github.com/jank-lang/jank). Feasibility was investigated against a
+    real local install on 2026-09-08 (`jank-0.1-alpha`, `~/.local`, Clang/LLVM 23);
+    everything below is measured on this machine, not read off documentation. **Verdict:
+    an embedded jank with a working JIT is real and already builds today** — a
+    from-scratch host program that initializes the runtime, loads `clojure.core`, evals
+    new source at runtime, and calls jank functions from C++ took an afternoon. The
+    blockers are not "can it be embedded"; they are memory footprint, a
+    garbage-collector/threading contract that ned currently violates 39 times over, and
+    0.1-alpha API ergonomics.
 
-      **The central fork: static vs. dynamic runtime.** The install ships two archives.
-      `libjank-static-runtime.a` links no LLVM at all (a hello-world embed is 2.7 MB, 0.5
-      ms to init) but refuses at runtime with *"The 'eval' feature is unsupported in a
-      static runtime"* — it is AOT-only. `libjank-dynamic-runtime.a` carries the codegen
-      and C++-interop objects (`cpp_*`, `builder`, `clang`) and does eval, at the cost of
-      dynamically linking `libclang-cpp.so.23` (84 MB) and `libLLVM.so.23` (182 MB). Ned's
-      whole scripting model — `init.janet` evaluated at startup, `ned/register-command`
-      defining commands at runtime, a REPL panel, project-local plugins — is eval. **Ned
-      needs the dynamic runtime, and therefore ships a hard dependency on a matching
-      Clang/LLVM.** That is the single largest difference from Janet, which is a ~1 MB
-      library with no toolchain dependency at all.
+    **The central fork: static vs. dynamic runtime.** The install ships two archives.
+    `libjank-static-runtime.a` links no LLVM at all (a hello-world embed is 2.7 MB, 0.5
+    ms to init) but refuses at runtime with *"The 'eval' feature is unsupported in a
+    static runtime"* — it is AOT-only. `libjank-dynamic-runtime.a` carries the codegen
+    and C++-interop objects (`cpp_*`, `builder`, `clang`) and does eval, at the cost of
+    dynamically linking `libclang-cpp.so.23` (84 MB) and `libLLVM.so.23` (182 MB). Ned's
+    whole scripting model — `init.janet` evaluated at startup, `ned/register-command`
+    defining commands at runtime, a REPL panel, project-local plugins — is eval. **Ned
+    needs the dynamic runtime, and therefore ships a hard dependency on a matching
+    Clang/LLVM.** That is the single largest difference from Janet, which is a ~1 MB
+    library with no toolchain dependency at all.
 
-      **Measured, embedded, on this machine** (host program in
-      `git log --grep=jank-feasibility` if kept; recipe below):
+    **Measured, embedded, on this machine** (host program in
+    `git log --grep=jank-feasibility` if kept; recipe below):
 
-      | | |
-      |---|---|
-      | PCH read (68 MB, warm page cache) | ~20 ms |
-      | `runtime::context` construction | ~80 ms |
-      | `clojure.core` load (AOT-compiled into the archive) | ~25 ms |
-      | first eval — runtime usable | **~170 ms** |
-      | first `defn` after that (one-time JIT warm-up) | ~85 ms |
-      | every subsequent form | **0.1–0.2 ms** |
-      | 50-form config file (the `init.janet` shape) | ~5 ms |
-      | 100k C++→jank calls | ~19 ms (0.19 µs/call) |
-      | process wall time, start to exit | 0.32 s |
-      | **peak RSS** | **~237 MB** |
+    | | |
+    |---|---|
+    | PCH read (68 MB, warm page cache) | ~20 ms |
+    | `runtime::context` construction | ~80 ms |
+    | `clojure.core` load (AOT-compiled into the archive) | ~25 ms |
+    | first eval — runtime usable | **~170 ms** |
+    | first `defn` after that (one-time JIT warm-up) | ~85 ms |
+    | every subsequent form | **0.1–0.2 ms** |
+    | 50-form config file (the `init.janet` shape) | ~5 ms |
+    | 100k C++→jank calls | ~19 ms (0.19 µs/call) |
+    | process wall time, start to exit | 0.32 s |
+    | **peak RSS** | **~237 MB** |
 
-      Startup and call cost are fine — a realistic config file is ~5 ms, and the
-      per-form cost after warm-up is negligible. **RSS is the problem**: ned with a file
-      open is currently ~28 MB resident. Embedding jank makes the floor ~10× that before
-      a single buffer is loaded, which sits badly beside the huge-file work that went in
-      specifically to keep memory bounded.
+    Startup and call cost are fine — a realistic config file is ~5 ms, and the
+    per-form cost after warm-up is negligible. **RSS is the problem**: ned with a file
+    open is currently ~28 MB resident. Embedding jank makes the floor ~10× that before
+    a single buffer is loaded, which sits badly beside the huge-file work that went in
+    specifically to keep memory bounded.
 
-      **Boehm GC and ned's threads — smaller than it first looks.** The GC is not a choice:
-      BDWGC (`pthread_support.c.o`, `mark.c.o`, `thread_local_alloc.c.o`, ...) is statically
-      baked into both jank archives, and jank's object model is built on it
-      (`new (UseGC) context{}`, `IMMER_HAS_LIBGC=1`). Swapping in another GC library is not
-      an available move; ned can only manage its *interaction* with the one jank brings.
+    **Boehm GC and ned's threads — smaller than it first looks.** The GC is not a choice:
+    BDWGC (`pthread_support.c.o`, `mark.c.o`, `thread_local_alloc.c.o`, ...) is statically
+    baked into both jank archives, and jank's object model is built on it
+    (`new (UseGC) context{}`, `IMMER_HAS_LIBGC=1`). Swapping in another GC library is not
+    an available move; ned can only manage its *interaction* with the one jank brings.
 
-      Upstream bdwgc already ships the fix, and ned would invent nothing — but its
-      *zero-effort* mechanism doesn't reach us. `gc_pthread_redirects.h` macro-redirects
-      `pthread_create` → `GC_pthread_create` (present in the archive, along with
-      `GC_pthread_join`/`_detach`/`_exit`/`_cancel`/`_sigmask`), which auto-registers the
-      thread with no application code at all. Verified: a raw `pthread_create` through
-      that macro survives allocation + collection cleanly. Equally verified: **the same
-      build with `std::thread` still aborts**, because libstdc++ makes the `pthread_create`
-      call inside an already-compiled `.so` where no macro of ned's can reach it.
-      `-Wl,--wrap=pthread_create` (bdwgc's `GC_USE_LD_WRAP` path) doesn't rescue it either
-      — same reason, and this jank build ships no `__wrap_pthread_create` anyway.
+    Upstream bdwgc already ships the fix, and ned would invent nothing — but its
+    *zero-effort* mechanism doesn't reach us. `gc_pthread_redirects.h` macro-redirects
+    `pthread_create` → `GC_pthread_create` (present in the archive, along with
+    `GC_pthread_join`/`_detach`/`_exit`/`_cancel`/`_sigmask`), which auto-registers the
+    thread with no application code at all. Verified: a raw `pthread_create` through
+    that macro survives allocation + collection cleanly. Equally verified: **the same
+    build with `std::thread` still aborts**, because libstdc++ makes the `pthread_create`
+    call inside an already-compiled `.so` where no macro of ned's can reach it.
+    `-Wl,--wrap=pthread_create` (bdwgc's `GC_USE_LD_WRAP` path) doesn't rescue it either
+    — same reason, and this jank build ships no `__wrap_pthread_create` anyway.
 
-      For `std::thread` the answer is bdwgc's explicit API, which is all the "wrapper"
-      anyone needs — `GC_get_stack_base` + `GC_register_my_thread` on entry,
-      `GC_unregister_my_thread` on exit, about eight lines of RAII over the library's own
-      functions. Verified under load: four `std::thread`s doing 500 allocations and 40
-      collections each, concurrently, all clean. `gc_cpp.h` is no help here; it covers
-      allocation (`class gc`, `gc_cleanup`), not threads.
+    For `std::thread` the answer is bdwgc's explicit API, which is all the "wrapper"
+    anyone needs — `GC_get_stack_base` + `GC_register_my_thread` on entry,
+    `GC_unregister_my_thread` on exit, about eight lines of RAII over the library's own
+    functions. Verified under load: four `std::thread`s doing 500 allocations and 40
+    collections each, concurrently, all clean. `gc_cpp.h` is no help here; it covers
+    allocation (`class gc`, `gc_cleanup`), not threads.
 
-      Three thread classes, each measured:
+    Three thread classes, each measured:
 
-      | thread does | result |
-      |---|---|
-      | never touches jank | **safe unregistered** — 50 main-thread collections, 15k spins, fine |
-      | allocates / calls into jank | **hard abort** — `Collecting from unknown thread`, core dump |
-      | merely *holds* a jank ref | **silent corruption** — object collected and its memory reused under load |
+    | thread does | result |
+    |---|---|
+    | never touches jank | **safe unregistered** — 50 main-thread collections, 15k spins, fine |
+    | allocates / calls into jank | **hard abort** — `Collecting from unknown thread`, core dump |
+    | merely *holds* a jank ref | **silent corruption** — object collected and its memory reused under load |
 
-      That third row is the dangerous one, and it only shows up under pressure: with light
-      load the held value looks intact, and it takes ~400k allocations plus 200 collections
-      on another thread before the contents turn to garbage. So the rule is not "threads
-      that allocate" but **"any thread that touches a jank object at all must be
-      registered"** — there is no safe read-only tier.
+    That third row is the dangerous one, and it only shows up under pressure: with light
+    load the held value looks intact, and it takes ~400k allocations plus 200 collections
+    on another thread before the contents turn to garbage. So the rule is not "threads
+    that allocate" but **"any thread that touches a jank object at all must be
+    registered"** — there is no safe read-only tier.
 
-      The good news is that ned already satisfies this almost for free. Scripting is
-      main-thread-only *by existing design*: every background subsystem marshals through
-      `EventLoop::Post`, and the contract is written down (`TestRunner.h`: "including a
-      Janet-backed parser -- always runs on the main thread"; `VcsRunner.h` the same, which
-      is precisely why a Janet VCS provider splits argv-building from subprocess-running).
-      None of the four files including a Janet header creates a thread. BDWGC registers the
-      main thread itself at `GC_init`. So the initial port needs **zero** thread
-      registration — the 39 `std::thread`/`std::jthread` in the tree are all in the
-      "oblivious" row.
+    The good news is that ned already satisfies this almost for free. Scripting is
+    main-thread-only *by existing design*: every background subsystem marshals through
+    `EventLoop::Post`, and the contract is written down (`TestRunner.h`: "including a
+    Janet-backed parser -- always runs on the main thread"; `VcsRunner.h` the same, which
+    is precisely why a Janet VCS provider splits argv-building from subprocess-running).
+    None of the four files including a Janet header creates a thread. BDWGC registers the
+    main thread itself at `GC_init`. So the initial port needs **zero** thread
+    registration — the 39 `std::thread`/`std::jthread` in the tree are all in the
+    "oblivious" row.
 
-      What that buys is an invariant to *defend*, not a migration to perform: the
-      eight-line RAII scope above, kept on the shelf for the day some thread legitimately
-      needs to touch scripting, plus a debug-build assertion in the binding layer that it is
-      running on the registered thread. Worth having early, because the failure it guards is
-      silent corruption rather than a crash.
+    What that buys is an invariant to *defend*, not a migration to perform: the
+    eight-line RAII scope above, kept on the shelf for the day some thread legitimately
+    needs to touch scripting, plus a debug-build assertion in the binding layer that it is
+    running on the registered thread. Worth having early, because the failure it guards is
+    silent corruption rather than a crash.
 
-      **What ned would actually have to change.** Smaller than it looks: only four files
-      outside `Source/Janet/` include a Janet header (`Editor/JanetSymbolComplete.cpp`,
-      `UI/JanetReplPanel.cpp`, `UI/BufferView.cpp`, `main.cpp`). `ScriptingSession`'s
-      language-agnostic seam did its job — the other ~117 files mentioning Janet only name
-      `ned/set-*` bindings in comments. The real work is the 149 `env.Register<>` bindings
-      in `EditorBindings.cpp` (3.2k lines across `Source/Janet/`), `JanetVcsProvider`, the
-      bundled `vcs-git.janet` plugin, ~1.2k lines of Janet-specific tests, and every
-      user's `init.janet`.
+    **What ned would actually have to change.** Smaller than it looks: only four files
+    outside `Source/Janet/` include a Janet header (`Editor/JanetSymbolComplete.cpp`,
+    `UI/JanetReplPanel.cpp`, `UI/BufferView.cpp`, `main.cpp`). `ScriptingSession`'s
+    language-agnostic seam did its job — the other ~117 files mentioning Janet only name
+    `ned/set-*` bindings in comments. The real work is the 149 `env.Register<>` bindings
+    in `EditorBindings.cpp` (3.2k lines across `Source/Janet/`), `JanetVcsProvider`, the
+    bundled `vcs-git.janet` plugin, ~1.2k lines of Janet-specific tests, and every
+    user's `init.janet`.
 
-      One genuine architectural *win* to weigh against all this: `jank_closure_create`
-      takes a `void *context`. Janet's `JanetCFunction` has a fixed signature with nowhere
-      to put one, which is the entire reason `ScriptingSession`'s
-      `ScriptingSessionScope`/`CommandContextScope` current-session globals exist — the
-      codebase's one deliberate piece of global-ish state. Closures with context delete
-      that workaround outright. (Partially verified: a native closure interned as
-      `ned/insert` *is* invoked from jank source, but neither shape tried for retrieving
-      the context inside the callback worked, and both failed by crashing rather than
-      erroring — representative of the alpha's rough edges.)
+    One genuine architectural *win* to weigh against all this: `jank_closure_create`
+    takes a `void *context`. Janet's `JanetCFunction` has a fixed signature with nowhere
+    to put one, which is the entire reason `ScriptingSession`'s
+    `ScriptingSessionScope`/`CommandContextScope` current-session globals exist — the
+    codebase's one deliberate piece of global-ish state. Closures with context delete
+    that workaround outright. (Partially verified: a native closure interned as
+    `ned/insert` *is* invoked from jank source, but neither shape tried for retrieving
+    the context inside the callback worked, and both failed by crashing rather than
+    erroring — representative of the alpha's rough edges.)
 
-      **Things not yet raised that will need answers:**
-      - **`clojure.core` cannot be bootstrapped through the C API.** `jank/c_api.h` has no
-        module loader; `main.cpp`'s sequence (`__rt_ctx = new (UseGC) context{}`,
-        `jank_load_clojure_core_native()`, `module_loader.add_load_fn`, `load_module`) is
-        C++-only. Ned must adopt jank's C++ headers, not just the C shim.
-      - **Inversion of control.** `jank_init_dynamic(argc, argv, ..., fn)` calls *your*
-        function; jank wants to own the outermost frame. Ned's `main.cpp` composition root
-        and `EventLoop::Run` would have to move inside that callback.
-      - **`-rdynamic` is mandatory and conflicts with `--gc-sections`.** The JIT resolves
-        symbols against the host executable's dynamic symbol table; without it, evaluating
-        anything fails with `Symbols not found: [...jank::runtime::obj::small_integer...]`.
-        Verified both ways. Ned's link line and binary size are both affected.
-      - **PCH as a deployment artifact.** The dynamic runtime needs a 68 MB
-        `incremental.pch`, generated per install into
-        `~/.cache/jank/<target-triple>-<binary-version-hash>/`. Ned would have to locate,
-        version-match, and possibly generate it — and decide what happens when it's absent
-        or stale.
-      - **Sanitizers.** ned's suite is expected to stay clean under ASan/UBSan and treats
-        findings as real bugs. An ASan build of the embed links and runs, but
-        LeakSanitizer reports jank's own allocations (`jit::processor` `strdup`s and
-        similar). A suppression file becomes a permanent fixture, which weakens the
-        guarantee the current policy rests on.
-      - **`jank print-cflags` is not yet a usable build integration.** It emits
-        `-I/Development/Jank/compiler+runtime/...` build-tree paths from wherever jank was
-        compiled, an unresolved `-Ljank_lib_link_dirs_prop-NOTFOUND`, and omits the
-        LLVM/clang/crypto libs the dynamic runtime actually needs (`-lclang-cpp -lLLVM
-        -lcrypto` had to be added by hand). It also emits `-l` flags mixed with `-I`, so
-        argument order matters. A CMake integration would be hand-rolled today.
-      - **Invasive global compile flags.** jank's flags include `-femulated-tls`,
-        `-fno-stack-protector`, `-D_FORTIFY_SOURCE=0`, `-fwrapv`, `-DPOINTER_MASK=...`,
-        `-DGC_THREADS`, `-D_GLIBCXX_USE_CXX11_ABI=1`. How far these have to propagate
-        through `ned_lib` (versus being confined to the TUs that include jank) is
-        unresolved and matters for the rest of the codebase's codegen.
-      - **C++23 is fine.** jank ships `-std=c++20`, but its headers compile clean in a
-        C++23 TU — ned does not have to downgrade. (Verified.)
-      - **Two languages at once, or a hard cut?** `ScriptingSession` could host both
-        during a transition, at the cost of carrying two runtimes (and two GCs) in one
-        process. Worth deciding early; it changes everything downstream.
-      - **User-facing cost.** Every `init.janet` in the world becomes an `init.jank`.
-        Ned's own `vcs-git.janet` plugin, the Janet REPL panel, `JanetSymbolComplete`'s
-        binding-aware completion, and the `ned/register-test-parser` callback convention
-        all get rewritten.
+    **Things not yet raised that will need answers:**
+    - **`clojure.core` cannot be bootstrapped through the C API.** `jank/c_api.h` has no
+      module loader; `main.cpp`'s sequence (`__rt_ctx = new (UseGC) context{}`,
+      `jank_load_clojure_core_native()`, `module_loader.add_load_fn`, `load_module`) is
+      C++-only. Ned must adopt jank's C++ headers, not just the C shim.
+    - **Inversion of control.** `jank_init_dynamic(argc, argv, ..., fn)` calls *your*
+      function; jank wants to own the outermost frame. Ned's `main.cpp` composition root
+      and `EventLoop::Run` would have to move inside that callback.
+    - **`-rdynamic` is mandatory and conflicts with `--gc-sections`.** The JIT resolves
+      symbols against the host executable's dynamic symbol table; without it, evaluating
+      anything fails with `Symbols not found: [...jank::runtime::obj::small_integer...]`.
+      Verified both ways. Ned's link line and binary size are both affected.
+    - **PCH as a deployment artifact.** The dynamic runtime needs a 68 MB
+      `incremental.pch`, generated per install into
+      `~/.cache/jank/<target-triple>-<binary-version-hash>/`. Ned would have to locate,
+      version-match, and possibly generate it — and decide what happens when it's absent
+      or stale.
+    - **Sanitizers.** ned's suite is expected to stay clean under ASan/UBSan and treats
+      findings as real bugs. An ASan build of the embed links and runs, but
+      LeakSanitizer reports jank's own allocations (`jit::processor` `strdup`s and
+      similar). A suppression file becomes a permanent fixture, which weakens the
+      guarantee the current policy rests on.
+    - **`jank print-cflags` is not yet a usable build integration.** It emits
+      `-I/Development/Jank/compiler+runtime/...` build-tree paths from wherever jank was
+      compiled, an unresolved `-Ljank_lib_link_dirs_prop-NOTFOUND`, and omits the
+      LLVM/clang/crypto libs the dynamic runtime actually needs (`-lclang-cpp -lLLVM
+      -lcrypto` had to be added by hand). It also emits `-l` flags mixed with `-I`, so
+      argument order matters. A CMake integration would be hand-rolled today.
+    - **Invasive global compile flags.** jank's flags include `-femulated-tls`,
+      `-fno-stack-protector`, `-D_FORTIFY_SOURCE=0`, `-fwrapv`, `-DPOINTER_MASK=...`,
+      `-DGC_THREADS`, `-D_GLIBCXX_USE_CXX11_ABI=1`. How far these have to propagate
+      through `ned_lib` (versus being confined to the TUs that include jank) is
+      unresolved and matters for the rest of the codebase's codegen.
+    - **C++23 is fine.** jank ships `-std=c++20`, but its headers compile clean in a
+      C++23 TU — ned does not have to downgrade. (Verified.)
+    - **Two languages at once, or a hard cut?** `ScriptingSession` could host both
+      during a transition, at the cost of carrying two runtimes (and two GCs) in one
+      process. Worth deciding early; it changes everything downstream.
+    - **User-facing cost.** Every `init.janet` in the world becomes an `init.jank`.
+      Ned's own `vcs-git.janet` plugin, the Janet REPL panel, `JanetSymbolComplete`'s
+      binding-aware completion, and the `ned/register-test-parser` callback convention
+      all get rewritten.
 
-      **Suggested sequencing** (nothing here commits to the swap):
-      1. Add a debug assertion that scripting entry points run on the registered thread,
-         and a small RAII `GcThread` for future use. Cheap, and it turns the
-         main-thread-only rule from an undocumented convention into something enforced
-         before it can be broken.
-      2. Stand up a throwaway `ned_lib`-linked spike that embeds jank beside Janet and
-         exposes ~5 real bindings through it — enough to feel the closure-context
-         ergonomics and confirm the RSS number in a real ned process rather than a toy.
-      3. Only then decide static-vs-dynamic, dual-runtime-vs-hard-cut, and whether 237 MB
-         of baseline RSS is a price this editor is willing to pay.
+    **Suggested sequencing** (nothing here commits to the swap):
+    1. Add a debug assertion that scripting entry points run on the registered thread,
+       and a small RAII `GcThread` for future use. Cheap, and it turns the
+       main-thread-only rule from an undocumented convention into something enforced
+       before it can be broken.
+    2. Stand up a throwaway `ned_lib`-linked spike that embeds jank beside Janet and
+       exposes ~5 real bindings through it — enough to feel the closure-context
+       ergonomics and confirm the RSS number in a real ned process rather than a toy.
+    3. Only then decide static-vs-dynamic, dual-runtime-vs-hard-cut, and whether 237 MB
+       of baseline RSS is a price this editor is willing to pay.
 
-      **Reproduction recipe** (what worked, after several that didn't): compile with
-      `jank print-cflags`, source file *before* the flags (they contain `-l`s), swap
-      `-ljank-static-runtime` → `-ljank-dynamic-runtime`, drop `-Wl,--gc-sections`, add
-      `-rdynamic -L/usr/lib/llvm/23/lib64 -lclang-cpp -lLLVM -lcrypto`, read
-      `~/.cache/jank/$(jank print-binary-version)/incremental.pch` into memory and hand it
-      to `jank_init_dynamic`, then do `main.cpp`'s `clojure.core` bootstrap inside the
-      callback. Note `jank print-cflags` must not be word-split by a shell that doesn't
-      (fish keeps it as one argument — build the argv programmatically).
+    **Reproduction recipe** (what worked, after several that didn't): compile with
+    `jank print-cflags`, source file *before* the flags (they contain `-l`s), swap
+    `-ljank-static-runtime` → `-ljank-dynamic-runtime`, drop `-Wl,--gc-sections`, add
+    `-rdynamic -L/usr/lib/llvm/23/lib64 -lclang-cpp -lLLVM -lcrypto`, read
+    `~/.cache/jank/$(jank print-binary-version)/incremental.pch` into memory and hand it
+    to `jank_init_dynamic`, then do `main.cpp`'s `clojure.core` bootstrap inside the
+    callback. Note `jank print-cflags` must not be word-split by a shell that doesn't
+    (fish keeps it as one argument — build the argv programmatically).
 
-      Upstream is reportedly making embedded builds easier in the coming weeks (noted
-      2026-09-08); several rough edges above — `print-cflags` build-tree leakage, the
-      C-API module-loading gap, PCH distribution — are exactly the kind of thing that
-      might disappear on their own. Worth re-checking before investing in workarounds.
+    Upstream is reportedly making embedded builds easier in the coming weeks (noted
+    2026-09-08); several rough edges above — `print-cflags` build-tree leakage, the
+    C-API module-loading gap, PCH distribution — are exactly the kind of thing that
+    might disappear on their own. Worth re-checking before investing in workarounds.
 
 ### Language Intelligence
 
@@ -304,6 +392,75 @@ plus `preselect` and `commitCharacters`.
       such a type would grow out of, but its payload is still the LSP wire struct and
       the fallback sources still synthesize LSP items to fit it. Bigger than the
       fidelity work above and independent of it.
+
+### Refactoring
+
+JetBrains-class rename/move refactoring, scoped the way an IDE scopes it: a local
+variable renames locally, a symbol renames across everything that actually references it,
+and moving a file fixes up what pointed at it. Ned already owns most of the substrate --
+`lsp-rename` (`C-c C-M-r`) drives `Manager::RequestRename`, whose multi-file `WorkspaceEdit`
+lands through `ApplyProjectEdit` as one `ProjectUndoManager` transaction; `rename-file` and
+the sidebar's own rename already send `workspace/willRenameFiles`/`didRenameFiles` and apply
+the resource operations a server sends back. What is missing is everything that has to work
+*without* a language server, everything that should be reviewable before it lands, and the
+file/class relationship an IDE keeps in sync.
+
+- [ ] **Scope-aware rename with no language server (`locals.scm`).** Ned bundles no LSP
+      server by default, so with none configured there is no rename at all -- and even with
+      one, renaming a loop variable should not require a round trip. Tree-sitter's
+      `locals.scm` convention (`@local.scope`, `@local.definition.*`, `@local.reference`)
+      is exactly the missing piece: it resolves a name to its binding and that binding's
+      scope, which is what makes "rename this parameter" correct in the presence of
+      shadowing. Ned already embeds five query kinds per language (`highlights`, `folds`,
+      `indents`, `tests`, `imports`, plus `tags` for three) through
+      `ned_embed_treesitter_query`, and `ModeOverrides` already scans a dynamic grammar's
+      query directory for conventional basenames -- so this is one more kind, one more
+      `Mode` capability (`localScopes`), and a resolver that walks enclosing scopes
+      outward from point. Deliberate limit: locals only. A name whose binding is not in
+      this file is not this feature's business.
+
+- [ ] **Rename through the review multibuffer, not blind.** JetBrains previews a refactor's
+      usages before applying it, and ned has the better version of that already built: the
+      editable multibuffer `project-replace` produces -- one excerpt per usage, `M-n`/`M-p`
+      to step, edit an excerpt back to its original text to exclude it, `M-c` to apply one
+      file, `C-c C-c` to commit the lot into live buffers or straight to disk, all as one
+      undo transaction. Route both rename paths through it: an LSP `WorkspaceEdit` becomes
+      a review buffer rather than an immediate apply, and the no-server path gets one for
+      free. The piece that makes it *better* than project-replace is classification: a
+      tree-sitter parse knows whether a hit is a real reference, a comment, or a string, so
+      the review buffer can group them and default the risky ones to excluded -- which is
+      the actual difference between a rename and a project-wide search-and-replace.
+
+- [ ] **File rename/move propagates, in both directions.** Renaming from inside ned already
+      tells the language server; what it does not do is fix references when no server is
+      running. The `imports.scm` queries (ten languages) already locate an import/include
+      target -- enough to rewrite a moved file's own relative imports and the imports that
+      named it, which covers the common case for C/C++ includes, Python modules and JS/TS
+      paths. The other direction is missing entirely: a move made *outside* ned (a `git mv`,
+      a file manager) arrives as unrelated delete/create events, because `FileWatch` masks
+      `IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_DELETE` and never pairs them. Adding
+      `IN_MOVED_FROM` and matching inotify's rename cookie turns that pair into a real
+      "this moved" signal, which is what makes the IDE behaviour feel automatic rather than
+      manual.
+
+- [ ] **Class/file name sync.** When a type's name matches its file's stem, renaming either
+      should offer the other -- JetBrains' most-used refactor after rename itself. The
+      lookup is `Mode::symbolKind`'s own `tags.scm` markers, so the work is mostly coverage:
+      three languages have a tags query today (C, C++, Kotlin) against ten with imports.
+      Java and C# want it most, since their languages *require* the match. Offer, never
+      assume: a prompt with the proposed rename, and a hard skip when the file holds more
+      than one top-level type.
+
+- [ ] **Change signature (the hard one, scoped honestly).** LSP has no request for this --
+      JetBrains does it from its own index, and no server offers an equivalent -- so it is
+      ned's own transform or nothing. Renaming a parameter falls out of the `locals.scm`
+      item above and needs nothing else. Adding, removing or reordering parameters means
+      rewriting call sites, which needs a per-language structural query (a `calls.scm`
+      alongside `tests.scm`, mapping a call expression to its argument list) plus an edit
+      planner that maps old positions to new ones and drops or defaults the rest. First cut
+      should be one language family and the review buffer above making the blast radius
+      visible before anything lands; a signature change that silently rewrote fifty call
+      sites would be the least trustworthy feature in the editor.
 
 ### Mouse Ergonomics
 
@@ -644,64 +801,64 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
       project-wide search, a refactor, a script evaluation. Round-trip count, not bandwidth,
       is what makes remote editing feel bad, so this is likely faster as well as simpler.
 
-      **The load-bearing design decision — local is the degenerate case.** The protocol
-      should be the *only* interface, with in-process execution as one transport behind it
-      rather than a bypass around it. Two things follow. It can't rot: every local keystroke
-      exercises the same path a remote session uses, so remote stops being a bolt-on that's
-      broken every time it's picked back up. And it makes "where does this script run"
-      a transport question rather than an architectural one — the same request answered
-      in-process, by a local subprocess, or by a host across a socket.
+    **The load-bearing design decision — local is the degenerate case.** The protocol
+    should be the *only* interface, with in-process execution as one transport behind it
+    rather than a bypass around it. Two things follow. It can't rot: every local keystroke
+    exercises the same path a remote session uses, so remote stops being a bolt-on that's
+    broken every time it's picked back up. And it makes "where does this script run"
+    a transport question rather than an architectural one — the same request answered
+    in-process, by a local subprocess, or by a host across a socket.
 
-      That last point interacts directly with the jank analysis above: if scripts execute
-      where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
-      lives on whichever side actually runs them. A remote session's client could then be
-      genuinely thin — and, per the same analysis, a headless binary already links
-      `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` +
-      `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316
-      objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter
-      *grammar* rather than the runtime, and the whole UI-side coupling is one call
-      (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is
-      already there to be taken.
+    That last point interacts directly with the jank analysis above: if scripts execute
+    where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
+    lives on whichever side actually runs them. A remote session's client could then be
+    genuinely thin — and, per the same analysis, a headless binary already links
+    `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` +
+    `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316
+    objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter
+    *grammar* rather than the runtime, and the whole UI-side coupling is one call
+    (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is
+    already there to be taken.
 
-      **Compression must be negotiated, and "none" must be first-class.** Nothing
-      compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib,
-      lzma or brotli — so any codec is a new dependency, and assuming one is present on
-      both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream,
-      or the encoding can't change after the handshake; advertise available codecs at
-      handshake and fall back to identity. LSP's own `capabilities` exchange is the model,
-      and this codebase already understands it well.
+    **Compression must be negotiated, and "none" must be first-class.** Nothing
+    compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib,
+    lzma or brotli — so any codec is a new dependency, and assuming one is present on
+    both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream,
+    or the encoding can't change after the handshake; advertise available codecs at
+    handshake and fall back to identity. LSP's own `capabilities` exchange is the model,
+    and this codebase already understands it well.
 
-      **This must inherit four protocol bugs already paid for, not rediscover them.** Ned
-      has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type`
-      envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an
-      `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
-      - an unbounded blocking `connect()` froze a live editor when the daemon's backlog
-        filled (`LspBrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
-      - joining a reader thread under a held mutex wedged the daemon for hours;
-      - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the
-        `ctest -j8` timeouts;
-      - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in
-        `LspClient`/`DapClient`/`AcpClient`.
-      A new protocol gets timeouts on every blocking call, a non-blocking connect, an
-      asynchronous write queue, and no lock held across a join — by construction, on day
-      one. `EventLoop::Post` is the existing, proven way results come back to the main
-      thread; the protocol layer should not invent a second one.
+    **This must inherit four protocol bugs already paid for, not rediscover them.** Ned
+    has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type`
+    envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an
+    `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
+    - an unbounded blocking `connect()` froze a live editor when the daemon's backlog
+      filled (`LspBrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
+    - joining a reader thread under a held mutex wedged the daemon for hours;
+    - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the
+      `ctest -j8` timeouts;
+    - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in
+      `LspClient`/`DapClient`/`AcpClient`.
+    A new protocol gets timeouts on every blocking call, a non-blocking connect, an
+    asynchronous write queue, and no lock held across a join — by construction, on day
+    one. `EventLoop::Post` is the existing, proven way results come back to the main
+    thread; the protocol layer should not invent a second one.
 
-      **Open questions worth settling before any code:** framing (length-prefixed binary vs.
-      reusing the `Content-Length` shape already implemented three times); whether requests
-      are JSON (nlohmann is already vendored) or something denser; how a long-running remote
-      operation streams partial results and gets cancelled (LSP's `$/progress` and
-      `$/cancelRequest` are the obvious prior art, already handled in `LspManager`);
-      versioning and forward compatibility; and authentication/transport (bare `AF_UNIX`
-      locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and trust conventions
-      in `BrokerSocketPath.cpp` are the local precedent).
+    **Open questions worth settling before any code:** framing (length-prefixed binary vs.
+    reusing the `Content-Length` shape already implemented three times); whether requests
+    are JSON (nlohmann is already vendored) or something denser; how a long-running remote
+    operation streams partial results and gets cancelled (LSP's `$/progress` and
+    `$/cancelRequest` are the obvious prior art, already handled in `LspManager`);
+    versioning and forward compatibility; and authentication/transport (bare `AF_UNIX`
+    locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and trust conventions
+    in `BrokerSocketPath.cpp` are the local precedent).
 
-      **Security is not a later concern here.** "Execute this script over a socket" is a
-      remote code execution surface by definition. Ned already gates project-local
-      `.ned/init.janet` behind `ProjectTrust`'s content-hash registry precisely because
-      opening a directory shouldn't run arbitrary code; the same discipline has to extend
-      across a transport, where the threat model is strictly worse. Decide the trust model
-      alongside the framing, not after it.
+    **Security is not a later concern here.** "Execute this script over a socket" is a
+    remote code execution surface by definition. Ned already gates project-local
+    `.ned/init.janet` behind `ProjectTrust`'s content-hash registry precisely because
+    opening a directory shouldn't run arbitrary code; the same discipline has to extend
+    across a transport, where the threat model is strictly worse. Decide the trust model
+    alongside the framing, not after it.
 
 - [ ] **One connection class instead of three copies of it** (raised 2026-09-08 —
       prerequisite for the protocol work above, and worth doing on its own merits).
@@ -716,49 +873,49 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
       currently defended by a comment repeated in three files: reorder two members in one
       of them and you get a hang, not a compile error.
 
-      **The seam is clean, because only the top of the stack actually differs.** Framing
-      differs (LSP and DAP share `Content-Length` via `Lsp/Transport.h`; ACP is
-      newline-delimited with its own). Envelope and dispatch differ (JSON-RPC id matching;
-      DAP's `seq`/`type` request-response-event; ACP's genuinely bidirectional,
-      async-capable handlers). Handshake gating differs (LSP queues until `initialized`).
-      Everything *below* "turn bytes into one frame" — process spawn, the read loop, the
-      stderr loop, the write queue and its thread, `EventLoop::Post` marshalling, shutdown
-      ordering — is byte-for-byte the same idea three times.
+    **The seam is clean, because only the top of the stack actually differs.** Framing
+    differs (LSP and DAP share `Content-Length` via `Lsp/Transport.h`; ACP is
+    newline-delimited with its own). Envelope and dispatch differ (JSON-RPC id matching;
+    DAP's `seq`/`type` request-response-event; ACP's genuinely bidirectional,
+    async-capable handlers). Handshake gating differs (LSP queues until `initialized`).
+    Everything *below* "turn bytes into one frame" — process spawn, the read loop, the
+    stderr loop, the write queue and its thread, `EventLoop::Post` marshalling, shutdown
+    ordering — is byte-for-byte the same idea three times.
 
-      **Shape — composition, not an interface, and for a design reason rather than a cost
-      one.** Nothing here ever holds a heterogeneous collection of clients: each one knows
-      its framing at compile time and is named concretely at every call site, so there is
-      no runtime type choice for a vtable to express (unlike `ITextStorage`, where `Buffer`
-      genuinely cannot know whether it holds a `Rope` or a `PieceTable`, or `Widget::Paint`,
-      or `VcsProvider`, whose implementation set is opened at runtime by Janet plugins).
-      An abstract `ProtocolClient` base with a virtual `DispatchFrame` would be paying for
-      a decision that is never made. So: `std::function` callables, which is also already
-      the house idiom — the whole `Set*`/register-then-connect convention across `UI/` and
-      the managers works exactly this way.
-      - `Transport` becomes a concept with concrete implementations rather than one class:
-        child-process pipes (today's `Process/ChildProcess`), `AF_UNIX`
-        (`LspBrokerConnect.cpp`'s non-blocking-connect + `poll` dance, currently 326 lines
-        living alone), and later TCP/stdio-over-ssh for the remote protocol.
-      - `FramedConnection` owns the threads, the queue, the member order and the shutdown
-        sequence exactly once, parameterized by a read-a-frame callable and an on-frame
-        callable. `LspClient`/`DapClient`/`AcpClient` each *own one* instead of
-        reimplementing it, keeping only their envelope, dispatch and handshake logic.
+    **Shape — composition, not an interface, and for a design reason rather than a cost
+    one.** Nothing here ever holds a heterogeneous collection of clients: each one knows
+    its framing at compile time and is named concretely at every call site, so there is
+    no runtime type choice for a vtable to express (unlike `ITextStorage`, where `Buffer`
+    genuinely cannot know whether it holds a `Rope` or a `PieceTable`, or `Widget::Paint`,
+    or `VcsProvider`, whose implementation set is opened at runtime by Janet plugins).
+    An abstract `ProtocolClient` base with a virtual `DispatchFrame` would be paying for
+    a decision that is never made. So: `std::function` callables, which is also already
+    the house idiom — the whole `Set*`/register-then-connect convention across `UI/` and
+    the managers works exactly this way.
+    - `Transport` becomes a concept with concrete implementations rather than one class:
+      child-process pipes (today's `Process/ChildProcess`), `AF_UNIX`
+      (`LspBrokerConnect.cpp`'s non-blocking-connect + `poll` dance, currently 326 lines
+      living alone), and later TCP/stdio-over-ssh for the remote protocol.
+    - `FramedConnection` owns the threads, the queue, the member order and the shutdown
+      sequence exactly once, parameterized by a read-a-frame callable and an on-frame
+      callable. `LspClient`/`DapClient`/`AcpClient` each *own one* instead of
+      reimplementing it, keeping only their envelope, dispatch and handshake logic.
 
-      **The payoff compounds with the protocol item above.** The four bugs already paid for
-      — unbounded blocking `connect()`, join-under-mutex, `poll(-1, -1)` parking forever,
-      unbounded `WriteAll` — get fixed in one place, and any new client (the server
-      protocol, a future MCP or nREPL endpoint) inherits all four by construction instead
-      of re-earning them. It also deletes the "reorder these members and it hangs" hazard
-      from two of the three files.
+    **The payoff compounds with the protocol item above.** The four bugs already paid for
+    — unbounded blocking `connect()`, join-under-mutex, `poll(-1, -1)` parking forever,
+    unbounded `WriteAll` — get fixed in one place, and any new client (the server
+    protocol, a future MCP or nREPL endpoint) inherits all four by construction instead
+    of re-earning them. It also deletes the "reorder these members and it hangs" hazard
+    from two of the three files.
 
-      **Honest risk:** this is a pure refactor of the most concurrency-sensitive and most
-      historically bug-prone code in the tree, all of which currently works. It is only
-      worth doing behaviour-preserving, one client at a time, leaning on the existing
-      safety net — `LspClientTest`/`DapClientTest`/`AcpClientTest`/`LspTransportTest`/
-      `AcpTransportTest`/`ChildProcessTest`/`TaskProcessTest`/the three broker tests, ~4000
-      assertions across the three clients — kept green at every step, and re-run under the
-      `sanitize` preset rather than just `default`. Do it *before* the server protocol, so
-      the new protocol is the first consumer rather than a fourth copy.
+    **Honest risk:** this is a pure refactor of the most concurrency-sensitive and most
+    historically bug-prone code in the tree, all of which currently works. It is only
+    worth doing behaviour-preserving, one client at a time, leaning on the existing
+    safety net — `LspClientTest`/`DapClientTest`/`AcpClientTest`/`LspTransportTest`/
+    `AcpTransportTest`/`ChildProcessTest`/`TaskProcessTest`/the three broker tests, ~4000
+    assertions across the three clients — kept green at every step, and re-run under the
+    `sanitize` preset rather than just `default`. Do it *before* the server protocol, so
+    the new protocol is the first consumer rather than a fourth copy.
 
 ### Remote Development (SSH Remote Editing)
 
@@ -1023,6 +1180,21 @@ As of 2026-09-08: `ctest -j8` is clean under the `default` preset, and so is the
 single-process `./build/ned_tests` (see the build/test note at the end of this file for
 why that is a separate check worth making). The `sanitize` preset has one reproducible
 failure, below. Two flakes and one documented behavioral limitation:
+
+- **The `[Performance]` tests flake under `ctest -j8`** (seen repeatedly 2026-09-09:
+  `Point navigation across a huge (piece-table-backed) buffer stays fast`). They budget
+  wall-clock while eight test processes compete for the machine, so a loaded run can miss a
+  budget the same binary clears comfortably on its own. Each one passes standalone and on
+  the next parallel run. Worth either gating them behind a serial ctest fixture or moving
+  them to a `RUN_SERIAL` property rather than continuing to eyeball each occurrence.
+
+- **`Symbol gutter remaps a huge buffer's window-relative offsets...` died with a bus
+  error once under `ctest -j8`** (2026-09-09), and passed both on its own immediately
+  afterwards and on the very next full `-j8` run, with no source change in between. SIGBUS
+  on a huge-file test points at the mmap path rather than the gutter logic: a page fault on
+  a mapping whose backing file could not be grown is exactly this signal, and these tests
+  write GB-scale files into a tmpfs `/tmp` that several parallel huge-file tests share. If
+  it recurs, check tmpfs headroom during the run before suspecting `MappedFile` itself.
 
 - **`ResolvePsr4Namespace strips a leading fully-qualified backslash` aborted once
   under `ctest -j8`** (seen 2026-09-09, passed on immediate rerun and on a full clean

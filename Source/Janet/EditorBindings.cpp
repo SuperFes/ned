@@ -288,6 +288,20 @@ namespace {
         editor::AddThemeColorOverride(key, token);
     }
 
+    // Translucency follow-up: a paint arrives as its one-line form and is
+    // parsed by the UI layer once a real Theme exists to resolve $slot
+    // references against -- the same deferral NedThemeSet just above uses,
+    // and the reason this layer can stay free of any UI dependency. The
+    // array form the docs show (`[:y "$bg" 3 "$bg+8"]`) is Janet-side sugar
+    // in the bundled gradients plugin, which flattens to exactly this.
+    void NedThemeGradient(std::string name, std::string spec) {
+        editor::AddNamedPaint(name, spec);
+    }
+
+    void NedThemeSurface(std::string surface, std::string part, std::string spec) {
+        editor::AddSurfacePaint(surface, part, spec);
+    }
+
     void NedSetMinimapEnabled(bool enabled) {
         editor::SetMinimapEnabled(enabled);
     }
@@ -1187,7 +1201,7 @@ void InstallEditorBindings(Environment& env) {
         "synthetic timeout failure (default 30000; non-positive values are clamped to 1).");
     env.Register<&NedSetTheme>(
         "ned", "set-theme",
-        "Select the startup theme by name (e.g. \"dark\", \"light\", \"ansi-dark\"). Overrides a saved --detect-theme "
+        "Select the startup theme by name (e.g. \"dark\", \"light\", \"gruvbox-dark\"). Overrides a saved --detect-theme "
         "file; an unknown name is reported at startup and falls back. Empty string clears the preference.");
     env.Register<&NedThemeSet>(
         "ned", "theme-set",
@@ -1195,6 +1209,19 @@ void InstallEditorBindings(Environment& env) {
         "(ned/theme-set \"active_tab_bold\" \"false\")) on top of the startup theme -- keys match the theme file's "
         "own, trait values are \"true\"/\"false\"; the save-theme command writes a full theme.janet of these calls "
         "for hand-editing, loaded via (dofile ...) from init.janet.");
+    env.Register<&NedThemeGradient>(
+        "ned", "theme-gradient",
+        "Register a named paint usable anywhere a paint is (e.g. (ned/theme-gradient \"brand\" \"diag $accent 2 "
+        "$keyword\")). The spec is an optional axis or pattern keyword, then stops, with numbers between them as "
+        "relative weights: stops are \"#rrggbb\"/\"#rrggbbaa\"/\"default\", a percentage like \"60%\" (making it a "
+        "fade of whatever colour is already there), or \"$slot\" with optional +lighten/-darken/\/alpha "
+        "adjustments. A stop naming another paint expands to that paint's own stops.");
+    env.Register<&NedThemeSurface>(
+        "ned", "theme-surface",
+        "Set one part of one themed surface: (ned/theme-surface \"popup\" \"fill\" \"y $bg/78 3 $bg/52\"). Parts are "
+        "\"fill\", \"border\" and \"text\"; the spec is the same paint grammar ned/theme-gradient takes. Surface "
+        "names come from the UI layer (\"buffer\", \"buffer.current_line\", \"modeline\", \"tab.active\", \"panel\", "
+        "\"popup\", ...); an unknown name or part is reported at startup.");
     env.Register<&NedSetMinimapEnabled>(
         "ned", "set-minimap-enabled",
         "Enable/disable the minimap (replaces the plain scrollbar) as the default starting state for newly-opened "

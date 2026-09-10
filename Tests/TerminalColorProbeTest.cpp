@@ -80,7 +80,9 @@ TEST_CASE("BuildDetectedTheme maps palette slots onto the same fields DarkTheme 
     REQUIRE(theme.defaultForeground == *detected.foreground);
     REQUIRE(theme.stringForeground == *detected.palette[2]);
     REQUIRE(theme.keywordForeground == *detected.palette[4]);
-    REQUIRE(theme.selectionBackground == *detected.palette[4]);
+    // Half strength: a selection tints the line rather than replacing it,
+    // composited over the buffer background at paint time.
+    REQUIRE(theme.selectionBackground == detected.palette[4]->WithAlpha(128));
 }
 
 TEST_CASE("BuildDetectedTheme keeps the fallback's value for anything not detected", "[TerminalColorProbe]") {

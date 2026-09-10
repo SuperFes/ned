@@ -1,5 +1,8 @@
 #include "ModeLine.h"
 
+#include "Paint.h"
+#include "ThemePaints.h"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -281,21 +284,32 @@ void ModeLine::Paint(Canvas c) {
     // Chrome-redesign follow-up: the focused pane's gradient pulls toward
     // the theme accent so which split has the keyboard is visible at a
     // glance -- see SetFocusProvider.
-    const bool  focused       = focusProvider_ && focusProvider_();
-    const Color gradientStart = focused ? theme_.modeLineFocusedGradientStart : theme_.modeLineGradientStart;
-    const Color gradientEnd   = focused ? theme_.modeLineFocusedGradientEnd : theme_.modeLineGradientEnd;
+    //
+    // Translucency follow-up (Docs/Translucency.md phase 5): the row is a
+    // themed Surface now rather than a hand-rolled interpolation. Its
+    // derived default is the same left-to-right gradient between the same
+    // two theme colours, so an unthemed editor is unchanged; a theme that
+    // sets "modeline"/"modeline.focused" gets any paint at all -- including
+    // a translucent one, which dithers through to the desktop rather than
+    // painting an opaque bar.
+    const bool    focused = focusProvider_ && focusProvider_();
+    const Surface surface = SurfaceFor(theme_, focused ? "modeline.focused" : "modeline");
+
+    // Paint order: clear, fill, glyphs, then any text fade. The clear
+    // matters because a translucent or patterned fill deliberately leaves
+    // gaps, and cells persist between frames.
+    ClearCanvas(c, ChromeBackdrop(theme_));
+    Fill(c, surface.fill);
 
     for (int x = 0; x < c.size().width; ++x) {
-        Cell& cell     = c[{.x = x, .y = 0}];
-        cell.character = (static_cast<std::size_t>(x) < columns.size()) ? columns[static_cast<std::size_t>(x)] : " ";
-
-        // A left-to-right gradient across the whole row rather than a flat
-        // fill -- the one "gradient" deliverable of Phase 6, chosen because
-        // it's always visible without needing any animation/timer machinery.
-        const float percent   = (c.size().width > 1) ? static_cast<float>(x) / static_cast<float>(c.size().width - 1) : 0.0F;
-        cell.background_color = Color::Interpolate(percent, gradientStart, gradientEnd);
-        cell.foreground_color = theme_.modeLineForeground;
+        const Point at{.x = x, .y = 0};
+        Cell        glyph;
+        glyph.character        = (static_cast<std::size_t>(x) < columns.size()) ? columns[static_cast<std::size_t>(x)] : " ";
+        glyph.foreground_color = TextColourAt(surface, c, at, theme_.modeLineForeground);
+        c.Blend(at, glyph);
     }
+
+    ApplyTextFade(c, surface);
 }
 
 void ModeLine::SetFocusProvider(std::function<bool()> provider) {

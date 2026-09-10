@@ -216,12 +216,12 @@ TEST_CASE("Diff markers render in the diff column itself, not under the status s
     // familiar colors, as foreground icons rather than solid swatches.
     REQUIRE(screen.PixelAt(0, 0).character == " "); // untouched line
     REQUIRE(screen.PixelAt(0, 1).character == "+"); // Added
-    REQUIRE(screen.PixelAt(0, 1).foreground_color == ned::ui::Color::BrightGreen);
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == fixture.theme.successForeground);
     REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.background);
     REQUIRE(screen.PixelAt(0, 2).character == "~"); // Modified
-    REQUIRE(screen.PixelAt(0, 2).foreground_color == ned::ui::Color::BrightBlue);
+    REQUIRE(screen.PixelAt(0, 2).foreground_color == fixture.theme.vcsModifiedForeground);
     REQUIRE(screen.PixelAt(0, 3).character == "▔"); // Removed notch
-    REQUIRE(screen.PixelAt(0, 3).foreground_color == ned::ui::Color::BrightRed);
+    REQUIRE(screen.PixelAt(0, 3).foreground_color == fixture.theme.diagnosticError);
     // The status column right of it belongs to the unsaved-change swatch
     // (the whole buffer is unsaved here) -- proves the two no longer fight
     // over one cell.

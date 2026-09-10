@@ -222,10 +222,8 @@ class BufferView : public Widget {
     // rich-theme-set follow-up (Phase 1): registers the callback the
     // select-theme picker applies a Theme through -- wired by main.cpp (via
     // WindowManager::SetThemeApplier) to an in-place assignment of the one
-    // Theme local every widget holds `const Theme&` into, the exact swap
-    // mechanism the ANSI fallback established there (and the applier is
-    // also where the limited-terminal AnsiFallbackFor gate stays in the
-    // loop -- this widget never needs to know about it). Unset (every
+    // Theme local every widget holds `const Theme&` into, which is safe
+    // because every widget repaints fresh each frame. Unset (every
     // test-constructed BufferView that doesn't wire one) makes select-theme
     // report via statusMessage_ instead of opening a session -- the same
     // "unset is a safe no-op" convention SetProjectSidebar/SetLspManager
@@ -3668,6 +3666,13 @@ class BufferView : public Widget {
     // editor::InlineDiagnosticsEnabled() is off.
     void                      EnsureInlineDiagnosticCache() const;
     [[nodiscard]] std::size_t AnnotationRowsForLine(std::size_t line) const;
+
+    // The inlay hints anchored inside one line, in the same RenderedInlayHint
+    // shape Paint() renders from -- the viewport's own column maths needs
+    // them, since a hint occupies real cells before the character it
+    // annotates.
+    [[nodiscard]] std::vector<bufferview::RenderedInlayHint> InlayHintsForLineRange(std::size_t lineStart,
+                                                                                    std::size_t lineEnd) const;
     // Paints one annotation row for `line` at screen row `row`: carets
     // under the diagnostic's visual span (skipped when wrap is on -- the
     // annotation sits below the line's LAST wrap row, where first-row
@@ -3739,8 +3744,13 @@ class BufferView : public Widget {
     // origin-agnostic) to still carry the signal, matching this feature's
     // own "otherwise the bottom hint is enough" design.
     static constexpr std::size_t kNoRowLine = static_cast<std::size_t>(-1);
-    void                         PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
-                                                              const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
+    // Paints the "buffer.current_line" surface into the backing layer -- behind
+    // the glyphs rather than into their cells, so a wash never has to choose
+    // between covering the syntax colour and being visible. Empty by default.
+    void PaintCurrentLineHighlight(Canvas& c, const std::vector<std::size_t>& rowLine) const;
+
+    void PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
+                                      const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
 
     // hover/completion follow-up. See Command.h's InteractiveRequest::
     // LspComplete doc comment and completionDebounceTimer_ above for the

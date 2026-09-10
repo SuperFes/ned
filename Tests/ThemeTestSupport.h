@@ -20,7 +20,7 @@
 
 namespace ned::tests {
 
-// Rec. 601 luma, same formula AnsiFallbackFor uses (Theme.cpp) -- good
+// Rec. 601 luma -- good
 // enough to order colors by perceived brightness for a contrast floor.
 inline int Luma(const ui::Color& c) {
     REQUIRE(c.kind == ui::Color::Kind::TrueColor); // palette-derived themes are TrueColor throughout

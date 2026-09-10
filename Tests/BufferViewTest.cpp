@@ -61,6 +61,7 @@
 #include "UI/ScrollArrowButton.h"
 #include "UI/ScrollBar.h"
 #include "UI/Theme.h"
+#include "UI/ThemePaints.h"
 #include "UI/ThemeRegistry.h"
 #include "UI/TreeView.h"
 
@@ -8687,14 +8688,14 @@ TEST_CASE("Arrowing through select-theme previews each highlighted theme live, a
 TEST_CASE("Enter commits the highlighted theme and typing narrows with live preview", "[BufferView]") {
     ThemePickerHarness h;
 
-    TypeText(h.view, "ansi-l");
-    REQUIRE(CandidateSelected(h.fixture.candidates, "ansi-light"));
+    TypeText(h.view, "gruvbox-l");
+    REQUIRE(CandidateSelected(h.fixture.candidates, "gruvbox-light"));
     REQUIRE_FALSE(h.applied.empty());
-    REQUIRE(h.applied.back() == "ansi-light");
+    REQUIRE(h.applied.back() == "gruvbox-light");
 
     h.view.OnEvent(ned::ui::test::Return());
-    REQUIRE(h.fixture.statusMessage == "Theme: ansi-light");
-    REQUIRE(h.applied.back() == "ansi-light");
+    REQUIRE(h.fixture.statusMessage == "Theme: gruvbox-light");
+    REQUIRE(h.applied.back() == "gruvbox-light");
 
     h.view.OnEvent(ned::ui::test::Character("z")); // back to normal editing
     REQUIRE(h.fixture.buffer.Text() == "z");
@@ -11844,8 +11845,9 @@ TEST_CASE("save-theme writes the active theme as runnable Janet to the XDG confi
         std::ostringstream content;
         content << in.rdbuf();
         // The fixture's theme is DarkTheme() -- spot-check one emitted call
-        // against a known value (keyword_foreground = Color::Blue = x:4).
-        REQUIRE(content.str().find("(ned/theme-set \"keyword_foreground\" \"x:4\")") != std::string::npos);
+        // against a known value (keyword_foreground, now a real RGB colour
+        // rather than an ANSI name resolving to xterm's flat #000080).
+        REQUIRE(content.str().find("(ned/theme-set \"keyword_foreground\" \"#61afef\")") != std::string::npos);
         REQUIRE(content.str().find("(ned/theme-set \"background\" \"default\")") != std::string::npos);
 
         view.OnEvent(ned::ui::test::Character("z")); // proves the one-shot returned to Normal mode
@@ -13079,4 +13081,61 @@ TEST_CASE("OnPaste with vim mode enabled in Insert mode does one atomic insert a
     // which is what the RecordInsertKey bookkeeping in the fast path exists
     // to make possible.
     REQUIRE(fixture.buffer.Text().size() == std::string("pastedstart ").size() + std::string("pasted").size());
+}
+
+TEST_CASE("The current-line highlight covers every row a wrapped line occupies", "[BufferView]") {
+    // translucency-theme-v2 follow-up: the highlight paints into the backing
+    // layer per SCREEN row, keyed on rowLine[row] -- and a wrapped line
+    // writes its own line number into every row it occupies, not just the
+    // first. Guards that: highlighting only the first row of a wrapped line
+    // is the obvious way for this to regress, and it's invisible until
+    // someone turns wrapping on with a long line under point.
+    struct SurfaceGuard {
+        ~SurfaceGuard() {
+            ned::ui::ClearSurfaceOverrides();
+        }
+    } const guard;
+
+    const ned::ui::Color highlight = ned::ui::Color::RGB(0x2a2a40);
+    ned::ui::Surface     current;
+    current.fill = ned::ui::SolidPaint(highlight);
+    ned::ui::SetSurfaceOverride("buffer.current_line", current);
+
+    Fixture fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint("aaaa bbbb cccc dddd\nsecond line");
+    fixture.buffer.SetPoint(0); // first (wrapped) line
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(15, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    // Same wrap geometry the word-boundary test above pins: "aaaa " /
+    // "bbbb " / "cccc dddd" across rows 0-2, with "second line" on row 3.
+    //
+    // Layer-agnostic on purpose: the highlight composites in place where the
+    // theme's own background already fills the cell and drops to the backing
+    // layer where nothing does, and which one applies is not what this test
+    // is about.
+    // Column 0 is excluded deliberately: it is the unsaved-changes gutter
+    // indicator, which owns its own background, and the highlight yields to
+    // anything already holding a cell rather than tinting over it.
+    const auto highlighted = [&](int row) {
+        for (int x = 1; x < 15; ++x) {
+            const ned::ui::Color text = screen.PixelAt(x, row).background_color;
+            const ned::ui::Color shown =
+                text.kind == ned::ui::Color::Kind::Default ? screen.BackingAt(x, row).background_color : text;
+            if (shown != highlight) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    REQUIRE(highlighted(0));
+    REQUIRE(highlighted(1));
+    REQUIRE(highlighted(2));
+    REQUIRE_FALSE(highlighted(3)); // a different buffer line
 }

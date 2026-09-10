@@ -2,7 +2,7 @@
 // The user's preferred startup theme name (rich-theme-set follow-up,
 // Phase 1). One process-wide string, mutex-guarded static state --
 // TabWidth.h/FormatOnSave.h's exact pattern. Configured from Janet via
-// ned/set-theme (e.g. (ned/set-theme "ansi-dark") in init.janet); empty
+// ned/set-theme (e.g. (ned/set-theme "gruvbox-dark") in init.janet); empty
 // means "no preference," the default, and an empty Set clears it back to
 // that (FormatOnSave's own empty-string convention).
 //
@@ -40,6 +40,34 @@ void                                                           AddThemeColorOver
 // Process-wide state needs a reset seam for tests (the SyntaxThemeGuard
 // precedent); not reachable from Janet.
 void ClearThemeColorOverrides();
+
+// Translucency follow-up (Docs/Translucency.md phase 4): named paints and
+// per-surface paints, accumulated from Janet the same deferred, string-only
+// way the color overrides above are.
+//
+// A paint arrives as its one-line form -- "y $bg 3 $bg+8" -- and is parsed
+// by ui::ParsePaint once main.cpp has a real Theme to resolve $slot
+// references against. This layer never interprets it. The array form the
+// docs show is Janet-side sugar that flattens to exactly this string, which
+// is also what keeps the whole grammar out of the binding layer and lets
+// the scripting language change underneath it.
+void                                                           AddNamedPaint(const std::string& name, const std::string& spec);
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> NamedPaintOverrides();
+void                                                           ClearNamedPaintOverrides();
+
+// One part of one surface: ("popup", "fill", "y $bg/78 3 $bg/52"). Parts
+// are "fill", "border" and "text"; an unknown part is main.cpp's to report,
+// not this layer's. Shadow and elevation are deliberately not here yet --
+// nothing paints them until the popup phase.
+struct SurfacePaintOverride {
+    std::string surface;
+    std::string part;
+    std::string spec;
+};
+
+void                                            AddSurfacePaint(const std::string& surface, const std::string& part, const std::string& spec);
+[[nodiscard]] std::vector<SurfacePaintOverride> SurfacePaintOverrides();
+void                                            ClearSurfacePaintOverrides();
 
 } // namespace ned::editor
 

@@ -366,9 +366,25 @@ Theme BuildDesktopTheme(const DesktopThemeInfo& info) {
         // see that function's own comment for why these particular fields.
         result.borderAccent.foreground = *info.accent;
         result.keywordForeground       = *info.accent;
+        // The selection reads as the desktop's accent at half strength --
+        // a tint over whatever the line already is, not a slab that hides
+        // it. Composited by OverlayBackground at paint time
+        // (UI/BufferView/Internal.h).
+        result.selectionBackground = info.accent->WithAlpha(96);
         result.modeLineFocusedGradientStart =
             Color::Interpolate(0.6F, result.modeLineGradientStart, *info.accent);
         result.modeLineFocusedGradientEnd = Color::Interpolate(0.6F, result.modeLineGradientEnd, *info.accent);
+
+        // Translucency follow-up: the bar fades toward the buffer as it runs
+        // right -- noticeably, not to nothing -- and an inactive tab sits
+        // back behind the active one instead of being a second solid block.
+        // Both are composited at paint time against the buffer background
+        // (ModeLine/TabBar clear to it before filling), so an opaque theme
+        // gets a real blend and a transparent one dithers through to the
+        // desktop.
+        result.modeLineGradientEnd.alpha        = 145;
+        result.modeLineFocusedGradientEnd.alpha = 145;
+        result.tabBar.background.alpha          = 150;
     }
 
     return result;

@@ -1,4 +1,5 @@
 #include "TerminalPanel.h"
+#include "ThemePaints.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -365,10 +366,10 @@ void TerminalPanel::Paint(Canvas canvas) {
             // DebugConsolePanel's own precedent) wins over a plain
             // selection when both apply.
             if (searchMatchLine && *searchMatchLine == static_cast<std::size_t>(lineIndex)) {
-                cell.background_color = theme_.isearchMatchBackground;
+                cell.background_color = OverlayBackground(theme_, theme_.isearchMatchBackground);
             }
             else if (InSelection(lineIndex, col)) {
-                cell.background_color = theme_.selectionBackground;
+                cell.background_color = OverlayBackground(theme_, SelectionFill(theme_));
             }
         }
     }

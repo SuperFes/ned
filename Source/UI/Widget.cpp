@@ -1,5 +1,7 @@
 #include "Widget.h"
 
+#include "Compositing.h"
+
 #include <notcurses/notcurses.h>
 
 namespace ned::ui {
@@ -59,6 +61,101 @@ namespace {
     };
 
 } // namespace
+
+// The five resolution rules from Docs/Translucency.md, in order. Which one
+// applies is decided by what is *already* in the destination cell -- a
+// background wash and a see-through background cannot coexist in one cell,
+// and neither can a dither pattern and a glyph.
+void Screen::Blend(int x, int y, const Cell& src, AlphaPolicy policy) {
+    if (x < 0 || y < 0 || x >= width_ || y >= height_) {
+        return;
+    }
+    Cell& dst = PixelAt(x, y);
+
+    // Asymmetric on purpose. For the *source*, only a genuinely empty
+    // character means "leave the destination's glyph alone" -- a space is a
+    // glyph a caller meant to write, and treating it as nothing left blank
+    // cells with no foreground of their own. For the *destination*, a space
+    // is nothing: it is a cell a dither or a pattern may claim.
+    const bool srcCarriesGlyph = !src.character.empty();
+    const bool dstCarriesGlyph = !IsBlankGlyph(dst.character);
+
+    // --- background ---------------------------------------------------
+    if (src.background_color.Composable() && src.background_color.alpha > 0) {
+        if (src.background_color.Opaque()) {
+            // Rule 1: an opaque wash is just a write, so a fully opaque
+            // Blend behaves exactly like the assignment it sits beside.
+            dst.background_color = src.background_color;
+        }
+        else if (policy == AlphaPolicy::Opaque) {
+            // Rule 5, checked before the others: this policy exists to
+            // *stop* the transparency-preserving paths from running.
+            dst.background_color = src.background_color.WithAlpha(255);
+        }
+        else if (dst.background_color.Composable()) {
+            // Rule 2 (T1): a known destination color, so blend exactly.
+            dst.background_color = BlendOver(dst.background_color, src.background_color);
+        }
+        else if (policy == AlphaPolicy::Skip) {
+            // Nothing: this surface would rather show the terminal than
+            // approximate itself.
+        }
+        else if (!dstCarriesGlyph && policy != AlphaPolicy::TintText) {
+            // Rule 3 (T2): an empty cell over the terminal's own
+            // background is the one place coverage dithering can run, and
+            // it is what lets a wash reach the desktop behind a
+            // translucent window.
+            std::string glyph = DitherGlyph(src.background_color.alpha / 255.0, x, y);
+            if (!glyph.empty()) {
+                dst.character        = std::move(glyph);
+                dst.foreground_color = src.background_color.WithAlpha(255);
+                dst.bold             = false;
+                dst.italic           = false;
+                dst.underlined       = false;
+                dst.strikethrough    = false;
+                dst.inverted         = false;
+            }
+        }
+        else if (policy != AlphaPolicy::Dither) {
+            // Rule 4 (T3): the cell is carrying a glyph, so the only thing
+            // left to move is its foreground. Keeps the text, keeps the
+            // transparency. AlphaPolicy::Dither declines this on purpose --
+            // a pattern tints the empty space of a surface, never its text.
+            dst.foreground_color = TintToward(dst.foreground_color, src.background_color);
+        }
+    }
+
+    // --- glyph and foreground ------------------------------------------
+    if (srcCarriesGlyph) {
+        dst.character     = src.character;
+        dst.bold          = src.bold;
+        dst.italic        = src.italic;
+        dst.underlined    = src.underlined;
+        dst.strikethrough = src.strikethrough;
+        dst.inverted      = src.inverted;
+
+        if (src.foreground_color.Opaque() || !src.foreground_color.Composable()) {
+            dst.foreground_color = src.foreground_color;
+        }
+        else if (dst.background_color.Composable()) {
+            // A translucent glyph color has the cell's own (already
+            // resolved) background behind it, not the old foreground --
+            // the glyph is being drawn *onto* that background.
+            dst.foreground_color = BlendOver(dst.background_color, src.foreground_color);
+        }
+        else {
+            dst.foreground_color = TintToward(dst.foreground_color, src.foreground_color);
+        }
+    }
+    else if (src.foreground_color.Composable()) {
+        // No glyph of its own, but a foreground color: this is a Fade,
+        // whose job is to move the color already there rather than write a
+        // glyph. Opaque is not a special case -- it is a fade that leaves
+        // nothing of the original, which TintToward already resolves to the
+        // wash color itself.
+        dst.foreground_color = TintToward(dst.foreground_color, src.foreground_color);
+    }
+}
 
 void ColorToRgb8(const Color& color, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b) {
     switch (color.kind) {
@@ -189,7 +286,39 @@ namespace {
     }
 } // namespace
 
-void Screen::Flush(ncplane* plane) {
+void Screen::Flush(ncplane* plane, ncplane* backingPlane) {
+
+    // The backing layer first, so the text plane above has something to defer
+    // to. Only its background is meaningful -- the glyph always comes from
+    // the text plane.
+    if (backingPlane != nullptr) {
+        for (int y = 0; y < height_; ++y) {
+            for (int x = 0; x < width_; ++x) {
+                const Cell& cell = backing_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) +
+                                            static_cast<std::size_t>(x)];
+                if (cell.background_color.kind == Color::Kind::Default) {
+                    // Nothing here: stay out of the way entirely, so the
+                    // terminal's own background still reaches a transparent
+                    // theme's buffer.
+                    ncplane_set_fg_alpha(backingPlane, NCALPHA_TRANSPARENT);
+                    ncplane_set_bg_alpha(backingPlane, NCALPHA_TRANSPARENT);
+                }
+                else {
+                    // Alpha is a *plane* attribute and persists across
+                    // writes, so the opaque case has to say so explicitly --
+                    // otherwise the first transparent cell leaves the plane
+                    // transparent for every painted cell after it, and the
+                    // whole layer silently draws nothing.
+                    ncplane_set_bg_alpha(backingPlane, NCALPHA_OPAQUE);
+                    ncplane_set_fg_alpha(backingPlane, NCALPHA_OPAQUE);
+                    ApplyBackground(backingPlane, cell.background_color);
+                    ncplane_set_fg_default(backingPlane);
+                }
+                ncplane_putstr_yx(backingPlane, y, x, " ");
+            }
+        }
+    }
+
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
             const Cell& cell = cells_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)];
@@ -203,7 +332,19 @@ void Screen::Flush(ncplane* plane) {
             const Color& fg = cell.inverted ? cell.background_color : cell.foreground_color;
             const Color& bg = cell.inverted ? cell.foreground_color : cell.background_color;
             ApplyForeground(plane, fg);
-            ApplyBackground(plane, bg);
+            if (backingPlane != nullptr && bg.kind == Color::Kind::Default) {
+                // Defer rather than paint: NCALPHA_TRANSPARENT takes the
+                // colour computed by lower planes, which is the backing
+                // layer where it painted something and the terminal's own
+                // background where it did not. ncplane_set_bg_default() would
+                // instead paint the terminal default *over* the backing
+                // layer, which is the whole difference between the two.
+                ncplane_set_bg_alpha(plane, NCALPHA_TRANSPARENT);
+            }
+            else {
+                ncplane_set_bg_alpha(plane, NCALPHA_OPAQUE); // see the backing loop: alpha persists per plane
+                ApplyBackground(plane, bg);
+            }
 
             unsigned styles = NCSTYLE_NONE;
             if (cell.bold)
