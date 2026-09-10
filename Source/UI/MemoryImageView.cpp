@@ -5,6 +5,8 @@
 #include "Border.h"
 #include "Editor/MemoryImage.h"
 #include "KeyTranslation.h"
+#include "Paint.h"
+#include "ThemePaints.h"
 
 namespace ned::ui {
 
@@ -36,17 +38,40 @@ void MemoryImageView::Paint(Canvas c) {
 
     const Brush interiorBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
 
-    // Fill the interior before drawing anything else -- TreeView/ListPopup's
-    // own "otherwise the pane underneath bleeds through empty cells" fix.
+    // Translucency phase 7: the body is the shared "popup" Surface, so this
+    // panel cannot drift from ListPopup/TreeView. Derived default is the flat
+    // theme background this used to apply per cell.
+    //
+    // The background is cleared first unless the fill reads it (a blur
+    // samples what the overlay covers) -- ListPopup's own rule, and what
+    // keeps a transparent theme's do-nothing default from leaving stale
+    // cells behind.
+    const Surface surface = SurfaceFor(theme_, "popup");
+    const bool    fillReadsDestination =
+        surface.fill.kind == PaintKind::Blur || surface.fill.kind == PaintKind::Stack;
     for (int y = 1; y < height - 1; ++y) {
         for (int x = 1; x < width - 1; ++x) {
-            Cell& cell     = c[{.x = x, .y = y}];
-            cell.character = " ";
-            interiorBrush.ApplyTo(cell);
+            Cell& cell            = c[{.x = x, .y = y}];
+            cell.character        = " ";
+            cell.foreground_color = interiorBrush.foreground;
+            cell.bold             = false;
+            cell.italic           = false;
+            cell.underlined       = false;
+            cell.strikethrough    = false;
+            cell.inverted         = false;
+            if (!fillReadsDestination) {
+                cell.background_color = interiorBrush.background;
+            }
         }
     }
 
+    const Point origin   = c.Origin();
+    Canvas      interior = c.ForBox(
+        Box{.x_min = origin.x + 1, .x_max = origin.x + width - 2, .y_min = origin.y + 1, .y_max = origin.y + height - 2});
+    Fill(interior, surface.fill);
+
     DrawBorder(c, theme_.border);
+    RecolourBorder(c, surface.border);
     DrawBorderTitle(c, model_.title, theme_.borderAccent);
 
     const int interiorWidth  = width - 2;

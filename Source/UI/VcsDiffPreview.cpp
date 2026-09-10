@@ -5,7 +5,9 @@
 #include <utility>
 
 #include "Border.h"
+#include "Paint.h"
 #include "Text/Utf8.h"
+#include "ThemePaints.h"
 
 namespace ned::ui {
 
@@ -71,16 +73,31 @@ std::vector<VcsDiffPreview::Row> VcsDiffPreview::BuildRows() const {
 }
 
 void VcsDiffPreview::Paint(Canvas c) {
-    const Brush blankBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
+    // Translucency phase 7: the shared "popup" Surface, same rule as
+    // ListPopup -- clear the background only when the fill does not read it.
+    const Brush   blankBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
+    const Surface surface = SurfaceFor(theme_, "popup");
+    const bool    fillReadsDestination =
+        surface.fill.kind == PaintKind::Blur || surface.fill.kind == PaintKind::Stack;
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
-            Cell& cell     = c[{.x = col, .y = row}];
-            cell.character = " ";
-            blankBrush.ApplyTo(cell);
+            Cell& cell            = c[{.x = col, .y = row}];
+            cell.character        = " ";
+            cell.foreground_color = blankBrush.foreground;
+            cell.bold             = false;
+            cell.italic           = false;
+            cell.underlined       = false;
+            cell.strikethrough    = false;
+            cell.inverted         = false;
+            if (!fillReadsDestination) {
+                cell.background_color = blankBrush.background;
+            }
         }
     }
+    Fill(c, surface.fill);
 
     DrawBorder(c, theme_.border);
+    RecolourBorder(c, surface.border);
 
     std::string title = "Diff preview";
     if (model_) {
@@ -129,7 +146,15 @@ void VcsDiffPreview::Paint(Canvas c) {
         for (std::size_t i = 0; i < label.size() && static_cast<int>(i) < contentColumns; ++i) {
             Cell& cell     = c[{.x = contentLeft + static_cast<int>(i), .y = y}];
             cell.character = text::EncodeCodepointUtf8(label[i]);
-            brush.ApplyTo(cell);
+            // Foreground and traits only -- every brush here varies only its
+            // foreground (added green, removed red, context dim), so the
+            // surface fill is what the row sits on.
+            cell.foreground_color = brush.foreground;
+            cell.bold             = brush.bold;
+            cell.italic           = brush.italic;
+            cell.underlined       = brush.underlined;
+            cell.strikethrough    = brush.strikethrough;
+            cell.inverted         = false;
         }
     }
 }
