@@ -150,10 +150,15 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         const editor::SymbolMarker& marker = chain[i];
         const int                   row    = static_cast<int>(i);
 
+        // Translucency follow-up: a sticky header is a hint about where you
+        // are, not a header bar, so it is a wash of the chrome tone rather
+        // than the chrome brush itself -- the same treatment the sidebar's
+        // pinned ancestors get, from the same helper.
+        const Brush stickyBrush{.background = StickyHighlight(theme_), .foreground = theme_.defaultForeground};
         for (int col = 0; col < width; ++col) {
             Cell& cell     = c[{.x = col, .y = row}];
             cell.character = " ";
-            theme_.tabBar.ApplyTo(cell);
+            stickyBrush.ApplyTo(cell);
         }
 
         const std::size_t line = content.ByteOffsetToLine(marker.startByte);
@@ -165,7 +170,8 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         if (LineNumberGutterActive()) {
             const std::string lineNumber = std::to_string(line + 1);
             const std::size_t padding    = gutterDigits > lineNumber.size() ? gutterDigits - lineNumber.size() : 0;
-            const Brush       lineNumberBrush{.background = theme_.tabBar.background, .foreground = theme_.lineNumberForeground};
+            const Brush lineNumberBrush{.background = stickyBrush.background,
+                                        .foreground = theme_.lineNumberForeground};
             for (std::size_t k = 0; k < lineNumber.size() && static_cast<int>(digitsStart + padding + k) < width; ++k) {
                 Cell& cell     = c[{.x = static_cast<int>(digitsStart + padding + k), .y = row}];
                 cell.character = std::string(1, lineNumber[k]);
@@ -178,7 +184,7 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         // carries that cue instead), matching an ordinary content row's
         // symbol glyph exactly.
         if (static_cast<int>(symbolStart) < width) {
-            const Brush glyphBrush{.background = theme_.tabBar.background,
+            const Brush glyphBrush{.background = stickyBrush.background,
                                    .foreground = theme_.BrushFor(editor::SyntaxClassFor(marker.kind)).foreground,
                                    .bold       = true};
             Cell&       glyphCell = c[{.x = static_cast<int>(symbolStart), .y = row}];
@@ -233,7 +239,7 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         const bool truncated = col + static_cast<int>(columnsNeeded) > width;
         const int  textLimit = truncated ? width - 1 : width;
         if (col < textLimit) {
-            col += PaintUtf8Row(c, col, row, trimmedLine, theme_.tabBar, textLimit - col);
+            col += PaintUtf8Row(c, col, row, trimmedLine, stickyBrush, textLimit - col);
         }
         if (truncated && col < width) {
             c[{.x = col, .y = row}].character = "…";
