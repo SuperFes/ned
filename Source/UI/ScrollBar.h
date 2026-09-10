@@ -15,8 +15,11 @@ namespace ned::ui {
 
 class ScrollBar : public Widget {
   public:
-    // brush must outlive this widget (the usual convention).
-    explicit ScrollBar(const Brush& brush);
+    // theme must outlive this widget (the usual convention). Takes the
+    // whole Theme rather than just its scrollBar Brush, because the row is
+    // painted through the "scrollbar" Surface now (Docs/Translucency.md
+    // phase 5) and a Surface is resolved against a Theme.
+    explicit ScrollBar(const Theme& theme);
 
     // Synced fresh every frame by whoever owns the real scroll state
     // (BufferView), the same "recompute, don't cache" convention every
@@ -44,7 +47,7 @@ class ScrollBar : public Widget {
     // appears to.
     [[nodiscard]] int PositionForRow(int row) const;
 
-    const Brush&             brush_;
+    const Theme&             theme_;
     std::function<void(int)> onScroll_;
     bool                     dragging_ = false;
 };

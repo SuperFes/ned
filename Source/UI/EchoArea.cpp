@@ -1,5 +1,8 @@
 #include "EchoArea.h"
 
+#include "Paint.h"
+#include "ThemePaints.h"
+
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -56,11 +59,26 @@ void EchoArea::Paint(Canvas c) {
     // column the way plain characters are, which is why the loop below
     // walks message_ by codepoint span rather than directly indexing it by
     // x the way the pre-sentinel version did.
-    const Color dimmedForeground = Color::Interpolate(0.5F, theme_.echoArea.foreground, theme_.echoArea.background);
-    // Faded further than plain dim (closer to the background) since ghost
-    // text represents a hint, not real candidate-list content -- it should
-    // read as clearly less present than DimForEchoArea's own text.
-    const Color ghostedForeground = Color::Interpolate(0.7F, theme_.echoArea.foreground, theme_.echoArea.background);
+    // Translucency phase 5: the row is a themed Surface, ModeLine's own
+    // precedent and paint order -- clear, fill, glyphs, then any text fade.
+    // The derived default is the flat echoArea Brush this used to apply
+    // per cell, so an unthemed editor is unchanged.
+    //
+    // Cleared to ChromeBackdrop rather than the theme's own background: the
+    // echo area is a bar, so a translucent fill should fade *into* the
+    // buffer's colour rather than fall down the dither path (see
+    // ThemePaints.h's ClearCanvas note, and ProjectSidebar for the opposite
+    // case).
+    const Surface surface = SurfaceFor(theme_, "echo");
+    ClearCanvas(c, ChromeBackdrop(theme_));
+    Fill(c, surface.fill);
+
+    // Dim and ghost interpolate toward whatever the fill actually put down
+    // at that cell, not toward the Brush's flat background -- identical for
+    // the derived default, and the only reading that stays right when a
+    // theme gives the row a gradient. Read per cell below; this is the
+    // fallback for a cell whose background is the terminal's own.
+    const Color fallbackBackground = ChromeBackdrop(theme_);
 
     int         x         = 0;
     bool        emphasize = false;
@@ -117,18 +135,30 @@ void EchoArea::Paint(Canvas c) {
             break; // rest of the message doesn't fit -- truncated, same as the pre-sentinel version
         }
 
-        Cell& cell     = c[{.x = x, .y = 0}];
-        cell.character = message_.substr(i, next - i);
-        theme_.echoArea.ApplyTo(cell);
-        if (emphasize) {
-            cell.bold = true;
-        }
+        const Point at{.x = x, .y = 0};
+        const Color painted = c[at].background_color.Composable() ? c[at].background_color : fallbackBackground;
+        const Color base    = TextColourAt(surface, c, at, theme_.echoArea.foreground);
+
+        // Written into the cell rather than blended, because these carry
+        // traits (Surface has none of its own -- see ROADMAP) and the
+        // background is already down. Leaving background_color alone is what
+        // keeps the fill underneath intact.
+        Cell& cell            = c[at];
+        cell.character        = message_.substr(i, next - i);
+        cell.foreground_color = base;
+        cell.bold             = theme_.echoArea.bold || emphasize;
+        cell.italic           = theme_.echoArea.italic || ghost;
+        cell.underlined       = theme_.echoArea.underlined;
+        cell.strikethrough    = theme_.echoArea.strikethrough;
         if (dim) {
-            cell.foreground_color = dimmedForeground;
+            cell.foreground_color = Color::Interpolate(0.5F, base, painted);
         }
         if (ghost) {
-            cell.foreground_color = ghostedForeground;
-            cell.italic           = true;
+            // Faded further than plain dim (closer to the background) since
+            // ghost text represents a hint, not real candidate-list content
+            // -- it should read as clearly less present than
+            // DimForEchoArea's own text.
+            cell.foreground_color = Color::Interpolate(0.7F, base, painted);
         }
         if (error) {
             cell.foreground_color = theme_.diagnosticError;
@@ -138,10 +168,17 @@ void EchoArea::Paint(Canvas c) {
     }
 
     for (; x < c.size().width; ++x) {
-        Cell& cell     = c[{.x = x, .y = 0}];
-        cell.character = " ";
-        theme_.echoArea.ApplyTo(cell);
+        const Point at{.x = x, .y = 0};
+        Cell&       cell      = c[at];
+        cell.character        = " ";
+        cell.foreground_color = TextColourAt(surface, c, at, theme_.echoArea.foreground);
+        cell.bold             = theme_.echoArea.bold;
+        cell.italic           = theme_.echoArea.italic;
+        cell.underlined       = theme_.echoArea.underlined;
+        cell.strikethrough    = theme_.echoArea.strikethrough;
     }
+
+    ApplyTextFade(c, surface);
 }
 
 } // namespace ned::ui

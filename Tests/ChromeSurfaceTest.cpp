@@ -19,9 +19,11 @@
 #include "Text/Buffer.h"
 #include "Text/Rope.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/EchoArea.h"
 #include "UI/ModeLine.h"
 #include "UI/Paint.h"
 #include "UI/PaintParse.h"
+#include "UI/ScrollBar.h"
 #include "UI/Theme.h"
 #include "UI/ThemePaints.h"
 #include "UI/Widget.h"
@@ -63,6 +65,30 @@ Screen PaintModeLine(const Theme& theme, int width) {
     modeLine.SetBox_(ned::ui::Box{.x_min = 0, .x_max = width - 1, .y_min = 0, .y_max = 0});
     Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = width - 1, .y_min = 0, .y_max = 0});
     modeLine.Paint(canvas);
+    return screen;
+}
+
+Screen PaintEchoArea(const Theme& theme, const std::string& message, int width) {
+    ned::ui::EchoArea  echoArea(message, theme);
+    Screen             screen(width, 1);
+    const ned::ui::Box box{.x_min = 0, .x_max = width - 1, .y_min = 0, .y_max = 0};
+    echoArea.SetBox_(box);
+    Canvas canvas(screen, box);
+    echoArea.Paint(canvas);
+    return screen;
+}
+
+Screen PaintScrollBar(const Theme& theme, int height) {
+    ned::ui::ScrollBar scrollBar(theme);
+    scrollBar.scrollable_length  = 100;
+    scrollBar.item_visual_length = 10;
+    scrollBar.position           = 0;
+
+    Screen             screen(1, height);
+    const ned::ui::Box box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = height - 1};
+    scrollBar.SetBox_(box);
+    Canvas canvas(screen, box);
+    scrollBar.Paint(canvas);
     return screen;
 }
 
@@ -390,4 +416,87 @@ TEST_CASE("buffer.current_line defaults to the desktop accent, well under select
     current.fill = ned::ui::SolidPaint(Color::RGB(0x2a2a40));
     ned::ui::SetSurfaceOverride("buffer.current_line", current);
     REQUIRE(ned::ui::PaintsColour(ned::ui::SurfaceFor(theme, "buffer.current_line").fill));
+}
+
+// Translucency phase 5 remainder: the two chrome widgets that were never in a
+// phase. Both painted a flat Brush per cell; both go through their own
+// Surface now, and their derived defaults have to be what they always were.
+
+TEST_CASE("An unthemed echo area paints exactly the Brush it always did", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    Theme              theme  = DarkTheme();
+    theme.echoArea.background = ned::ui::Color::RGB(0x20, 0x20, 0x28);
+    theme.echoArea.foreground = ned::ui::Color::RGB(0xc0, 0xc0, 0xd0);
+
+    Screen screen = PaintEchoArea(theme, "hi", 12);
+    for (int x = 0; x < 12; ++x) {
+        INFO("column " << x);
+        REQUIRE(screen.PixelAt(x, 0).background_color == theme.echoArea.background);
+        REQUIRE(screen.PixelAt(x, 0).foreground_color == theme.echoArea.foreground);
+    }
+    REQUIRE(screen.PixelAt(0, 0).character == "h");
+    // Padding runs to the full width -- a half-painted bar would show the
+    // buffer through its own row.
+    REQUIRE(screen.PixelAt(11, 0).character == " ");
+}
+
+TEST_CASE("A themed echo area paints the theme's own paint under its text", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+
+    ned::ui::Surface echo;
+    echo.fill = ParseOrDie("x #400000 #004000", theme);
+    ned::ui::SetSurfaceOverride("echo", echo);
+
+    Screen screen = PaintEchoArea(theme, "hi", 12);
+    // A gradient, so the two ends differ -- and the glyphs are still there.
+    REQUIRE_FALSE(screen.PixelAt(0, 0).background_color == screen.PixelAt(11, 0).background_color);
+    REQUIRE(screen.PixelAt(0, 0).character == "h");
+    REQUIRE(screen.PixelAt(1, 0).character == "i");
+}
+
+TEST_CASE("Echo-area dim reads the painted background, not the flat Brush", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+
+    // Dimming interpolates toward what the fill actually put down. Under a
+    // gradient the two ends dim toward different colours, which a
+    // flat-Brush reading could not express.
+    ned::ui::Surface echo;
+    echo.fill = ParseOrDie("x #400000 #004000", theme);
+    ned::ui::SetSurfaceOverride("echo", echo);
+
+    const std::string dimmed = ned::ui::DimForEchoArea("aaaaaaaaaaaa");
+    Screen            screen = PaintEchoArea(theme, dimmed, 12);
+    REQUIRE_FALSE(screen.PixelAt(0, 0).foreground_color == screen.PixelAt(11, 0).foreground_color);
+}
+
+TEST_CASE("An unthemed scroll bar paints exactly the Brush it always did", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    Theme              theme   = DarkTheme();
+    theme.scrollBar.background = ned::ui::Color::RGB(0x18, 0x18, 0x20);
+    theme.scrollBar.foreground = ned::ui::Color::RGB(0x60, 0x60, 0x80);
+
+    Screen screen = PaintScrollBar(theme, 10);
+    for (int y = 0; y < 10; ++y) {
+        INFO("row " << y);
+        REQUIRE(screen.PixelAt(0, y).background_color == theme.scrollBar.background);
+        REQUIRE(screen.PixelAt(0, y).foreground_color == theme.scrollBar.foreground);
+    }
+    // The thumb still reads by inverting, so it survives any fill.
+    REQUIRE(screen.PixelAt(0, 0).inverted);
+    REQUIRE_FALSE(screen.PixelAt(0, 9).inverted);
+}
+
+TEST_CASE("A themed scroll bar paints the theme's own paint", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+
+    ned::ui::Surface bar;
+    bar.fill = ParseOrDie("y #400000 #004000", theme);
+    ned::ui::SetSurfaceOverride("scrollbar", bar);
+
+    Screen screen = PaintScrollBar(theme, 10);
+    REQUIRE_FALSE(screen.PixelAt(0, 0).background_color == screen.PixelAt(0, 9).background_color);
+    REQUIRE(screen.PixelAt(0, 0).inverted); // thumb still distinguishable
 }
