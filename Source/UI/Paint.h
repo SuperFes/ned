@@ -103,6 +103,20 @@ struct Shadow {
 
 // A themed region. Popups, panels, tabs and the mode line are all this one
 // type, which is what keeps them from each hand-rolling a look.
+//
+// No bold/italic/underlined/strikethrough here, and that is settled rather
+// than pending: a Surface is *paints for a region*, and a paint interpolates
+// -- that is what makes a gradient a gradient. A trait is binary per cell,
+// with no meaningful "60% bold", so it would be a field that cannot take part
+// in the one thing this type exists for.
+//
+// Traits stay a Brush concern. A widget taking its colours from a Surface
+// takes its traits from the Brush beside it, via Brush::ApplyTextTo (which is
+// ApplyTo minus the background the fill owns) -- TabBar is the clearest
+// example. Every surface derived from a Brush inherits that Brush's trait
+// keys for free, so `active_tab_bold` and friends already work; a surface
+// with no Brush behind it (popup, panel, modeline) has no trait expression,
+// which nothing has yet needed.
 struct Surface {
     Paint  fill;
     Paint  border;

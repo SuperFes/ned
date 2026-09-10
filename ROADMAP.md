@@ -148,10 +148,23 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       `VcsPanel` paint through the `panel` surface `ProjectSidebar` already used, so the
       rail and border columns ramp with the interior instead of sitting flat beside it. A
       transparent theme is untouched by construction.
-- [ ] **Surfaces do not carry traits.** `Brush` has bold/italic/underlined/strikethrough;
-      `Surface` has only paints, so `TabBar` still reads its traits from the Brush while
-      taking colours from the Surface. Either add trait fields to `Surface` (and a way to
-      set them from `ned/theme-surface`) or decide traits stay a Brush concern and say so.
+- [x] **Surfaces do not carry traits, and that is settled.** Decided rather than deferred:
+      a `Surface` is *paints for a region*, and a paint interpolates -- that is what makes a
+      gradient a gradient. A trait is binary per cell, with no meaningful "60% bold", so it
+      would be a field that cannot take part in the one thing the type exists for. Traits
+      stay a `Brush` concern, written into `Paint.h` beside `Surface` so it is not
+      re-litigated.
+      The maintenance complaint behind the entry was real and is fixed separately:
+      `Brush::ApplyTextTo` is `ApplyTo` minus the background a surface fill owns, and it
+      replaced nine hand-unrolled copies of the same four trait assignments across
+      `EchoArea`, `ScrollBar`, `ListPopup`, `TreeView`, `TabBar`, `VcsDiffPreview`,
+      `MemoryImageView` and `ThemeGallery` -- duplication that appeared purely because every
+      surface adoption had to drop `ApplyTo`'s one background line by hand. `ApplyTo` is
+      defined in terms of it now, with a test pinning that the two cannot drift.
+      Note the asymmetry this leaves, since it is a real one: a surface derived from a
+      `Brush` (`tab`, `tab.active`, `echo`, `scrollbar`) inherits that Brush's 28 trait keys
+      for free, so `active_tab_bold` already works; a surface with no Brush behind it
+      (`popup`, `panel`, `modeline`) has no trait expression at all. Nothing has needed one.
 - [x] **`DarkTheme`'s ANSI colour names are real RGB now** (`LightTheme` never had any).
       One colour per constant, so every equality the theme expressed survives; the two
       *background* uses got purpose-chosen values instead, since a colour that reads as

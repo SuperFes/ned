@@ -649,3 +649,54 @@ TEST_CASE("A gradient border leaves the interior and the title alone", "[ChromeS
     REQUIRE(screen.PixelAt(4, 1).character == "o");
     REQUIRE(screen.PixelAt(4, 1).foreground_color == theme.defaultForeground);
 }
+
+// Brush::ApplyTextTo -- ApplyTo minus the background a surface fill owns.
+// Nine widgets were unrolling ApplyTo by hand to drop that one line.
+
+TEST_CASE("ApplyTextTo carries every trait but leaves the background", "[ChromeSurface]") {
+    ned::ui::Brush brush{.background    = ned::ui::Color::RGB(0x10, 0x20, 0x30),
+                         .foreground    = ned::ui::Color::RGB(0xAA, 0xBB, 0xCC),
+                         .bold          = true,
+                         .italic        = true,
+                         .underlined    = true,
+                         .strikethrough = true};
+
+    ned::ui::Cell cell;
+    cell.background_color = ned::ui::Color::RGB(0x99, 0x88, 0x77); // a fill already put this down
+    cell.inverted         = true;                                  // a stale flag from a prior frame
+
+    brush.ApplyTextTo(cell);
+
+    REQUIRE(cell.background_color == ned::ui::Color::RGB(0x99, 0x88, 0x77)); // untouched
+    REQUIRE(cell.foreground_color == brush.foreground);
+    REQUIRE(cell.bold);
+    REQUIRE(cell.italic);
+    REQUIRE(cell.underlined);
+    REQUIRE(cell.strikethrough);
+    // Reset for ApplyTo's own reason: the Screen is repainted in place and
+    // never blanked, so a stale inversion would otherwise stick forever.
+    REQUIRE_FALSE(cell.inverted);
+}
+
+TEST_CASE("ApplyTo is ApplyTextTo plus the background", "[ChromeSurface]") {
+    const ned::ui::Brush brush{.background = ned::ui::Color::RGB(0x10, 0x20, 0x30),
+                               .foreground = ned::ui::Color::RGB(0xAA, 0xBB, 0xCC),
+                               .italic     = true};
+
+    ned::ui::Cell viaApplyTo;
+    brush.ApplyTo(viaApplyTo);
+
+    ned::ui::Cell viaTextTo;
+    viaTextTo.background_color = brush.background;
+    brush.ApplyTextTo(viaTextTo);
+
+    // The two must not drift: ApplyTo is defined in terms of ApplyTextTo, and
+    // this is what keeps that true if either is edited.
+    REQUIRE(viaApplyTo.background_color == viaTextTo.background_color);
+    REQUIRE(viaApplyTo.foreground_color == viaTextTo.foreground_color);
+    REQUIRE(viaApplyTo.bold == viaTextTo.bold);
+    REQUIRE(viaApplyTo.italic == viaTextTo.italic);
+    REQUIRE(viaApplyTo.underlined == viaTextTo.underlined);
+    REQUIRE(viaApplyTo.strikethrough == viaTextTo.strikethrough);
+    REQUIRE(viaApplyTo.inverted == viaTextTo.inverted);
+}

@@ -188,11 +188,10 @@ void TabBar::Paint(Canvas c) {
             Cell        cell;
             cell.character        = text::EncodeCodepointUtf8(label[i]);
             cell.background_color = fillColourAt(static_cast<int>(i));
+            // Traits from the Brush, colour from the Surface -- Surface
+            // carries no traits, deliberately (see Paint.h's own note).
+            traits.ApplyTextTo(cell);
             cell.foreground_color = TextColourAt(surface, c, at, traits.foreground);
-            cell.bold             = traits.bold;
-            cell.italic           = traits.italic;
-            cell.underlined       = traits.underlined;
-            cell.strikethrough    = traits.strikethrough;
             c.Blend(at, cell);
         }
 

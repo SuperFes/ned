@@ -53,12 +53,7 @@ void MemoryImageView::Paint(Canvas c) {
         for (int x = 1; x < width - 1; ++x) {
             Cell& cell            = c[{.x = x, .y = y}];
             cell.character        = " ";
-            cell.foreground_color = interiorBrush.foreground;
-            cell.bold             = false;
-            cell.italic           = false;
-            cell.underlined       = false;
-            cell.strikethrough    = false;
-            cell.inverted         = false;
+            interiorBrush.ApplyTextTo(cell);
             if (!fillReadsDestination) {
                 cell.background_color = interiorBrush.background;
             }

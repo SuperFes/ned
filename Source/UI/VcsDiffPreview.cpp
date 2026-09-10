@@ -83,12 +83,7 @@ void VcsDiffPreview::Paint(Canvas c) {
         for (int col = 0; col < c.size().width; ++col) {
             Cell& cell            = c[{.x = col, .y = row}];
             cell.character        = " ";
-            cell.foreground_color = blankBrush.foreground;
-            cell.bold             = false;
-            cell.italic           = false;
-            cell.underlined       = false;
-            cell.strikethrough    = false;
-            cell.inverted         = false;
+            blankBrush.ApplyTextTo(cell);
             if (!fillReadsDestination) {
                 cell.background_color = blankBrush.background;
             }
@@ -149,12 +144,7 @@ void VcsDiffPreview::Paint(Canvas c) {
             // Foreground and traits only -- every brush here varies only its
             // foreground (added green, removed red, context dim), so the
             // surface fill is what the row sits on.
-            cell.foreground_color = brush.foreground;
-            cell.bold             = brush.bold;
-            cell.italic           = brush.italic;
-            cell.underlined       = brush.underlined;
-            cell.strikethrough    = brush.strikethrough;
-            cell.inverted         = false;
+            brush.ApplyTextTo(cell);
         }
     }
 }
