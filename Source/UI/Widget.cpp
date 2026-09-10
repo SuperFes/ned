@@ -286,7 +286,39 @@ namespace {
     }
 } // namespace
 
-void Screen::Flush(ncplane* plane) {
+void Screen::Flush(ncplane* plane, ncplane* backingPlane) {
+
+    // The backing layer first, so the text plane above has something to defer
+    // to. Only its background is meaningful -- the glyph always comes from
+    // the text plane.
+    if (backingPlane != nullptr) {
+        for (int y = 0; y < height_; ++y) {
+            for (int x = 0; x < width_; ++x) {
+                const Cell& cell = backing_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) +
+                                            static_cast<std::size_t>(x)];
+                if (cell.background_color.kind == Color::Kind::Default) {
+                    // Nothing here: stay out of the way entirely, so the
+                    // terminal's own background still reaches a transparent
+                    // theme's buffer.
+                    ncplane_set_fg_alpha(backingPlane, NCALPHA_TRANSPARENT);
+                    ncplane_set_bg_alpha(backingPlane, NCALPHA_TRANSPARENT);
+                }
+                else {
+                    // Alpha is a *plane* attribute and persists across
+                    // writes, so the opaque case has to say so explicitly --
+                    // otherwise the first transparent cell leaves the plane
+                    // transparent for every painted cell after it, and the
+                    // whole layer silently draws nothing.
+                    ncplane_set_bg_alpha(backingPlane, NCALPHA_OPAQUE);
+                    ncplane_set_fg_alpha(backingPlane, NCALPHA_OPAQUE);
+                    ApplyBackground(backingPlane, cell.background_color);
+                    ncplane_set_fg_default(backingPlane);
+                }
+                ncplane_putstr_yx(backingPlane, y, x, " ");
+            }
+        }
+    }
+
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
             const Cell& cell = cells_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)];
@@ -300,7 +332,19 @@ void Screen::Flush(ncplane* plane) {
             const Color& fg = cell.inverted ? cell.background_color : cell.foreground_color;
             const Color& bg = cell.inverted ? cell.foreground_color : cell.background_color;
             ApplyForeground(plane, fg);
-            ApplyBackground(plane, bg);
+            if (backingPlane != nullptr && bg.kind == Color::Kind::Default) {
+                // Defer rather than paint: NCALPHA_TRANSPARENT takes the
+                // colour computed by lower planes, which is the backing
+                // layer where it painted something and the terminal's own
+                // background where it did not. ncplane_set_bg_default() would
+                // instead paint the terminal default *over* the backing
+                // layer, which is the whole difference between the two.
+                ncplane_set_bg_alpha(plane, NCALPHA_TRANSPARENT);
+            }
+            else {
+                ncplane_set_bg_alpha(plane, NCALPHA_OPAQUE); // see the backing loop: alpha persists per plane
+                ApplyBackground(plane, bg);
+            }
 
             unsigned styles = NCSTYLE_NONE;
             if (cell.bold)

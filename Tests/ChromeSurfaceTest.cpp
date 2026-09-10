@@ -322,3 +322,50 @@ TEST_CASE("A transparent theme's tab strip is chrome, not a hole", "[ChromeSurfa
     REQUIRE(strip.stops.front().colour.Composable());   // something to see...
     REQUIRE_FALSE(strip.stops.front().colour.Opaque()); // ...but not a solid band
 }
+
+TEST_CASE("The current line paints into the backing layer, not the text cells", "[ChromeSurface]") {
+    // The backing layer is a second grid flushed to a plane *below* the text
+    // one, so a row highlight sits behind the glyphs instead of in the same
+    // cell as them. That is what lets a wash exist without the text layer
+    // having to choose between covering the syntax colour and being visible.
+    Screen screen(8, 2);
+
+    SECTION("a backing cell is independent of the text cell above it") {
+        screen.PixelAt(0, 0).character          = "x";
+        screen.PixelAt(0, 0).foreground_color   = Color::RGB(0x00ff00);
+        screen.BackingAt(0, 0).background_color = Color::RGB(0xff0000);
+
+        REQUIRE(screen.PixelAt(0, 0).character == "x");
+        REQUIRE(screen.PixelAt(0, 0).foreground_color == Color::RGB(0x00ff00));
+        REQUIRE(screen.PixelAt(0, 0).background_color == Color::Default); // untouched
+        REQUIRE(screen.BackingAt(0, 0).background_color == Color::RGB(0xff0000));
+    }
+
+    SECTION("ClearBacking resets it, since both layers persist between frames") {
+        screen.BackingAt(3, 1).background_color = Color::RGB(0xff0000);
+        screen.ClearBacking();
+        REQUIRE(screen.BackingAt(3, 1).background_color == Color::Default);
+    }
+
+    SECTION("a Canvas addresses the backing layer in its own local coordinates") {
+        Canvas canvas(screen, ned::ui::Box{.x_min = 2, .x_max = 7, .y_min = 1, .y_max = 1});
+        canvas.Backing({.x = 0, .y = 0}).background_color = Color::RGB(0x0000ff);
+        REQUIRE(screen.BackingAt(2, 1).background_color == Color::RGB(0x0000ff));
+
+        // Out of bounds discards rather than corrupting a neighbour, exactly
+        // like operator[].
+        REQUIRE_NOTHROW(canvas.Backing({.x = 99, .y = 0}).background_color = Color::RGB(0x00ff00));
+        REQUIRE(screen.BackingAt(7, 1).background_color == Color::Default);
+    }
+}
+
+TEST_CASE("buffer.current_line stays empty unless a theme asks for it", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+    REQUIRE_FALSE(ned::ui::PaintsColour(ned::ui::SurfaceFor(theme, "buffer.current_line").fill));
+
+    Surface current;
+    current.fill = ned::ui::SolidPaint(Color::RGB(0x2a2a40));
+    ned::ui::SetSurfaceOverride("buffer.current_line", current);
+    REQUIRE(ned::ui::PaintsColour(ned::ui::SurfaceFor(theme, "buffer.current_line").fill));
+}
