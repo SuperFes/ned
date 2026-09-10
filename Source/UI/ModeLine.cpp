@@ -298,7 +298,7 @@ void ModeLine::Paint(Canvas c) {
     // Paint order: clear, fill, glyphs, then any text fade. The clear
     // matters because a translucent or patterned fill deliberately leaves
     // gaps, and cells persist between frames.
-    ClearCanvas(c, theme_.background);
+    ClearCanvas(c, ChromeBackdrop(theme_));
     Fill(c, surface.fill);
 
     for (int x = 0; x < c.size().width; ++x) {

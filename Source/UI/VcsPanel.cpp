@@ -1,4 +1,5 @@
 #include "VcsPanel.h"
+#include "ThemePaints.h"
 
 #include <algorithm>
 #include <exception>
@@ -580,9 +581,9 @@ void VcsPanel::Paint(Canvas c) {
         }
 
         if (isSelectedRow) {
-            brush.background = theme_.selectionBackground;
+            brush.background = OverlayBackground(theme_, SelectionFill(theme_));
             for (int x = 0; x < contentColumns; ++x) {
-                c[{.x = x, .y = y}].background_color = theme_.selectionBackground;
+                c[{.x = x, .y = y}].background_color = OverlayBackground(theme_, SelectionFill(theme_));
             }
         }
 
