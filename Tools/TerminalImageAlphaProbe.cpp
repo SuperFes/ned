@@ -43,6 +43,7 @@
 // It cannot tell you what happened: reading the result is a human job.
 //
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -413,6 +414,38 @@ void DrawBlock(Protocol protocol, const RgbaImage& img, int cellsW, int cellsH, 
     std::printf("\0338\033[%dB\r", cellsH);
 }
 
+// The question an editor actually has to answer: can a translucent image act
+// as a *background* for real text? A highlight band that shows the desktop
+// through it is only useful if the line's own glyphs still render on top.
+//
+// Both orderings are drawn, because which one wins is the whole point: the
+// image first and text after is what an editor would do (background, then
+// content), while text first and image after is the control that shows
+// whether an image simply claims the cells it covers.
+void DrawTextOverImage(Protocol protocol, const RgbaImage& band, int cellsW, int cellsH, bool imageFirst) {
+    static const char* kLine = "    if (v <= 0.0) {   // real text over a 50% band";
+
+    for (int i = 0; i < cellsH; ++i) {
+        std::printf("\n");
+    }
+    std::printf("\033[%dA\r", cellsH);
+
+    if (imageFirst) {
+        std::printf("\0337");
+        Emit(protocol, band, cellsW, cellsH);
+        std::printf("\0338");
+        std::printf("\033[0m%s", kLine); // default background: nothing of our own painted
+        std::printf("\r\033[%dB", cellsH);
+    }
+    else {
+        std::printf("\033[0m%s\r", kLine);
+        std::printf("\0337");
+        Emit(protocol, band, cellsW, cellsH);
+        std::printf("\0338\033[%dB", cellsH);
+    }
+    std::printf("\r");
+}
+
 void RunProtocol(Protocol protocol, int cellsW, int cellsH, int pxW, int pxH) {
     const RgbaImage staircase = AlphaStaircase(pxW, pxH);
     const RgbaImage field     = ColourAndAlphaField(pxW, pxH);
@@ -428,9 +461,62 @@ void RunProtocol(Protocol protocol, int cellsW, int cellsH, int pxW, int pxH) {
     std::printf("  c) colour ramping across, alpha ramping down, over the same band:\n");
     DrawBlock(protocol, field, cellsW, cellsH, true);
 
+    // A uniform half-alpha band, which is what a current-line highlight would
+    // be: one colour, 50% everywhere, and text expected to survive on top.
+    RgbaImage band(pxW, pxH);
+    for (int y = 0; y < band.h; ++y) {
+        for (int x = 0; x < band.w; ++x) {
+            band.Set(x, y, Rgb{90, 120, 220}, 128);
+        }
+    }
+
+    std::printf("  d) a 50%% band drawn FIRST, then text written over those cells:\n");
+    DrawTextOverImage(protocol, band, cellsW, 1, true);
+    std::printf("     (text legible AND the band still tinting behind it => a translucent highlight is possible)\n");
+
+    std::printf("  e) the same band drawn AFTER the text (control -- does an image claim its cells?):\n");
+    DrawTextOverImage(protocol, band, cellsW, 1, false);
+
     std::printf("  (three blank boxes above = this terminal ignored or dropped the %s sequences)\n",
                 protocol == Protocol::Iterm ? "iTerm2" : protocol == Protocol::Kitty ? "kitty"
                                                                                      : "sixel");
+}
+
+// Whether it *works* is only half the question: a current-line highlight
+// repaints on every cursor motion, so the cost of one band has to be
+// affordable per keystroke. This reports what an editor would actually pay --
+// encode plus base64 for one band, and the bytes that reach the terminal.
+void ReportBandCost(int cellsW, int cellPixelW, int cellPixelH) {
+    const int pxW = cellsW * cellPixelW;
+    const int pxH = cellPixelH;
+
+    RgbaImage band(pxW, pxH);
+    for (int y = 0; y < band.h; ++y) {
+        for (int x = 0; x < band.w; ++x) {
+            band.Set(x, y, Rgb{90, 120, 220}, 128);
+        }
+    }
+
+    constexpr int kRuns = 50;
+    const auto    start = std::chrono::steady_clock::now();
+    std::size_t   bytes = 0;
+    for (int i = 0; i < kRuns; ++i) {
+        const std::vector<std::uint8_t> png = EncodePng(band);
+        const std::string               b64 = Base64(png);
+        bytes                               = b64.size();
+    }
+    const auto   elapsed = std::chrono::steady_clock::now() - start;
+    const double perBandMs =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(elapsed).count() / kRuns;
+
+    std::printf("\n\033[1m== cost of one %d-cell band (%dx%d px) ==\033[0m\n", cellsW, pxW, pxH);
+    std::printf("  encode + base64: %.2f ms   payload: %zu bytes\n", perBandMs, bytes);
+    std::printf("  at 60 fps that is %.1f MB/s to the terminal; a whole SGR text frame is a few KB.\n",
+                (static_cast<double>(bytes) * 60.0) / (1024.0 * 1024.0));
+    std::printf("  (this encoder uses stored deflate -- no compression at all. Measured against zlib level 6,\n"
+                "   the same uniform band is 126 bytes rather than 51216: about 400x smaller, since a flat\n"
+                "   colour is exactly what deflate is good at. So the payload is an artefact of this probe,\n"
+                "   not of the approach -- a real implementation would compress and pay CPU instead.)\n");
 }
 
 void PrintUsage(const char* argv0) {
@@ -497,6 +583,8 @@ int main(int argc, char** argv) {
     if (wantSixel) {
         RunProtocol(Protocol::Sixel, cellsW, cellsH, pxW, pxH);
     }
+
+    ReportBandCost(cellsW, pxW / cellsW, pxH / cellsH);
 
     std::printf("\n(nothing above is a claim -- report which blocks rendered and how they looked)\n");
     return 0;
