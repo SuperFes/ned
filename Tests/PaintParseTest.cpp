@@ -259,10 +259,11 @@ TEST_CASE("Surfaces default to what the widget paints today", "[PaintParse]") {
     REQUIRE(modeline.fill.stops.front().colour == theme.modeLineGradientStart);
     REQUIRE(modeline.fill.stops.back().colour == theme.modeLineGradientEnd);
 
-    SECTION("the current line has no default highlight -- ned has never drawn one") {
+    SECTION("the current line defaults to a faint accent wash, and to fill alone") {
         const Surface current = ned::ui::SurfaceFor(theme, "buffer.current_line");
-        REQUIRE(current.fill.stops.empty());
-        REQUIRE(current.text.stops.empty());
+        REQUIRE(ned::ui::PaintsColour(current.fill));
+        REQUIRE(current.fill.stops.front().colour.alpha < 64); // a tint, not a band
+        REQUIRE(current.text.stops.empty());                   // a marker is a background: it never recolours the code
     }
 
     SECTION("an unknown surface paints nothing") {

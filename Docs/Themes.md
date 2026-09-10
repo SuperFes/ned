@@ -225,8 +225,11 @@ Parts are `fill`, `border` and `text`. Names: `buffer`, `buffer.current_line`,
 
 Surfaces are **additive**: anything a theme does not set stays derived from the colour keys
 above, so setting none of them leaves every widget painting exactly what it always has.
-`buffer.current_line` is empty by default -- ned has never highlighted the current line's
-row, only its gutter number.
+`buffer.current_line` defaults to the detected desktop accent at ~16% (the focused mode
+line's accent when nothing has been detected), which is deliberately below every other
+overlay: it is up the whole time you are typing, so a selection or a search hit has to win
+against it rather than tie. It sets `fill` alone -- a current-line marker is a background,
+and the rest of the line's colour is the theme's own business.
 
 ### Translucent overlays
 
