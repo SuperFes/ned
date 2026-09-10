@@ -31,8 +31,8 @@ const std::string kLine = "Dim(std_plane, y)";
 
 std::vector<RenderedInlayHint> Hints() {
     return {
-        RenderedInlayHint{.byteOffset = 4, .label = "plane:"},  // before "std_plane"
-        RenderedInlayHint{.byteOffset = 15, .label = "y:"},     // before "y"
+        RenderedInlayHint{.byteOffset = 4, .label = "plane:"}, // before "std_plane"
+        RenderedInlayHint{.byteOffset = 15, .label = "y:"},    // before "y"
     };
 }
 
@@ -65,7 +65,7 @@ TEST_CASE("VisualColumn counts the hints to point's left", "[InlayHint]") {
 
 TEST_CASE("ByteOffsetForColumnInLine is VisualColumn's inverse under hints", "[InlayHint]") {
     const ned::text::RopeStorage content{ned::text::Rope(kLine)};
-    const auto            hints = Hints();
+    const auto                   hints = Hints();
 
     SECTION("round-trips every offset in the line") {
         for (std::size_t offset = 0; offset <= kLine.size(); ++offset) {
