@@ -1,5 +1,8 @@
 #include "TabBar.h"
 
+#include "Paint.h"
+#include "ThemePaints.h"
+
 #include <algorithm>
 
 #include "Text/Utf8.h"
@@ -81,18 +84,23 @@ void TabBar::Paint(Canvas c) {
     // own distinct block instead of the whole strip merging into one bar
     // (the original fill made tabs visually indistinguishable, a real
     // user report).
+    // generic-popup follow-up (Phase 3): a full reset, not just character +
+    // background_color -- same reasoning as the end-cap cell further down
+    // (see that one's own comment): the Screen buffer is reused across
+    // frames, so a stale foreground_color/bold/etc. from a prior frame's
+    // cell here would otherwise linger once whatever painted it (an overlay
+    // reaching this far up, or a theme-preview session) stops.
+    //
+    // Translucency follow-up: the strip itself is a Surface. Its derived
+    // default is still the buffer's own background -- so the gaps between
+    // tabs read as the buffer showing through -- except for a theme whose
+    // background *is* the terminal's, where there is nothing to show and the
+    // strip would be a hole rather than chrome (see ThemePaints.cpp).
+    const Surface strip = SurfaceFor(theme_, "tab.strip");
+    ClearCanvas(c, ChromeBackdrop(theme_));
+    Fill(c, strip.fill);
     for (int x = 0; x < c.size().width; ++x) {
-        // generic-popup follow-up (Phase 3): a full reset, not just
-        // character + background_color -- same reasoning as the end-cap
-        // cell further down (see that one's own comment): the Screen
-        // buffer is reused across frames, so a stale foreground_color/
-        // bold/etc. from a prior frame's cell here would otherwise linger
-        // once whatever painted it (an overlay reaching this far up, or a
-        // theme-preview session) stops.
-        Cell& cell            = c[{.x = x, .y = 0}];
-        cell                  = Cell{};
-        cell.character        = " ";
-        cell.background_color = theme_.background;
+        c[{.x = x, .y = 0}].character = " ";
     }
 
     const text::Buffer*          active  = &activeBufferProvider_().Get();
@@ -133,41 +141,70 @@ void TabBar::Paint(Canvas c) {
     // takes the same accent-tinted chrome color the focused mode line's
     // gradient starts from, so the top and bottom edges of a focused pane
     // light up as one system (see SetFocusProvider).
-    Brush activeBrush = theme_.activeTab;
-    if (focusProvider_ && focusProvider_()) {
-        activeBrush.background = theme_.modeLineFocusedGradientStart;
-    }
+    // Translucency follow-up (Docs/Translucency.md phase 5): each tab's
+    // block is a themed Surface. The derived defaults are exactly the
+    // Brushes this used before -- including the focused-accent variant,
+    // which is its own surface now ("tab.active.focused") rather than a
+    // field poke -- so an unthemed tab strip is unchanged, while a theme can
+    // give a tab any paint at all.
+    //
+    // The gradient parameter runs across each tab's *own* full width, not
+    // the clipped part of it, so a horizontally scrolled tab keeps the same
+    // colours it would have had unscrolled.
+    const bool    focused       = focusProvider_ && focusProvider_();
+    const Surface tabSurface    = SurfaceFor(theme_, "tab");
+    const Surface activeSurface = SurfaceFor(theme_, focused ? "tab.active.focused" : "tab.active");
+    const Point   origin        = c.Origin();
 
     for (const TabLayout& tab : layout) {
-        Brush brush = (tab.buffer == active) ? activeBrush : theme_.tabBar;
+        const bool     isActive = tab.buffer == active;
+        const Surface& surface  = isActive ? activeSurface : tabSurface;
+        // Traits still come from the Brush: a Surface carries paints, not
+        // bold/italic (see ROADMAP -- trait-carrying surfaces are their own
+        // follow-up). Italic marks a preview tab, VS Code's own convention.
+        Brush traits = isActive ? theme_.activeTab : theme_.tabBar;
         if (tab.buffer == preview) {
-            // Single-click-preview follow-up: italic marks a tab as
-            // transient (VS Code's own convention for the same concept) --
-            // no new Theme color needed, just a trait layered onto whatever
-            // brush this tab would otherwise use.
-            brush.italic = true;
+            traits.italic = true;
         }
-        const std::u32string label = TabLabel(*tab.buffer);
+
+        const std::u32string label    = TabLabel(*tab.buffer);
+        const int            tabWidth = static_cast<int>(label.size());
+
+        auto fillColourAt = [&](int index) {
+            if (!PaintsColour(surface.fill)) {
+                return traits.background;
+            }
+            const double u   = tabWidth > 1 ? static_cast<double>(index) / (tabWidth - 1) : 0.0;
+            const int    col = tab.startColumn + index - scrollOffset_;
+            return PaintColourAt(surface.fill, u, 0.0, origin.x + col, origin.y);
+        };
 
         for (std::size_t i = 0; i < label.size(); ++i) {
             const int col = tab.startColumn + static_cast<int>(i) - scrollOffset_;
             if (col < 0 || col >= c.size().width) {
                 continue;
             }
-            Cell& cell     = c[{.x = col, .y = 0}];
-            cell.character = text::EncodeCodepointUtf8(label[i]);
-            brush.ApplyTo(cell);
+            const Point at{.x = col, .y = 0};
+            Cell        cell;
+            cell.character        = text::EncodeCodepointUtf8(label[i]);
+            cell.background_color = fillColourAt(static_cast<int>(i));
+            cell.foreground_color = TextColourAt(surface, c, at, traits.foreground);
+            cell.bold             = traits.bold;
+            cell.italic           = traits.italic;
+            cell.underlined       = traits.underlined;
+            cell.strikethrough    = traits.strikethrough;
+            c.Blend(at, cell);
         }
 
-        // The end cap -- see kTabEndCap. Assigned as a whole fresh Cell
-        // (not just character + colors) so no trait leaks in from whatever
-        // a previous frame left in this reused Screen cell.
-        const int capCol = tab.startColumn + static_cast<int>(label.size()) - scrollOffset_;
+        // The end cap -- see kTabEndCap -- drawn in the tab's trailing
+        // colour against the row's own background, so a gradient tab ends on
+        // the colour it actually ended on.
+        const int capCol = tab.startColumn + tabWidth - scrollOffset_;
         if (capCol >= 0 && capCol < c.size().width) {
             Cell& cell            = c[{.x = capCol, .y = 0}];
             cell                  = Cell{};
             cell.character        = text::EncodeCodepointUtf8(kTabEndCap);
-            cell.foreground_color = brush.background;
+            cell.foreground_color = fillColourAt(tabWidth > 0 ? tabWidth - 1 : 0);
             cell.background_color = theme_.background;
         }
     }

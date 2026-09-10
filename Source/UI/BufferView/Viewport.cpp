@@ -388,7 +388,9 @@ void Viewport::ScrollToShowPointHorizontally() {
     EnsureLinks();
     const std::size_t lineEnd =
         (pointLine + 1 < content.LineCount()) ? content.LineToByteOffset(pointLine + 1) - 1 : content.ByteLength();
-    const std::vector<RenderedLink> lineLinks = LinksForLine(links_, lineStart, lineEnd, point);
+    const std::vector<RenderedLink>      lineLinks = LinksForLine(links_, lineStart, lineEnd, point);
+    const std::vector<RenderedInlayHint> lineHints =
+        host_.inlayHintsForLine ? host_.inlayHintsForLine(lineStart, lineEnd) : std::vector<RenderedInlayHint>{};
 
     // Point's true column from the start of the line, unbounded (well,
     // bounded only by the line's own length, not the viewport) -- needed to
@@ -397,7 +399,7 @@ void Viewport::ScrollToShowPointHorizontally() {
     // long line still only walks as far as point itself, same cost class as
     // every other per-line scan in this file.
     const std::optional<int> visualCol =
-        VisualColumn(content, lineStart, point, std::numeric_limits<int>::max(), lineLinks);
+        VisualColumn(content, lineStart, point, std::numeric_limits<int>::max(), lineLinks, lineHints);
     if (!visualCol) {
         return; // shouldn't happen with an unbounded maxColumns, but a safe no-op
     }
@@ -581,7 +583,9 @@ std::size_t Viewport::ByteOffsetForPoint(Point at) const {
         segEnd                                        = segments[clampedSegment].endByte;
     }
 
-    return ByteOffsetForColumnInLine(content, segStart, segEnd, column, editor::TabWidth(), lineLinks);
+    const std::vector<RenderedInlayHint> lineHints =
+        host_.inlayHintsForLine ? host_.inlayHintsForLine(lineStart, lineEnd) : std::vector<RenderedInlayHint>{};
+    return ByteOffsetForColumnInLine(content, segStart, segEnd, column, editor::TabWidth(), lineLinks, lineHints);
 }
 
 const std::vector<std::pair<std::size_t, std::size_t>>& Viewport::HiddenLineRanges() const {

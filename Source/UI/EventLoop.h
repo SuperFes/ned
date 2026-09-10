@@ -106,7 +106,7 @@ struct EventLoopCallbacks {
 // Tests/TerminalOutputTestGuard.cpp forces it on once for the whole binary.
 //
 // It also makes the suite deterministic across environments: Notcurses'
-// capability probes (CanTrueColor/PaletteSize/CanPixelBlit below) otherwise
+// capability probes (CanPixelGraphics below) otherwise
 // answer differently depending on whether stdout happened to be a real tty
 // or a ctest pipe.
 void               SetHeadlessOutputForTesting(bool headless);
@@ -121,24 +121,31 @@ class EventLoop {
     EventLoop& operator=(const EventLoop&) = delete;
 
     [[nodiscard]] ncplane* StdPlane() const;
-    [[nodiscard]] Size     TerminalSize() const;
 
-    // ansi-fallback-theme follow-up: Notcurses' own view of what the
-    // terminal can actually display (notcurses_cantruecolor /
-    // notcurses_palette_size) -- main.cpp checks these once, right after
-    // construction, to decide whether the TrueColor-heavy built-in/detected
-    // Theme must be swapped for an AnsiFallbackFor() one (Theme.h). Lives
-    // here because the queries need the live notcurses context this class
-    // owns; the swap decision itself stays in the composition root.
-    [[nodiscard]] bool     CanTrueColor() const;
-    [[nodiscard]] unsigned PaletteSize() const;
+    // A plane sitting *below* the standard one, for backgrounds the text
+    // layer should not have to carry: a current-line wash, a pinned-row
+    // highlight, anything that wants to be behind the glyphs rather than in
+    // the same cell as them.
+    //
+    // Measured, not assumed: ncplane_move_below() accepts the standard plane
+    // as a target, and a cell on the standard plane whose background alpha is
+    // NCALPHA_TRANSPARENT renders with this plane's colour behind it. Where
+    // this plane paints nothing either, the terminal's own background shows
+    // through as before -- so a transparent theme keeps its desktop.
+    //
+    // Sized to the terminal and rebuilt on resize. Null until the first
+    // successful creation; Screen::Flush treats null as "no backing layer"
+    // and behaves exactly as it did before this existed.
+    [[nodiscard]] ncplane* BackingPlane() const;
+    [[nodiscard]] Size     TerminalSize() const;
 
     // Pixel-blitter-minimap follow-up: whether this terminal can blit
     // real, pixel-accurate bitmaps (NCBLIT_PIXEL, via sixel/Kitty/iTerm2/
     // etc.) -- Minimap checks this once per Paint() to decide between the
-    // braille-glyph approximation and a real per-pixel raster, the same
-    // live-context capability-check shape CanTrueColor() already
-    // established for the ANSI-fallback-theme swap.
+    // braille-glyph approximation and a real per-pixel raster. The one
+    // remaining live-context capability check: colour capability is no
+    // longer probed at all, since themes are truecolor and Notcurses
+    // quantizes for a terminal that cannot keep up.
     [[nodiscard]] bool CanPixelGraphics() const;
 
     // Raw Notcurses context handle -- Minimap's pixel path needs this
@@ -221,6 +228,7 @@ class EventLoop {
     std::optional<std::uint32_t> heldMouseButtonId_;
 
     notcurses* nc_               = nullptr;
+    ncplane*   backingPlane_     = nullptr;
     bool       running_          = false;
     bool       suspendRequested_ = false; // suspend-frame follow-up: consumed by Run()'s own loop, see Suspend()'s doc comment
 

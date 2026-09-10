@@ -219,8 +219,11 @@ Theme BuildDetectedTheme(const DetectedColors& detected, const Theme& fallback) 
         result.stringForeground = *detected.palette[2];
     }
     if (detected.palette[4]) {
-        result.keywordForeground   = *detected.palette[4];
-        result.selectionBackground = *detected.palette[4];
+        result.keywordForeground = *detected.palette[4];
+        // Half strength, so a selection tints the line rather than replacing
+        // it -- composited over the buffer background at paint time
+        // (UI/BufferView/Internal.h's OverlayBackground).
+        result.selectionBackground = detected.palette[4]->WithAlpha(128);
     }
     if (detected.palette[5]) {
         result.numberForeground = *detected.palette[5];
@@ -242,7 +245,15 @@ Theme BuildDetectedTheme(const DetectedColors& detected, const Theme& fallback) 
     // rather than half-detected.
     if (detected.background) {
         result.modeLineGradientStart = Tint(*detected.background, 30);
-        result.modeLineGradientEnd   = Tint(*detected.background, -20);
+        // Fading rather than simply darkening as it runs right: enough to
+        // read as a gradient into the buffer, not enough to lose the bar.
+        // Composited at paint time -- see ModeLine::Paint.
+        result.modeLineGradientEnd       = Tint(*detected.background, -20);
+        result.modeLineGradientEnd.alpha = 145;
+        // An inactive tab sits back behind the active one rather than being
+        // a second solid block of chrome.
+        result.tabBar.background       = Tint(*detected.background, -15);
+        result.tabBar.background.alpha = 150;
     }
 
     // Same "no palette slot for this" reasoning as the gradient above

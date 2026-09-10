@@ -6,6 +6,8 @@
 #include <utility>
 
 #include "Editor/SyntaxTheme.h"
+#include "PaintParse.h"
+#include "ThemePaints.h"
 
 namespace ned::ui {
 
@@ -63,10 +65,9 @@ namespace {
         {"markup_marker_foreground", &Theme::markupMarkerForeground},
         {"mode_line_foreground", &Theme::modeLineForeground},
         // Gradient endpoints accept any color token now, not hex-only as
-        // originally documented: the ANSI fallback themes made a Palette16
-        // endpoint genuinely meaningful (equal endpoints, which
-        // Color::Interpolate returns unchanged -- see its own comment), so
-        // the old restriction would break their round-trip for no benefit.
+        // originally documented: theme colours are truecolor or Default,
+        // and a legacy "x:<n>" token from a pre-truecolor file resolves to
+        // real RGB on the way in (Theme.cpp's ParseColorToken).
         {"mode_line_gradient_start", &Theme::modeLineGradientStart},
         {"mode_line_gradient_end", &Theme::modeLineGradientEnd},
         {"mode_line_focused_gradient_start", &Theme::modeLineFocusedGradientStart},
@@ -96,6 +97,11 @@ namespace {
         {"diff_added_background", &Theme::diffAddedBackground},
         {"diff_removed_background", &Theme::diffRemovedBackground},
         {"trailing_whitespace_background", &Theme::trailingWhitespaceBackground},
+        {"success_foreground", &Theme::successForeground},
+        {"vcs_modified_foreground", &Theme::vcsModifiedForeground},
+        {"vcs_untracked_foreground", &Theme::vcsUntrackedForeground},
+        {"blame_recent_foreground", &Theme::blameRecentForeground},
+        {"blame_old_foreground", &Theme::blameOldForeground},
         {"indent_guide_foreground", &Theme::indentGuideForeground},
         {"headline_level1_foreground", &Theme::headlineLevel1Foreground},
         {"headline_level2_foreground", &Theme::headlineLevel2Foreground},
@@ -251,6 +257,64 @@ namespace {
     // per known name/class is cheap here (a save-theme-time-only path, not
     // the render path) and keeps the round-trip complete: load the written
     // file back and every override is back too, not just the base palette.
+    // Translucency follow-up: named paints and surface overrides, written
+    // after the colour fields so the file replays in the same order startup
+    // applies them -- named paints first, since a surface's spec can
+    // reference one by name.
+    //
+    // A Stack has no one-line form (nesting is the array form's alone), so
+    // it is written as a comment rather than as a call that would silently
+    // mean something else on reload.
+    void SerializePaintOverrides(std::ostringstream& out) {
+        const std::vector<std::string> paints = NamedPaintNames();
+        if (!paints.empty()) {
+            out << "\n# Named paints (ned/theme-gradient), usable anywhere a paint is.\n";
+            for (const std::string& name : paints) {
+                const std::optional<Paint> paint = NamedPaint(name);
+                if (!paint) {
+                    continue;
+                }
+                const std::string spec = PaintToString(*paint);
+                if (spec.empty()) {
+                    out << "# " << name << ": a stacked paint, which has no one-line form --\n"
+                        << "# re-author it from your own init.janet with (ned/gradient ...).\n";
+                    continue;
+                }
+                out << "(ned/theme-gradient \"" << name << "\" \"" << spec << "\")\n";
+            }
+        }
+
+        const std::vector<std::string> surfaces = SurfaceOverrideNames();
+        if (surfaces.empty()) {
+            return;
+        }
+        out << "\n# Surface overrides (ned/theme-surface). Only the parts a theme actually\n"
+               "# set are here; everything else stays derived from the colours above.\n";
+        for (const std::string& name : surfaces) {
+            const std::optional<Surface> surface = SurfaceOverride(name);
+            if (!surface) {
+                continue;
+            }
+            const std::pair<const char*, const Paint*> parts[] = {
+                {"fill", &surface->fill},
+                {"border", &surface->border},
+                {"text", &surface->text},
+            };
+            for (const auto& [part, paint] : parts) {
+                if (paint->kind == PaintKind::Solid && paint->stops.empty()) {
+                    continue; // paints nothing: nothing to write
+                }
+                const std::string spec = PaintToString(*paint);
+                if (spec.empty()) {
+                    out << "# " << name << '.' << part << ": a stacked paint, which has no one-line\n"
+                        << "# form -- re-author it from your own init.janet with (ned/surface ...).\n";
+                    continue;
+                }
+                out << "(ned/theme-surface \"" << name << "\" \"" << part << "\" \"" << spec << "\")\n";
+            }
+        }
+    }
+
     void SerializeSyntaxThemeOverrides(std::ostringstream& out) {
         bool       wroteHeader  = false;
         const auto ensureHeader = [&] {
@@ -346,6 +410,7 @@ std::string SerializeThemeJanet(const Theme& theme) {
         out << "(ned/theme-set \"" << entry.prefix << "_strikethrough\" \"" << BoolToken(brush.strikethrough) << "\")\n";
     }
     SerializeSyntaxThemeOverrides(out);
+    SerializePaintOverrides(out);
     return out.str();
 }
 

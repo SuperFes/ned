@@ -150,10 +150,24 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         const editor::SymbolMarker& marker = chain[i];
         const int                   row    = static_cast<int>(i);
 
+        // Translucency follow-up: a sticky header is a hint about where you
+        // are, not a header bar, so it is a wash of the chrome tone rather
+        // than the chrome brush itself.
+        //
+        // The wash goes on the backing layer, and these cells keep
+        // Color::Default so it shows through. That is what lets it be a wash
+        // at all on a transparent theme: a cell holds one background, so
+        // tinting the band here would mean painting every cell opaque, and
+        // against a buffer showing the desktop an opaque row reads as
+        // exactly the solid slab this exists to avoid. On the layer beneath,
+        // the same tone is composited against the backdrop once and the
+        // pinned rows come out tinted rather than boxed.
+        const Brush stickyBrush{.background = Color::Default, .foreground = theme_.defaultForeground};
         for (int col = 0; col < width; ++col) {
             Cell& cell     = c[{.x = col, .y = row}];
             cell.character = " ";
-            theme_.tabBar.ApplyTo(cell);
+            stickyBrush.ApplyTo(cell);
+            c.Backing({.x = col, .y = row}).background_color = StickyHighlight(theme_);
         }
 
         const std::size_t line = content.ByteOffsetToLine(marker.startByte);
@@ -165,7 +179,8 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         if (LineNumberGutterActive()) {
             const std::string lineNumber = std::to_string(line + 1);
             const std::size_t padding    = gutterDigits > lineNumber.size() ? gutterDigits - lineNumber.size() : 0;
-            const Brush       lineNumberBrush{.background = theme_.tabBar.background, .foreground = theme_.lineNumberForeground};
+            const Brush lineNumberBrush{.background = stickyBrush.background,
+                                        .foreground = theme_.lineNumberForeground};
             for (std::size_t k = 0; k < lineNumber.size() && static_cast<int>(digitsStart + padding + k) < width; ++k) {
                 Cell& cell     = c[{.x = static_cast<int>(digitsStart + padding + k), .y = row}];
                 cell.character = std::string(1, lineNumber[k]);
@@ -178,7 +193,7 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         // carries that cue instead), matching an ordinary content row's
         // symbol glyph exactly.
         if (static_cast<int>(symbolStart) < width) {
-            const Brush glyphBrush{.background = theme_.tabBar.background,
+            const Brush glyphBrush{.background = stickyBrush.background,
                                    .foreground = theme_.BrushFor(editor::SyntaxClassFor(marker.kind)).foreground,
                                    .bold       = true};
             Cell&       glyphCell = c[{.x = static_cast<int>(symbolStart), .y = row}];
@@ -233,7 +248,7 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         const bool truncated = col + static_cast<int>(columnsNeeded) > width;
         const int  textLimit = truncated ? width - 1 : width;
         if (col < textLimit) {
-            col += PaintUtf8Row(c, col, row, trimmedLine, theme_.tabBar, textLimit - col);
+            col += PaintUtf8Row(c, col, row, trimmedLine, stickyBrush, textLimit - col);
         }
         if (truncated && col < width) {
             c[{.x = col, .y = row}].character = "…";
@@ -265,7 +280,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     // computed just above), matching the diff gutter column's
     // own choice to give Removed a distinct glyph instead.
     const Color gutterForeground = lineDiffTint
-                                       ? (lineDiffTint == DiffLineKind::Added ? Color::BrightGreen : Color::BrightBlue)
+                                       ? (lineDiffTint == DiffLineKind::Added ? theme_.successForeground : theme_.vcsModifiedForeground)
                                    : (line == frame.pointLine) ? theme_.currentLineNumberForeground
                                                                : theme_.lineNumberForeground;
     // Digits+padding get the full selection background only when the
@@ -273,11 +288,13 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     // Partial too, so a partially-selected line still shows a thin
     // highlighted edge instead of no indication at all.
     const Brush gutterBrush{
-        .background = (gutterSelection == GutterSelection::Full) ? theme_.selectionBackground : theme_.background,
+        .background = (gutterSelection == GutterSelection::Full) ? OverlayBackground(theme_, SelectionFill(theme_))
+                                                                 : theme_.background,
         .foreground = gutterForeground,
     };
     const Brush gutterGapBrush{
-        .background = (gutterSelection != GutterSelection::None) ? theme_.selectionBackground : theme_.background,
+        .background = (gutterSelection != GutterSelection::None) ? OverlayBackground(theme_, SelectionFill(theme_))
+                                                                 : theme_.background,
         .foreground = gutterForeground,
     };
     // DAP client slice 2/4: the debug-marker column -- an
@@ -355,15 +372,15 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
             switch (it->second) {
                 case DiffLineKind::Added:
                     cell.character        = "+";
-                    cell.foreground_color = Color::BrightGreen;
+                    cell.foreground_color = theme_.successForeground;
                     break;
                 case DiffLineKind::Modified:
                     cell.character        = "~";
-                    cell.foreground_color = Color::BrightBlue;
+                    cell.foreground_color = theme_.vcsModifiedForeground;
                     break;
                 case DiffLineKind::Removed:
                     cell.character        = "▔"; // UPPER ONE EIGHTH BLOCK
-                    cell.foreground_color = Color::BrightRed;
+                    cell.foreground_color = theme_.diagnosticError;
                     break;
             }
         }
@@ -539,7 +556,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
         if (it != gutters_.TestEntries().end() && it->line == line) {
             Cell& cell            = c[{.x = static_cast<int>(frame.gutter.testStart), .y = row}];
             cell.character        = TestGlyphFor(it->status);
-            cell.foreground_color = TestStatusColor(it->status);
+            cell.foreground_color = TestStatusColor(theme_, it->status);
             cell.bold             = true;
         }
     }
@@ -569,20 +586,23 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
             Cell& cell = c[{.x = static_cast<int>(frame.gutter.coverageStart), .y = row}];
             if (it->second == editor::coverage::LineStatus::Uncovered && changed) {
                 cell.character        = "!";
-                cell.foreground_color = Color::BrightRed;
+                cell.foreground_color = theme_.diagnosticError;
                 cell.bold             = true;
             }
             else {
-                Color color = Color::Green;
+                // Coverage is the same three meanings the diagnostics
+                // already name: this is fine, this needs attention, this is
+                // wrong.
+                Color color = theme_.successForeground;
                 switch (it->second) {
                     case editor::coverage::LineStatus::Covered:
-                        color = Color::Green;
+                        color = theme_.successForeground;
                         break;
                     case editor::coverage::LineStatus::Partial:
-                        color = Color::BrightYellow;
+                        color = theme_.diagnosticWarning;
                         break;
                     case editor::coverage::LineStatus::Uncovered:
-                        color = Color::BrightRed;
+                        color = theme_.diagnosticError;
                         break;
                 }
                 cell.character        = " ";
@@ -661,7 +681,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
                                          [](const auto& entry, std::size_t l) { return entry.first < l; });
         if (it != blameLineInfo_.end() && it->first == line) {
             const std::string shortHash = it->second.commitHash.substr(0, std::min<std::size_t>(8, it->second.commitHash.size()));
-            const Color       hashColor = BlameHashColor(it->second.date);
+            const Color       hashColor = BlameHashColor(theme_, it->second.date);
             for (std::size_t i = 0; i < shortHash.size() && static_cast<int>(frame.gutter.blameStart + i) < c.size().width; ++i) {
                 Cell& cell            = c[{.x = static_cast<int>(frame.gutter.blameStart + i), .y = row}];
                 cell.character        = std::string(1, shortHash[i]);
@@ -1023,13 +1043,13 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         }
     }
     if (InIsearchMatch(offset)) {
-        brush.background = theme_.isearchMatchBackground;
+        brush.background = OverlayBackground(theme_, theme_.isearchMatchBackground);
     }
     else if (InActiveSnippetField(offset)) {
-        brush.background = theme_.snippetFieldBackground;
+        brush.background = OverlayBackground(theme_, theme_.snippetFieldBackground);
     }
     else if (InSelection(offset)) {
-        brush.background = theme_.selectionBackground;
+        brush.background = OverlayBackground(theme_, SelectionFill(theme_));
     }
     else if (InConflictOurs(offset)) {
         // Merge Conflict Resolution Mode: a persistent,
@@ -1618,6 +1638,10 @@ void BufferView::Paint(Canvas paneCanvas) {
             Cell& cell     = c[{.x = col, .y = row}];
             cell.character = " ";
             emptyBrush.ApplyTo(cell);
+            // The backing layer persists between frames exactly as the text
+            // one does, so last frame's highlight has to go before this
+            // frame's is decided.
+            c.Backing({.x = col, .y = row}) = Cell{};
         }
 
         if (pendingAnnotationLine) {
@@ -1838,6 +1862,8 @@ void BufferView::Paint(Canvas paneCanvas) {
         }
     }
 
+    PaintCurrentLineHighlight(c, rowLine);
+
     PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutter.totalWidth);
 
     // completion-popup follow-up: activeCompletion_ mutation sites already
@@ -1885,14 +1911,17 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
         const std::size_t         lineEnd =
             (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         const std::vector<RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, buffer.Point());
+        // An underline has to land under the characters it marks, which the
+        // hints on this line have already pushed right.
+        const std::vector<RenderedInlayHint> lineHints = InlayHintsForLineRange(lineStart, lineEnd);
 
         // Same viewport_.LeftColumn()-aware bound/offset arithmetic CursorPosition uses.
         const int                bound = width + static_cast<int>(viewport_.LeftColumn());
         const std::optional<int> startCol =
-            VisualColumn(content, lineStart, std::min(diagnostic.startByte, lineEnd), bound, lineLinks);
+            VisualColumn(content, lineStart, std::min(diagnostic.startByte, lineEnd), bound, lineLinks, lineHints);
         if (startCol && *startCol >= static_cast<int>(viewport_.LeftColumn())) {
             const std::optional<int> endCol =
-                VisualColumn(content, lineStart, std::min(diagnostic.endByte, lineEnd), bound, lineLinks);
+                VisualColumn(content, lineStart, std::min(diagnostic.endByte, lineEnd), bound, lineLinks, lineHints);
             const int screenStart = static_cast<int>(gutterWidth) + *startCol - static_cast<int>(viewport_.LeftColumn());
             // A span running past the visual-column bound (endCol nullopt)
             // degrades to a single caret at its start rather than flooding
@@ -1927,6 +1956,61 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
         cell.character = std::string(1, ch);
         messageBrush.ApplyTo(cell);
         ++col;
+    }
+}
+
+// The current line's own background, painted into the layer *below* the text
+// rather than into the text cells themselves. That is the whole point of the
+// backing plane: a wash here never has to choose between covering the
+// syntax colour and being visible, because it is not in the same cell as the
+// glyph at all.
+//
+// Empty by default -- ned has never highlighted the current line's row, only
+// its gutter number -- so a theme opts in by giving "buffer.current_line" a
+// fill. Alpha in that fill is resolved against the theme's own background
+// here, since the backing plane is a real plane and can only carry a real
+// colour.
+void BufferView::PaintCurrentLineHighlight(Canvas& c, const std::vector<std::size_t>& rowLine) const {
+    const Surface surface = SurfaceFor(theme_, "buffer.current_line");
+    if (!PaintsColour(surface.fill)) {
+        return;
+    }
+
+    const text::Buffer& buffer    = activeBuffer_.Get();
+    const std::size_t   pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+    const int           width     = c.size().width;
+    const Point         origin    = c.Origin();
+
+    for (int row = 0; row < c.size().height; ++row) {
+        if (row >= static_cast<int>(rowLine.size()) || rowLine[row] != pointLine) {
+            continue;
+        }
+        for (int col = 0; col < width; ++col) {
+            const double u      = width > 1 ? static_cast<double>(col) / (width - 1) : 0.0;
+            const Color  colour = PaintColourAt(surface.fill, u, 0.0, origin.x + col, origin.y + row);
+            if (colour.alpha == 0) {
+                continue;
+            }
+
+            Cell& cell = c[{.x = col, .y = row}];
+            if (cell.background_color.kind == Color::Kind::Default) {
+                // Nothing in the cell: the wash goes on the layer beneath, so
+                // it tints whatever is showing through -- the desktop, for a
+                // transparent theme -- instead of plugging the hole.
+                c.Backing({.x = col, .y = row}).background_color = OverlayBackground(theme_, colour);
+            }
+            else if (cell.background_color == theme_.background) {
+                // An opaque theme paints the row's own background into these
+                // cells, which hides the backing layer completely. There is
+                // nothing to gain from a lower plane when the upper one is
+                // solid, so composite in place instead.
+                cell.background_color = BlendOver(theme_.background, colour);
+            }
+            // Any other background is something louder that already owns this
+            // cell -- a selection, a search hit, a diff tint, a gutter
+            // indicator. The current line is up the whole time you are
+            // typing, so it yields to all of them rather than muddying them.
+        }
     }
 }
 
@@ -2200,7 +2284,8 @@ std::optional<Point> BufferView::CursorPosition() const {
     const int maxColumns = sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) + static_cast<int>(viewport_.LeftColumn())
                                        : std::numeric_limits<int>::max();
 
-    const std::optional<int> visualCol = VisualColumn(content, segmentStart, point, maxColumns, lineLinks);
+    const std::vector<RenderedInlayHint> lineHints = InlayHintsForLineRange(lineStart, lineEnd);
+    const std::optional<int>             visualCol = VisualColumn(content, segmentStart, point, maxColumns, lineLinks, lineHints);
     if (!visualCol || *visualCol < static_cast<int>(viewport_.LeftColumn())) {
         return std::nullopt; // scrolled off the left edge -- shouldn't happen once viewport_.LeftColumn() is correct, but a safe guard
     }
@@ -2210,6 +2295,18 @@ std::optional<Point> BufferView::CursorPosition() const {
         return std::nullopt; // scrolled off horizontally to the right
     }
     return Point{.x = static_cast<int>(col), .y = static_cast<int>(visibleRow) + stickyRowCount_};
+}
+
+std::vector<bufferview::RenderedInlayHint> BufferView::InlayHintsForLineRange(std::size_t lineStart,
+                                                                              std::size_t lineEnd) const {
+    // Same source Paint() renders hints from, so the two can never disagree
+    // about where a hint sits or how wide it is -- which is the whole point:
+    // the cursor's column and the painted text have to be computed from one
+    // set of facts.
+    if (lspManager_ == nullptr) {
+        return {};
+    }
+    return InlayHintsForLine(lspManager_->InlayHintSpans(activeBuffer_.Get()), lineStart, lineEnd);
 }
 
 bool BufferView::InSelection(std::size_t byteOffset) const {

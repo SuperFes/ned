@@ -206,6 +206,51 @@ EventLoop::~EventLoop() {
     }
 }
 
+namespace {
+
+    // Creates (or rebuilds) a terminal-sized plane sitting below the standard
+    // one. Below is the whole point: the standard plane is where the editor's
+    // own text lands, and a cell there with a transparent background renders
+    // with whatever this plane put down. Verified against Notcurses directly
+    // -- ncplane_move_below() accepts the standard plane as its target.
+    ncplane* RebuildBackingPlane(notcurses* nc, ncplane*& existing) {
+        if (existing != nullptr) {
+            ncplane_destroy(existing);
+            existing = nullptr;
+        }
+        ncplane* std_plane = notcurses_stdplane(nc);
+        unsigned rows      = 0;
+        unsigned cols      = 0;
+        ncplane_dim_yx(std_plane, &rows, &cols);
+
+        ncplane_options opts{};
+        opts.rows = rows;
+        opts.cols = cols;
+
+        ncplane* plane = ncplane_create(std_plane, &opts);
+        if (plane == nullptr) {
+            return nullptr; // no backing layer; Screen::Flush copes
+        }
+        // Nothing by default: an untouched cell must let the terminal's own
+        // background through, or a transparent theme loses its desktop.
+        uint64_t channels = 0;
+        ncchannels_set_fg_rgb8(&channels, 0, 0, 0);
+        ncchannels_set_bg_rgb8(&channels, 0, 0, 0);
+        ncchannels_set_fg_alpha(&channels, NCALPHA_TRANSPARENT);
+        ncchannels_set_bg_alpha(&channels, NCALPHA_TRANSPARENT);
+        ncplane_set_base(plane, " ", 0, channels);
+
+        ncplane_move_below(plane, std_plane);
+        existing = plane;
+        return plane;
+    }
+
+} // namespace
+
+ncplane* EventLoop::BackingPlane() const {
+    return backingPlane_;
+}
+
 ncplane* EventLoop::StdPlane() const {
     return notcurses_stdplane(nc_);
 }
@@ -216,20 +261,12 @@ Size EventLoop::TerminalSize() const {
     return Size{static_cast<int>(x), static_cast<int>(y)};
 }
 
-bool EventLoop::CanTrueColor() const {
-    return notcurses_cantruecolor(nc_);
-}
-
 bool EventLoop::CanPixelGraphics() const {
     return notcurses_canpixel(nc_);
 }
 
 notcurses* EventLoop::NotcursesContext() const {
     return nc_;
-}
-
-unsigned EventLoop::PaletteSize() const {
-    return notcurses_palette_size(nc_);
 }
 
 void EventLoop::Wake_() {
@@ -274,6 +311,7 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
     running_ = true;
 
     Size lastSize = TerminalSize();
+    RebuildBackingPlane(nc_, backingPlane_);
     if (callbacks.onResize) {
         SafeInvoke("onResize", [&] { callbacks.onResize(lastSize); });
     }
@@ -402,9 +440,12 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
                 unsigned rows = 0, cols = 0;
                 notcurses_refresh(nc_, &rows, &cols);
                 const Size newSize{static_cast<int>(cols), static_cast<int>(rows)};
-                if ((newSize.width != lastSize.width || newSize.height != lastSize.height) && callbacks.onResize) {
+                if (newSize.width != lastSize.width || newSize.height != lastSize.height) {
                     lastSize = newSize;
-                    SafeInvoke("onResize", [&] { callbacks.onResize(newSize); });
+                    RebuildBackingPlane(nc_, backingPlane_); // it is terminal-sized, so it resizes with it
+                    if (callbacks.onResize) {
+                        SafeInvoke("onResize", [&] { callbacks.onResize(newSize); });
+                    }
                 }
                 needsRepaint = true;
                 continue;

@@ -1,4 +1,5 @@
 #include "ListPopup.h"
+#include "ThemePaints.h"
 
 #include <algorithm>
 #include <cctype>
@@ -171,9 +172,10 @@ void ListPopup::Paint(Canvas c) {
 
     const Brush chordBrush{.background = theme_.background, .foreground = theme_.borderAccent.foreground, .bold = true};
     const Brush labelBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
+    const Color selectionFill = OverlayBackground(theme_, SelectionFill(theme_));
     const Brush selectedChordBrush{
-        .background = theme_.selectionBackground, .foreground = theme_.borderAccent.foreground, .bold = true};
-    const Brush selectedLabelBrush{.background = theme_.selectionBackground, .foreground = theme_.defaultForeground};
+        .background = selectionFill, .foreground = theme_.borderAccent.foreground, .bold = true};
+    const Brush selectedLabelBrush{.background = selectionFill, .foreground = theme_.defaultForeground};
 
     // Fill the interior with the popup's own background before drawing
     // anything else -- otherwise only the specific cells a row's text lands
@@ -204,7 +206,7 @@ void ListPopup::Paint(Canvas c) {
 
         if (selected) {
             for (int x = 1; x < width - 1; ++x) {
-                c[{.x = x, .y = row}].background_color = theme_.selectionBackground;
+                c[{.x = x, .y = row}].background_color = selectionFill;
             }
         }
 
@@ -212,7 +214,7 @@ void ListPopup::Paint(Canvas c) {
         // completion-popup follow-up: leftForeground overrides the
         // accented/plain choice entirely -- see its own doc comment.
         const Brush leftOverrideBrush{
-            .background = selected ? theme_.selectionBackground : theme_.background,
+            .background = selected ? selectionFill : theme_.background,
             .foreground = popupRow.leftForeground.value_or(Color::Default)};
         const Brush& leftBrush = popupRow.leftForeground ? leftOverrideBrush : (popupRow.accented ? left : mainText);
         int          x         = PaintRowText(c, 2, width, row, popupRow.left, leftBrush);

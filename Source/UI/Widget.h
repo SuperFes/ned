@@ -58,10 +58,16 @@ struct Box {
 
 // A small, introspectable color representation -- lives here (not Theme.h)
 // since Cell (below) needs to store one directly. Genuinely necessary as a
-// real three-way Default/Palette16/TrueColor variant, rather than an opaque
-// library color type, because ThemeFile.cpp's round-trip text serialization
-// needs the kind/RGB bytes back out -- see ThemeFile.cpp's own header
-// comment. Turning one into a real terminal color happens inside
+// real variant, rather than an opaque library color type, because
+// ThemeFile.cpp's round-trip text serialization needs the kind/RGB bytes
+// back out -- see ThemeFile.cpp's own header comment.
+//
+// Palette16 is no longer something a *theme* can produce: themes are
+// truecolor throughout. It survives as transport for the one thing that
+// genuinely means "whatever this terminal calls colour N" -- an indexed SGR
+// colour arriving from a program running inside the embedded terminal panel
+// (Editor/Terminal/Emulator.cpp), which should keep honouring the user's own
+// palette rather than being rewritten to our idea of red. Turning one into a real terminal color happens inside
 // Screen::Flush (Widget.cpp), the only place that needs to know how
 // Notcurses itself wants colors expressed.
 struct Color {
@@ -70,8 +76,17 @@ struct Color {
                                      TrueColor };
 
     Kind         kind         = Kind::Default;
-    std::uint8_t paletteIndex = 0;             // valid when kind == Palette16
+    std::uint8_t paletteIndex = 0;             // valid when kind == Palette16 (embedded terminal only)
     std::uint8_t red = 0, green = 0, blue = 0; // valid when kind == TrueColor
+
+    // Translucency follow-up: 255 is opaque and is what every existing
+    // construction produces, so nothing that predates this field changed
+    // meaning. Alpha is meaningful only for TrueColor -- Default is the
+    // terminal's own background (there is nothing here to be partly), and
+    // a palette index has no RGB value we could composite against. It is
+    // never handed to Notcurses: Screen::Blend resolves it away (Widget.cpp),
+    // and Screen::Flush only ever sees colors that are already opaque.
+    std::uint8_t alpha = 255;
 
     [[nodiscard]] constexpr bool operator==(const Color&) const = default;
 
@@ -88,6 +103,33 @@ struct Color {
     }
     [[nodiscard]] static constexpr Color Palette(std::uint8_t index) {
         return Color{.kind = Kind::Palette16, .paletteIndex = index};
+    }
+
+    // 0xrrggbbaa, the same byte order the theme files' own #rrggbbaa token
+    // uses.
+    [[nodiscard]] static constexpr Color RGBA(std::uint32_t hex) {
+        return Color{.kind  = Kind::TrueColor,
+                     .red   = static_cast<std::uint8_t>((hex >> 24) & 0xFF),
+                     .green = static_cast<std::uint8_t>((hex >> 16) & 0xFF),
+                     .blue  = static_cast<std::uint8_t>((hex >> 8) & 0xFF),
+                     .alpha = static_cast<std::uint8_t>(hex & 0xFF)};
+    }
+
+    [[nodiscard]] constexpr Color WithAlpha(std::uint8_t a) const {
+        Color copy = *this;
+        copy.alpha = a;
+        return copy;
+    }
+
+    [[nodiscard]] constexpr bool Opaque() const {
+        return alpha == 255;
+    }
+
+    // "Has a real RGB value we can composite with", i.e. neither the
+    // terminal's own background nor a palette index whose RGB we can only
+    // guess at.
+    [[nodiscard]] constexpr bool Composable() const {
+        return kind == Kind::TrueColor;
     }
 
     // Named 16-color constants.
@@ -117,22 +159,30 @@ struct Color {
 void ColorToRgb8(const Color& color, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b);
 
 inline constexpr Color Color::Default{};
-inline constexpr Color Color::Black         = Color::Palette(0);
-inline constexpr Color Color::Red           = Color::Palette(1);
-inline constexpr Color Color::Green         = Color::Palette(2);
-inline constexpr Color Color::Yellow        = Color::Palette(3);
-inline constexpr Color Color::Blue          = Color::Palette(4);
-inline constexpr Color Color::Magenta       = Color::Palette(5);
-inline constexpr Color Color::Cyan          = Color::Palette(6);
-inline constexpr Color Color::White         = Color::Palette(7);
-inline constexpr Color Color::BrightBlack   = Color::Palette(8);
-inline constexpr Color Color::BrightRed     = Color::Palette(9);
-inline constexpr Color Color::BrightGreen   = Color::Palette(10);
-inline constexpr Color Color::BrightYellow  = Color::Palette(11);
-inline constexpr Color Color::BrightBlue    = Color::Palette(12);
-inline constexpr Color Color::BrightMagenta = Color::Palette(13);
-inline constexpr Color Color::BrightCyan    = Color::Palette(14);
-inline constexpr Color Color::BrightWhite   = Color::Palette(15);
+// The sixteen names are now real RGB -- xterm's own default palette values
+// -- rather than palette indices. Themes are truecolor and own their own
+// contrast (Docs/Translucency.md), so a theme field must never resolve to
+// "whatever the user's terminal decided index 9 means": that colour cannot
+// be composited against, cannot carry alpha, and made every blend path
+// define a case it had no answer for. The handful of call sites still
+// reaching for a named colour rather than a Theme field are the ones a
+// later phase should migrate into the theme.
+inline constexpr Color Color::Black         = Color::RGB(0x000000);
+inline constexpr Color Color::Red           = Color::RGB(0x800000);
+inline constexpr Color Color::Green         = Color::RGB(0x008000);
+inline constexpr Color Color::Yellow        = Color::RGB(0x808000);
+inline constexpr Color Color::Blue          = Color::RGB(0x000080);
+inline constexpr Color Color::Magenta       = Color::RGB(0x800080);
+inline constexpr Color Color::Cyan          = Color::RGB(0x008080);
+inline constexpr Color Color::White         = Color::RGB(0xC0C0C0);
+inline constexpr Color Color::BrightBlack   = Color::RGB(0x808080);
+inline constexpr Color Color::BrightRed     = Color::RGB(0xFF0000);
+inline constexpr Color Color::BrightGreen   = Color::RGB(0x00FF00);
+inline constexpr Color Color::BrightYellow  = Color::RGB(0xFFFF00);
+inline constexpr Color Color::BrightBlue    = Color::RGB(0x0000FF);
+inline constexpr Color Color::BrightMagenta = Color::RGB(0xFF00FF);
+inline constexpr Color Color::BrightCyan    = Color::RGB(0x00FFFF);
+inline constexpr Color Color::BrightWhite   = Color::RGB(0xFFFFFF);
 
 // One screen cell. foreground_color/background_color are this file's own
 // Color (above) rather than an opaque library color -- one less conversion
@@ -149,6 +199,30 @@ struct Cell {
     bool        inverted      = false;
 };
 
+// What Screen::Blend should do with a translucent color when the cell it
+// lands on has no known background to composite against -- i.e. when the
+// destination is Color::Default, the terminal's own background, which is
+// also the only background a translucent terminal lets the desktop through.
+// See Docs/Translucency.md; the short version is that a cell is one glyph
+// plus one foreground plus one background, so "wash the background" and
+// "stay see-through" cannot both happen, and different surfaces genuinely
+// want different answers.
+enum class AlphaPolicy {
+    // Rules in order: composite if the destination background is known,
+    // else dither into an empty cell, else tint the glyph's foreground.
+    Auto,
+    // Dither empty cells; leave cells carrying a glyph completely alone.
+    // What patterns want -- a checkerboard behind code is unreadable.
+    Dither,
+    // Never dither; tint the foreground instead, glyph cells or not.
+    TintText,
+    // Give up the transparency and write the color opaque. The escape hatch
+    // for a surface that must be legible above all else.
+    Opaque,
+    // Do nothing at all over a transparent background.
+    Skip,
+};
+
 // A full-terminal-sized grid of Cells that every Widget's Paint() call
 // writes into (via Canvas, below) over the course of one frame, and which
 // gets pushed out to the real ncplane exactly once per frame by Flush() --
@@ -159,7 +233,8 @@ struct Cell {
 class Screen {
   public:
     Screen(int width, int height) : width_(std::max(0, width)), height_(std::max(0, height)),
-                                    cells_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)) {
+                                    cells_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)),
+                                    backing_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)) {
     }
 
     [[nodiscard]] int Width() const {
@@ -173,6 +248,28 @@ class Screen {
         return cells_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)];
     }
 
+    // The backing layer: a second grid flushed to a plane *below* the text
+    // one, for backgrounds the text layer should not have to carry. A row
+    // highlight painted here sits behind the glyphs instead of in the same
+    // cell as them, so it never has to choose between washing the background
+    // and keeping the syntax colour -- the two-pass idea in
+    // Docs/Translucency.md, on real planes.
+    //
+    // Only the background matters here; the glyph and foreground of a backing
+    // cell are never rendered, since the text plane above always supplies
+    // them.
+    [[nodiscard]] Cell& BackingAt(int x, int y) {
+        return backing_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)];
+    }
+
+    // Backing cells persist between frames like the text ones do, so whoever
+    // paints a highlight has to clear last frame's first.
+    void ClearBacking() {
+        for (Cell& cell : backing_) {
+            cell = Cell{};
+        }
+    }
+
     // Writes every cell in this Screen out to the given ncplane (which must
     // be at least Width() x Height()) and requests a real terminal
     // repaint -- the one place fg/bg Color and the bold/italic/underline/
@@ -181,12 +278,39 @@ class Screen {
     // ncplane_putegc_yx). Called once per frame from the main loop
     // (Source/main.cpp) after every visible Widget has painted into this
     // Screen.
-    void Flush(ncplane* plane);
+    // `backingPlane`, when non-null, receives the backing grid and must sit
+    // below `plane`; a text cell with no background of its own then defers to
+    // it rather than painting the terminal's default over it. Null means "no
+    // backing layer", and the flush behaves exactly as it did before one
+    // existed.
+    void Flush(ncplane* plane, ncplane* backingPlane = nullptr);
+
+    // Composites `src` onto the cell at (x, y) instead of overwriting it --
+    // the translucency write path, beside the plain Cell& assignment
+    // Canvas::operator[] hands out. Semantics (Widget.cpp implements them,
+    // Tests/CompositingTest.cpp pins them):
+    //
+    //  - An empty `src.character` means "leave the destination's glyph and
+    //    traits alone" -- how a wash tints a row of real text without
+    //    erasing it. A non-empty one replaces glyph and traits outright.
+    //  - An opaque src background is written straight through, so a fully
+    //    opaque Blend is exactly today's assignment.
+    //  - A translucent src background resolves per `policy` above.
+    //  - A src *foreground* with no glyph of its own moves the
+    //    destination's foreground instead of writing a glyph. That is the
+    //    Fade paint: keep the syntax color, pull it toward the wash by the
+    //    wash's own alpha -- an opaque one being simply a fade that leaves
+    //    nothing of the original.
+    //
+    // Out-of-range coordinates are silently ignored, matching Canvas's own
+    // clip-to-a-discard-cell safety net.
+    void Blend(int x, int y, const Cell& src, AlphaPolicy policy = AlphaPolicy::Auto);
 
   private:
     int               width_;
     int               height_;
     std::vector<Cell> cells_;
+    std::vector<Cell> backing_;
 };
 
 // A view onto a rectangular region of a Screen, translating local
@@ -199,6 +323,23 @@ class Canvas {
 
     [[nodiscard]] const Size& size() const {
         return size_;
+    }
+
+    // The backing layer beneath this Canvas's own cells -- a background that
+    // renders behind the glyphs rather than in the same cell as them. Out of
+    // bounds discards, exactly like operator[].
+    [[nodiscard]] Cell& Backing(Point p) {
+        if (p.x < 0 || p.x >= size_.width || p.y < 0 || p.y >= size_.height) {
+            return discard_;
+        }
+        return screen_.BackingAt(box_.x_min + p.x, box_.y_min + p.y);
+    }
+
+    // Where this Canvas sits on the shared Screen. Paints that key off cell
+    // position (dithering, patterns) need absolute coordinates so they stay
+    // anchored to the screen rather than crawling when a widget moves.
+    [[nodiscard]] Point Origin() const {
+        return Point{.x = box_.x_min, .y = box_.y_min};
     }
 
     // Out-of-bounds writes are silently clipped to a discard cell rather
@@ -220,6 +361,18 @@ class Canvas {
     // already assumes.
     [[nodiscard]] Canvas ForBox(Box box) const {
         return Canvas(screen_, box);
+    }
+
+    // Screen::Blend in this Canvas's local coordinates. Deliberately
+    // translates to absolute screen coordinates before blending: the dither
+    // technique keys its ordered-dither matrix off cell position, so a
+    // pattern or a translucent fill has to be anchored to the screen rather
+    // than to the widget, or it would crawl every time the widget moves.
+    void Blend(Point p, const Cell& src, AlphaPolicy policy = AlphaPolicy::Auto) {
+        if (p.x < 0 || p.x >= size_.width || p.y < 0 || p.y >= size_.height) {
+            return;
+        }
+        screen_.Blend(box_.x_min + p.x, box_.y_min + p.y, src, policy);
     }
 
   private:

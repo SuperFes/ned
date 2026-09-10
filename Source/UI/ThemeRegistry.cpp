@@ -782,8 +782,6 @@ namespace {
     constexpr ThemeFactory kThemeFactories[] = {
         {"dark", DarkTheme},
         {"light", LightTheme},
-        {"ansi-dark", AnsiDarkTheme},
-        {"ansi-light", AnsiLightTheme},
         {"major-dark", MajorDarkTheme},
         {"major-light", MajorLightTheme},
         {"minor-dark", MinorDarkTheme},
