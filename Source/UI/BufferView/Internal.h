@@ -615,12 +615,28 @@ inline const RenderedInlayHint* InlayHintStartingAt(const std::vector<RenderedIn
 // never disagree about where point's own column actually lands on a
 // line containing a collapsed link.
 inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::size_t lineStart, std::size_t byteOffset,
-                                       int maxColumns, const std::vector<RenderedLink>& lineLinks = {}) {
+                                       int maxColumns, const std::vector<RenderedLink>& lineLinks = {},
+                                       const std::vector<RenderedInlayHint>& lineHints = {}) {
     int         col    = 0;
     std::size_t offset = lineStart;
     while (offset < byteOffset) {
         if (col >= maxColumns) {
             return std::nullopt;
+        }
+        // An inlay hint renders as extra cells *before* the real character
+        // still at this offset, so every hint strictly before byteOffset
+        // pushes point that much further right. A hint anchored exactly at
+        // byteOffset does not: it renders after the cursor, which is why the
+        // loop condition stops before it (matching where the painter puts
+        // the cursor, and where VS Code puts it too).
+        //
+        // Leaving this out was a real bug: the cursor drew N columns left of
+        // the character it was on, N being the width of every hint earlier
+        // in the line, so an Enter split appeared in the wrong place and the
+        // horizontal-scroll decision under-estimated how far right point
+        // really was.
+        if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, offset)) {
+            col += DisplayColumns(hint->label);
         }
         if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
             col += DisplayColumns(link->displayText);
@@ -652,11 +668,22 @@ constexpr std::size_t kMaxTabAwareColumnScan = 512;
 
 inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, std::size_t lineStart, std::size_t lineEnd,
                                              std::size_t targetColumn, int tabWidth,
-                                             const std::vector<RenderedLink>& lineLinks) {
+                                             const std::vector<RenderedLink>&      lineLinks,
+                                             const std::vector<RenderedInlayHint>& lineHints = {}) {
     std::size_t offset       = lineStart;
     std::size_t visualColumn = 0;
     std::size_t steps        = 0;
     while (offset < lineEnd && visualColumn < targetColumn) {
+        // VisualColumn's inverse has to skip the same virtual cells, or a
+        // click lands on a different character than the one under the mouse
+        // by the total width of the hints to its left.
+        if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, offset)) {
+            const std::size_t hintColumns = static_cast<std::size_t>(DisplayColumns(hint->label));
+            if (targetColumn < visualColumn + hintColumns) {
+                return offset; // the click landed on the hint itself -- the real character it annotates
+            }
+            visualColumn += hintColumns;
+        }
         if (steps >= kMaxTabAwareColumnScan) {
             const std::size_t remainingColumns = targetColumn - visualColumn;
             const std::size_t lineEndCodepoint = content.ByteOffsetToCodepointOffset(lineEnd);

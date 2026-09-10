@@ -42,6 +42,7 @@
 #include "UI/BufferView/CacheStamp.h"
 #include "UI/BufferView/EditorContext.h"
 #include "UI/BufferView/GutterModel.h"
+#include "UI/BufferView/RenderTypes.h"
 #include "UI/Widget.h"
 
 namespace ned::ui::bufferview {
@@ -59,6 +60,13 @@ class Viewport {
         std::function<int()>                         stickyRowCount;
         std::function<std::size_t(std::size_t line)> annotationRows;
         std::function<std::size_t(std::size_t line)> leadingAnnotationRows;
+        // Inlay hints on one line. They render as extra cells *before* the
+        // real characters they annotate, so the horizontal-scroll decision
+        // and the click-to-offset mapping both have to count them -- leaving
+        // them out put point's column short by the width of every hint to
+        // its left. Unset is a safe no-op (an empty list), like every other
+        // hook here.
+        std::function<std::vector<RenderedInlayHint>(std::size_t lineStart, std::size_t lineEnd)> inlayHintsForLine;
         // Scrolling invalidates a hover popup anchored to a screen position.
         std::function<void()> dismissHover;
     };

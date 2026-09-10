@@ -3666,6 +3666,13 @@ class BufferView : public Widget {
     // editor::InlineDiagnosticsEnabled() is off.
     void                      EnsureInlineDiagnosticCache() const;
     [[nodiscard]] std::size_t AnnotationRowsForLine(std::size_t line) const;
+
+    // The inlay hints anchored inside one line, in the same RenderedInlayHint
+    // shape Paint() renders from -- the viewport's own column maths needs
+    // them, since a hint occupies real cells before the character it
+    // annotates.
+    [[nodiscard]] std::vector<bufferview::RenderedInlayHint> InlayHintsForLineRange(std::size_t lineStart,
+                                                                                    std::size_t lineEnd) const;
     // Paints one annotation row for `line` at screen row `row`: carets
     // under the diagnostic's visual span (skipped when wrap is on -- the
     // annotation sits below the line's LAST wrap row, where first-row

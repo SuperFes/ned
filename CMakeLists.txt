@@ -1167,6 +1167,7 @@ if (NED_BUILD_TESTS)
             Tests/OrgClockTest.cpp
             Tests/TableTest.cpp
             Tests/MarkdownTest.cpp
+            Tests/InlayHintColumnTest.cpp
             Tests/MarkdownHighlightTest.cpp
             Tests/InjectionTest.cpp
             Tests/EmbeddedDocumentsTest.cpp

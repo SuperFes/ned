@@ -1911,14 +1911,17 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
         const std::size_t         lineEnd =
             (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         const std::vector<RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, buffer.Point());
+        // An underline has to land under the characters it marks, which the
+        // hints on this line have already pushed right.
+        const std::vector<RenderedInlayHint> lineHints = InlayHintsForLineRange(lineStart, lineEnd);
 
         // Same viewport_.LeftColumn()-aware bound/offset arithmetic CursorPosition uses.
         const int                bound = width + static_cast<int>(viewport_.LeftColumn());
         const std::optional<int> startCol =
-            VisualColumn(content, lineStart, std::min(diagnostic.startByte, lineEnd), bound, lineLinks);
+            VisualColumn(content, lineStart, std::min(diagnostic.startByte, lineEnd), bound, lineLinks, lineHints);
         if (startCol && *startCol >= static_cast<int>(viewport_.LeftColumn())) {
             const std::optional<int> endCol =
-                VisualColumn(content, lineStart, std::min(diagnostic.endByte, lineEnd), bound, lineLinks);
+                VisualColumn(content, lineStart, std::min(diagnostic.endByte, lineEnd), bound, lineLinks, lineHints);
             const int screenStart = static_cast<int>(gutterWidth) + *startCol - static_cast<int>(viewport_.LeftColumn());
             // A span running past the visual-column bound (endCol nullopt)
             // degrades to a single caret at its start rather than flooding
@@ -2226,7 +2229,8 @@ std::optional<Point> BufferView::CursorPosition() const {
     const int maxColumns = sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) + static_cast<int>(viewport_.LeftColumn())
                                        : std::numeric_limits<int>::max();
 
-    const std::optional<int> visualCol = VisualColumn(content, segmentStart, point, maxColumns, lineLinks);
+    const std::vector<RenderedInlayHint> lineHints = InlayHintsForLineRange(lineStart, lineEnd);
+    const std::optional<int>             visualCol = VisualColumn(content, segmentStart, point, maxColumns, lineLinks, lineHints);
     if (!visualCol || *visualCol < static_cast<int>(viewport_.LeftColumn())) {
         return std::nullopt; // scrolled off the left edge -- shouldn't happen once viewport_.LeftColumn() is correct, but a safe guard
     }
@@ -2236,6 +2240,18 @@ std::optional<Point> BufferView::CursorPosition() const {
         return std::nullopt; // scrolled off horizontally to the right
     }
     return Point{.x = static_cast<int>(col), .y = static_cast<int>(visibleRow) + stickyRowCount_};
+}
+
+std::vector<bufferview::RenderedInlayHint> BufferView::InlayHintsForLineRange(std::size_t lineStart,
+                                                                              std::size_t lineEnd) const {
+    // Same source Paint() renders hints from, so the two can never disagree
+    // about where a hint sits or how wide it is -- which is the whole point:
+    // the cursor's column and the painted text have to be computed from one
+    // set of facts.
+    if (lspManager_ == nullptr) {
+        return {};
+    }
+    return InlayHintsForLine(lspManager_->InlayHintSpans(activeBuffer_.Get()), lineStart, lineEnd);
 }
 
 bool BufferView::InSelection(std::size_t byteOffset) const {

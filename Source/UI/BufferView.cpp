@@ -34,6 +34,9 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
                                                                                                                  [this]() { return stickyRowCount_; },
                                                                                                                  [this](std::size_t line) { return AnnotationRowsForLine(line); },
                                                                                                                  [this](std::size_t line) { return LeadingAnnotationRowsForLine(line); },
+                                                                                                                 [this](std::size_t lineStart, std::size_t lineEnd) {
+                                                                                                                     return InlayHintsForLineRange(lineStart, lineEnd);
+                                                                                                                 },
                                                                                                                  [this]() { DismissHover(); }}) {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
