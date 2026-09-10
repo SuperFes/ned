@@ -573,7 +573,11 @@ TEST_CASE("Scrolling past an expanded directory's own row pins it at the top (st
     // pinned as a sticky header on the first content row (row 1 -- row 0 is
     // the project-name header) instead of disappearing.
     REQUIRE(RowText(screen, 1, 28).find("sub/") != std::string::npos);
-    REQUIRE(screen.PixelAt(0, 1).foreground_color == theme.tabBar.foreground);
+    // A pinned ancestor is a hint, not a header bar: ordinary text over a
+    // faint wash of the chrome tone, rather than the full chrome brush.
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == theme.defaultForeground);
+    REQUIRE(screen.PixelAt(0, 1).bold);
+    REQUIRE(screen.PixelAt(0, 1).background_color != theme.tabBar.background);
 
     std::filesystem::remove_all(dir);
 }
