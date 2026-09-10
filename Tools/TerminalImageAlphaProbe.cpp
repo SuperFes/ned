@@ -42,6 +42,21 @@
 //
 // It cannot tell you what happened: reading the result is a human job.
 //
+// RESULT (Konsole 26.08, 2026-09-09): alpha yes, text no.
+//
+// Panel (a) renders five distinct steps with the desktop visible through the
+// low-alpha end, so Konsole honours a PNG's alpha channel per pixel, all the
+// way out to the window backdrop. But panel (d) -- band first, text written
+// over those cells -- shows the text with the band *gone*, and panel (e) --
+// band after the text -- shows the band covering the text. An image and a
+// glyph are mutually exclusive per cell.
+//
+// So this path cannot back a highlight that has text on it, which is what a
+// current-line or sticky-header band is. It remains usable for regions that
+// carry no text of their own: the minimap, a gutter decoration, anything
+// purely graphical. For a row of code, an opaque background on a plane
+// beneath the text (Screen's backing layer) is the ceiling.
+//
 
 #include <chrono>
 #include <cstdint>
