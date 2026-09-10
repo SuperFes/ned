@@ -14,6 +14,18 @@
 // current-line highlight and a translucent sticky-header band both become
 // possible, so it is worth being sure rather than reasoning about it.
 //
+// Two different things are called "alpha" in this file, and conflating them
+// is the easiest way to misread it:
+//
+//   cell alpha   a two-bit *mode* per cell (NCALPHA_OPAQUE / _BLEND /
+//                _TRANSPARENT / _HIGHCONTRAST). Not an opacity -- there is
+//                no way to say "50% green" for a cell. BLEND averages with
+//                the planes below; TRANSPARENT defers to them entirely.
+//   pixel alpha  a real 0-255 channel in an RGBA image (panels E/F).
+//
+// Panels A-D are the cell kind; E and F are the pixel kind. The question the
+// probe exists to answer is whether either can reach past the terminal.
+//
 // Six panels, each drawn from real ncplanes in a known z-order:
 //
 //   A  opaque plane under a transparent-background text plane   (control:
@@ -95,17 +107,32 @@ ncplane* MakePlane(ncplane* parent, int y, int x, int rows, int cols, std::vecto
     return plane;
 }
 
-// A plane filled with one background, at the requested alpha. Spaces are
-// written explicitly rather than left to the base cell so the fill is a real
-// cell-by-cell paint, exactly like ned's own Screen::Flush produces.
-ncplane* FilledPlane(ncplane* parent, int y, int x, int rows, int cols, Rgb colour, unsigned alpha,
+// A plane filled with one background. Spaces are written explicitly rather
+// than left to the base cell so the fill is a real cell-by-cell paint,
+// exactly like ned's own Screen::Flush produces.
+//
+// `alphaMode` is NOT an opacity. There is no such thing for a cell: colour
+// and alpha are set separately, and the alpha is a *two-bit mode* --
+// NCALPHA_OPAQUE / NCALPHA_BLEND / NCALPHA_TRANSPARENT (and HIGHCONTRAST,
+// foreground only) -- describing how this plane's colour combines with the
+// planes beneath it, not how much of it to use. "50% green" is not
+// expressible; NCALPHA_BLEND averages with whatever is below, and with
+// nothing below it averages with the void, which is what panel B measures.
+//
+// Both calls set *plane attributes*, applied to every cell written after
+// them -- which is why the fill loop follows rather than passing a colour
+// per cell.
+//
+// The one place in this file with a real 0-255 alpha is the RGBA image
+// buffer in panels E/F, and the contrast is the whole point of the probe.
+ncplane* FilledPlane(ncplane* parent, int y, int x, int rows, int cols, Rgb colour, unsigned alphaMode,
                      std::vector<ncplane*>& owned) {
     ncplane* plane = MakePlane(parent, y, x, rows, cols, owned);
     if (plane == nullptr) {
         return nullptr;
     }
     ncplane_set_bg_rgb8(plane, colour.r, colour.g, colour.b);
-    ncplane_set_bg_alpha(plane, alpha);
+    ncplane_set_bg_alpha(plane, alphaMode);
     ncplane_set_fg_default(plane);
     for (int row = 0; row < rows; ++row) {
         for (int col = 0; col < cols; ++col) {
@@ -208,7 +235,7 @@ int main(int argc, char** argv) {
 
     // --- B: the crux -----------------------------------------------------
     Label(std_plane, y, 2, "B) NCALPHA_BLEND plane over NOTHING, text above it");
-    FilledPlane(std_plane, y + 1, 2, 1, panelWidth, Rgb{40, 200, 90}, NCALPHA_TRANSPARENT, owned);
+    FilledPlane(std_plane, y + 1, 2, 1, panelWidth, Rgb{40, 200, 90}, NCALPHA_BLEND, owned);
     TextPlane(std_plane, y + 1, 4, panelWidth - 4, "if this shows your DESKTOP tinted green, layering wins", owned);
     Dim(std_plane, y + 2, 2, "   desktop through the green => layering solves it. Dark/olive green => blended with black.");
     y += 4;
@@ -272,12 +299,16 @@ int main(int argc, char** argv) {
 
         // Half-alpha magenta: if per-pixel alpha reaches the desktop, this
         // reads as a tint over whatever is behind the window.
+        // The other kind of alpha: a real 8-bit per-pixel channel, not the
+        // two-bit cell mode FilledPlane takes. 128 is a genuine 50% -- which
+        // a cell cannot express at all. Whether Notcurses does anything
+        // proportional with it is exactly what E and F are asking.
         std::vector<std::uint8_t> pixels(static_cast<std::size_t>(pxW) * pxH * 4);
         for (std::size_t i = 0; i < pixels.size(); i += 4) {
-            pixels[i + 0] = 225;
-            pixels[i + 1] = 70;
-            pixels[i + 2] = 190;
-            pixels[i + 3] = 128;
+            pixels[i + 0] = 225; // R
+            pixels[i + 1] = 70;  // G
+            pixels[i + 2] = 190; // B
+            pixels[i + 3] = 128; // A -- half opacity, per pixel
         }
 
         for (int variant = 0; variant < 2; ++variant) {
