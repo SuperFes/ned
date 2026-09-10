@@ -1068,6 +1068,12 @@ target_link_libraries(notcurses_gradient_probe PRIVATE notcurses-core)
 # handling that Notcurses itself cannot reach (3.0.17 has no iTerm2 backend).
 add_executable(terminal_image_alpha_probe Tools/TerminalImageAlphaProbe.cpp)
 
+# Same standalone-diagnostic shape -- see Tools/NotcursesLayerProbe.cpp's own
+# header comment: whether layered ncplanes can produce a background that is
+# translucent to the desktop, or only to Notcurses' own idea of a backdrop.
+add_executable(notcurses_layer_probe Tools/NotcursesLayerProbe.cpp)
+target_link_libraries(notcurses_layer_probe PRIVATE notcurses-core)
+
 if (NED_BUILD_TESTS)
     enable_testing()
     include(CTest)
