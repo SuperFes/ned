@@ -389,6 +389,75 @@ plus `preselect` and `commitCharacters`.
       the fallback sources still synthesize LSP items to fit it. Bigger than the
       fidelity work above and independent of it.
 
+### Refactoring
+
+JetBrains-class rename/move refactoring, scoped the way an IDE scopes it: a local
+variable renames locally, a symbol renames across everything that actually references it,
+and moving a file fixes up what pointed at it. Ned already owns most of the substrate --
+`lsp-rename` (`C-c C-M-r`) drives `Manager::RequestRename`, whose multi-file `WorkspaceEdit`
+lands through `ApplyProjectEdit` as one `ProjectUndoManager` transaction; `rename-file` and
+the sidebar's own rename already send `workspace/willRenameFiles`/`didRenameFiles` and apply
+the resource operations a server sends back. What is missing is everything that has to work
+*without* a language server, everything that should be reviewable before it lands, and the
+file/class relationship an IDE keeps in sync.
+
+- [ ] **Scope-aware rename with no language server (`locals.scm`).** Ned bundles no LSP
+      server by default, so with none configured there is no rename at all -- and even with
+      one, renaming a loop variable should not require a round trip. Tree-sitter's
+      `locals.scm` convention (`@local.scope`, `@local.definition.*`, `@local.reference`)
+      is exactly the missing piece: it resolves a name to its binding and that binding's
+      scope, which is what makes "rename this parameter" correct in the presence of
+      shadowing. Ned already embeds five query kinds per language (`highlights`, `folds`,
+      `indents`, `tests`, `imports`, plus `tags` for three) through
+      `ned_embed_treesitter_query`, and `ModeOverrides` already scans a dynamic grammar's
+      query directory for conventional basenames -- so this is one more kind, one more
+      `Mode` capability (`localScopes`), and a resolver that walks enclosing scopes
+      outward from point. Deliberate limit: locals only. A name whose binding is not in
+      this file is not this feature's business.
+
+- [ ] **Rename through the review multibuffer, not blind.** JetBrains previews a refactor's
+      usages before applying it, and ned has the better version of that already built: the
+      editable multibuffer `project-replace` produces -- one excerpt per usage, `M-n`/`M-p`
+      to step, edit an excerpt back to its original text to exclude it, `M-c` to apply one
+      file, `C-c C-c` to commit the lot into live buffers or straight to disk, all as one
+      undo transaction. Route both rename paths through it: an LSP `WorkspaceEdit` becomes
+      a review buffer rather than an immediate apply, and the no-server path gets one for
+      free. The piece that makes it *better* than project-replace is classification: a
+      tree-sitter parse knows whether a hit is a real reference, a comment, or a string, so
+      the review buffer can group them and default the risky ones to excluded -- which is
+      the actual difference between a rename and a project-wide search-and-replace.
+
+- [ ] **File rename/move propagates, in both directions.** Renaming from inside ned already
+      tells the language server; what it does not do is fix references when no server is
+      running. The `imports.scm` queries (ten languages) already locate an import/include
+      target -- enough to rewrite a moved file's own relative imports and the imports that
+      named it, which covers the common case for C/C++ includes, Python modules and JS/TS
+      paths. The other direction is missing entirely: a move made *outside* ned (a `git mv`,
+      a file manager) arrives as unrelated delete/create events, because `FileWatch` masks
+      `IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_DELETE` and never pairs them. Adding
+      `IN_MOVED_FROM` and matching inotify's rename cookie turns that pair into a real
+      "this moved" signal, which is what makes the IDE behaviour feel automatic rather than
+      manual.
+
+- [ ] **Class/file name sync.** When a type's name matches its file's stem, renaming either
+      should offer the other -- JetBrains' most-used refactor after rename itself. The
+      lookup is `Mode::symbolKind`'s own `tags.scm` markers, so the work is mostly coverage:
+      three languages have a tags query today (C, C++, Kotlin) against ten with imports.
+      Java and C# want it most, since their languages *require* the match. Offer, never
+      assume: a prompt with the proposed rename, and a hard skip when the file holds more
+      than one top-level type.
+
+- [ ] **Change signature (the hard one, scoped honestly).** LSP has no request for this --
+      JetBrains does it from its own index, and no server offers an equivalent -- so it is
+      ned's own transform or nothing. Renaming a parameter falls out of the `locals.scm`
+      item above and needs nothing else. Adding, removing or reordering parameters means
+      rewriting call sites, which needs a per-language structural query (a `calls.scm`
+      alongside `tests.scm`, mapping a call expression to its argument list) plus an edit
+      planner that maps old positions to new ones and drops or defaults the rest. First cut
+      should be one language family and the review buffer above making the blast radius
+      visible before anything lands; a signature change that silently rewrote fifty call
+      sites would be the least trustworthy feature in the editor.
+
 ### Mouse Ergonomics
 
 Design stance: over SSH/tmux/a bare terminal, mouse support is genuinely unreliable (no
