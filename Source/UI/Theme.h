@@ -72,6 +72,24 @@ struct Brush {
     // wants inversion sets cell.inverted = true itself, after this call.
     void ApplyTo(Cell& cell) const {
         cell.background_color = background;
+        ApplyTextTo(cell);
+    }
+
+    // ApplyTo without the background -- everything a Brush says about the
+    // *glyph*, leaving whatever is already in the cell behind it.
+    //
+    // This is what a widget painting through a themed Surface needs
+    // (Docs/Translucency.md phases 5-7): the surface's fill owns the
+    // background, so a text pass that wrote one would erase the gradient,
+    // pattern or blur it just put down. Every such widget was unrolling
+    // ApplyTo by hand and dropping the one line -- nine copies of the same
+    // four assignments, which is what this exists to stop.
+    //
+    // Resets Cell::inverted for the same reason ApplyTo does: the Screen is
+    // repainted in place every frame and never blanked first, so a cell some
+    // other widget marked inverted would stay inverted forever once that
+    // widget moved on. A caller wanting inversion sets it after this call.
+    void ApplyTextTo(Cell& cell) const {
         cell.foreground_color = foreground;
         cell.bold             = bold;
         cell.italic           = italic;
