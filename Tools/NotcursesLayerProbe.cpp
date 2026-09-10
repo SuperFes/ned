@@ -31,17 +31,37 @@
 //
 // Run it in a terminal with a *translucent* background, or the whole thing
 // is moot: ./build/notcurses_layer_probe
-// Reads one keypress, then exits and restores the terminal.
+//
+// Renders incrementally -- a notcurses_render() after each panel rather than
+// one at the end -- specifically so that if a later panel dies, whatever
+// already succeeded stays on screen instead of the whole probe appearing to
+// do nothing. The image panels are the fragile ones (a terminal can report a
+// pixel backend and still fail the blit), so they come last and progress is
+// mirrored to stderr: ./build/notcurses_layer_probe 2>/tmp/layer.err
+//
+// --skip-images leaves them out entirely; --force-images runs them even where
+// no pixel backend is reported. Reads one keypress, then exits and restores
+// the terminal.
 //
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
 #include <notcurses/notcurses.h>
 
 namespace {
+
+// Mirrors this probe's own progress on stderr, flushed immediately -- if a
+// later step crashes or the terminal is left mid-escape, this may be the only
+// trace of how far execution actually got. Capture it separately:
+//     ./build/notcurses_layer_probe 2>/tmp/layer.err
+void Progress(const char* what) {
+    std::fprintf(stderr, "[layer-probe] %s\n", what);
+    std::fflush(stderr);
+}
 
 struct Rgb {
     int r;
@@ -131,7 +151,26 @@ const char* PixelImplName(ncpixelimpl_e impl) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    // --force-images runs the image panels even where Notcurses reports no
+    // pixel backend. They will fail or degrade, which is the point: it is how
+    // that path gets exercised somewhere other than the one terminal that
+    // supports it.
+    bool forceImages = false;
+    bool skipImages  = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--force-images") == 0) {
+            forceImages = true;
+        }
+        else if (std::strcmp(argv[i], "--skip-images") == 0) {
+            skipImages = true;
+        }
+        else {
+            std::fprintf(stderr, "usage: %s [--force-images] [--skip-images]\n", argv[0]);
+            return 2;
+        }
+    }
+
     notcurses_options opts{};
     opts.flags = NCOPTION_NO_QUIT_SIGHANDLERS | NCOPTION_SUPPRESS_BANNERS;
 
@@ -156,12 +195,16 @@ int main() {
     Dim(std_plane, 2, 2, "or only to Notcurses' own idea of what is beneath? C and F are the controls.");
 
     int y = 4;
+    notcurses_render(nc); // whatever follows, the header is already visible
+    Progress("header rendered");
 
     // --- A: does layering work at all? -----------------------------------
     Label(std_plane, y, 2, "A) opaque plane, text plane above it (control: layering itself)");
     FilledPlane(std_plane, y + 1, 2, 1, panelWidth, Rgb{40, 70, 120}, NCALPHA_OPAQUE, owned);
     TextPlane(std_plane, y + 1, 4, panelWidth - 4, "text on an opaque plane -- must be legible on solid blue", owned);
     y += 3;
+    notcurses_render(nc);
+    Progress("panel A rendered");
 
     // --- B: the crux -----------------------------------------------------
     Label(std_plane, y, 2, "B) NCALPHA_BLEND plane over NOTHING, text above it");
@@ -169,12 +212,16 @@ int main() {
     TextPlane(std_plane, y + 1, 4, panelWidth - 4, "if this shows your DESKTOP tinted green, layering wins", owned);
     Dim(std_plane, y + 2, 2, "   desktop through the green => layering solves it. Dark/olive green => blended with black.");
     y += 4;
+    notcurses_render(nc);
+    Progress("panel B rendered");
 
     // --- C: what ned does today ------------------------------------------
     Label(std_plane, y, 2, "C) default-background plane under text (control: today's behaviour)");
     FilledPlane(std_plane, y + 1, 2, 1, panelWidth, Rgb{0, 0, 0}, NCALPHA_TRANSPARENT, owned);
     TextPlane(std_plane, y + 1, 4, panelWidth - 4, "your desktop MUST show through here -- no colour is painted", owned);
     y += 3;
+    notcurses_render(nc);
+    Progress("panel C rendered");
 
     // --- D: does depth help? ---------------------------------------------
     Label(std_plane, y, 2, "D) BLEND stacked 1 / 2 / 3 deep over nothing");
@@ -195,18 +242,33 @@ int main() {
     std::snprintf(capability, sizeof(capability), "E/F) pixel backend: %s", PixelImplName(impl));
     Label(std_plane, y, 2, capability);
 
-    if (impl == NCPIXEL_NONE) {
-        Dim(std_plane, y + 1, 2, "   no pixel graphics here, so the image tests cannot run -- see B and D above.");
+    if (skipImages || (impl == NCPIXEL_NONE && !forceImages)) {
+        Dim(std_plane, y + 1, 2,
+            skipImages ? "   image tests skipped (--skip-images) -- B and D are the ones that matter anyway."
+                       : "   no pixel graphics here, so the image tests cannot run -- see B and D above.");
         y += 3;
     }
     else {
         unsigned celly = 0;
         unsigned cellx = 0;
         ncplane_pixel_geom(std_plane, nullptr, nullptr, &celly, &cellx, nullptr, nullptr);
+        char geometry[96];
+        std::snprintf(geometry, sizeof(geometry), "cell pixel geometry: %ux%u", cellx, celly);
+        Progress(geometry);
 
         const int imageCells = panelWidth / 2;
         const int pxW        = imageCells * static_cast<int>(cellx);
         const int pxH        = static_cast<int>(celly);
+
+        // A terminal can report a pixel backend and still hand back a zero
+        // cell geometry; building a zero-sized RGBA buffer from that would
+        // hand ncvisual_from_rgba a null pointer.
+        if (pxW <= 0 || pxH <= 0) {
+            Dim(std_plane, y + 1, 2, "   pixel backend reported, but cell geometry is 0 -- image tests skipped.");
+            Progress("cell geometry was zero; skipping image panels");
+            y += 3;
+            goto finish;
+        }
 
         // Half-alpha magenta: if per-pixel alpha reaches the desktop, this
         // reads as a tint over whatever is behind the window.
@@ -235,8 +297,10 @@ int main() {
             vopts.blitter = NCBLIT_PIXEL;
             vopts.flags   = NCVISUAL_OPTION_CHILDPLANE;
 
+            Progress(withText ? "blitting image for panel E" : "blitting image for panel F");
             ncplane* drawn = ncvisual_blit(nc, visual, &vopts);
             ncvisual_destroy(visual);
+            Progress(drawn == nullptr ? "ncvisual_blit returned nullptr" : "ncvisual_blit succeeded");
             if (drawn == nullptr) {
                 Dim(std_plane, row, 2, "   ncvisual_blit(NCBLIT_PIXEL) failed");
                 continue;
@@ -257,14 +321,28 @@ int main() {
         y += 5;
     }
 
+finish:
     Dim(std_plane, static_cast<int>(rows) - 2, 2,
         "If B shows the desktop, ned can have translucent bands. If only C does, the cell model is the limit.");
     Label(std_plane, static_cast<int>(rows) - 1, 2, "Press any key to exit...");
 
     notcurses_render(nc);
+    Progress("all panels rendered; waiting for a keypress");
 
+    // Wait for a real key. A release event or a resize is not a keypress, and
+    // treating one as such is how a probe exits before anyone has read it.
     ncinput ni;
-    notcurses_get_blocking(nc, &ni);
+    while (true) {
+        const uint32_t key = notcurses_get_blocking(nc, &ni);
+        if (key == static_cast<uint32_t>(-1)) {
+            Progress("notcurses_get_blocking failed; exiting");
+            break;
+        }
+        if (ni.evtype == NCTYPE_RELEASE || key == NCKEY_RESIZE || key == 0) {
+            continue;
+        }
+        break;
+    }
 
     for (ncplane* plane : owned) {
         ncplane_destroy(plane);
