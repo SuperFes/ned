@@ -233,7 +233,8 @@ enum class AlphaPolicy {
 class Screen {
   public:
     Screen(int width, int height) : width_(std::max(0, width)), height_(std::max(0, height)),
-                                    cells_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)) {
+                                    cells_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)),
+                                    backing_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)) {
     }
 
     [[nodiscard]] int Width() const {
@@ -247,6 +248,28 @@ class Screen {
         return cells_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)];
     }
 
+    // The backing layer: a second grid flushed to a plane *below* the text
+    // one, for backgrounds the text layer should not have to carry. A row
+    // highlight painted here sits behind the glyphs instead of in the same
+    // cell as them, so it never has to choose between washing the background
+    // and keeping the syntax colour -- the two-pass idea in
+    // Docs/Translucency.md, on real planes.
+    //
+    // Only the background matters here; the glyph and foreground of a backing
+    // cell are never rendered, since the text plane above always supplies
+    // them.
+    [[nodiscard]] Cell& BackingAt(int x, int y) {
+        return backing_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)];
+    }
+
+    // Backing cells persist between frames like the text ones do, so whoever
+    // paints a highlight has to clear last frame's first.
+    void ClearBacking() {
+        for (Cell& cell : backing_) {
+            cell = Cell{};
+        }
+    }
+
     // Writes every cell in this Screen out to the given ncplane (which must
     // be at least Width() x Height()) and requests a real terminal
     // repaint -- the one place fg/bg Color and the bold/italic/underline/
@@ -255,7 +278,12 @@ class Screen {
     // ncplane_putegc_yx). Called once per frame from the main loop
     // (Source/main.cpp) after every visible Widget has painted into this
     // Screen.
-    void Flush(ncplane* plane);
+    // `backingPlane`, when non-null, receives the backing grid and must sit
+    // below `plane`; a text cell with no background of its own then defers to
+    // it rather than painting the terminal's default over it. Null means "no
+    // backing layer", and the flush behaves exactly as it did before one
+    // existed.
+    void Flush(ncplane* plane, ncplane* backingPlane = nullptr);
 
     // Composites `src` onto the cell at (x, y) instead of overwriting it --
     // the translucency write path, beside the plain Cell& assignment
@@ -282,6 +310,7 @@ class Screen {
     int               width_;
     int               height_;
     std::vector<Cell> cells_;
+    std::vector<Cell> backing_;
 };
 
 // A view onto a rectangular region of a Screen, translating local
@@ -294,6 +323,16 @@ class Canvas {
 
     [[nodiscard]] const Size& size() const {
         return size_;
+    }
+
+    // The backing layer beneath this Canvas's own cells -- a background that
+    // renders behind the glyphs rather than in the same cell as them. Out of
+    // bounds discards, exactly like operator[].
+    [[nodiscard]] Cell& Backing(Point p) {
+        if (p.x < 0 || p.x >= size_.width || p.y < 0 || p.y >= size_.height) {
+            return discard_;
+        }
+        return screen_.BackingAt(box_.x_min + p.x, box_.y_min + p.y);
     }
 
     // Where this Canvas sits on the shared Screen. Paints that key off cell

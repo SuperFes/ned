@@ -121,6 +121,22 @@ class EventLoop {
     EventLoop& operator=(const EventLoop&) = delete;
 
     [[nodiscard]] ncplane* StdPlane() const;
+
+    // A plane sitting *below* the standard one, for backgrounds the text
+    // layer should not have to carry: a current-line wash, a pinned-row
+    // highlight, anything that wants to be behind the glyphs rather than in
+    // the same cell as them.
+    //
+    // Measured, not assumed: ncplane_move_below() accepts the standard plane
+    // as a target, and a cell on the standard plane whose background alpha is
+    // NCALPHA_TRANSPARENT renders with this plane's colour behind it. Where
+    // this plane paints nothing either, the terminal's own background shows
+    // through as before -- so a transparent theme keeps its desktop.
+    //
+    // Sized to the terminal and rebuilt on resize. Null until the first
+    // successful creation; Screen::Flush treats null as "no backing layer"
+    // and behaves exactly as it did before this existed.
+    [[nodiscard]] ncplane* BackingPlane() const;
     [[nodiscard]] Size     TerminalSize() const;
 
     // Pixel-blitter-minimap follow-up: whether this terminal can blit
@@ -212,6 +228,7 @@ class EventLoop {
     std::optional<std::uint32_t> heldMouseButtonId_;
 
     notcurses* nc_               = nullptr;
+    ncplane*   backingPlane_     = nullptr;
     bool       running_          = false;
     bool       suspendRequested_ = false; // suspend-frame follow-up: consumed by Run()'s own loop, see Suspend()'s doc comment
 
