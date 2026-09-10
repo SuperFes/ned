@@ -204,10 +204,17 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       The current-line gradient wash ships now, and so does a selection one -- see
       `Docs/Themes.md`; the bundled `focus` preset had been written for exactly the former
       ("current-line wash", in gradients.janet) and never wired to anything.
-      Still open: recency glow driven by
-      `UnsavedChangeRanges` + an `EventLoop` timer (nothing exists; no `glow`/`recency`
-      symbol anywhere), and virtual text (inline diagnostics, blame, fold placeholders) at
-      real alpha. `buffer` is the last surface with no consumer.
+      The recency glow ships too (`Editor/RecencyGlow.h`, `buffer.recency`): edited ranges
+      are derived by diffing `UnsavedChangeRanges()` on a `ContentGeneration()` move and
+      *subtracting the previous set*, since those ranges are merged and continuous typing
+      grows one rather than appending -- without the subtraction every edit re-glows
+      everything typed since the last save. Timestamps live in `BufferView`, not `Buffer`:
+      `Text/` knows nothing above it, and a timestamp is a UI concern. The animation
+      re-arms a 60ms one-shot only while something is fading, the background spinner's
+      exact shape, so an idle editor costs zero wakeups -- measured at 0.06 CPU-seconds for
+      three seconds of continuous typing and nothing measurable once it stops.
+      Still open: virtual text (inline diagnostics, blame, fold placeholders) at real
+      alpha. `buffer` is the last surface with no consumer.
 - [x] **`echo` and `scrollbar` adopted; four advertised surfaces still have no consumer.**
       The 2026-09-10 audit found six surfaces derived and listed but painted by nothing, so
       `ned/theme-surface` on any of them parsed, stored, and did nothing visible. `echo` and

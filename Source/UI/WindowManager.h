@@ -363,6 +363,12 @@ class WindowManager {
     // OverlayHost-owned handler lives above this class entirely.
     void SetOnThemeGalleryToggle(std::function<void()> onToggle);
 
+    // Whether any pane still has a recency glow fading, so the composition
+    // root knows whether to re-arm the animation timer for another frame.
+    // Asked once per render; false is what stops the animation, which is the
+    // property that keeps an idle editor at zero wakeups.
+    [[nodiscard]] bool AnyPaneHasLiveRecencyGlow();
+
     // which-key follow-up: same "forwarded to every pane, present and
     // future" shape as SetOnDapConsoleToggle above, but a data callback
     // fired on every Pending/non-Pending transition rather than an explicit

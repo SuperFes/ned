@@ -34,6 +34,12 @@ namespace {
     // selected; a theme wanting a flat bar sets buffer.selection itself.
     constexpr double kSelectionLiftPercent = 78.0;
 
+    // The recency glow's peak, before its own fade scales it down. Above the
+    // current line's 40 because it is on screen for well under a second and
+    // has to register in peripheral vision; well below a selection's 110
+    // because it must never look like one.
+    constexpr std::uint8_t kRecencyGlowAlpha = 70;
+
     // The left dock's edge falloff, in percent of the way toward white. See
     // the "panel" branch of DerivedSurface for why this exists and why it
     // runs on the panel's own side.
@@ -263,6 +269,16 @@ namespace {
                 static_cast<std::uint8_t>(std::lround(fill.alpha * (kSelectionLiftPercent / 100.0)));
             surface.fill = GradientPaint(PaintAxis::Y, {ColorStop{.colour = fill},
                                                         ColorStop{.colour = fill.WithAlpha(lowered)}});
+            return surface;
+        }
+        if (name == "buffer.recency") {
+            // The just-edited wash. Uses the accent, like the current line,
+            // so "something happened here" and "you are here" read as the
+            // same colour language rather than two competing hues -- and
+            // sits above the current line's own strength, since it is
+            // momentary rather than always-on.
+            const Color accent = DetectedAccent().value_or(theme.modeLineFocusedGradientStart);
+            surface.fill       = SolidPaint(accent.WithAlpha(kRecencyGlowAlpha));
             return surface;
         }
         if (name == "buffer.search") {
@@ -532,7 +548,7 @@ std::vector<std::string> SurfaceNames() {
     // M-x theme-gallery and Docs/Themes.md despite working perfectly if you
     // already knew the name.
     return {"buffer", "buffer.current_line", "buffer.selection", "buffer.search",
-            "modeline", "modeline.focused", "tab.strip", "tab", "tab.active",
+            "buffer.recency", "modeline", "modeline.focused", "tab.strip", "tab", "tab.active",
             "tab.active.focused", "echo", "scrollbar", "panel",
             "popup"};
 }

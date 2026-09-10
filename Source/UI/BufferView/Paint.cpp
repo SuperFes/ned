@@ -6,6 +6,7 @@
 // per-cell brush and selection predicates it consults.
 //
 
+#include "Editor/RecencyGlow.h"
 #include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
@@ -1028,6 +1029,105 @@ void BufferView::SyncBufferSwitch() {
 // document highlight, line inspect, execution line, multibuffer tint, and
 // finally trailing whitespace, which is purely cosmetic and always loses to
 // an overlay that means something.
+void BufferView::RefreshRecencyGlows() {
+    const text::Buffer& buffer = activeBuffer_.Get();
+    const auto          now    = std::chrono::steady_clock::now();
+
+    // Drop whatever has finished fading first, so the cap below is spent on
+    // live glows rather than on history.
+    std::erase_if(recencyGlows_, [now](const RecencyGlow& glow) {
+        return now - glow.at >= editor::kRecencyGlowDuration;
+    });
+
+    // Seeded on the first paint, *before* the generation check rather than
+    // after it. A fresh buffer's ContentGeneration is 0 and so is this
+    // member, so a check-first ordering never seeds until something changes
+    // -- and then spends the user's first edit doing it, which is exactly
+    // the edit most worth showing. Found by typing into a new file and
+    // seeing nothing.
+    //
+    // Seeding at all is what stops a buffer that already carried unsaved
+    // ranges (a restored session, or simply switching to it) from lighting
+    // every one of them up as though it had just been typed.
+    if (!recencyGlowSeeded_) {
+        recencyGlowSeeded_     = true;
+        recencyGlowGeneration_ = buffer.ContentGeneration();
+        previousUnsavedRanges_ = buffer.UnsavedChangeRanges();
+        return;
+    }
+
+    const std::uint64_t generation = buffer.ContentGeneration();
+    if (generation == recencyGlowGeneration_) {
+        return;
+    }
+    recencyGlowGeneration_ = generation;
+
+    const std::vector<std::pair<std::size_t, std::size_t>> current = buffer.UnsavedChangeRanges();
+
+    // What the newest edit *newly covers*. UnsavedChangeRanges is merged, so
+    // continuous typing grows one range rather than appending: subtracting
+    // the previous set is what isolates the bytes this edit actually
+    // touched, instead of re-glowing everything typed since the last save.
+    for (const auto& [start, end] : current) {
+        std::size_t cursor = start;
+        for (const auto& [previousStart, previousEnd] : previousUnsavedRanges_) {
+            if (previousEnd <= cursor || previousStart >= end) {
+                continue; // no overlap with what is left of this range
+            }
+            if (previousStart > cursor) {
+                recencyGlows_.push_back(RecencyGlow{.start = cursor, .end = previousStart, .at = now});
+            }
+            cursor = std::max(cursor, previousEnd);
+            if (cursor >= end) {
+                break;
+            }
+        }
+        if (cursor < end) {
+            recencyGlows_.push_back(RecencyGlow{.start = cursor, .end = end, .at = now});
+        }
+    }
+
+    previousUnsavedRanges_ = current;
+
+    // A paste or a multi-cursor edit can produce many at once; keep the
+    // newest, since those are the ones with any life left in them.
+    if (recencyGlows_.size() > kMaxRecencyGlows) {
+        recencyGlows_.erase(recencyGlows_.begin(),
+                            recencyGlows_.end() - static_cast<std::ptrdiff_t>(kMaxRecencyGlows));
+    }
+}
+
+double BufferView::RecencyGlowStrengthAt(std::size_t byteOffset) const {
+    if (!editor::RecencyGlowEnabled()) {
+        return 0.0;
+    }
+    const auto now       = std::chrono::steady_clock::now();
+    double     strongest = 0.0;
+    for (const RecencyGlow& glow : recencyGlows_) {
+        if (byteOffset < glow.start || byteOffset >= glow.end) {
+            continue;
+        }
+        const auto elapsed = now - glow.at;
+        if (elapsed >= editor::kRecencyGlowDuration) {
+            continue;
+        }
+        const double remaining =
+            1.0 - (std::chrono::duration<double>(elapsed) / std::chrono::duration<double>(editor::kRecencyGlowDuration));
+        strongest = std::max(strongest, remaining);
+    }
+    return strongest;
+}
+
+bool BufferView::HasLiveRecencyGlow() const {
+    if (!editor::RecencyGlowEnabled()) {
+        return false;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    return std::any_of(recencyGlows_.begin(), recencyGlows_.end(), [now](const RecencyGlow& glow) {
+        return now - glow.at < editor::kRecencyGlowDuration;
+    });
+}
+
 Color BufferView::OverlayWashAt(std::string_view surfaceName, const Color& fallback, const Canvas& c, int col,
                                 int row) const {
     const Surface surface = SurfaceFor(theme_, surfaceName);
@@ -1162,6 +1262,24 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         // guarantees this cell is a space/tab (see that field's
         // own doc comment), so no codepoint check is needed here.
         brush.background = OverlayBackground(theme_, theme_.trailingWhitespaceBackground);
+    }
+    else if (const double glow = RecencyGlowStrengthAt(offset); glow > 0.0) {
+        // Translucency phase 6: the recency glow, last in the chain because
+        // it is the only purely decorative thing in it -- every overlay
+        // above says something about state the user asked about, and a
+        // momentary "this just changed" must never hide one of them.
+        //
+        // Its own fade scales the surface's alpha rather than replacing it,
+        // so a theme retunes the peak by setting buffer.recency and the
+        // shape of the fade stays this file's business.
+        const Color peak = OverlayWashAt("buffer.recency", theme_.background, c, col, row);
+        if (peak.Composable()) {
+            const Color faded =
+                theme_.background.Composable()
+                    ? Color::Interpolate(static_cast<float>(glow), theme_.background, peak)
+                    : peak;
+            brush.background = faded;
+        }
     }
     return brush;
 }
@@ -1891,6 +2009,7 @@ void BufferView::Paint(Canvas paneCanvas) {
         }
     }
 
+    RefreshRecencyGlows();
     PaintCurrentLineHighlight(c, rowLine);
 
     PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutter.totalWidth);
