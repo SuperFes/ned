@@ -40,8 +40,10 @@
 #define NED_UI_OVERLAY_H
 
 #include <functional>
+#include <string>
 #include <vector>
 
+#include "Theme.h"
 #include "Widget.h"
 
 namespace ned::ui {
@@ -55,7 +57,17 @@ class OverlayHost {
     // Registers widget, initially hidden (widget.active = false). The
     // widget must outlive this host; the host never owns it, mirroring how
     // main.cpp's composition owns every other widget directly.
-    void Add(Widget& widget, PlacementFn placement);
+    // `surfaceName` is the themed Surface this overlay's shadow comes from
+    // -- "popup" for every popup-shaped widget, which is all of them today.
+    // A shadow falls *outside* the widget's own Box, and a Canvas clips to
+    // its box, so the widget cannot paint its own: this host does, because
+    // it is the only thing that knows both the box and the whole Screen.
+    void Add(Widget& widget, PlacementFn placement, std::string surfaceName = "popup");
+
+    // The Theme shadows resolve against. Unset (the default) means no
+    // shadows at all, which is what keeps a test-constructed host and every
+    // caller that has not wired one working exactly as before.
+    void SetTheme(const Theme* theme);
 
     // Makes widget visible, re-boxes it from the last known terminal size,
     // and raises it above any other visible overlay.
@@ -90,7 +102,10 @@ class OverlayHost {
         Widget*               widget = nullptr;
         PlacementFn           placement;
         std::function<void()> onFocusReturn;
+        std::string           surfaceName = "popup";
     };
+
+    const Theme* theme_ = nullptr; // see SetTheme
 
     [[nodiscard]] Entry*       FindEntry(const Widget& widget);
     [[nodiscard]] const Entry* FindEntry(const Widget& widget) const;

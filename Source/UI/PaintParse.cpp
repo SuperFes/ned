@@ -394,6 +394,53 @@ std::optional<Paint> ParsePaint(std::string_view line, const PaintContext& conte
     return ParsePaint(tokens, context, error);
 }
 
+std::optional<Shadow> ParseShadow(std::string_view line, const PaintContext& context) {
+    std::vector<std::string> fields;
+    std::size_t              pos = 0;
+    while (pos < line.size()) {
+        const std::size_t begin = line.find_first_not_of(" \t", pos);
+        if (begin == std::string_view::npos) {
+            break;
+        }
+        const std::size_t end = line.find_first_of(" \t", begin);
+        fields.emplace_back(line.substr(begin, end == std::string_view::npos ? std::string_view::npos : end - begin));
+        pos = (end == std::string_view::npos) ? line.size() : end;
+    }
+    if (fields.size() != 4) {
+        return std::nullopt;
+    }
+
+    Shadow shadow;
+    try {
+        std::size_t consumed = 0;
+        shadow.dx            = std::stoi(fields[0], &consumed);
+        if (consumed != fields[0].size()) {
+            return std::nullopt;
+        }
+        shadow.dy = std::stoi(fields[1], &consumed);
+        if (consumed != fields[1].size()) {
+            return std::nullopt;
+        }
+        shadow.radius = std::stoi(fields[2], &consumed);
+        if (consumed != fields[2].size()) {
+            return std::nullopt;
+        }
+    }
+    catch (const std::exception&) {
+        return std::nullopt;
+    }
+    if (shadow.radius < 0) {
+        return std::nullopt;
+    }
+
+    const std::optional<Color> colour = ParseColorStop(fields[3], context);
+    if (!colour) {
+        return std::nullopt;
+    }
+    shadow.colour = *colour;
+    return shadow;
+}
+
 std::string PaintToString(const Paint& paint) {
     std::ostringstream out;
 

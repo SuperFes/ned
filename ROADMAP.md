@@ -58,9 +58,10 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       Theme's flat colour fields rather than a replacement: every derived default is
       byte-identical to what the widget paints today, so widgets migrate one at a time in
       phases 5-7 instead of in one flag day.
-- [ ] **Phase 4 remainder.** `Shadow`/`elevation` are typed but deliberately not settable
-      from Janet yet — an authoring surface for something nothing paints is worse than none,
-      so they land with the popup phase that consumes them.
+- [x] **Phase 4 remainder.** `Shadow`/`elevation` are settable from Janet now, alongside the
+      popup phase that consumes them: `ned/theme-surface "popup" "shadow" "dx dy radius
+      colour"` and `... "elevation" "<int>"`. They were held back because an authoring
+      surface for something nothing paints is worse than none; that is no longer the case.
 - [x] **Current-line highlight: the two-pass layering.** Settled, and by real planes
       rather than the "no second `Screen` needed" this entry guessed at: `Screen` carries a
       second cell grid flushed to an ncplane *below* the text one (`backing-plane`), and a
@@ -225,14 +226,20 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
         `DrawBorderTitle`, so the title stays its own accent rather than being swept
         through. The derived solid default recolours to the colour `DrawBorder` already
         used, so an unthemed frame is byte-identical.
-      - **7c — `Shadow` and `elevation`** (this is also the Phase 4 remainder; `elevation`
-        has exactly one mention in `Source/UI/*.cpp`, in a comment). The real problem: a drop
-        shadow falls *outside* the popup's own `Box_`, and `Canvas` clips to its box, so the
-        popup cannot paint it. `OverlayHost` should — it knows every overlay's box and the
-        `Screen`. That means `overlays.Add(...)` learning each overlay's surface name
-        (defaulting to `"popup"`), plus a Janet spec grammar for a shadow (dx/dy/radius/
-        colour). Decision to make first: elevation drives shadow depth only, or z-order too?
-        Sorting by elevation would change existing add/show stacking.
+      - [x] **7c — `Shadow` and `elevation`.** `OverlayHost` paints each overlay's shadow,
+        since it falls outside the widget's own `Box` and a `Canvas` clips to its box --
+        the host is the only thing knowing both the box and the whole `Screen`.
+        `overlays.Add(...)` learns each overlay's surface name (defaulting to `"popup"`),
+        and `SetTheme` wires the theme; unset means no shadows, so every headless test is
+        unaffected. `PaintParse`'s `ParseShadow` reads `dx dy radius colour`, the colour
+        through the same `ParseColorStop` paint stops use.
+        Elevation multiplies the offset and **defaults to 0, meaning no shadow**, which is
+        what keeps this inert until a theme asks. It deliberately does *not* affect
+        z-order: overlays still stack in add/show order, and sorting by elevation would
+        change existing behaviour nobody asked to change. The shadow never darkens cells
+        the overlay itself covers, and blends rather than assigns, so `Screen::Blend`'s own
+        rules decide what a shadow means over a glyph (tint) versus an empty cell
+        (composite, or dither on a transparent theme).
       - **Translucent bodies.** A translucent fill currently composites against the theme's
         background rather than against what the popup covers (see the clear-first note
         above). Fixing that properly is the backing-plane approach, not another clear rule.

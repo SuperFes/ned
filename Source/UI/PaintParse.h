@@ -85,6 +85,17 @@ struct PaintContext {
 // cannot be written this way (no nesting) and comes back empty.
 [[nodiscard]] std::string PaintToString(const Paint& paint);
 
+// Translucency phase 7c: a shadow spec -- `dx dy radius colour`, e.g.
+// "2 1 2 #00000060". Positional rather than keyword-ish because all four
+// always matter and there is no sensible default for any of them once a
+// theme has decided to author one at all.
+//
+// The colour goes through ParseColorStop, so it takes the same `$slot`
+// references and `#rrggbbaa` literals every paint stop does -- a shadow that
+// tints toward the theme's own background rather than flat black is a
+// legitimate thing to want. std::nullopt for anything that does not parse.
+[[nodiscard]] std::optional<Shadow> ParseShadow(std::string_view line, const PaintContext& context);
+
 // The slot names a theme exposes to $-references, resolved against the
 // active Theme's own fields -- deliberately a fixed, small table rather
 // than every one of the ~70 fields, since a gradient wants the handful of
