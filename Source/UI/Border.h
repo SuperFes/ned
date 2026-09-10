@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 
+#include "Paint.h"
 #include "Theme.h"
 #include "Widget.h"
 
@@ -42,6 +43,27 @@ void DrawBorder(Canvas& c, const Brush& brush, const BorderGlyphs& glyphs = Roun
 // overwritten. Codepoint-safe (chrome-widget-utf8 follow-up) via
 // PaintUtf8Row below; a canvas too narrow for any text is a no-op.
 void DrawBorderTitle(Canvas& c, const std::string& title, const Brush& titleBrush);
+
+// Translucency phase 7b: recolours an already-drawn frame's glyphs from a
+// Paint, so a border can be a gradient rather than one flat colour.
+//
+// Only the frame cells -- the outermost ring of the canvas -- and only their
+// *foreground*: a border is a line, and its colour is the line's colour. The
+// background those cells already carry is left alone, which is what keeps a
+// bordered widget's own fill running underneath the frame.
+//
+// Each cell samples the paint at its own position within the whole canvas, so
+// the axis keywords mean what they look like: `x` runs left to right along
+// the top and bottom edges (and is constant down the sides), `y` runs top to
+// bottom down the sides, `diag` corner to corner, `radial` from the middle
+// out. A paint contributing no colour of its own (an empty one, or a Fade)
+// is a no-op, which is what makes the derived solid default byte-identical
+// to what DrawBorder already painted.
+//
+// Call between DrawBorder and DrawBorderTitle: the title is content rather
+// than frame, so it keeps its own accent instead of being swept through by
+// the gradient.
+void RecolourBorder(Canvas& c, const Paint& paint);
 
 // chrome-widget-utf8 follow-up: paints text left-to-right starting at
 // (x, y), one whole UTF-8 codepoint per Cell (via Text/Utf8.h's

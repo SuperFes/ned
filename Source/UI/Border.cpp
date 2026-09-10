@@ -1,5 +1,7 @@
 #include "Border.h"
 
+#include "Compositing.h"
+
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -67,6 +69,38 @@ void DrawBorder(Canvas& c, const Brush& brush, const BorderGlyphs& glyphs) {
     put(width - 1, 0, text::EncodeCodepointUtf8(glyphs.topRight));
     put(0, height - 1, text::EncodeCodepointUtf8(glyphs.bottomLeft));
     put(width - 1, height - 1, text::EncodeCodepointUtf8(glyphs.bottomRight));
+}
+
+void RecolourBorder(Canvas& c, const Paint& paint) {
+    const int width  = c.size().width;
+    const int height = c.size().height;
+    if (width <= 0 || height <= 0 || !PaintsColour(paint)) {
+        return;
+    }
+
+    const Point origin   = c.Origin();
+    const auto  recolour = [&](int x, int y) {
+        const double u      = width > 1 ? static_cast<double>(x) / (width - 1) : 0.0;
+        const double v      = height > 1 ? static_cast<double>(y) / (height - 1) : 0.0;
+        const Color  colour = PaintColourAt(paint, u, v, origin.x + x, origin.y + y);
+        if (colour.alpha == 0) {
+            return; // this paint contributes nothing here -- a pattern's off phase
+        }
+        Cell& cell = c[{.x = x, .y = y}];
+        // Translucency resolves against the cell's own background rather than
+        // being dithered: a frame cell already carries a glyph, so coverage
+        // dithering would have to destroy the line to show through.
+        cell.foreground_color = colour.Opaque() ? colour : TintToward(cell.foreground_color, colour);
+    };
+
+    for (int x = 0; x < width; ++x) {
+        recolour(x, 0);
+        recolour(x, height - 1);
+    }
+    for (int y = 1; y < height - 1; ++y) {
+        recolour(0, y);
+        recolour(width - 1, y);
+    }
 }
 
 void DrawBorderTitle(Canvas& c, const std::string& title, const Brush& titleBrush) {

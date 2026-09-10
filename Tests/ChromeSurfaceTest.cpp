@@ -590,3 +590,62 @@ TEST_CASE("A blurred popup samples what it is covering", "[ChromeSurface]") {
     REQUIRE(seam.green > left.green);
     REQUIRE(seam.green < right.green);
 }
+
+// Translucency phase 7b: a border can be a gradient. RecolourBorder walks the
+// frame ring only, and only its foreground -- a border is a line.
+
+TEST_CASE("An unthemed popup border is the flat colour DrawBorder always used", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    Theme              theme = DarkTheme();
+    theme.border.foreground  = ned::ui::Color::RGB(0x3a, 0x3a, 0x50);
+
+    Screen screen = PaintPopupOver(theme, ned::ui::Color::RGB(0x80, 0x00, 0x00), 20, 8);
+    // The derived default is a solid, so recolouring is a no-op.
+    REQUIRE(screen.PixelAt(5, 0).foreground_color == theme.border.foreground);
+    REQUIRE(screen.PixelAt(0, 4).foreground_color == theme.border.foreground);
+    REQUIRE(screen.PixelAt(19, 4).foreground_color == theme.border.foreground);
+}
+
+TEST_CASE("A gradient border runs along the frame", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+
+    ned::ui::Surface popup;
+    popup.border = ParseOrDie("x #ff0000 #0000ff", theme);
+    ned::ui::SetSurfaceOverride("popup", popup);
+
+    Screen screen = PaintPopupOver(theme, ned::ui::Color::RGB(0x80, 0x00, 0x00), 20, 8);
+
+    // An x gradient sweeps across the top edge...
+    const Color topLeft  = screen.PixelAt(1, 0).foreground_color;
+    const Color topRight = screen.PixelAt(18, 0).foreground_color;
+    REQUIRE(topLeft.red > topRight.red);
+    REQUIRE(topRight.blue > topLeft.blue);
+
+    // ...and is constant down a side, which is the same column throughout.
+    REQUIRE(screen.PixelAt(0, 2).foreground_color == screen.PixelAt(0, 5).foreground_color);
+
+    // The bottom edge sweeps the same way the top does.
+    REQUIRE(screen.PixelAt(1, 7).foreground_color == topLeft);
+}
+
+TEST_CASE("A gradient border leaves the interior and the title alone", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+
+    ned::ui::Surface popup;
+    popup.border = ParseOrDie("x #ff0000 #0000ff", theme);
+    ned::ui::SetSurfaceOverride("popup", popup);
+
+    Screen screen = PaintPopupOver(theme, ned::ui::Color::RGB(0x80, 0x00, 0x00), 20, 8);
+
+    // The title is content, not frame: recolouring runs before it is drawn,
+    // so it keeps its own accent rather than being swept through.
+    // Column 2 is the title's leading pad space; the text starts at 3.
+    REQUIRE(screen.PixelAt(3, 0).character == "T");
+    REQUIRE(screen.PixelAt(3, 0).foreground_color == theme.borderAccent.foreground);
+
+    // And nothing inside the ring was touched.
+    REQUIRE(screen.PixelAt(4, 1).character == "o");
+    REQUIRE(screen.PixelAt(4, 1).foreground_color == theme.defaultForeground);
+}
