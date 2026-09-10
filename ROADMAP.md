@@ -186,18 +186,25 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       one, nothing ships one), recency glow driven by `UnsavedChangeRanges` + an
       `EventLoop` timer (nothing exists — no `glow`/`recency` symbol anywhere), and virtual
       text (inline diagnostics, blame, fold placeholders) at real alpha.
-- [ ] **Six advertised surfaces have no consumer.** Audited 2026-09-10 by grepping every
-      literal surface name in `Source/UI/`: `buffer`, `buffer.selection`, `buffer.search`,
-      `echo`, `scrollbar` and `popup` are derived and listed but nothing paints through
-      them, so `ned/theme-surface` on any of them parses, stores, and does nothing visible.
-      `buffer.selection`/`buffer.search` are phase 6's; `popup` is phase 7's; `echo` and
-      `scrollbar` are unmigrated widgets that were never listed as a phase at all.
-      `Docs/Themes.md` now says which are inert rather than implying all fourteen work.
-      (`tab.strip` was a *seventh* case in the other direction — painted by `TabBar` and
-      derived by `DerivedSurface`, but missing from `SurfaceNames()`, so it was invisible
-      to the gallery and the docs while working perfectly for anyone who knew the name.
-      Published, and `PaintParseTest` now fails if a widget paints a surface the list
-      does not carry.)
+- [x] **`echo` and `scrollbar` adopted; four advertised surfaces still have no consumer.**
+      The 2026-09-10 audit found six surfaces derived and listed but painted by nothing, so
+      `ned/theme-surface` on any of them parsed, stored, and did nothing visible. `echo` and
+      `scrollbar` were the two that were never scoped into a phase at all — both widgets
+      applied a flat `Brush` per cell — and they now paint through their Surface on
+      `ModeLine`'s clear/fill/glyphs/fade order, with byte-identical derived defaults pinned
+      in `ChromeSurfaceTest`. `ScrollBar` takes the whole `Theme` rather than one `Brush` to
+      get there; its thumb still reads by inverting, so it survives whatever a fill turns
+      out to be. The echo area's dim/ghost shades now interpolate toward the *painted*
+      background rather than the flat Brush colour — identical for the default, and the only
+      reading that stays right under a gradient.
+      Still inert: `buffer.selection` and `buffer.search` (phase 6 — they already composite,
+      this is about letting a theme express them as a *paint*), `buffer`, and `popup`
+      (phase 7).
+      (`tab.strip` was a seventh case in the other direction — painted by `TabBar` and
+      derived by `DerivedSurface`, but missing from `SurfaceNames()`, so it was invisible to
+      the gallery and the docs while working perfectly for anyone who knew the name.
+      Published, and `PaintParseTest` now fails if a widget paints a surface the list does
+      not carry.)
 - [ ] **Phase 7 — popups.** Transparent outer border, translucent or blurred body,
       alpha-falloff shadow, one `elevation` concept shared by completion/hover/TreeView/
       ListPopup/peek. Verified 2026-09-10: `ListPopup`/`TreeView` still paint from raw

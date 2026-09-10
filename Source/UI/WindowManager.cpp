@@ -191,7 +191,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
                                                                 bufferView_(std::make_shared<BufferView>(activeBuffer_, killRing, registers, promptHistory, bufferList, dispatcher_,
                                                                                                          statusMessage, mode_, theme)),
                                                                 modeLine_(std::make_shared<ModeLine>(activeBuffer_, mode_, theme)),
-                                                                scrollBar_(std::make_shared<ScrollBar>(theme.scrollBar)),
+                                                                scrollBar_(std::make_shared<ScrollBar>(theme)),
                                                                 scrollUp_(std::make_shared<ScrollArrowButton>(U'▲', theme.scrollBar, theme.scrollBarDisabled)),
                                                                 scrollDown_(std::make_shared<ScrollArrowButton>(U'▼', theme.scrollBar, theme.scrollBarDisabled)),
                                                                 minimap_(std::make_shared<Minimap>(activeBuffer_, mode_, theme)),

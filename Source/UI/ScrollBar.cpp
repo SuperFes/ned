@@ -1,5 +1,8 @@
 #include "ScrollBar.h"
 
+#include "Paint.h"
+#include "ThemePaints.h"
+
 #include <algorithm>
 
 namespace ned::ui {
@@ -11,7 +14,7 @@ namespace {
 
 } // namespace
 
-ScrollBar::ScrollBar(const Brush& brush) : brush_(brush) {
+ScrollBar::ScrollBar(const Theme& theme) : theme_(theme) {
 }
 
 void ScrollBar::SetOnScroll(std::function<void(int)> onScroll) {
@@ -38,13 +41,36 @@ void ScrollBar::Paint(Canvas c) {
                          0, maxThumbStart)
             : 0;
 
+    // Translucency phase 5: the track is a themed Surface, ModeLine's own
+    // precedent and paint order -- clear, fill, glyphs. The derived default
+    // is the flat scrollBar Brush this used to apply per cell, so an
+    // unthemed bar is unchanged.
+    //
+    // Cleared to ChromeBackdrop for the same reason the mode line and echo
+    // area are: this is chrome beside the buffer, so a translucent fill
+    // should fade into the buffer's colour rather than dither.
+    const Surface surface = SurfaceFor(theme_, "scrollbar");
+    ClearCanvas(c, ChromeBackdrop(theme_));
+    Fill(c, surface.fill);
+
     for (int y = 0; y < height; ++y) {
-        const bool onThumb = y >= thumbStart && y < thumbStart + thumbRows;
-        Cell&      cell    = c[{.x = 0, .y = y}];
-        cell.character     = std::string(1, onThumb ? kThumbChar : kTrackChar);
-        brush_.ApplyTo(cell);
-        cell.inverted = onThumb; // solid block look for the thumb, distinct from the plain track
+        const bool  onThumb = y >= thumbStart && y < thumbStart + thumbRows;
+        const Point at{.x = 0, .y = y};
+
+        // Background left alone so the fill underneath survives; the thumb
+        // still reads by inverting, which keeps it visible whatever the fill
+        // turned out to be rather than depending on a second themed colour.
+        Cell& cell            = c[at];
+        cell.character        = std::string(1, onThumb ? kThumbChar : kTrackChar);
+        cell.foreground_color = TextColourAt(surface, c, at, theme_.scrollBar.foreground);
+        cell.bold             = theme_.scrollBar.bold;
+        cell.italic           = theme_.scrollBar.italic;
+        cell.underlined       = theme_.scrollBar.underlined;
+        cell.strikethrough    = theme_.scrollBar.strikethrough;
+        cell.inverted         = onThumb; // solid block look for the thumb, distinct from the plain track
     }
+
+    ApplyTextFade(c, surface);
 }
 
 int ScrollBar::PositionForRow(int row) const {
