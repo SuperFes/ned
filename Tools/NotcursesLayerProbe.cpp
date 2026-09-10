@@ -157,6 +157,29 @@ ncplane* TextPlane(ncplane* parent, int y, int x, int cols, const char* text, st
     // TRANSPARENT takes the next plane's foreground entirely, and
     // HIGHCONTRAST ignores the requested colour and derives a legible one
     // from the background computed through this plane.
+    // The base cell is what Notcurses renders "anywhere that the ncplane's
+    // gcluster is 0" -- every cell this plane never writes to. A freshly
+    // created plane's base cell is zeroed, i.e. default colours at OPAQUE
+    // alpha, so the columns past the end of the text would paint the
+    // terminal's own background over whatever plane is beneath. Setting it
+    // transparent is what makes a text plane contribute only its text.
+    //
+    // An empty EGC with both channels transparent is the "contribute
+    // nothing" base -- the same one NotcursesGradientProbe's own tinting
+    // panel established.
+    // A real colour and then TRANSPARENT alpha: a channel left at "use the
+    // default colour" is itself a rendering mode, so give it something
+    // concrete and let the alpha say to defer.
+    uint64_t baseChannels = 0;
+    ncchannels_set_fg_rgb8(&baseChannels, 0, 0, 0);
+    ncchannels_set_bg_rgb8(&baseChannels, 0, 0, 0);
+    ncchannels_set_fg_alpha(&baseChannels, NCALPHA_TRANSPARENT);
+    ncchannels_set_bg_alpha(&baseChannels, NCALPHA_TRANSPARENT);
+    const int baseResult = ncplane_set_base(plane, " ", 0, baseChannels);
+    if (baseResult < 0) {
+        Progress("ncplane_set_base failed on the text plane");
+    }
+
     ncplane_set_bg_alpha(plane, NCALPHA_TRANSPARENT);
     ncplane_set_fg_rgb8(plane, fg.r, fg.g, fg.b);
     ncplane_set_fg_alpha(plane, fgAlphaMode);
@@ -457,6 +480,15 @@ finish:
     // a terminal whose background is its own. If it still picks a legible
     // colour there, a row can be marked without painting any background at
     // all -- which is exactly what a translucent theme needs.
+    // A filled plane with nothing above it, to establish the baseline: does a
+    // plane of spaces paint its whole width, or only where something was
+    // written over it?
+    Label(std_plane, fy, 2, "M) a filled plane with NO text plane above it (baseline)");
+    FilledPlaneWithFg(std_plane, fy + 1, 2, 1, panelWidth / 2, Rgb{120, 40, 40}, Rgb{230, 200, 60}, owned);
+    Dim(std_plane, fy + 1, 2 + panelWidth / 2 + 2, "the red should run the plane's full width");
+    fy += 3;
+    notcurses_render(nc);
+
     Label(std_plane, fy, 2, "L) fg HIGHCONTRAST over NOTHING (the terminal's own background)");
     TextPlane(std_plane, fy + 1, 4, panelWidth - 4, "legible against your real terminal background?", owned,
               NCALPHA_HIGHCONTRAST);
