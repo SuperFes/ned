@@ -208,7 +208,7 @@ int main(int argc, char** argv) {
 
     // --- B: the crux -----------------------------------------------------
     Label(std_plane, y, 2, "B) NCALPHA_BLEND plane over NOTHING, text above it");
-    FilledPlane(std_plane, y + 1, 2, 1, panelWidth, Rgb{40, 200, 90}, NCALPHA_BLEND, owned);
+    FilledPlane(std_plane, y + 1, 2, 1, panelWidth, Rgb{40, 200, 90}, NCALPHA_TRANSPARENT, owned);
     TextPlane(std_plane, y + 1, 4, panelWidth - 4, "if this shows your DESKTOP tinted green, layering wins", owned);
     Dim(std_plane, y + 2, 2, "   desktop through the green => layering solves it. Dark/olive green => blended with black.");
     y += 4;
