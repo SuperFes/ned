@@ -268,6 +268,10 @@ class WindowManager {
     // doc comment for what main.cpp wires in).
     void SetThemeApplier(std::function<void(const Theme&)> applier);
 
+    // Same "forwarded to every pane, present and future" shape as
+    // SetThemeApplier -- see BufferView::SetThemeDetector's own doc comment.
+    void SetThemeDetector(std::function<Theme()> detector);
+
     // terminal-panel follow-up: same "forwarded to every pane, present and
     // future" shape as SetThemeApplier above -- toggle-terminal can fire
     // from whichever pane has focus, and the handler (main.cpp's
@@ -352,6 +356,12 @@ class WindowManager {
     // (main.cpp's toggle over the OverlayHost-owned BufferListPanel) lives
     // above this class entirely.
     void SetOnBufferListToggle(std::function<void()> onToggle);
+
+    // Translucency phase 4b: same "forwarded to every pane, present and
+    // future" shape as SetOnBufferListToggle immediately above -- the
+    // gallery can fire from whichever pane has focus, and the
+    // OverlayHost-owned handler lives above this class entirely.
+    void SetOnThemeGalleryToggle(std::function<void()> onToggle);
 
     // which-key follow-up: same "forwarded to every pane, present and
     // future" shape as SetOnDapConsoleToggle above, but a data callback
@@ -876,6 +886,7 @@ class WindowManager {
     const janet::Environment*                          janetEnv_    = nullptr;     // see SetJanetEnvironment
     EventLoop*                                         eventLoop_   = nullptr;     // see SetEventLoop
     std::function<void(const Theme&)>                  themeApplier_;              // see SetThemeApplier
+    std::function<Theme()>                             themeDetector_;             // see SetThemeDetector
     std::function<void()>                              onTerminalToggle_;          // see SetOnTerminalToggle
     std::function<void()>                              onNewTerminalRequest_;      // see SetOnNewTerminalRequest
     std::function<void()>                              onAcpPanelToggle_;          // see SetOnAcpPanelToggle
@@ -887,6 +898,7 @@ class WindowManager {
     std::function<void()>                              onDapThreadsToggle_;        // see SetOnDapThreadsToggle
     std::function<void()>                              onDapThreadsRefreshNeeded_; // see SetOnDapThreadsRefreshNeeded
     std::function<void()>                              onBufferListToggle_;        // see SetOnBufferListToggle
+    std::function<void()>                              onThemeGalleryToggle_;      // see SetOnThemeGalleryToggle
     std::function<void(std::optional<WhichKeyHint>)>   onPrefixHintChanged_;       // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_;       // see SetOnCandidatesChanged
     std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_;       // see SetOnCompletionChanged

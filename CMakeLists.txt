@@ -941,7 +941,8 @@ add_library(ned_lib STATIC
         Source/UI/ThemePalette.cpp
         Source/UI/ThemeRegistry.cpp
         Source/UI/ThemeFile.cpp
-        Source/UI/TerminalColorProbe.cpp
+        Source/UI/ThemeResolve.cpp
+        Source/UI/ThemeGallery.cpp
         Source/UI/DesktopThemeProbe.cpp)
 
 target_include_directories(ned_lib
@@ -1206,7 +1207,11 @@ if (NED_BUILD_TESTS)
             Tests/BundledThemesTest.cpp
             Tests/SyntaxThemeTest.cpp
             Tests/ThemeFileTest.cpp
-            Tests/TerminalColorProbeTest.cpp
+            Tests/ThemeResolveTest.cpp
+            Tests/ThemeGalleryTest.cpp
+            Tests/ThemeKeyDocsTest.cpp
+            Tests/InitFileThemeWriteTest.cpp
+            Tests/BufferViewTintCompositingTest.cpp
             Tests/DesktopThemeProbeTest.cpp
             Tests/ActiveBufferTest.cpp
             Tests/CacheStampTest.cpp
@@ -1375,6 +1380,12 @@ if (NED_BUILD_TESTS)
     endif()
 
     target_link_libraries(ned_tests PRIVATE ned_lib Catch2::Catch2WithMain)
+
+    # ThemeKeyDocsTest holds Docs/Themes.md's key reference against the real
+    # ui::ThemeKeys() table, so it needs to find the repo from a test binary
+    # that runs out of the build tree. Tests-only, deliberately: nothing in
+    # ned_lib or the ned binary may depend on where the source happens to be.
+    target_compile_definitions(ned_tests PRIVATE NED_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
 
     catch_discover_tests(ned_tests)
 endif()

@@ -28,8 +28,8 @@ void                      SetPreferredThemeName(const std::string& name);
 [[nodiscard]] std::string PreferredThemeName();
 
 // Theme-editing follow-up: per-field color overrides accumulated from Janet
-// (ned/theme-set, typically a whole (dofile ".../theme.janet") worth --
-// save-theme's output). Same string-only layering as the name above: keys
+// (ned/theme-set -- a handful of overrides over whichever bundled theme
+// ned/set-theme picked). Same string-only layering as the name above: keys
 // are ui::ThemeFile's own serialization keys, but *this* layer never
 // interprets them -- main.cpp applies them over the selected theme via
 // ui::SetThemeColorByKey after init.janet has loaded. Kept in insertion

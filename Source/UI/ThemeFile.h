@@ -1,17 +1,20 @@
 //
-// Theme persistence, in two formats sharing one key table (ThemeFile.cpp's
-// kColorKeys/kBrushKeys):
+// The theme key vocabulary: the one table mapping a settable name
+// ("keyword_foreground", "active_tab_bold") to the ui::Theme field it names,
+// plus the read/write pair over it.
 //
-// - "key=value" text (SerializeTheme/ParseTheme, theme.txt) -- the
-//   --detect-theme cache. Deliberately not Janet: a cache of previously-
-//   detected colors, not a scripting API (the original Phase 6 reasoning,
-//   still true for this format).
-// - Runnable Janet (SerializeThemeJanet, theme.janet) -- the save-theme
-//   command's output, theme-editing follow-up: one (ned/theme-set ...) call
-//   per color, hand-editable, loaded from init.janet via (dofile ...). This
-//   IS the scripting API the .txt format deliberately isn't -- the
-//   accumulated calls land in Editor/ThemeSetting.h's override store and
-//   main.cpp applies them via SetThemeColorByKey below.
+// A theme is written as `(ned/theme-set "key" "value")` calls in the user's
+// own init.janet, on top of whichever bundled theme ned/set-theme picks --
+// so this table *is* the format, and Docs/Themes.md's key listing is its
+// documentation (ThemeKeyDocsTest holds the two against each other). Key
+// names must never be renamed: an existing init.janet keeps working, and an
+// unrecognized key is reported once at startup rather than being an error.
+//
+// Two things used to live here and no longer do: a plain `key=value` file
+// (the `ned --detect-theme` cache) and a whole-theme Janet serializer behind
+// `M-x save-theme`. Detection is UI/DesktopThemeProbe.h's job, and a
+// theme small enough to be worth writing is small enough to write by hand --
+// a handful of overrides on a bundled base, not a 70-field snapshot.
 //
 
 #ifndef NED_UI_THEMEFILE_H
@@ -21,62 +24,35 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "Theme.h"
 
 namespace ned::ui {
 
-// Renders a Theme as "key=value" lines: hex colors ("#rrggbb") or the
-// sentinel "default" for ui::Color::Default, which lets a background (or
-// the echo area's) stay a pass-through rather than an opaque snapshot -- the
-// only way to preserve a terminal's own transparency/blur, since no OSC
-// query reliably reports an actual alpha value (Konsole's transparency, for
-// instance, is a compositor/window effect, not a queryable cell property).
-[[nodiscard]] std::string SerializeTheme(const Theme& theme);
-
-// Parses SerializeTheme's format. Any key that's missing, unrecognized, or
-// fails to parse keeps its value from `base` instead of erroring -- a
-// partially hand-edited file degrades gracefully rather than failing
-// outright.
-[[nodiscard]] Theme ParseTheme(std::string_view text, const Theme& base);
-
-// $XDG_CONFIG_HOME/ned/theme.txt, falling back to $HOME/.config/ned/theme.txt
-// if XDG_CONFIG_HOME is unset or empty. Throws std::runtime_error if neither
-// is usable. Mirrors Janet/InitFile.h's resolution exactly.
-[[nodiscard]] std::filesystem::path ThemeFilePath();
-
-void SaveThemeFile(const Theme& theme, const std::filesystem::path& path);
-
-// Returns std::nullopt if the file doesn't exist; propagates std::runtime_error
-// on an I/O failure (as opposed to a parse issue, which degrades gracefully
-// per ParseTheme above and never throws).
-[[nodiscard]] std::optional<Theme> LoadThemeFile(const std::filesystem::path& path);
-
-// Theme-editing follow-up: the Janet-facing side of the same key table
-// SerializeTheme/ParseTheme walk (see ThemeFile.cpp's kColorKeys comment).
-//
 // SetThemeColorByKey assigns one keyed color or Brush trait (bold/italic/
-// underlined/strikethrough, "true"/"false" tokens) -- exactly one ParseTheme
+// underlined/strikethrough, "true"/"false" tokens) -- exactly one serialized
 // line's worth -- returning false for an unrecognized key or unparseable
-// token (caller decides whether that's worth reporting; ParseTheme itself
-// stays silently forward-compatible). This is what main.cpp uses to apply
-// `ned/theme-set` overrides from init.janet on top of the selected theme.
+// token. This is what UI/ThemeResolve.h uses to apply `ned/theme-set`
+// overrides from init.janet on top of the selected theme.
 bool SetThemeColorByKey(Theme& theme, std::string_view key, std::string_view token);
 
-// Renders a Theme as a runnable Janet script -- one
-// `(ned/theme-set "<key>" "<value>")` call per keyed color or Brush trait,
-// same keys and tokens as SerializeTheme -- for the save-theme command:
-// written out, hand-edited, then loaded from init.janet via a plain
-// (dofile ...).
-[[nodiscard]] std::string SerializeThemeJanet(const Theme& theme);
+// Every key SetThemeColorByKey accepts, in table order: the colour keys
+// first, then each Brush's <prefix>_background/_foreground pair followed by
+// its four trait flags.
+//
+// This is the vocabulary a theme is written in, so it is the thing
+// Docs/Themes.md has to list in full -- ThemeKeyDocsTest holds the two
+// against each other, which is what keeps a newly added Theme field from
+// being settable but undocumented. It is also how the theme tests walk every
+// colour of every bundled theme without naming ~70 fields by hand.
+[[nodiscard]] std::vector<std::string> ThemeKeys();
 
-// $XDG_CONFIG_HOME/ned/theme.janet -- the save-theme command's output path,
-// same XDG resolution as ThemeFilePath above.
-[[nodiscard]] std::filesystem::path ThemeJanetFilePath();
-
-// SerializeThemeJanet to disk -- SaveThemeFile's exact write/error contract,
-// different serialization.
-void SaveThemeJanetFile(const Theme& theme, const std::filesystem::path& path);
+// The value SetThemeColorByKey would round-trip for `key`, as the same token
+// form it accepts ("#rrggbb", "#rrggbbaa", "default", "true"/"false"), or
+// std::nullopt for an unrecognized key. The read half of the pair -- there
+// was no need for one while a whole-theme serializer existed.
+[[nodiscard]] std::optional<std::string> ThemeValueByKey(const Theme& theme, std::string_view key);
 
 } // namespace ned::ui
 

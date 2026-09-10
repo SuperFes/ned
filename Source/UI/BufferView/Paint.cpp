@@ -1051,19 +1051,32 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
     else if (InSelection(offset)) {
         brush.background = OverlayBackground(theme_, SelectionFill(theme_));
     }
+    // Every wash from here down goes through OverlayBackground, the same way
+    // isearch/snippet-field/selection above already do. These used to assign
+    // the theme's colour straight into the cell, which meant two things: a
+    // theme could not give any of them alpha (Screen::Flush reads only a
+    // background's RGB, so a translucent one rendered opaque regardless), and
+    // over a theme whose background is the terminal's own they plugged the
+    // hole outright rather than tinting what shows through. An opaque value
+    // composites to itself byte for byte, so every existing theme paints
+    // exactly what it painted before -- this only gives these fields the
+    // alpha channel selection_background already had.
+    //
+    // No default alpha is substituted the way SelectionFill does for
+    // selection: these stay exactly as authored unless a theme opts in.
     else if (InConflictOurs(offset)) {
         // Merge Conflict Resolution Mode: a persistent,
         // must-not-miss "this is unresolved" state -- loses only
         // to isearch/snippet-field/selection above (explicit
         // user actions), but wins over documentHighlight/
         // execution-line/multibuffer/trailing-whitespace below.
-        brush.background = theme_.conflictOursBackground;
+        brush.background = OverlayBackground(theme_, theme_.conflictOursBackground);
     }
     else if (InConflictTheirs(offset)) {
-        brush.background = theme_.conflictTheirsBackground;
+        brush.background = OverlayBackground(theme_, theme_.conflictTheirsBackground);
     }
     else if (InConflictBase(offset)) {
-        brush.background = theme_.conflictBaseBackground;
+        brush.background = OverlayBackground(theme_, theme_.conflictBaseBackground);
     }
     else if (std::any_of(lineState.documentHighlightSpans.begin(), lineState.documentHighlightSpans.end(),
                          [offset](const auto& span) { return offset >= span.first && offset < span.second; })) {
@@ -1074,7 +1087,7 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         // multibuffer/trailing-whitespace washes below (this is
         // still a direct answer to "what does point currently
         // mean", a stronger signal than those cosmetic washes).
-        brush.background = theme_.documentHighlightBackground;
+        brush.background = OverlayBackground(theme_, theme_.documentHighlightBackground);
     }
     else if (InLineInspectHighlight(offset)) {
         // Debugging wishlist (line-inspect follow-up): same
@@ -1083,7 +1096,7 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         // the user just ran, so it still wins over the more
         // ambient execution-line/multibuffer/trailing-whitespace
         // washes below.
-        brush.background = theme_.lineInspectBackground;
+        brush.background = OverlayBackground(theme_, theme_.lineInspectBackground);
     }
     else if (lineState.isExecutionLine) {
         // DAP client slice 2: the stopped line's own wash --
@@ -1094,7 +1107,7 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         // the diff gutter glyph plus the accent-colored line
         // number carry the whole signal; lineState.diffTint
         // survives only for the latter.
-        brush.background = theme_.executionLineBackground;
+        brush.background = OverlayBackground(theme_, theme_.executionLineBackground);
     }
     else if (lineState.multibufferTint) {
         // Multibuffers follow-up: unlike the live diff gutter's
@@ -1111,10 +1124,10 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         // fight the rule glyph's own default color.
         switch (*lineState.multibufferTint) {
             case editor::multibuffer::LineTint::Added:
-                brush.background = theme_.diffAddedBackground;
+                brush.background = OverlayBackground(theme_, theme_.diffAddedBackground);
                 break;
             case editor::multibuffer::LineTint::Removed:
-                brush.background = theme_.diffRemovedBackground;
+                brush.background = OverlayBackground(theme_, theme_.diffRemovedBackground);
                 break;
             case editor::multibuffer::LineTint::Header:
                 brush.bold = true;
@@ -1132,7 +1145,7 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         // offset >= lineState.trailingWhitespaceStart already
         // guarantees this cell is a space/tab (see that field's
         // own doc comment), so no codepoint check is needed here.
-        brush.background = theme_.trailingWhitespaceBackground;
+        brush.background = OverlayBackground(theme_, theme_.trailingWhitespaceBackground);
     }
     return brush;
 }
@@ -1965,11 +1978,11 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
 // syntax colour and being visible, because it is not in the same cell as the
 // glyph at all.
 //
-// Empty by default -- ned has never highlighted the current line's row, only
-// its gutter number -- so a theme opts in by giving "buffer.current_line" a
-// fill. Alpha in that fill is resolved against the theme's own background
-// here, since the backing plane is a real plane and can only carry a real
-// colour.
+// Defaults to the detected desktop accent taken right down (~16%, see
+// DerivedSurface's own "buffer.current_line" branch); a theme overrides it by
+// giving the surface a fill of its own, and silences it with an empty one.
+// Alpha in that fill is resolved against the theme's own background here,
+// since the backing plane is a real plane and can only carry a real colour.
 void BufferView::PaintCurrentLineHighlight(Canvas& c, const std::vector<std::size_t>& rowLine) const {
     const Surface surface = SurfaceFor(theme_, "buffer.current_line");
     if (!PaintsColour(surface.fill)) {

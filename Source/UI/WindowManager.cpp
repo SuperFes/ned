@@ -525,6 +525,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetLeftDock(leftDock_);
     pane->Buffer().SetVcsPanel(vcsPanel_);
     pane->Buffer().SetThemeApplier(themeApplier_);
+    pane->Buffer().SetThemeDetector(themeDetector_);
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
     pane->Buffer().SetOnNewTerminalRequest(onNewTerminalRequest_);
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
@@ -534,6 +535,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnRunReplRequest(onRunReplRequest_);
     pane->Buffer().SetOnDapThreadsToggle(onDapThreadsToggle_);
     pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
+    pane->Buffer().SetOnThemeGalleryToggle(onThemeGalleryToggle_);
     pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
     pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
     pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
@@ -591,6 +593,13 @@ void WindowManager::SetThemeApplier(std::function<void(const Theme&)> applier) {
     themeApplier_ = std::move(applier);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetThemeApplier(themeApplier_);
+    }
+}
+
+void WindowManager::SetThemeDetector(std::function<Theme()> detector) {
+    themeDetector_ = std::move(detector);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetThemeDetector(themeDetector_);
     }
 }
 
@@ -662,6 +671,13 @@ void WindowManager::SetOnBufferListToggle(std::function<void()> onToggle) {
     onBufferListToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
+    }
+}
+
+void WindowManager::SetOnThemeGalleryToggle(std::function<void()> onToggle) {
+    onThemeGalleryToggle_ = std::move(onToggle);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnThemeGalleryToggle(onThemeGalleryToggle_);
     }
 }
 

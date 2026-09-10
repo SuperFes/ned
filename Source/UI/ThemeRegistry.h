@@ -27,12 +27,31 @@ namespace ned::ui {
 
 // std::nullopt for an unknown name, not an error -- mirroring
 // treesitter::LanguageByName/editor::ModeByName's graceful-fallback
-// convention. Names are exact matches ("dark", "ansi-light", ...).
+// convention.
+//
+// Matching is normalized rather than exact: case is ignored and spaces and
+// underscores are equivalent to hyphens, so "Gruvbox Dark", "gruvbox-dark"
+// and "GRUVBOX_DARK" all resolve to the same theme. That is what lets the
+// picker show and persist proper-case display names while every
+// (ned/set-theme "gruvbox-dark") already written in an init.janet keeps
+// working untouched.
 [[nodiscard]] std::optional<Theme> ThemeByName(std::string_view name);
 
-// Every registered name, sorted -- the select-theme picker's candidate
-// list, and what an "unknown theme" error can suggest from.
+// Every registered *canonical* name, sorted -- the identifier form, which
+// is what Theme::name carries and what a theme file round-trips.
 [[nodiscard]] std::vector<std::string> ThemeNames();
+
+// The same name as the picker shows it: "gruvbox-dark" -> "Gruvbox Dark".
+// Derived mechanically from the canonical form (hyphens become spaces,
+// each word's first letter is capitalized) rather than kept in a second
+// table, so a theme cannot be added to the registry and forgotten here.
+// A name that is not registered is title-cased and returned anyway --
+// callers use this to phrase messages about names that failed to resolve.
+[[nodiscard]] std::string ThemeDisplayName(std::string_view canonical);
+
+// Every registered theme's display name, sorted by display name -- the
+// select-theme picker's candidate list.
+[[nodiscard]] std::vector<std::string> ThemeDisplayNames();
 
 } // namespace ned::ui
 

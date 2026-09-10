@@ -231,6 +231,17 @@ class BufferView : public Widget {
     // establish.
     void SetThemeApplier(std::function<void(const Theme&)> applier);
 
+    // What the select-theme picker's "None (detect)" row resolves to: the
+    // theme a launch with nothing pinned would work out for itself. Kept a
+    // callback rather than computed here because that resolution reads
+    // config files and probes the desktop session, neither of which belongs
+    // in a widget -- the same reason SetThemeApplier is a callback.
+    //
+    // Unset removes the row from the picker entirely (a headless BufferView
+    // has nothing to detect against), rather than leaving an Enter that
+    // does nothing.
+    void SetThemeDetector(std::function<Theme()> detector);
+
     // LSP client follow-up: registers the shared Manager so Paint() can
     // call SyncBuffer for the active buffer every frame -- nullptr (the
     // default) means no-op, the same "unset is a safe no-op" convention
@@ -686,6 +697,10 @@ class BufferView : public Widget {
     // pane. Unset is a safe no-op.
     void SetOnBufferListToggle(std::function<void()> handler);
 
+    // Translucency phase 4b: theme-gallery's forwarding hook, same shape and
+    // reasoning as SetOnBufferListToggle above. Unset is a safe no-op.
+    void SetOnThemeGalleryToggle(std::function<void()> handler);
+
     // which-key follow-up: same OverlayHost-owned-above-this-class shape as
     // SetOnTerminalToggle/SetOnAcpPanelToggle/SetOnDapConsoleToggle, but
     // fired on every Pending/non-Pending transition rather than by an
@@ -990,6 +1005,12 @@ class BufferView : public Widget {
                            // buffer -- y/n before overwriting, mirroring
                            // ConfirmCloseBuffer's shape.
                            ConfirmOverwriteSave,
+                           // The select-theme picker committed a theme, which applies
+                           // for this session -- y/n on whether to also write
+                           // (ned/set-theme "...") into the global init.janet, so a
+                           // theme sticks only when the user says so. ned never
+                           // rewrites a config file unasked.
+                           ConfirmWriteThemeToInit,
                            // external-modification-round-2 follow-up: save-buffer
                            // found unresolved "<<<<<<<" conflict markers still in
                            // the buffer -- y/n before writing them to disk, same
@@ -1449,6 +1470,12 @@ class BufferView : public Widget {
     void               HandleProjectReplaceKey(const editor::KeyChord& chord);
     void               HandleConfirmCloseBufferKey(const editor::KeyChord& chord);       // see RequestCloseBuffer/pendingClose_
     void               HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord);     // external-modification-safety: y -> save-buffer-force
+    // select-theme: y -> write (ned/set-theme "...") into the global init.janet
+    void                                    HandleConfirmWriteThemeToInitKey(const editor::KeyChord& chord);
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmWriteThemeToInitPrompt();
+    // The canonical theme name a pending y/n would write down. Set by the
+    // picker's own commit, read once by the prompt.
+    std::string        pendingThemeToWrite_;
     void               HandleConfirmSaveWithConflictsKey(const editor::KeyChord& chord); // external-modification-round-2: y -> save-buffer-force
     // multibuffer-review follow-up: b -> open buffers, d -> the files
     // themselves, anything else -> cancel. applyTargetFileOnly_ carries
@@ -2211,8 +2238,8 @@ class BufferView : public Widget {
     // theme and reports it; Escape/C-g re-applies themeBeforePreview_ (a
     // full Theme snapshot copied from theme_ at session start -- a copy,
     // not a name, so cancelling restores exactly what was showing even if
-    // the active theme never came from the registry at all, e.g. a
-    // --detect-theme file).
+    // the active theme never came from the registry at all, e.g. one built
+    // by the desktop probe).
     void HandleSelectThemeKey(const editor::KeyChord& chord);
     void RefreshSelectThemeStatus();
     void ApplySelectedThemePreview();
@@ -3381,6 +3408,7 @@ class BufferView : public Widget {
 
     std::optional<Theme>              themeBeforePreview_;
     std::function<void(const Theme&)> themeApplier_;
+    std::function<Theme()>            themeDetector_; // see SetThemeDetector
 
     // kmacro-end-or-call-macro follow-up: reentrancy guard for ReplayMacro --
     // a macro can never structurally contain a call to replay itself (see
@@ -3401,6 +3429,7 @@ class BufferView : public Widget {
     std::function<void(const std::string&)>            onRunReplRequest_;      // see SetOnRunReplRequest
     std::function<void()>                              onDapThreadsToggle_;    // see SetOnDapThreadsToggle
     std::function<void()>                              onBufferListToggle_;    // see SetOnBufferListToggle
+    std::function<void()>                              onThemeGalleryToggle_;  // see SetOnThemeGalleryToggle
     std::function<void(text::Buffer&)>                 onActiveBufferChanged_; // see SetOnActiveBufferChanged
     std::function<void(std::optional<WhichKeyHint>)>   onPrefixHintChanged_;   // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_;   // see SetOnCandidatesChanged

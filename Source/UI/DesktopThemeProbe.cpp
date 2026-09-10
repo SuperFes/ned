@@ -361,9 +361,10 @@ Theme BuildDesktopTheme(const DesktopThemeInfo& info) {
     Theme result = info.preferDark ? DarkTheme() : LightTheme();
 
     if (info.accent) {
-        // Same accent-application block TerminalColorProbe::BuildDetectedTheme
-        // uses for its own single detected accent color (palette[5]) --
-        // see that function's own comment for why these particular fields.
+        // The fields a single detected accent colour is worth applying to --
+        // the chrome that reads as "this editor's colour" rather than as
+        // syntax, so one detected hue re-tints the UI without touching how
+        // code is highlighted.
         result.borderAccent.foreground = *info.accent;
         result.keywordForeground       = *info.accent;
         // The selection reads as the desktop's accent at half strength --

@@ -118,6 +118,10 @@ void BufferView::SetOnBufferListToggle(std::function<void()> handler) {
     onBufferListToggle_ = std::move(handler);
 }
 
+void BufferView::SetOnThemeGalleryToggle(std::function<void()> handler) {
+    onThemeGalleryToggle_ = std::move(handler);
+}
+
 void BufferView::SetOnActiveBufferChanged(std::function<void(text::Buffer&)> handler) {
     onActiveBufferChanged_ = std::move(handler);
 }
@@ -236,6 +240,10 @@ bool BufferView::OnKeyEvent(const Event& event) {
             ClampPointToNarrowing();
             return true;
 
+        case InputMode::ConfirmWriteThemeToInit:
+            HandleConfirmWriteThemeToInitKey(*chord);
+            ClampPointToNarrowing();
+            return true;
         case InputMode::ConfirmOverwriteSave:
             HandleConfirmOverwriteSaveKey(*chord);
             ClampPointToNarrowing();

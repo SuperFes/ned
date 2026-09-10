@@ -1,5 +1,7 @@
 #include "ThemeRegistry.h"
 
+#include <cctype>
+
 #include <algorithm>
 
 #include "UI/ThemePalette.h"
@@ -814,9 +816,30 @@ namespace {
 
 } // namespace
 
+namespace {
+
+    // Lowercase, with spaces and underscores folded onto hyphens -- so the
+    // display form a picker persists and the canonical form an init.janet
+    // was written with are the same key.
+    std::string Normalize(std::string_view name) {
+        std::string key;
+        key.reserve(name.size());
+        for (const char ch : name) {
+            if (ch == ' ' || ch == '_') {
+                key.push_back('-');
+                continue;
+            }
+            key.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+        }
+        return key;
+    }
+
+} // namespace
+
 std::optional<Theme> ThemeByName(std::string_view name) {
+    const std::string key = Normalize(name);
     for (const ThemeFactory& factory : kThemeFactories) {
-        if (factory.name == name) {
+        if (Normalize(factory.name) == key) {
             return factory.make();
         }
     }
@@ -828,6 +851,32 @@ std::vector<std::string> ThemeNames() {
     names.reserve(std::size(kThemeFactories));
     for (const ThemeFactory& factory : kThemeFactories) {
         names.emplace_back(factory.name);
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+std::string ThemeDisplayName(std::string_view canonical) {
+    std::string display;
+    display.reserve(canonical.size());
+    bool startOfWord = true;
+    for (const char ch : canonical) {
+        if (ch == '-' || ch == '_') {
+            display.push_back(' ');
+            startOfWord = true;
+            continue;
+        }
+        display.push_back(startOfWord ? static_cast<char>(std::toupper(static_cast<unsigned char>(ch))) : ch);
+        startOfWord = false;
+    }
+    return display;
+}
+
+std::vector<std::string> ThemeDisplayNames() {
+    std::vector<std::string> names;
+    names.reserve(std::size(kThemeFactories));
+    for (const ThemeFactory& factory : kThemeFactories) {
+        names.emplace_back(ThemeDisplayName(factory.name));
     }
     std::sort(names.begin(), names.end());
     return names;

@@ -40,8 +40,8 @@ Measured, not assumed:
   pattern. There is no layering *within* a cell.
 - **`Color::Default` is the only background that reaches the desktop.** Everything else is
   a colour the terminal paints opaquely, however we arrived at it. ned already supports
-  this end to end: `ned --detect-theme --transparent` produces a theme whose background is
-  `Color::Default`.
+  this end to end: the bundled `dark`/`light` themes keep `Color::Default` as their
+  background for exactly this reason.
 
 ## The image path, measured to its end
 
@@ -192,7 +192,7 @@ per-class/per-capture inheritance is untouched -- it is orthogonal and it works.
 ### Authoring and serialisation
 
 - Token format extends to `#rrggbbaa`; alpha is serialised only when it isn't 255, so every
-  existing theme file, `theme.janet`, and `ned/theme-set` call keeps working byte for byte.
+  existing `ned/theme-set` call keeps working byte for byte.
 - `ned/theme-set` gains a table form beside its string form:
   `(ned/theme-set "modeline.fill" {:gradient [[0.0 "#1e1e2eff"] [1.0 "#313244cc"]] :axis :x})`
 - `ned/theme-surface` sets a whole bundle:
@@ -200,7 +200,6 @@ per-class/per-capture inheritance is untouched -- it is orthogonal and it works.
 - `ThemePalette` still derives a complete theme from ~15 semantic slots; it gains derived
   *paints* (panel fill = base background at 85% with a subtle vertical ramp, popup = blur +
   tint, and so on) so cloning an upstream palette stays a 15-line job.
-- `M-x save-theme` round-trips surfaces, not just colours.
 
 ### Contrast guard
 
@@ -284,7 +283,7 @@ until phase 4.
 3. ANSI-fallback removal (decision 2 above) -- deliberately before theme v2 lands, so the
    new engine never has to define alpha-over-palette-index semantics.
 4. Theme v2: keyed surface registry, `#rrggbbaa`, table-form `ned/theme-set`,
-   `ned/theme-surface`, `ThemePalette` derived paints, `save-theme` round-trip, `Docs/Themes.md`
+   `ned/theme-surface`, `ThemePalette` derived paints, `Docs/Themes.md`
    rewrite.
 5. Chrome adoption: mode line, tabs, sidebar, panels, scrim. Low risk, no text interaction.
 6. Text-layer adoption: current line, selection, isearch, diff, merge, virtual text. Highest
@@ -325,7 +324,7 @@ the light, top to bottom. Radial centres on the box, because a centre parameter 
 step toward the parser we are not writing.
 
 The same array flattens to one line for the flat `key=value` theme file, and it is what
-`M-x save-theme` round-trips:
+A theme's own authoring surface covers:
 
 ```
 modeline.fill = x #1e1e2e #313244
@@ -557,9 +556,6 @@ it paints today and widgets can move one at a time.
 Gradient authoring lives or dies on iteration speed, so the format matters less than these
 two:
 
-- **`M-x reload-theme`** -- re-`dofile` the user's `theme.janet` and repaint, so a tweak is
-  visible in under a second. The theme picker already previews live; this is the same idea
-  for hand-authored files.
 - **`M-x theme-gallery`** -- a buffer showing every surface as a labelled swatch, redrawn on
   reload. What the probe pages are for Notcurses, pointed at our own themes instead, and it
   doubles as the contrast guard's reporting surface.

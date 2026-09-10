@@ -81,7 +81,7 @@ struct PaintContext {
 [[nodiscard]] std::optional<Paint> ParsePaint(std::string_view line, const PaintContext& context,
                                               std::string* error = nullptr);
 
-// Back to the one-line form, which is what save-theme round-trips. A Stack
+// Back to the one-line form, the only shape C++ parses. A Stack
 // cannot be written this way (no nesting) and comes back empty.
 [[nodiscard]] std::string PaintToString(const Paint& paint);
 

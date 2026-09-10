@@ -325,9 +325,9 @@ struct Theme {
 
     // Chrome-redesign follow-up: the focused pane's mode-line gradient
     // endpoints (unfocused panes keep modeLineGradientStart/End above) --
-    // stored as explicit fields rather than derived at paint time so theme
-    // files and --detect-theme control the tint, same reasoning as the
-    // base gradient's own fields. Same "hex only" ThemeFile restriction.
+    // stored as explicit fields rather than derived at paint time so a
+    // theme controls the tint, same reasoning as the base gradient's own
+    // fields. Same "hex only" ThemeFile restriction.
     Color modeLineFocusedGradientStart;
     Color modeLineFocusedGradientEnd;
 

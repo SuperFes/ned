@@ -13,19 +13,19 @@ namespace ned::ui {
 
 namespace {
 
-    // The one key<->field table both SerializeTheme and ParseTheme walk
+    // The one key<->field table SerializeThemeJanet and SetThemeColorByKey walk
     // (theme-editing follow-up) -- replaces the old hand-mirrored pair of a
     // 50-line serializer and a 50-branch parser, which had silently drifted:
     // every per-SyntaxClass color added since the bundle-remaining-grammars
     // follow-up (function/type/constant/variable/..., 19 fields) was never
-    // serialized at all, fine for --detect-theme's chrome-only output but
-    // fatal for save-theme's "write it out, hand-edit it, load it back"
-    // round-trip. A shared table makes that drift structurally impossible:
+    // serialized at all, fine for the chrome-only theme cache that used to
+    // be the other consumer but fatal for a theme written as ned/theme-set
+    // calls, where an omitted field is simply unsettable. A shared table makes that drift structurally impossible:
     // a field is either here (serialized AND parsed) or not.
     //
     // Key names are the file format -- existing keys must never be renamed
-    // (older theme.txt files keep working; unrecognized keys are ignored on
-    // parse for forward compatibility, see ParseTheme).
+    // (an existing init.janet keeps working; an unrecognized key
+    // is reported once and ignored rather than being an error).
     struct ThemeColorKey {
         std::string_view key;
         ui::Color ui::Theme::* field;
@@ -117,8 +117,8 @@ namespace {
     // color pairs plus <prefix>_bold/_italic/_underlined/_strikethrough trait
     // flags (bold/italic-round-trip follow-up -- closes the long-standing gap
     // this table used to have: only background/foreground ever persisted,
-    // silently dropping e.g. activeTab's own bold on every save-theme/
-    // --detect-theme round-trip).
+    // silently dropping e.g. activeTab's own bold, which left it
+    // unsettable from a theme).
     struct ThemeBrushKey {
         std::string_view prefix;
         ui::Brush ui::Theme::* field;
@@ -153,27 +153,76 @@ namespace {
 
 } // namespace
 
-std::string SerializeTheme(const Theme& theme) {
-    std::ostringstream out;
+namespace {
+
+    // The four trait suffixes, in the order every key listing and every
+    // Brush walk uses them.
+    constexpr std::string_view kTraitSuffixes[] = {"_bold", "_italic", "_underlined", "_strikethrough"};
+
+    bool Brush::* TraitFieldFor(std::string_view suffix) {
+        if (suffix == "_bold") {
+            return &Brush::bold;
+        }
+        if (suffix == "_italic") {
+            return &Brush::italic;
+        }
+        if (suffix == "_underlined") {
+            return &Brush::underlined;
+        }
+        if (suffix == "_strikethrough") {
+            return &Brush::strikethrough;
+        }
+        return nullptr;
+    }
+
+} // namespace
+
+std::vector<std::string> ThemeKeys() {
+    std::vector<std::string> keys;
+    keys.reserve(std::size(kColorKeys) + std::size(kBrushKeys) * 6);
     for (const ThemeColorKey& entry : kColorKeys) {
-        out << entry.key << '=' << ColorToToken(theme.*entry.field) << '\n';
+        keys.emplace_back(entry.key);
     }
     for (const ThemeBrushKey& entry : kBrushKeys) {
-        const Brush& brush = theme.*entry.field;
-        out << entry.prefix << "_background=" << ColorToToken(brush.background) << '\n';
-        out << entry.prefix << "_foreground=" << ColorToToken(brush.foreground) << '\n';
-        out << entry.prefix << "_bold=" << BoolToken(brush.bold) << '\n';
-        out << entry.prefix << "_italic=" << BoolToken(brush.italic) << '\n';
-        out << entry.prefix << "_underlined=" << BoolToken(brush.underlined) << '\n';
-        out << entry.prefix << "_strikethrough=" << BoolToken(brush.strikethrough) << '\n';
+        keys.emplace_back(std::string(entry.prefix) + "_background");
+        keys.emplace_back(std::string(entry.prefix) + "_foreground");
+        for (const std::string_view suffix : kTraitSuffixes) {
+            keys.emplace_back(std::string(entry.prefix) + std::string(suffix));
+        }
     }
-    return out.str();
+    return keys;
+}
+
+std::optional<std::string> ThemeValueByKey(const Theme& theme, std::string_view key) {
+    for (const ThemeColorKey& entry : kColorKeys) {
+        if (entry.key == key) {
+            return ColorToToken(theme.*entry.field);
+        }
+    }
+    for (const ThemeBrushKey& entry : kBrushKeys) {
+        // Suffix-checked for the same reason SetThemeColorByKey is: the
+        // "scroll_bar" prefix must never claim "scroll_bar_disabled_*".
+        if (!key.starts_with(entry.prefix)) {
+            continue;
+        }
+        const std::string_view suffix = key.substr(entry.prefix.size());
+        if (suffix == "_background") {
+            return ColorToToken((theme.*entry.field).background);
+        }
+        if (suffix == "_foreground") {
+            return ColorToToken((theme.*entry.field).foreground);
+        }
+        if (bool Brush::* traitField = TraitFieldFor(suffix); traitField != nullptr) {
+            return BoolToken((theme.*entry.field).*traitField);
+        }
+    }
+    return std::nullopt;
 }
 
 bool SetThemeColorByKey(Theme& theme, std::string_view key, std::string_view token) {
     for (const ThemeColorKey& entry : kColorKeys) {
         if (entry.key == key) {
-            // A malformed token assigns nothing, same as ParseTheme always did.
+            // A malformed token assigns nothing.
             const std::optional<Color> color = ParseColorToken(token);
             if (!color) {
                 return false;
@@ -224,252 +273,6 @@ bool SetThemeColorByKey(Theme& theme, std::string_view key, std::string_view tok
         }
     }
     return false; // unrecognized key
-}
-
-Theme ParseTheme(std::string_view text, const Theme& base) {
-    Theme result = base;
-
-    std::istringstream in{std::string(text)};
-    std::string        line;
-    while (std::getline(in, line)) {
-        const auto eq = line.find('=');
-        if (eq == std::string::npos) {
-            continue;
-        }
-        // A false return (malformed value, unrecognized key) keeps base's
-        // own value -- ignored deliberately, forward-compatible with files
-        // written by newer versions.
-        SetThemeColorByKey(result, std::string_view(line).substr(0, eq), std::string_view(line).substr(eq + 1));
-    }
-
-    return result;
-}
-
-namespace {
-
-    // theme-file-capture-serialization follow-up: ned/set-syntax-*/
-    // ned/set-capture-*/ned/set-capture-class overrides (Editor/SyntaxTheme.h)
-    // are a separate, process-wide overlay store, layered on top of a Theme's
-    // own fields at ui::Theme::BrushFor() render time rather than living
-    // inside the Theme struct itself -- kColorKeys/kBrushKeys above walk the
-    // struct alone, so save-theme silently dropped any of these overrides
-    // configured via init.janet before this. One optional-field-present check
-    // per known name/class is cheap here (a save-theme-time-only path, not
-    // the render path) and keeps the round-trip complete: load the written
-    // file back and every override is back too, not just the base palette.
-    // Translucency follow-up: named paints and surface overrides, written
-    // after the colour fields so the file replays in the same order startup
-    // applies them -- named paints first, since a surface's spec can
-    // reference one by name.
-    //
-    // A Stack has no one-line form (nesting is the array form's alone), so
-    // it is written as a comment rather than as a call that would silently
-    // mean something else on reload.
-    void SerializePaintOverrides(std::ostringstream& out) {
-        const std::vector<std::string> paints = NamedPaintNames();
-        if (!paints.empty()) {
-            out << "\n# Named paints (ned/theme-gradient), usable anywhere a paint is.\n";
-            for (const std::string& name : paints) {
-                const std::optional<Paint> paint = NamedPaint(name);
-                if (!paint) {
-                    continue;
-                }
-                const std::string spec = PaintToString(*paint);
-                if (spec.empty()) {
-                    out << "# " << name << ": a stacked paint, which has no one-line form --\n"
-                        << "# re-author it from your own init.janet with (ned/gradient ...).\n";
-                    continue;
-                }
-                out << "(ned/theme-gradient \"" << name << "\" \"" << spec << "\")\n";
-            }
-        }
-
-        const std::vector<std::string> surfaces = SurfaceOverrideNames();
-        if (surfaces.empty()) {
-            return;
-        }
-        out << "\n# Surface overrides (ned/theme-surface). Only the parts a theme actually\n"
-               "# set are here; everything else stays derived from the colours above.\n";
-        for (const std::string& name : surfaces) {
-            const std::optional<Surface> surface = SurfaceOverride(name);
-            if (!surface) {
-                continue;
-            }
-            const std::pair<const char*, const Paint*> parts[] = {
-                {"fill", &surface->fill},
-                {"border", &surface->border},
-                {"text", &surface->text},
-            };
-            for (const auto& [part, paint] : parts) {
-                if (paint->kind == PaintKind::Solid && paint->stops.empty()) {
-                    continue; // paints nothing: nothing to write
-                }
-                const std::string spec = PaintToString(*paint);
-                if (spec.empty()) {
-                    out << "# " << name << '.' << part << ": a stacked paint, which has no one-line\n"
-                        << "# form -- re-author it from your own init.janet with (ned/surface ...).\n";
-                    continue;
-                }
-                out << "(ned/theme-surface \"" << name << "\" \"" << part << "\" \"" << spec << "\")\n";
-            }
-        }
-    }
-
-    void SerializeSyntaxThemeOverrides(std::ostringstream& out) {
-        bool       wroteHeader  = false;
-        const auto ensureHeader = [&] {
-            if (!wroteHeader) {
-                out << "\n# Per-syntax-class and per-capture-name overrides (ned/set-syntax-*/\n"
-                       "# ned/set-capture-*), layered on top of the color fields above at render\n"
-                       "# time rather than part of them -- see Editor/SyntaxTheme.h.\n";
-                wroteHeader = true;
-            }
-        };
-
-        for (const std::string& name : editor::SyntaxClassNames()) {
-            const editor::SyntaxClass         cls = editor::SyntaxClassByName(name);
-            const editor::SyntaxStyleOverride ov  = editor::SyntaxOverrideFor(cls);
-            if (ov.foreground) {
-                ensureHeader();
-                out << "(ned/set-syntax-foreground \"" << name << "\" \"" << *ov.foreground << "\")\n";
-            }
-            if (ov.background) {
-                ensureHeader();
-                out << "(ned/set-syntax-background \"" << name << "\" \"" << *ov.background << "\")\n";
-            }
-            if (ov.bold) {
-                ensureHeader();
-                out << "(ned/set-syntax-bold \"" << name << "\" " << BoolToken(*ov.bold) << ")\n";
-            }
-            if (ov.italic) {
-                ensureHeader();
-                out << "(ned/set-syntax-italic \"" << name << "\" " << BoolToken(*ov.italic) << ")\n";
-            }
-            if (ov.underlined) {
-                ensureHeader();
-                out << "(ned/set-syntax-underlined \"" << name << "\" " << BoolToken(*ov.underlined) << ")\n";
-            }
-            if (ov.strikethrough) {
-                ensureHeader();
-                out << "(ned/set-syntax-strikethrough \"" << name << "\" " << BoolToken(*ov.strikethrough) << ")\n";
-            }
-        }
-
-        for (const std::string& name : editor::KnownCaptureNames()) {
-            if (const auto remapped = editor::SyntaxClassOverrideForCapture(name)) {
-                ensureHeader();
-                out << "(ned/set-capture-class \"" << name << "\" \"" << editor::SyntaxClassName(*remapped) << "\")\n";
-            }
-            const editor::SyntaxStyleOverride ov = editor::CaptureOverrideFor(name);
-            if (ov.foreground) {
-                ensureHeader();
-                out << "(ned/set-capture-foreground \"" << name << "\" \"" << *ov.foreground << "\")\n";
-            }
-            if (ov.background) {
-                ensureHeader();
-                out << "(ned/set-capture-background \"" << name << "\" \"" << *ov.background << "\")\n";
-            }
-            if (ov.bold) {
-                ensureHeader();
-                out << "(ned/set-capture-bold \"" << name << "\" " << BoolToken(*ov.bold) << ")\n";
-            }
-            if (ov.italic) {
-                ensureHeader();
-                out << "(ned/set-capture-italic \"" << name << "\" " << BoolToken(*ov.italic) << ")\n";
-            }
-            if (ov.underlined) {
-                ensureHeader();
-                out << "(ned/set-capture-underlined \"" << name << "\" " << BoolToken(*ov.underlined) << ")\n";
-            }
-            if (ov.strikethrough) {
-                ensureHeader();
-                out << "(ned/set-capture-strikethrough \"" << name << "\" " << BoolToken(*ov.strikethrough) << ")\n";
-            }
-        }
-    }
-
-} // namespace
-
-std::string SerializeThemeJanet(const Theme& theme) {
-    std::ostringstream out;
-    out << "# Generated by ned's save-theme command -- a snapshot of the theme that\n"
-           "# was active when it ran, as plain Janet. Edit freely; load it from\n"
-           "# init.janet with (dofile \"<this file's path>\") to make it the\n"
-           "# startup theme. Every color is set explicitly, so the base theme\n"
-           "# underneath doesn't show through anywhere.\n";
-    for (const ThemeColorKey& entry : kColorKeys) {
-        out << "(ned/theme-set \"" << entry.key << "\" \"" << ColorToToken(theme.*entry.field) << "\")\n";
-    }
-    for (const ThemeBrushKey& entry : kBrushKeys) {
-        const Brush& brush = theme.*entry.field;
-        out << "(ned/theme-set \"" << entry.prefix << "_background\" \"" << ColorToToken(brush.background) << "\")\n";
-        out << "(ned/theme-set \"" << entry.prefix << "_foreground\" \"" << ColorToToken(brush.foreground) << "\")\n";
-        out << "(ned/theme-set \"" << entry.prefix << "_bold\" \"" << BoolToken(brush.bold) << "\")\n";
-        out << "(ned/theme-set \"" << entry.prefix << "_italic\" \"" << BoolToken(brush.italic) << "\")\n";
-        out << "(ned/theme-set \"" << entry.prefix << "_underlined\" \"" << BoolToken(brush.underlined) << "\")\n";
-        out << "(ned/theme-set \"" << entry.prefix << "_strikethrough\" \"" << BoolToken(brush.strikethrough) << "\")\n";
-    }
-    SerializeSyntaxThemeOverrides(out);
-    SerializePaintOverrides(out);
-    return out.str();
-}
-
-std::filesystem::path ThemeFilePath() {
-    if (const char* xdgConfigHome = std::getenv("XDG_CONFIG_HOME"); xdgConfigHome && *xdgConfigHome) {
-        return std::filesystem::path(xdgConfigHome) / "ned" / "theme.txt";
-    }
-
-    if (const char* home = std::getenv("HOME"); home && *home) {
-        return std::filesystem::path(home) / ".config" / "ned" / "theme.txt";
-    }
-
-    throw std::runtime_error("ned: cannot determine config directory (neither XDG_CONFIG_HOME nor HOME is set)");
-}
-
-std::filesystem::path ThemeJanetFilePath() {
-    return ThemeFilePath().parent_path() / "theme.janet";
-}
-
-namespace {
-
-    void WriteThemeContent(const std::string& content, const std::filesystem::path& path) {
-        std::filesystem::create_directories(path.parent_path());
-
-        std::ofstream file(path, std::ios::binary | std::ios::trunc);
-        if (!file) {
-            throw std::runtime_error("ned: cannot open theme file for writing: " + path.string());
-        }
-
-        file.write(content.data(), static_cast<std::streamsize>(content.size()));
-        if (!file) {
-            throw std::runtime_error("ned: error writing theme file: " + path.string());
-        }
-    }
-
-} // namespace
-
-void SaveThemeFile(const Theme& theme, const std::filesystem::path& path) {
-    WriteThemeContent(SerializeTheme(theme), path);
-}
-
-void SaveThemeJanetFile(const Theme& theme, const std::filesystem::path& path) {
-    WriteThemeContent(SerializeThemeJanet(theme), path);
-}
-
-std::optional<Theme> LoadThemeFile(const std::filesystem::path& path) {
-    if (!std::filesystem::exists(path)) {
-        return std::nullopt;
-    }
-
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error("ned: cannot open theme file for reading: " + path.string());
-    }
-
-    std::ostringstream content;
-    content << file.rdbuf();
-
-    return ParseTheme(content.str(), DarkTheme());
 }
 
 } // namespace ned::ui

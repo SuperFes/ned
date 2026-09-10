@@ -277,9 +277,9 @@ std::optional<Color> ParseColorToken(std::string_view token) {
         return trueColor;
     }
     if (token.starts_with("x:")) {
-        // Legacy: theme files written before themes went truecolor-only
-        // (the ANSI fallback pair, and any --detect-theme cache from that
-        // era) carry palette indices. They still load, but they resolve to
+        // Legacy: themes written before ned went truecolor-only (the ANSI
+        // fallback pair, and init.janet files from that era) carry palette
+        // indices. They still load, but they resolve to
         // real RGB -- nothing puts a palette index back into a theme, since
         // one cannot be composited against or carry alpha.
         const std::string digits(token.substr(2));

@@ -1,13 +1,16 @@
 //
 // Desktop-environment theme detection (theme-polish follow-up, Phase 4) --
-// the theme-precedence chain's last-resort fallback (see main.cpp), tried
-// only once every explicit source (a remembered theme variable,
-// `ned/set-theme`, an existing `ned --detect-theme` terminal-probe file)
-// has already come up empty. Unlike TerminalColorProbe.h (which queries the
-// *terminal* directly over OSC and needs raw-mode stdin), this queries the
-// *desktop environment* the terminal happens to be running under, so it's
-// safe to run unconditionally at any point in startup -- no terminal state
-// to fight over.
+// the theme-precedence chain's fallback (see UI/ThemeResolve.h), tried once
+// every explicit source (a remembered theme variable, `ned/set-theme`) has
+// come up empty -- which makes it the detection path for anyone who never
+// names a theme at all.
+//
+// It replaced an OSC-based probe of the *terminal's* own colours, which had
+// to run before anything read stdin and so could only ever work as a
+// separate `ned --detect-theme` invocation writing a cache file. This one
+// queries the *desktop environment* the terminal happens to be running
+// under, so it is cheap, needs no terminal state, no cache, and no separate
+// invocation: it just runs on every launch.
 //
 // Two independent facts are sought: light/dark polarity and an accent
 // color, tried via a short waterfall of desktop-specific mechanisms (see
@@ -25,7 +28,7 @@
 // that's missing, times out, or returns something unparseable just leaves
 // that one fact undetermined rather than failing the whole probe.
 //
-// Split the same way TerminalColorProbe.h is: the reply-parsing functions
+// Split for testability: the reply-parsing functions
 // below are pure and unit-tested directly; ProbeDesktopTheme is the
 // impure orchestration (subprocess spawns, file reads) that only a real
 // desktop session can meaningfully exercise end-to-end.
@@ -100,11 +103,10 @@ struct KdeGlobalsInfo {
 [[nodiscard]] std::optional<DesktopThemeInfo> ProbeDesktopTheme();
 
 // DarkTheme()/LightTheme() by polarity, with the accent color (if any)
-// applied to the same fields TerminalColorProbe::BuildDetectedTheme applies
-// its own single detected accent to (borderAccent, the keyword slot, and
-// the focused mode-line gradient pulled 60% toward it) -- same "one
-// detected color still produces a coherent-looking theme" derivation, just
-// starting from a bundled base instead of the detected background.
+// applied to borderAccent, the keyword slot, and the focused mode-line
+// gradient pulled 60% toward it -- the chrome that reads as "this editor's
+// colour" rather than as syntax, so one detected hue still produces a
+// coherent-looking theme without touching how code is highlighted.
 [[nodiscard]] Theme BuildDesktopTheme(const DesktopThemeInfo& info);
 
 } // namespace ned::ui

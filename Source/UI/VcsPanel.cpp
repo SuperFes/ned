@@ -108,7 +108,7 @@ namespace {
     struct TreeBuilderNode {
         std::filesystem::path                  fullPath;
         bool                                   isDirectory = false;
-        editor::vcs::RowStatus              status      = editor::vcs::RowStatus::None;
+        editor::vcs::RowStatus                 status      = editor::vcs::RowStatus::None;
         std::map<std::string, TreeBuilderNode> children; // key = this child's own filename, sorted alphabetically
     };
 
@@ -179,7 +179,7 @@ namespace {
             const std::filesystem::path absPath = (root / entry.path).lexically_normal();
             InsertStatusPath(builderRoot, root, absPath, editor::vcs::ClassifyPorcelainStatus(entry.state));
         }
-        std::vector<editor::ProjectTreeEntry>                                flat;
+        std::vector<editor::ProjectTreeEntry>                             flat;
         std::unordered_map<std::filesystem::path, editor::vcs::RowStatus> status;
         FlattenNode(builderRoot, 0, flat, status);
         return {std::move(flat), std::move(status)};
@@ -453,12 +453,20 @@ void VcsPanel::Paint(Canvas c) {
     // generic-popup follow-up's own precedent (ProjectSidebar::Paint): reset
     // the whole Brush per cell, not just background, so a prior overlay
     // frame can never leave a stale foreground baked into a blank row.
-    const Brush blankBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
+    //
+    // Through the "panel" Surface, ProjectSidebar::Paint's own precedent --
+    // the two are hosted in the same LeftDock slot and have to agree on what
+    // that slot looks like, or switching panels would change the dock's own
+    // background under you.
+    const Surface panel = SurfaceFor(theme_, "panel");
+    ClearCanvas(c, theme_.background);
+    Fill(c, panel.fill);
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
-            Cell& cell     = c[{.x = col, .y = row}];
-            cell.character = " ";
-            blankBrush.ApplyTo(cell);
+            const Point at{.x = col, .y = row};
+            Cell&       cell      = c[at];
+            cell.character        = " ";
+            cell.foreground_color = TextColourAt(panel, c, at, theme_.defaultForeground);
         }
     }
 

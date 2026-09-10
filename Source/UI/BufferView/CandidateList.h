@@ -35,7 +35,20 @@ class CandidateList {
     // Replace the pool being filtered and re-rank against `query`. The selection
     // goes back to the top: a new pool means the previous selection referred to
     // something from a different list.
-    void Reset(std::vector<std::string> candidates, std::string_view query = {});
+    //
+    // `pinnedCount` marks the first N entries as *actions* rather than results
+    // (the theme picker's "Current theme" and "None (detect)"). They are still
+    // filtered by the query -- typing "gruv" drops both, which is right -- but
+    // they never compete with the results for position: whichever of them still
+    // match sit at the top, in the order given, and the rest rank below.
+    //
+    // Without this a pinned row keeps its place only by accident of collation.
+    // FuzzyFilterAndRank tie-breaks equal scores alphabetically, and with an
+    // empty query every candidate scores equally, so "Current theme" was first
+    // purely because every registry name beside it was lowercase and 'C' sorts
+    // before 'c'. Proper-casing the theme names sent it into the middle of the
+    // list.
+    void Reset(std::vector<std::string> candidates, std::string_view query = {}, std::size_t pinnedCount = 0);
 
     // Re-rank the existing pool. The selection stays where it is where it still
     // can, clamped to the last entry when the list shrank under it -- typing
@@ -93,7 +106,8 @@ class CandidateList {
 
     std::vector<std::string> source_;
     std::vector<std::string> ranked_;
-    std::size_t              selection_ = 0;
+    std::size_t              selection_   = 0;
+    std::size_t              pinnedCount_ = 0; // see Reset
 };
 
 } // namespace ned::ui::bufferview

@@ -1,5 +1,7 @@
 #include "ThemePaints.h"
 
+#include <algorithm>
+#include <cmath>
 #include <map>
 
 #include <mutex>
@@ -23,8 +25,13 @@ namespace {
     // ~16%. The current line is the one wash that is up the whole time you
     // are typing, so it sits below every other overlay's strength -- a
     // selection or a search hit has to win against it, not tie.
-    constexpr std::uint8_t kCurrentLineAlpha       = 40;
-    constexpr std::uint8_t kModeLineFadeAlpha      = 165;
+    constexpr std::uint8_t kCurrentLineAlpha = 40;
+
+    // The left dock's edge falloff, in percent of the way toward white. See
+    // the "panel" branch of DerivedSurface for why this exists and why it
+    // runs on the panel's own side.
+    constexpr double       kPanelEdgeLift     = 4.0;
+    constexpr std::uint8_t kModeLineFadeAlpha = 165;
 
     std::mutex& Lock() {
         static std::mutex mutex;
@@ -135,6 +142,41 @@ namespace {
         return colour.Composable() ? SolidPaint(colour) : Paint{};
     }
 
+    // A colour moved `percent` of the way *away* from itself, keeping its own
+    // hue -- PaintParse's own AdjustLightness rule, restated here because
+    // that one is private to the parser and this is a derived default rather
+    // than something parsed from a spec.
+    //
+    // Unlike AdjustLightness the direction is chosen rather than given, by
+    // the same luminance test EnsureContrast uses: toward white from a dark
+    // colour, toward black from a light one. A fixed "toward white" reads as
+    // elevation on a dark theme and as nothing at all on a light one, where
+    // the background already sits a couple of levels off white and has no
+    // headroom left -- measured on gruvbox-light, which moved by 1.
+    //
+    // A colour with no RGB to move (the terminal's own background) comes
+    // back unchanged, which is what makes the panel falloff a no-op on a
+    // transparent theme.
+    Color Lifted(const Color& colour, double percent) {
+        if (!colour.Composable()) {
+            return colour;
+        }
+        const Color target = RelativeLuminance(colour) > 0.5 ? Color::RGB(0x000000) : Color::RGB(0xFFFFFF);
+        const auto  amount = static_cast<std::uint8_t>(std::lround(std::clamp(percent, 0.0, 100.0) * 2.55));
+        return BlendOver(colour, target.WithAlpha(amount)).WithAlpha(colour.alpha);
+    }
+
+    // Lifted at the panel's outer (left) edge, settling to the buffer's own
+    // background at its inner one. Both stops are equal on a transparent
+    // theme, so this degrades to a paint that paints nothing.
+    Paint PanelEdgeFill(const Color& background) {
+        if (!background.Composable()) {
+            return Paint{};
+        }
+        return GradientPaint(PaintAxis::X, {ColorStop{.colour = Lifted(background, kPanelEdgeLift)},
+                                            ColorStop{.colour = background}});
+    }
+
     Surface FromBrush(const Brush& brush) {
         Surface surface;
         surface.fill = SolidOrNothing(brush.background);
@@ -232,8 +274,36 @@ namespace {
         if (name == "scrollbar") {
             return FromBrush(theme.scrollBar);
         }
-        if (name == "panel" || name == "popup") {
+        if (name == "popup") {
             surface.fill   = SolidOrNothing(theme.background);
+            surface.border = SolidOrNothing(theme.border.foreground);
+            surface.text   = SolidOrNothing(theme.defaultForeground);
+            return surface;
+        }
+        if (name == "panel") {
+            // The one derived default that is deliberately *not* the flat
+            // colour the widget used to paint (Docs/Translucency.md phase 5's
+            // byte-identical rule): a left-docked panel sitting flat against
+            // the buffer meets it as one slab edge-on to another, and the
+            // only thing separating them is the border glyph.
+            //
+            // A horizontal walk instead -- a few percent lighter at the
+            // panel's outer edge, settling to exactly the buffer background
+            // where the two meet, so the seam itself has no step in it at all
+            // and the panel reads as lifting away from the buffer rather than
+            // butting against it. Runs on the *panel's* side because the
+            // buffer's side carries code: a wash there would tint the text
+            // (Compositing.h's T3), which is the one thing an edge treatment
+            // must not do.
+            //
+            // Measured at 4% (~10 levels either way): visible as a direction,
+            // not as a band, and it costs the panel's own text nothing --
+            // the gallery reports the same contrast at both ends.
+            // A transparent theme is unaffected for free, since
+            // AdjustLightness declines a colour with no RGB to move, leaving
+            // both stops equal to Color::Default and the fill painting
+            // nothing.
+            surface.fill   = PanelEdgeFill(theme.background);
             surface.border = SolidOrNothing(theme.border.foreground);
             surface.text   = SolidOrNothing(theme.defaultForeground);
             return surface;
@@ -416,8 +486,14 @@ void ClearCanvas(Canvas& canvas, const Color& beneath) {
 }
 
 std::vector<std::string> SurfaceNames() {
+    // Must list every name DerivedSurface answers to. The two are separate
+    // hand-maintained lists and nothing but SurfaceNamesTest makes them
+    // agree -- "tab.strip" was derived and painted by TabBar for a while
+    // while being absent from here, which made it invisible to both
+    // M-x theme-gallery and Docs/Themes.md despite working perfectly if you
+    // already knew the name.
     return {"buffer", "buffer.current_line", "buffer.selection", "buffer.search",
-            "modeline", "modeline.focused", "tab", "tab.active",
+            "modeline", "modeline.focused", "tab.strip", "tab", "tab.active",
             "tab.active.focused", "echo", "scrollbar", "panel",
             "popup"};
 }

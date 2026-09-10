@@ -1456,9 +1456,24 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "Theme switching is not wired up.";
                 return;
             }
-            std::vector<std::string> themeNames = ThemeNames();
+            // Display names, not canonical ones: "Gruvbox Dark" rather than
+            // "gruvbox-dark". ThemeByName matches normalized, so every one
+            // of these still resolves, and so does anything a user already
+            // wrote in an init.janet.
+            std::vector<std::string> themeNames = ThemeDisplayNames();
+            // Offered only when the composition root wired a detector -- a
+            // headless BufferView has no way to work out what "detect"
+            // would even resolve to, so the row would be a dead Enter.
+            std::size_t pinned = 1;
+            if (themeDetector_) {
+                themeNames.insert(themeNames.begin(), std::string(kDetectThemeLabel));
+                ++pinned;
+            }
             themeNames.insert(themeNames.begin(), std::string(kCurrentThemeLabel));
-            selectThemeList_.Reset(std::move(themeNames));
+            // Pinned, not merely first: these two are actions, and ranking
+            // would otherwise sort them in among the theme names (see
+            // CandidateList::Reset's own doc comment).
+            selectThemeList_.Reset(std::move(themeNames), {}, pinned);
             themeBeforePreview_ = theme_;
             inputMode_          = InputMode::SelectTheme;
             prompt_.emplace("Theme (fuzzy): ");
@@ -1466,19 +1481,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             RefreshSelectThemeStatus();
             return;
         }
-        // theme-editing follow-up: one-shot direct action, ToggleProjectSidebar's
-        // shape. Writes whatever theme is *currently showing* -- picker-
-        // committed, ned/set-theme'd, override-adjusted, or the ANSI
-        // fallback -- as runnable Janet, so "pick something close, save it,
-        // edit the file" is the whole theme-authoring workflow.
-        case editor::InteractiveRequest::SaveTheme:
-            try {
-                const std::filesystem::path path = ThemeJanetFilePath();
-                SaveThemeJanetFile(theme_, path);
-                statusMessage_ = "Saved theme to " + path.string();
-            }
-            catch (const std::exception& e) {
-                ReportError(e.what());
+        // Translucency phase 4b: a one-shot forward, ListBuffers' shape -- the
+        // gallery overlay lives above this class.
+        case editor::InteractiveRequest::ShowThemeGallery:
+            if (onThemeGalleryToggle_) {
+                onThemeGalleryToggle_();
             }
             return;
         // kmacro-start-macro/kmacro-end-or-call-macro follow-up: one-shot
@@ -3064,6 +3071,23 @@ bufferview::ConfirmPrompt BufferView::ConfirmCloseBufferPrompt() {
             }};
 }
 
+bufferview::ConfirmPrompt BufferView::ConfirmWriteThemeToInitPrompt() {
+    return {.cancelMessage = "Theme applied for this session only.",
+            .onConfirm     = [this, name = pendingThemeToWrite_] {
+                try {
+                    janet::WriteSetThemeCall(name);
+                    statusMessage_ = "Wrote (ned/set-theme \"" + name + "\") to " + janet::InitFilePath().string();
+                }
+                catch (const std::exception& e) {
+                    ReportError(e.what());
+                }
+            }};
+}
+
+void BufferView::HandleConfirmWriteThemeToInitKey(const editor::KeyChord& chord) {
+    HandleConfirmPromptKey(ConfirmWriteThemeToInitPrompt(), chord);
+}
+
 bufferview::ConfirmPrompt BufferView::ConfirmOverwriteSavePrompt() {
     return {.cancelMessage = "Save cancelled; the file on disk was left as-is.",
             .onConfirm     = [this] { ForceSaveBuffer(); }};
@@ -3832,27 +3856,51 @@ bufferview::FuzzyPrompt BufferView::SelectThemePrompt() {
                     if (selected == kCurrentThemeLabel) {
                         // Committing "Current theme" leaves everything as it is: no
                         // ThemeByName() lookup (there is no registry entry by this
-                        // name) and no variables.json write, since the persisted base
-                        // theme name already describes what is active and overwriting
-                        // it with this synthetic label would break the next launch's
-                        // own theme resolution.
+                        // name) and no y/n about writing it down: there is nothing
+                        // new to write, and this synthetic label is not a theme name
+                        // anything could resolve later.
                         if (themeApplier_ && snapshot) {
                             themeApplier_(*snapshot);
                         }
                         statusMessage_ = "Theme unchanged.";
                         return;
                     }
-                    if (themeApplier_) {
-                        if (const auto named = ThemeByName(selected)) {
-                            themeApplier_(*named);
+                    if (selected == kDetectThemeLabel) {
+                        // What this editor would look like with no theme configured
+                        // at all -- the desktop probe's own answer, with any
+                        // ned/theme-set overrides still applied over it.
+                        if (themeDetector_ && themeApplier_) {
+                            const Theme detected = themeDetector_();
+                            themeApplier_(detected);
+                            statusMessage_ = "Theme: detected (" + ThemeDisplayName(detected.name) +
+                                             ") -- remove ned/set-theme from init.janet to keep it";
                         }
+                        return;
                     }
-                    // A committed pick is remembered across runs as the *base* theme;
-                    // preview and cancel deliberately never persist anything, and
-                    // init.janet's own (ned/theme-set ...) overrides still apply over
-                    // it at startup.
-                    editor::SetVariable("theme", selected);
-                    statusMessage_ = "Theme: " + selected;
+                    const auto named = ThemeByName(selected);
+                    if (!named) {
+                        statusMessage_ = "Unknown theme \"" + selected + "\"";
+                        return;
+                    }
+                    if (themeApplier_) {
+                        themeApplier_(*named);
+                    }
+                    // Applies to this session only, and says so with the line to write
+                    // down. A theme is an explicit setting: the picker used to persist
+                    // the pick to $XDG_STATE_HOME and that pin then outranked
+                    // ned/set-theme, so a config file could be silently overruled by a
+                    // click with nothing on screen to explain it. Trying a theme and
+                    // choosing to keep one are different acts, and only the second
+                    // belongs in a config file -- which is the user's to edit, not
+                    // ned's to rewrite.
+                    //
+                    // ...and offer to write it down, rather than either persisting
+                    // silently or leaving the user to retype it. Declining is a real
+                    // answer: the theme still applies for this session.
+                    pendingThemeToWrite_ = named->name;
+                    inputMode_           = InputMode::ConfirmWriteThemeToInit;
+                    statusMessage_       = "Theme: " + selected + ". Write (ned/set-theme \"" + named->name +
+                                           "\") to init.janet? (y/n)";
                 },
             .onSelectionChanged = [this] { ApplySelectedThemePreview(); },
             .onCancel           = [this] {
@@ -4004,6 +4052,15 @@ void BufferView::ApplySelectedThemePreview() {
         // comment for why a named lookup here would be destructive.
         if (themeBeforePreview_) {
             themeApplier_(*themeBeforePreview_);
+        }
+        return;
+    }
+    if (selected == kDetectThemeLabel) {
+        // What a launch with nothing pinned would resolve to. Previewed the
+        // same way every other row is, and without writing anything --
+        // committing is what actually unpins.
+        if (themeDetector_) {
+            themeApplier_(themeDetector_());
         }
         return;
     }
@@ -4226,6 +4283,10 @@ void BufferView::ScrollCandidatePopup(int steps) {
 
 void BufferView::SetThemeApplier(std::function<void(const Theme&)> applier) {
     themeApplier_ = std::move(applier);
+}
+
+void BufferView::SetThemeDetector(std::function<Theme()> detector) {
+    themeDetector_ = std::move(detector);
 }
 
 void BufferView::SetAcpManager(editor::acp::Manager* acpManager) {

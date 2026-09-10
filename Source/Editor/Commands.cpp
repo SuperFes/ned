@@ -2458,12 +2458,15 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::SelectTheme;
                       });
-    // theme-editing follow-up: M-x only, like select-theme above.
-    registry.Register("save-theme",
-                      "Write the active theme to theme.janet (one ned/theme-set call per color) for hand-editing; "
-                      "load it from init.janet with (dofile ...) to make it the startup theme.",
+    // Translucency phase 4b: M-x only, like select-theme above. A theme is
+    // written as ned/theme-set calls in init.janet (Docs/Themes.md lists
+    // every key); this is how the *paint* vocabulary -- which resolves
+    // against the live theme and so cannot be read off a page -- stays
+    // discoverable.
+    registry.Register("theme-gallery",
+                      "Show every themed surface and named paint as a live swatch, with a contrast readout.",
                       [](CommandContext& context) {
-                          context.interactiveRequest = InteractiveRequest::SaveTheme;
+                          context.interactiveRequest = InteractiveRequest::ShowThemeGallery;
                       });
 
     registry.Register("kmacro-start-macro", "Begin recording a keyboard macro.", [](CommandContext& context) {

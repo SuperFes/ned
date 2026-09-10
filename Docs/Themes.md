@@ -7,8 +7,7 @@ Ground-truthed against `Source/UI/ThemeRegistry.cpp`, `Source/UI/ThemePalette.h`
 ## Bundled themes
 
 Every name below resolves via `ThemeByName` (`Source/UI/ThemeRegistry.cpp`) -- the same
-lookup `ned/set-theme`, the remembered-theme variable, and the `M-x select-theme` picker
-all go through.
+lookup `ned/set-theme` and the `M-x select-theme` picker both go through.
 
 **Hand-built:** `dark`, `light` (the two original themes, `Theme.cpp`). Both are entirely
 real RGB -- no ANSI colour names, which stopped meaning "whatever this terminal calls blue"
@@ -39,54 +38,186 @@ Color palettes are uncopyrightable facts; every upstream project cloned here shi
 MIT (or, for classic Monokai, is universally redistributed), and names are kept as-is per
 universal editor practice.
 
-## Picking a theme
+## Setting a theme
 
-- **`M-x select-theme`** -- fuzzy-filtered live picker (type to narrow, arrows to move,
-  every highlight change previews immediately). `Enter` commits: the choice is written to
-  `$XDG_STATE_HOME/ned/variables.json` (the `"theme"` variable) so it survives restarts.
-  `C-g` cancels and restores whatever was active before the picker opened, without writing
-  anything.
-- **`(ned/set-theme "name")`** in `init.janet` -- a static default. Loses to a
-  variables.json-remembered pick (see precedence below), so once you've committed a choice
-  through the picker, this line stops having any visible effect until you clear the
-  remembered variable.
+- **`(ned/set-theme "name")`** in `init.janet` -- picks the base theme. A project's
+  `<root>/.ned/init.janet` loads after your global one, so it wins for that project.
+
+  Names resolve leniently: case-insensitive, with spaces and underscores equal to hyphens,
+  so `"Gruvbox Dark"`, `"gruvbox-dark"` and `"GRUVBOX_DARK"` are the same theme. The picker
+  lists the display form; `Theme::name` and every other surface use the hyphenated one.
 - **`(ned/theme-set "key" "value")`** -- overrides one field of whichever base theme wins,
-  applied last regardless of how the base was chosen. `M-x save-theme` writes a full
-  `theme.janet` of these calls for the *current* live theme (one call per color/trait),
-  meant to be hand-edited and loaded from `init.janet` via `(dofile ...)`. Keys match the
-  plain-text theme file's own key names (`keyword_foreground`, `active_tab_bold`, ...);
-  color values are `"#rrggbb"` or `"default"`, trait values are `"true"`/`"false"`.
-- **`ned --detect-theme [--transparent] [output-path]`** -- a separate CLI mode, not part
-  of a normal launch. Probes the *terminal's* actual configured colors (OSC 10/11/4 --
-  foreground, background, and the 16-slot ANSI palette) and writes a theme file (default
-  path: the same one loaded at startup, see below), then exits without starting the editor
-  at all. Must be run and finish before ned's own event loop starts reading stdin, which is
-  why it's a distinct invocation rather than something that could run automatically on
-  every launch -- see `Source/UI/TerminalColorProbe.h`'s header comment for exactly why.
-  `--transparent` treats the detected background as transparent (`Color::Default`) instead
-  of the queried opaque color.
+  applied last regardless of how the base was chosen. This is how you write your own theme:
+  put the calls in `init.janet`, on top of whichever bundled theme `ned/set-theme` picks.
+  Colour values are `"#rrggbb"`, `"#rrggbbaa"` or `"default"`; trait values are `"true"` /
+  `"false"`. Every key is listed under "Key reference" below.
+
+## Writing your own theme
+
+There is no theme file format and no generator: a theme is `ned/theme-set` calls in your
+own `init.janet`, over a bundled base. That is deliberate -- with 30 bundled themes and
+`ThemeFromPalette` deriving a full theme from ~15 semantic colours, a theme worth writing
+is a handful of overrides, not a 117-key snapshot.
+
+```janet
+(ned/set-theme "gruvbox-dark")                        # the base
+(ned/theme-set "keyword_foreground"   "#83a598")      # ...and what you disagree with
+(ned/theme-set "selection_background" "#45403d80")    # alpha composites, see below
+(ned/theme-set "active_tab_bold"      "true")
+```
+
+`M-x theme-gallery` is the discovery surface for the *paint* vocabulary below -- surfaces
+and named paints resolve against the live theme, so unlike a colour key they cannot be read
+off a page. It shows every surface and named paint as a live swatch with a contrast
+readout, and updates as the theme changes.
+
+## Key reference
+
+Every key `ned/theme-set` accepts. `Tests/ThemeKeyDocsTest.cpp` holds this list against the
+real table in both directions, so a key cannot be added without appearing here and a key
+cannot linger here after it stops existing.
+
+<!-- theme-keys:begin -->
+
+**Base**
+
+`background` `default_foreground`
+
+**Syntax**
+
+`comment_foreground` `doc_comment_foreground` `string_foreground` `string_escape_foreground`
+`keyword_foreground` `control_keyword_foreground` `keyword_modifier_foreground` `number_foreground`
+`function_foreground` `function_builtin_foreground` `method_foreground` `constructor_foreground`
+`type_foreground` `type_builtin_foreground` `return_type_foreground` `constant_foreground`
+`constant_builtin_foreground` `variable_foreground` `variable_builtin_foreground` `parameter_foreground`
+`property_foreground` `operator_foreground` `punctuation_foreground` `tag_foreground`
+`attribute_foreground` `namespace_foreground` `label_foreground` `include_path_foreground`
+`markup_marker_foreground`
+
+**Mode line and gutter**
+
+`mode_line_foreground` `mode_line_gradient_start` `mode_line_gradient_end` `mode_line_focused_gradient_start`
+`mode_line_focused_gradient_end` `line_number_foreground` `current_line_number_foreground` `indent_guide_foreground`
+
+**Overlays (all composited, so all accept alpha)**
+
+`selection_background` `isearch_match_background` `snippet_field_background` `document_highlight_background`
+`conflict_ours_background` `conflict_theirs_background` `conflict_base_background` `execution_line_background`
+`diff_added_background` `diff_removed_background` `trailing_whitespace_background`
+
+**Diagnostics**
+
+`diagnostic_error` `diagnostic_warning` `diagnostic_information` `diagnostic_hint`
+
+**Debugger**
+
+`breakpoint_marker` `unverified_breakpoint_marker` `execution_marker`
+
+**Version control**
+
+`vcs_modified_foreground` `vcs_untracked_foreground` `blame_recent_foreground` `blame_old_foreground`
+`unsaved_change_indicator` `success_foreground`
+
+**Org and Markdown**
+
+`headline_level1_foreground` `headline_level2_foreground` `headline_level3_foreground` `todo_keyword_foreground`
+`done_keyword_foreground` `checkbox_foreground`
+
+**Misc text**
+
+`binary_foreground` `ghost_text_foreground` `link_foreground` `truncation_indicator_foreground`
+`underline_foreground` `strikethrough_foreground`
+
+**Brush-valued fields.** Each of these names a foreground/background pair plus four
+style flags, so each expands to six keys -- `<prefix>_background`, `<prefix>_foreground`,
+`<prefix>_bold`, `<prefix>_italic`, `<prefix>_underlined`, `<prefix>_strikethrough`.
+The colour keys take a colour token; the four flags take `"true"` or `"false"`.
+
+`echo_area_background` `echo_area_foreground` `echo_area_bold` `echo_area_italic` `echo_area_underlined` `echo_area_strikethrough`
+`tab_bar_background` `tab_bar_foreground` `tab_bar_bold` `tab_bar_italic` `tab_bar_underlined` `tab_bar_strikethrough`
+`active_tab_background` `active_tab_foreground` `active_tab_bold` `active_tab_italic` `active_tab_underlined` `active_tab_strikethrough`
+`scroll_bar_background` `scroll_bar_foreground` `scroll_bar_bold` `scroll_bar_italic` `scroll_bar_underlined` `scroll_bar_strikethrough`
+`scroll_bar_disabled_background` `scroll_bar_disabled_foreground` `scroll_bar_disabled_bold` `scroll_bar_disabled_italic` `scroll_bar_disabled_underlined` `scroll_bar_disabled_strikethrough`
+`border_background` `border_foreground` `border_bold` `border_italic` `border_underlined` `border_strikethrough`
+`border_accent_background` `border_accent_foreground` `border_accent_bold` `border_accent_italic` `border_accent_underlined` `border_accent_strikethrough`
+
+<!-- theme-keys:end -->
 
 ## Startup precedence
 
-In order, first match wins (an unresolvable name at any step falls through to the next
-source rather than aborting, reported via the status line):
+One rule: **a theme is whatever a config file says.** Nothing else decides it.
 
-1. **The remembered `"theme"` variable** (`$XDG_STATE_HOME/ned/variables.json`) --
-   whatever `M-x select-theme` last committed. The newest expression of intent, so it beats
-   even a static `init.janet` `(ned/set-theme ...)` call.
-2. **`(ned/set-theme "name")`** from `init.janet`.
-3. **A previously `ned --detect-theme`-generated file**, if one exists at the default theme
-   file path. Never probes the terminal itself on a normal launch -- only reads a file that
-   `--detect-theme` already wrote out in an earlier, separate invocation.
-4. **A live desktop-environment probe** (`Source/UI/DesktopThemeProbe.h`) -- queries the
-   running desktop for its light/dark preference and accent color, cheaply and without
-   touching terminal state, so unlike step 3 this runs unconditionally on every normal
-   launch that reaches this point. See "Desktop-environment detection" below.
-5. **`DarkTheme()`**, the fixed final default.
+1. **`(ned/set-theme "name")`** -- from a project's `<root>/.ned/init.janet` if it has one,
+   else your global `init.janet`. The project file loads second, so it wins.
+2. **A live desktop-environment probe** (`Source/UI/DesktopThemeProbe.h`) -- queries the
+   running desktop for its light/dark preference and accent colour, cheaply and without
+   touching terminal state, so it runs on every launch that reaches this point. If you never
+   name a theme, this is what you get.
+3. **`DarkTheme()`**, the fixed final default.
 
-Regardless of which base wins, every `(ned/theme-set ...)` override from `init.janet`
-still applies last, on top of it -- overrides always determine the final look, even over a
-`--detect-theme` file or a desktop-detected base.
+Then every `(ned/theme-set ...)` override applies on top, in call order, so a later call for
+the same key wins and a field you set by hand always sticks.
+
+There used to be two more sources above `ned/set-theme`, and both are gone:
+
+- A `theme.txt` cache written by `ned --detect-theme`, which queried the *terminal's* own
+  colours over OSC. That probe had to run before anything read stdin, so it could never be
+  part of an ordinary launch -- it needed a cache file plus a separate invocation to be
+  useful at all, and a cache goes stale. The desktop probe has none of those problems.
+- A remembered `"theme"` variable in `$XDG_STATE_HOME`, written by the picker, which
+  outranked `ned/set-theme` outright. That made `(ned/set-theme "nord")` in an init.janet
+  appear to be *ignored* once you had picked something else, with nothing on screen to say
+  why -- an implicit pin quietly overruling an explicit setting. `M-x select-theme` applies
+  for the session now and offers to write the line down; see below.
+
+## Picking a theme, and keeping it
+
+`M-x select-theme` previews live as you move, and `Enter` applies the highlighted theme --
+**for this session**. It then asks whether to write it down:
+
+```
+Theme: Nord. Write (ned/set-theme "nord") to init.janet? (y/n)
+```
+
+`y` writes into your **global** `init.janet`; `n` leaves the theme applied and the file
+untouched. Trying a theme and deciding to keep one are different acts, and ned never edits a
+config file without being asked.
+
+The write is deliberately narrow: it replaces the last line that is exactly a
+`(ned/set-theme "...")` call, preserving its indentation, and otherwise appends one at the
+end. It never reformats, reorders, or touches a line it did not match, and it preserves the
+file's permissions. A call it does not recognise -- one inside a conditional, or sharing a
+line with other code -- is left alone and a plain call is appended instead; that is correct
+rather than merely cautious, since a later `ned/set-theme` is the one that takes effect.
+
+Two rows sit above the themes and are not themes:
+
+- **`Current theme`** -- leave everything as it is. It is what the picker opens on, so
+  opening the picker never disturbs the active look (in particular it never strips
+  `init.janet`'s own `ned/theme-set` overrides, which a lookup by name would).
+- **`None (detect)`** -- show what this editor looks like with no theme configured at all,
+  i.e. the desktop probe's answer. It cannot write that down for you, since "no
+  `ned/set-theme` line" is not a line to add -- delete yours to keep it.
+
+### Per-project themes
+
+A project can carry its own `<root>/.ned/init.janet`:
+
+```janet
+# <project>/.ned/init.janet
+(ned/set-theme "gruvbox-light")
+(ned/theme-set "selection_background" "#45403d80")
+```
+
+It loads after your global `init.janet`, so it wins for anything both set, and it is a
+checked-in file -- so the whole team gets the same look. The picker deliberately does not
+write here: which project should look different is a decision worth making on purpose, not
+a side effect of trying a theme once.
+
+A project init file is arbitrary code triggered by opening a directory, so it is never run
+silently: the first time you open a project -- and again whenever the file's content changes
+-- ned prompts before running it. Answering yes loads it and re-resolves the theme
+immediately, so a project theme takes effect on the spot rather than on the next launch.
 
 ## Desktop-environment detection
 
@@ -116,7 +247,7 @@ When only polarity or only an accent was found, the other half falls back to `Da
 own default (dark, no accent override).
 
 The derived theme is `DarkTheme()`/`LightTheme()` by polarity, with a found accent color
-applied to the same fields `--detect-theme`'s own single-accent case applies to (the border
+applied to the same fields a single detected accent has always applied to (the border
 accent, the keyword syntax color, and the focused mode-line gradient blended 60% toward
 it) -- one detected color still produces a coherent-looking theme rather than a literal,
 half-derived one.
@@ -159,7 +290,8 @@ Strings are stops. Numbers are weights. That is all of it.
 
 Both are equivalent: the array form is Janet sugar from the bundled `gradients.janet`
 plugin, which flattens it into the one-line string the editor actually parses. The one-line
-form is also what `M-x save-theme` writes and what the plain `key=value` theme file takes.
+form is the only one C++ parses; the array form is sugar the bundled `gradients.janet`
+flattens into it.
 
 - **Axes** are `:x`, `:y`, `:diag`, `:radial`, defaulting to `:y`. Radial centres on the box.
 - **Weights** are relative span sizes. `[:y "#89b4faff" 3 "#89b4fa00"]` spends three
@@ -178,9 +310,8 @@ form is also what `M-x save-theme` writes and what the plain `key=value` theme f
 - **`:blur`** takes a radius and an optional tint: `[:blur 2 "#00000033"]`. It samples what
   is beneath and box-blurs it.
 - **`:stack`** applies several paints in order: `[:stack "$glass" [:noise 6 "$bg"]]`. It is
-  the one construct with no one-line form, so a stacked paint cannot be written into the
-  flat theme file (`save-theme` says so in a comment rather than emitting something that
-  would mean the wrong thing).
+  the one construct with no one-line form, so it is only expressible in the array form --
+  which is why a stack's layers are usually *named* paints.
 
 ### `$slot` references
 
@@ -220,8 +351,14 @@ building blocks rather than terminal values:
 ```
 
 Parts are `fill`, `border` and `text`. Names: `buffer`, `buffer.current_line`,
-`buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab`, `tab.active`,
-`echo`, `scrollbar`, `panel`, `popup`.
+`buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab.strip`, `tab`,
+`tab.active`, `tab.active.focused`, `echo`, `scrollbar`, `panel`, `popup`.
+
+Not all of them are painted yet. Setting one no widget consumes parses and stores fine and
+then does nothing visible -- `buffer`, `buffer.selection`, `buffer.search`, `echo`,
+`scrollbar` and `popup` are in that state today, waiting on the text-layer and popup phases
+in `ROADMAP.md`. `M-x theme-gallery` lists every name either way, since what it shows is
+what the surface *resolves to*, not whether anything draws it.
 
 Surfaces are **additive**: anything a theme does not set stays derived from the colour keys
 above, so setting none of them leaves every widget painting exactly what it always has.
@@ -231,16 +368,41 @@ overlay: it is up the whole time you are typing, so a selection or a search hit 
 against it rather than tie. It sets `fill` alone -- a current-line marker is a background,
 and the rest of the line's colour is the theme's own business.
 
+`panel` is the other derived default that is not simply the flat colour its widgets used
+to paint: it is a horizontal walk, ~4% lifted at the left dock's outer edge and settling to
+exactly the buffer background where the two meet. That gives the dock a direction without
+putting a step in the seam, and it is why the dock reads as lifting away from the buffer
+rather than butting against it. The direction follows the background's own luminance --
+lighter on a dark theme, darker on a light one -- because a fixed "toward white" does
+nothing on a light theme, whose background already sits a couple of levels off white.
+`LeftDock`, `ProjectSidebar` and `VcsPanel` all paint through it, so the rail, the border
+columns and the panel interior ramp together.
+
+The falloff runs on the *panel's* side of the seam and never the buffer's: the buffer's
+columns carry code, and a wash over a glyph tints the text rather than its background (see
+`Docs/Translucency.md`'s T3). Over a theme whose background is the terminal's own there is
+no colour to walk, so the panel keeps showing the desktop through, untouched -- imposing a
+dithered edge by default on a theme that exists to be seen through is a theme author's call
+to make with `ned/theme-surface`, not a default.
+
 ### Translucent overlays
 
-Selection, search-match and snippet-field backgrounds are composited over the buffer's own
-background rather than replacing it, so any of them can carry alpha:
+Every wash the buffer paints over a line is composited over the buffer's own background
+rather than replacing it, so any of them can carry alpha -- selection, search match and
+snippet field, and (as of the text-layer pass) the merge-conflict ours/theirs/base tints,
+`documentHighlight`, line-inspect, the DAP execution line, a multibuffer's added/removed
+diff tints, and trailing whitespace:
 
 ```janet
 (ned/theme-set "selection_background" "#61afef80")   # the accent at half strength
 ```
 
-An opaque value behaves exactly as it always did. A detected theme uses this already: its
+An opaque value behaves exactly as it always did -- it composites to itself, byte for byte,
+which is why giving those fields an alpha channel changed nothing for any theme that had
+already set them. Note the asymmetry with `selection_background`, which is the one field
+that substitutes a default alpha when a theme leaves it fully opaque (every theme written
+before the format had alpha says 255, and a solid bar over text is what that produces);
+the rest stay exactly as authored. A detected theme uses this already: its
 selection is the desktop accent at 50%, its mode line fades toward the buffer as it runs
 right, and an inactive tab sits back behind the active one. Over a theme whose background
 is the terminal's own there is nothing to composite against, so a translucent overlay lands

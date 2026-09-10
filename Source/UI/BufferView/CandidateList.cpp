@@ -16,8 +16,9 @@ namespace {
 
 } // namespace
 
-void CandidateList::Reset(std::vector<std::string> candidates, std::string_view query) {
-    source_ = std::move(candidates);
+void CandidateList::Reset(std::vector<std::string> candidates, std::string_view query, std::size_t pinnedCount) {
+    source_      = std::move(candidates);
+    pinnedCount_ = std::min(pinnedCount, source_.size());
     RankAgainst(query, /*keepSelection=*/false);
 }
 
@@ -27,6 +28,9 @@ void CandidateList::Refilter(std::string_view query) {
 
 void CandidateList::Refilter(std::vector<std::string> candidates, std::string_view query) {
     source_ = std::move(candidates);
+    // Nominally the same pool (see the header), so the pin count carries over
+    // -- but it can no longer point past the end.
+    pinnedCount_ = std::min(pinnedCount_, source_.size());
     RankAgainst(query, /*keepSelection=*/true);
 }
 
@@ -41,7 +45,23 @@ const std::vector<std::string>& CandidateList::Refiltered(std::vector<std::strin
 }
 
 void CandidateList::RankAgainst(std::string_view query, bool keepSelection) {
-    ranked_ = editor::FuzzyFilterAndRank(source_, std::string(query));
+    if (pinnedCount_ == 0) {
+        ranked_ = editor::FuzzyFilterAndRank(source_, std::string(query));
+    }
+    else {
+        // Pinned entries keep the caller's own order rather than being ranked
+        // among themselves -- they are a fixed little menu, not results.
+        ranked_.clear();
+        for (std::size_t i = 0; i < pinnedCount_; ++i) {
+            if (editor::FuzzyScore(source_[i], query)) {
+                ranked_.push_back(source_[i]);
+            }
+        }
+        const std::vector<std::string> rest(source_.begin() + static_cast<std::ptrdiff_t>(pinnedCount_), source_.end());
+        for (std::string& name : editor::FuzzyFilterAndRank(rest, std::string(query))) {
+            ranked_.push_back(std::move(name));
+        }
+    }
     if (!keepSelection || ranked_.empty()) {
         selection_ = 0;
         return;
