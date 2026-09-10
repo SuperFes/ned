@@ -22,6 +22,10 @@ namespace ned::ui {
 
 namespace {
 
+    // ~18%: a pinned ancestor should be findable at a glance without
+    // competing with the selection, which owns a real background.
+    constexpr std::uint8_t kStickyHighlightAlpha = 46;
+
     // Standard Unicode Box Drawing characters (guaranteed single-column
     // width in any monospace font) for tree-connector lines, `tree`-command
     // style -- deliberately not Nerd Font icons: those need a specific
@@ -441,16 +445,36 @@ void ProjectSidebar::Paint(Canvas c) {
 
         const std::optional<Color> vcsColor = VcsStatusColor(LookupVcsStatus(vcsStatus_, entry.path), theme_);
 
+        // A directory is structure, so it reads *stronger* than a file, not
+        // weaker: same text colour, bold. It used to take
+        // lineNumberForeground -- the gutter's deliberately recessive gray --
+        // which put the tree's own scaffolding below the leaves it organises
+        // and left the panel looking washed out (reported live).
+        //
+        // A pinned ancestor is a hint about where you are, not a header bar,
+        // so it takes a wash at kStickyHighlightAlpha rather than the solid
+        // chrome brush it used to. Composited, so it tints whatever the
+        // panel is showing -- including the desktop, for a transparent theme.
+        const Color stickyTone =
+            theme_.tabBar.background.Composable() ? theme_.tabBar.background : theme_.modeLineGradientStart;
+
         Brush brush =
             isActiveFile ? theme_.activeTab
-            : isSticky   ? theme_.tabBar // pinned ancestor header -- same chrome family as TabBar's own row
+            : isSticky   ? Brush{.background = OverlayBackground(theme_, stickyTone.WithAlpha(kStickyHighlightAlpha)),
+                                 .foreground = vcsColor.value_or(theme_.defaultForeground),
+                                 .bold       = true}
                          : Brush{.background = theme_.background,
-                                 .foreground = vcsColor.value_or(entry.isDirectory ? theme_.lineNumberForeground
-                                                                                   : theme_.defaultForeground)};
+                                 .foreground = vcsColor.value_or(theme_.defaultForeground),
+                                 .bold       = entry.isDirectory};
+
         if (isSelected) {
             brush.background = OverlayBackground(theme_, SelectionFill(theme_));
+        }
+        // A row-wide background reads as a band; painting only the label's
+        // own cells would leave the wash stopping mid-row.
+        if (isSelected || isSticky) {
             for (int x = 0; x < contentColumns; ++x) {
-                c[{.x = x, .y = row}].background_color = OverlayBackground(theme_, SelectionFill(theme_));
+                c[{.x = x, .y = row}].background_color = brush.background;
             }
         }
 
