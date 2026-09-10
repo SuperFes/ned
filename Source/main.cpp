@@ -1321,6 +1321,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // own header comment for the three hooks below and why keyboard needs
     // none). Inert until something is Show()n.
     OverlayHost overlays;
+    // Translucency phase 7c: the host paints each overlay's shadow, since a
+    // shadow falls outside the overlay's own Box and a Canvas clips to its
+    // box. Inert until a theme gives a surface a non-zero elevation.
+    overlays.SetTheme(&theme);
 
     // Inline diff preview (VCS side panel follow-up): a bottom-docked,
     // non-focusable overlay, TerminalPanel's own geometry but smaller and

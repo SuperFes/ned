@@ -359,7 +359,23 @@ top and bottom edges, `y` runs down the sides, `diag` goes corner to corner:
 ```
 
 Only the frame's foreground is touched, so the body's fill runs underneath it, and the
-border title keeps its own accent rather than being swept through by the gradient. Names: `buffer`, `buffer.current_line`,
+border title keeps its own accent rather than being swept through by the gradient.
+
+Two more parts are not paints. `shadow` takes `dx dy radius colour` and `elevation` takes an
+integer, and a surface needs both to cast one -- **elevation defaults to 0, which means no
+shadow**, so nothing changes until you ask:
+
+```janet
+(ned/theme-surface "popup" "shadow" "2 1 2 #000000c0")
+(ned/theme-surface "popup" "elevation" "1")
+```
+
+Elevation multiplies the offset, so the same shadow spec at a higher elevation reads as
+further off the page. The shadow is drawn by the overlay host rather than the widget, since
+it falls outside the widget's own box, and it never darkens the cells the overlay itself
+covers. `radius` softens its edge; `0` is a hard-edged offset block. The colour goes through
+the same parser paint stops do, so `$slot` references and `#rrggbbaa` both work -- a shadow
+tinted toward the theme's own background reads better than flat black on some themes. Names: `buffer`, `buffer.current_line`,
 `buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab.strip`, `tab`,
 `tab.active`, `tab.active.focused`, `echo`, `scrollbar`, `panel`, `popup`.
 

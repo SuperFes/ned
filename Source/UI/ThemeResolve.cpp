@@ -94,6 +94,38 @@ int ApplyPaintOverrides(const Theme& theme) {
         }
     }
     for (const auto& override : editor::SurfacePaintOverrides()) {
+        // Translucency phase 7c: two parts that are not paints. Handled
+        // before ParsePaint so a shadow spec is never fed to a parser that
+        // would reject it for the wrong reason.
+        if (override.part == "shadow") {
+            const std::optional<Shadow> shadow = ParseShadow(override.spec, PaintContextFor(theme));
+            if (!shadow) {
+                ++rejected;
+                continue;
+            }
+            Surface surface = SurfaceFor(theme, override.surface);
+            surface.shadow  = *shadow;
+            SetSurfaceOverride(override.surface, surface);
+            continue;
+        }
+        if (override.part == "elevation") {
+            try {
+                std::size_t consumed  = 0;
+                const int   elevation = std::stoi(override.spec, &consumed);
+                if (consumed != override.spec.size() || elevation < 0) {
+                    ++rejected;
+                    continue;
+                }
+                Surface surface   = SurfaceFor(theme, override.surface);
+                surface.elevation = elevation;
+                SetSurfaceOverride(override.surface, surface);
+            }
+            catch (const std::exception&) {
+                ++rejected;
+            }
+            continue;
+        }
+
         const auto paint = ParsePaint(override.spec, PaintContextFor(theme));
         if (!paint) {
             ++rejected;

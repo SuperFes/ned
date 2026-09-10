@@ -55,10 +55,12 @@ void                                                           AddNamedPaint(con
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> NamedPaintOverrides();
 void                                                           ClearNamedPaintOverrides();
 
-// One part of one surface: ("popup", "fill", "y $bg/78 3 $bg/52"). Parts
-// are "fill", "border" and "text"; an unknown part is main.cpp's to report,
-// not this layer's. Shadow and elevation are deliberately not here yet --
-// nothing paints them until the popup phase.
+// One part of one surface: ("popup", "fill", "y $bg/78 3 $bg/52"). Parts are
+// "fill", "border", "text", "shadow" and "elevation"; an unknown part is
+// UI/ThemeResolve.h's to report, not this layer's. The last two are not
+// paints -- a shadow is `dx dy radius colour` and an elevation is an integer
+// -- but they travel the same deferred, string-only route for the same
+// reason: this layer never interprets a spec.
 struct SurfacePaintOverride {
     std::string surface;
     std::string part;
