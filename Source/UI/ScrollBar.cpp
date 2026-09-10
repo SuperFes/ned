@@ -62,11 +62,8 @@ void ScrollBar::Paint(Canvas c) {
         // turned out to be rather than depending on a second themed colour.
         Cell& cell            = c[at];
         cell.character        = std::string(1, onThumb ? kThumbChar : kTrackChar);
+        theme_.scrollBar.ApplyTextTo(cell);
         cell.foreground_color = TextColourAt(surface, c, at, theme_.scrollBar.foreground);
-        cell.bold             = theme_.scrollBar.bold;
-        cell.italic           = theme_.scrollBar.italic;
-        cell.underlined       = theme_.scrollBar.underlined;
-        cell.strikethrough    = theme_.scrollBar.strikethrough;
         cell.inverted         = onThumb; // solid block look for the thumb, distinct from the plain track
     }
 

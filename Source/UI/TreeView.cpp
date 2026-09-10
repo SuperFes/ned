@@ -31,12 +31,7 @@ namespace {
             const std::size_t next = text::NextCodepointBoundary(text, pos);
             Cell&             cell = c[{.x = x, .y = row}];
             cell.character         = text.substr(pos, next - pos);
-            cell.foreground_color  = brush.foreground;
-            cell.bold              = brush.bold;
-            cell.italic            = brush.italic;
-            cell.underlined        = brush.underlined;
-            cell.strikethrough     = brush.strikethrough;
-            cell.inverted          = false;
+            brush.ApplyTextTo(cell);
             ++x;
             pos = next;
         }
@@ -108,12 +103,7 @@ void TreeView::Paint(Canvas c) {
         for (int x = 1; x < width - 1; ++x) {
             Cell& cell            = c[{.x = x, .y = y}];
             cell.character        = " ";
-            cell.foreground_color = labelBrush.foreground;
-            cell.bold             = labelBrush.bold;
-            cell.italic           = labelBrush.italic;
-            cell.underlined       = labelBrush.underlined;
-            cell.strikethrough    = labelBrush.strikethrough;
-            cell.inverted         = false;
+            labelBrush.ApplyTextTo(cell);
         }
     }
 

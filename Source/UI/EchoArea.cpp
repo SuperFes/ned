@@ -143,13 +143,15 @@ void EchoArea::Paint(Canvas c) {
         // traits (Surface has none of its own -- see ROADMAP) and the
         // background is already down. Leaving background_color alone is what
         // keeps the fill underneath intact.
-        Cell& cell            = c[at];
-        cell.character        = message_.substr(i, next - i);
+        Cell& cell     = c[at];
+        cell.character = message_.substr(i, next - i);
+        theme_.echoArea.ApplyTextTo(cell);
         cell.foreground_color = base;
-        cell.bold             = theme_.echoArea.bold || emphasize;
-        cell.italic           = theme_.echoArea.italic || ghost;
-        cell.underlined       = theme_.echoArea.underlined;
-        cell.strikethrough    = theme_.echoArea.strikethrough;
+        // The inline markup widens the Brush's own traits rather than
+        // replacing them: a theme asking for an italic echo area still gets
+        // one on a row that happens to carry an emphasis sentinel.
+        cell.bold |= emphasize;
+        cell.italic |= ghost;
         if (dim) {
             cell.foreground_color = Color::Interpolate(0.5F, base, painted);
         }
@@ -171,11 +173,8 @@ void EchoArea::Paint(Canvas c) {
         const Point at{.x = x, .y = 0};
         Cell&       cell      = c[at];
         cell.character        = " ";
+        theme_.echoArea.ApplyTextTo(cell);
         cell.foreground_color = TextColourAt(surface, c, at, theme_.echoArea.foreground);
-        cell.bold             = theme_.echoArea.bold;
-        cell.italic           = theme_.echoArea.italic;
-        cell.underlined       = theme_.echoArea.underlined;
-        cell.strikethrough    = theme_.echoArea.strikethrough;
     }
 
     ApplyTextFade(c, surface);
