@@ -1,195 +1,80 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <cstdlib>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
+#include <algorithm>
+#include <optional>
 #include <string>
+#include <vector>
 
-#include "Editor/SyntaxTheme.h"
 #include "UI/ThemeFile.h"
 
-using ned::ui::Brush;
 using ned::ui::Color;
 using ned::ui::DarkTheme;
 using ned::ui::LightTheme;
-using ned::ui::LoadThemeFile;
-using ned::ui::ParseTheme;
-using ned::ui::SaveThemeFile;
-using ned::ui::SerializeTheme;
+using ned::ui::SetThemeColorByKey;
 using ned::ui::Theme;
-using ned::ui::ThemeFilePath;
+using ned::ui::ThemeKeys;
+using ned::ui::ThemeValueByKey;
 
 namespace {
 
-// Mirrors Tests/InitFileTest.cpp's EnvVarGuard exactly, since ThemeFilePath
-// follows the same XDG resolution InitFilePath does.
-class EnvVarGuard {
-  public:
-    EnvVarGuard(const char* name, const char* value) : name_(name) {
-        if (const char* existing = std::getenv(name)) {
-            hadPrevious_ = true;
-            previous_    = existing;
-        }
-        if (value) {
-            setenv(name, value, 1);
-        }
-        else {
-            unsetenv(name);
-        }
+// Every key applied onto `base`, taking each value from `from` -- what
+// writing one theme's worth of (ned/theme-set ...) calls into an init.janet
+// and starting ned does, minus the Janet.
+Theme ApplyAllKeys(const Theme& from, Theme base) {
+    for (const std::string& key : ThemeKeys()) {
+        const std::optional<std::string> value = ThemeValueByKey(from, key);
+        REQUIRE(value.has_value());
+        REQUIRE(SetThemeColorByKey(base, key, *value));
     }
-
-    ~EnvVarGuard() {
-        if (hadPrevious_) {
-            setenv(name_.c_str(), previous_.c_str(), 1);
-        }
-        else {
-            unsetenv(name_.c_str());
-        }
-    }
-
-    EnvVarGuard(const EnvVarGuard&)            = delete;
-    EnvVarGuard& operator=(const EnvVarGuard&) = delete;
-
-  private:
-    std::string name_;
-    bool        hadPrevious_ = false;
-    std::string previous_;
-};
+    return base;
+}
 
 } // namespace
 
-TEST_CASE("ThemeFilePath prefers XDG_CONFIG_HOME when set", "[ThemeFile]") {
-    EnvVarGuard xdg("XDG_CONFIG_HOME", "/tmp/ned-xdg-test-config");
-    EnvVarGuard home("HOME", "/tmp/ned-xdg-test-home");
+TEST_CASE("Every listed key reads back and assigns", "[ThemeFile]") {
+    // ThemeKeys and the ThemeValueByKey/SetThemeColorByKey pair are three
+    // walks over one table; nothing but this holds them together, and a key
+    // that lists but does not assign would be silently unsettable.
+    const std::vector<std::string> keys = ThemeKeys();
+    REQUIRE(keys.size() > 60); // the whole vocabulary, not a subset
 
-    REQUIRE(ThemeFilePath() == std::filesystem::path("/tmp/ned-xdg-test-config/ned/theme.txt"));
+    // No duplicates -- a repeated key would mean two fields fighting over
+    // one name, with the first always winning.
+    std::vector<std::string> sorted = keys;
+    std::sort(sorted.begin(), sorted.end());
+    REQUIRE(std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end());
+
+    Theme theme = DarkTheme();
+    for (const std::string& key : keys) {
+        INFO(key);
+        const std::optional<std::string> value = ThemeValueByKey(theme, key);
+        REQUIRE(value.has_value());
+        REQUIRE(SetThemeColorByKey(theme, key, *value));
+    }
+
+    REQUIRE_FALSE(ThemeValueByKey(theme, "no_such_key").has_value());
 }
 
-TEST_CASE("ThemeFilePath falls back to HOME/.config when XDG_CONFIG_HOME is unset", "[ThemeFile]") {
-    EnvVarGuard xdg("XDG_CONFIG_HOME", nullptr);
-    EnvVarGuard home("HOME", "/tmp/ned-xdg-test-home");
-
-    REQUIRE(ThemeFilePath() == std::filesystem::path("/tmp/ned-xdg-test-home/.config/ned/theme.txt"));
-}
-
-TEST_CASE("ThemeFilePath throws when neither XDG_CONFIG_HOME nor HOME is set", "[ThemeFile]") {
-    EnvVarGuard xdg("XDG_CONFIG_HOME", nullptr);
-    EnvVarGuard home("HOME", nullptr);
-
-    REQUIRE_THROWS_AS(ThemeFilePath(), std::runtime_error);
-}
-
-TEST_CASE("SerializeTheme/ParseTheme round-trips DarkTheme exactly", "[ThemeFile]") {
+TEST_CASE("The key table covers a whole theme, losslessly", "[ThemeFile]") {
+    // Applying every key of one theme onto a deliberately mismatched base
+    // has to produce the first theme exactly -- which is what makes "write
+    // your theme as ned/theme-set calls in init.janet" a complete story
+    // rather than one that silently drops whatever the table forgot.
     const Theme original = DarkTheme();
-    const Theme restored = ParseTheme(SerializeTheme(original), LightTheme()); // deliberately mismatched base
+    const Theme rebuilt  = ApplyAllKeys(original, LightTheme());
 
-    REQUIRE(restored.background == original.background);
-    REQUIRE(restored.defaultForeground == original.defaultForeground);
-    REQUIRE(restored.commentForeground == original.commentForeground);
-    REQUIRE(restored.stringForeground == original.stringForeground);
-    REQUIRE(restored.keywordForeground == original.keywordForeground);
-    REQUIRE(restored.numberForeground == original.numberForeground);
-    REQUIRE(restored.modeLineForeground == original.modeLineForeground);
-    REQUIRE(restored.modeLineGradientStart == original.modeLineGradientStart);
-    REQUIRE(restored.modeLineGradientEnd == original.modeLineGradientEnd);
-    REQUIRE(restored.echoArea == original.echoArea);
-    REQUIRE(restored.selectionBackground == original.selectionBackground);
-    REQUIRE(restored.isearchMatchBackground == original.isearchMatchBackground);
-    REQUIRE(restored.tabBar.background == original.tabBar.background);
-    REQUIRE(restored.tabBar.foreground == original.tabBar.foreground);
-    REQUIRE(restored.activeTab.background == original.activeTab.background);
-    REQUIRE(restored.activeTab.foreground == original.activeTab.foreground);
-    REQUIRE(restored.scrollBar.background == original.scrollBar.background);
-    REQUIRE(restored.scrollBar.foreground == original.scrollBar.foreground);
-    REQUIRE(restored.scrollBarDisabled.background == original.scrollBarDisabled.background);
-    REQUIRE(restored.scrollBarDisabled.foreground == original.scrollBarDisabled.foreground);
-    REQUIRE(restored.binaryForeground == original.binaryForeground);
-    REQUIRE(restored.linkForeground == original.linkForeground);
-    REQUIRE(restored.truncationIndicatorForeground == original.truncationIndicatorForeground);
-    REQUIRE(restored.unsavedChangeIndicator == original.unsavedChangeIndicator);
-    REQUIRE(restored.headlineLevel1Foreground == original.headlineLevel1Foreground);
-    REQUIRE(restored.headlineLevel2Foreground == original.headlineLevel2Foreground);
-    REQUIRE(restored.headlineLevel3Foreground == original.headlineLevel3Foreground);
-    REQUIRE(restored.todoKeywordForeground == original.todoKeywordForeground);
-    REQUIRE(restored.doneKeywordForeground == original.doneKeywordForeground);
-    REQUIRE(restored.checkboxForeground == original.checkboxForeground);
-    REQUIRE(restored.underlineForeground == original.underlineForeground);
-    REQUIRE(restored.strikethroughForeground == original.strikethroughForeground);
-    REQUIRE(restored.keywordModifierForeground == original.keywordModifierForeground);
-    REQUIRE(restored.methodForeground == original.methodForeground);
-    REQUIRE(restored.constructorForeground == original.constructorForeground);
-    REQUIRE(restored.labelForeground == original.labelForeground);
-    REQUIRE(restored.returnTypeForeground == original.returnTypeForeground);
-    REQUIRE(restored.includePathForeground == original.includePathForeground);
-    REQUIRE(restored.border.background == original.border.background);
-    REQUIRE(restored.border.foreground == original.border.foreground);
-    REQUIRE(restored.borderAccent.background == original.borderAccent.background);
-    REQUIRE(restored.borderAccent.foreground == original.borderAccent.foreground);
-    REQUIRE(restored.modeLineFocusedGradientStart == original.modeLineFocusedGradientStart);
-    REQUIRE(restored.modeLineFocusedGradientEnd == original.modeLineFocusedGradientEnd);
+    for (const std::string& key : ThemeKeys()) {
+        INFO(key);
+        REQUIRE(ThemeValueByKey(rebuilt, key) == ThemeValueByKey(original, key));
+    }
 }
 
-TEST_CASE("SerializeTheme/ParseTheme round-trips LightTheme's TrueColor palette exactly", "[ThemeFile]") {
-    const Theme original = LightTheme();
-    const Theme restored = ParseTheme(SerializeTheme(original), DarkTheme());
-
-    REQUIRE(restored.background == original.background);
-    REQUIRE(restored.defaultForeground == original.defaultForeground);
-    REQUIRE(restored.selectionBackground == original.selectionBackground);
-}
-
-TEST_CASE("ParseTheme keeps base's value for a malformed or unrecognized entry", "[ThemeFile]") {
-    const Theme base = DarkTheme();
-
-    const Theme result = ParseTheme(
-        "background=not-a-color\n"
-        "some_future_key=irrelevant\n"
-        "string_foreground=#00ff00\n",
-        base);
-
-    REQUIRE(result.background == base.background);            // malformed -- kept base's value
-    REQUIRE(result.stringForeground == Color::RGB(0x00ff00)); // valid -- overridden
-}
-
-TEST_CASE("ParseTheme understands the \"default\" sentinel as a pass-through Color", "[ThemeFile]") {
-    const Theme result = ParseTheme("background=default\n", LightTheme()); // LightTheme's own background is opaque RGB
-
-    REQUIRE(result.background == Color::Default);
-}
-
-TEST_CASE("SaveThemeFile/LoadThemeFile round-trip through a real file", "[ThemeFile]") {
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_theme_file_test" / "theme.txt";
-    std::filesystem::remove_all(path.parent_path());
-
-    SaveThemeFile(LightTheme(), path);
-    REQUIRE(std::filesystem::exists(path));
-
-    const auto loaded = LoadThemeFile(path);
-    REQUIRE(loaded.has_value());
-    REQUIRE(loaded->background == LightTheme().background);
-
-    std::filesystem::remove_all(path.parent_path());
-}
-
-TEST_CASE("LoadThemeFile returns nullopt for a missing file", "[ThemeFile]") {
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_theme_file_test_missing.txt";
-    std::filesystem::remove(path);
-
-    REQUIRE_FALSE(LoadThemeFile(path).has_value());
-}
-
-// theme-editing follow-up: the shared key table's new coverage and the
-// theme.janet side.
-
-TEST_CASE("Round-trip preserves the per-SyntaxClass colors the old serializer dropped", "[ThemeFile]") {
-    // These 19 fields were never serialized before the shared key table --
-    // fine for --detect-theme's chrome-focused output, fatal for
-    // save-theme's edit-and-reload workflow.
+TEST_CASE("Round-trip preserves the per-SyntaxClass colors an older table dropped", "[ThemeFile]") {
+    // These 19 fields were never covered before the shared key table. Named
+    // individually rather than left to the whole-theme case above, because
+    // that is the regression this guards.
     const Theme original = DarkTheme();
-    const Theme restored = ParseTheme(SerializeTheme(original), LightTheme()); // deliberately mismatched base
+    const Theme restored = ApplyAllKeys(original, LightTheme());
 
     REQUIRE(restored.docCommentForeground == original.docCommentForeground);
     REQUIRE(restored.stringEscapeForeground == original.stringEscapeForeground);
@@ -213,11 +98,19 @@ TEST_CASE("Round-trip preserves the per-SyntaxClass colors the old serializer dr
     REQUIRE(restored.ghostTextForeground == original.ghostTextForeground);
 }
 
+TEST_CASE("Brush traits round-trip through the key table, not just colours", "[ThemeFile]") {
+    Theme original          = DarkTheme();
+    original.activeTab.bold = false; // flip away from DarkTheme's own true, so a dropped trait would show
+
+    const Theme rebuilt = ApplyAllKeys(original, LightTheme());
+    REQUIRE_FALSE(rebuilt.activeTab.bold);
+    REQUIRE(ThemeValueByKey(rebuilt, "active_tab_bold") == std::optional<std::string>{"false"});
+}
+
 TEST_CASE("A legacy x:<n> token still loads, as real RGB", "[ThemeFile]") {
-    // Theme files written before themes went truecolor-only (the ANSI
-    // fallback pair, or a --detect-theme cache from that era) carry palette
-    // indices. They must keep loading -- but as RGB, since nothing puts a
-    // palette index back into a theme now.
+    // An init.janet from before themes went truecolor-only can still carry
+    // palette indices. They must keep resolving -- but as RGB,
+    // since nothing puts a palette index back into a theme now.
     Theme theme = DarkTheme();
 
     REQUIRE(ned::ui::SetThemeColorByKey(theme, "border_accent_foreground", "x:5"));
@@ -271,121 +164,4 @@ TEST_CASE("SetThemeColorByKey assigns a Brush's bold/italic/underlined/strikethr
     REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "active_tab_bold", "not-a-bool"));
     REQUIRE_FALSE(theme.activeTab.bold); // the bad token assigned nothing, prior value kept
     REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "no_such_prefix_bold", "true"));
-}
-
-TEST_CASE("SerializeTheme/ParseTheme round-trips every Brush trait, not just background/foreground", "[ThemeFile]") {
-    Theme original = DarkTheme();
-    // Deliberately flip every trait on every kBrushKeys field away from
-    // DarkTheme's own defaults, so a trait silently not round-tripping
-    // would show up as a mismatch rather than an accidental match.
-    for (Brush Theme::* field :
-         {&Theme::echoArea, &Theme::tabBar, &Theme::activeTab, &Theme::scrollBar, &Theme::scrollBarDisabled,
-          &Theme::border, &Theme::borderAccent}) {
-        Brush& brush        = original.*field;
-        brush.bold          = !brush.bold;
-        brush.italic        = !brush.italic;
-        brush.underlined    = !brush.underlined;
-        brush.strikethrough = !brush.strikethrough;
-    }
-
-    const Theme restored = ParseTheme(SerializeTheme(original), LightTheme()); // deliberately mismatched base
-
-    REQUIRE(restored.echoArea == original.echoArea);
-    REQUIRE(restored.tabBar == original.tabBar);
-    REQUIRE(restored.activeTab == original.activeTab);
-    REQUIRE(restored.scrollBar == original.scrollBar);
-    REQUIRE(restored.scrollBarDisabled == original.scrollBarDisabled);
-    REQUIRE(restored.border == original.border);
-    REQUIRE(restored.borderAccent == original.borderAccent);
-}
-
-TEST_CASE("SerializeThemeJanet's Brush trait calls are round-trippable, same as the color calls", "[ThemeFile]") {
-    Theme original          = DarkTheme();
-    original.activeTab.bold = false; // flip away from DarkTheme's own true, so a dropped trait would show up
-
-    const std::string janet = ned::ui::SerializeThemeJanet(original);
-    REQUIRE(janet.find("(ned/theme-set \"active_tab_bold\" \"false\")") != std::string::npos);
-
-    Theme              rebuilt = LightTheme();
-    std::istringstream in{janet};
-    std::string        line;
-    while (std::getline(in, line)) {
-        if (line.rfind("(ned/theme-set \"", 0) != 0) {
-            continue; // header comment
-        }
-        const std::size_t keyStart = std::strlen("(ned/theme-set \"");
-        const std::size_t keyEnd   = line.find('"', keyStart);
-        const std::size_t valStart = line.find('"', keyEnd + 1) + 1;
-        const std::size_t valEnd   = line.find('"', valStart);
-        REQUIRE(ned::ui::SetThemeColorByKey(rebuilt, line.substr(keyStart, keyEnd - keyStart),
-                                            line.substr(valStart, valEnd - valStart)));
-    }
-    REQUIRE(SerializeTheme(rebuilt) == SerializeTheme(original));
-}
-
-TEST_CASE("SerializeThemeJanet emits one ned/theme-set call per serialized color, round-trippable", "[ThemeFile]") {
-    const Theme       original = DarkTheme();
-    const std::string janet    = ned::ui::SerializeThemeJanet(original);
-
-    REQUIRE(janet.find("(ned/theme-set \"background\" ") != std::string::npos);
-    REQUIRE(janet.find("(ned/theme-set \"keyword_foreground\" ") != std::string::npos);
-    REQUIRE(janet.find("(ned/theme-set \"border_accent_foreground\" ") != std::string::npos);
-
-    // Re-apply every emitted (key, token) pair onto a mismatched base via
-    // SetThemeColorByKey -- exactly what the real ned/theme-set path does at
-    // startup -- and require the result to serialize identically to the
-    // original: the generated Janet is a complete, lossless snapshot.
-    Theme              rebuilt = LightTheme();
-    std::istringstream in{janet};
-    std::string        line;
-    while (std::getline(in, line)) {
-        if (line.rfind("(ned/theme-set \"", 0) != 0) {
-            continue; // header comment
-        }
-        const std::size_t keyStart = std::strlen("(ned/theme-set \"");
-        const std::size_t keyEnd   = line.find('"', keyStart);
-        const std::size_t valStart = line.find('"', keyEnd + 1) + 1;
-        const std::size_t valEnd   = line.find('"', valStart);
-        REQUIRE(ned::ui::SetThemeColorByKey(rebuilt, line.substr(keyStart, keyEnd - keyStart),
-                                            line.substr(valStart, valEnd - valStart)));
-    }
-    REQUIRE(SerializeTheme(rebuilt) == SerializeTheme(original));
-}
-
-// theme-file-capture-serialization follow-up: ned/set-syntax-*/
-// ned/set-capture-*/ned/set-capture-class overrides live in a separate,
-// process-wide store (Editor/SyntaxTheme.h), layered on top of a Theme's own
-// fields at render time rather than part of the struct SerializeThemeJanet
-// otherwise walks -- these two cases are what closes that gap.
-TEST_CASE("SerializeThemeJanet round-trips ned/set-syntax-* and ned/set-capture-* overrides too", "[ThemeFile]") {
-    struct OverrideGuard {
-        ~OverrideGuard() {
-            ned::editor::SetSyntaxForeground(ned::editor::SyntaxClass::Comment, std::nullopt);
-            ned::editor::SetSyntaxBold(ned::editor::SyntaxClass::Comment, std::nullopt);
-            ned::editor::SetCaptureForeground("function.builtin", std::nullopt);
-            ned::editor::SetSyntaxClassForCapture("markdown/punctuation.special", std::nullopt);
-        }
-    } guard;
-    ned::editor::SetSyntaxForeground(ned::editor::SyntaxClass::Comment, std::string("#112233"));
-    ned::editor::SetSyntaxBold(ned::editor::SyntaxClass::Comment, true);
-    ned::editor::SetCaptureForeground("function.builtin", std::string("#445566"));
-    ned::editor::SetSyntaxClassForCapture("markdown/punctuation.special", ned::editor::SyntaxClass::Comment);
-
-    const std::string janet = ned::ui::SerializeThemeJanet(DarkTheme());
-    REQUIRE(janet.find("(ned/set-syntax-foreground \"comment\" \"#112233\")") != std::string::npos);
-    REQUIRE(janet.find("(ned/set-syntax-bold \"comment\" true)") != std::string::npos);
-    REQUIRE(janet.find("(ned/set-capture-foreground \"function.builtin\" \"#445566\")") != std::string::npos);
-    REQUIRE(janet.find("(ned/set-capture-class \"markdown/punctuation.special\" \"comment\")") != std::string::npos);
-}
-
-TEST_CASE("SerializeThemeJanet emits no ned/set-syntax-*/ned/set-capture-* calls with nothing configured",
-          "[ThemeFile]") {
-    const std::string janet = ned::ui::SerializeThemeJanet(DarkTheme());
-    REQUIRE(janet.find("ned/set-syntax-") == std::string::npos);
-    REQUIRE(janet.find("ned/set-capture-") == std::string::npos);
-}
-
-TEST_CASE("ThemeJanetFilePath sits beside the theme.txt path", "[ThemeFile]") {
-    EnvVarGuard xdg("XDG_CONFIG_HOME", "/tmp/ned-xdg-test-config");
-    REQUIRE(ned::ui::ThemeJanetFilePath() == std::filesystem::path("/tmp/ned-xdg-test-config/ned/theme.janet"));
 }

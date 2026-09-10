@@ -39,17 +39,16 @@ Notcurses.
 Full design: `Docs/Translucency.md` (techniques, compositing rules, phasing, risks).
 Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlphaProbe.cpp`.
 
-- [ ] **Phase 1 — alpha in the compositor.** `Color` gains an alpha byte; `Screen::Blend`
-      implements the five resolution rules (known-bg lerp, dither, foreground tint, opaque
-      escape hatch). Headless unit tests; no visual change.
-- [ ] **Phase 2 — Paint/Surface types.** `Paint` (solid/linear/radial/blur), `Shadow`,
-      `Surface`, `Canvas::Fill(box, Paint)`, per-Paint `AlphaPolicy`, contrast guard.
-- [ ] **Phase 3 follow-up — migrate the last named-colour call sites into the theme.**
-      A handful of widgets still reach for `Color::BrightRed`/`BrightGreen`/`BrightBlack`
-      directly (test gutter marks in `BufferView/Internal.h`, `VcsDiffPreview`,
-      `ProjectSidebar`, the `JanetReplPanel`/`DebugConsolePanel` cursor cells). Those are
-      xterm's default RGB now rather than the user's palette, which is a behaviour change
-      worth finishing properly: they should be `Theme` fields like everything else.
+- [x] **Phase 1 — alpha in the compositor.** `Color::alpha`, `Screen::Blend` with all five
+      resolution rules numbered in its own body, `Compositing.h`'s `BlendOver`/`TintToward`/
+      `DitherGlyph`, unit-tested headlessly. (Was still marked open; verified against the
+      code 2026-09-10.)
+- [x] **Phase 2 — Paint/Surface types.** `Paint` with Solid/Gradient/Fade/Pattern/Blur/Stack,
+      `Shadow`, `Surface`, `Fill(canvas, box, paint)`, per-Paint `AlphaPolicy`, and
+      `EnsureContrast` as the contrast guard. (Same: marked open, verified built.)
+- [x] **Phase 3 follow-up — the last named-colour call sites.** Already closed by the
+      "No widget hard-codes a colour any more" audit below; re-verified 2026-09-10 (no
+      `Color::Bright*` use survives outside `Widget.h`'s own constant definitions).
 - [x] **Phase 4 — theme v2 (core).** Landed: `#rrggbbaa` tokens, the paint grammar and its
       one-line string form (`Source/UI/PaintParse.h`), `$slot+8`-style references resolved
       against the theme's own fields, named paints and per-surface overrides
@@ -62,17 +61,76 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
 - [ ] **Phase 4 remainder.** `Shadow`/`elevation` are typed but deliberately not settable
       from Janet yet — an authoring surface for something nothing paints is worse than none,
       so they land with the popup phase that consumes them.
-- [ ] **Current-line highlight: try the two-pass layering first.** Paint washes (current
-      line, selection, diff tints) as a background pass, then the text pass writes only
-      foregrounds and leaves the background alone unless a span overrides it — no second
-      `Screen` needed, just the buffer's text pass not clobbering what the wash put down.
-      This is what makes a background-only current-line highlight work over a transparent
-      theme, where a single pass has to choose between tinting text and giving up
-      transparency. `buffer.current_line` exists and is empty until this is settled.
-- [ ] **Phase 4b — theme authoring loop.** `M-x reload-theme` (re-`dofile` theme.janet and
-      repaint) and `M-x theme-gallery` (every surface as a labelled swatch, redrawn on
-      reload, doubling as the contrast guard's reporting surface). Small, and it is what
-      makes gradient authoring bearable.
+- [x] **Current-line highlight: the two-pass layering.** Settled, and by real planes
+      rather than the "no second `Screen` needed" this entry guessed at: `Screen` carries a
+      second cell grid flushed to an ncplane *below* the text one (`backing-plane`), and a
+      text cell with no background of its own emits `NCALPHA_TRANSPARENT` so it renders
+      against whatever the backing layer put down. That is what lets a wash run in its own
+      pass without the text pass clobbering it — the ordering problem this entry describes
+      simply stops existing when the two passes write different grids.
+      `buffer.current_line` is no longer empty either: it defaults to the detected desktop
+      accent at ~16% (`f8b91f0`).
+      The other half of this entry's wording — the *rest* of the washes — landed
+      separately: every tint below selection in `BrushForCell` (conflict ours/theirs/base,
+      documentHighlight, line-inspect, execution line, multibuffer diff, trailing
+      whitespace) used to assign a theme colour straight into the cell, so none of them
+      could carry alpha (`Screen::Flush` reads only a background's RGB) and all of them
+      plugged the hole outright over a transparent theme. They composite through
+      `OverlayBackground` now, like isearch/snippet-field/selection already did; an opaque
+      value composites to itself, so every existing theme is byte-identical.
+- [x] **Phase 4b — `M-x theme-gallery`.** Every themed surface and named paint as a live
+      swatch, with a WCAG contrast readout measured from the *composited* cells rather than
+      from theme fields — so a dithered fill, a translucent one and a `Fade` are each
+      reported as what they became. A `Widget`, not the buffer the design doc imagined: a
+      buffer is text and a swatch is a painted region. It reads the live registries every
+      `Paint()`, so a theme switch repaints it with no refresh step of its own.
+      The pipeline main.cpp ran inline became `UI/ThemeResolve.h` on the way past, because
+      the picker needs it too — swapping the base theme invalidates every paint that
+      resolved a `$slot` against the old one, which was a real pre-existing bug.
+      This entry originally also scoped `M-x reload-theme`, which shipped and was then
+      removed with `save-theme` and the whole theme-file story (below). Also picked up here:
+      a picker row for "None (detect)" that unpins the remembered theme, proper-case theme
+      display names with normalized `ThemeByName` lookup so existing `ned/set-theme` strings
+      keep working, and real pinning in `CandidateList` (the synthetic "Current theme" row
+      had been staying at the top only because ASCII uppercase sorts before lowercase).
+- [x] **The theme is config, not state.** The select-theme picker used to persist its pick
+      to `$XDG_STATE_HOME/ned/variables.json`, and that pin outranked `ned/set-theme` — so
+      `(ned/set-theme "nord")` in an init.janet was silently ignored once you had picked
+      anything else, with nothing on screen to say why. Two places to look, and the
+      implicit one won.
+      The pin is gone. Precedence is now one rule — *a theme is whatever a config file
+      says*: `ned/set-theme` (a project's `<root>/.ned/init.janet` beating the global one),
+      then the desktop probe, then `DarkTheme()`, with `ned/theme-set` overrides on top.
+      `Enter` in the picker applies for the session and then **asks** whether to write
+      `(ned/set-theme "...")` into the global init.janet — trying a theme and keeping one
+      are different acts, and ned never edits a config file unasked. The write
+      (`janet::WithSetThemeCall`, pure and unit-tested) replaces the last line that is
+      exactly a simple call, preserving indentation, else appends; it leaves a computed or
+      inline call alone and appends instead, which is correct rather than cautious since a
+      later `ned/set-theme` is the one that wins. Permissions are preserved.
+      Per-project themes stay `<root>/.ned/init.janet` — checked in, so a team shares them —
+      and the picker deliberately does not write there. `Editor/Variables.h` keeps its other
+      keys (sidebar width/visibility, active left panel, minimap), which really are state.
+- [x] **A trust-prompted project init's theme calls were dropped.** Found by testing the
+      precedence rather than by a report: `<root>/.ned/init.janet` loads inline *before* the
+      theme is resolved when it is already trusted, but a first open (or any content-hash
+      change) defers it to the y/n/a prompt, which runs long after. Its `ned/set-theme`/
+      `ned/theme-set`/`ned/theme-gradient` calls landed in the override store with nothing
+      left to apply them — the file loaded, said so, and half of it silently did nothing
+      until the next launch. `main.cpp`'s prompt callback re-runs
+      `ResolveConfiguredTheme()` now. Verified live: 0 matching cells before, 13 after.
+- [x] **No theme file, no theme generator.** `save-theme`, `reload-theme`,
+      `SerializeThemeJanet` and `ThemeJanetFilePath` are gone: a theme is `ned/theme-set`
+      calls in the user's own `init.janet`, over a bundled base. With 30 bundled themes and
+      `ThemeFromPalette` deriving a full theme from ~15 semantic colours, a theme worth
+      writing is a handful of overrides rather than a 117-key snapshot, which is what the
+      generator existed to produce.
+      That makes `Docs/Themes.md` load-bearing rather than explanatory — it is now the only
+      way to find out what is settable — so `ThemeKeys`/`ThemeValueByKey` expose the key
+      table directly and `Tests/ThemeKeyDocsTest.cpp` holds the docs' key reference against
+      it in both directions: a key cannot be added without being documented, and cannot be
+      documented after it stops existing. The theme tests that walked a serializer's output
+      to reach every field now walk that table instead.
 - [x] **Phase 5 — chrome adoption (widgets).** `ModeLine`, `TabBar` and `ProjectSidebar`
       paint through themed Surfaces; derived defaults are byte-identical to what they
       painted before, pinned by `Tests/ChromeSurfaceTest.cpp`. Verified live: a theme
@@ -82,6 +140,13 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       indexing / test-run / load progress as a sweep across the bar). The scrim needs a
       composition-root hook for "a docked panel or overlay holds focus", which is why it
       is not in with the widget migrations.
+- [x] **Dock edge falloff.** `panel`'s derived default is a horizontal walk now rather than
+      a flat colour -- ~4% lifted at the dock's outer edge, settling to exactly the buffer
+      background at the seam, direction chosen by the background's own luminance (a fixed
+      "toward white" measured as a 1-level no-op on gruvbox-light). `LeftDock` and
+      `VcsPanel` paint through the `panel` surface `ProjectSidebar` already used, so the
+      rail and border columns ramp with the interior instead of sitting flat beside it. A
+      transparent theme is untouched by construction.
 - [ ] **Surfaces do not carry traits.** `Brush` has bold/italic/underlined/strikethrough;
       `Surface` has only paints, so `TabBar` still reads its traits from the Brush while
       taking colours from the Surface. Either add trait fields to `Surface` (and a way to
@@ -101,19 +166,47 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       `diagnosticError`, an uncovered line is too, a dim gutter affordance is
       `lineNumberForeground`. All five derive from the palette in `ThemeFromPalette`, so
       every cloned theme got them for free.
-- [ ] **`BuildDetectedTheme` only maps seven ANSI slots.** Everything it does not map keeps
-      the *fallback* theme's value, which is how a stale `--detect-theme` cache ends up
-      holding `constant_foreground=x:13` — a legacy palette token that now resolves to
-      xterm's flat `#ff00ff` rather than the terminal's own magenta. Re-running
-      `--detect-theme` fixes an existing cache; mapping more slots (constants, types,
-      functions, operators) would stop the fallback showing through in the first place.
-- [ ] **Phase 6 — text-layer adoption.** Selection/isearch/diff/merge/DAP rows become tints
-      rather than background replacements (merge overlaps composite for free); current-line
-      gradient wash; recency glow driven by `UnsavedChangeRanges` + an `EventLoop` timer;
-      virtual text (inline diagnostics, blame, fold placeholders) at real alpha.
-- [ ] **Phase 7 — popups.** Transparent outer border, translucent or blurred body
-      (in-app blur: sample `Screen`, box-blur, use as fill), alpha-falloff shadow, one
-      `elevation` concept shared by completion/hover/TreeView/ListPopup/peek.
+- [x] **`--detect-theme` removed, and with it `BuildDetectedTheme`'s seven-ANSI-slot gap.**
+      The terminal-colour probe had to run before anything read stdin, so it could only ever
+      be a separate CLI invocation writing a `theme.txt` cache — and a cache goes stale,
+      which is exactly what made a detected theme show the fallback's colours through for
+      every field the probe never mapped. Deleted rather than extended: the desktop probe
+      (`UI/DesktopThemeProbe.h`) needs no raw stdin, no cache and no separate invocation, and
+      runs on every launch. Gone with it: `UI/TerminalColorProbe.*`, the `--detect-theme`/
+      `--transparent` flags, precedence step 3, and `ThemeFile`'s plain `key=value` format.
+      `ThemeFile` keeps its Janet half (`SerializeThemeJanet`/`SaveThemeJanetFile`/
+      `ThemeJanetFilePath`/`SetThemeColorByKey`) and the shared `kColorKeys`/`kBrushKeys`
+      table — that is `save-theme` and `ned/theme-set`. The theme tests that walked the
+      `key=value` output to enumerate every field now walk the Janet output instead, so the
+      per-field coverage survived the format going away.
+- [ ] **Phase 6 remainder — text-layer adoption.** The "become tints rather than background
+      replacements" half is done (see the current-line entry above — every wash in
+      `BrushForCell` composites through `OverlayBackground` now, so merge overlaps and DAP
+      rows carry alpha). Still open: the current-line *gradient* wash (the surface accepts
+      one, nothing ships one), recency glow driven by `UnsavedChangeRanges` + an
+      `EventLoop` timer (nothing exists — no `glow`/`recency` symbol anywhere), and virtual
+      text (inline diagnostics, blame, fold placeholders) at real alpha.
+- [ ] **Six advertised surfaces have no consumer.** Audited 2026-09-10 by grepping every
+      literal surface name in `Source/UI/`: `buffer`, `buffer.selection`, `buffer.search`,
+      `echo`, `scrollbar` and `popup` are derived and listed but nothing paints through
+      them, so `ned/theme-surface` on any of them parses, stores, and does nothing visible.
+      `buffer.selection`/`buffer.search` are phase 6's; `popup` is phase 7's; `echo` and
+      `scrollbar` are unmigrated widgets that were never listed as a phase at all.
+      `Docs/Themes.md` now says which are inert rather than implying all fourteen work.
+      (`tab.strip` was a *seventh* case in the other direction — painted by `TabBar` and
+      derived by `DerivedSurface`, but missing from `SurfaceNames()`, so it was invisible
+      to the gallery and the docs while working perfectly for anyone who knew the name.
+      Published, and `PaintParseTest` now fails if a widget paints a surface the list
+      does not carry.)
+- [ ] **Phase 7 — popups.** Transparent outer border, translucent or blurred body,
+      alpha-falloff shadow, one `elevation` concept shared by completion/hover/TreeView/
+      ListPopup/peek. Verified 2026-09-10: `ListPopup`/`TreeView` still paint from raw
+      `theme_.` fields and never call `SurfaceFor`, so this is genuinely unstarted — but
+      the in-app blur this entry describes as work is **already built and reachable**
+      (`FillBlur` in `Paint.cpp` samples the destination and box-blurs it; `PaintParse`
+      accepts `:blur`). Nothing constructs one, so it has never run outside its own tests.
+      The blocker for the rest is `Shadow`/`elevation`, which nothing paints — see the
+      Phase 4 remainder above; the two land together or not at all.
 - [x] **Phase 8 — settled by measurement, and it is a "no" for text rows.** Konsole does
       honour a PNG's per-pixel alpha out to the desktop, but an image and a glyph are
       mutually exclusive per cell: writing text into an image's cells removes the image, and
@@ -573,6 +666,36 @@ Shipped here, one slug each for `git log --grep=`: `terminal-panel-scrollback`,
 run-this-test plus a pre-run `▸` affordance, the failures-only degradation surfaced
 instead of silently degrading, and go's basename-only `file:line` resolved through the
 import path it already reports).
+
+- [ ] **A determinate progress bar, and a huge save that can paint one.** The mode line's
+      spinner is the right answer for indeterminate work and stays; what has no answer at
+      all is a long operation whose end *is* knowable. Saving a multi-GB buffer is the
+      motivating case, and the blocker is not the widget:
+      `save-buffer` calls `Editor/BufferSave.h`'s `WriteBufferToDisk` **synchronously,
+      inside command dispatch, on the main thread** (`Commands.cpp`'s `saveBufferBody`),
+      so a huge save freezes the event loop outright — nothing repaints, and a progress
+      bar added today would never be drawn during the one operation it exists for. The
+      `Editor/Backup.h` pre-save version write (huge buffers included, 64GiB cap) is on
+      that same blocking path, so the wait is roughly doubled.
+      Two pieces, in order:
+      - **Make the huge save yield.** `Buffer::SaveToFile`'s huge branch is already a
+        streaming `ITextStorage::ForEachChunk` pass, so the chunk boundary is exactly
+        where a progress callback and a yield point belong. The shape to copy is the
+        load side, which already solved this: `UI/AsyncFileLoader.h`/`HugeFileLoader.h`
+        run off-thread and marshal back via `EventLoop::Post`, with `Buffer::IsLoading()`
+        gating what may touch the buffer meanwhile. A symmetric `IsSaving()` is the
+        obvious counterpart — `save-buffer` already refuses a still-loading buffer, so
+        the precedent for refusing during the inverse exists too. The real design
+        question is what an edit *during* a save should do, which the load side never had
+        to answer (a loading buffer has no user content yet).
+      - **Then the widget.** Determinate, 0..1 plus a label, painted through a themed
+        surface like every other chrome. Two consumers already have a real fraction the
+        moment one exists: `Buffer::CurrentLoadProgress` (huge load, currently rendered
+        as `Loading... 45%` text in the mode line) and LSP `$/progress`, whose
+        `percentage` `Lsp/Manager.cpp` already parses and then discards into a string.
+      Deliberately *not* the "state-driven mode-line fills" idea listed under Translucency
+      phase 5 — that one washes the whole bar and was set aside as decoration; this is a
+      real widget for real determinate work.
 
 - [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
       consumed by the panel itself (focus, scrollback ring); a TUI subprocess running

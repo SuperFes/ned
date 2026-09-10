@@ -112,3 +112,43 @@ TEST_CASE("Refilter with a fresh pool keeps the selection, unlike Reset", "[Cand
 
     REQUIRE(list.Selection() == 1);
 }
+
+TEST_CASE("Pinned entries stay at the top instead of being ranked among the rest", "[CandidateList]") {
+    CandidateList list;
+    // The theme picker's shape: two action rows, then the real names. With an
+    // empty query every candidate scores the same, so FuzzyFilterAndRank's
+    // alphabetical tie-break would otherwise sort "Current theme" between
+    // "Catppuccin Mocha" and "Dark" -- which is exactly what proper-casing the
+    // theme names caused before pinning existed.
+    list.Reset({"Current theme", "None (detect)", "Catppuccin Mocha", "Dark", "Apple"}, "", 2);
+
+    REQUIRE(list.Ranked().size() == 5);
+    REQUIRE(list.Ranked()[0] == "Current theme");
+    REQUIRE(list.Ranked()[1] == "None (detect)");
+    // Everything below is ranked normally -- alphabetically, for an empty query.
+    REQUIRE(list.Ranked()[2] == "Apple");
+    REQUIRE(list.Selected() == "Current theme");
+}
+
+TEST_CASE("A pinned entry is still filtered out when it does not match", "[CandidateList]") {
+    CandidateList list;
+    list.Reset({"Current theme", "None (detect)", "Gruvbox Dark", "Gruvbox Light"}, "", 2);
+
+    // Pinned means "never competes for position", not "always shown": typing a
+    // real theme's name should leave the action rows behind.
+    list.Refilter("Gruvbox");
+    REQUIRE(list.Ranked().size() == 2);
+    REQUIRE(list.Ranked()[0] == "Gruvbox Dark");
+
+    // ...and a query that does match one brings it back to the top.
+    list.Refilter("Cur");
+    REQUIRE(list.Ranked().front() == "Current theme");
+}
+
+TEST_CASE("Pinning survives a recomputed pool and cannot point past its end", "[CandidateList]") {
+    CandidateList list;
+    list.Reset({"Current theme", "None (detect)", "Dark"}, "", 2);
+
+    list.Refilter(std::vector<std::string>{"Only one"}, "");
+    REQUIRE(list.Ranked() == std::vector<std::string>{"Only one"});
+}

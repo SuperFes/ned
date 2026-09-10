@@ -180,10 +180,11 @@ enum class InteractiveRequest { None,
                                 // live-previewed before Enter commits -- see
                                 // BufferView::HandleSelectThemeKey.
                                 SelectTheme,
-                                // theme-editing follow-up: one-shot direct action (no prompt) --
-                                // writes the currently-active theme out as an editable
-                                // theme.janet; see BufferView::StartInteractiveSession's case.
-                                SaveTheme,
+                                // Translucency phase 4b: a one-shot direct action toggling
+                                // an OverlayHost panel of every surface and named paint as
+                                // a live swatch. The overlay lives above BufferView, so
+                                // BufferView only forwards -- ListBuffers' precedent.
+                                ShowThemeGallery,
                                 // kmacro-start-macro/kmacro-end-or-call-macro follow-up: also
                                 // one-shot direct actions (BufferView::StartInteractiveSession
                                 // acts on them immediately, inputMode_ stays Normal), not

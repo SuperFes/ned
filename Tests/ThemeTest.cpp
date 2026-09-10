@@ -136,24 +136,6 @@ TEST_CASE("Capture-aware BrushFor: capture chain beats class override beats buil
     REQUIRE(theme.BrushFor(SyntaxClass::Function, ned::editor::kNoCapture) == theme.BrushFor(SyntaxClass::Function));
 }
 
-namespace {
-
-// SerializeTheme covers every Color field via ThemeFile's shared key table,
-// so walking its output is the whole theme.
-std::vector<std::string> SerializedLines(const Theme& theme) {
-    std::vector<std::string> lines;
-    std::istringstream       stream(ned::ui::SerializeTheme(theme));
-    std::string              line;
-    while (std::getline(stream, line)) {
-        if (!line.empty()) {
-            lines.push_back(line);
-        }
-    }
-    return lines;
-}
-
-} // namespace
-
 TEST_CASE("Interpolate returns equal endpoints unchanged, preserving their kind", "[Theme]") {
     // Default has no RGB to interpolate from, so an equal pair must pass
     // through rather than collapsing to a mid-grey approximation.
@@ -293,14 +275,11 @@ TEST_CASE("Every bundled theme is truecolor -- no palette indices survive", "[Th
         const std::optional<Theme> theme = ned::ui::ThemeByName(name);
         REQUIRE(theme.has_value());
         INFO(name);
-        for (const std::string& line : SerializedLines(*theme)) {
-            const auto eq = line.find('=');
-            REQUIRE(eq != std::string::npos);
-            if (ned::tests::IsBrushTraitKey(line.substr(0, eq))) {
+        for (const auto& [key, token] : ned::tests::SerializedThemeEntries(*theme)) {
+            if (ned::tests::IsBrushTraitKey(key)) {
                 continue;
             }
-            const std::string token = line.substr(eq + 1);
-            INFO(line);
+            INFO(key << " = " << token);
             REQUIRE_FALSE(token.starts_with("x:"));
         }
     }

@@ -8642,6 +8642,15 @@ struct ThemePickerHarness {
     ThemePickerHarness() {
         view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
         view.SetThemeApplier([this](const ned::ui::Theme& theme) { applied.push_back(theme.name); });
+        // A stub rather than the real ui::ResolveConfiguredTheme: that one
+        // reads the developer's own config and probes the desktop session
+        // over D-Bus, so the "None (detect)" row's answer would differ
+        // machine to machine. The hook exists precisely so a test can pin it.
+        view.SetThemeDetector([] {
+            ned::ui::Theme detected = ned::ui::LightTheme();
+            detected.name           = "detected-stub";
+            return detected;
+        });
         CaptureCandidates(view, fixture.candidates);
         view.OnEvent(ned::ui::test::Alt('x'));
         TypeText(view, "select-theme");
@@ -8669,33 +8678,81 @@ TEST_CASE("select-theme opens on a synthetic \"Current theme\" row at the top, p
 TEST_CASE("Arrowing through select-theme previews each highlighted theme live, and back to none", "[BufferView]") {
     ThemePickerHarness h;
 
-    // The real registry names sort right after the synthetic "Current
-    // theme" row -- one Down from the opening selection lands on the
-    // alphabetically-first one.
-    const std::string first = ned::ui::ThemeNames().front();
+    // The real themes sort after both synthetic rows, and are listed by
+    // their proper-case display name -- one Down lands on "None (detect)",
+    // two on the alphabetically-first real theme.
+    const std::string first = ned::ui::ThemeDisplayNames().front();
+    h.view.OnEvent(ned::ui::test::ArrowDown());
+    REQUIRE(CandidateSelected(h.fixture.candidates, "None (detect)"));
+    REQUIRE(h.applied == std::vector<std::string>{"detected-stub"});
+
     h.view.OnEvent(ned::ui::test::ArrowDown());
     REQUIRE(CandidateSelected(h.fixture.candidates, first));
-    REQUIRE(h.applied == std::vector<std::string>{first});
+    REQUIRE(h.applied.back() == ned::ui::ThemeByName(first)->name);
 
     // Back to "Current theme" -- resolved against the session's own
     // snapshot (the Fixture's DarkTheme(), name "dark"), not a registry
     // lookup by the literal row text.
     h.view.OnEvent(ned::ui::test::ArrowUp());
+    h.view.OnEvent(ned::ui::test::ArrowUp());
     REQUIRE(CandidateSelected(h.fixture.candidates, "Current theme"));
-    REQUIRE(h.applied == std::vector<std::string>{first, "dark"});
+    REQUIRE(h.applied.back() == "dark");
+}
+
+TEST_CASE("select-theme's \"None (detect)\" row shows what no configured theme looks like", "[BufferView]") {
+    ThemePickerHarness h;
+
+    h.view.OnEvent(ned::ui::test::ArrowDown()); // "None (detect)"
+    h.view.OnEvent(ned::ui::test::Return());
+
+    // Applies, and says what to remove to keep it -- it cannot write that
+    // down itself, since "no ned/set-theme line" is not a line to add.
+    REQUIRE(h.applied.back() == "detected-stub");
+    REQUIRE(h.fixture.statusMessage.starts_with("Theme: detected (Detected Stub)"));
+    REQUIRE(h.fixture.statusMessage.find("remove ned/set-theme") != std::string::npos);
+
+    // No y/n follows, so ordinary editing resumes immediately.
+    h.view.OnEvent(ned::ui::test::Character("z"));
+    REQUIRE(h.fixture.buffer.Text() == "z");
+}
+
+TEST_CASE("select-theme without a detector never offers the \"None (detect)\" row", "[BufferView]") {
+    StateDirGuard       stateGuard;
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    view.SetThemeApplier([](const ned::ui::Theme&) {});
+    CaptureCandidates(view, fixture.candidates);
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "select-theme");
+    view.OnEvent(ned::ui::test::Return());
+
+    // A dead Enter is worse than an absent row -- see
+    // BufferView::SetThemeDetector's own doc comment.
+    view.OnEvent(ned::ui::test::ArrowDown());
+    REQUIRE(CandidateSelected(fixture.candidates, ned::ui::ThemeDisplayNames().front()));
 }
 
 TEST_CASE("Enter commits the highlighted theme and typing narrows with live preview", "[BufferView]") {
     ThemePickerHarness h;
 
-    TypeText(h.view, "gruvbox-l");
-    REQUIRE(CandidateSelected(h.fixture.candidates, "gruvbox-light"));
+    TypeText(h.view, "Gruvbox L");
+    REQUIRE(CandidateSelected(h.fixture.candidates, "Gruvbox Light"));
     REQUIRE_FALSE(h.applied.empty());
+    // Shown by display name, resolved and persisted by canonical name.
     REQUIRE(h.applied.back() == "gruvbox-light");
 
     h.view.OnEvent(ned::ui::test::Return());
-    REQUIRE(h.fixture.statusMessage == "Theme: gruvbox-light");
     REQUIRE(h.applied.back() == "gruvbox-light");
+    // Committing applies for the session and then *asks* about persisting --
+    // ned never rewrites a config file unasked. The offered line names the
+    // canonical form, so it can be copied verbatim.
+    REQUIRE(h.fixture.statusMessage ==
+            "Theme: Gruvbox Light. Write (ned/set-theme \"gruvbox-light\") to init.janet? (y/n)");
+
+    h.view.OnEvent(ned::ui::test::Character("n")); // declined
+    REQUIRE(h.fixture.statusMessage == "Theme applied for this session only.");
+    REQUIRE(h.applied.back() == "gruvbox-light"); // still applied
 
     h.view.OnEvent(ned::ui::test::Character("z")); // back to normal editing
     REQUIRE(h.fixture.buffer.Text() == "z");
@@ -8719,15 +8776,16 @@ TEST_CASE("Enter on \"Current theme\" with no navigation leaves everything uncha
 TEST_CASE("Escape cancels select-theme and restores the pre-session theme exactly", "[BufferView]") {
     ThemePickerHarness h;
 
-    const std::string first = ned::ui::ThemeNames().front();
-    h.view.OnEvent(ned::ui::test::ArrowDown()); // preview the alphabetically-first real theme
-    REQUIRE(h.applied == std::vector<std::string>{first});
+    const std::string first = ned::ui::ThemeDisplayNames().front();
+    h.view.OnEvent(ned::ui::test::ArrowDown()); // "None (detect)"
+    h.view.OnEvent(ned::ui::test::ArrowDown()); // the alphabetically-first real theme
+    REQUIRE(h.applied.back() == ned::ui::ThemeByName(first)->name);
 
     h.view.OnEvent(ned::ui::test::Escape());
     REQUIRE(h.fixture.statusMessage == "Theme selection cancelled.");
     // The revert re-applies the snapshot taken at session start -- the
     // Fixture's own DarkTheme(), by value, not by registry lookup.
-    REQUIRE(h.applied == std::vector<std::string>{first, "dark"});
+    REQUIRE(h.applied.back() == "dark");
 }
 
 TEST_CASE("select-theme without a wired applier reports instead of opening a session", "[BufferView]") {
@@ -11818,40 +11876,45 @@ TEST_CASE("tab-next with a single tab stays put", "[BufferView]") {
     REQUIRE(&activeBuffer.Get() == &only);
 }
 
-// theme-editing follow-up: the save-theme command (M-x only, one-shot).
-TEST_CASE("save-theme writes the active theme as runnable Janet to the XDG config path", "[BufferView]") {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_save_theme";
+// The picker never persists a theme on its own: a theme is an explicit
+// setting, so it goes in init.janet, and only when the user says yes.
+TEST_CASE("select-theme writes init.janet only on an explicit yes", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_theme_init";
     std::filesystem::remove_all(dir);
-
-    // Scoped XDG override, mirroring ThemeFileTest's EnvVarGuard shape.
     const char*       previous = std::getenv("XDG_CONFIG_HOME");
     const std::string restore  = previous ? previous : "";
     setenv("XDG_CONFIG_HOME", dir.c_str(), 1);
+    const std::filesystem::path initPath = dir / "ned" / "init.janet";
 
-    {
-        Fixture             fixture;
-        ned::ui::BufferView view = fixture.View();
-        view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    SECTION("declining leaves the file untouched") {
+        ThemePickerHarness h;
+        TypeText(h.view, "Nord");
+        h.view.OnEvent(ned::ui::test::Return());
+        h.view.OnEvent(ned::ui::test::Character("n"));
 
-        view.OnEvent(ned::ui::test::Alt('x'));
-        TypeText(view, "save-theme");
-        view.OnEvent(ned::ui::test::Return());
+        REQUIRE(h.fixture.statusMessage == "Theme applied for this session only.");
+        REQUIRE_FALSE(std::filesystem::exists(initPath));
+    }
 
-        const std::filesystem::path expected = dir / "ned" / "theme.janet";
-        REQUIRE(fixture.statusMessage == "Saved theme to " + expected.string());
-        REQUIRE(std::filesystem::exists(expected));
+    SECTION("confirming writes the call, creating the file if it is not there") {
+        ThemePickerHarness h;
+        TypeText(h.view, "Nord");
+        h.view.OnEvent(ned::ui::test::Return());
+        h.view.OnEvent(ned::ui::test::Character("y"));
 
-        std::ifstream      in(expected);
+        REQUIRE(std::filesystem::exists(initPath));
+        std::ifstream      in(initPath);
         std::ostringstream content;
         content << in.rdbuf();
-        // The fixture's theme is DarkTheme() -- spot-check one emitted call
-        // against a known value (keyword_foreground, now a real RGB colour
-        // rather than an ANSI name resolving to xterm's flat #000080).
-        REQUIRE(content.str().find("(ned/theme-set \"keyword_foreground\" \"#61afef\")") != std::string::npos);
-        REQUIRE(content.str().find("(ned/theme-set \"background\" \"default\")") != std::string::npos);
+        REQUIRE(content.str().find("(ned/set-theme \"nord\")") != std::string::npos);
+        REQUIRE(h.fixture.statusMessage.starts_with("Wrote (ned/set-theme \"nord\") to "));
+    }
 
-        view.OnEvent(ned::ui::test::Character("z")); // proves the one-shot returned to Normal mode
-        REQUIRE(fixture.buffer.Text() == "z");
+    SECTION("cancelling the picker never reaches the prompt at all") {
+        ThemePickerHarness h;
+        h.view.OnEvent(ned::ui::test::ArrowDown()); // preview only
+        h.view.OnEvent(ned::ui::test::Escape());
+        REQUIRE_FALSE(std::filesystem::exists(initPath));
     }
 
     if (previous) {
@@ -11861,24 +11924,6 @@ TEST_CASE("save-theme writes the active theme as runnable Janet to the XDG confi
         unsetenv("XDG_CONFIG_HOME");
     }
     std::filesystem::remove_all(dir);
-}
-
-// variables-store follow-up: a committed pick is remembered; preview and
-// cancel are not.
-TEST_CASE("Enter in select-theme remembers the committed theme; Escape remembers nothing", "[BufferView]") {
-    {
-        ThemePickerHarness h;
-        h.view.OnEvent(ned::ui::test::ArrowDown()); // preview only
-        h.view.OnEvent(ned::ui::test::Escape());
-        REQUIRE_FALSE(std::filesystem::exists(h.stateGuard.dir / "ned" / "variables.json"));
-    }
-    {
-        ThemePickerHarness h;
-        TypeText(h.view, "nord");
-        h.view.OnEvent(ned::ui::test::Return());
-        REQUIRE(ned::editor::Variable("theme") == "nord");
-        REQUIRE(std::filesystem::exists(h.stateGuard.dir / "ned" / "variables.json"));
-    }
 }
 
 // -- backup-and-recovery follow-up: the recover-file prompt session ----------

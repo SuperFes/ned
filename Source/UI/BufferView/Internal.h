@@ -103,6 +103,7 @@
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
 #include "Janet/Environment.h"
+#include "Janet/InitFile.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Grapheme.h"
 #include "Text/Utf8.h"
@@ -111,6 +112,7 @@
 #include "UI/KeyTranslation.h"
 #include "UI/ThemeFile.h"
 #include "UI/ThemeRegistry.h"
+#include "UI/ThemeResolve.h"
 
 namespace ned::ui::detail {
 
@@ -270,6 +272,14 @@ constexpr std::size_t kMaxPopupRows = 10;
 // screen" symptom. See ApplySelectedThemePreview/HandleSelectThemeKey's
 // own checks against this same constant.
 constexpr std::string_view kCurrentThemeLabel = "Current theme";
+
+// The picker's other synthetic row: unpin whatever theme was last
+// committed and go back to what a fresh launch would work out for itself
+// (ned/set-theme, then the desktop probe, then the built-in default --
+// ui::ResolveConfiguredTheme's own chain). Also not
+// a registry name, for the same reason kCurrentThemeLabel is not: there is
+// no fixed theme behind it, only a decision to stop pinning one.
+constexpr std::string_view kDetectThemeLabel = "None (detect)";
 
 // dropdown-path-completion follow-up: optional `display` transform lets a
 // caller show something other than the raw candidate string per row (a

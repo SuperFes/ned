@@ -19,8 +19,8 @@
 //
 // OSC 52 read-back (letting the terminal answer with the clipboard's
 // current contents) is a deliberate scope cut: unlike the OSC 10/11 color
-// queries UI/TerminalColorProbe.h sends -- which run and finish strictly
-// before ui::EventLoop's Notcurses context exists -- a paste needs to
+// queries ned once sent at startup -- which ran and finished strictly
+// before ui::EventLoop's Notcurses context existed -- a paste needs to
 // happen in the middle of a live editing session, where Notcurses already
 // owns stdin's read loop. Racing an unsolicited OSC 52 reply against
 // Notcurses' own input parser risks it being silently swallowed or
@@ -139,8 +139,8 @@ void CopyToSystemClipboard(std::string_view text);
 // it just for being large.
 [[nodiscard]] std::optional<std::string> PasteFromPrimarySelection(std::chrono::milliseconds readTimeout = SubprocessReadTimeoutMs());
 
-// Exposed for testing (mirrors UI/TerminalColorProbe.h's own BuildColorQuery
-// split): the pure OSC 52 escape-sequence construction, no I/O. wrapForTmux
+// Exposed for testing: the pure OSC 52 escape-sequence construction, no
+// I/O. wrapForTmux
 // applies tmux's DCS passthrough envelope (doubling every literal ESC byte
 // inside a `\033Ptmux;...\033\\` wrapper) -- tmux otherwise strips an OSC 52
 // sequence rather than forwarding it to the real terminal underneath.

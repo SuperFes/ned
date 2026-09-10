@@ -12,8 +12,12 @@
 
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
@@ -27,29 +31,43 @@ inline int Luma(const ui::Color& c) {
     return (299 * c.red + 587 * c.green + 114 * c.blue) / 1000;
 }
 
-// bold/italic-round-trip follow-up: SerializeTheme's output isn't
-// color-only anymore -- each kBrushKeys entry also emits four
-// "<prefix>_bold"/"_italic"/"_underlined"/"_strikethrough" "true"/"false"
-// lines alongside its color pair (ThemeFile.cpp). Not a color, so
-// SerializedColors below skips them rather than asserting every line
-// parses as one; the suffix set mirrors ThemeFile.cpp's own closed list.
+// bold/italic-round-trip follow-up: a serialized theme isn't color-only --
+// each kBrushKeys entry also emits four "<prefix>_bold"/"_italic"/
+// "_underlined"/"_strikethrough" "true"/"false" entries alongside its color
+// pair (ThemeFile.cpp). Not a color, so SerializedColors below skips them
+// rather than asserting every entry parses as one; the suffix set mirrors
+// ThemeFile.cpp's own closed list.
 inline bool IsBrushTraitKey(std::string_view key) {
     return key.ends_with("_bold") || key.ends_with("_italic") || key.ends_with("_underlined") ||
            key.ends_with("_strikethrough");
 }
 
+// Every (key, token) pair a theme carries, straight from the one shared key
+// table -- which is what makes walking this the same as walking the whole
+// Theme, without naming ~70 fields by hand.
+//
+// This used to parse a serializer's output (first the plain `key=value`
+// theme.txt, then SerializeThemeJanet). Both formats are gone; ui::ThemeKeys
+// and ui::ThemeValueByKey are the table itself, so there is no text to parse
+// and nothing to drift.
+inline std::vector<std::pair<std::string, std::string>> SerializedThemeEntries(const ui::Theme& theme) {
+    std::vector<std::pair<std::string, std::string>> entries;
+    for (const std::string& key : ui::ThemeKeys()) {
+        const std::optional<std::string> value = ui::ThemeValueByKey(theme, key);
+        REQUIRE(value.has_value()); // every listed key must be readable back
+        entries.emplace_back(key, *value);
+    }
+    REQUIRE_FALSE(entries.empty());
+    return entries;
+}
+
 inline std::map<std::string, ui::Color> SerializedColors(const ui::Theme& theme) {
     std::map<std::string, ui::Color> result;
-    std::istringstream               in{ui::SerializeTheme(theme)};
-    std::string                      line;
-    while (std::getline(in, line)) {
-        const auto eq = line.find('=');
-        REQUIRE(eq != std::string::npos);
-        const std::string key = line.substr(0, eq);
+    for (const auto& [key, token] : SerializedThemeEntries(theme)) {
         if (IsBrushTraitKey(key)) {
             continue;
         }
-        const auto color = ui::ParseColorToken(std::string_view(line).substr(eq + 1));
+        const auto color = ui::ParseColorToken(token);
         REQUIRE(color.has_value());
         result.emplace(key, *color);
     }
