@@ -114,9 +114,13 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
 - [ ] **Phase 7 — popups.** Transparent outer border, translucent or blurred body
       (in-app blur: sample `Screen`, box-blur, use as fill), alpha-falloff shadow, one
       `elevation` concept shared by completion/hover/TreeView/ListPopup/peek.
-- [ ] **Phase 8 (optional, separate).** iTerm2-protocol image layer for smooth true alpha
-      over the desktop, Konsole/iTerm2 only. Confirmed working live; the probe is the
-      reference implementation. Notcurses cannot drive this path at all.
+- [x] **Phase 8 — settled by measurement, and it is a "no" for text rows.** Konsole does
+      honour a PNG's per-pixel alpha out to the desktop, but an image and a glyph are
+      mutually exclusive per cell: writing text into an image's cells removes the image, and
+      drawing the image afterwards covers the text. So it cannot back a current-line or
+      sticky-header band. It stays available for text-free regions (the minimap already
+      uses pixel blitting), and `Screen`'s backing layer is the answer for row highlights.
+      See `Docs/Translucency.md`.
 
 ### Embedded Language
 

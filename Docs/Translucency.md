@@ -43,6 +43,28 @@ Measured, not assumed:
   this end to end: `ned --detect-theme --transparent` produces a theme whose background is
   `Color::Default`.
 
+## The image path, measured to its end
+
+Konsole honours a PNG's alpha channel per pixel, out to the window backdrop -- the staircase
+renders as five distinct steps with the desktop visible through the low-alpha end. That much
+was known. What was still assumed rather than tested was whether such an image could sit
+*behind text*, which is what any highlight band needs.
+
+It cannot. Drawing the band first and then writing text into those cells removes the band;
+drawing the band after the text covers the text. **An image and a glyph are mutually
+exclusive per cell**, so this path cannot back a current-line highlight, a sticky-header
+band, or anything else with content on it.
+
+Where it stays useful is regions that carry no text of their own -- the minimap (already
+pixel-blitted), a gutter decoration, a purely graphical panel. For a row of code, an opaque
+background on a plane beneath the text is the ceiling, which is what `Screen`'s backing
+layer now provides.
+
+Cost, for the record: one 40-cell band was 0.16 ms to encode and 27 KB on the wire, but that
+payload is an artefact of the probe's stored-deflate encoder -- the same flat band through
+zlib level 6 is 126 bytes rather than 51 KB. Bandwidth was never going to be the blocker;
+the cell model was.
+
 ## Foreground alpha, measured
 
 `Tools/NotcursesLayerProbe.cpp` page two varies the *foreground* alpha of a text plane over
@@ -88,7 +110,7 @@ different question about what is already in the cell.
 | T3 | **Foreground tinting** | destination bg is `Default` and the cell *has* a glyph | highlight without losing transparency or the glyph |
 | T4 | **Sub-cell colour** (half blocks / quadrants) | chrome rows we own outright | 2x vertical gradient resolution |
 | T5 | **In-app blur** | region beneath is known colours | real frosted glass: sample `Screen`, box-blur, use as fill |
-| T6 | **iTerm2 image layer** | Konsole / iTerm2 only | smooth true alpha over the desktop, at PNG-per-frame cost |
+| T6 | **iTerm2 image layer** | Konsole / iTerm2 only, and only where no text goes | smooth true alpha over the desktop |
 
 T5 is the one worth dwelling on: because we own the `Screen`, a popup can read the cells it
 is about to cover, blur their colours, and use that as its own fill. That is genuine frosted
