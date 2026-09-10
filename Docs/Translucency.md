@@ -230,10 +230,19 @@ foreground, which is exactly what a background-only highlight should not do. A s
 alternative (2026-09-09) is to stop treating it as one pass: paint a *background layer*
 first -- current line, selection, diff tints, whatever else is a wash -- and then paint the
 text layer on top writing only foregrounds, leaving the background it lands on alone unless
-a span genuinely overrides it. That needs no second `Screen`: it is the same painter's-order
-compositor with the buffer's own text pass stopping short of writing a background per cell,
-which is the part that currently destroys whatever a wash put there. Deferred; the surface
-(`buffer.current_line`) exists and is empty by default until this is settled.
+a span genuinely overrides it.
+
+**Done, and on real planes rather than a second `Screen`.** `Screen` carries a backing grid
+flushed to an `ncplane` below the text one (`EventLoop::BackingPlane`, `Canvas::Backing`), and
+a text cell with no background of its own defers to it instead of painting the terminal
+default over it. A wash picks its layer per cell: nothing in the cell means the backing layer,
+where the tint lands over whatever is showing through -- the desktop included; the theme's own
+background already in the cell means compositing in place, since there is nothing to gain from
+a lower plane when the upper one is solid; and any *other* background is something louder that
+already owns the cell, which a wash leaves alone. The current-line highlight and both sticky
+bands (buffer and sidebar) go through this. Note the layer is only written by whoever wants
+something there, unlike the text layer every widget repaints in full, so the render loop clears
+it each frame or a highlight trails the cursor.
 
 **Recency glow.** `UnsavedChangeRanges` plus an `EventLoop` timer: freshly edited lines get a
 wash that decays over a few seconds. Peripheral, cheap, and nothing else in the terminal

@@ -7,6 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <optional>
 #include <string>
 
 #include "Editor/Mode.h"
@@ -35,6 +36,12 @@ using ned::ui::Theme;
 namespace {
 
 struct SurfaceGuard {
+    // The detected accent is process-wide and now feeds a derived surface
+    // (buffer.current_line), so it is part of what a surface test has to put
+    // back -- restored rather than cleared, since the process may have been
+    // started with one.
+    std::optional<ned::ui::Color> accent = ned::ui::DetectedAccent();
+
     SurfaceGuard() {
         ned::ui::ClearSurfaceOverrides();
         ned::ui::ClearNamedPaints();
@@ -42,6 +49,7 @@ struct SurfaceGuard {
     ~SurfaceGuard() {
         ned::ui::ClearSurfaceOverrides();
         ned::ui::ClearNamedPaints();
+        ned::ui::SetDetectedAccent(accent);
     }
 };
 
@@ -359,10 +367,24 @@ TEST_CASE("The current line paints into the backing layer, not the text cells", 
     }
 }
 
-TEST_CASE("buffer.current_line stays empty unless a theme asks for it", "[ChromeSurface]") {
+TEST_CASE("buffer.current_line defaults to the desktop accent, well under selection strength", "[ChromeSurface]") {
     const SurfaceGuard guard;
     const Theme        theme = DarkTheme();
-    REQUIRE_FALSE(ned::ui::PaintsColour(ned::ui::SurfaceFor(theme, "buffer.current_line").fill));
+
+    // The default follows the detected desktop accent when there is one, so
+    // the highlight belongs to the same palette as the rest of the chrome.
+    ned::ui::SetDetectedAccent(Color::RGB(0x3f7fbf));
+    const Surface derived = ned::ui::SurfaceFor(theme, "buffer.current_line");
+    REQUIRE(ned::ui::PaintsColour(derived.fill));
+    REQUIRE(derived.fill.stops.front().colour.Opaque() == false);
+    REQUIRE(derived.fill.stops.front().colour.WithAlpha(255) == Color::RGB(0x3f7fbf));
+
+    // It is up the whole time you are typing, so it has to lose to the
+    // overlays that mean something momentary.
+    REQUIRE(derived.fill.stops.front().colour.alpha < ned::ui::SelectionFill(theme).alpha);
+
+    ned::ui::SetDetectedAccent(std::nullopt);
+    REQUIRE(ned::ui::PaintsColour(ned::ui::SurfaceFor(theme, "buffer.current_line").fill));
 
     Surface current;
     current.fill = ned::ui::SolidPaint(Color::RGB(0x2a2a40));

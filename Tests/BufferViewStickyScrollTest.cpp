@@ -16,6 +16,7 @@
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
 #include "UI/Theme.h"
+#include "UI/ThemePaints.h"
 
 using ned::ui::BufferView;
 
@@ -376,4 +377,37 @@ TEST_CASE("Clicking a pinned Org sticky row jumps to that headline's own line",
 
     const std::size_t line = fixture.buffer.Content().ByteOffsetToLine(fixture.buffer.Point());
     REQUIRE(line == 2); // "** Sub"
+}
+
+TEST_CASE("The pinned band paints on the backing layer, not into the header cells", "[BufferView][StickyScroll]") {
+    // translucency-theme-v2 follow-up: the band used to be an opaque
+    // background on the header cells themselves, which a transparent theme
+    // could not accept -- an opaque row over a buffer showing the desktop is
+    // the solid slab the wash exists to avoid, so those themes got bold text
+    // and an underline instead of a band at all. It is a real composite on
+    // the layer beneath now, so both kinds of theme get the same tint, and
+    // the header cells have to stay out of its way.
+    const StickyScrollSettingsGuard guard;
+    Fixture                         fixture;
+    fixture.buffer.InsertAtPoint(kSource);
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.SetTopLine(5);
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.Paint(canvas);
+
+    const ned::ui::Color band = ned::ui::StickyHighlight(fixture.theme);
+    REQUIRE(band != ned::ui::Color::Default); // otherwise the rest proves nothing
+
+    for (int row = 0; row < 3; ++row) { // outer / Widget / run
+        for (int col = 0; col < 40; ++col) {
+            REQUIRE(screen.BackingAt(col, row).background_color == band);
+            REQUIRE(screen.PixelAt(col, row).background_color == ned::ui::Color::Default);
+        }
+    }
+
+    // The first real content row is nobody's header: no band under it.
+    REQUIRE(screen.BackingAt(0, 3).background_color != band);
 }

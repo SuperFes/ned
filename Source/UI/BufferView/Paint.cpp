@@ -154,26 +154,20 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         // are, not a header bar, so it is a wash of the chrome tone rather
         // than the chrome brush itself.
         //
-        // Over a *transparent* theme it cannot be a wash at all. A cell holds
-        // one background, so tinting the band uniformly means painting every
-        // cell opaque -- and against a buffer that is showing the desktop,
-        // any opaque row reads as exactly the solid band this replaced.
-        // Coverage dithering is the only other translucency a cell has, and
-        // it fills the spaces *inside* the header text with dots. So on a
-        // transparent theme the band is marked the way a background cannot
-        // do it: the pinned text stays bold on the buffer's own backdrop,
-        // and the last pinned row is underlined to draw the boundary between
-        // frozen and live content.
-        const bool  opaqueTheme = theme_.background.Composable();
-        const bool  lastSticky  = i + 1 == chain.size();
-        const Brush stickyBrush{.background = opaqueTheme ? StickyHighlight(theme_) : theme_.background,
-                                .foreground = theme_.defaultForeground,
-                                .bold       = !opaqueTheme,
-                                .underlined = !opaqueTheme && lastSticky};
+        // The wash goes on the backing layer, and these cells keep
+        // Color::Default so it shows through. That is what lets it be a wash
+        // at all on a transparent theme: a cell holds one background, so
+        // tinting the band here would mean painting every cell opaque, and
+        // against a buffer showing the desktop an opaque row reads as
+        // exactly the solid slab this exists to avoid. On the layer beneath,
+        // the same tone is composited against the backdrop once and the
+        // pinned rows come out tinted rather than boxed.
+        const Brush stickyBrush{.background = Color::Default, .foreground = theme_.defaultForeground};
         for (int col = 0; col < width; ++col) {
             Cell& cell     = c[{.x = col, .y = row}];
             cell.character = " ";
             stickyBrush.ApplyTo(cell);
+            c.Backing({.x = col, .y = row}).background_color = StickyHighlight(theme_);
         }
 
         const std::size_t line = content.ByteOffsetToLine(marker.startByte);
@@ -1997,7 +1991,25 @@ void BufferView::PaintCurrentLineHighlight(Canvas& c, const std::vector<std::siz
             if (colour.alpha == 0) {
                 continue;
             }
-            c.Backing({.x = col, .y = row}).background_color = OverlayBackground(theme_, colour);
+
+            Cell& cell = c[{.x = col, .y = row}];
+            if (cell.background_color.kind == Color::Kind::Default) {
+                // Nothing in the cell: the wash goes on the layer beneath, so
+                // it tints whatever is showing through -- the desktop, for a
+                // transparent theme -- instead of plugging the hole.
+                c.Backing({.x = col, .y = row}).background_color = OverlayBackground(theme_, colour);
+            }
+            else if (cell.background_color == theme_.background) {
+                // An opaque theme paints the row's own background into these
+                // cells, which hides the backing layer completely. There is
+                // nothing to gain from a lower plane when the upper one is
+                // solid, so composite in place instead.
+                cell.background_color = BlendOver(theme_.background, colour);
+            }
+            // Any other background is something louder that already owns this
+            // cell -- a selection, a search hit, a diff tint, a gutter
+            // indicator. The current line is up the whole time you are
+            // typing, so it yields to all of them rather than muddying them.
         }
     }
 }

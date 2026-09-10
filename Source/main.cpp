@@ -2725,6 +2725,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     };
 
     callbacks.render = [&]() -> std::optional<Point> {
+        // The backing layer is written by whoever wants a background behind
+        // the glyphs (a current-line highlight, a sticky band) and only for
+        // the rows they want it on -- unlike the text layer, which every
+        // widget repaints in full. So last frame's rows have to go first,
+        // or a highlight leaves a trail behind the cursor as it moves.
+        screenBuffer.ClearBacking();
         head.Paint(Canvas(screenBuffer, head.Box_()));
         overlays.Paint(screenBuffer);
         screenBuffer.Flush(eventLoop.StdPlane(), eventLoop.BackingPlane());
