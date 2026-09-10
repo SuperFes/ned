@@ -193,13 +193,19 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       table — that is `save-theme` and `ned/theme-set`. The theme tests that walked the
       `key=value` output to enumerate every field now walk the Janet output instead, so the
       per-field coverage survived the format going away.
-- [ ] **Phase 6 remainder — text-layer adoption.** The "become tints rather than background
-      replacements" half is done (see the current-line entry above — every wash in
-      `BrushForCell` composites through `OverlayBackground` now, so merge overlaps and DAP
-      rows carry alpha). Still open: the current-line *gradient* wash (the surface accepts
-      one, nothing ships one), recency glow driven by `UnsavedChangeRanges` + an
-      `EventLoop` timer (nothing exists — no `glow`/`recency` symbol anywhere), and virtual
-      text (inline diagnostics, blame, fold placeholders) at real alpha.
+- [ ] **Phase 6 remainder — text-layer adoption.** The tint half is done (every wash in
+      `BrushForCell` composites, so all of them carry alpha), and `buffer.selection` /
+      `buffer.search` are real Surfaces now -- sampled across the whole viewport, so a
+      gradient selection is one wash the selection reveals rather than a ramp per selected
+      run. Aligning the derived default with what the buffer paints turned up a latent
+      mismatch on the way: `buffer.selection` derived from the raw `selectionBackground`
+      while the buffer painted `SelectionFill`'s softened version, so the gallery had been
+      showing a selection swatch nothing on screen matched.
+      Still open: the current-line *gradient* wash (the surface accepts one, no bundled
+      theme ships one -- a taste call, not code), recency glow driven by
+      `UnsavedChangeRanges` + an `EventLoop` timer (nothing exists; no `glow`/`recency`
+      symbol anywhere), and virtual text (inline diagnostics, blame, fold placeholders) at
+      real alpha. `buffer` is the last surface with no consumer.
 - [x] **`echo` and `scrollbar` adopted; four advertised surfaces still have no consumer.**
       The 2026-09-10 audit found six surfaces derived and listed but painted by nothing, so
       `ned/theme-surface` on any of them parsed, stored, and did nothing visible. `echo` and

@@ -10,6 +10,7 @@
 namespace ned::ui {
 
 Color ChromeBackdrop(const Theme& theme);
+Color SelectionFill(const Theme& theme);
 
 namespace {
 
@@ -223,7 +224,11 @@ namespace {
             return surface;
         }
         if (name == "buffer.selection") {
-            surface.fill = SolidOrNothing(theme.selectionBackground);
+            // SelectionFill, not the raw field: an opaque selectionBackground
+            // is softened to a tint (see SelectionFill's own comment), and
+            // the derived default has to be what the buffer actually paints
+            // or the gallery shows a swatch nothing matches.
+            surface.fill = SolidOrNothing(SelectionFill(theme));
             return surface;
         }
         if (name == "buffer.search") {

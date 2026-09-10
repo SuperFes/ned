@@ -379,9 +379,15 @@ tinted toward the theme's own background reads better than flat black on some th
 `buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab.strip`, `tab`,
 `tab.active`, `tab.active.focused`, `echo`, `scrollbar`, `panel`, `popup`.
 
-Not all of them are painted yet. Setting one no widget consumes parses and stores fine and
-then does nothing visible -- `buffer`, `buffer.selection` and `buffer.search` are
-in that state today, waiting on the text-layer and popup phases in `ROADMAP.md`. `M-x theme-gallery` lists every name either way, since what it shows is
+One is not painted yet: setting `buffer` parses and stores fine and then does nothing
+visible, waiting on the text-layer phase in `ROADMAP.md`.
+
+`buffer.selection` and `buffer.search` are sampled across the whole viewport rather than
+across each run of matching cells, so a gradient one reads as a single wash that the
+selection reveals rather than as a separate ramp per selected run. They composite over the
+buffer like every other overlay, so a paint wanting to tint rather than cover should carry
+alpha. Blur and stack paints are not sampleable per cell (they need the destination, and
+only exist through a fill), so these two take solid, gradient and pattern paints. `M-x theme-gallery` lists every name either way, since what it shows is
 what the surface *resolves to*, not whether anything draws it.
 
 Surfaces are **additive**: anything a theme does not set stays derived from the colour keys
