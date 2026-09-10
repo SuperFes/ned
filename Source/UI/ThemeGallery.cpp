@@ -185,17 +185,28 @@ void ThemeGallery::Paint(Canvas c) {
         return;
     }
 
-    const Brush interiorBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
+    // Translucency phase 7: the same "popup" Surface every other overlay
+    // body uses -- which also means this panel shows its own `popup` row
+    // being applied to itself, the most direct feedback the gallery can give.
+    const Brush   interiorBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
+    const Surface surface = SurfaceFor(theme_, "popup");
+    const bool    fillReadsDestination =
+        surface.fill.kind == PaintKind::Blur || surface.fill.kind == PaintKind::Stack;
     for (int y = 1; y < height - 1; ++y) {
         for (int x = 1; x < width - 1; ++x) {
-            Cell& cell     = c[{.x = x, .y = y}];
-            cell.character = " ";
-            interiorBrush.ApplyTo(cell);
+            Cell& cell            = c[{.x = x, .y = y}];
+            cell.character        = " ";
+            cell.foreground_color = interiorBrush.foreground;
+            cell.bold             = false;
+            cell.italic           = false;
+            cell.underlined       = false;
+            cell.strikethrough    = false;
+            cell.inverted         = false;
+            if (!fillReadsDestination) {
+                cell.background_color = interiorBrush.background;
+            }
         }
     }
-
-    DrawBorder(c, theme_.border);
-    DrawBorderTitle(c, "Theme gallery", theme_.borderAccent);
 
     const int   interiorWidth  = width - 2;
     const int   interiorHeight = height - 2;
@@ -204,6 +215,11 @@ void ThemeGallery::Paint(Canvas c) {
                                               .x_max = origin.x + width - 2,
                                               .y_min = origin.y + 1,
                                               .y_max = origin.y + height - 2});
+
+    Fill(interior, surface.fill);
+    DrawBorder(c, theme_.border);
+    RecolourBorder(c, surface.border);
+    DrawBorderTitle(c, "Theme gallery", theme_.borderAccent);
 
     const std::vector<Entry> entries = Entries();
     ClampScroll(interiorHeight, entries.size());
