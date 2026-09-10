@@ -318,7 +318,7 @@ TEST_CASE("AcpPanel's input row shows typed text and a caret", "[AcpPanel]") {
     // comment.
     const ned::ui::Cell& caretCell = fixture.screen.PixelAt(static_cast<int>(std::string("Prompt: hi").size()), kHeight - 1);
     REQUIRE(caretCell.background_color == fixture.theme.echoArea.foreground);
-    REQUIRE(caretCell.foreground_color == ned::ui::Color::Black);
+    REQUIRE(caretCell.foreground_color == fixture.theme.background);
 }
 
 TEST_CASE("AcpPanel's input row places the caret by column, not byte, once multi-byte text is typed", "[AcpPanel]") {
@@ -338,7 +338,7 @@ TEST_CASE("AcpPanel's input row places the caret by column, not byte, once multi
     REQUIRE(fixture.screen.PixelAt(static_cast<int>(prefix.size()) + 1, kHeight - 1).character == "i");
     const ned::ui::Cell& caretCell = fixture.screen.PixelAt(static_cast<int>(prefix.size()) + 2, kHeight - 1);
     REQUIRE(caretCell.background_color == fixture.theme.echoArea.foreground);
-    REQUIRE(caretCell.foreground_color == ned::ui::Color::Black);
+    REQUIRE(caretCell.foreground_color == fixture.theme.background);
 }
 
 TEST_CASE("AcpPanel's Backspace deletes the last typed character", "[AcpPanel]") {
@@ -619,7 +619,8 @@ TEST_CASE("AcpPanel's composer grows past one row once typed text wraps, and kee
     for (int y = 0; y < kHeight; ++y) {
         for (int x = 0; x < kWidth; ++x) {
             const ned::ui::Cell& cell = fixture.screen.PixelAt(x, y);
-            if (cell.background_color == fixture.theme.echoArea.foreground && cell.foreground_color == ned::ui::Color::Black) {
+            if (cell.background_color == fixture.theme.echoArea.foreground &&
+                cell.foreground_color == fixture.theme.background) {
                 foundCaret = true;
             }
         }

@@ -107,7 +107,19 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         // background blend of subtleForeground, the same relationship
         // scrollBarDisabled above already uses for "visible but recessive."
         .trailingWhitespaceBackground = Color::Interpolate(0.82F, p.magenta, p.background),
-        .indentGuideForeground        = Color::Interpolate(0.5F, p.subtleForeground, p.background),
+        // Theme-audit follow-up: the semantic colours a widget needs but
+        // the diagnostics never covered. Derived from the palette's own
+        // hues so a cloned theme gets them without its author writing a
+        // line: green means success wherever it appears, blue means
+        // changed-but-present, cyan means untracked, and blame's age ramp
+        // runs from the palette's cyan to the same subtle gray every other
+        // recessive element uses.
+        .successForeground      = p.green,
+        .vcsModifiedForeground  = p.blue,
+        .vcsUntrackedForeground = p.cyan,
+        .blameRecentForeground  = p.cyan,
+        .blameOldForeground     = p.subtleForeground,
+        .indentGuideForeground  = Color::Interpolate(0.5F, p.subtleForeground, p.background),
         // Depth-colorized-indent-guides follow-up: the palette's own six
         // accent hues, each pulled halfway toward background the same way
         // indentGuideForeground above is -- dim enough to stay secondary to

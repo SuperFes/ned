@@ -20,6 +20,8 @@
 
 #include "UI/BufferView.h"
 #include "UI/BufferView/RenderTypes.h"
+#include "UI/Compositing.h"
+#include "UI/ThemePaints.h"
 
 #include <algorithm>
 #include <cctype>
@@ -613,12 +615,28 @@ inline const RenderedInlayHint* InlayHintStartingAt(const std::vector<RenderedIn
 // never disagree about where point's own column actually lands on a
 // line containing a collapsed link.
 inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::size_t lineStart, std::size_t byteOffset,
-                                       int maxColumns, const std::vector<RenderedLink>& lineLinks = {}) {
+                                       int maxColumns, const std::vector<RenderedLink>& lineLinks = {},
+                                       const std::vector<RenderedInlayHint>& lineHints = {}) {
     int         col    = 0;
     std::size_t offset = lineStart;
     while (offset < byteOffset) {
         if (col >= maxColumns) {
             return std::nullopt;
+        }
+        // An inlay hint renders as extra cells *before* the real character
+        // still at this offset, so every hint strictly before byteOffset
+        // pushes point that much further right. A hint anchored exactly at
+        // byteOffset does not: it renders after the cursor, which is why the
+        // loop condition stops before it (matching where the painter puts
+        // the cursor, and where VS Code puts it too).
+        //
+        // Leaving this out was a real bug: the cursor drew N columns left of
+        // the character it was on, N being the width of every hint earlier
+        // in the line, so an Enter split appeared in the wrong place and the
+        // horizontal-scroll decision under-estimated how far right point
+        // really was.
+        if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, offset)) {
+            col += DisplayColumns(hint->label);
         }
         if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
             col += DisplayColumns(link->displayText);
@@ -650,11 +668,22 @@ constexpr std::size_t kMaxTabAwareColumnScan = 512;
 
 inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, std::size_t lineStart, std::size_t lineEnd,
                                              std::size_t targetColumn, int tabWidth,
-                                             const std::vector<RenderedLink>& lineLinks) {
+                                             const std::vector<RenderedLink>&      lineLinks,
+                                             const std::vector<RenderedInlayHint>& lineHints = {}) {
     std::size_t offset       = lineStart;
     std::size_t visualColumn = 0;
     std::size_t steps        = 0;
     while (offset < lineEnd && visualColumn < targetColumn) {
+        // VisualColumn's inverse has to skip the same virtual cells, or a
+        // click lands on a different character than the one under the mouse
+        // by the total width of the hints to its left.
+        if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, offset)) {
+            const std::size_t hintColumns = static_cast<std::size_t>(DisplayColumns(hint->label));
+            if (targetColumn < visualColumn + hintColumns) {
+                return offset; // the click landed on the hint itself -- the real character it annotates
+            }
+            visualColumn += hintColumns;
+        }
         if (steps >= kMaxTabAwareColumnScan) {
             const std::size_t remainingColumns = targetColumn - visualColumn;
             const std::size_t lineEndCodepoint = content.ByteOffsetToCodepointOffset(lineEnd);
@@ -998,19 +1027,21 @@ inline const char* TestGlyphFor(const std::optional<editor::testrun::TestResult:
     return " "; // unreachable, same convention as DiagnosticGlyphFor above
 }
 
-inline Color TestStatusColor(const std::optional<editor::testrun::TestResult::Status>& status) {
+inline Color TestStatusColor(const Theme& theme, const std::optional<editor::testrun::TestResult::Status>& status) {
     if (!status) {
-        return Color::BrightBlack; // an affordance, not a result -- deliberately quiet
+        // An affordance, not a result -- deliberately quiet, so it takes the
+        // gutter's own recessive colour rather than a status hue.
+        return theme.lineNumberForeground;
     }
     switch (*status) {
         case editor::testrun::TestResult::Status::Passed:
-            return Color::BrightGreen;
+            return theme.successForeground;
         case editor::testrun::TestResult::Status::Failed:
-            return Color::BrightRed;
+            return theme.diagnosticError;
         case editor::testrun::TestResult::Status::Skipped:
-            return Color::BrightYellow;
+            return theme.diagnosticWarning;
     }
-    return Color::BrightGreen; // unreachable
+    return theme.successForeground; // unreachable
 }
 
 inline Color DiagnosticSeverityColor(const Theme& theme, text::Buffer::Diagnostic::Severity severity) {
@@ -1039,20 +1070,20 @@ inline Color DiagnosticSeverityColor(const Theme& theme, text::Buffer::Diagnosti
 // unparseable date (a plugin using a different format, or a genuinely
 // empty field) degrades to the oldest/dimmest color rather than
 // throwing -- this is purely cosmetic, never load-bearing.
-inline Color BlameHashColor(const std::string& date) {
+inline Color BlameHashColor(const Theme& theme, const std::string& date) {
     constexpr int kBlameMaxAgeDays = 365;
 
     std::istringstream    stream(date);
     std::chrono::sys_days parsed;
     stream >> std::chrono::parse("%Y-%m-%d", parsed);
     if (stream.fail()) {
-        return Color::BrightBlack;
+        return theme.blameOldForeground;
     }
 
     const auto  now     = std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now());
     const auto  ageDays = std::chrono::duration_cast<std::chrono::days>(now - parsed).count();
     const float t       = std::clamp(static_cast<float>(ageDays) / static_cast<float>(kBlameMaxAgeDays), 0.0f, 1.0f);
-    return Color::Interpolate(t, Color::BrightCyan, Color::BrightBlack);
+    return Color::Interpolate(t, theme.blameRecentForeground, theme.blameOldForeground);
 }
 
 // prose-diagnostic-callout follow-up: one Prose diagnostic reduced to

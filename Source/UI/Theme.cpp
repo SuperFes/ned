@@ -164,9 +164,13 @@ namespace {
     }
 
     std::string TrueColorToHex(const Color& c) {
-        const std::array<std::uint8_t, 3> channels{c.red, c.green, c.blue};
-        std::string                       out = "#000000";
-        for (std::size_t i = 0; i < channels.size(); ++i) {
+        // Alpha is written only when there is any -- an opaque colour keeps
+        // the exact six-digit form every theme file already contains, so
+        // the format extension costs no churn in existing files.
+        const bool                        translucent = !c.Opaque();
+        const std::array<std::uint8_t, 4> channels{c.red, c.green, c.blue, c.alpha};
+        std::string                       out = translucent ? "#00000000" : "#000000";
+        for (std::size_t i = 0; i < (translucent ? 4U : 3U); ++i) {
             out[1 + i * 2]     = HexDigit(channels[i] >> 4);
             out[1 + i * 2 + 1] = HexDigit(channels[i] & 0x0F);
         }
@@ -199,7 +203,7 @@ namespace {
     }
 
     std::optional<Color> ParseHexColor(std::string_view token) {
-        if (token.size() != 7 || token[0] != '#') {
+        if ((token.size() != 7 && token.size() != 9) || token[0] != '#') {
             return std::nullopt;
         }
         const auto r = ParseHexByte(token.substr(1, 2));
@@ -208,19 +212,57 @@ namespace {
         if (!r || !g || !b) {
             return std::nullopt;
         }
-        return Color::RGB(*r, *g, *b);
+        if (token.size() == 7) {
+            return Color::RGB(*r, *g, *b);
+        }
+        const auto a = ParseHexByte(token.substr(7, 2));
+        if (!a) {
+            return std::nullopt;
+        }
+        return Color::RGB(*r, *g, *b).WithAlpha(static_cast<std::uint8_t>(*a));
     }
 
 } // namespace
 
 // Moved here from ThemeFile.cpp (Janet-configurable-syntax-theme follow-up)
 // -- see Theme.h's own doc comment on these two for why.
+namespace {
+
+    // xterm's own 256-colour layout: 0-15 are the named palette (whose RGB
+    // ColorToRgb8 already knows), 16-231 a 6x6x6 cube, 232-255 a 24-step
+    // grey ramp. Only ever used to read a legacy "x:<n>" token.
+    Color LegacyPaletteToRgb(int index) {
+        if (index < 16) {
+            std::uint8_t r = 0, g = 0, b = 0;
+            ColorToRgb8(Color::Palette(static_cast<std::uint8_t>(index)), r, g, b);
+            return Color::RGB(r, g, b);
+        }
+        if (index < 232) {
+            constexpr int kLevels[6] = {0, 95, 135, 175, 215, 255};
+            const int     offset     = index - 16;
+            return Color::RGB(static_cast<std::uint8_t>(kLevels[(offset / 36) % 6]),
+                              static_cast<std::uint8_t>(kLevels[(offset / 6) % 6]),
+                              static_cast<std::uint8_t>(kLevels[offset % 6]));
+        }
+        const auto grey = static_cast<std::uint8_t>(8 + 10 * (index - 232));
+        return Color::RGB(grey, grey, grey);
+    }
+
+} // namespace
+
 std::string ColorToToken(const Color& color) {
     switch (color.kind) {
         case Color::Kind::TrueColor:
             return TrueColorToHex(color);
-        case Color::Kind::Palette16:
-            return "x:" + std::to_string(color.paletteIndex);
+        case Color::Kind::Palette16: {
+            // Unreachable from a theme -- themes are truecolor throughout --
+            // but Color itself still carries palette indices for the
+            // embedded terminal, so serialize the RGB we would approximate
+            // one with rather than reintroducing a token no theme can mean.
+            std::uint8_t r = 0, g = 0, b = 0;
+            ColorToRgb8(color, r, g, b);
+            return TrueColorToHex(Color::RGB(r, g, b));
+        }
         case Color::Kind::Default:
         default:
             return "default";
@@ -235,58 +277,76 @@ std::optional<Color> ParseColorToken(std::string_view token) {
         return trueColor;
     }
     if (token.starts_with("x:")) {
+        // Legacy: theme files written before themes went truecolor-only
+        // (the ANSI fallback pair, and any --detect-theme cache from that
+        // era) carry palette indices. They still load, but they resolve to
+        // real RGB -- nothing puts a palette index back into a theme, since
+        // one cannot be composited against or carry alpha.
         const std::string digits(token.substr(2));
         char*             end   = nullptr;
         const long        value = std::strtol(digits.c_str(), &end, 10);
         if (end != digits.c_str() + digits.size() || value < 0 || value > 255) {
             return std::nullopt;
         }
-        return Color::Palette(static_cast<std::uint8_t>(value));
+        return LegacyPaletteToRgb(static_cast<int>(value));
     }
     return std::nullopt;
 }
 
+// Every colour here is real RGB. The ANSI colour *names* this used to reach
+// for (Color::Blue, Color::BrightWhite, ...) stopped meaning "whatever the
+// user's terminal calls blue" when the palette-fallback path went away --
+// they resolve to xterm's own defaults, which are flatter and darker than
+// anything a themed terminal would have shown, so an operator painted in
+// #800000 was effectively invisible.
+//
+// The values below stay in the family the theme already used for the fields
+// that were always RGB (#e06c75 / #e5c07b / #61afef / #5c6370 -- One
+// Dark-adjacent), and each named constant maps to exactly one colour so
+// every equality the theme expressed (keyword == controlKeyword, function ==
+// functionBuiltin, ...) is preserved. The two *background* usages are the
+// exception: a colour that reads as text is not a colour text reads on.
 Theme DarkTheme() {
     return Theme{
         .name                        = "dark",
         .background                  = Color::Default, // let the terminal's own (typically dark) background show
-        .defaultForeground           = Color::White,
+        .defaultForeground           = Color::RGB(0xc5c8d6),
         .commentForeground           = Color::RGB(0xa6a6a0),
-        .stringForeground            = Color::Green,
-        .keywordForeground           = Color::Blue,
-        .numberForeground            = Color::Magenta,
-        .docCommentForeground        = Color::BrightBlack,
-        .stringEscapeForeground      = Color::BrightGreen,
-        .controlKeywordForeground    = Color::Blue,
-        .functionForeground          = Color::Cyan,
-        .functionBuiltinForeground   = Color::Cyan,
-        .typeForeground              = Color::Yellow,
-        .typeBuiltinForeground       = Color::Yellow,
-        .constantForeground          = Color::BrightMagenta,
-        .constantBuiltinForeground   = Color::BrightMagenta,
-        .variableForeground          = Color::BrightWhite,
-        .variableBuiltinForeground   = Color::BrightWhite,
-        .parameterForeground         = Color::BrightYellow,
-        .propertyForeground          = Color::BrightCyan,
-        .operatorForeground          = Color::Red,
-        .punctuationForeground       = Color::BrightBlack,
-        .tagForeground               = Color::BrightBlue,
-        .attributeForeground         = Color::BrightRed,
-        .namespaceForeground         = Color::BrightMagenta,
+        .stringForeground            = Color::RGB(0x98c379),
+        .keywordForeground           = Color::RGB(0x61afef),
+        .numberForeground            = Color::RGB(0xc678dd),
+        .docCommentForeground        = Color::RGB(0x6c7280),
+        .stringEscapeForeground      = Color::RGB(0xb5e890),
+        .controlKeywordForeground    = Color::RGB(0x61afef),
+        .functionForeground          = Color::RGB(0x4ec9b0),
+        .functionBuiltinForeground   = Color::RGB(0x4ec9b0),
+        .typeForeground              = Color::RGB(0xe5c07b),
+        .typeBuiltinForeground       = Color::RGB(0xe5c07b),
+        .constantForeground          = Color::RGB(0xd7a3ea),
+        .constantBuiltinForeground   = Color::RGB(0xd7a3ea),
+        .variableForeground          = Color::RGB(0xf0f2f8),
+        .variableBuiltinForeground   = Color::RGB(0xf0f2f8),
+        .parameterForeground         = Color::RGB(0xf0d399),
+        .propertyForeground          = Color::RGB(0x7fdbca),
+        .operatorForeground          = Color::RGB(0xe06c75),
+        .punctuationForeground       = Color::RGB(0x6c7280),
+        .tagForeground               = Color::RGB(0x82c0ff),
+        .attributeForeground         = Color::RGB(0xff7b86),
+        .namespaceForeground         = Color::RGB(0xd7a3ea),
         .keywordModifierForeground   = Color::RGB(0x6fa8dc),
         .methodForeground            = Color::RGB(0x4ec9b0),
         .constructorForeground       = Color::RGB(0xd7ba7d),
         .labelForeground             = Color::RGB(0xc586c0),
         .returnTypeForeground        = Color::RGB(0xe0af68),
         .includePathForeground       = Color::RGB(0xce9178),
-        .modeLineForeground          = Color::BrightWhite,
+        .modeLineForeground          = Color::RGB(0xf0f2f8),
         .modeLineGradientStart       = Color::RGB(0x2b2b40),
         .modeLineGradientEnd         = Color::RGB(0x1b1b30),
-        .echoArea                    = Brush{.foreground = Color::BrightYellow},
-        .lineNumberForeground        = Color::BrightBlack,
-        .currentLineNumberForeground = Color::BrightWhite,
-        .selectionBackground         = Color::Blue,
-        .isearchMatchBackground      = Color::Yellow,
+        .echoArea                    = Brush{.foreground = Color::RGB(0xf0d399)},
+        .lineNumberForeground        = Color::RGB(0x6c7280),
+        .currentLineNumberForeground = Color::RGB(0xf0f2f8),
+        .selectionBackground         = Color::RGB(0x33406b), // deep indigo; keeps 6:1 against defaultForeground
+        .isearchMatchBackground      = Color::RGB(0x5a4a1e), // warm amber wash, same family as lineInspectBackground
         .snippetFieldBackground      = Color::RGB(0x3d3d5c),
         .documentHighlightBackground = Color::RGB(0x2a4a4a),
         .lineInspectBackground       = Color::RGB(0x5a3f1a),
@@ -297,12 +357,12 @@ Theme DarkTheme() {
         // so inactive tab labels actually read against their own block now
         // that the blocks are the only chrome on the row.
         .tabBar                        = Brush{.background = Color::RGB(0x1b1b30), .foreground = Color::RGB(0x9898b0)},
-        .activeTab                     = Brush{.background = Color::RGB(0x2b2b40), .foreground = Color::BrightWhite, .bold = true},
-        .scrollBar                     = Brush{.foreground = Color::BrightBlack},
+        .activeTab                     = Brush{.background = Color::RGB(0x2b2b40), .foreground = Color::RGB(0xf0f2f8), .bold = true},
+        .scrollBar                     = Brush{.foreground = Color::RGB(0x6c7280)},
         .scrollBarDisabled             = Brush{.foreground = Color::RGB(0x333340)},
-        .binaryForeground              = Color::BrightRed,
-        .ghostTextForeground           = Color::BrightBlack,
-        .linkForeground                = Color::BrightCyan,
+        .binaryForeground              = Color::RGB(0xff7b86),
+        .ghostTextForeground           = Color::RGB(0x6c7280),
+        .linkForeground                = Color::RGB(0x7fdbca),
         .truncationIndicatorForeground = Color::RGB(0x8f80e0),
         .unsavedChangeIndicator        = Color::RGB(0xd19a66),
         .diagnosticError               = Color::RGB(0xe06c75),
@@ -316,6 +376,11 @@ Theme DarkTheme() {
         .diffAddedBackground           = Color::RGB(0x2a3a2a), // dim green wash, dark enough to keep default-foreground text legible
         .diffRemovedBackground         = Color::RGB(0x3a2a2a), // dim red wash, same lightness as diffAddedBackground
         .trailingWhitespaceBackground  = Color::RGB(0x40282f), // dim maroon wash, distinct from diffRemovedBackground's red
+        .successForeground             = Color::RGB(0x98c379), // the theme's own green, matching stringForeground
+        .vcsModifiedForeground         = Color::RGB(0x61afef), // the theme's own blue, matching diagnosticInformation
+        .vcsUntrackedForeground        = Color::RGB(0x4ec9b0), // teal: present but unknown to the repository
+        .blameRecentForeground         = Color::RGB(0x7fdbca), // fresh commits read bright...
+        .blameOldForeground            = Color::RGB(0x5c6370), // ...and fade into the hint gray with age
         .indentGuideForeground         = Color::RGB(0x4a4a48), // dim gray, deliberately low-contrast against defaultForeground
         // Depth-colorized-indent-guides follow-up: a 6-color rotation, dim
         // enough to stay secondary to real syntax highlighting (same
@@ -323,14 +388,14 @@ Theme DarkTheme() {
         // above, just spread across a few distinct hues instead of one).
         .indentGuideDepthPalette  = {Color::RGB(0x8a5050), Color::RGB(0x8a7250), Color::RGB(0x8a8a50),
                                      Color::RGB(0x508a5f), Color::RGB(0x50748a), Color::RGB(0x74508a)},
-        .headlineLevel1Foreground = Color::BrightBlue,
-        .headlineLevel2Foreground = Color::BrightCyan,
-        .headlineLevel3Foreground = Color::BrightGreen,
-        .todoKeywordForeground    = Color::BrightRed,
-        .doneKeywordForeground    = Color::BrightGreen,
-        .checkboxForeground       = Color::BrightYellow,
-        .underlineForeground      = Color::White,
-        .strikethroughForeground  = Color::BrightBlack,
+        .headlineLevel1Foreground = Color::RGB(0x82c0ff),
+        .headlineLevel2Foreground = Color::RGB(0x7fdbca),
+        .headlineLevel3Foreground = Color::RGB(0xb5e890),
+        .todoKeywordForeground    = Color::RGB(0xff7b86),
+        .doneKeywordForeground    = Color::RGB(0xb5e890),
+        .checkboxForeground       = Color::RGB(0xf0d399),
+        .underlineForeground      = Color::RGB(0xc5c8d6),
+        .strikethroughForeground  = Color::RGB(0x6c7280),
         // The chrome family's two poles (chrome-redesign follow-up): border
         // is a quiet structural blue-grey one step lighter than the
         // 0x1b1b30/0x2b2b40 tab/mode-line chrome it frames; the accent is
@@ -345,7 +410,7 @@ Theme DarkTheme() {
         .borderAccent                 = Brush{.foreground = Color::RGB(0x8f80e0), .bold = true},
         .modeLineFocusedGradientStart = Color::RGB(0x675ea0),
         .modeLineFocusedGradientEnd   = Color::RGB(0x605799),
-        .markupMarkerForeground       = Color::BrightBlack,
+        .markupMarkerForeground       = Color::RGB(0x6c7280),
     };
 }
 
@@ -418,6 +483,11 @@ Theme LightTheme() {
         .diffAddedBackground           = Color::RGB(0xe0f0d8), // light green wash, dark text stays legible
         .diffRemovedBackground         = Color::RGB(0xf5dcdc), // light red wash, same lightness as diffAddedBackground
         .trailingWhitespaceBackground  = Color::RGB(0xf0dde8), // light pink wash, distinct from diffRemovedBackground's red
+        .successForeground             = Color::RGB(0x3d7a2e), // dark enough to read on a light background
+        .vcsModifiedForeground         = Color::RGB(0x1f6fa0), // the theme's own blue, matching linkForeground
+        .vcsUntrackedForeground        = Color::RGB(0x1f7f74), // teal: present but unknown to the repository
+        .blameRecentForeground         = Color::RGB(0x2b7f74), // fresh commits read strongest...
+        .blameOldForeground            = Color::RGB(0x95a5a6), // ...and fade into the hint gray with age
         .indentGuideForeground         = Color::RGB(0xd8d8d0), // light gray, deliberately low-contrast against defaultForeground
         // Depth-colorized-indent-guides follow-up: DarkTheme's own palette
         // pulled darker/more saturated so each hue stays visible against a
@@ -442,206 +512,6 @@ Theme LightTheme() {
         .modeLineFocusedGradientEnd   = Color::RGB(0x585cae),
         .markupMarkerForeground       = Color::RGB(0xa8a496),
     };
-}
-
-// ansi-fallback-theme follow-up (see Theme.h's own comment on these two for
-// the 0-7-plus-Default restriction and the equal-gradient-endpoints rule).
-// Hue choices echo DarkTheme's where it already used palette colors
-// (string=Green, keyword=Blue, number=Magenta, operator=Red, type=Yellow,
-// selection=Blue, isearch=Yellow); its gray/RGB accents map to whichever of
-// the 7 usable hues (Black is unusable against a dark background) reads
-// closest in role. Collisions are unavoidable at 8 colors -- the
-// deliberately-default-colored categories (variables, punctuation, ...) all
-// share White so the load-bearing five (comment/string/keyword/number/type)
-// each keep a distinct hue.
-Theme AnsiDarkTheme() {
-    return Theme{
-        .name                          = "ansi-dark",
-        .background                    = Color::Default,
-        .defaultForeground             = Color::Default,
-        .commentForeground             = Color::Cyan,
-        .stringForeground              = Color::Green,
-        .keywordForeground             = Color::Blue,
-        .numberForeground              = Color::Magenta,
-        .docCommentForeground          = Color::Cyan,
-        .stringEscapeForeground        = Color::Green,
-        .controlKeywordForeground      = Color::Blue,
-        .functionForeground            = Color::White,
-        .functionBuiltinForeground     = Color::White,
-        .typeForeground                = Color::Yellow,
-        .typeBuiltinForeground         = Color::Yellow,
-        .constantForeground            = Color::Magenta,
-        .constantBuiltinForeground     = Color::Magenta,
-        .variableForeground            = Color::White,
-        .variableBuiltinForeground     = Color::White,
-        .parameterForeground           = Color::White,
-        .propertyForeground            = Color::White,
-        .operatorForeground            = Color::Red,
-        .punctuationForeground         = Color::White,
-        .tagForeground                 = Color::Blue,
-        .attributeForeground           = Color::Red,
-        .namespaceForeground           = Color::Magenta,
-        .keywordModifierForeground     = Color::Blue,
-        .methodForeground              = Color::White,
-        .constructorForeground         = Color::White,
-        .labelForeground               = Color::Magenta,
-        .returnTypeForeground          = Color::Yellow,
-        .includePathForeground         = Color::Green,
-        .modeLineForeground            = Color::White,
-        .modeLineGradientStart         = Color::Blue,
-        .modeLineGradientEnd           = Color::Blue,
-        .echoArea                      = Brush{.foreground = Color::Yellow},
-        .lineNumberForeground          = Color::Blue,
-        .currentLineNumberForeground   = Color::White,
-        .selectionBackground           = Color::Blue,
-        .isearchMatchBackground        = Color::Yellow,
-        .snippetFieldBackground        = Color::Green,
-        .documentHighlightBackground   = Color::Magenta,
-        .lineInspectBackground         = Color::Red,
-        .conflictOursBackground        = Color::Green,
-        .conflictTheirsBackground      = Color::Blue,
-        .conflictBaseBackground        = Color::Cyan,
-        .tabBar                        = Brush{.foreground = Color::White},
-        .activeTab                     = Brush{.background = Color::Blue, .foreground = Color::White, .bold = true},
-        .scrollBar                     = Brush{.foreground = Color::White},
-        .scrollBarDisabled             = Brush{.foreground = Color::Blue},
-        .binaryForeground              = Color::Red,
-        .ghostTextForeground           = Color::Blue,
-        .linkForeground                = Color::Cyan,
-        .truncationIndicatorForeground = Color::Magenta,
-        .unsavedChangeIndicator        = Color::Yellow,
-        .diagnosticError               = Color::Red,
-        .diagnosticWarning             = Color::Yellow,
-        .diagnosticInformation         = Color::Blue,
-        .diagnosticHint                = Color::Cyan,
-        .breakpointMarker              = Color::Red,
-        .executionMarker               = Color::Yellow,
-        .executionLineBackground       = Color::Blue,
-        .unverifiedBreakpointMarker    = Color::Cyan, // same as diagnosticHint -- ANSI fallback restricted to palette 0-7, no Bright range
-        .diffAddedBackground           = Color::Green,
-        .diffRemovedBackground         = Color::Red,
-        .trailingWhitespaceBackground  = Color::Yellow,
-        .indentGuideForeground         = Color::Blue,
-        // Depth-colorized-indent-guides follow-up: the ANSI 8-color palette
-        // has no dim/desaturated variants to reach for, so this is
-        // literally the base hue rotation -- rainbow indent guides in the
-        // plainest sense.
-        .indentGuideDepthPalette      = {Color::Red, Color::Yellow, Color::Green, Color::Cyan, Color::Blue, Color::Magenta},
-        .headlineLevel1Foreground     = Color::Blue,
-        .headlineLevel2Foreground     = Color::Cyan,
-        .headlineLevel3Foreground     = Color::Green,
-        .todoKeywordForeground        = Color::Red,
-        .doneKeywordForeground        = Color::Green,
-        .checkboxForeground           = Color::Yellow,
-        .underlineForeground          = Color::White,
-        .strikethroughForeground      = Color::White,
-        .border                       = Brush{.foreground = Color::Blue},
-        .borderAccent                 = Brush{.foreground = Color::Magenta, .bold = true},
-        .modeLineFocusedGradientStart = Color::Magenta,
-        .modeLineFocusedGradientEnd   = Color::Magenta,
-        .markupMarkerForeground       = Color::Blue,
-    };
-}
-
-// Same structure against a light terminal background. Yellow/Cyan read
-// poorly on white but stay in their conventional roles (type, comment) --
-// every other choice favors the dark-on-light half of the base palette.
-Theme AnsiLightTheme() {
-    return Theme{
-        .name                          = "ansi-light",
-        .background                    = Color::Default,
-        .defaultForeground             = Color::Black,
-        .commentForeground             = Color::Cyan,
-        .stringForeground              = Color::Green,
-        .keywordForeground             = Color::Blue,
-        .numberForeground              = Color::Magenta,
-        .docCommentForeground          = Color::Cyan,
-        .stringEscapeForeground        = Color::Green,
-        .controlKeywordForeground      = Color::Blue,
-        .functionForeground            = Color::Black,
-        .functionBuiltinForeground     = Color::Black,
-        .typeForeground                = Color::Yellow,
-        .typeBuiltinForeground         = Color::Yellow,
-        .constantForeground            = Color::Magenta,
-        .constantBuiltinForeground     = Color::Magenta,
-        .variableForeground            = Color::Black,
-        .variableBuiltinForeground     = Color::Black,
-        .parameterForeground           = Color::Black,
-        .propertyForeground            = Color::Black,
-        .operatorForeground            = Color::Red,
-        .punctuationForeground         = Color::Black,
-        .tagForeground                 = Color::Blue,
-        .attributeForeground           = Color::Red,
-        .namespaceForeground           = Color::Magenta,
-        .keywordModifierForeground     = Color::Blue,
-        .methodForeground              = Color::Black,
-        .constructorForeground         = Color::Black,
-        .labelForeground               = Color::Magenta,
-        .returnTypeForeground          = Color::Yellow,
-        .includePathForeground         = Color::Green,
-        .modeLineForeground            = Color::White,
-        .modeLineGradientStart         = Color::Blue,
-        .modeLineGradientEnd           = Color::Blue,
-        .echoArea                      = Brush{.foreground = Color::Blue},
-        .lineNumberForeground          = Color::Cyan,
-        .currentLineNumberForeground   = Color::Black,
-        .selectionBackground           = Color::Cyan,
-        .isearchMatchBackground        = Color::Yellow,
-        .snippetFieldBackground        = Color::Green,
-        .documentHighlightBackground   = Color::Magenta,
-        .lineInspectBackground         = Color::Red,
-        .conflictOursBackground        = Color::Green,
-        .conflictTheirsBackground      = Color::Blue,
-        .conflictBaseBackground        = Color::Cyan,
-        .tabBar                        = Brush{.foreground = Color::Black},
-        .activeTab                     = Brush{.background = Color::Cyan, .foreground = Color::Black, .bold = true},
-        .scrollBar                     = Brush{.foreground = Color::Black},
-        .scrollBarDisabled             = Brush{.foreground = Color::Cyan},
-        .binaryForeground              = Color::Red,
-        .ghostTextForeground           = Color::Cyan,
-        .linkForeground                = Color::Blue,
-        .truncationIndicatorForeground = Color::Magenta,
-        .unsavedChangeIndicator        = Color::Yellow,
-        .diagnosticError               = Color::Red,
-        .diagnosticWarning             = Color::Yellow,
-        .diagnosticInformation         = Color::Blue,
-        .diagnosticHint                = Color::Cyan,
-        .breakpointMarker              = Color::Red,
-        .executionMarker               = Color::Yellow,
-        .executionLineBackground       = Color::Cyan,
-        .unverifiedBreakpointMarker    = Color::Cyan, // same as diagnosticHint -- ANSI fallback restricted to palette 0-7, no Bright range
-        .diffAddedBackground           = Color::Green,
-        .diffRemovedBackground         = Color::Red,
-        .trailingWhitespaceBackground  = Color::Yellow,
-        .indentGuideForeground         = Color::Blue,
-        .indentGuideDepthPalette       = {Color::Red, Color::Yellow, Color::Green, Color::Cyan, Color::Blue, Color::Magenta},
-        .headlineLevel1Foreground      = Color::Blue,
-        .headlineLevel2Foreground      = Color::Magenta,
-        .headlineLevel3Foreground      = Color::Green,
-        .todoKeywordForeground         = Color::Red,
-        .doneKeywordForeground         = Color::Green,
-        .checkboxForeground            = Color::Cyan,
-        .underlineForeground           = Color::Black,
-        .strikethroughForeground       = Color::Black,
-        .border                        = Brush{.foreground = Color::Cyan},
-        .borderAccent                  = Brush{.foreground = Color::Magenta, .bold = true},
-        .modeLineFocusedGradientStart  = Color::Magenta,
-        .modeLineFocusedGradientEnd    = Color::Magenta,
-        .markupMarkerForeground        = Color::Cyan,
-    };
-}
-
-Theme AnsiFallbackFor(const Theme& theme) {
-    if (theme.background.kind == Color::Kind::TrueColor) {
-        // Rec. 601 luma, integer arithmetic -- the midpoint split only needs
-        // to separate "genuinely light background" from everything else.
-        const int luma =
-            (299 * theme.background.red + 587 * theme.background.green + 114 * theme.background.blue) / 1000;
-        if (luma >= 128) {
-            return AnsiLightTheme();
-        }
-    }
-    return AnsiDarkTheme();
 }
 
 } // namespace ned::ui
