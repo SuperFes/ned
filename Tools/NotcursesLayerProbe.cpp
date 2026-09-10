@@ -144,14 +144,44 @@ ncplane* FilledPlane(ncplane* parent, int y, int x, int rows, int cols, Rgb colo
 
 // A text plane whose cells carry NO background of their own -- the layering
 // question in its purest form: does what is beneath show through?
-ncplane* TextPlane(ncplane* parent, int y, int x, int cols, const char* text, std::vector<ncplane*>& owned) {
+ncplane* TextPlane(ncplane* parent, int y, int x, int cols, const char* text, std::vector<ncplane*>& owned,
+                   unsigned fgAlphaMode = NCALPHA_OPAQUE, Rgb fg = Rgb{255, 255, 255}) {
     ncplane* plane = MakePlane(parent, y, x, 1, cols, owned);
     if (plane == nullptr) {
         return nullptr;
     }
+    // The background always defers to whatever is beneath -- that is what
+    // makes this a *text* plane rather than a second fill. The foreground is
+    // the interesting half, and page two varies it: OPAQUE uses the colour
+    // below unchanged, BLEND averages it with the foregrounds beneath,
+    // TRANSPARENT takes the next plane's foreground entirely, and
+    // HIGHCONTRAST ignores the requested colour and derives a legible one
+    // from the background computed through this plane.
     ncplane_set_bg_alpha(plane, NCALPHA_TRANSPARENT);
-    ncplane_set_fg_rgb8(plane, 255, 255, 255);
+    ncplane_set_fg_rgb8(plane, fg.r, fg.g, fg.b);
+    ncplane_set_fg_alpha(plane, fgAlphaMode);
     ncplane_putstr_yx(plane, 0, 0, text);
+    return plane;
+}
+
+// A filled plane that also carries a foreground colour, so a plane above it
+// with a TRANSPARENT or BLEND foreground has something real to inherit or
+// average with.
+ncplane* FilledPlaneWithFg(ncplane* parent, int y, int x, int rows, int cols, Rgb background, Rgb foreground,
+                           std::vector<ncplane*>& owned) {
+    ncplane* plane = MakePlane(parent, y, x, rows, cols, owned);
+    if (plane == nullptr) {
+        return nullptr;
+    }
+    ncplane_set_bg_rgb8(plane, background.r, background.g, background.b);
+    ncplane_set_bg_alpha(plane, NCALPHA_OPAQUE);
+    ncplane_set_fg_rgb8(plane, foreground.r, foreground.g, foreground.b);
+    ncplane_set_fg_alpha(plane, NCALPHA_OPAQUE);
+    for (int row = 0; row < rows; ++row) {
+        for (int col = 0; col < cols; ++col) {
+            ncplane_putchar_yx(plane, row, col, ' ');
+        }
+    }
     return plane;
 }
 
@@ -355,7 +385,7 @@ int main(int argc, char** argv) {
 finish:
     Dim(std_plane, static_cast<int>(rows) - 2, 2,
         "If B shows the desktop, ned can have translucent bands. If only C does, the cell model is the limit.");
-    Label(std_plane, static_cast<int>(rows) - 1, 2, "Press any key to exit...");
+    Label(std_plane, static_cast<int>(rows) - 1, 2, "Press any key for page 2 (foreground alpha)...");
 
     notcurses_render(nc);
     Progress("all panels rendered; waiting for a keypress");
@@ -367,6 +397,79 @@ finish:
         const uint32_t key = notcurses_get_blocking(nc, &ni);
         if (key == static_cast<uint32_t>(-1)) {
             Progress("notcurses_get_blocking failed; exiting");
+            break;
+        }
+        if (ni.evtype == NCTYPE_RELEASE || key == NCKEY_RESIZE || key == 0) {
+            continue;
+        }
+        break;
+    }
+
+    // --- page two: the foreground half --------------------------------------
+    //
+    // Page one only ever varied a *background* mode and let the text plane's
+    // background fall through. That leaves the more interesting half
+    // untested: a foreground has its own alpha, and its modes mean different
+    // things -- including HIGHCONTRAST, which is the one mode that asks
+    // Notcurses to pick a legible colour rather than being told one.
+    for (ncplane* plane : owned) {
+        ncplane_destroy(plane);
+    }
+    owned.clear();
+    ncplane_erase(std_plane);
+    Progress("page 2: foreground alpha");
+
+    Label(std_plane, 0, 2, "Page 2 -- foreground alpha across planes (page 1 varied backgrounds only).");
+    Dim(std_plane, 1, 2, "Each row: a filled plane below (its own fg colour in brackets), a text plane above it.");
+
+    int fy = 3;
+
+    struct FgCase {
+        const char* label;
+        unsigned    mode;
+        Rgb         below; // the plane underneath, and its foreground
+        Rgb         belowFg;
+        const char* whatToLookFor;
+    };
+    const FgCase cases[] = {
+        {"G) fg OPAQUE over a blue plane [fg yellow]", NCALPHA_OPAQUE, Rgb{40, 70, 120}, Rgb{230, 200, 60},
+         "white text -- the requested colour, unchanged"},
+        {"H) fg BLEND over the same plane", NCALPHA_BLEND, Rgb{40, 70, 120}, Rgb{230, 200, 60},
+         "averaged with what is beneath, so a cream/yellow-white"},
+        {"I) fg TRANSPARENT over the same plane", NCALPHA_TRANSPARENT, Rgb{40, 70, 120}, Rgb{230, 200, 60},
+         "the plane below's own yellow -- this plane's colour discarded"},
+        {"J) fg HIGHCONTRAST over a LIGHT plane", NCALPHA_HIGHCONTRAST, Rgb{225, 225, 215}, Rgb{80, 80, 80},
+         "dark text chosen for legibility, not the white asked for"},
+        {"K) fg HIGHCONTRAST over a DARK plane", NCALPHA_HIGHCONTRAST, Rgb{25, 25, 35}, Rgb{80, 80, 80},
+         "light text, same request, opposite answer"},
+    };
+
+    for (const FgCase& test : cases) {
+        Label(std_plane, fy, 2, test.label);
+        FilledPlaneWithFg(std_plane, fy + 1, 2, 1, panelWidth / 2, test.below, test.belowFg, owned);
+        TextPlane(std_plane, fy + 1, 4, panelWidth / 2 - 4, "the quick brown fox", owned, test.mode);
+        Dim(std_plane, fy + 1, 2 + panelWidth / 2 + 2, test.whatToLookFor);
+        fy += 3;
+        notcurses_render(nc);
+    }
+
+    // The case that matters for ned: HIGHCONTRAST with *nothing* beneath, on
+    // a terminal whose background is its own. If it still picks a legible
+    // colour there, a row can be marked without painting any background at
+    // all -- which is exactly what a translucent theme needs.
+    Label(std_plane, fy, 2, "L) fg HIGHCONTRAST over NOTHING (the terminal's own background)");
+    TextPlane(std_plane, fy + 1, 4, panelWidth - 4, "legible against your real terminal background?", owned,
+              NCALPHA_HIGHCONTRAST);
+    Dim(std_plane, fy + 2, 2,
+        "   if this is readable, ned can mark a row on a transparent theme with no background at all.");
+
+    Label(std_plane, static_cast<int>(rows) - 1, 2, "Press any key to exit...");
+    notcurses_render(nc);
+    Progress("page 2 rendered; waiting for a keypress");
+
+    while (true) {
+        const uint32_t key = notcurses_get_blocking(nc, &ni);
+        if (key == static_cast<uint32_t>(-1)) {
             break;
         }
         if (ni.evtype == NCTYPE_RELEASE || key == NCKEY_RESIZE || key == 0) {

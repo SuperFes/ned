@@ -43,6 +43,39 @@ Measured, not assumed:
   this end to end: `ned --detect-theme --transparent` produces a theme whose background is
   `Color::Default`.
 
+## Foreground alpha, measured
+
+`Tools/NotcursesLayerProbe.cpp` page two varies the *foreground* alpha of a text plane over
+a filled plane whose own foreground is yellow `#e6c83c`, asking white for the glyphs each
+time. What Notcurses emitted:
+
+| mode | emitted glyph colour | meaning |
+|---|---|---|
+| `NCALPHA_OPAQUE` | `#ffffff` | the requested colour, unchanged |
+| `NCALPHA_BLEND` | `#f2e39d` | the exact average of white and the plane below's `#e6c83c` |
+| `NCALPHA_TRANSPARENT` | `#e6c83c` | the plane below's own foreground; this plane's colour discarded |
+| `NCALPHA_HIGHCONTRAST` over a light plane | `#3f3f3f` | computed dark -- neither the requested white nor the plane's own grey |
+| `NCALPHA_HIGHCONTRAST` over a dark plane | `#ffffff` | computed light, same request, opposite answer |
+| `NCALPHA_HIGHCONTRAST` over *nothing* | `#ffffff` | assumed a dark backdrop |
+
+Two of these are usable tools rather than curiosities.
+
+**`TRANSPARENT` foregrounds mean a plane can contribute a glyph while a lower plane
+contributes its colour** -- the composition a background-layer-under-a-text-layer design
+would want, if we ever move ned's own two-pass idea onto real Notcurses planes rather than
+doing it inside our own compositor.
+
+**`HIGHCONTRAST` asks Notcurses to pick a legible colour** instead of being told one, which
+is exactly the shape of "mark this row without painting a background". The caveat is in the
+last row: over the terminal's own background there is nothing to measure, so it *assumes*
+dark and answers white. That is right for a dark terminal and wrong for a light one, and
+Notcurses cannot tell which it is -- so it is a good tool for a known backdrop and a guess
+otherwise.
+
+Note that ned does not currently use Notcurses cell alpha at all: our own compositor
+resolves everything and hands `Screen::Flush` opaque colours. Using `HIGHCONTRAST` would
+mean letting specific cells carry an alpha mode through to Notcurses.
+
 ## The six techniques
 
 Every idea below is built from these. They are not interchangeable -- each one answers a
