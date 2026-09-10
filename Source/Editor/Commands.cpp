@@ -2819,6 +2819,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::LspRename;
                       });
 
+    // scope-aware-rename follow-up: the tiered entry point C-c C-M-r is bound
+    // to. lsp-rename above stays registered and reachable from M-x as the
+    // explicitly server-only form -- worth keeping for the case where the
+    // scope-aware answer is right but the server's wider one is wanted anyway.
+    registry.Register("rename-symbol",
+                      "Rename the symbol at point -- scope-aware and in this buffer alone when it is a local "
+                      "binding, otherwise across every file the language server reports it in.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::RenameSymbol;
+                      });
+
     // prepareRename/linkedEditingRange follow-up: see InteractiveRequest::
     // LspLinkedEditingRange's own doc comment in Command.h -- BufferView::
     // RequestLinkedEditingRangeAtPoint owns the actual request and the
@@ -4193,7 +4204,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c l S"), "lsp-type-hierarchy-subtypes");
     // prepareRename/linkedEditingRange follow-up: continues the "C-c l"
     // mnemonic prefix -- "r" for "related"/"linked range," distinct from
-    // lsp-rename's own unprefixed "C-c C-M-r" binding below (a different
+    // rename-symbol's own unprefixed "C-c C-M-r" binding below (a different
     // command: this one mirrors edits live, it never renames across files).
     keymap.Bind(ParseKeySequence("C-c l r"), "lsp-linked-editing-range");
     // header-source-switching follow-up: "M-o" is free (grepped the full
@@ -4202,10 +4213,10 @@ Keymap BuildDefaultGlobalKeymap() {
     // equivalent real-Emacs binding to align with instead (ff-find-other-
     // file has no standard default keybinding of its own).
     keymap.Bind(ParseKeySequence("M-o"), "switch-header-source");
-    keymap.Bind(ParseKeySequence("C-c C-M-r"), "lsp-rename"); // C-c C-r is already project-replace
+    keymap.Bind(ParseKeySequence("C-c C-M-r"), "rename-symbol"); // C-c C-r is already project-replace
     keymap.Bind(ParseKeySequence("C-c C-b"), "run-task");
     // task-runner follow-up: same "shift/meta variant is the stronger
-    // version of the same action" slot lsp-rename's own C-c C-M-r binding
+    // version of the same action" slot rename-symbol's own C-c C-M-r binding
     // establishes -- cancelling is rare, but not rare enough to leave
     // M-x-only once it's actually needed (unlike lsp-show-log's own
     // "no binding yet" precedent, this one's a "stop something running now"

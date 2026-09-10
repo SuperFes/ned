@@ -401,23 +401,35 @@ and moving a file fixes up what pointed at it. Ned already owns most of the subs
 `lsp-rename` (`C-c C-M-r`) drives `Manager::RequestRename`, whose multi-file `WorkspaceEdit`
 lands through `ApplyProjectEdit` as one `ProjectUndoManager` transaction; `rename-file` and
 the sidebar's own rename already send `workspace/willRenameFiles`/`didRenameFiles` and apply
-the resource operations a server sends back. What is missing is everything that has to work
-*without* a language server, everything that should be reviewable before it lands, and the
-file/class relationship an IDE keeps in sync.
+the resource operations a server sends back, and `rename-symbol` now resolves a local
+binding from the mode's own `locals.scm` with no server involved at all. What is still
+missing is everything that should be reviewable before it lands, and the file/class
+relationship an IDE keeps in sync.
 
-- [ ] **Scope-aware rename with no language server (`locals.scm`).** Ned bundles no LSP
-      server by default, so with none configured there is no rename at all -- and even with
-      one, renaming a loop variable should not require a round trip. Tree-sitter's
-      `locals.scm` convention (`@local.scope`, `@local.definition.*`, `@local.reference`)
-      is exactly the missing piece: it resolves a name to its binding and that binding's
-      scope, which is what makes "rename this parameter" correct in the presence of
-      shadowing. Ned already embeds five query kinds per language (`highlights`, `folds`,
-      `indents`, `tests`, `imports`, plus `tags` for three) through
-      `ned_embed_treesitter_query`, and `ModeOverrides` already scans a dynamic grammar's
-      query directory for conventional basenames -- so this is one more kind, one more
-      `Mode` capability (`localScopes`), and a resolver that walks enclosing scopes
-      outward from point. Deliberate limit: locals only. A name whose binding is not in
-      this file is not this feature's business.
+Shipped here, one slug for `git log --grep=`: `scope-aware-rename` (`rename-symbol` on
+`C-c C-M-r`, tiered -- a name that resolves to a binding this file wholly owns is renamed
+in-buffer as one undo step with no request sent, and anything else falls through to the
+`prepareRename`/`rename` flow, which `lsp-rename` still reaches directly from `M-x`.
+Twelve hand-authored `*-locals.scm` queries, a `Mode::localScopes` capability, and
+`Editor/LocalScopes.h`'s pure resolver; `TreeSitterMode`'s six positional query-source
+parameters became a designated-initializer `TreeSitterQuerySources` on the way past).
+
+- [ ] Eight bundled modes have no `locals.scm`. Four of them never will -- JSON, YAML,
+      TOML and XML have no binding construct to resolve -- but fish, janet, and
+      clojure/jank do, and HTML/CSS have a narrow one (a CSS custom property, an `id`).
+      `rename-symbol` in those modes reports there is nothing scope-aware to offer and
+      hands off, which is correct but is not coverage (`scope-aware-rename`).
+- [ ] A use that textually precedes its own binding in a whole-scope-binding language
+      (Python's function scope, JavaScript `var` hoisting) is detected and *declined*
+      rather than resolved -- `LocalBinding::usedBeforeDefinition`, the one case where
+      the resolver's position rule knowingly gives up. Resolving it properly means
+      knowing per language whether binding is declaration-point or whole-scope, which is
+      a real per-language fact this deliberately did not invent a place to record
+      (`scope-aware-rename`).
+- [ ] A huge buffer (`ITextStorage::IsHuge()`) never gets the scope-aware tier at all.
+      Unlike the fold/symbol/test gutters beside it, this one cannot window: a binding's
+      occurrence set is only complete if the whole file was parsed, so a windowed answer
+      would be a partial *rename*, not a partial display (`scope-aware-rename`).
 
 - [ ] **Rename through the review multibuffer, not blind.** JetBrains previews a refactor's
       usages before applying it, and ned has the better version of that already built: the
@@ -425,11 +437,12 @@ file/class relationship an IDE keeps in sync.
       to step, edit an excerpt back to its original text to exclude it, `M-c` to apply one
       file, `C-c C-c` to commit the lot into live buffers or straight to disk, all as one
       undo transaction. Route both rename paths through it: an LSP `WorkspaceEdit` becomes
-      a review buffer rather than an immediate apply, and the no-server path gets one for
-      free. The piece that makes it *better* than project-replace is classification: a
-      tree-sitter parse knows whether a hit is a real reference, a comment, or a string, so
-      the review buffer can group them and default the risky ones to excluded -- which is
-      the actual difference between a rename and a project-wide search-and-replace.
+      a review buffer rather than an immediate apply, and the no-server path
+      `scope-aware-rename` shipped gets one for free. The piece that makes it *better*
+      than project-replace is classification: a tree-sitter parse knows whether a hit is
+      a real reference, a comment, or a string, so the review buffer can group them and
+      default the risky ones to excluded -- which is the actual difference between a
+      rename and a project-wide search-and-replace.
 
 - [ ] **File rename/move propagates, in both directions.** Renaming from inside ned already
       tells the language server; what it does not do is fix references when no server is

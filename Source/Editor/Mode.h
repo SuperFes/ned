@@ -342,6 +342,55 @@ struct TestMarker {
 // test discovery configured for this mode," the standing convention.
 using TestDiscoveryFunction = std::function<std::vector<TestMarker>(std::string_view bufferText)>;
 
+// scope-aware-rename follow-up: what a language's locals.scm captured at one
+// node -- the tree-sitter/Neovim "@local.scope"/"@local.definition*"/
+// "@local.reference" convention (the one query kind here that IS an upstream
+// convention rather than a ned-local one, unlike tests/imports/indents;
+// see LocalCaptureKindFromCaptureName below).
+//
+// Deliberately flat, like every other Mode capability's output: nesting is
+// recoverable from byte containment alone (a scope encloses everything
+// whose range is inside its own), so Editor/LocalScopes.h can resolve a
+// binding without holding a live parse tree -- which is what keeps it a
+// pure, unit-testable function over a capture list rather than something
+// that needs a Parser to exercise.
+enum class LocalCaptureKind {
+    Scope,      // a node that introduces a new naming scope
+    Definition, // a binding site -- where a name is introduced
+    Reference,  // a use site of some name
+};
+
+struct LocalCapture {
+    std::size_t      startByte;
+    std::size_t      endByte;
+    LocalCaptureKind kind;
+    // A Definition's dotted qualifier -- the part after
+    // "local.definition." ("parameter", "var", "function", "type", ...),
+    // empty for a bare "@local.definition" and for every Scope/Reference
+    // capture. Carried so a command can say *what* it renamed ("Renamed
+    // parameter \"n\" -- 4 occurrences") rather than just that it renamed
+    // something; nothing about binding resolution depends on it.
+    std::string qualifier;
+};
+
+// Maps a locals.scm capture name (without the leading '@', e.g.
+// "local.definition.parameter") onto a kind, or nullopt for anything that
+// isn't one of the three -- an upstream locals.scm can carry unrelated
+// captures, and a "_"-prefixed helper capture is a normal thing to find in
+// one. "local.definition" and every "local.definition.<qualifier>" resolve
+// to Definition; the qualifier is returned separately via the out
+// parameter, empty for the bare form.
+[[nodiscard]] std::optional<LocalCaptureKind> LocalCaptureKindFromCaptureName(std::string_view captureName,
+                                                                              std::string*     qualifier = nullptr);
+
+// Given a buffer's full text, returns every locals.scm capture in it, in
+// tree order. Empty function (the default) means this mode has no locals
+// query at all, the standing "empty means not configured" convention --
+// rename-symbol reports that plainly instead of guessing, and never falls
+// back to a textual scan (a scope-unaware rename is exactly the thing this
+// exists to avoid being).
+using LocalScopeFunction = std::function<std::vector<LocalCapture>(std::string_view bufferText)>;
+
 // embedded-language-documents follow-up: one tree-sitter injection match's
 // resolved (host-buffer byte range, canonical target language) pair --
 // Injection.h's CollectInjectionRegions is what produces these. Lives here
@@ -481,6 +530,11 @@ struct Mode {
     // extraction configured for this mode, same "empty means not
     // configured" convention as everything above.
     LineInspectFunction lineInspect;
+    // scope-aware-rename follow-up: empty function (the default) means this
+    // mode has no locals.scm, so rename-symbol has no scope-aware answer of
+    // its own for it and says so, same "empty means not configured"
+    // convention as everything above.
+    LocalScopeFunction localScopes;
     // line-wrap follow-up: this mode's own default for whether BufferView
     // should soft-wrap long lines at word boundaries instead of scrolling
     // horizontally -- false (matching every bundled mode except the two
@@ -508,48 +562,58 @@ struct Mode {
 // The default mode: no special keybindings, no highlighting.
 [[nodiscard]] Mode FundamentalMode();
 
-// Builds a Mode backed by a real tree-sitter grammar and a real (embedded,
-// see Source/Editor/TreeSitter/Queries.h) queries/highlights.scm query --
+// The per-language tree-sitter query sources a Mode is built from -- one
+// field per query kind, every one optional. Built at each call site with
+// designated initializers, so a language that has only a highlights and an
+// indents query names exactly those two rather than padding the gap with
+// positional empties; the seven kinds arrived one at a time (folds, imports,
+// tags, tests, indents, locals) and a positional parameter list had stopped
+// being readable well before the last of them.
+//
+// Every field is a std::string_view over text this does NOT own. Both
+// builders below read each source during construction and never retain it
+// (Query's constructor compiles the pattern immediately), so a caller
+// passing a compile-time-embedded constant (Source/Editor/TreeSitter/
+// Queries.h -- what every bundled *Mode() factory does) and one passing a
+// locally-owned std::string it destroys afterwards (ModeOverrides.cpp's
+// dynamic-grammar path) are equally safe.
+//
+// An empty field means "this language has no query of that kind," which is
+// the same signal as the corresponding Mode capability being left an empty
+// std::function -- see each capability's own doc comment above. That
+// includes `highlights`: some real grammars ship no highlights.scm at all.
+struct TreeSitterQuerySources {
+    // queries/highlights.scm -> Mode::highlight
+    std::string_view highlights;
+    // a "@fold"-capture query -> Mode::fold (generic-code-folding follow-up)
+    std::string_view folds;
+    // an "@import.target"/"@import.module"/"@import.statement"-capture query
+    // -> Mode::importTarget (import-target-tree-sitter follow-up)
+    std::string_view imports;
+    // a "@definition.*"-capture tags.scm -> Mode::symbolKind
+    // (gutter-symbol-kind follow-up)
+    std::string_view tags;
+    // a "@test.definition"/"@test.name"-capture query -> Mode::testDiscovery
+    // (test-runner integration)
+    std::string_view tests;
+    // an "@indent"/"@dedent"-capture query -> Mode::indentColumn
+    // (smart-indentation follow-up, see Editor/Indent.h)
+    std::string_view indents;
+    // a "@local.scope"/"@local.definition*"/"@local.reference"-capture
+    // locals.scm -> Mode::localScopes (scope-aware-rename follow-up, see
+    // Editor/LocalScopes.h)
+    std::string_view locals;
+};
+
+// Builds a Mode backed by a real tree-sitter grammar and that grammar's own
+// embedded queries (see Source/Editor/TreeSitter/Queries.h) --
 // bundle-remaining-grammars follow-up. `languageName` is the name
-// treesitter::LanguageByName expects (e.g. "python"); `querySource` is the
-// embedded query text for that grammar. Every *Mode() function below is a
-// one-line call to this -- factored out once all thirteen turned out to be
-// otherwise identical, rather than hand-duplicating the same
+// treesitter::LanguageByName expects (e.g. "python"). Every *Mode() function
+// below is a one-line call to this -- factored out once all thirteen turned
+// out to be otherwise identical, rather than hand-duplicating the same
 // Parser/Query/HighlightFunction-construction logic JsonMode originally
 // wrote out in full during the tree-sitter foundation phase.
-// foldQuerySource: same embedded-static-storage-duration contract as
-// querySource, but for a "@fold"-capture query (generic-code-folding
-// follow-up) -- nullptr (the default) means this language has no fold query
-// yet, leaving the returned Mode's .fold empty. Not every bundled language
-// has one; see Mode.cpp's own *Mode() functions for which do. querySource
-// itself is also optional -- nullptr/empty leaves .highlight empty too, for
-// a grammar with no highlights.scm at all (e.g. one that only ships a fold
-// or locals query).
-// importQuerySource (import-target-tree-sitter follow-up): same optional,
-// embedded-static-storage-duration contract as foldQuerySource, but for an
-// "@import.target"/"@import.module"/"@import.statement"-capture query (see
-// Mode::importTarget's own doc comment) -- nullptr (the default) means this
-// language has no import query yet, leaving the returned Mode's
-// .importTarget empty.
-// symbolKindQuerySource (gutter-symbol-kind follow-up): same optional
-// contract, but for a "@definition.*"-capture tags.scm query (see
-// Mode::symbolKind's own doc comment) -- nullptr (the default) means this
-// language has no tags query yet, leaving the returned Mode's .symbolKind
-// empty.
-// testQuerySource (test-runner integration): same optional contract, but
-// for a "@test.definition"/"@test.name"-capture query (see
-// Mode::testDiscovery's own doc comment) -- nullptr (the default) means
-// this language has no test-discovery query yet, leaving the returned
-// Mode's .testDiscovery empty.
-// indentQuerySource (smart-indentation follow-up): same optional contract,
-// but for an "@indent"/"@dedent"-capture query (see Mode::indentColumn's own
-// doc comment and Editor/Indent.h) -- nullptr (the default) means this
-// language has no indent query yet, leaving the returned Mode's
-// .indentColumn empty.
-[[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
-                                  const char* foldQuerySource = nullptr, const char* importQuerySource = nullptr,
-                                  const char* symbolKindQuerySource = nullptr, const char* testQuerySource = nullptr,
-                                  const char* indentQuerySource = nullptr);
+[[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const TreeSitterQuerySources& queries);
 
 // The shared construction logic TreeSitterMode above delegates to, split out
 // (dynamic-grammar-loading follow-up) so a caller that already has a
@@ -557,21 +621,9 @@ struct Mode {
 // TreeSitter/DynamicGrammar.h), which by definition isn't in the bundled
 // registry TreeSitterMode's own languageName lookup searches -- doesn't need
 // to hand-duplicate the Parser/Query/HighlightFunction-construction logic a
-// second time. querySource is read here (not stored), unlike TreeSitterMode
-// above whose const char* comes from a compile-time-embedded string with
-// static storage duration -- safe for the same reason: Query's constructor
-// compiles the pattern immediately and doesn't retain the source text past
-// that call. querySource is also optional (empty leaves .highlight empty,
-// same as an empty foldQuerySource leaves .fold empty) -- some real grammars
-// have no highlights.scm at all. importQuerySource: same optional contract,
-// see TreeSitterMode's own doc comment above. indentQuerySource: same
-// optional contract, see TreeSitterMode's own doc comment above.
+// second time.
 [[nodiscard]] Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language,
-                                              std::string_view querySource = {}, std::string_view foldQuerySource = {},
-                                              std::string_view importQuerySource     = {},
-                                              std::string_view symbolKindQuerySource = {},
-                                              std::string_view testQuerySource       = {},
-                                              std::string_view indentQuerySource     = {});
+                                              const TreeSitterQuerySources& queries = {});
 
 // A real tree-sitter-backed Janet mode (bundle-remaining-grammars
 // follow-up), replacing the original hand-rolled per-line #-comment/

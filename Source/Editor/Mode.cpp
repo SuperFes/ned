@@ -632,10 +632,34 @@ std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName
     return std::nullopt;
 }
 
-Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language, std::string_view querySource,
-                                std::string_view foldQuerySource, std::string_view importQuerySource,
-                                std::string_view symbolKindQuerySource, std::string_view testQuerySource,
-                                std::string_view indentQuerySource) {
+std::optional<LocalCaptureKind> LocalCaptureKindFromCaptureName(std::string_view captureName, std::string* qualifier) {
+    if (qualifier != nullptr) {
+        qualifier->clear();
+    }
+    if (captureName == "local.scope") {
+        return LocalCaptureKind::Scope;
+    }
+    if (captureName == "local.reference") {
+        return LocalCaptureKind::Reference;
+    }
+    constexpr std::string_view kDefinition = "local.definition";
+    if (captureName == kDefinition) {
+        return LocalCaptureKind::Definition;
+    }
+    // "local.definition.<qualifier>" -- the '.' must be there, so that a
+    // hypothetical "local.definitions" capture isn't read as a definition
+    // named "s".
+    if (captureName.size() > kDefinition.size() + 1 && captureName.starts_with(kDefinition) &&
+        captureName[kDefinition.size()] == '.') {
+        if (qualifier != nullptr) {
+            *qualifier = std::string(captureName.substr(kDefinition.size() + 1));
+        }
+        return LocalCaptureKind::Definition;
+    }
+    return std::nullopt;
+}
+
+Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language, const TreeSitterQuerySources& queries) {
     const auto parser = std::make_shared<treesitter::Parser>(language);
 
     // language-scoped-capture-rules follow-up: LanguageKeyForMode's own
@@ -674,12 +698,12 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // Only built when a highlight query source was actually given -- some
     // real, bundled-elsewhere grammars have no highlights.scm at all (only a
     // folds/locals/tags query), the same "not every language has one" fact
-    // already true of foldQuerySource below. An empty querySource leaves
+    // already true of queries.folds below. An empty queries.highlights leaves
     // mode.highlight a default-constructed, empty std::function, the exact
     // "no highlighting" signal BufferView already checks for.
     HighlightFunction highlight;
-    if (!querySource.empty()) {
-        const auto query = std::make_shared<treesitter::Query>(language, querySource);
+    if (!queries.highlights.empty()) {
+        const auto query = std::make_shared<treesitter::Query>(language, queries.highlights);
         highlight        = [parser, query, sharedParse, languageKey](std::string_view bufferText) -> std::vector<HighlightSpan> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
@@ -704,8 +728,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // empty std::function, which is exactly the "no fold support" signal
     // BufferView checks for.
     FoldFunction fold;
-    if (!foldQuerySource.empty()) {
-        const auto foldQuery = std::make_shared<treesitter::Query>(language, foldQuerySource);
+    if (!queries.folds.empty()) {
+        const auto foldQuery = std::make_shared<treesitter::Query>(language, queries.folds);
         fold                 = [parser, foldQuery, sharedParse](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
@@ -739,8 +763,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // "@injection.content" from one pattern instance) so SymbolMarker can
     // carry the definition's own full range and name, not just its kind.
     SymbolKindFunction symbolKind;
-    if (!symbolKindQuerySource.empty()) {
-        const auto symbolKindQuery = std::make_shared<treesitter::Query>(language, symbolKindQuerySource);
+    if (!queries.tags.empty()) {
+        const auto symbolKindQuery = std::make_shared<treesitter::Query>(language, queries.tags);
         symbolKind                 = [parser, symbolKindQuery, sharedParse](std::string_view bufferText) -> std::vector<SymbolMarker> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
@@ -955,8 +979,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // "import.module"/"import.statement" (see Mode.h's ImportTarget doc
     // comment); this closure only ever looks for those three fixed names.
     ImportTargetFunction importTarget;
-    if (!importQuerySource.empty()) {
-        const auto importQuery = std::make_shared<treesitter::Query>(language, importQuerySource);
+    if (!queries.imports.empty()) {
+        const auto importQuery = std::make_shared<treesitter::Query>(language, queries.imports);
         importTarget           = [parser, importQuery, sharedParse](std::string_view bufferText,
                                                                     std::size_t      point) -> std::optional<ImportTarget> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
@@ -1081,8 +1105,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // a describe() block contains its it() blocks, a PHPUnit class its
     // methods -- each name must land on its own innermost definition).
     TestDiscoveryFunction testDiscovery;
-    if (!testQuerySource.empty()) {
-        const auto testQuery = std::make_shared<treesitter::Query>(language, testQuerySource);
+    if (!queries.tests.empty()) {
+        const auto testQuery = std::make_shared<treesitter::Query>(language, queries.tests);
         testDiscovery        = [parser, testQuery, sharedParse](std::string_view bufferText) -> std::vector<TestMarker> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
@@ -1166,9 +1190,36 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // Mode below -- see BuildIndentFunction's own doc comment (Indent.h) for
     // why the indent style lookup needs this rather than languageKey.
     IndentFunction indentColumn;
-    if (!indentQuerySource.empty()) {
-        const auto indentQuery = std::make_shared<treesitter::Query>(language, indentQuerySource);
+    if (!queries.indents.empty()) {
+        const auto indentQuery = std::make_shared<treesitter::Query>(language, queries.indents);
         indentColumn           = BuildIndentFunction(parser, indentQuery, sharedParse, name);
+    }
+
+    // scope-aware-rename follow-up: a ninth closure sharing the same
+    // parser/sharedParse, same reasoning as everything above -- rename runs
+    // off an explicit keystroke rather than per-Paint(), but a buffer whose
+    // text hasn't changed since the last repaint gets the cached tree for
+    // free, which is exactly the case an interactive rename is in.
+    LocalScopeFunction localScopes;
+    if (!queries.locals.empty()) {
+        const auto localsQuery = std::make_shared<treesitter::Query>(language, queries.locals);
+        localScopes            = [parser, localsQuery, sharedParse](std::string_view bufferText) -> std::vector<LocalCapture> {
+            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            if (tree.IsNull()) {
+                return {};
+            }
+
+            std::vector<LocalCapture> captures;
+            for (const treesitter::QueryCapture& capture : localsQuery->Captures(tree.RootNode(), bufferText)) {
+                std::string                           qualifier;
+                const std::optional<LocalCaptureKind> kind = LocalCaptureKindFromCaptureName(capture.name, &qualifier);
+                if (!kind) {
+                    continue; // an unrelated or "_"-prefixed helper capture -- see LocalCaptureKindFromCaptureName
+                }
+                captures.push_back(LocalCapture{capture.startByte, capture.endByte, *kind, std::move(qualifier)});
+            }
+            return captures;
+        };
     }
 
     // Debugging wishlist (line-inspect follow-up): Tier 1 -- unconditional,
@@ -1192,29 +1243,22 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 .importTarget    = std::move(importTarget),
                 .testDiscovery   = std::move(testDiscovery),
                 .indentColumn    = std::move(indentColumn),
-                .lineInspect     = std::move(lineInspect)};
+                .lineInspect     = std::move(lineInspect),
+                .localScopes     = std::move(localScopes)};
 }
 
-Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
-                    const char* foldQuerySource, const char* importQuerySource, const char* symbolKindQuerySource,
-                    const char* testQuerySource, const char* indentQuerySource) {
+Mode TreeSitterMode(std::string name, std::string_view languageName, const TreeSitterQuerySources& queries) {
     const auto language = treesitter::LanguageByName(languageName);
     // Every languageName this is called with (below) names a grammar
     // Languages.cpp always bundles -- if this ever fires it's a build-time
     // bundling regression (a Mode function calling this with a typo'd or
     // no-longer-bundled name), not a runtime condition to recover from
     // gracefully.
-    return TreeSitterModeFromLanguage(std::move(name), *language, querySource,
-                                      foldQuerySource != nullptr ? std::string_view(foldQuerySource) : std::string_view(),
-                                      importQuerySource != nullptr ? std::string_view(importQuerySource) : std::string_view(),
-                                      symbolKindQuerySource != nullptr ? std::string_view(symbolKindQuerySource) : std::string_view(),
-                                      testQuerySource != nullptr ? std::string_view(testQuerySource) : std::string_view(),
-                                      indentQuerySource != nullptr ? std::string_view(indentQuerySource) : std::string_view());
+    return TreeSitterModeFromLanguage(std::move(name), *language, queries);
 }
 
 Mode JanetMode() {
-    Mode mode              = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet, nullptr, treesitter::queries::kJanetImports,
-                                            nullptr, nullptr, treesitter::queries::kJanetIndents);
+    Mode mode              = TreeSitterMode("janet-mode", "janet", {.highlights = treesitter::queries::kJanet, .imports = treesitter::queries::kJanetImports, .indents = treesitter::queries::kJanetIndents});
     mode.lineCommentPrefix = ";";             // Lisp-family convention
     mode.autoPairs         = LispAutoPairs(); // '(...) is the reader's quote macro, not a paired delimiter
     return mode;
@@ -1224,14 +1268,11 @@ Mode JsonMode() {
     // No lineCommentPrefix -- JSON has no comment syntax at all, real or
     // otherwise; toggle-line-comment correctly reports nothing configured
     // rather than inserting something that would make the file invalid JSON.
-    return TreeSitterMode("json-mode", "json", treesitter::queries::kJson, treesitter::queries::kJsonFolds, nullptr,
-                          nullptr, nullptr, treesitter::queries::kJsonIndents);
+    return TreeSitterMode("json-mode", "json", {.highlights = treesitter::queries::kJson, .folds = treesitter::queries::kJsonFolds, .indents = treesitter::queries::kJsonIndents});
 }
 
 Mode CMode() {
-    Mode mode              = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds,
-                                            treesitter::queries::kCImports, treesitter::queries::kCTags, nullptr,
-                                            treesitter::queries::kCIndents);
+    Mode mode              = TreeSitterMode("c-mode", "c", {.highlights = treesitter::queries::kC, .folds = treesitter::queries::kCFolds, .imports = treesitter::queries::kCImports, .tags = treesitter::queries::kCTags, .indents = treesitter::queries::kCIndents, .locals = treesitter::queries::kCLocals});
     mode.lineCommentPrefix = "//";
     // Debugging wishlist (line-inspect follow-up), Tier 2: overrides the
     // generic identifier-only default with IsCLikeExpressionNodeType's
@@ -1243,9 +1284,7 @@ Mode CMode() {
 }
 
 Mode CppMode() {
-    Mode mode              = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds,
-                                            treesitter::queries::kCImports, treesitter::queries::kCppTags,
-                                            treesitter::queries::kCppTests, treesitter::queries::kCppIndents);
+    Mode mode              = TreeSitterMode("cpp-mode", "cpp", {.highlights = treesitter::queries::kCpp, .folds = treesitter::queries::kCppFolds, .imports = treesitter::queries::kCImports, .tags = treesitter::queries::kCppTags, .tests = treesitter::queries::kCppTests, .indents = treesitter::queries::kCppIndents, .locals = treesitter::queries::kCppLocals});
     mode.lineCommentPrefix = "//";
     // Debugging wishlist (line-inspect follow-up), Tier 2 -- see CMode's own.
     if (const auto language = treesitter::LanguageByName("cpp")) {
@@ -1255,42 +1294,31 @@ Mode CppMode() {
 }
 
 Mode PhpMode() {
-    Mode mode              = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp, nullptr, treesitter::queries::kPhpImports,
-                                            treesitter::queries::kPhpTags, treesitter::queries::kPhpTests,
-                                            treesitter::queries::kPhpIndents);
+    Mode mode              = TreeSitterMode("php-mode", "php", {.highlights = treesitter::queries::kPhp, .imports = treesitter::queries::kPhpImports, .tags = treesitter::queries::kPhpTags, .tests = treesitter::queries::kPhpTests, .indents = treesitter::queries::kPhpIndents, .locals = treesitter::queries::kPhpLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode JavaScriptMode() {
-    Mode mode              = TreeSitterMode("javascript-mode", "javascript", treesitter::queries::kJavaScript,
-                                            treesitter::queries::kJavaScriptFolds, treesitter::queries::kJavaScriptImports,
-                                            treesitter::queries::kJavaScriptTags, treesitter::queries::kJavaScriptTests,
-                                            treesitter::queries::kJavaScriptIndents);
+    Mode mode              = TreeSitterMode("javascript-mode", "javascript", {.highlights = treesitter::queries::kJavaScript, .folds = treesitter::queries::kJavaScriptFolds, .imports = treesitter::queries::kJavaScriptImports, .tags = treesitter::queries::kJavaScriptTags, .tests = treesitter::queries::kJavaScriptTests, .indents = treesitter::queries::kJavaScriptIndents, .locals = treesitter::queries::kJavaScriptLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode TypeScriptMode() {
-    Mode mode              = TreeSitterMode("typescript-mode", "typescript", treesitter::queries::kTypeScript,
-                                            treesitter::queries::kTypeScriptFolds, treesitter::queries::kTypeScriptImports,
-                                            treesitter::queries::kTypeScriptTags, treesitter::queries::kTypeScriptTests,
-                                            treesitter::queries::kTypeScriptIndents);
+    Mode mode              = TreeSitterMode("typescript-mode", "typescript", {.highlights = treesitter::queries::kTypeScript, .folds = treesitter::queries::kTypeScriptFolds, .imports = treesitter::queries::kTypeScriptImports, .tags = treesitter::queries::kTypeScriptTags, .tests = treesitter::queries::kTypeScriptTests, .indents = treesitter::queries::kTypeScriptIndents, .locals = treesitter::queries::kTypeScriptLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode TsxMode() {
-    Mode mode              = TreeSitterMode("tsx-mode", "tsx", treesitter::queries::kTypeScript, treesitter::queries::kTypeScriptFolds,
-                                            treesitter::queries::kTypeScriptImports, treesitter::queries::kTypeScriptTags,
-                                            treesitter::queries::kTypeScriptTests, treesitter::queries::kTypeScriptIndents);
+    Mode mode              = TreeSitterMode("tsx-mode", "tsx", {.highlights = treesitter::queries::kTypeScript, .folds = treesitter::queries::kTypeScriptFolds, .imports = treesitter::queries::kTypeScriptImports, .tags = treesitter::queries::kTypeScriptTags, .tests = treesitter::queries::kTypeScriptTests, .indents = treesitter::queries::kTypeScriptIndents, .locals = treesitter::queries::kTypeScriptLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode HtmlMode() {
-    Mode mode = TreeSitterMode("html-mode", "html", treesitter::queries::kHtml, nullptr, nullptr, nullptr, nullptr,
-                               treesitter::queries::kHtmlIndents);
+    Mode mode = TreeSitterMode("html-mode", "html", {.highlights = treesitter::queries::kHtml, .indents = treesitter::queries::kHtmlIndents});
     // No lineCommentPrefix -- HTML only has block comments (<!-- -->), no
     // single-line comment token to toggle per line.
 
@@ -1353,28 +1381,23 @@ Mode HtmlMode() {
 Mode CssMode() {
     // No lineCommentPrefix -- same reasoning as HtmlMode, CSS only has
     // block comments (/* */).
-    return TreeSitterMode("css-mode", "css", treesitter::queries::kCss, nullptr, treesitter::queries::kCssImports, nullptr,
-                          nullptr, treesitter::queries::kCssIndents);
+    return TreeSitterMode("css-mode", "css", {.highlights = treesitter::queries::kCss, .imports = treesitter::queries::kCssImports, .indents = treesitter::queries::kCssIndents});
 }
 
 Mode PythonMode() {
-    Mode mode              = TreeSitterMode("python-mode", "python", treesitter::queries::kPython, treesitter::queries::kPythonFolds,
-                                            treesitter::queries::kPythonImports, treesitter::queries::kPythonTags,
-                                            treesitter::queries::kPythonTests, treesitter::queries::kPythonIndents);
+    Mode mode              = TreeSitterMode("python-mode", "python", {.highlights = treesitter::queries::kPython, .folds = treesitter::queries::kPythonFolds, .imports = treesitter::queries::kPythonImports, .tags = treesitter::queries::kPythonTags, .tests = treesitter::queries::kPythonTests, .indents = treesitter::queries::kPythonIndents, .locals = treesitter::queries::kPythonLocals});
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode BashMode() {
-    Mode mode              = TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash, nullptr, treesitter::queries::kBashImports,
-                                            nullptr, nullptr, treesitter::queries::kBashIndents);
+    Mode mode              = TreeSitterMode("bash-mode", "bash", {.highlights = treesitter::queries::kBash, .imports = treesitter::queries::kBashImports, .indents = treesitter::queries::kBashIndents, .locals = treesitter::queries::kBashLocals});
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode FishMode() {
-    Mode mode              = TreeSitterMode("fish-mode", "fish", treesitter::queries::kFish, nullptr, nullptr, nullptr, nullptr,
-                                            treesitter::queries::kFishIndents);
+    Mode mode              = TreeSitterMode("fish-mode", "fish", {.highlights = treesitter::queries::kFish, .indents = treesitter::queries::kFishIndents});
     mode.lineCommentPrefix = "#";
     return mode;
 }
@@ -1382,66 +1405,53 @@ Mode FishMode() {
 Mode XmlMode() {
     // No lineCommentPrefix -- XML only has block comments (<!-- -->), same
     // reasoning as HtmlMode/CssMode above.
-    return TreeSitterMode("xml-mode", "xml", treesitter::queries::kXml, nullptr, nullptr, nullptr, nullptr,
-                          treesitter::queries::kXmlIndents);
+    return TreeSitterMode("xml-mode", "xml", {.highlights = treesitter::queries::kXml, .indents = treesitter::queries::kXmlIndents});
 }
 
 Mode RustMode() {
-    Mode mode              = TreeSitterMode("rust-mode", "rust", treesitter::queries::kRust, treesitter::queries::kRustFolds,
-                                            treesitter::queries::kRustImports, treesitter::queries::kRustTags,
-                                            treesitter::queries::kRustTests, treesitter::queries::kRustIndents);
+    Mode mode              = TreeSitterMode("rust-mode", "rust", {.highlights = treesitter::queries::kRust, .folds = treesitter::queries::kRustFolds, .imports = treesitter::queries::kRustImports, .tags = treesitter::queries::kRustTags, .tests = treesitter::queries::kRustTests, .indents = treesitter::queries::kRustIndents, .locals = treesitter::queries::kRustLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode GoMode() {
-    Mode mode              = TreeSitterMode("go-mode", "go", treesitter::queries::kGo, treesitter::queries::kGoFolds, nullptr,
-                                            treesitter::queries::kGoTags, treesitter::queries::kGoTests, treesitter::queries::kGoIndents);
+    Mode mode              = TreeSitterMode("go-mode", "go", {.highlights = treesitter::queries::kGo, .folds = treesitter::queries::kGoFolds, .tags = treesitter::queries::kGoTags, .tests = treesitter::queries::kGoTests, .indents = treesitter::queries::kGoIndents, .locals = treesitter::queries::kGoLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode CSharpMode() {
-    Mode mode              = TreeSitterMode("csharp-mode", "csharp", treesitter::queries::kCSharp, treesitter::queries::kCSharpFolds,
-                                            nullptr, treesitter::queries::kCSharpTags, treesitter::queries::kCSharpTests,
-                                            treesitter::queries::kCSharpIndents);
+    Mode mode              = TreeSitterMode("csharp-mode", "csharp", {.highlights = treesitter::queries::kCSharp, .folds = treesitter::queries::kCSharpFolds, .tags = treesitter::queries::kCSharpTags, .tests = treesitter::queries::kCSharpTests, .indents = treesitter::queries::kCSharpIndents, .locals = treesitter::queries::kCSharpLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode JavaMode() {
-    Mode mode              = TreeSitterMode("java-mode", "java", treesitter::queries::kJava, treesitter::queries::kJavaFolds,
-                                            nullptr, treesitter::queries::kJavaTags, treesitter::queries::kJavaTests,
-                                            treesitter::queries::kJavaIndents);
+    Mode mode              = TreeSitterMode("java-mode", "java", {.highlights = treesitter::queries::kJava, .folds = treesitter::queries::kJavaFolds, .tags = treesitter::queries::kJavaTags, .tests = treesitter::queries::kJavaTests, .indents = treesitter::queries::kJavaIndents, .locals = treesitter::queries::kJavaLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode KotlinMode() {
-    Mode mode              = TreeSitterMode("kotlin-mode", "kotlin", treesitter::queries::kKotlin, treesitter::queries::kKotlinFolds,
-                                            nullptr, treesitter::queries::kKotlinTags, treesitter::queries::kKotlinTests,
-                                            treesitter::queries::kKotlinIndents);
+    Mode mode              = TreeSitterMode("kotlin-mode", "kotlin", {.highlights = treesitter::queries::kKotlin, .folds = treesitter::queries::kKotlinFolds, .tags = treesitter::queries::kKotlinTags, .tests = treesitter::queries::kKotlinTests, .indents = treesitter::queries::kKotlinIndents, .locals = treesitter::queries::kKotlinLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode YamlMode() {
-    Mode mode              = TreeSitterMode("yaml-mode", "yaml", treesitter::queries::kYaml, nullptr, nullptr, nullptr, nullptr,
-                                            treesitter::queries::kYamlIndents);
+    Mode mode              = TreeSitterMode("yaml-mode", "yaml", {.highlights = treesitter::queries::kYaml, .indents = treesitter::queries::kYamlIndents});
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode TomlMode() {
-    Mode mode              = TreeSitterMode("toml-mode", "toml", treesitter::queries::kToml, nullptr, nullptr, nullptr, nullptr,
-                                            treesitter::queries::kTomlIndents);
+    Mode mode              = TreeSitterMode("toml-mode", "toml", {.highlights = treesitter::queries::kToml, .indents = treesitter::queries::kTomlIndents});
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode ClojureMode() {
-    Mode mode              = TreeSitterMode("clojure-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
-                                            treesitter::queries::kClojureImports, nullptr, nullptr, treesitter::queries::kClojureIndents);
+    Mode mode              = TreeSitterMode("clojure-mode", "clojure", {.highlights = treesitter::queries::kClojure, .folds = treesitter::queries::kClojureFolds, .imports = treesitter::queries::kClojureImports, .indents = treesitter::queries::kClojureIndents});
     mode.lineCommentPrefix = ";";             // Lisp-family convention, same as JanetMode
     mode.autoPairs         = LispAutoPairs(); // same reasoning as JanetMode
     return mode;
@@ -1449,15 +1459,14 @@ Mode ClojureMode() {
 
 Mode JankMode() {
     // Same grammar and query as ClojureMode, distinct name -- see Mode.h.
-    Mode mode              = TreeSitterMode("jank-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
-                                            treesitter::queries::kClojureImports, nullptr, nullptr, treesitter::queries::kClojureIndents);
+    Mode mode              = TreeSitterMode("jank-mode", "clojure", {.highlights = treesitter::queries::kClojure, .folds = treesitter::queries::kClojureFolds, .imports = treesitter::queries::kClojureImports, .indents = treesitter::queries::kClojureIndents});
     mode.lineCommentPrefix = ";";
     mode.autoPairs         = LispAutoPairs(); // same reasoning as JanetMode
     return mode;
 }
 
 Mode MarkdownMode() {
-    Mode mode = TreeSitterMode("markdown-mode", "markdown", treesitter::queries::kMarkdown);
+    Mode mode = TreeSitterMode("markdown-mode", "markdown", {.highlights = treesitter::queries::kMarkdown});
     // Tables follow-up: the second Mode in this codebase to ever construct
     // a non-empty Keymap (OrgMode() was the first, see its own doc comment
     // below) -- no shadowing risk, Markdown has no fold-cycle or other TAB

@@ -118,8 +118,13 @@ void BufferView::ShowContextMenuAt(Point localClick) {
             contextMenuEntries_.push_back(ContextMenuCommandEntry("lsp-goto-definition"));
         }
         contextMenuEntries_.push_back(ContextMenuCommandEntry("project-find-references"));
-        if (hasLsp) {
-            contextMenuEntries_.push_back(ContextMenuCommandEntry("lsp-rename"));
+        // scope-aware-rename follow-up: rename-symbol is shown whenever it
+        // can do something -- a live server, OR a mode with a locals query,
+        // where it renames a local binding with no server at all. It is
+        // still hidden when neither holds, since then it really would hit
+        // the dead end this gate exists to keep off the menu.
+        if (hasLsp || static_cast<bool>(mode_.localScopes)) {
+            contextMenuEntries_.push_back(ContextMenuCommandEntry("rename-symbol"));
         }
         contextMenuEntries_.push_back(ContextMenuCommandEntry("format-buffer"));
 
