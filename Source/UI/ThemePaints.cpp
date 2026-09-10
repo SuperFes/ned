@@ -360,6 +360,17 @@ Color SelectionFill(const Theme& theme) {
     return theme.selectionBackground.WithAlpha(kDefaultSelectionAlpha);
 }
 
+Color StickyHighlight(const Theme& theme) {
+    // ~18%: findable at a glance without competing with the selection, which
+    // owns a real background. Falls back to the mode line's tone for a theme
+    // whose tab chrome is the terminal's own colour and has nothing to tint
+    // with.
+    constexpr std::uint8_t kStickyAlpha = 46;
+
+    const Color tone = theme.tabBar.background.Composable() ? theme.tabBar.background : theme.modeLineGradientStart;
+    return OverlayBackground(theme, tone.WithAlpha(kStickyAlpha));
+}
+
 Color TextColourAt(const Surface& surface, const Canvas& canvas, Point local, const Color& fallback) {
     if (!PaintsColour(surface.text)) {
         return fallback;

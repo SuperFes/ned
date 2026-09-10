@@ -22,10 +22,6 @@ namespace ned::ui {
 
 namespace {
 
-    // ~18%: a pinned ancestor should be findable at a glance without
-    // competing with the selection, which owns a real background.
-    constexpr std::uint8_t kStickyHighlightAlpha = 46;
-
     // Standard Unicode Box Drawing characters (guaranteed single-column
     // width in any monospace font) for tree-connector lines, `tree`-command
     // style -- deliberately not Nerd Font icons: those need a specific
@@ -455,12 +451,9 @@ void ProjectSidebar::Paint(Canvas c) {
         // so it takes a wash at kStickyHighlightAlpha rather than the solid
         // chrome brush it used to. Composited, so it tints whatever the
         // panel is showing -- including the desktop, for a transparent theme.
-        const Color stickyTone =
-            theme_.tabBar.background.Composable() ? theme_.tabBar.background : theme_.modeLineGradientStart;
-
         Brush brush =
             isActiveFile ? theme_.activeTab
-            : isSticky   ? Brush{.background = OverlayBackground(theme_, stickyTone.WithAlpha(kStickyHighlightAlpha)),
+            : isSticky   ? Brush{.background = StickyHighlight(theme_),
                                  .foreground = vcsColor.value_or(theme_.defaultForeground),
                                  .bold       = true}
                          : Brush{.background = theme_.background,

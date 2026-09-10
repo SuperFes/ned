@@ -1108,6 +1108,13 @@ single-process `./build/ned_tests` (see the build/test note at the end of this f
 why that is a separate check worth making). The `sanitize` preset has one reproducible
 failure, below. Two flakes and one documented behavioral limitation:
 
+- **The `[Performance]` tests flake under `ctest -j8`** (seen repeatedly 2026-09-09:
+  `Point navigation across a huge (piece-table-backed) buffer stays fast`). They budget
+  wall-clock while eight test processes compete for the machine, so a loaded run can miss a
+  budget the same binary clears comfortably on its own. Each one passes standalone and on
+  the next parallel run. Worth either gating them behind a serial ctest fixture or moving
+  them to a `RUN_SERIAL` property rather than continuing to eyeball each occurrence.
+
 - **`Symbol gutter remaps a huge buffer's window-relative offsets...` died with a bus
   error once under `ctest -j8`** (2026-09-09), and passed both on its own immediately
   afterwards and on the very next full `-j8` run, with no source change in between. SIGBUS

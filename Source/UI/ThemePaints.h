@@ -102,6 +102,12 @@ void                               SetAssumedBackground(std::optional<Color> bac
 // See Docs/Themes.md.
 [[nodiscard]] Color SelectionFill(const Theme& theme);
 
+// The wash behind a pinned row -- the sidebar's sticky ancestors and the
+// buffer's own sticky-scroll headers. A hint about where you are rather than
+// a header bar, so it is a fraction of the chrome tone rather than the
+// chrome itself, composited like any other overlay.
+[[nodiscard]] Color StickyHighlight(const Theme& theme);
+
 // The colour a glyph should take from a surface's text paint at one local
 // cell, or `fallback` when that paint contributes no colour of its own --
 // it is empty, or it is a Fade, which modulates the glyphs *after* they are
