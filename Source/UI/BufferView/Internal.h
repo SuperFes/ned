@@ -21,6 +21,7 @@
 #include "UI/BufferView.h"
 #include "UI/BufferView/RenderTypes.h"
 #include "UI/Compositing.h"
+#include "UI/ThemePaints.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1014,21 +1015,6 @@ inline Color TestStatusColor(const Theme& theme, const std::optional<editor::tes
             return theme.diagnosticWarning;
     }
     return theme.successForeground; // unreachable
-}
-
-// An overlay background -- selection, isearch, a diff or conflict wash --
-// composited over the buffer's own background rather than replacing it, so a
-// theme can give any of them alpha and get a *tint* instead of a slab. An
-// opaque overlay passes through byte for byte, which is every built-in
-// theme's behaviour today.
-//
-// Over a theme whose background is the terminal's own there is nothing to
-// composite against, so a translucent overlay lands opaque (BlendOver's
-// documented rule). Making it dither instead needs the two-pass layering in
-// Docs/Translucency.md -- background wash first, text pass second -- which is
-// deliberately still open.
-inline Color OverlayBackground(const Theme& theme, const Color& overlay) {
-    return BlendOver(theme.background, overlay);
 }
 
 inline Color DiagnosticSeverityColor(const Theme& theme, text::Buffer::Diagnostic::Severity severity) {

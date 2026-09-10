@@ -1,4 +1,5 @@
 #include "TreeView.h"
+#include "ThemePaints.h"
 
 #include <algorithm>
 
@@ -82,10 +83,11 @@ void TreeView::Paint(Canvas c) {
     }
 
     const Brush labelBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
-    const Brush selectedLabelBrush{.background = theme_.selectionBackground, .foreground = theme_.defaultForeground};
+    const Color selectionFill = OverlayBackground(theme_, SelectionFill(theme_));
+    const Brush selectedLabelBrush{.background = selectionFill, .foreground = theme_.defaultForeground};
     const Brush glyphBrush{.background = theme_.background, .foreground = theme_.borderAccent.foreground, .bold = true};
     const Brush selectedGlyphBrush{
-        .background = theme_.selectionBackground, .foreground = theme_.borderAccent.foreground, .bold = true};
+        .background = selectionFill, .foreground = theme_.borderAccent.foreground, .bold = true};
 
     // Fill the interior before drawing anything else -- ListPopup's own
     // "otherwise the pane underneath bleeds through empty cells" fix,
@@ -113,7 +115,7 @@ void TreeView::Paint(Canvas c) {
 
         if (selected) {
             for (int x = 1; x < width - 1; ++x) {
-                c[{.x = x, .y = row}].background_color = theme_.selectionBackground;
+                c[{.x = x, .y = row}].background_color = selectionFill;
             }
         }
 

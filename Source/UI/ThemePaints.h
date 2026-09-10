@@ -58,6 +58,15 @@ void                                   ClearSurfaceOverrides();
 void                               SetDetectedAccent(std::optional<Color> accent);
 [[nodiscard]] std::optional<Color> DetectedAccent();
 
+// What to composite against when the theme's own background is the
+// terminal's -- the detected background colour, kept for exactly the case a
+// transparent theme creates: a translucent selection has nothing to blend
+// with, and would otherwise land as the solid slab it exists to avoid. This
+// is Docs/Translucency.md's "assumedBackground" rule. Unset means fall back
+// to opaque, as before.
+void                               SetAssumedBackground(std::optional<Color> background);
+[[nodiscard]] std::optional<Color> AssumedBackground();
+
 // --- resolution ----------------------------------------------------------
 
 // A context that resolves $slot against this theme's own fields and $name
@@ -68,6 +77,30 @@ void                               SetDetectedAccent(std::optional<Color> accent
 // the default derived from `theme`'s flat fields. An unknown name yields a
 // surface that paints nothing, which is what an unmigrated widget wants.
 [[nodiscard]] Surface SurfaceFor(const Theme& theme, std::string_view name);
+
+// An overlay background -- a selection, a search match, a wash -- composited
+// over `beneath` rather than replacing it, so a theme can give any of them
+// alpha and get a tint instead of a slab. An opaque overlay passes through
+// byte for byte.
+//
+// Over a theme whose background is the terminal's own there is nothing to
+// composite against, so a translucent overlay lands opaque (BlendOver's
+// documented rule); making it dither instead needs the two-pass layering in
+// Docs/Translucency.md.
+[[nodiscard]] Color OverlayBackground(const Theme& theme, const Color& overlay);
+
+// What a chrome widget's own fill sits on: the theme's background, or the
+// assumed backdrop when that is the terminal's own. Chrome clears to this
+// before filling, so a translucent fill has a colour to blend with instead
+// of falling down the dither path.
+[[nodiscard]] Color ChromeBackdrop(const Theme& theme);
+
+// The selection colour to actually paint. A theme carrying its own alpha
+// wins outright; a *fully opaque* one is treated as unspecified rather than
+// as "a slab, definitely", because every theme written before the format had
+// alpha says 255 by default and a solid bar over text is what that produces.
+// See Docs/Themes.md.
+[[nodiscard]] Color SelectionFill(const Theme& theme);
 
 // The colour a glyph should take from a surface's text paint at one local
 // cell, or `fallback` when that paint contributes no colour of its own --

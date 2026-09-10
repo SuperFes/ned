@@ -273,12 +273,12 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     // Partial too, so a partially-selected line still shows a thin
     // highlighted edge instead of no indication at all.
     const Brush gutterBrush{
-        .background = (gutterSelection == GutterSelection::Full) ? OverlayBackground(theme_, theme_.selectionBackground)
+        .background = (gutterSelection == GutterSelection::Full) ? OverlayBackground(theme_, SelectionFill(theme_))
                                                                  : theme_.background,
         .foreground = gutterForeground,
     };
     const Brush gutterGapBrush{
-        .background = (gutterSelection != GutterSelection::None) ? OverlayBackground(theme_, theme_.selectionBackground)
+        .background = (gutterSelection != GutterSelection::None) ? OverlayBackground(theme_, SelectionFill(theme_))
                                                                  : theme_.background,
         .foreground = gutterForeground,
     };
@@ -1034,7 +1034,7 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         brush.background = OverlayBackground(theme_, theme_.snippetFieldBackground);
     }
     else if (InSelection(offset)) {
-        brush.background = OverlayBackground(theme_, theme_.selectionBackground);
+        brush.background = OverlayBackground(theme_, SelectionFill(theme_));
     }
     else if (InConflictOurs(offset)) {
         // Merge Conflict Resolution Mode: a persistent,

@@ -235,3 +235,90 @@ TEST_CASE("A surface spec referencing a bundled preset applies the way startup a
     ned::editor::ClearNamedPaintOverrides();
     ned::editor::ClearSurfacePaintOverrides();
 }
+
+TEST_CASE("A translucent overlay composites against the assumed backdrop", "[ChromeSurface]") {
+    // The case a transparent theme creates: the buffer background is the
+    // terminal's own, so a translucent selection has nothing in the cell to
+    // blend with and would land as the solid slab it exists to avoid.
+    const SurfaceGuard guard;
+    struct BackdropGuard {
+        ~BackdropGuard() {
+            ned::ui::SetAssumedBackground(std::nullopt);
+        }
+    } backdropGuard;
+
+    Theme theme               = DarkTheme();
+    theme.background          = Color::Default;
+    theme.selectionBackground = Color::RGB(0xff0000).WithAlpha(128);
+
+    SECTION("with no backdrop known it stays opaque, as before") {
+        ned::ui::SetAssumedBackground(std::nullopt);
+        REQUIRE(ned::ui::OverlayBackground(theme, theme.selectionBackground) == Color::RGB(0xff0000));
+    }
+
+    SECTION("with one, it tints") {
+        ned::ui::SetAssumedBackground(Color::RGB(0x000000));
+        const Color tinted = ned::ui::OverlayBackground(theme, theme.selectionBackground);
+        REQUIRE(static_cast<int>(tinted.red) == 128);
+        REQUIRE(static_cast<int>(tinted.green) == 0);
+    }
+}
+
+TEST_CASE("An opaque selection colour is softened; an authored alpha is obeyed", "[ChromeSurface]") {
+    // Every theme written before the format had alpha says 255 by default,
+    // and a solid bar over text is what that produces -- so a fully opaque
+    // value is treated as unspecified rather than as a deliberate slab.
+    Theme theme               = DarkTheme();
+    theme.selectionBackground = Color::RGB(0x2e4a80);
+    REQUIRE(static_cast<int>(ned::ui::SelectionFill(theme).alpha) == 110);
+
+    theme.selectionBackground = Color::RGB(0x2e4a80).WithAlpha(200);
+    REQUIRE(static_cast<int>(ned::ui::SelectionFill(theme).alpha) == 200);
+
+    theme.selectionBackground = Color::Default;
+    REQUIRE(ned::ui::SelectionFill(theme) == Color::Default);
+}
+
+TEST_CASE("A mode line only fades where there is something to fade into", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    struct BackdropGuard {
+        ~BackdropGuard() {
+            ned::ui::SetAssumedBackground(std::nullopt);
+        }
+    } backdropGuard;
+
+    SECTION("an opaque theme fades toward its own background") {
+        Theme theme      = DarkTheme();
+        theme.background = Color::RGB(0x101014);
+        REQUIRE_FALSE(ned::ui::SurfaceFor(theme, "modeline").fill.stops.back().colour.Opaque());
+    }
+
+    SECTION("a transparent theme with no backdrop keeps the flat bar rather than dithering") {
+        ned::ui::SetAssumedBackground(std::nullopt);
+        Theme theme      = DarkTheme();
+        theme.background = Color::Default;
+        REQUIRE(ned::ui::SurfaceFor(theme, "modeline").fill.stops.back().colour == theme.modeLineGradientEnd);
+    }
+
+    SECTION("a transparent theme with a detected backdrop fades again") {
+        Theme theme      = DarkTheme();
+        theme.background = Color::Default;
+        ned::ui::SetAssumedBackground(Color::RGB(0x101014));
+        REQUIRE_FALSE(ned::ui::SurfaceFor(theme, "modeline").fill.stops.back().colour.Opaque());
+    }
+}
+
+TEST_CASE("A transparent theme's tab strip is chrome, not a hole", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+
+    Theme opaque      = DarkTheme();
+    opaque.background = Color::RGB(0x101014);
+    REQUIRE(ned::ui::SurfaceFor(opaque, "tab.strip").fill.stops.front().colour == opaque.background);
+
+    Theme transparent      = DarkTheme();
+    transparent.background = Color::Default;
+    const auto strip       = ned::ui::SurfaceFor(transparent, "tab.strip").fill;
+    REQUIRE(strip.stops.size() == 1);
+    REQUIRE(strip.stops.front().colour.Composable());   // something to see...
+    REQUIRE_FALSE(strip.stops.front().colour.Opaque()); // ...but not a solid band
+}

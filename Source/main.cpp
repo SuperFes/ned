@@ -733,6 +733,28 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         ned::ui::SetDetectedAccent(desktopAccent->accent);
     }
 
+    // What a translucent overlay composites against when the theme's own
+    // background is the terminal's (Docs/Translucency.md's assumedBackground
+    // rule). The theme deliberately keeps Color::Default there so the
+    // desktop shows through the buffer; a selection still needs *something*
+    // to tint, or it lands as the solid slab it exists to avoid.
+    if (theme.background.Composable()) {
+        ned::ui::SetAssumedBackground(theme.background);
+    }
+    else {
+        // Nothing to read here: the terminal's real background can only be
+        // probed before the event loop starts reading stdin (see
+        // TerminalColorProbe.h), and by now it has. Polarity from the
+        // theme's own foreground is enough -- light text means a dark
+        // backdrop -- and it only decides what a *translucent overlay*
+        // composites against, never what gets painted where nothing is.
+        const int  luma      = (299 * theme.defaultForeground.red + 587 * theme.defaultForeground.green +
+                                114 * theme.defaultForeground.blue) /
+                               1000;
+        const bool lightText = !theme.defaultForeground.Composable() || luma >= 128;
+        ned::ui::SetAssumedBackground(lightText ? ned::ui::Color::RGB(0x14141c) : ned::ui::Color::RGB(0xf0f0ec));
+    }
+
     // theme-editing follow-up: init.janet's accumulated (ned/theme-set ...)
     // overrides, applied on top of whichever base won above -- typically a
     // whole (dofile ".../theme.janet") worth from save-theme's output, which
