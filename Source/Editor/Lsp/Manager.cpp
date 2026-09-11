@@ -1465,6 +1465,7 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     inlayHintsRequestedRange_.erase(&buffer);
     inlayHintsRequestCounter_.erase(&buffer);
     inlayHintSpans_.erase(&buffer);
+    inlayHintSpansGeneration_.erase(&buffer);
     codeLensRequestedGeneration_.erase(&buffer);
     codeLensRequestCounter_.erase(&buffer);
     codeLensSpans_.erase(&buffer);
@@ -1967,14 +1968,25 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
             }
             std::sort(resolved.begin(), resolved.end(),
                       [](const ResolvedInlayHint& a, const ResolvedInlayHint& b) { return a.byteOffset < b.byteOffset; });
-            inlayHintSpans_[bufferPtr] = std::move(resolved);
+            inlayHintSpans_[bufferPtr]           = std::move(resolved);
+            inlayHintSpansGeneration_[bufferPtr] = requestedGeneration;
         });
 }
 
 const std::vector<Manager::ResolvedInlayHint>& Manager::InlayHintSpans(const text::Buffer& buffer) const {
     static const std::vector<ResolvedInlayHint> kEmpty;
     const auto                                  it = inlayHintSpans_.find(const_cast<text::Buffer*>(&buffer));
-    return it != inlayHintSpans_.end() ? it->second : kEmpty;
+    if (it == inlayHintSpans_.end()) {
+        return kEmpty;
+    }
+    // Applied against a document that has since been edited: the offsets no
+    // longer name the bytes they were computed for. See this method's own
+    // declaration for why that garbles rather than merely misplaces.
+    const auto generationIt = inlayHintSpansGeneration_.find(const_cast<text::Buffer*>(&buffer));
+    if (generationIt == inlayHintSpansGeneration_.end() || generationIt->second != buffer.ContentGeneration()) {
+        return kEmpty;
+    }
+    return it->second;
 }
 
 void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverKey) {
