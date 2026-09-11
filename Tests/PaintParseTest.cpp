@@ -315,6 +315,7 @@ TEST_CASE("Every surface a widget actually paints is one a theme can discover", 
     // enumerated; the point is that adding a SurfaceFor(...) call with a new
     // name has to fail here until the name is published.
     const std::vector<std::string> paintedByWidgets = {
+        "buffer",              // BufferView/Paint.cpp
         "buffer.current_line", // BufferView/Paint.cpp
         "modeline",            // ModeLine.cpp
         "modeline.focused",    // ModeLine.cpp

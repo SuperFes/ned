@@ -128,6 +128,14 @@ cannot linger here after it stops existing.
 `binary_foreground` `ghost_text_foreground` `link_foreground` `truncation_indicator_foreground`
 `underline_foreground` `strikethrough_foreground`
 
+`ghost_text_foreground` is the **virtual text** colour -- inlay hints, code-lens titles:
+text ned synthesises rather than text the buffer contains. It is the one colour key where
+alpha does something beyond compositing a background: give it one (`#c5c8d680`) and virtual
+text fades toward whatever is genuinely behind that cell instead of toward a colour picked
+once at theme-author time. The bundled themes all use an opaque pre-dimmed grey, which is
+returned untouched, so this is opt-in. An inlay hint also inherits its line's own
+background, so one sitting inside a selection stays inside it.
+
 **Brush-valued fields.** Each of these names a foreground/background pair plus four
 style flags, so each expands to six keys -- `<prefix>_background`, `<prefix>_foreground`,
 `<prefix>_bold`, `<prefix>_italic`, `<prefix>_underlined`, `<prefix>_strikethrough`.
@@ -379,8 +387,12 @@ tinted toward the theme's own background reads better than flat black on some th
 `buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab.strip`, `tab`,
 `tab.active`, `tab.active.focused`, `echo`, `scrollbar`, `panel`, `popup`.
 
-One is not painted yet: setting `buffer` parses and stores fine and then does nothing
-visible, waiting on the text-layer phase in `ROADMAP.md`.
+`buffer` is the body's own background -- the bottom layer every other overlay here sits on.
+It paints only where nothing louder already claimed the cell, so a selection, a search hit,
+a snippet field, a diff tint and a conflict wash all still win against it, and the
+current-line tint composites on top of it rather than instead of it. Its derived default is
+a flat theme background, so leaving it alone changes nothing; a gradient here is a body
+wash the whole viewport is normalised against, not one ramp per line.
 
 `buffer.selection` and `buffer.search` are sampled across the whole viewport rather than
 across each run of matching cells, so a gradient one reads as a single wash that the

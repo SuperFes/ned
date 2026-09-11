@@ -99,6 +99,10 @@ class Environment; // Self-hosting-completion follow-up: see SetJanetEnvironment
 
 namespace ned::ui {
 
+// Only ever taken by const reference here (BaseBackgroundAt), so a forward
+// declaration keeps Paint.h out of this header.
+struct Surface;
+
 class BufferView : public Widget {
   public:
     // statusMessage is where a caught command exception, a command like
@@ -2852,6 +2856,12 @@ class BufferView : public Widget {
     // search washes are themed Surfaces (Docs/Translucency.md phase 6), so a
     // gradient or pattern one has to know where in the viewport it lands.
     // Every other wash in the chain is a flat colour and ignores them.
+    // Synthetic "virtual text" (inlay hints, code-lens titles) resolved at
+    // real alpha against whatever is actually behind the cell. An opaque
+    // theme_.ghostTextForeground -- every bundled theme today -- comes back
+    // untouched.
+    [[nodiscard]] Color GhostForegroundOver(const Color& beneath) const;
+
     [[nodiscard]] Brush BrushForCell(std::size_t offset, const LineRenderState& lineState, const Canvas& c, int col,
                                      int row) const;
 
@@ -3876,6 +3886,27 @@ class BufferView : public Widget {
     // origin-agnostic) to still carry the signal, matching this feature's
     // own "otherwise the bottom hint is enough" design.
     static constexpr std::size_t kNoRowLine = static_cast<std::size_t>(-1);
+    // Paints the "buffer" surface -- the body's own background, the bottom
+    // layer everything else here sits on. Runs after the content loop rather
+    // than before it, because "nothing louder has claimed this cell" is a
+    // question about the painted result, not about paint order: a cell still
+    // holding exactly theme_.background is one no selection, search hit,
+    // diff tint or conflict wash wanted.
+    //
+    // The derived default is a solid theme.background, so an unthemed buffer
+    // composites that colour onto itself and is byte-identical; a transparent
+    // theme derives a paint that paints nothing and is skipped outright.
+    void PaintBufferSurface(Canvas& c) const;
+
+    // The colour a cell is left holding when nothing louder than the buffer's
+    // own background has claimed it -- theme_.background, or what the
+    // "buffer" surface composited onto it at this cell. Every wash painted
+    // after PaintBufferSurface tests against this rather than against
+    // theme_.background directly, since a themed `buffer` fill means the two
+    // are no longer the same colour (and a gradient means it differs per
+    // cell).
+    [[nodiscard]] Color BaseBackgroundAt(const Surface& bufferSurface, const Canvas& c, int col, int row) const;
+
     // Paints the "buffer.current_line" surface into the backing layer -- behind
     // the glyphs rather than into their cells, so a wash never has to choose
     // between covering the syntax colour and being visible. Empty by default.

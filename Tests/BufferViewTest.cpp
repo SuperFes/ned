@@ -56,6 +56,7 @@
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
+#include "UI/Compositing.h"
 #include "UI/EchoArea.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/ScrollArrowButton.h"
@@ -1492,6 +1493,123 @@ TEST_CASE("A textDocument/inlayHint response renders virtual text mid-line witho
     REQUIRE(screen.PixelAt(gutter + 5, 0).character == "t");
     REQUIRE(screen.PixelAt(gutter + 6, 0).character == " "); // real ' ' from "x = 1;", shifted right by the hint
     REQUIRE(screen.PixelAt(gutter + 7, 0).character == "=");
+
+    std::filesystem::remove(path);
+}
+
+// translucency phase 6 (virtual text): an inlay hint is virtual text drawn
+// *inside* a real line, so it sits wherever that line's own background is --
+// including inside a selection. It used to write theme_.background into its
+// own cells unconditionally, which punched a hole through the selection at
+// exactly the columns the hint occupied.
+TEST_CASE("An inlay hint inside a selection keeps the selection's background", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_inlay_selection_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("x = 1;"); // hint anchors right after 'x', at byte 1
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    const std::vector<ned::editor::lsp::Json> frames      = ReadLspFrames(server.serverStdinRead, 2);
+    const auto                                inlayHintIt = std::find_if(
+        frames.begin(), frames.end(), [](const ned::editor::lsp::Json& f) { return f["method"] == "textDocument/inlayHint"; });
+    REQUIRE(inlayHintIt != frames.end());
+
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", (*inlayHintIt)["id"]},
+        {"result", ned::editor::lsp::Json::array({{{"position", {{"line", 0}, {"character", 1}}}, {"label", ": int"}}})},
+    }
+                              .dump());
+
+    buffer.SetMark(0);
+    buffer.SetPoint(buffer.Content().ByteLength()); // whole line selected
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(1);
+    // The real 'x' at gutter+0 is selected; the hint occupies gutter+1..+5.
+    const ned::ui::Color selected = screen.PixelAt(gutter + 0, 0).background_color;
+    REQUIRE(screen.PixelAt(gutter + 1, 0).character == ":");
+    for (int col = 1; col <= 5; ++col) {
+        INFO("hint column " << col);
+        REQUIRE(screen.PixelAt(gutter + col, 0).background_color == selected);
+    }
+
+    std::filesystem::remove(path);
+}
+
+// translucency phase 6 (virtual text): the other half of the above -- a theme
+// that gives ghost_text_foreground an alpha channel gets text resolved against
+// what is actually behind the cell, instead of a foreground Screen::Flush
+// would render fully opaque anyway.
+TEST_CASE("Virtual text honours a translucent ghost foreground", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_inlay_alpha_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("x = 1;");
+    fixture.activeBuffer.Set(buffer);
+
+    fixture.theme                     = ned::ui::ThemeByName("gruvbox-light").value(); // opaque background to resolve against
+    const ned::ui::Color ghost        = ned::ui::Color::RGB(0x204080).WithAlpha(128);
+    fixture.theme.ghostTextForeground = ghost;
+
+    // The current-line wash composites into these same cells *after* the
+    // content loop has already resolved the hint's foreground, so leaving it
+    // on would make the cell's final background a different colour from the
+    // one the foreground was resolved against (see GhostForegroundOver's own
+    // note on paint order). Silenced here so the assertion below is exact.
+    struct SurfaceGuard {
+        ~SurfaceGuard() {
+            ned::ui::ClearSurfaceOverrides();
+        }
+    } const guard;
+    ned::ui::SetSurfaceOverride("buffer.current_line", ned::ui::Surface{});
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    const std::vector<ned::editor::lsp::Json> frames      = ReadLspFrames(server.serverStdinRead, 2);
+    const auto                                inlayHintIt = std::find_if(
+        frames.begin(), frames.end(), [](const ned::editor::lsp::Json& f) { return f["method"] == "textDocument/inlayHint"; });
+    REQUIRE(inlayHintIt != frames.end());
+
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", (*inlayHintIt)["id"]},
+        {"result", ned::editor::lsp::Json::array({{{"position", {{"line", 0}, {"character", 1}}}, {"label", ": int"}}})},
+    }
+                              .dump());
+    view.Paint(canvas);
+
+    const int            gutter = GutterWidth(1);
+    const ned::ui::Cell& hint   = screen.PixelAt(gutter + 1, 0);
+    REQUIRE(hint.character == ":");
+    // Resolved, not passed through: the raw authored colour would render
+    // opaque, which is the whole trap this exists to avoid.
+    REQUIRE(hint.foreground_color != ghost);
+    REQUIRE(hint.foreground_color == ned::ui::BlendOver(hint.background_color, ghost));
 
     std::filesystem::remove(path);
 }
@@ -13126,6 +13244,99 @@ TEST_CASE("OnPaste with vim mode enabled in Insert mode does one atomic insert a
     // which is what the RecordInsertKey bookkeeping in the fast path exists
     // to make possible.
     REQUIRE(fixture.buffer.Text().size() == std::string("pastedstart ").size() + std::string("pasted").size());
+}
+
+TEST_CASE("The buffer surface paints the body's own background", "[BufferView]") {
+    // translucency phase 6: "buffer" was derived, published in SurfaceNames()
+    // and documented while being painted by nothing at all, so
+    // ned/theme-surface "buffer" ... parsed, stored and did nothing. This is
+    // the consumer.
+    struct SurfaceGuard {
+        ~SurfaceGuard() {
+            ned::ui::ClearSurfaceOverrides();
+        }
+    } const guard;
+
+    const ned::ui::Color body = ned::ui::Color::RGB(0x123456);
+    ned::ui::Surface     surface;
+    surface.fill = ned::ui::SolidPaint(body);
+    ned::ui::SetSurfaceOverride("buffer", surface);
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("alpha\nbeta\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(20, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    // Layer-agnostic for the same reason the current-line test below is: an
+    // opaque theme composites in place, a transparent one drops to the
+    // backing plane, and which applies is not what this is about.
+    const auto shownAt = [&](int x, int y) {
+        const ned::ui::Color text = screen.PixelAt(x, y).background_color;
+        return text.kind == ned::ui::Color::Kind::Default ? screen.BackingAt(x, y).background_color : text;
+    };
+
+    int painted = 0;
+    for (int y = 0; y < 5; ++y) {
+        for (int x = 0; x < 20; ++x) {
+            if (shownAt(x, y) == body) {
+                ++painted;
+            }
+        }
+    }
+    // Most of the view is plain body background -- two short lines of text in
+    // a 20x5 view -- so this is a wash across the region, not one stray cell.
+    REQUIRE(painted > 50);
+}
+
+TEST_CASE("The current line still reads on top of a themed buffer fill", "[BufferView]") {
+    // The regression BaseBackgroundAt exists to prevent: the current-line
+    // wash tested `cell.background_color == theme_.background` to mean
+    // "nothing louder claimed this cell", which stopped being true the moment
+    // the buffer surface composited its own fill into those same cells. The
+    // current line would then silently vanish for any theme that set one.
+    struct SurfaceGuard {
+        ~SurfaceGuard() {
+            ned::ui::ClearSurfaceOverrides();
+        }
+    } const guard;
+
+    ned::ui::Surface body;
+    body.fill = ned::ui::SolidPaint(ned::ui::Color::RGB(0x123456));
+    ned::ui::SetSurfaceOverride("buffer", body);
+
+    ned::ui::Surface current;
+    current.fill = ned::ui::SolidPaint(ned::ui::Color::RGB(0x804020).WithAlpha(120));
+    ned::ui::SetSurfaceOverride("buffer.current_line", current);
+
+    Fixture fixture;
+    // An OPAQUE theme on purpose. DarkTheme's background is Color::Default,
+    // which sends every wash here down the backing-plane branch; the branch
+    // BaseBackgroundAt guards is the in-place one, which only an opaque theme
+    // reaches.
+    fixture.theme = ned::ui::ThemeByName("gruvbox-light").value();
+    REQUIRE(fixture.theme.background.Composable());
+    fixture.buffer.InsertAtPoint("alpha\nbeta\n");
+    fixture.buffer.SetPoint(0); // first line
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(20, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    const auto shownAt = [&](int x, int y) {
+        const ned::ui::Color text = screen.PixelAt(x, y).background_color;
+        return text.kind == ned::ui::Color::Kind::Default ? screen.BackingAt(x, y).background_color : text;
+    };
+
+    // Row 0 carries the point, row 1 does not. Whatever the exact composite
+    // works out to, the two must not be the same colour -- that difference IS
+    // the current-line highlight.
+    REQUIRE(shownAt(15, 0) != shownAt(15, 1));
 }
 
 TEST_CASE("The current-line highlight covers every row a wrapped line occupies", "[BufferView]") {
