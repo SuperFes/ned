@@ -12412,6 +12412,138 @@ struct CalloutStyleGuard {
 
 } // namespace
 
+// A styling-alignment trap, per the shape this was reported in: everything
+// looks right until the LSP's own feedback is on screen, and then the
+// *styling* -- not the text -- drifts out of step with the characters it
+// marks as you type.
+//
+// Written as an invariant rather than a snapshot, so it cannot rot into
+// "whatever it did last time": a diagnostic underline must cover exactly the
+// characters of the word it flags, and nothing else. The load-bearing part is
+// the negative half -- an underline that has crept onto the space beside the
+// word is the signature of a stale byte range, and is invisible to any
+// assertion that only checks the word itself is underlined.
+namespace {
+
+// Every column on `row` whose cell is underlined, as the string of characters
+// it covers plus the column it starts at.
+std::pair<int, std::string> UnderlinedRun(ned::ui::Screen& screen, int row, int width) {
+    int         start = -1;
+    std::string covered;
+    for (int x = 0; x < width; ++x) {
+        if (!screen.PixelAt(x, row).underlined) {
+            continue;
+        }
+        if (start < 0) {
+            start = x;
+        }
+        covered += screen.PixelAt(x, row).character;
+    }
+    return {start, covered};
+}
+
+} // namespace
+
+TEST_CASE("A diagnostic underline stays on the word it flags while typing ahead of it", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode             = ned::editor::CppMode();
+    const std::string source = "int alpha = 1;\n";
+    fixture.buffer.InsertAtPoint(source);
+
+    // What the LSP reports, in the only form BufferView ever sees it: byte
+    // ranges against the document as it stood when the response landed.
+    const std::size_t alphaStart = source.find("alpha");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{.startByte = alphaStart,
+                                      .endByte   = alphaStart + 5,
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Warning,
+                                      .message   = "unused variable alpha"},
+    });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 3});
+    ned::ui::Screen screen = ned::ui::Screen(80, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 3});
+
+    fixture.buffer.SetPoint(0);
+    view.Paint(canvas);
+
+    // The gutter's exact width depends on which columns CppMode activates, so
+    // the absolute start is recorded rather than asserted -- what this test is
+    // about is that the run stays on the same characters, not where the gutter
+    // happens to end.
+    const auto [startBefore, coveredBefore] = UnderlinedRun(screen, 0, 80);
+    INFO("before typing");
+    REQUIRE(coveredBefore == "alpha");
+
+    // Now type ahead of it, the way you would while the server is still
+    // catching up. Every byte offset in that diagnostic now names a different
+    // byte; the underline must follow the word, not the offset.
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.InsertAtPoint("yy");
+    view.Paint(canvas);
+
+    const auto [startAfter, coveredAfter] = UnderlinedRun(screen, 0, 80);
+    INFO("after typing two characters ahead of the flagged word");
+    // Either the underline moved with the word, or it is gone entirely --
+    // both are honest. What it must never do is stay put and underline
+    // "t alp", pulling the styling out of step with the text.
+    if (!coveredAfter.empty()) {
+        REQUIRE(coveredAfter == "alpha");
+        REQUIRE(startAfter == startBefore + 2);
+    }
+}
+
+// The same trap generalised to a typing burst, and stated as the property that
+// is cheap to check and impossible to satisfy by accident: an underline is the
+// one styling attribute here that comes only from an LSP diagnostic.
+// Tree-sitter will happily italicise the spaces inside a comment, but nothing
+// legitimately underlines the gap between two tokens -- so an underlined space
+// is a stale byte range, every time, with no false positives to sift.
+TEST_CASE("No keystroke leaves a diagnostic underline sitting on whitespace", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode             = ned::editor::CppMode();
+    const std::string source = "int alpha = 1;\nint beta = 2;\n";
+    fixture.buffer.InsertAtPoint(source);
+
+    const std::size_t alphaStart = source.find("alpha");
+    const std::size_t betaStart  = source.find("beta");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{.startByte = alphaStart,
+                                      .endByte   = alphaStart + 5,
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Warning,
+                                      .message   = "unused variable alpha"},
+        ned::text::Buffer::Diagnostic{.startByte = betaStart,
+                                      .endByte   = betaStart + 4,
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Error,
+                                      .message   = "unused variable beta"},
+    });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 5});
+    ned::ui::Screen screen = ned::ui::Screen(80, 6);
+
+    // Typed at the very start of the file, so every diagnostic on both lines
+    // is downstream of the caret and every keystroke invalidates every offset.
+    fixture.buffer.SetPoint(0);
+    for (int keystroke = 0; keystroke < 8; ++keystroke) {
+        view.OnEvent(ned::ui::test::Character('y'));
+        ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 5});
+        view.Paint(canvas);
+
+        for (int row = 0; row < 6; ++row) {
+            for (int x = 0; x < 80; ++x) {
+                const ned::ui::Cell& cell = screen.PixelAt(x, row);
+                if (!cell.underlined) {
+                    continue;
+                }
+                INFO("keystroke " << keystroke << ", cell (" << x << ", " << row << ") holds a space");
+                REQUIRE(cell.character != " ");
+            }
+        }
+    }
+}
+
 // The default style, and the reason it is the default. Reported twice against
 // a live session as "lines move around in a wonky way while typing": a server
 // republishes constantly as you edit, and under Callout every diagnostic that
