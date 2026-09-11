@@ -21,6 +21,22 @@
 (bracketed_parameter_list) @aligned
 (bracketed_argument_list) @aligned
 
+; lambda-body-alignment follow-up: "@align.barrier" marks a brace-delimited
+; STATEMENT/DECLARATION body an enclosing @aligned container's column
+; alignment must not reach through -- alignment is a continuation-line rule
+; ("foo(a,\n    b)"), and a block-bodied callable passed as an argument
+; ("Task.Run(() => {") is not a continuation of the argument list at
+; all. Contributes no indent level of its own (the same node's @indent
+; capture above still does that); it only degrades an OUTER @aligned
+; container back to plain level counting. Deliberately never applied to a
+; data literal -- a multi-line initializer/object/array argument aligning
+; its own body relative to the call's alignment column is existing,
+; intentional behavior. See Editor/Indent.h.
+(block) @align.barrier
+(declaration_list) @align.barrier
+(switch_body) @align.barrier
+(accessor_list) @align.barrier
+
 (declaration_list "}" @dedent)
 (enum_member_declaration_list "}" @dedent)
 (block "}" @dedent)

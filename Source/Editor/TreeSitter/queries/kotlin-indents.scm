@@ -21,6 +21,28 @@
 (value_arguments) @aligned
 (indexing_suffix) @aligned
 
+; lambda-body-alignment follow-up: "@align.barrier" marks a brace-delimited
+; STATEMENT/DECLARATION body an enclosing @aligned container's column
+; alignment must not reach through -- alignment is a continuation-line rule
+; ("foo(a,\n    b)"), and a block-bodied callable passed as an argument
+; ("runCatching(block = {") is not a continuation of the argument list at
+; all. Contributes no indent level of its own (the same node's @indent
+; capture above still does that); it only degrades an OUTER @aligned
+; container back to plain level counting. Deliberately never applied to a
+; data literal -- a multi-line struct/array/collection-literal argument
+; aligning its own body relative to the call's alignment column is existing,
+; intentional behavior. See Editor/Indent.h.
+(lambda_literal) @align.barrier
+(class_body) @align.barrier
+(enum_class_body) @align.barrier
+(when_expression) @align.barrier
+(anonymous_initializer) @align.barrier
+(catch_block) @align.barrier
+(finally_block) @align.barrier
+(function_body "{") @align.barrier
+(control_structure_body "{") @align.barrier
+(secondary_constructor "{") @align.barrier
+
 (class_body "}" @dedent)
 (enum_class_body "}" @dedent)
 (lambda_literal "}" @dedent)

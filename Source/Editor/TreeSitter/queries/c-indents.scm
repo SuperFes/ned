@@ -23,6 +23,23 @@
 (parameter_list) @aligned
 (argument_list) @aligned
 
+; lambda-body-alignment follow-up: "@align.barrier" marks a brace-delimited
+; STATEMENT/DECLARATION body an enclosing @aligned container's column
+; alignment must not reach through -- alignment is a continuation-line rule
+; ("foo(a,\n    b)", and nothing more). C itself has no block-bodied
+; argument expression the way C++/JS/Go do (this capture is what keeps
+; cpp-indents.scm's own lambda case right, and is carried here purely so the
+; two queries stay the divergence-free pair their headers already claim),
+; but a statement body reached from inside an @aligned container is the same
+; situation wherever it arises. Contributes no indent level of its own
+; (the same node's @indent capture above still does that); it only
+; degrades an OUTER @aligned container back to plain level counting.
+; Deliberately never applied to a data literal -- a multi-line
+; initializer-list argument aligning its own body relative to the call's
+; alignment column is existing, intentional behavior. See Editor/Indent.h.
+(compound_statement) @align.barrier
+(field_declaration_list) @align.barrier
+
 (compound_statement "}" @dedent)
 (field_declaration_list "}" @dedent)
 (initializer_list "}" @dedent)
