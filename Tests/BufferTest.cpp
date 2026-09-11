@@ -912,6 +912,87 @@ TEST_CASE("SetDiagnostics/Diagnostics/DiagnosticsGeneration round-trip and repla
     REQUIRE(buffer.Diagnostics().empty());
 }
 
+// Diagnostics are the sixth tracked field kind relocated across edits. Unlike
+// the LSP's other results (inlay hints, semantic tokens) these are relocated
+// rather than suppressed while stale, because a diagnostic also drives the
+// gutter glyph, next-error navigation and the echo hint -- blanking all of
+// that on every keystroke trades one flicker for a louder one.
+TEST_CASE("Diagnostics relocate across inserts and deletes", "[Buffer]") {
+    const std::string source = "int alpha = 1;\n";
+    Buffer            buffer("scratch", ned::text::Rope(source));
+
+    const std::size_t alphaStart = source.find("alpha");
+    const auto        flagged    = [&] {
+        const Buffer::Diagnostic& diagnostic = buffer.Diagnostics().at(0);
+        return buffer.Text().substr(diagnostic.startByte, diagnostic.endByte - diagnostic.startByte);
+    };
+
+    buffer.SetDiagnostics({
+        Buffer::Diagnostic{
+            .startByte = alphaStart, .endByte = alphaStart + 5, .severity = Buffer::Diagnostic::Severity::Warning, .message = "unused"},
+    });
+    REQUIRE(flagged() == "alpha");
+
+    SECTION("an insert ahead of the range carries it along") {
+        buffer.SetPoint(0);
+        buffer.InsertAtPoint("yy");
+        REQUIRE(flagged() == "alpha");
+    }
+
+    SECTION("an insert after the range leaves it alone") {
+        buffer.SetPoint(buffer.Content().ByteLength());
+        buffer.InsertAtPoint("int beta = 2;\n");
+        REQUIRE(flagged() == "alpha");
+    }
+
+    SECTION("a delete ahead of the range pulls it back") {
+        buffer.DeleteRange(0, 4); // "int "
+        REQUIRE(flagged() == "alpha");
+    }
+
+    SECTION("a delete of the range itself collapses it rather than dropping it") {
+        // Kept degenerate on purpose: the server's next publish decides
+        // whether the problem is gone, and guessing here would make the
+        // gutter disagree with the message list until it arrives.
+        buffer.DeleteRange(alphaStart, alphaStart + 5);
+        REQUIRE(buffer.Diagnostics().size() == 1);
+        REQUIRE(flagged().empty());
+    }
+}
+
+// The restore path has no offset/length in hand the way an ordinary edit
+// does, so it recovers one from an old-versus-new content diff. Found
+// 2026-09-11: the five editing call sites were wired and this one was not, so
+// an undo moved the text without moving the underlines.
+TEST_CASE("Diagnostics relocate across undo and redo", "[Buffer]") {
+    const std::string source = "int alpha = 1;\n";
+    Buffer            buffer("scratch", ned::text::Rope(source));
+
+    const std::size_t alphaStart = source.find("alpha");
+    const auto        flagged    = [&] {
+        const Buffer::Diagnostic& diagnostic = buffer.Diagnostics().at(0);
+        return buffer.Text().substr(diagnostic.startByte, diagnostic.endByte - diagnostic.startByte);
+    };
+
+    buffer.SetDiagnostics({
+        Buffer::Diagnostic{
+            .startByte = alphaStart, .endByte = alphaStart + 5, .severity = Buffer::Diagnostic::Severity::Warning, .message = "unused"},
+    });
+
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("yy");
+    REQUIRE(buffer.Text() == "yyint alpha = 1;\n");
+    REQUIRE(flagged() == "alpha");
+
+    buffer.Undo();
+    REQUIRE(buffer.Text() == source);
+    REQUIRE(flagged() == "alpha");
+
+    buffer.Redo();
+    REQUIRE(buffer.Text() == "yyint alpha = 1;\n");
+    REQUIRE(flagged() == "alpha");
+}
+
 TEST_CASE("Fold markers relocate across inserts and deletes the same way Mark_ does", "[Buffer]") {
     Buffer buffer("scratch", ned::text::Rope("* a\n* b\n* c\n"));
     buffer.SetFoldMarker(4, Buffer::FoldMarker::Collapsed); // "* b"'s own line start

@@ -694,6 +694,7 @@ add_library(ned_lib STATIC
         Source/Text/Rope.cpp
         Source/Text/RopeStorage.cpp
         Source/Text/MappedFile.cpp
+        Source/Text/OffsetRemap.cpp
         Source/Text/PieceTable.cpp
         Source/Text/PieceTableStorage.cpp
         Source/Text/DiskSpace.cpp
@@ -1214,6 +1215,7 @@ if (NED_BUILD_TESTS)
             Tests/ThemeKeyDocsTest.cpp
             Tests/InitFileThemeWriteTest.cpp
             Tests/LayoutStabilityProbe.cpp
+            Tests/OffsetRemapTest.cpp
             Tests/OverlayScrimTest.cpp
             Tests/OverlayShadowTest.cpp
             Tests/RecencyGlowTest.cpp
