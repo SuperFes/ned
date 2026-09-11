@@ -33,7 +33,7 @@ fs::path RepoRoot() { return fs::path(NED_REPO_ROOT); }
 
 std::string ReadFile(const fs::path& path) {
     std::ifstream in(path);
-    REQUIRE(in); // a doc named here is part of the deliverable
+    REQUIRE(in); // a tracked doc named here is part of the deliverable
     std::ostringstream content;
     content << in.rdbuf();
     return content.str();
@@ -133,7 +133,18 @@ std::string Describe(const std::vector<std::string>& dangling) {
 } // namespace
 
 TEST_CASE("CLAUDE.md's source-path references all resolve", "[Docs]") {
-    const std::vector<std::string> dangling = DanglingPathsIn(ReadFile(RepoRoot() / "CLAUDE.md"));
+    // CLAUDE.md is deliberately NOT tracked in this repo -- it is ignored
+    // globally, by the author's own choice -- so a fresh CI checkout does not
+    // have one. Check it when it is there (it is the file loaded into an
+    // agent's context every session, which is exactly why its paths must
+    // resolve) and skip when it is not, rather than failing a build for the
+    // absence of an untracked local file.
+    const fs::path path = RepoRoot() / "CLAUDE.md";
+    if (!fs::exists(path)) {
+        SUCCEED("no CLAUDE.md in this checkout (untracked by design)");
+        return;
+    }
+    const std::vector<std::string> dangling = DanglingPathsIn(ReadFile(path));
     INFO("CLAUDE.md names files that do not exist:" << Describe(dangling));
     CHECK(dangling.empty());
 }
