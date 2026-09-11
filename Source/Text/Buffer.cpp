@@ -15,6 +15,7 @@
 #include "FilePreservation.h"
 #include "Grapheme.h"
 #include "LineEnding.h"
+#include "OffsetRemap.h"
 #include "PieceTable.h"
 #include "PieceTableStorage.h"
 #include "RopeStorage.h"
@@ -314,100 +315,6 @@ namespace {
     // the two snapshots would report one range spanning all of them rather
     // than several -- an accepted over-approximation, not a correctness
     // bug (the true edit sites are always a subset of the reported range).
-    // Returns nullopt if the two are byte-identical (e.g. undoing straight
-    // back to a state reached by pure point/mark motion, no real content
-    // change). Reports both the old-text span that was effectively
-    // "deleted" and the new-text span that was effectively "inserted" --
-    // together the standard way to express any text replacement, matching
-    // MarkUnsavedRangeDeleted/MarkUnsavedRangeInserted's own respective
-    // parameter shapes so a caller can just feed this straight into both.
-    struct ChangedSpan {
-        std::size_t oldStart, oldEnd;
-        std::size_t newStart, newEnd;
-    };
-
-    // progressive-huge-file-load follow-up: this used to run against two
-    // fully-materialized std::strings (Storage_->ToString()) -- for a
-    // multi-GB piece-table buffer that's the exact freeze/OOM the huge-file
-    // feature exists to eliminate, and it's not even huge-load-specific:
-    // any Undo()/Redo() on any huge buffer paid it. CommonPrefixLength/
-    // CommonSuffixLength below read through ITextStorage::Substring in
-    // exponentially-growing blocks instead of ever materializing either
-    // side whole -- total bytes actually read is bounded to O(the common
-    // region actually found) via the standard doubling-search argument
-    // (geometric series dominated by its last term), so a single localized
-    // edit (or a single background load-append) costs O(edit size)
-    // regardless of total document size, whether the edit sits near the
-    // start, middle, or end of the buffer. The one case that's still
-    // O(document size) is a genuine full-content match (both common-prefix
-    // and common-suffix walks have to run to completion to prove it) --
-    // unavoidable for an exact-equality question, but still bounded-memory
-    // streaming via Substring rather than one giant allocation-plus-compare.
-    std::size_t CommonPrefixLength(const ITextStorage& a, const ITextStorage& b) {
-        const std::size_t maxLen    = std::min(a.ByteLength(), b.ByteLength());
-        std::size_t       checked   = 0;
-        std::size_t       blockSize = 4096;
-        while (checked < maxLen) {
-            const std::size_t len    = std::min(blockSize, maxLen - checked);
-            const std::string blockA = a.Substring(checked, len);
-            const std::string blockB = b.Substring(checked, len);
-            const std::size_t common =
-                static_cast<std::size_t>(std::mismatch(blockA.begin(), blockA.end(), blockB.begin()).first - blockA.begin());
-            checked += common;
-            if (common < len) {
-                return checked;
-            }
-            blockSize *= 2;
-        }
-        return maxLen;
-    }
-
-    // Mirrors CommonPrefixLength, walking backward from the end of each
-    // side instead -- maxLen bounds the search (callers pass maxCommon
-    // minus whatever the prefix search already claimed, so the two scans
-    // can never overlap into the same bytes).
-    std::size_t CommonSuffixLength(const ITextStorage& a, const ITextStorage& b, std::size_t maxLen) {
-        const std::size_t aLen      = a.ByteLength();
-        const std::size_t bLen      = b.ByteLength();
-        std::size_t       checked   = 0;
-        std::size_t       blockSize = 4096;
-        while (checked < maxLen) {
-            const std::size_t len    = std::min(blockSize, maxLen - checked);
-            const std::string blockA = a.Substring(aLen - checked - len, len);
-            const std::string blockB = b.Substring(bLen - checked - len, len);
-            std::size_t       common = 0;
-            while (common < len && blockA[len - 1 - common] == blockB[len - 1 - common]) {
-                ++common;
-            }
-            checked += common;
-            if (common < len) {
-                return checked;
-            }
-            blockSize *= 2;
-        }
-        return maxLen;
-    }
-
-    // Bounded byte-for-byte equality -- length-mismatch is O(1); otherwise
-    // the same doubling walk as CommonPrefixLength, so two buffers that
-    // differ near the start are cheap to tell apart even at huge size.
-    bool StorageContentEquals(const ITextStorage& a, const ITextStorage& b) {
-        return a.ByteLength() == b.ByteLength() && CommonPrefixLength(a, b) == a.ByteLength();
-    }
-
-    std::optional<ChangedSpan> ChangedByteRange(const ITextStorage& oldStorage, const ITextStorage& newStorage) {
-        const std::size_t oldLen    = oldStorage.ByteLength();
-        const std::size_t newLen    = newStorage.ByteLength();
-        const std::size_t maxCommon = std::min(oldLen, newLen);
-
-        const std::size_t prefix = CommonPrefixLength(oldStorage, newStorage);
-        if (prefix == oldLen && prefix == newLen) {
-            return std::nullopt;
-        }
-        const std::size_t maxSuffix = maxCommon - prefix;
-        const std::size_t suffix    = CommonSuffixLength(oldStorage, newStorage, maxSuffix);
-        return ChangedSpan{prefix, oldLen - suffix, prefix, newLen - suffix};
-    }
 } // namespace
 
 Buffer::Buffer(std::string name, Rope initialContent) : Name_(std::move(name)),
@@ -2134,6 +2041,7 @@ void Buffer::ApplyUndoTreeNavigation(const ITextStorage& oldStorage) {
     if (!RestoreExcerptRangeOffsets()) {
         UpdateExcerptRangesForRestore(oldStorage);
     }
+    UpdateDiagnosticsForRestore(oldStorage);
 }
 
 void Buffer::Undo() {
@@ -2263,6 +2171,31 @@ bool Buffer::RestoreExcerptRangeOffsets() {
         ExcerptRanges_[i].end   = it->second[i].second;
     }
     return true;
+}
+
+// Undo/redo moves text the same way an edit does, and diagnostics have to
+// move with it for the same reason: a range left behind underlines whatever
+// bytes it now names. The ordinary editing paths relocate through
+// RelocateDiagnosticsForInsert/Delete at each of their own call sites; a
+// restore has no offset/length in hand, so it recovers one from the diff --
+// UpdateExcerptRangesForRestore's exact shape, and the same delete-half-then-
+// insert-half composition.
+//
+// Found 2026-09-11 while writing up the sibling publish-position bug: the
+// five editing call sites were wired and this one was not, so an undo moved
+// the text without moving the underlines.
+void Buffer::UpdateDiagnosticsForRestore(const ITextStorage& oldStorage) {
+    if (Diagnostics_.empty()) {
+        return; // fast path: most buffers carry none, so skip even the bounded diff
+    }
+    if (const auto span = ChangedByteRange(oldStorage, *Storage_)) {
+        if (span->oldEnd > span->oldStart) {
+            RelocateDiagnosticsForDelete(span->oldStart, span->oldEnd);
+        }
+        if (span->newEnd > span->newStart) {
+            RelocateDiagnosticsForInsert(span->newStart, span->newEnd - span->newStart);
+        }
+    }
 }
 
 void Buffer::UpdateExcerptRangesForRestore(const ITextStorage& oldStorage) {

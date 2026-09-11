@@ -1520,6 +1520,52 @@ TEST_CASE("Manager routes a real publishDiagnostics notification into Buffer::Di
     REQUIRE(buffer.Diagnostics()[0].severity == Buffer::Diagnostic::Severity::Error);
 }
 
+// stale-publish-position follow-up. A server's positions are {line, character}
+// against the document version it was last sent, and it answers on its own
+// schedule -- so converting them against the buffer's *current* content puts
+// every diagnostic on the wrong bytes until the next publish catches up.
+// Reported as "the underlines still shift waiting for LSP redraw".
+TEST_CASE("A publish's positions are converted against the version the server was sent", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-stale-publish-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int alpha = 1;");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen -- the server now knows "int alpha = 1;"
+
+    // Type ahead of the word while the server is still thinking. No re-sync:
+    // this is exactly the window the bug lived in.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("yy");
+    REQUIRE(buffer.Text() == "yyint alpha = 1;");
+
+    // The server answers for what it was actually sent: "alpha" at columns
+    // 4..9 of the *original* line.
+    client->DispatchFrame(Json{
+        {"jsonrpc", "2.0"},
+        {"method", "textDocument/publishDiagnostics"},
+        {"params",
+         {{"uri", "file://" + path.string()},
+          {"diagnostics",
+           Json::array({{{"range", {{"start", {{"line", 0}, {"character", 4}}}, {"end", {{"line", 0}, {"character", 9}}}}},
+                         {"severity", 2},
+                         {"message", "unused variable alpha"}}})}}},
+    }
+                              .dump());
+    WaitForDiagnosticCount(eventLoop, buffer, 1);
+
+    REQUIRE(buffer.Diagnostics().size() == 1);
+    // The whole point: the range names "alpha" in the buffer as it is now, at
+    // 6..11 -- not 4..9, which is "t alp" and is what this used to produce.
+    const Buffer::Diagnostic& diagnostic = buffer.Diagnostics()[0];
+    REQUIRE(buffer.Text().substr(diagnostic.startByte, diagnostic.endByte - diagnostic.startByte) == "alpha");
+}
+
 TEST_CASE("A publishDiagnostics notification is not applied until the debounce delay elapses", "[Lsp]") {
     const int originalDebounceMs = ned::editor::lsp::DiagnosticsDebounceMs();
     ned::editor::lsp::SetLspDiagnosticsDebounceMs(100);

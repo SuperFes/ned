@@ -1113,6 +1113,11 @@ class Buffer {
     // tracked field.
     void UpdateExcerptRangesForRestore(const ITextStorage& oldStorage);
 
+    // The same diff-recovered relocation for diagnostics. Undo/redo has no
+    // offset/length in hand the way an ordinary edit does, so it recovers one
+    // from the old-versus-new content diff.
+    void UpdateDiagnosticsForRestore(const ITextStorage& oldStorage);
+
     // multibuffer-gaps follow-up: what UpdateExcerptRangesForRestore above
     // is now only the *fallback* for. Relocating across a
     // ChangedByteRange diff can't be exact, because that diff is free to

@@ -21,6 +21,9 @@
 #include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/OffsetRemap.h"
+#include "Text/Rope.h"
+#include "Text/RopeStorage.h"
 #include "Text/Utf8.h"
 
 namespace ned::editor::lsp {
@@ -1538,7 +1541,46 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
     const text::Buffer::Diagnostic::Origin origin =
         (language == kProseLanguageKey) ? text::Buffer::Diagnostic::Origin::Prose : text::Buffer::Diagnostic::Origin::Code;
 
-    std::vector<text::Buffer::Diagnostic> diagnostics = ParsePublishedDiagnostics(params, buffer->Content(), origin);
+    // stale-publish-position follow-up. A server computes its {line,
+    // character} positions against the document version it was last told
+    // about and answers on its own schedule, so by the time a publish lands
+    // the buffer has usually moved on -- the sync itself is debounced, and
+    // typing does not stop while it waits. Converting those positions against
+    // the *current* content puts every diagnostic on the wrong bytes until
+    // the next publish catches up, which is what "the underlines shift until
+    // the LSP redraws" looked like from the outside.
+    //
+    // BufferSyncState::lastSyncedText is already exactly the text the server
+    // was last sent (it exists as the incremental-sync baseline), so this
+    // needs no new storage: convert against that, then remap the resulting
+    // offsets onto the live content through the single-changed-range diff in
+    // Text/OffsetRemap.h -- the same relocation Buffer applies to its own
+    // tracked fields across an undo.
+    //
+    // The remap runs before FilterToOwnedRanges, which asks about the *live*
+    // buffer's embedded-language ranges and would otherwise be handed offsets
+    // against a different document.
+    //
+    // A `version` in the params that disagrees with what we last sent means
+    // the server is further behind still; lastSyncedText remains the closest
+    // document we hold, so this uses it either way rather than dropping a
+    // publish and leaving the line unmarked.
+    const BufferSyncState*                syncState = ResolveSyncState(*buffer, language);
+    std::vector<text::Buffer::Diagnostic> diagnostics;
+    if (syncState != nullptr && !syncState->lastSyncedText.empty() &&
+        syncState->lastSyncedGeneration != buffer->ContentGeneration()) {
+        const text::RopeStorage sentContent{text::Rope(syncState->lastSyncedText)};
+        diagnostics = ParsePublishedDiagnostics(params, sentContent, origin);
+        if (const auto span = text::ChangedByteRange(sentContent, buffer->Content())) {
+            for (text::Buffer::Diagnostic& diagnostic : diagnostics) {
+                diagnostic.startByte = text::RemapOffset(diagnostic.startByte, *span);
+                diagnostic.endByte   = std::max(diagnostic.startByte, text::RemapOffset(diagnostic.endByte, *span));
+            }
+        }
+    }
+    else {
+        diagnostics = ParsePublishedDiagnostics(params, buffer->Content(), origin);
+    }
     FilterToOwnedRanges(buffer, language, diagnostics);
 
     // prose-checking follow-up: this server's own full current diagnostic
