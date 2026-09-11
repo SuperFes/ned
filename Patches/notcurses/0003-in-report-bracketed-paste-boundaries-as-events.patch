@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ned <ned@localhost>
+Date: Sun, 6 Sep 2026 14:01:57 -0700
+Subject: [PATCH] in: report bracketed-paste boundaries as events
+
+Surface the bracketed-paste start/end sequences as distinct events rather
+than letting the payload arrive as an indistinguishable stream of individual
+keypresses. This lets a caller buffer a whole paste at once, which is the
+difference between a large paste being instant and being replayed one
+keystroke at a time.
+
+Deliberately a smaller shape than the design sketch in upstream issue #2704:
+no fbuf/paste_content field is added inside notcurses itself, only the
+boundary events, leaving the buffering to the caller's own event loop.
+---
+ include/notcurses/nckeys.h |  7 +++++++
+ src/lib/in.c               | 28 ++++++++++++++++++++++++++++
+ 2 files changed, 35 insertions(+)
+
+diff --git a/include/notcurses/nckeys.h b/include/notcurses/nckeys.h
+index aef9d4e..cc6cbd9 100644
+--- a/include/notcurses/nckeys.h
++++ b/include/notcurses/nckeys.h
+@@ -175,6 +175,13 @@ extern "C" {
+ #define NCKEY_BUTTON10  preterunicode(210)
+ #define NCKEY_BUTTON11  preterunicode(211)
+ 
++// ned patch: paste keys -- bracketed-paste start/end markers, registered as
++// fixed literal escapes in in.c's prep_bracketed_paste_keys. Placed here,
++// under NCKEY_EOF below, so nckey_synthesized_p() still classifies them as
++// synthesized like every other special key.
++#define NCKEY_PASTE_BEGIN preterunicode(220)
++#define NCKEY_PASTE_END   preterunicode(221)
++
+ // we received SIGCONT
+ #define NCKEY_SIGNAL    preterunicode(400)
+ 
+diff --git a/src/lib/in.c b/src/lib/in.c
+index b7ffaf5..eaa0309 100644
+--- a/src/lib/in.c
++++ b/src/lib/in.c
+@@ -2150,6 +2150,31 @@ prep_windows_special_keys(inputctx* ictx){
+   return 0;
+ }
+ 
++// ned patch: paste -- \x1b[200~/\x1b[201~ are fixed literal escapes (SGR
++// bracketed-paste markers), the same shape prep_xtmodkeys/
++// prep_windows_special_keys already register via inputctx_add_input_escape;
++// no numeric CSI-tilde parsing involved.
++static int
++prep_bracketed_paste_keys(inputctx* ictx){
++  static const struct {
++    const char* esc;
++    uint32_t key;
++    unsigned modifiers;
++  } keys[] = {
++    { .esc = "\x1b[200~", .key = NCKEY_PASTE_BEGIN, },
++    { .esc = "\x1b[201~", .key = NCKEY_PASTE_END, },
++    { .esc = NULL, .key = 0, },
++  }, *k;
++  for(k = keys ; k->esc ; ++k){
++    if(inputctx_add_input_escape(&ictx->amata, k->esc, k->key, k->modifiers)){
++      return -1;
++    }
++    logdebug("added %s %u", k->esc, k->key);
++  }
++  loginfo("added bracketed paste keys");
++  return 0;
++}
++
+ static int
+ prep_all_keys(inputctx* ictx){
+   if(prep_windows_special_keys(ictx)){
+@@ -2161,6 +2186,9 @@ prep_all_keys(inputctx* ictx){
+   if(prep_xtmodkeys(ictx)){
+     return -1;
+   }
++  if(prep_bracketed_paste_keys(ictx)){
++    return -1;
++  }
+   return 0;
+ }
+ 

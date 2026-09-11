@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ned <ned@localhost>
+Date: Wed, 26 Aug 2026 20:24:40 -0700
+Subject: [PATCH] in: decode SGR wheel-right (Cb=67) instead of misreporting it
+
+An SGR mouse report with Cb=67 is wheel-right. The decoder did not
+recognize it, so it fell through and was misdecoded as a motion event
+followed by a release -- losing the scroll entirely and synthesizing two
+events that never happened.
+---
+ src/lib/in.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/lib/in.c b/src/lib/in.c
+index 864bb06..b7ffaf5 100644
+--- a/src/lib/in.c
++++ b/src/lib/in.c
+@@ -614,7 +614,7 @@ mouse_click(inputctx* ictx, unsigned release, char follow){
+   }else{
+     tni.evtype = NCTYPE_PRESS;
+   }
+-  if(mods % 4 == 3){
++  if(mods < 64 && mods % 4 == 3){ /* ned patch: wheel -- this sentinel only applies to the base button group */
+     tni.id = NCKEY_MOTION;
+     tni.evtype = NCTYPE_RELEASE;
+   }else{

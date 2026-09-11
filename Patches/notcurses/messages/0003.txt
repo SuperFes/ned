@@ -1,0 +1,11 @@
+in: report bracketed-paste boundaries as events
+
+Surface the bracketed-paste start/end sequences as distinct events rather
+than letting the payload arrive as an indistinguishable stream of individual
+keypresses. This lets a caller buffer a whole paste at once, which is the
+difference between a large paste being instant and being replayed one
+keystroke at a time.
+
+Deliberately a smaller shape than the design sketch in upstream issue #2704:
+no fbuf/paste_content field is added inside notcurses itself, only the
+boundary events, leaving the buffering to the caller's own event loop.

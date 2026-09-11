@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ned <ned@localhost>
+Date: Thu, 20 Aug 2026 13:44:59 -0700
+Subject: [PATCH] in: recover Ctrl+Space/Ctrl+@ on legacy terminals
+
+A terminal with neither the kitty keyboard protocol nor modifyOtherKeys
+(a default tmux, for instance) sends Ctrl+Space and Ctrl+@ as the single
+NUL byte 0x00. load_ncinput() normalizes C0 bytes 1..26 to Ctrl+letter but
+leaves 0 alone, so the event is queued with id == 0 -- and notcurses_get()'s
+return-value contract uses 0 for "no input", which makes a NUL keypress
+unrecoverable by any caller: a notcurses_get_nblock() drain loop has to
+treat 0 as queue-empty.
+
+The byte can only be saved inside the library, before it is queued.
+Normalize it to id ' ' plus NCKEY_MOD_CTRL -- exactly the shape a
+kitty-protocol or modifyOtherKeys terminal already reports for Ctrl+Space --
+so callers see one consistent event regardless of terminal capability.
+---
+ src/lib/in.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/lib/in.c b/src/lib/in.c
+index 43f768a..864bb06 100644
+--- a/src/lib/in.c
++++ b/src/lib/in.c
+@@ -530,7 +530,10 @@ load_ncinput(inputctx* ictx, ncinput *tni){
+   ncinput* ni = ictx->inputs + ictx->iwrite;
+   memcpy(ni, tni, sizeof(*tni));
+   // perform final normalizations
+-  if(ni->id == 0x7f || ni->id == 0x8){
++  if(ni->id == 0){ /* ned patch: NUL is a legacy terminal's Ctrl+Space/Ctrl+@ */
++    ni->id = ' ';
++    ni->modifiers |= NCKEY_MOD_CTRL;
++  }else if(ni->id == 0x7f || ni->id == 0x8){
+     ni->id = NCKEY_BACKSPACE;
+   }else if(ni->id == '\n' || ni->id == '\r'){
+     ni->id = NCKEY_ENTER;

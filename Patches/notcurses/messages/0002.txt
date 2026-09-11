@@ -1,0 +1,6 @@
+in: decode SGR wheel-right (Cb=67) instead of misreporting it
+
+An SGR mouse report with Cb=67 is wheel-right. The decoder did not
+recognize it, so it fell through and was misdecoded as a motion event
+followed by a release -- losing the scroll entirely and synthesizing two
+events that never happened.
