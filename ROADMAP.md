@@ -411,15 +411,15 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       out to be. The echo area's dim/ghost shades now interpolate toward the *painted*
       background rather than the flat Brush colour — identical for the default, and the only
       reading that stays right under a gradient.
-      Still inert: `popup` (phase 7 — a translucent body composites against the theme
-      background rather than against what the popup covers). `buffer.selection`,
-      `buffer.search` and `buffer` all have consumers now (phase 6, above).
+      Every advertised surface has a consumer now: `buffer.selection`, `buffer.search` and
+      `buffer` in phase 6, `popup`'s translucent bodies in phase 7d, and `scrim` arrived
+      with a consumer in phase 5.
       (`tab.strip` was a seventh case in the other direction — painted by `TabBar` and
       derived by `DerivedSurface`, but missing from `SurfaceNames()`, so it was invisible to
       the gallery and the docs while working perfectly for anyone who knew the name.
       Published, and `PaintParseTest` now fails if a widget paints a surface the list does
       not carry.)
-- [ ] **Phase 7 remainder — popups.** 7a landed: `ListPopup` and `TreeView` paint their
+- [x] **Phase 7 — popups.** 7a landed: `ListPopup` and `TreeView` paint their
       bodies through the `popup` Surface, derived defaults byte-identical, and **blur works**
       -- an overlay paints after the tree beneath it, so the cells under a popup already
       hold what it covers, which is exactly what `FillBlur` samples. Confirmed live: an
@@ -453,9 +453,22 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
         the overlay itself covers, and blends rather than assigns, so `Screen::Blend`'s own
         rules decide what a shadow means over a glyph (tint) versus an empty cell
         (composite, or dither on a transparent theme).
-      - **Translucent bodies.** A translucent fill currently composites against the theme's
-        background rather than against what the popup covers (see the clear-first note
-        above). Fixing that properly is the backing-plane approach, not another clear rule.
+      - [x] **7d — translucent bodies.** Closed 2026-09-10, and this entry's own premise
+        was wrong: it said the fix was "the backing-plane approach, not another clear rule",
+        and it is in fact exactly a clear rule. The reasoning that changed it — a cell grid
+        holds one glyph per cell, so what is *under* a popup is overwritten no matter which
+        plane its background lives on. There is no arrangement of planes that shows the
+        text beneath a popup through it. What a translucent body can honestly mean is that
+        the popup's background composites with the *colours* the cells held, which is
+        precisely what blur already does successfully by skipping the clear.
+        So `PaintReadsDestination` replaced the hand-rolled `Blur || Stack` test duplicated
+        across all five popup-shaped widgets, and now answers true for a Fade and for any
+        paint carrying a translucent stop. The stale-cell guard is untouched: a paint
+        contributing nothing still answers false and still clears, which is the case that
+        rule existed for. The glyph/trait reset was always unconditional, so no text
+        underneath shows through either way.
+        Pinned by a test that fails against the old rule: one uniform translucent wash over
+        a two-colour backdrop has to produce two different results.
       - [x] **Every popup-shaped widget adopted.** `ThemeGallery`, `MemoryImageView` and
         `VcsDiffPreview` join `ListPopup`/`TreeView` on the same `popup` Surface and the
         same clear-unless-the-fill-reads-it rule, so one `ned/theme-surface "popup" ...`

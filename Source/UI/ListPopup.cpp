@@ -213,21 +213,24 @@ void ListPopup::Paint(Canvas c) {
     // frame cells.
     const Surface surface = SurfaceFor(theme_, "popup");
 
-    // A blur reads the destination, so its cells must keep whatever the tree
-    // beneath this overlay painted this frame. Every other paint settles the
-    // background itself -- except that a paint contributing nothing (the
-    // derived default over a theme whose background is the terminal's own)
-    // would leave the previous frame's cells showing, which is the stale-cell
-    // bleed ListPopup's own interior fill has always existed to prevent.
-    // Clearing first covers both: it reproduces the old behaviour exactly,
-    // and a fill that does cover simply overwrites it.
+    // A destination-reading paint must keep whatever the tree beneath this
+    // overlay painted this frame -- a blur samples it, a fade modulates it,
+    // and a *translucent* fill composites against it. Clearing first would
+    // hand all three the clear colour instead of the content, which is how a
+    // translucent popup body used to composite against the theme background
+    // rather than against the code it covers (phase 7's translucent-body
+    // step, closed here).
     //
-    // The cost is that a *translucent* fill composites against the theme's
-    // background rather than against what the popup covers. Phase 7's
-    // translucent-body step is where that gets revisited; blur is the case
-    // that actually needs the destination today.
-    const bool fillReadsDestination =
-        surface.fill.kind == PaintKind::Blur || surface.fill.kind == PaintKind::Stack;
+    // Everything else still gets the clear, and that is not merely tidy: a
+    // paint contributing nothing (the derived default over a theme whose
+    // background is the terminal's own) would otherwise leave the previous
+    // frame's cells showing -- the stale-cell bleed this interior fill has
+    // always existed to prevent. PaintReadsDestination answers false for it,
+    // so it clears exactly as it did before.
+    //
+    // Only the background is at stake here. The glyph/trait reset above runs
+    // unconditionally, so nothing shows the text underneath either way.
+    const bool fillReadsDestination = PaintReadsDestination(surface.fill);
     if (!fillReadsDestination) {
         for (int y = 1; y < height - 1; ++y) {
             for (int x = 1; x < width - 1; ++x) {
