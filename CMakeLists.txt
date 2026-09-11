@@ -1214,6 +1214,7 @@ if (NED_BUILD_TESTS)
             Tests/InitFileThemeWriteTest.cpp
             Tests/OverlayShadowTest.cpp
             Tests/RecencyGlowTest.cpp
+            Tests/KeystrokeBench.cpp
             Tests/BufferViewTintCompositingTest.cpp
             Tests/DesktopThemeProbeTest.cpp
             Tests/ActiveBufferTest.cpp
