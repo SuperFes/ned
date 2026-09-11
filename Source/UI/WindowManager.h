@@ -574,6 +574,14 @@ class WindowManager {
     // HandlePromptKey already offers, instead of just reporting a refusal.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
 
+    // file-rename-propagation follow-up: a move ned did not make, as
+    // identified by FileWatch.h's inotify cookie pairing. Follows any open
+    // buffer to the file's new path, tells a language server the rename
+    // happened, and hands the import fixups it implies to the focused
+    // pane's review -- the same three things an in-editor rename does, in
+    // the same order, just after the fact rather than before it.
+    void HandleExternalMoves(const std::vector<editor::FileMove>& moves);
+
     // sidebar-context-menu follow-up: same "route to whichever pane is
     // currently focused" shape as RequestOpenBinaryFile just above -- wired
     // to ProjectSidebar::SetOnContextMenuRequest's own popup actions in

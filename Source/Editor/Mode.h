@@ -279,6 +279,14 @@ using SexpMotionFunction = std::function<std::optional<std::size_t>(std::string_
 // reasoning) -- BufferView prepends that stem to baseDirectory before
 // resolving, the same "per-language baseDirectory adjustment" shape
 // relativeLevel above already establishes for Python.
+//
+// file-rename-propagation follow-up: [targetStartByte, targetEndByte) is the
+// specifier's own text, which is what a rewrite replaces -- distinct from
+// [startByte, endByte) above, the wider range point has to land in for
+// go-to-file-at-point to resolve. Delimiters are excluded (a C #include's
+// own quotes stay put), with one deliberate exception: a Python relative
+// import keeps its leading dots inside the range even though `target`
+// excludes them, because rewriting one has to change the dot count itself.
 struct ImportTarget {
     std::string target;
     bool        isModulePath;
@@ -287,9 +295,19 @@ struct ImportTarget {
     int         relativeLevel    = 0;
     bool        isNamespacePath  = false;
     bool        isModDeclaration = false;
+    std::size_t targetStartByte  = 0;
+    std::size_t targetEndByte    = 0;
 };
 using ImportTargetFunction =
     std::function<std::optional<ImportTarget>(std::string_view bufferText, std::size_t point)>;
+
+// file-rename-propagation follow-up: every import in the document, in
+// tree order, rather than the one enclosing point -- what
+// Editor/ImportFixup.h's planner asks each candidate file when deciding
+// whether a move invalidated anything it says. Empty when the mode has no
+// import query at all, the same "absent means not configured" convention
+// importTarget itself uses.
+using ImportTargetsFunction = std::function<std::vector<ImportTarget>(std::string_view bufferText)>;
 
 // gutter-symbol-kind follow-up: a coarse landmark kind for the gutter's
 // symbol-kind column -- deliberately not a reuse of SyntaxClass's own finer
@@ -540,6 +558,8 @@ struct Mode {
     // fold/expandSelection/sexpMotion above -- BufferView falls back to
     // Editor/Link.h's generic, mode-agnostic bare-URL/path detection.
     ImportTargetFunction importTarget;
+    // See ImportTargetsFunction above -- set exactly when importTarget is.
+    ImportTargetsFunction importTargets;
     // test-runner integration: empty function (the default) means no test
     // discovery configured for this mode, same "empty means not configured"
     // convention as everything above -- run-test-at-point reports it, and

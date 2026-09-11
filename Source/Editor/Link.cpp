@@ -321,21 +321,31 @@ namespace {
 std::optional<std::filesystem::path> ResolveFileLink(const std::string& target, const std::filesystem::path& baseDirectory,
                                                      const std::vector<std::filesystem::path>& includePaths,
                                                      const std::vector<std::string>&           candidateExtensions,
-                                                     const std::vector<std::string>&           indexBasenames) {
+                                                     const std::vector<std::string>&           indexBasenames,
+                                                     std::filesystem::path*                    resolvedBase) {
     const std::filesystem::path targetPath(target);
+    const auto                  found = [&](const std::filesystem::path& base) {
+        if (resolvedBase != nullptr) {
+            *resolvedBase = base;
+        }
+    };
 
     if (targetPath.is_absolute()) {
+        found({});
         return TryVariants(targetPath, candidateExtensions, indexBasenames);
     }
 
     if (const auto resolved = TryVariants(baseDirectory / targetPath, candidateExtensions, indexBasenames)) {
+        found(baseDirectory);
         return resolved;
     }
     if (const auto resolved = TryVariants(ProjectRoot() / targetPath, candidateExtensions, indexBasenames)) {
+        found(ProjectRoot());
         return resolved;
     }
     for (const std::filesystem::path& includePath : includePaths) {
         if (const auto resolved = TryVariants(includePath / targetPath, candidateExtensions, indexBasenames)) {
+            found(includePath);
             return resolved;
         }
     }

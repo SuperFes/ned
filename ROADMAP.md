@@ -892,10 +892,21 @@ lands through `ApplyProjectEdit` as one `ProjectUndoManager` transaction; `renam
 the sidebar's own rename already send `workspace/willRenameFiles`/`didRenameFiles` and apply
 the resource operations a server sends back, and `rename-symbol` now resolves a local
 binding from the mode's own `locals.scm` with no server involved at all, routing the result
-through a review buffer rather than applying it blind. What is still missing is the
-file/class relationship an IDE keeps in sync.
+through a review buffer rather than applying it blind, and a file rename now fixes up the
+imports that named it in both directions. What is still missing is the file/class
+relationship an IDE keeps in sync.
 
-Shipped here, one slug each for `git log --grep=`: `rename-review` (both rename tiers hand
+Shipped here, one slug each for `git log --grep=`: `file-rename-propagation` (renaming or
+moving a file now rewrites the imports that named it and the relative imports it wrote
+itself, with no server involved -- `Editor/ImportFixup.h`'s pure specifier arithmetic plus
+a planner over `Mode::importTargets`, routed through the same editable review multibuffer
+a rename is, default on via `ned/set-import-fixup`. A server that answered
+`workspace/willRenameFiles` with edits of its own still wins outright. The other direction
+landed with it: `FileWatch` now masks `IN_MOVED_FROM` and pairs inotify's rename cookie,
+so a `git mv` made outside ned becomes a real "this moved" signal -- the open buffer
+follows the file, the server is told, and the same import review comes up, resolved
+backwards through `MatchMovedTarget` since the file is already gone by then),
+`rename-review` (both rename tiers hand
 their edits to an editable `*rename*` review multibuffer before anything lands, default on
 via `ned/set-rename-review`; every hit classified against its own file's highlighter, the
 comment/string occurrences the rename never asked for listed and excluded until `M-a`
@@ -957,17 +968,34 @@ parameters became a designated-initializer `TreeSitterQuerySources` on the way p
       offered -- that would be a project-wide search, which `project-replace` already is
       (`rename-review`).
 
-- [ ] **File rename/move propagates, in both directions.** Renaming from inside ned already
-      tells the language server; what it does not do is fix references when no server is
-      running. The `imports.scm` queries (ten languages) already locate an import/include
-      target -- enough to rewrite a moved file's own relative imports and the imports that
-      named it, which covers the common case for C/C++ includes, Python modules and JS/TS
-      paths. The other direction is missing entirely: a move made *outside* ned (a `git mv`,
-      a file manager) arrives as unrelated delete/create events, because `FileWatch` masks
-      `IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_DELETE` and never pairs them. Adding
-      `IN_MOVED_FROM` and matching inotify's rename cookie turns that pair into a real
-      "this moved" signal, which is what makes the IDE behaviour feel automatic rather than
-      manual.
+- [ ] An import fixup only ever rewrites a specifier in the style it was already written
+      in, and declines anything that style cannot express: an angle-form system include, a
+      PHP `use` namespace, a Rust `mod` declaration, a bare package specifier, and a target
+      that moved out of the root its specifier counts from (a project-root-relative
+      `"Editor/Widget.h"` moved outside the project). Declines are counted and named in the
+      review's status line rather than guessed at. Lifting any of them means teaching the
+      rewriter a second style to write in, which is what the "never restyle" rule exists to
+      refuse (`file-rename-propagation`).
+- [ ] An externally detected move is only seen inside a directory ned already watches --
+      the parent of an open buffer -- and only paired when BOTH ends are such a directory.
+      A rename inside one always pairs (the moved file itself need not be open); a move
+      into a directory nothing is open in delivers inotify's `IN_MOVED_FROM` half alone,
+      which still triggers the existing sweep but has no destination to name, and none is
+      guessed at. Watching the whole project tree would fix both and cost a watch per
+      directory, which is the trade that was declined (`file-rename-propagation`).
+- [ ] An externally detected move opens its review unprompted, switching the focused pane
+      to it. That is the point -- the imports are broken either way and the review is
+      non-destructive -- but a branch switch that moves many files will interrupt whatever
+      was on screen. A "N imports need fixing (C-c i to review)" status line instead, with
+      the review built on demand, is the obvious alternative if it turns out to grate
+      (`file-rename-propagation`).
+- [ ] The import scan runs synchronously on the main thread, inside the rename itself:
+      one `SearchDirectory` pass for the moved file's own name, then a tree-sitter parse of
+      each file that matched. Measured at ~1.2s for the worst case in ned's own tree
+      (renaming `Mode.h`, whose stem half the codebase mentions) and far less for an
+      ordinary file. Bounded by `ned/set-import-fixup-max-files` and skipped outright for a
+      move with no end inside the project root. Worth moving off-thread only if a real
+      repository makes the pause visible (`file-rename-propagation`).
 
 - [ ] **Class/file name sync.** When a type's name matches its file's stem, renaming either
       should offer the other -- JetBrains' most-used refactor after rename itself. The

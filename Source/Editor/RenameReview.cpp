@@ -60,7 +60,8 @@ namespace {
             if (it->startByte < bodyStart || it->endByte > bodyStart + body.size() || it->endByte < it->startByte) {
                 continue; // a hit outside the row it was grouped into: degrade, don't corrupt
             }
-            out.replace(it->startByte - bodyStart, it->endByte - it->startByte, newName);
+            out.replace(it->startByte - bodyStart, it->endByte - it->startByte,
+                        it->replacement.empty() ? newName : it->replacement);
         }
         return out;
     }

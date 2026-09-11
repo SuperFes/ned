@@ -30,7 +30,12 @@ namespace {
     // sustained writer can't starve the callback indefinitely.
     constexpr std::chrono::milliseconds kDebounceCap{500};
 
-    constexpr std::uint32_t kWatchMask = IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_ONLYDIR;
+    // file-rename-propagation follow-up: IN_MOVED_FROM joins the set purely
+    // so a rename can be recognized AS a rename -- without it, inotify's
+    // report of a "git mv" is an unrelated IN_DELETE and IN_CREATE with
+    // nothing tying the two together.
+    constexpr std::uint32_t kWatchMask =
+        IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_ONLYDIR;
 
     // EINTR-retrying single-fd poll (ChildProcess::WaitReadable's idiom);
     // true on readable, false on timeout or error (an error here just means
@@ -60,7 +65,7 @@ bool FileWatchEnabled() {
     return FileWatchStorage();
 }
 
-FileWatcher::FileWatcher(std::function<void()> onChange) : onChange_(std::move(onChange)) {
+FileWatcher::FileWatcher(std::function<void()> onChange, std::function<void(std::vector<FileMove>)> onMoved) : onChange_(std::move(onChange)), onMoved_(std::move(onMoved)) {
     fd_ = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (fd_ < 0) {
         return; // inert -- the poll-tick sweep is the sole detection mechanism
@@ -157,8 +162,33 @@ bool FileWatcher::DrainEvents() {
                 continue;
             }
             const auto namesIt = dirToBasenames_.find(dirIt->second);
-            if (namesIt != dirToBasenames_.end() && namesIt->second.contains(event->name)) {
+            const bool watched = namesIt != dirToBasenames_.end() && namesIt->second.contains(event->name);
+            if (watched) {
                 relevant = true;
+            }
+
+            // A rename's two halves share a cookie. Any entry of a watched
+            // directory can start a pair, not just a watched basename: the
+            // events arrive either way, and the file worth following is
+            // routinely one no buffer has open (a `git mv` of a header
+            // nobody is editing). The IN_MOVED_TO half is matched on the
+            // cookie alone, since the destination name is by definition not
+            // one that was being watched.
+            //
+            // That width is why the consumer, not this class, decides what
+            // a move MEANS: every atomic save in this codebase is a
+            // write-sibling-then-rename, so ".ned-tmp -> foo.cpp" is a
+            // perfectly real rename pair that must not be mistaken for one
+            // (see WindowManager::HandleExternalMoves' own filter).
+            if ((event->mask & IN_MOVED_FROM) != 0) {
+                pendingMoves_[event->cookie] = dirIt->second / event->name;
+            }
+            else if ((event->mask & IN_MOVED_TO) != 0) {
+                if (const auto pending = pendingMoves_.find(event->cookie); pending != pendingMoves_.end()) {
+                    completedMoves_.push_back(FileMove{pending->second, dirIt->second / event->name});
+                    pendingMoves_.erase(pending);
+                    relevant = true;
+                }
             }
         }
     }
@@ -180,9 +210,22 @@ void FileWatcher::ReadLoop(const std::stop_token& stopToken) {
                PollReadable(fd_, kDebounceQuietMs)) {
             DrainEvents();
         }
-        if (!stopToken.stop_requested()) {
-            onChange_();
+        std::vector<FileMove> moves;
+        {
+            const std::lock_guard lock(mutex_);
+            moves.swap(completedMoves_);
+            // Anything still half-paired had its other half land outside
+            // every watched directory -- a real change (onChange below
+            // still fires), but not a move with a destination to name.
+            pendingMoves_.clear();
         }
+        if (stopToken.stop_requested()) {
+            continue;
+        }
+        if (onMoved_ && !moves.empty()) {
+            onMoved_(moves);
+        }
+        onChange_();
     }
 }
 

@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <unistd.h>
+
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -888,4 +891,87 @@ TEST_CASE("A resized split's ratio survives CaptureWindowLayout + RestoreWindowL
     ned::ui::Screen  screen2 = ned::ui::Screen(81, 24);
     RenderFullScreen(root2, screen2);
     REQUIRE(screen2.PixelAt(55, 0).character == "\xe2\x94\x82"); // restored at the resized position, not back to 40
+}
+
+//
+// file-rename-propagation follow-up: a move ned did not make. FileWatchTest
+// pins the inotify half (that a rename is reported AS a rename) and
+// ImportFixupTest the planning; what this pins is what the editor does with
+// one -- follow the open buffer, and offer the import fixups it implies.
+//
+
+TEST_CASE("An externally moved file drags its open buffer along", "[WindowManager]") {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("ned_wm_external_move_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path from = dir / "old.txt";
+    const std::filesystem::path to   = dir / "new.txt";
+    std::ofstream(from) << "content\n";
+
+    Fixture                fixture;
+    ned::text::Buffer&     opened  = fixture.bufferList.OpenOrCreateFile(from);
+    ned::ui::WindowManager manager = fixture.Manager();
+
+    std::filesystem::rename(from, to);
+    manager.HandleExternalMoves({{from, to}});
+
+    CHECK(opened.Path() == to);
+    CHECK(opened.Name() == "new.txt");
+    CHECK(fixture.statusMessage.find("Followed a file moved on disk") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("An externally moved file opens an import review for what named it", "[WindowManager]") {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("ned_wm_external_move_imports_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "Editor");
+    std::filesystem::create_directories(dir / "Text");
+    std::filesystem::create_directories(dir / "UI");
+    std::ofstream(dir / "Editor" / "Widget.h") << "#pragma once\n";
+    std::ofstream(dir / "UI" / "Pane.cpp") << "#include \"Editor/Widget.h\"\n";
+
+    const std::filesystem::path savedRoot = ned::editor::ProjectRoot();
+    ned::editor::SetProjectRoot(dir);
+
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    // The move has already happened on disk by the time ned hears about it
+    // -- which is the whole difference from an in-editor rename.
+    std::filesystem::rename(dir / "Editor" / "Widget.h", dir / "Text" / "Widget.h");
+    manager.HandleExternalMoves({{dir / "Editor" / "Widget.h", dir / "Text" / "Widget.h"}});
+
+    ned::text::Buffer* const review = fixture.bufferList.Find("*imports*");
+    REQUIRE(review != nullptr);
+    CHECK(review->Content().Substring(0, review->Content().ByteLength()).find("#include \"Text/Widget.h\"") !=
+          std::string::npos);
+
+    ned::editor::SetProjectRoot(savedRoot);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A temp-file rename -- every atomic save in this codebase -- is not a move", "[WindowManager]") {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("ned_wm_external_move_tmp_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "Pane.cpp") << "#include \"Widget.h\"\n";
+
+    Fixture                fixture;
+    ned::text::Buffer&     opened  = fixture.bufferList.OpenOrCreateFile(dir / "Pane.cpp");
+    ned::ui::WindowManager manager = fixture.Manager();
+
+    // Exactly what Buffer::SaveToFile's own write-sibling-then-rename looks
+    // like from inotify's side.
+    manager.HandleExternalMoves({{dir / "Pane.cpp.ned-tmp", dir / "Pane.cpp"}});
+
+    CHECK(opened.Path() == dir / "Pane.cpp");
+    CHECK(fixture.statusMessage.empty());
+    CHECK(fixture.bufferList.Find("*imports*") == nullptr);
+
+    std::filesystem::remove_all(dir);
 }
