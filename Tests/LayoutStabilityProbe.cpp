@@ -4,6 +4,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Editor/Commands.h"
@@ -97,4 +98,88 @@ TEST_CASE(". LAYOUTPROBE: what moves on screen while typing", "[.][layoutprobe]"
     }
     WARN("  cursor row moved " << moves << " times while typing on one line");
     WARN("  rows: " << rows.str());
+}
+
+// Follow-up report: "colours, underlines, bolds and italics start wrapping
+// weird, but the text stays where it should". Dump the style map beside the
+// text so a mismatch between a run of styling and the run of characters it
+// belongs to is visible directly.
+TEST_CASE(". LAYOUTPROBE: style runs against the text they belong to", "[.][layoutprobe]") {
+    const std::string source = "int alpha = 1;  // a trailing comment that is quite long indeed\n"
+                               "const char* beta = \"a string literal\";\n"
+                               "int gamma = 3;\n";
+    ned::text::Buffer buffer{"probe.cpp"};
+    buffer.InsertAtPoint(source);
+
+    // Offsets found in the text rather than written by hand: a
+    // hand-counted offset that lands two columns early looks exactly like
+    // the misalignment this probe exists to detect, which is a good way to
+    // spend an hour chasing your own test data.
+    const auto span = [&](std::string_view word) {
+        const std::size_t at = source.find(word);
+        return std::pair<std::size_t, std::size_t>{at, at + word.size()};
+    };
+    const auto [alphaStart, alphaEnd] = span("alpha");
+    const auto [betaStart, betaEnd]   = span("beta");
+    const auto [gammaStart, gammaEnd] = span("gamma");
+    buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{.startByte = alphaStart,
+                                      .endByte   = alphaEnd,
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Warning,
+                                      .message   = "unused variable alpha"},
+        ned::text::Buffer::Diagnostic{.startByte = betaStart,
+                                      .endByte   = betaEnd,
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Error,
+                                      .message   = "expected ';' after declaration"},
+        ned::text::Buffer::Diagnostic{.startByte = gammaStart,
+                                      .endByte   = gammaEnd,
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Warning,
+                                      .message   = "unused variable gamma"},
+    });
+    buffer.SetPoint(0);
+
+    ned::text::KillRing          killRing;
+    ned::editor::RegisterTable   registers;
+    ned::editor::PromptHistory   promptHistory;
+    ned::text::BufferList        bufferList;
+    ned::editor::CommandRegistry registry;
+    ned::editor::RegisterBuiltinCommands(registry);
+    ned::editor::Keymap     keymap = ned::editor::BuildDefaultGlobalKeymap();
+    ned::editor::Dispatcher dispatcher{registry, ned::editor::KeymapStack({&keymap})};
+    ned::editor::Mode       mode  = ned::editor::CppMode();
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             status;
+    ned::ui::ActiveBuffer   active{buffer};
+
+    ned::ui::BufferView view(active, killRing, registers, promptHistory, bufferList, dispatcher, status, mode, theme);
+    const ned::ui::Box  box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 7};
+    view.SetBox_(box);
+    ned::ui::Screen screen(60, 8);
+    ned::ui::Canvas canvas(screen, box);
+    view.Paint(canvas);
+
+    for (int row = 0; row < 8; ++row) {
+        std::string text;
+        std::string style;
+        for (int x = 0; x < 60; ++x) {
+            const ned::ui::Cell& cell = screen.PixelAt(x, row);
+            text += cell.character.empty() ? " " : cell.character;
+            char s = '.';
+            if (cell.italic) {
+                s = 'i';
+            }
+            if (cell.bold) {
+                s = 'b';
+            }
+            if (cell.underlined) {
+                s = 'u';
+            }
+            if (cell.bold && cell.italic) {
+                s = 'B';
+            }
+            style += s;
+        }
+        WARN("  text  |" << text << "|");
+        WARN("  style |" << style << "|");
+    }
 }

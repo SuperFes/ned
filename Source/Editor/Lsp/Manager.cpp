@@ -1459,6 +1459,7 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     semanticTokensRequestedGeneration_.erase(&buffer);
     semanticTokensRequestCounter_.erase(&buffer);
     semanticTokenSpans_.erase(&buffer);
+    semanticTokenSpansContentGeneration_.erase(&buffer);
     semanticTokensGeneration_.erase(&buffer);
     semanticTokensRequestedRange_.erase(&buffer);
     previousSemanticTokens_.erase(&buffer);
@@ -1681,12 +1682,13 @@ void Manager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector
             .syntaxClass = *syntaxClass,
         });
     }
-    semanticTokenSpans_[&buffer] = std::move(spans);
+    semanticTokenSpans_[&buffer]                  = std::move(spans);
+    semanticTokenSpansContentGeneration_[&buffer] = buffer.ContentGeneration();
     ++semanticTokensGeneration_[&buffer];
 }
 
 void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
-                                       const std::string& serverKey) {
+                                    const std::string& serverKey) {
     if (!SemanticHighlightingEnabled()) {
         return;
     }
@@ -1884,7 +1886,32 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
 const std::vector<editor::HighlightSpan>& Manager::SemanticTokenSpans(const text::Buffer& buffer) const {
     static const std::vector<editor::HighlightSpan> kEmpty;
     const auto                                      it = semanticTokenSpans_.find(const_cast<text::Buffer*>(&buffer));
-    return it != semanticTokenSpans_.end() ? it->second : kEmpty;
+    if (it == semanticTokenSpans_.end()) {
+        return kEmpty;
+    }
+    // Same staleness rule inlay hints got, for the same reason and with a
+    // different symptom. These spans are byte ranges resolved against the
+    // document as it stood when the response landed; nothing relocates them
+    // across the edits that follow. Handing them out anyway does not move any
+    // text -- it recolours the *wrong characters*, so colours, bolds, italics
+    // and underlines drift out of step with the code they belong to while you
+    // type (live-reported 2026-09-10, right after the annotation rows stopped
+    // moving and made this the visible artifact).
+    //
+    // As with inlay hints, the receipt path's own generation check is what
+    // makes this persist rather than self-correct: during continuous typing
+    // every response is computed against a superseded document and dropped,
+    // so the last applied set stays up and drifts further with each keystroke.
+    //
+    // Falling back to empty is cheap and correct here in a way it would not be
+    // for some features: the tree-sitter highlighting underneath is a complete
+    // answer on its own, and is exactly what the buffer showed before the
+    // server ever replied.
+    const auto generationIt = semanticTokenSpansContentGeneration_.find(const_cast<text::Buffer*>(&buffer));
+    if (generationIt == semanticTokenSpansContentGeneration_.end() || generationIt->second != buffer.ContentGeneration()) {
+        return kEmpty;
+    }
+    return it->second;
 }
 
 std::size_t Manager::SemanticTokensGeneration(const text::Buffer& buffer) const {
