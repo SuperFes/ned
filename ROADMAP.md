@@ -259,10 +259,33 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       edit by diffing its own last text, so every keystroke also walks the whole document
       twice before tree-sitter starts. Worth attacking the same way: give it the edit
       directly instead of making it rediscover one.
-- [ ] **`mode.symbolKind` runs its own whole-file query per keystroke**, keyed on
-      `ContentGeneration` like highlighting was -- 5,826us of the original 74ms on
-      ROADMAP.md. It wants the same `HighlightWindow` treatment, or the same shared-cache
-      treatment, and is now the largest remaining per-keystroke cost after the parse.
+- [ ] **`mode.symbolKind` is O(document) per keystroke, and cannot simply be windowed.**
+      Keyed on `ContentGeneration` like highlighting was. Re-measured after the windowing
+      landed: ~5.3ms *marginal* (highlight alone 64.7ms whole-document, highlight then
+      symbolKind 70.0ms), so roughly a fifth of the current ~25ms ROADMAP.md frame and the
+      largest single line item left above the parse. Two different shapes behind one
+      `std::function`: `TreeSitterModeFromLanguage`'s closure runs `Query::Matches` over the
+      whole tree, while `MarkdownMode`'s walks the whole block tree in
+      `CollectMarkdownSectionMarkers` -- the latter genuinely shares `sharedParse` as its
+      comment claims, so its cost is the *walk*, not a second parse.
+
+      The `HighlightWindow` trick does **not** transfer, and that is the interesting part.
+      Highlighting only ever needed what is on screen; `symbolKind` has a second consumer,
+      `Editor/StickyScroll.h`, which needs the *enclosing* definitions -- a class opened at
+      line 1 while the viewport sits at line 900. A viewport window silently empties the
+      sticky row. (Huge buffers already accept exactly that degradation via
+      `structuralWindow_`; ordinary ones should not.)
+
+      So split the two consumers rather than windowing the one call:
+      - the **gutter** wants markers intersecting the viewport -- `ts_query_cursor_set_byte_range`,
+        the same bound `Query::CapturesInRange` already added for highlighting;
+      - **sticky scroll** wants an ancestor chain at one offset, which is a walk *up* from
+        `Node::NamedDescendantForByteRange(viewportTopByte, ...)` via `Node::Parent()` --
+        O(tree depth), not O(document), and it never needed the full marker list to begin
+        with.
+
+      `Tests/KeystrokeBench.cpp`'s `highlight then symbolKind` line is the measurement to
+      watch; it exists to separate the query/walk from the parse it shares.
 
 - [ ] **Dirty-region flush, and the animation question behind it.** `Screen::Flush` writes
       *every* cell of both planes every frame -- 14,400 `ncplane_putstr_yx` calls at 160x45
@@ -1514,13 +1537,17 @@ failure, below. Two flakes and one documented behavioral limitation:
   remaps a huge buffer's window-relative offsets back to the correct absolute line when
   the window starts deep in the file" (`BufferViewHugeStructuralGutterTest.cpp`) failed
   once during the BufferView decomposition work on 2026-09-08, then passed on
-  `--rerun-failed` and on two consecutive full `-j8` runs. Seen once, not reproduced;
-  the test builds a genuinely huge buffer and is one of the slower ones, so the most
-  likely cause is load-dependent timing under parallel execution rather than anything
-  in the fold windowing itself. Noted rather than chased because a single unreproduced
-  failure gives nothing to bisect against — if it recurs, capture the `-j8` seed and
-  the machine load before touching the windowing code, which is separately covered by
-  the rest of that file.
+  `--rerun-failed` and on two consecutive full `-j8` runs. **Recurred 2026-09-10**, same
+  test, same shape: plain `Failed` under `-j8`, passing immediately on `--rerun-failed`,
+  against a tree whose only changes were one benchmark line and this file. Two sightings
+  two days apart now, both load-dependent and neither reproducible in isolation. The test
+  builds a genuinely huge buffer and is one of the slower ones, so parallel-execution
+  timing remains the likeliest cause rather than anything in the fold windowing itself --
+  and note its sibling `Symbol gutter remaps a huge buffer's...` entry above, which SIGBUS'd
+  under the same conditions: these huge-file tests share a tmpfs `/tmp` and compete for it.
+  If a third sighting lands, treat the shared-tmpfs theory as the lead and check headroom
+  during the run before touching the windowing code, which is separately covered by the
+  rest of that file.
 
 One documented behavioral limitation, not a flake:
 
