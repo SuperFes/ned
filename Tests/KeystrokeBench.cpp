@@ -6,6 +6,7 @@
 
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
+#include "Editor/HighlightCache.h"
 #include "Editor/Keymap.h"
 #include "Editor/Mode.h"
 #include "Editor/PromptHistory.h"
@@ -155,6 +156,18 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
             timeHighlight("~4000 short lines (120 KiB)", manyLines);
             timeHighlight("1 huge paragraph  (120 KiB)", onePara);
         }
+
+        // The minimap keeps its *own* whole-file highlight cache, also keyed
+        // on ContentGeneration -- so with it enabled a keystroke pays the
+        // whole-document highlight twice. This benchmark paints no minimap,
+        // so every other number here is the optimistic case.
+        // Two consumers asking for the same buffer's spans in one frame --
+        // BufferView and Minimap. Through the shared cache the second is a
+        // hit; before it, this was two whole-document highlights.
+        timeIt("two consumers, one frame ", [&] {
+            return ned::editor::CachedHighlightSpans(md, mdMode)->size() +
+                   ned::editor::CachedHighlightSpans(md, mdMode)->size();
+        });
 
         timeIt("buffer.Text() copy alone ", [&] { return md.Text().size(); });
         timeIt("mode.highlight(text)     ", [&] { return mdMode.highlight ? mdMode.highlight(md.Text()).size() : 0U; });
