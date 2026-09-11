@@ -34,6 +34,79 @@ Notcurses.
 
 ## Open Items
 
+### Release 0.6 — "a stranger can install it, learn it, and get equal language treatment"
+
+Version is now real and reported: `project(Ned VERSION 0.5.0)` flows through a generated
+`NedVersion.h` into `ned --version`, and `v0.5.0` is tagged. Before that the CMake version
+was metadata nothing consumed, which is how it came to read 0.5.0 while the only tag read
+v0.1.0 and the binary could report neither.
+
+0.5 is usable *by its author*. The content of 0.6 is being usable by someone who is not —
+which is one coherent claim rather than a pile of features, and is what the items below
+are scoped against. Deliberately **not** in 0.6: the parsing engine and Theme v2. Both are
+1.0-scale and reshape foundations (`Mode`, the whole theme surface); folding either in
+would make the number mean nothing.
+
+- [ ] **Split the docs.** `Docs/` is entirely developer-facing today — design records
+      (`ParsingEngine.md`, `Translucency.md`, `BufferViewDecomposition.md`), capability
+      audits, and key references. There is no user-side documentation at all, and the
+      README is 70 lines against **275 registered commands** and **160 `ned/*` Janet
+      bindings**. Split developer docs from user docs as separate trees with separate
+      audiences, rather than continuing to let one directory serve both.
+- [ ] **Generate the command/binding reference rather than writing it.** The highest-
+      leverage user-doc item, because it cannot drift: a `Tools/` binary linking `ned_lib`
+      walks `CommandRegistry` and the `ned/*` binding table and dumps the doc strings
+      *already being passed to* `Register<Fn>` into Markdown. Spec is in "Documentation &
+      Companion Tooling" below; this promotes it to a 0.6 blocker. An existing, invisible
+      asset becomes the reference page.
+- [ ] **Ship an install story.** `install(TARGETS ned ...)` exists, but CI produces no
+      artifacts and there is no package, so a stranger must build 24 tree-sitter grammars,
+      FetchContent nine dependencies, and already have a pkg-config-discoverable Janet. The
+      `v0.5.0` tag is the trigger a release workflow hangs off. *In flight:* a Gentoo ebuild
+      (author-side), and the Notcurses patches are now extractable — see below.
+- [ ] **Notcurses as a system library.** `Patches/notcurses/` now carries the three fixes
+      as real `git am`/`patch -p1` files generated from the `CMake/PatchNotcurses*.cmake`
+      scripts that remain the source of truth, plus `regenerate.sh` (byte-stable output,
+      dated from each script's own last commit) so they cannot silently go stale on a
+      Notcurses bump. Verified against pristine v3.0.17: all three apply in order and the
+      result is byte-identical to the tree the CMake scripts produce. What remains is the
+      build-side option — letting `CMakeLists.txt` consume a system Notcurses that already
+      carries these, instead of always FetchContent-ing and patching its own copy. Note the
+      existing private-libdir install rule exists precisely because ned is built against a
+      specific patched Notcurses a stock system package does not carry; a system-library
+      path has to make that requirement explicit rather than silently falling back.
+- [ ] **Tier A language parity (D2).** `c`/`cpp`/`python`/`javascript`/`typescript`/`tsx`/
+      `php` have LSP root markers, formatter and test-runner config;
+      `java`/`kotlin`/`csharp`/`go`/`rust`/`bash` have the grammars and none of it. Someone
+      arriving with a Go project gets a visibly worse editor than someone arriving with C++,
+      for no reason except nobody wrote the table. Pure config — `LspServerConfig.h`,
+      `DapConfig.h` and `TestRunConfig.h` already take this as data. See
+      `Docs/LanguageCoverage.md` for the tier definitions.
+- [ ] **Add Lua and CMake grammars.** Both are Tier A by usage and both are absent; CMake is
+      ned's own build system and Lua is the configuration language of half the tooling
+      world. Sourcing: `tree-sitter-grammars/tree-sitter-lua` (2026-06-19),
+      `uyha/tree-sitter-cmake` (2026-07-08).
+- [ ] **Add diff/unified-diff.** Cheapest high-value grammar in the catalogue: ned owns a
+      VCS side panel, hunk-level staging (`Vcs/DiffPatch.h`) and a merge-conflict mode, all
+      of which currently read diff output as untyped text.
+      `tree-sitter-grammars/tree-sitter-diff` is live (2026-08-14).
+- [ ] **Add the tree-sitter query language (`.scm`).** ned authors 79 of them and edits them
+      with no highlighting at all.
+- [ ] **Stability gate: don't ship a minor bump with a known-red preset.** `sanitize -j8`
+      has one reproducible `[Performance]` failure. The fix named in the watch list below is
+      to gate the budgets on the build being optimised (`NDEBUG`) rather than loosen them,
+      since loosening gives up the regression signal the tests exist for. Close it, or
+      downgrade it to explicitly-deferred with that reasoning recorded.
+
+**1.0, for context, since branching starts near it.** For a scriptable editor 1.0 is a
+promise about the *Janet surface*, not about features: 160 `Register<>` bindings and 275
+command names, and declaring 1.0 makes breaking any of them a major-version event. That
+surface is still moving (`TreeSitterQuerySources` became designated-initializers mid-flight;
+the parsing engine would reshape `Mode` outright), which is the real reason 1.0 is not close
+regardless of how usable ned feels. Candidate criteria, all already present below: Janet API
+frozen · parsing-engine decision made either way · no known data-loss paths · release
+artifacts · the mdBook docs site.
+
 ### Translucent UI & Theme Engine v2
 
 Full design: `Docs/Translucency.md` (techniques, compositing rules, phasing, risks).
@@ -976,31 +1049,18 @@ about whether a language works at all** — D0 falls out of Tier 0 inference for
 "basically every known language" becomes a real target rather than a boast, and the honest
 answer to a request for an obscure DSL becomes "yes, next release".
 
-The first four items below are **independent of the engine work and deliverable today** —
-they are configuration and grammar additions, not parsing:
+The concrete near-term grammar and config items this implies — Tier A's D2 gap, Lua and
+CMake, diff, `.scm`, and SQL as the acceptance test for Tier 1 rule inheritance — are
+**independent of the engine work** and are tracked under "Release 0.6" at the top of this
+file rather than duplicated here. SQL is the one worth restating, because it is the
+strongest demo of the architecture rather than a line item: ned has none today, and
+upstream is four grammars for one language family precisely because tree-sitter cannot
+express "T-SQL is ANSI SQL plus these deltas", so every dialect forks the whole grammar and
+drifts. `DerekStride/tree-sitter-sql` (2026-09-10, 245★) as the core plus per-dialect trait
+deltas would be better than anything upstream currently offers. Graveyarded en route:
+`dhcmrlchtdj/tree-sitter-sqlite` (archived 2023), `m-novikov/tree-sitter-sql` (stale
+2024-03).
 
-- [ ] **Close Tier A's D2 gap.** java/kotlin/csharp/go/rust/bash have no LSP root markers,
-      formatter or test-runner config, while c/cpp/python/javascript/typescript/tsx/php do
-      (`Lsp/LspRootResolver.h`). Pure config — `LspServerConfig.h`/`DapConfig.h`/
-      `TestRunConfig.h` already take this as data.
-- [ ] **Add Lua and CMake grammars.** Both are Tier A by usage and both are absent; CMake
-      is ned's own build system, and Lua is named four times elsewhere in this file.
-      Sourcing: `tree-sitter-grammars/tree-sitter-lua` (2026-06-19), `uyha/tree-sitter-cmake`
-      (2026-07-08).
-- [ ] **Add diff/unified-diff.** Cheapest high-value entry in the catalogue: ned owns a VCS
-      side panel, hunk-level staging (`Vcs/DiffPatch.h`) and a merge-conflict mode, all of
-      which currently read diff output as untyped text. `tree-sitter-grammars/tree-sitter-diff`
-      is live (2026-08-14).
-- [ ] **Add the tree-sitter query language (`.scm`).** ned authors 79 of them and edits
-      them with no highlighting at all.
-- [ ] **SQL, as the acceptance test for Tier 1 rule inheritance.** ned has no SQL today and
-      upstream is fragmented — four grammars for one language family because tree-sitter
-      cannot express "T-SQL is ANSI SQL plus these deltas", so every dialect forks the whole
-      grammar and drifts. `DerekStride/tree-sitter-sql` (2026-09-10, 245★) as the core plus
-      per-dialect trait deltas would be a better answer than anything upstream currently
-      offers, which makes it the strongest demo of the architecture rather than a line item.
-      Graveyarded en route: `dhcmrlchtdj/tree-sitter-sqlite` (archived 2023),
-      `m-novikov/tree-sitter-sql` (stale 2024-03).
 - [ ] Admission policy worth knowing before adding any grammar: **prefer
       `tree-sitter-grammars/*` over the original personal repo, and never use star count as
       a health signal.** Measured 2026-09-11 — `alemuller/tree-sitter-make` is 51★ and stale
