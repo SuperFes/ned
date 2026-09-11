@@ -210,38 +210,41 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       false positives to sift. It catches drift that any "is the word still underlined?"
       assertion passes straight through.
 
-- [ ] **A publish's own diagnostic positions are converted against the wrong document.**
-      Re-reported 2026-09-11 after the relocation fix landed: "the underlines still shift
-      waiting for LSP redraw instead of working with offsets." Relocation closed the drift
-      *between* publishes; this is the other half, and the two are genuinely separate bugs.
+- [x] **A publish's diagnostic positions are converted against the version the server was
+      sent — fixed 2026-09-11.** Closes the last piece of the underline drift: relocation
+      handled the edits *after* a publish, this handles the publish itself being computed
+      against an older document than the one it lands in.
 
-      `Manager::HandlePublishDiagnostics` converts each diagnostic's `{line, character}`
-      to a byte offset against `buffer->Content()` **as it is at receipt**, not against the
-      document the server actually analysed. Confirmed by inspection: `"version"` appears in
-      this file only on the outgoing `didOpen`/`didChange`
-      (`Manager.cpp` lines 1091/1166/1178) — the incoming `PublishDiagnosticsParams.version`
-      is never read, and there is no generation check of the kind `RequestSemanticTokens`
-      and `RequestInlayHints` both have. So a publish for version N lands against version
-      N+3's text, is converted there, and relocation then faithfully preserves that wrong
-      position until the next publish catches up. Exactly "shifts until the LSP redraws".
+      `HandlePublishDiagnostics` converted `{line, character}` against `buffer->Content()`
+      as it stood at receipt. The sync is debounced and typing does not stop while it
+      waits, so a publish for version N routinely landed against version N+3's text — and
+      relocation then faithfully preserved the wrong position until the next publish caught
+      up. Reported as "the underlines still shift waiting for LSP redraw instead of working
+      with offsets", and reproduced exactly: a diagnostic on `alpha` came back naming
+      `"t alp"`.
 
-      The fix needs a version→generation map, which `BufferSyncState` already has both
-      halves of (`version`, `lastSyncedGeneration`) but never pairs up or retains. Two
-      shapes worth weighing:
-      - **Drop a publish whose version is not the newest we sent** — one line, matches the
-        two sibling features, and costs a redraw of stale-but-approximately-right
-        underlines while typing.
-      - **Convert against the content of the version it names**, which needs that version's
-        text (or a stored edit log to replay), and is the only one that keeps diagnostics
-        visible *and* correct mid-burst.
-      A server that omits `version` (it is optional) has to fall back to today's behaviour
-      either way, so neither shape can be unconditional.
+      No new storage was needed, which is the pleasing part: `BufferSyncState::lastSyncedText`
+      already holds the exact text the server was last sent (it exists as the
+      incremental-sync baseline). So convert against that, then remap the offsets onto the
+      live content. The `version` field stays unread deliberately — it is optional in the
+      spec, and `lastSyncedText` is the closest document we hold whether or not a server
+      sends one, so using it unconditionally beats dropping a publish and leaving the line
+      unmarked.
 
-      Second, smaller gap found while writing this up, worth doing in the same pass:
-      `Buffer::UpdateExcerptRangesForRestore`'s undo/redo path relocates excerpt ranges
-      across a `ChangedByteRange` diff, and diagnostics were **not** added beside it — so
-      an undo moves the text without moving the underlines. Ordinary editing is covered
-      (the five insert/delete sites are wired); this is the restore path only.
+      **`Text/OffsetRemap.h`** is the extraction that made it possible: `ChangedByteRange`,
+      `StorageContentEquals` and the bounded common-prefix/suffix walks moved out of
+      `Buffer.cpp`'s anonymous namespace, joined by `RemapOffset`/`RemapOffsetBetween`, and
+      `Buffer` now uses the shared copy. Pure and storage-only, so it unit-tests with no
+      `Buffer`, no `Manager` and no `Screen`. The model is one contiguous changed region
+      rather than a real diff — exact for what an editing session produces between two
+      nearby versions, and its limit (two distant edits report as one span) is pinned by a
+      test rather than left to be discovered.
+
+      The undo/redo gap noted below is closed in the same pass:
+      `Buffer::UpdateDiagnosticsForRestore` relocates diagnostics across a restore the way
+      `UpdateExcerptRangesForRestore` already did for excerpts, recovering the
+      offset/length a restore does not have in hand from the diff. Verified by watching the
+      test produce `"pha ="` without it.
 
 - [ ] **Code lenses drift the same way inlay hints did, one step removed.** Found while
       fixing the inlay-hint garbling (below) and deliberately left alone rather than given
