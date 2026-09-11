@@ -1848,6 +1848,24 @@ Ideas worth remembering but not worth scoping yet — too undecided for "Open It
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
 
+- [ ] **Configurable indicator glyphs** — the five render-indicator characters
+      (`Source/UI/BufferView/Internal.h`) are `constexpr char32_t`: `…` fold ellipsis,
+      `»` truncation, `│` indent guide, `↳` wrap continuation, `¬` no-trailing-newline.
+      Their *colours* already follow the theme — the wrap glyph paints in
+      `indentGuideForeground`, which `ThemeFromPalette` defines as
+      `Interpolate(0.5, subtleForeground, background)`, so it recedes correctly on light
+      and dark alike (verified live across `light`/`high-contrast-dark`/`mono-light`) —
+      but the characters themselves are fixed. Raised when the wrap indicator moved into
+      the gutter (2026-09-11); deliberately not done for that one glyph alone, since a
+      bespoke `ned/set-wrap-glyph` beside four hardcoded siblings is exactly the
+      one-off this codebase avoids. The shape if it happens: one small module in
+      `TabWidth.h`'s mutex-guarded-static pattern covering all five, a
+      `ned/set-glyph "wrap-continuation" "⤷"`-style binding, and validation that the
+      replacement is a single-width codepoint — a double- or zero-width glyph in the
+      digits column shifts the whole gutter. A maybe rather than an open item because
+      nobody has yet wanted a different character, only a different weight, and the
+      theme already provides that.
+
 - [ ] **Split BufferView's prompt/session machine out, with its LSP pickers** — the
       BufferView decomposition (`Docs/BufferViewDecomposition.md`) shrank `BufferView.cpp`
       from 16,823 lines to ~1,700 and `Paint` from 1,597 to 459, but `BufferView.h` is
