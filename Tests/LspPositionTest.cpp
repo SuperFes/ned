@@ -105,3 +105,27 @@ TEST_CASE("Utf16LengthOfByteRange matches the character delta ByteRangeToLspRang
     const std::size_t utf16Length = Utf16LengthOfByteRange(content, startByte, endByte);
     REQUIRE(range.end.character - range.start.character == utf16Length);
 }
+
+// rename-review follow-up: PositionToByte's plain-string overload, for a
+// caller holding a file's text with no ITextStorage over it.
+TEST_CASE("PositionToByte over a plain string round-trips ByteRangeToLspRange", "[Lsp]") {
+    const std::string content = "first\nsecond\nthird";
+    for (std::size_t byteOffset = 0; byteOffset <= content.size(); ++byteOffset) {
+        const Range range = ByteRangeToLspRange(content, byteOffset, byteOffset);
+        CHECK(PositionToByte(std::string_view(content), range.start) == byteOffset);
+    }
+}
+
+TEST_CASE("PositionToByte over a plain string counts UTF-16 units", "[Lsp]") {
+    // "é" is 2 bytes / 1 UTF-16 unit; "𝄞" is 4 bytes / 2 UTF-16 units.
+    const std::string content = "aé𝄞b";
+    CHECK(PositionToByte(std::string_view(content), Position{.line = 0, .character = 1}) == 1);
+    CHECK(PositionToByte(std::string_view(content), Position{.line = 0, .character = 2}) == 3);
+    CHECK(PositionToByte(std::string_view(content), Position{.line = 0, .character = 4}) == 7);
+}
+
+TEST_CASE("PositionToByte over a plain string clamps out-of-range input", "[Lsp]") {
+    const std::string content = "ab\ncd";
+    CHECK(PositionToByte(std::string_view(content), Position{.line = 0, .character = 99}) == 2); // line end, not the newline
+    CHECK(PositionToByte(std::string_view(content), Position{.line = 9, .character = 0}) == content.size());
+}

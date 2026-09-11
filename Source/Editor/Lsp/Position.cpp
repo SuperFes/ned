@@ -105,6 +105,25 @@ Range ByteRangeToLspRange(std::string_view content, std::size_t startByte, std::
     return Range{.start = start, .end = Position{.line = line, .character = utf16}};
 }
 
+std::size_t PositionToByte(std::string_view content, Position position) {
+    std::size_t cursor = 0;
+    for (std::size_t line = 0; line < position.line && cursor < content.size(); ++line) {
+        const std::size_t newline = content.find('\n', cursor);
+        if (newline == std::string_view::npos) {
+            return content.size(); // a line past the end of the text
+        }
+        cursor = newline + 1;
+    }
+
+    std::size_t utf16 = 0;
+    while (cursor < content.size() && content[cursor] != '\n' && utf16 < position.character) {
+        const Utf8Step step = StepUtf8(content, cursor);
+        utf16 += step.utf16Units;
+        cursor += step.byteLength;
+    }
+    return cursor;
+}
+
 std::size_t Utf16LengthOfByteRange(std::string_view content, std::size_t startByte, std::size_t endByte) {
     std::size_t utf16  = 0;
     std::size_t cursor = startByte;

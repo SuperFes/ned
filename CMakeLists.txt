@@ -746,6 +746,8 @@ add_library(ned_lib STATIC
         Source/Editor/WrapOverrides.cpp
         Source/Editor/CodeFold.cpp
         Source/Editor/LocalScopes.cpp
+        Source/Editor/RenameReview.cpp
+        Source/Editor/RenameReviewSettings.cpp
         Source/Editor/CodeFoldSettings.cpp
         Source/Editor/StickyScroll.cpp
         Source/Editor/StickyScrollSettings.cpp
@@ -1117,7 +1119,9 @@ if (NED_BUILD_TESTS)
             Tests/DabbrevCompleteTest.cpp
             Tests/LocalScopesTest.cpp
             Tests/ModeLocalsTest.cpp
+            Tests/RenameReviewTest.cpp
             Tests/BufferViewRenameSymbolTest.cpp
+            Tests/BufferViewRenameReviewTest.cpp
             Tests/SnippetTest.cpp
             Tests/SnippetRegistryTest.cpp
             Tests/BundledSnippetsTest.cpp
