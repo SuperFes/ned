@@ -126,15 +126,26 @@ const HighlightFunction* ResolveEmbeddedLanguageHighlight(std::string_view tag, 
 
 void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_view bufferText,
                                    const treesitter::Query& injectionQuery, EmbeddedLanguageCache& cache,
-                                   std::vector<HighlightSpan>& spans) {
+                                   std::vector<HighlightSpan>& spans, HighlightWindow window) {
     for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery)) {
+        // Every injected region is its own parse, so skipping the ones with
+        // no bytes in the window is where most of the saving is -- markdown
+        // injects markdown_inline into *every* inline node, which on a
+        // 125 KiB document is thousands of separate parses per keystroke for
+        // a screenful of text. Intersection, not containment: a fenced block
+        // straddling the top of the window still has to be highlighted.
+        if (match.content.endByte <= window.startByte || match.content.startByte >= window.endByte) {
+            continue;
+        }
         const HighlightFunction* highlight = ResolveEmbeddedLanguageHighlight(match.languageTag, cache);
         if (!highlight) {
             continue;
         }
         const std::size_t      start    = match.content.startByte;
         const std::string_view codeText = bufferText.substr(start, match.content.endByte - start);
-        for (const HighlightSpan& span : (*highlight)(codeText)) {
+        // The inner call gets the whole region: it is already only as big as
+        // the injection, and its own offsets are region-relative.
+        for (const HighlightSpan& span : (*highlight)(codeText, HighlightWindow{})) {
             spans.push_back(HighlightSpan{.startByte   = start + span.startByte,
                                           .endByte     = start + span.endByte,
                                           .syntaxClass = span.syntaxClass,

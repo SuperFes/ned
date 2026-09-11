@@ -29,7 +29,7 @@ TEST_CASE("BuildWarmModeForPath's returned Mode still highlights correctly after
     const std::string_view  text = "int main() { return 0; }";
     const ned::editor::Mode mode = BuildWarmModeForPath("/some/path/warm-test2.cpp", text);
     REQUIRE(static_cast<bool>(mode.highlight));
-    REQUIRE_FALSE(mode.highlight(text).empty());
+    REQUIRE_FALSE(mode.highlight(text, ned::editor::HighlightWindow{}).empty());
 }
 
 TEST_CASE("BuildWarmModeForPath skips the highlight/fold warm-up past MaxHighlightBytes, same gate BufferView's own "

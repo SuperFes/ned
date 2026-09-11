@@ -32,7 +32,7 @@ TEST_CASE("ResolveEmbeddedLanguageHighlight resolves a real bundled Mode via Mod
     REQUIRE(highlight != nullptr);
 
     bool sawKeyword = false;
-    for (const HighlightSpan& span : (*highlight)("def f():\n    pass\n")) {
+    for (const HighlightSpan& span : (*highlight)("def f():\n    pass\n", ned::editor::HighlightWindow{})) {
         if (span.syntaxClass == SyntaxClass::Keyword) {
             sawKeyword = true;
         }

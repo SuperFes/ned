@@ -32,7 +32,7 @@ TEST_CASE("MarkdownMode has a highlighting hook installed", "[Markdown]") {
 TEST_CASE("MarkdownMode ATX headings cycle HeadlineLevel1/2/3 by level, whole line included", "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     // Marker itself is dimmed (MarkupMarker), but the whole node (marker +
     // text + trailing newline) gets the cyclic heading span appended after,
@@ -50,7 +50,7 @@ TEST_CASE("MarkdownMode ATX headings cycle HeadlineLevel1/2/3 by level, whole li
 TEST_CASE("MarkdownMode setext headings resolve level from the underline style", "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "Title1\n======\n\nTitle2\n------\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 14, SyntaxClass::HeadlineLevel1));  // "Title1\n======\n"
     REQUIRE(HasSpan(spans, 15, 29, SyntaxClass::HeadlineLevel2)); // "Title2\n------\n"
@@ -59,7 +59,7 @@ TEST_CASE("MarkdownMode setext headings resolve level from the underline style",
 TEST_CASE("MarkdownMode inline formatting: bold/italic/code span/strikethrough", "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "a **bold** b *italic* c `code` d ~~strike~~ e\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 2, 10, SyntaxClass::Strong));         // "**bold**"
     REQUIRE(HasSpan(spans, 13, 21, SyntaxClass::Emphasis));      // "*italic*"
@@ -74,7 +74,7 @@ TEST_CASE("MarkdownMode inline formatting: bold/italic/code span/strikethrough",
 TEST_CASE("MarkdownMode links and images resolve to Link", "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "[text](http://example.com) and ![alt](img.png)\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 1, 5, SyntaxClass::Link));   // link text
     REQUIRE(HasSpan(spans, 7, 25, SyntaxClass::Link));  // link destination
@@ -88,7 +88,7 @@ TEST_CASE("MarkdownMode links and images resolve to Link", "[Markdown]") {
 TEST_CASE("MarkdownMode list/blockquote/thematic-break markers are dimmed via MarkupMarker", "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "- item\n> quote\n---\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 2, SyntaxClass::MarkupMarker));   // "- "
     REQUIRE(HasSpan(spans, 7, 9, SyntaxClass::MarkupMarker));   // "> "
@@ -98,7 +98,7 @@ TEST_CASE("MarkdownMode list/blockquote/thematic-break markers are dimmed via Ma
 TEST_CASE("MarkdownMode GFM task-list checkboxes resolve to Checkbox", "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "- [ ] todo\n- [x] done\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 2, 5, SyntaxClass::Checkbox));   // "[ ]"
     REQUIRE(HasSpan(spans, 13, 16, SyntaxClass::Checkbox)); // "[x]"
@@ -107,7 +107,7 @@ TEST_CASE("MarkdownMode GFM task-list checkboxes resolve to Checkbox", "[Markdow
 TEST_CASE("MarkdownMode fenced code block content doesn't get clobbered by the upstream @none capture", "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "```\ncode here\n```\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     // The whole fenced_code_block (delimiters + content) is text.literal ->
     // String. Without the IsHighlightableCapture("none") fix,
@@ -124,7 +124,7 @@ TEST_CASE("MarkdownMode fenced code block content doesn't get clobbered by the u
 TEST_CASE("MarkdownMode backslash escapes resolve to StringEscape", "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "a \\* b\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 2, 4, SyntaxClass::StringEscape)); // "\*"
 }
@@ -133,7 +133,7 @@ TEST_CASE("MarkdownMode a bold word inside a heading keeps its bold weight, over
           "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "# a **bold** heading\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 21, SyntaxClass::HeadlineLevel1)); // whole line
     REQUIRE(HasSpan(spans, 4, 12, SyntaxClass::Strong));         // "**bold**" wins locally, appended later
@@ -143,7 +143,7 @@ TEST_CASE("MarkdownMode fenced code block with a recognized language tag gets re
           "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "```python\ndef f():\n    return \"x\"\n```\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     // "def" -- byte offset 10..13 inside the fence content -- resolves to a
     // real Python keyword span, not the flat block-wide String span.
@@ -165,7 +165,7 @@ TEST_CASE("MarkdownMode fenced code block with a recognized language tag gets re
 TEST_CASE("MarkdownMode fenced code block language alias resolves to the canonical grammar", "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "```py\ndef f():\n    pass\n```\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     bool sawKeyword = false;
     for (const HighlightSpan& span : spans) {
@@ -180,7 +180,7 @@ TEST_CASE("MarkdownMode fenced code block with an unrecognized language tag fall
           "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "```notalanguage\ncode here\n```\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 30, SyntaxClass::String));
     for (const HighlightSpan& span : spans) {
@@ -192,7 +192,7 @@ TEST_CASE("MarkdownMode fenced code sub-language spans are offset-translated int
           "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "intro text\n\nmore text\n\n```python\ndef f():\n    pass\n```\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     const std::size_t fenceContentStart = text.find("def f()");
     REQUIRE(fenceContentStart != std::string::npos);
@@ -210,7 +210,7 @@ TEST_CASE("MarkdownMode fenced code sub-language spans are offset-translated int
 TEST_CASE("MarkdownMode reuses one sub-language highlight per language across multiple fences", "[Markdown]") {
     const auto        mode  = MarkdownMode();
     const std::string text  = "```python\ndef f():\n    pass\n```\n\n```python\ndef g():\n    pass\n```\n";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     int keywordSpanCount = 0;
     for (const HighlightSpan& span : spans) {
