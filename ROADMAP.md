@@ -215,8 +215,11 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       rather than washing the row behind them, which keeps an animation frame to one or two
       changed cells instead of a hundred and sixty, and its thread is created once and
       parked (`UI/EventLoop.h`'s `AnimationTimer`) rather than spawned per tick.
-      It ships **off by default** anyway: reported as making the editor feel slow to type
-      in, repeatedly, and a decoration does not get the benefit of the doubt against that.
+      It was **off by default** for a while, blamed -- in good faith, three times -- for
+      typing lag it never caused; the cause was unbounded whole-document syntax
+      highlighting, 134ms per keystroke against about 1ms for this. With that fixed
+      (~25ms), typing measures the same with the glow on as off (24,588us against
+      24,650us), so it is on again.
       Still open: virtual text (inline diagnostics, blame, fold placeholders) at real
       alpha. `buffer` is the last surface with no consumer.
 - [x] **Syntax highlighting cost 134ms per keystroke; it is now ~25ms.** Measured

@@ -1465,7 +1465,7 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetRecencyGlow>(
         "ned", "set-recency-glow",
         "Enable/disable the recency glow -- a brief accent wash over text that was just edited, fading out over "
-        "~200ms (default FALSE -- opt in). Tints the edited characters rather than washing the line behind them, "
+        "~200ms (default true). Tints the edited characters rather than washing the line behind them, "
         "what keeps it cheap -- see Editor/RecencyGlow.h. Retune its colour with "
         "(ned/theme-surface \"buffer.recency\" \"fill\" ...).");
     env.Register<&NedSetInlineDiagnostics>(

@@ -178,6 +178,28 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
                 ned::ui::Canvas mc(screen, mmBox);
                 minimap.Paint(mc);
             }
+            const auto measure = [&](const char* label, bool glow) {
+                ned::editor::SetRecencyGlowEnabled(glow);
+                for (int i = 0; i < 3; ++i) {
+                    ned::ui::Canvas w(screen, ned::ui::Box{.x_min = 0, .x_max = 149, .y_min = 0, .y_max = 44});
+                    mdView.Paint(w);
+                }
+                const auto t0 = std::chrono::steady_clock::now();
+                for (int i = 0; i < 10; ++i) {
+                    mdView.OnEvent(ned::ui::test::Character('q'));
+                    ned::ui::Canvas w(screen, ned::ui::Box{.x_min = 0, .x_max = 149, .y_min = 0, .y_max = 44});
+                    mdView.Paint(w);
+                    ned::ui::Canvas mw(screen, mmBox);
+                    minimap.Paint(mw);
+                }
+                const auto each =
+                    std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count() / 10;
+                WARN("    " << label << ": " << each << " us");
+            };
+            measure("glow OFF, buffer+minimap", false);
+            measure("glow ON,  buffer+minimap", true);
+            ned::editor::SetRecencyGlowEnabled(false);
+
             const auto begin = std::chrono::steady_clock::now();
             for (int i = 0; i < 10; ++i) {
                 mdView.OnEvent(ned::ui::test::Character('z'));
