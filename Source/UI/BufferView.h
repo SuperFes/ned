@@ -2876,6 +2876,16 @@ class BufferView : public Widget {
     std::uint64_t                                    recencyGlowGeneration_ = 0;
     bool                                             recencyGlowSeeded_     = false;
 
+    // Hoisted out of the per-cell path and refreshed once per Paint.
+    // RecencyGlowStrengthAt runs for *every visible cell*, and it used to
+    // take the settings mutex and read steady_clock on each one -- some 3,200
+    // lock/unlock pairs and clock reads per frame on an ordinary viewport, on
+    // every keystroke. That was reported live as typing lag, and it is why
+    // these are cached rather than asked for where they are used. With
+    // nothing glowing the per-cell cost is a single bool test.
+    std::chrono::steady_clock::time_point recencyGlowNow_;
+    bool                                  recencyGlowActive_ = false;
+
     // Called once per Paint: stamps whatever the last edit newly covered and
     // drops anything that has finished fading.
     void RefreshRecencyGlows();
