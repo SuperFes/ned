@@ -189,13 +189,12 @@ void ThemeGallery::Paint(Canvas c) {
     // body uses -- which also means this panel shows its own `popup` row
     // being applied to itself, the most direct feedback the gallery can give.
     const Brush   interiorBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
-    const Surface surface = SurfaceFor(theme_, "popup");
-    const bool    fillReadsDestination =
-        surface.fill.kind == PaintKind::Blur || surface.fill.kind == PaintKind::Stack;
+    const Surface surface              = SurfaceFor(theme_, "popup");
+    const bool    fillReadsDestination = PaintReadsDestination(surface.fill);
     for (int y = 1; y < height - 1; ++y) {
         for (int x = 1; x < width - 1; ++x) {
-            Cell& cell            = c[{.x = x, .y = y}];
-            cell.character        = " ";
+            Cell& cell     = c[{.x = x, .y = y}];
+            cell.character = " ";
             interiorBrush.ApplyTextTo(cell);
             if (!fillReadsDestination) {
                 cell.background_color = interiorBrush.background;

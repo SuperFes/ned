@@ -46,13 +46,12 @@ void MemoryImageView::Paint(Canvas c) {
     // samples what the overlay covers) -- ListPopup's own rule, and what
     // keeps a transparent theme's do-nothing default from leaving stale
     // cells behind.
-    const Surface surface = SurfaceFor(theme_, "popup");
-    const bool    fillReadsDestination =
-        surface.fill.kind == PaintKind::Blur || surface.fill.kind == PaintKind::Stack;
+    const Surface surface              = SurfaceFor(theme_, "popup");
+    const bool    fillReadsDestination = PaintReadsDestination(surface.fill);
     for (int y = 1; y < height - 1; ++y) {
         for (int x = 1; x < width - 1; ++x) {
-            Cell& cell            = c[{.x = x, .y = y}];
-            cell.character        = " ";
+            Cell& cell     = c[{.x = x, .y = y}];
+            cell.character = " ";
             interiorBrush.ApplyTextTo(cell);
             if (!fillReadsDestination) {
                 cell.background_color = interiorBrush.background;

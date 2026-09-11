@@ -125,8 +125,7 @@ void TreeView::Paint(Canvas c) {
     // background rather than against what the popup covers. Phase 7's
     // translucent-body step is where that gets revisited; blur is the case
     // that actually needs the destination today.
-    const bool fillReadsDestination =
-        surface.fill.kind == PaintKind::Blur || surface.fill.kind == PaintKind::Stack;
+    const bool fillReadsDestination = PaintReadsDestination(surface.fill);
     if (!fillReadsDestination) {
         for (int y = 1; y < height - 1; ++y) {
             for (int x = 1; x < width - 1; ++x) {

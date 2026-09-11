@@ -387,6 +387,14 @@ tinted toward the theme's own background reads better than flat black on some th
 `buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab.strip`, `tab`,
 `tab.active`, `tab.active.focused`, `echo`, `scrollbar`, `panel`, `popup`, `scrim`.
 
+A **translucent** popup fill composites against what the popup covers rather than against
+the theme's background — the same way a `blur` does, and for the same reason: a paint that
+needs to see the destination must not have it cleared first. That applies to a `fade` and
+to any paint carrying an alpha channel. An opaque fill, and one that paints nothing at all,
+still clear first, which is what stops a previous frame's cells showing through. Note the
+limit this cannot cross: a cell holds one glyph, so the *text* under a popup is always
+overwritten. A translucent body blends backgrounds, never text.
+
 `scrim` is the **focus scrim**: while an overlay holds the keyboard -- the terminal drawer,
 the chat panel, a tree view -- everything it does not cover is washed with this surface, so
 the thing you are typing into reads as the thing you are typing into. It is gated on

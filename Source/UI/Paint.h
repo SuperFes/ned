@@ -160,6 +160,19 @@ struct Surface {
 // nothing at all.
 [[nodiscard]] bool PaintsColour(const Paint& paint);
 
+// Whether this paint needs to see what is already in the cell to produce its
+// result -- a Blur samples it, a Stack may contain one, a Fade modulates it,
+// and a translucent stop composites against it.
+//
+// This is what a popup-shaped widget asks before clearing its own interior.
+// Clearing exists so a paint that covers *nothing* cannot leave the previous
+// frame showing through, but a destination-reading paint that is cleared
+// first reads the clear colour instead of the content it was supposed to
+// composite with -- which is how a translucent popup body ended up
+// compositing against the theme background rather than against the code it
+// covers.
+[[nodiscard]] bool PaintReadsDestination(const Paint& paint);
+
 // --- application ---------------------------------------------------------
 
 // Paints across the whole canvas, or across one local-coordinate box of it.

@@ -291,6 +291,26 @@ Color PaintColourAt(const Paint& paint, double u, double v, int x, int y) {
     return Transparent();
 }
 
+bool PaintReadsDestination(const Paint& paint) {
+    switch (paint.kind) {
+        case PaintKind::Blur:
+        case PaintKind::Fade:
+            return true;
+        case PaintKind::Stack:
+            return std::any_of(paint.layers.begin(), paint.layers.end(),
+                               [](const Paint& layer) { return PaintReadsDestination(layer); });
+        case PaintKind::Solid:
+        case PaintKind::Gradient:
+        case PaintKind::Pattern:
+            // Any translucent stop composites with whatever is underneath,
+            // so the cell's existing colour is an input to the result.
+            return std::any_of(paint.stops.begin(), paint.stops.end(),
+                               [](const ColorStop& stop) { return stop.colour.alpha > 0 && !stop.colour.Opaque(); });
+        default:
+            return false;
+    }
+}
+
 bool PaintsColour(const Paint& paint) {
     switch (paint.kind) {
         case PaintKind::Solid:

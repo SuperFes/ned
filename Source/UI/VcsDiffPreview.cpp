@@ -76,13 +76,12 @@ void VcsDiffPreview::Paint(Canvas c) {
     // Translucency phase 7: the shared "popup" Surface, same rule as
     // ListPopup -- clear the background only when the fill does not read it.
     const Brush   blankBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
-    const Surface surface = SurfaceFor(theme_, "popup");
-    const bool    fillReadsDestination =
-        surface.fill.kind == PaintKind::Blur || surface.fill.kind == PaintKind::Stack;
+    const Surface surface              = SurfaceFor(theme_, "popup");
+    const bool    fillReadsDestination = PaintReadsDestination(surface.fill);
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
-            Cell& cell            = c[{.x = col, .y = row}];
-            cell.character        = " ";
+            Cell& cell     = c[{.x = col, .y = row}];
+            cell.character = " ";
             blankBrush.ApplyTextTo(cell);
             if (!fillReadsDestination) {
                 cell.background_color = blankBrush.background;
