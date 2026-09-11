@@ -1567,29 +1567,37 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
     // the server is further behind still; lastSyncedText remains the closest
     // document we hold, so this uses it either way rather than dropping a
     // publish and leaving the line unmarked.
-    const BufferSyncState*                syncState = ResolveSyncState(*buffer, language);
-    std::vector<text::Buffer::Diagnostic> diagnostics;
+    const BufferSyncState* syncState = ResolveSyncState(*buffer, language);
+    DiagnosticSlice        slice;
     if (syncState != nullptr && !syncState->lastSyncedText.empty() &&
         syncState->lastSyncedGeneration != buffer->ContentGeneration()) {
-        const text::RopeStorage sentContent{text::Rope(syncState->lastSyncedText)};
-        diagnostics = ParsePublishedDiagnostics(params, sentContent, origin);
-        if (const auto span = text::ChangedByteRange(sentContent, buffer->Content())) {
-            for (text::Buffer::Diagnostic& diagnostic : diagnostics) {
-                diagnostic.startByte = text::RemapOffset(diagnostic.startByte, *span);
-                diagnostic.endByte   = std::max(diagnostic.startByte, text::RemapOffset(diagnostic.endByte, *span));
-            }
-        }
+        auto sentContent  = std::make_shared<const text::RopeStorage>(text::Rope(syncState->lastSyncedText));
+        slice.diagnostics = ParsePublishedDiagnostics(params, *sentContent, origin);
+        // Deliberately not stamped with the live generation: these offsets are
+        // against what the server was sent, and the rebase just below is what
+        // has to run.
+        slice.resolvedAgainst = std::move(sentContent);
+        // Onto the live content right here rather than leaving it for the
+        // push: FilterToOwnedRanges just below asks about the *live*
+        // buffer's embedded-language ranges and would otherwise be handed
+        // offsets against a different document.
+        RebaseSliceOntoLiveContent(*buffer, slice);
     }
     else {
-        diagnostics = ParsePublishedDiagnostics(params, buffer->Content(), origin);
+        slice.diagnostics          = ParsePublishedDiagnostics(params, buffer->Content(), origin);
+        slice.resolvedAgainst      = buffer->Content().Clone();
+        slice.resolvedAtGeneration = buffer->ContentGeneration();
     }
-    FilterToOwnedRanges(buffer, language, diagnostics);
+    FilterToOwnedRanges(buffer, language, slice.diagnostics);
 
     // prose-checking follow-up: this server's own full current diagnostic
     // set for buffer replaces only its own slice -- another server's slice
     // (recorded independently the same way) is untouched. PushMergedDiagnostics
     // is what actually reaches buffer.SetDiagnostics.
-    diagnosticsBySource_[buffer][language] = std::move(diagnostics);
+    // slice.resolvedAgainst is what PushMergedDiagnostics remaps from -- these
+    // offsets are right for the buffer as it is at this instant, and the
+    // debounce below means that is not the instant they are applied.
+    diagnosticsBySource_[buffer][language] = std::move(slice);
 
     // diagnostics-debounce follow-up: applying this immediately would mean
     // inline diagnostics repaint on essentially every keystroke (a server
@@ -1699,7 +1707,10 @@ void Manager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& se
             // Same source-key slot HandlePublishDiagnostics writes into --
             // see this method's own doc comment in Manager.h for why
             // that's the deliberate choice here.
-            diagnosticsBySource_[buffer][sourceKey] = std::move(diagnostics);
+            diagnosticsBySource_[buffer][sourceKey] =
+                DiagnosticSlice{.diagnostics          = std::move(diagnostics),
+                                .resolvedAgainst      = content.Clone(),
+                                .resolvedAtGeneration = buffer->ContentGeneration()};
             PushMergedDiagnostics(*buffer);
         });
 }
@@ -2348,11 +2359,49 @@ void Manager::ResolveDocumentLink(text::Buffer& buffer, const ResolvedDocumentLi
 void Manager::PushMergedDiagnostics(text::Buffer& buffer) {
     std::vector<text::Buffer::Diagnostic> merged;
     if (const auto it = diagnosticsBySource_.find(&buffer); it != diagnosticsBySource_.end()) {
-        for (const auto& perSource : it->second) {
-            merged.insert(merged.end(), perSource.second.begin(), perSource.second.end());
+        for (auto& perSource : it->second) {
+            // debounce-window-drift follow-up. A slice's offsets were resolved
+            // against the document in resolvedAgainst, which is not the
+            // document they are about to be applied to: this buffer kept being
+            // typed into through DiagnosticsDebounceMs(), and a slice from
+            // another source may have been sitting here far longer than that,
+            // re-pushed verbatim every time any source fires. Remap onto the
+            // live content and rebase the slice onto it, so each stored offset
+            // is only ever one edit-span behind and the next push starts from
+            // here rather than from the original parse.
+            RebaseSliceOntoLiveContent(buffer, perSource.second);
+            merged.insert(merged.end(), perSource.second.diagnostics.begin(), perSource.second.diagnostics.end());
         }
     }
     buffer.SetDiagnostics(std::move(merged));
+}
+
+void Manager::RebaseSliceOntoLiveContent(const text::Buffer& buffer, DiagnosticSlice& slice) const {
+    if (!slice.resolvedAgainst || slice.diagnostics.empty() || slice.resolvedAtGeneration == buffer.ContentGeneration()) {
+        return;
+    }
+    const std::optional<text::ChangedSpan> span = text::ChangedByteRange(*slice.resolvedAgainst, buffer.Content());
+    if (!span) {
+        return; // byte-identical -- the offsets already name the live content
+    }
+    // A pure insertion leaves RemapOffset with no way to know which side of
+    // it an offset sitting exactly at the insertion point belongs to -- that
+    // is gravity, and it is the caller's to decide. A diagnostic start has
+    // right gravity for the same reason Buffer::RelocateDiagnosticsForInsert
+    // gives it one: text typed at a flagged token's first byte was not part
+    // of what the server flagged, so the underline moves along rather than
+    // growing over it. The end needs no such case (RemapOffset already
+    // shifts an offset at the change's end, which is the at-or-after rule
+    // that side wants).
+    const bool insertionOnly = span->oldStart == span->oldEnd;
+    for (text::Buffer::Diagnostic& diagnostic : slice.diagnostics) {
+        diagnostic.startByte = (insertionOnly && diagnostic.startByte == span->oldStart)
+                                   ? span->newEnd
+                                   : text::RemapOffset(diagnostic.startByte, *span);
+        diagnostic.endByte   = std::max(diagnostic.startByte, text::RemapOffset(diagnostic.endByte, *span));
+    }
+    slice.resolvedAgainst      = buffer.Content().Clone();
+    slice.resolvedAtGeneration = buffer.ContentGeneration();
 }
 
 void Manager::HandleProgress(const std::string& connectionKey, const Json& params) {

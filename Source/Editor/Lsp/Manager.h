@@ -1368,13 +1368,47 @@ class Manager {
     void SendTypeHierarchyStepRequest(const std::string& method, text::Buffer& buffer, const HierarchyItem& item,
                                       HierarchyItemsCallback callback, const std::string& serverKey);
 
+    // debounce-window-drift follow-up: a slice's offsets are only meaningful
+    // against the document they were resolved on, and the gap between that
+    // and the buffer reaching SetDiagnostics is real -- DiagnosticsDebounceMs()
+    // of continued typing for the source that just published, and arbitrarily
+    // longer for every *other* source, whose slice is re-pushed verbatim
+    // whenever any one of them fires. Holding the document beside the offsets
+    // is what lets PushMergedDiagnostics close both gaps with one remap;
+    // ITextStorage::Clone() is O(1) (structural sharing), so a snapshot per
+    // publish costs a pointer, not a copy of the file.
+    struct DiagnosticSlice {
+        std::vector<text::Buffer::Diagnostic>     diagnostics;
+        std::shared_ptr<const text::ITextStorage> resolvedAgainst;
+        // What resolvedAgainst's ContentGeneration() was. The diff itself is
+        // O(edit size), but proving two documents byte-identical is not --
+        // it has to read both in full -- and "nothing changed" is the common
+        // case on a push. This is the same generation stamp every other cache
+        // in this codebase compares instead of the content itself.
+        std::size_t resolvedAtGeneration = 0;
+    };
+
     // prose-checking follow-up: flattens every source language's current
     // diagnostics slice for buffer (diagnosticsBySource_[&buffer]) into one
     // vector and pushes it via buffer.SetDiagnostics -- the actual merge
     // point that replaces the old "last publisher wins" wholesale replace.
     // Called after any publish, and after a source's slice is dropped
     // (disconnect) so stale diagnostics from a dead server don't linger.
+    //
+    // debounce-window-drift follow-up: also the single point where a slice's
+    // offsets are brought onto the buffer as it is *now*. Each slice records
+    // the document it was resolved against (DiagnosticSlice::resolvedAgainst),
+    // and this remaps through Text/OffsetRemap.h and rebases the slice onto
+    // the live content before merging -- so the debounce delay, and any
+    // number of edits made by another source's timer firing first, move the
+    // underlines with the text instead of pinning them where they were parsed.
     void PushMergedDiagnostics(text::Buffer& buffer);
+
+    // PushMergedDiagnostics' per-slice half: moves slice's offsets from the
+    // document they were resolved against onto buffer's live content and
+    // makes that the slice's new baseline. A no-op for a slice with no
+    // snapshot (nothing to diff from) or no diagnostics.
+    void RebaseSliceOntoLiveContent(const text::Buffer& buffer, DiagnosticSlice& slice) const;
 
     // semanticTokens range/delta follow-up. Shared tail of all three
     // RequestSemanticTokens response branches (range/full-delta/full):
@@ -1559,7 +1593,7 @@ class Manager {
     // publishDiagnostics wholesale-replacing whatever the other server just
     // reported. PushMergedDiagnostics flattens this into the vector that
     // actually reaches buffer.SetDiagnostics.
-    std::unordered_map<text::Buffer*, std::unordered_map<std::string, std::vector<text::Buffer::Diagnostic>>> diagnosticsBySource_;
+    std::unordered_map<text::Buffer*, std::unordered_map<std::string, DiagnosticSlice>> diagnosticsBySource_;
 
     // embedded-language-documents follow-up: buffer's own true host
     // language, stamped by SyncBuffer -- what PrimarySyncState looks up

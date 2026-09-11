@@ -939,6 +939,19 @@ TEST_CASE("Diagnostics relocate across inserts and deletes", "[Buffer]") {
         REQUIRE(flagged() == "alpha");
     }
 
+    SECTION("an insert exactly at the range start moves it rather than swallowing what was typed") {
+        buffer.SetPoint(alphaStart);
+        buffer.InsertAtPoint("x");
+        REQUIRE(buffer.Text() == "int xalpha = 1;\n");
+        REQUIRE(flagged() == "alpha"); // not "xalpha" -- the new byte is not what was flagged
+    }
+
+    SECTION("an insert exactly at the range end extends it") {
+        buffer.SetPoint(alphaStart + 5);
+        buffer.InsertAtPoint("x");
+        REQUIRE(flagged() == "alphax"); // the at-or-after rule every other tracked field uses
+    }
+
     SECTION("an insert after the range leaves it alone") {
         buffer.SetPoint(buffer.Content().ByteLength());
         buffer.InsertAtPoint("int beta = 2;\n");

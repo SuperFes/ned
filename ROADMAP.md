@@ -246,6 +246,38 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       offset/length a restore does not have in hand from the diff. Verified by watching the
       test produce `"pha ="` without it.
 
+- [x] **The debounce window itself was the last place a diagnostic could drift — fixed
+      2026-09-11.** Re-reported the same day with a screencast, against a build that
+      already had the fix above: the underline still slides a couple of columns off the
+      token while typing and snaps back when the burst ends. Two distinct gaps, both
+      between a slice being *resolved* and that slice reaching `SetDiagnostics`:
+
+      - **The debounce delay.** `HandlePublishDiagnostics` converts correctly on arrival
+        and then arms a `DiagnosticsDebounceMs()` (500ms default) timer. Typing does not
+        stop for it, so the offsets that finally land are however many keystrokes behind.
+        At a measured ~3 characters/second that is the two-column shift the screencast
+        shows, exactly.
+      - **Every other source's slice.** `PushMergedDiagnostics` rebuilds the whole set
+        from `diagnosticsBySource_`, so a source that has not published in a while — the
+        prose checker, typically — has its original offsets re-applied verbatim the moment
+        any *other* source fires, throwing away every relocation `Buffer` had done for it
+        in between. Unbounded, not 500ms.
+
+      One fix for both: each slice now carries the document its offsets were resolved
+      against (`DiagnosticSlice::resolvedAgainst`, plus the generation stamp that makes
+      "nothing changed" O(1) instead of a full byte-compare), and `PushMergedDiagnostics`
+      remaps through `Text/OffsetRemap.h` and rebases the slice before merging. Affordable
+      for the same reason the code-lens snapshot is: `ITextStorage::Clone` is O(1).
+
+      Found while pinning the cross-source case: `Buffer::RelocateDiagnosticsForInsert`
+      did the **opposite of its own comment** at one boundary. The comment promised that
+      text inserted exactly at a diagnostic's start pushes it along rather than extending
+      it; the test was `insertOffset < startByte`, so typing in front of a flagged token
+      grew the underline over what you had just typed. `<=` now, with both boundaries
+      pinned by their own sections, and `RebaseSliceOntoLiveContent` gives a start the same
+      right gravity (`RemapOffset` itself stays gravity-free — that is the caller's call to
+      make, and `Buffer`'s other tracked fields want the other answer).
+
 - [x] **Code lenses relocate now too (2026-09-11) — the stale-offset family is closed.**
       The loudest failure of the four, once it does happen: a lens owns a whole extra
       screen row above the line it annotates, so a stale offset does not merely misplace a
