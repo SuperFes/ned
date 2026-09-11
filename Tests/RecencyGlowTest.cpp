@@ -153,13 +153,21 @@ TEST_CASE("A glow covers only the bytes the newest edit touched", "[RecencyGlow]
     ned::ui::Canvas canvas(screen, box);
     view.Paint(canvas);
 
+    // The glow tints the *glyph*, not the cell behind it -- which is what
+    // keeps it to a cell or two of terminal output per frame instead of a
+    // whole row. So look at foregrounds, and require the backgrounds to be
+    // untouched.
     int glowing = 0;
     for (int x = 0; x < 40; ++x) {
         const ned::ui::Cell& cell = screen.PixelAt(x, 0);
-        if ((cell.character == "a" || cell.character == "b") &&
-            !(cell.background_color == fixture.theme.background)) {
+        if (cell.character != "a" && cell.character != "b") {
+            continue;
+        }
+        REQUIRE(cell.background_color == fixture.theme.background);
+        if (!(cell.foreground_color == fixture.theme.defaultForeground)) {
             ++glowing;
         }
     }
     REQUIRE(glowing <= 1);
+    REQUIRE(glowing == 1); // ...and the newest byte really is lit
 }

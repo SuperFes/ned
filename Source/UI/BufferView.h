@@ -2885,6 +2885,7 @@ class BufferView : public Widget {
     // nothing glowing the per-cell cost is a single bool test.
     std::chrono::steady_clock::time_point recencyGlowNow_;
     bool                                  recencyGlowActive_ = false;
+    Color                                 recencyGlowColour_ = Color::Default;
 
     // Called once per Paint: stamps whatever the last edit newly covered and
     // drops anything that has finished fading.
@@ -2894,6 +2895,13 @@ class BufferView : public Widget {
     // glowing there. Linear fade, deliberately -- it is the shape that is
     // easiest to reason about while the timings are still being tuned.
     [[nodiscard]] double RecencyGlowStrengthAt(std::size_t byteOffset) const;
+
+    // The colour a glowing glyph is tinted toward, resolved once per Paint
+    // alongside the clock -- SurfaceFor takes a mutex and builds a whole
+    // Surface by value, which is not something to do per cell.
+    [[nodiscard]] Color RecencyGlowColour() const {
+        return recencyGlowColour_;
+    }
 
   public:
     // Whether anything is still fading, so the composition root knows to
