@@ -411,16 +411,16 @@ unambiguous. Measured on gruvbox-dark, the current line costs 0.6 of a contrast 
 `M-x theme-gallery` reports the same numbers for whatever theme you are on.
 
 `buffer.recency` is the **recency glow**: a brief accent wash over text that was just
-edited, fading out over ~600ms. It uses the accent for the same reason the current line
+edited, fading out over ~200ms. It uses the accent for the same reason the current line
 does, so "something happened here" and "you are here" read as one colour language rather
 than two competing hues. `(ned/set-recency-glow false)` turns it off; setting the surface
 retunes its colour and peak.
 
 It animates, so it is worth knowing what that costs. ned's event loop has no free-running
-render tick -- it wakes for real input or posted work -- and the glow re-arms a 60ms
+render tick -- it wakes for real input or posted work -- and the glow re-arms a short
 one-shot timer only *while something is still fading*, stopping the moment the last one
-expires. Measured: three seconds of continuous typing costs 0.06 CPU-seconds (about 2% of
-one core), and five seconds idle afterwards costs nothing measurable.
+expires. Measured on a 120x40 viewport: three seconds of continuous typing costs one tick
+of CPU time, and an idle editor costs nothing at all.
 
 `panel` is the other derived default that is not simply the flat colour its widgets used
 to paint: it is a horizontal walk, ~4% lifted at the left dock's outer edge and settling to

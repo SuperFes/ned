@@ -1033,6 +1033,11 @@ void BufferView::RefreshRecencyGlows() {
     const text::Buffer& buffer = activeBuffer_.Get();
     const auto          now    = std::chrono::steady_clock::now();
 
+    // Read once here rather than per cell -- the two facts every cell's own
+    // strength lookup needs.
+    recencyGlowNow_    = now;
+    recencyGlowActive_ = editor::RecencyGlowEnabled() && !recencyGlows_.empty();
+
     // Drop whatever has finished fading first, so the cap below is spent on
     // live glows rather than on history.
     std::erase_if(recencyGlows_, [now](const RecencyGlow& glow) {
@@ -1053,6 +1058,7 @@ void BufferView::RefreshRecencyGlows() {
         recencyGlowSeeded_     = true;
         recencyGlowGeneration_ = buffer.ContentGeneration();
         previousUnsavedRanges_ = buffer.UnsavedChangeRanges();
+        recencyGlowActive_     = false;
         return;
     }
 
@@ -1095,19 +1101,25 @@ void BufferView::RefreshRecencyGlows() {
         recencyGlows_.erase(recencyGlows_.begin(),
                             recencyGlows_.end() - static_cast<std::ptrdiff_t>(kMaxRecencyGlows));
     }
+
+    // Re-settled after this paint's own stamping, so an edit glows on the
+    // very frame it happened rather than one frame later.
+    recencyGlowActive_ = editor::RecencyGlowEnabled() && !recencyGlows_.empty();
 }
 
 double BufferView::RecencyGlowStrengthAt(std::size_t byteOffset) const {
-    if (!editor::RecencyGlowEnabled()) {
+    // One bool in the common case. Everything expensive -- the settings
+    // mutex, the clock -- was hoisted into RefreshRecencyGlows once this
+    // showed up as typing lag; see recencyGlowActive_'s own comment.
+    if (!recencyGlowActive_) {
         return 0.0;
     }
-    const auto now       = std::chrono::steady_clock::now();
-    double     strongest = 0.0;
+    double strongest = 0.0;
     for (const RecencyGlow& glow : recencyGlows_) {
         if (byteOffset < glow.start || byteOffset >= glow.end) {
             continue;
         }
-        const auto elapsed = now - glow.at;
+        const auto elapsed = recencyGlowNow_ - glow.at;
         if (elapsed >= editor::kRecencyGlowDuration) {
             continue;
         }
