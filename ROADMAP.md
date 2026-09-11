@@ -211,10 +211,12 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       everything typed since the last save. Timestamps live in `BufferView`, not `Buffer`:
       `Text/` knows nothing above it, and a timestamp is a UI concern. The animation
       re-arms a 60ms one-shot only while something is fading, the background spinner's
-      exact shape, so an idle editor costs zero wakeups -- measured at 0.06 CPU-seconds for
-      three seconds of continuous typing and nothing measurable once it stops.
-      The glow ships **off by default**, which is the honest outcome of building it: see
-      below.
+      exact shape, so an idle editor costs zero wakeups. It tints the edited *glyphs*
+      rather than washing the row behind them, which keeps an animation frame to one or two
+      changed cells instead of a hundred and sixty, and its thread is created once and
+      parked (`UI/EventLoop.h`'s `AnimationTimer`) rather than spawned per tick.
+      It ships **off by default** anyway: reported as making the editor feel slow to type
+      in, repeatedly, and a decoration does not get the benefit of the doubt against that.
       Still open: virtual text (inline diagnostics, blame, fold placeholders) at real
       alpha. `buffer` is the last surface with no consumer.
 - [ ] **Dirty-region flush, and the animation question behind it.** `Screen::Flush` writes
@@ -223,7 +225,10 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       repaints when something happens, which is what ned was until the recency glow asked
       it to repaint on a clock: an animation frame is a full-screen redraw, ~36 a second,
       on the thread that also handles input. Reported live as an editor that felt slow to
-      type in, and the glow now defaults off because of it.
+      type in -- three times, across three different fixes, which is the point. Each was real: a
+      per-cell mutex and clock read; a thread spawned *and joined* per animation tick, then
+      per *keystroke* once start/stop straddled the 200ms effect; a background wash
+      repainting a whole row per frame. None of them was the last one.
       What makes that hard to catch: the editor's own CPU stays *low* (forty keystrokes at
       160x45 measures two ticks), because the expensive part is the terminal consuming the
       output, not ned producing it. Every CPU measurement said "fine" while the thing felt
