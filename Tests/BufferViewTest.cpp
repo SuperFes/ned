@@ -1550,6 +1550,61 @@ TEST_CASE("An inlay hint inside a selection keeps the selection's background", "
     std::filesystem::remove(path);
 }
 
+// Live-reported (screencast, 2026-09-10): typing garbled lines far below the
+// edit -- "writfd:ten", "static_casbuf:t" -- because applied inlay hints keep
+// their byte offsets while the text under them shifts. The receipt path
+// already drops a response computed against a superseded generation, but the
+// hints ALREADY applied were never invalidated, so during continuous typing
+// (where every response arrives after the next keystroke and is dropped) the
+// stale set stays on screen and drifts further with each character.
+TEST_CASE("Applied inlay hints stop rendering once the buffer has moved on", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_inlay_stale_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("x = 1;");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    const std::vector<ned::editor::lsp::Json> frames      = ReadLspFrames(server.serverStdinRead, 2);
+    const auto                                inlayHintIt = std::find_if(
+        frames.begin(), frames.end(), [](const ned::editor::lsp::Json& f) { return f["method"] == "textDocument/inlayHint"; });
+    REQUIRE(inlayHintIt != frames.end());
+
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", (*inlayHintIt)["id"]},
+        {"result", ned::editor::lsp::Json::array({{{"position", {{"line", 0}, {"character", 1}}}, {"label", ": int"}}})},
+    }
+                              .dump());
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(1);
+    REQUIRE(screen.PixelAt(gutter + 1, 0).character == ":"); // applied, and on the right byte
+
+    // Now type ahead of the hint's anchor. Byte 1 is no longer where ": int"
+    // belongs, and until a fresh response lands nothing here knows where it
+    // does belong -- so it must not be drawn at the offset it used to have.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("yy");
+    view.Paint(canvas);
+
+    REQUIRE(ContentRowText(screen, 0, 8, 1) == "yyx = 1;");
+
+    std::filesystem::remove(path);
+}
+
 // translucency phase 6 (virtual text): the other half of the above -- a theme
 // that gives ghost_text_foreground an alpha channel gets text resolved against
 // what is actually behind the cell, instead of a foreground Screen::Flush

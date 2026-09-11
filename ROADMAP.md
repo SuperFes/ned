@@ -137,6 +137,18 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       painted before, pinned by `Tests/ChromeSurfaceTest.cpp`. Verified live: a theme
       setting `modeline.fill` to `[:x "$spectrum"]` ramps blue→teal→yellow→magenta across
       the row, text intact.
+- [ ] **Code lenses drift the same way inlay hints did, one step removed.** Found while
+      fixing the inlay-hint garbling (below) and deliberately left alone rather than given
+      the same guard. `codeLensSpans_` resolves its byte offsets against the content as it
+      stood *at receipt*, so unlike a stale inlay hint its offsets start out valid — but
+      nothing relocates them across the edits that follow, so the lens row gradually
+      belongs to the wrong line. The inlay fix does not transfer: a lens occupies a whole
+      extra *row* above the line it annotates, so dropping the set on every keystroke would
+      make a row appear and disappear as you type, which is the vertical jumping this would
+      be trying to cure. The right fix is relocation (what `Buffer` already does for its six
+      tracked field kinds), not suppression — or accepting a stale reference count, which
+      is what every other editor does.
+
 - [ ] **Phase 5 remainder — focus scrim**, and the state-driven mode-line fills (LSP
       indexing / test-run / load progress as a sweep across the bar). The scrim needs a
       composition-root hook for "a docked panel or overlay holds focus", which is why it

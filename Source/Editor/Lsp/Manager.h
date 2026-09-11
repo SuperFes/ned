@@ -1070,6 +1070,18 @@ class Manager {
     // The most recently applied inlay hints for buffer, sorted by
     // byteOffset -- empty if never requested, not yet answered, or the
     // server has no hints for the last-requested range at all.
+    //
+    // Also empty once `buffer` has been edited since these were resolved.
+    // A hint is virtual text that occupies real columns before the byte it
+    // annotates, so a stale offset does not render a hint slightly out of
+    // place -- it renders it *inside* whatever token now sits at that
+    // offset, which is how a keystroke could visibly garble lines far below
+    // the edit (live-reported 2026-09-10: "writfd:ten", "static_casbuf:t").
+    // The receipt path's own generation check cannot cover this: it drops a
+    // response computed against a superseded document, which during
+    // continuous typing is *every* response, leaving the previously applied
+    // set on screen and drifting further with each character. Hints
+    // reappear on the first response that lands against a settled buffer.
     [[nodiscard]] const std::vector<ResolvedInlayHint>& InlayHintSpans(const text::Buffer& buffer) const;
 
     // codeLens follow-up. One applied lens, already resolved to byte
@@ -1726,6 +1738,13 @@ class Manager {
     std::unordered_map<text::Buffer*, std::tuple<std::size_t, std::size_t, std::size_t>> inlayHintsRequestedRange_;
     std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintsRequestCounter_;
     std::unordered_map<text::Buffer*, std::vector<ResolvedInlayHint>>                    inlayHintSpans_;
+    // The content generation inlayHintSpans_ above was resolved against.
+    // Unlike every other *Generation_ map here (which dedupe *requests*),
+    // this one guards the *reads*: a hint inserts real columns into a line,
+    // so one still carrying a superseded offset does not merely sit a
+    // character off -- it lands mid-token and garbles the text around it.
+    // See InlayHintSpans.
+    std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintSpansGeneration_;
     std::unordered_set<std::string>                                                      inlayHintsUnsupported_;
 
     // codeLens follow-up. requestedGeneration_ is the same
