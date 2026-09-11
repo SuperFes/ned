@@ -1760,10 +1760,22 @@ class Manager {
     // requestCounter_/spans_/unsupported_ mirror the same three fields'
     // roles for semanticTokens/inlayHint. All erased in NotifyBufferClosed
     // (unsupported_ instead cleared in ClientDisconnected).
-    std::unordered_map<text::Buffer*, std::size_t>                   codeLensRequestedGeneration_;
-    std::unordered_map<text::Buffer*, std::size_t>                   codeLensRequestCounter_;
-    std::unordered_map<text::Buffer*, std::vector<ResolvedCodeLens>> codeLensSpans_;
-    std::unordered_set<std::string>                                  codeLensUnsupported_;
+    // Mutable because CodeLensSpans is a const accessor that relocates its
+    // own cached set forward on read -- see its definition for why the
+    // catch-up lives there rather than at each edit. Manager is main-thread
+    // only, so there is no synchronisation question behind this.
+    // Carries a resolved lens set from the document it was resolved against
+    // onto a newer one; shared by the receipt path and the lazy catch-up in
+    // CodeLensSpans.
+    static void RemapCodeLensSpans(std::vector<ResolvedCodeLens>& lenses, const text::ITextStorage& from,
+                                   const text::ITextStorage& to);
+
+    mutable std::unordered_map<text::Buffer*, std::shared_ptr<const text::ITextStorage>> codeLensSpansContent_;
+    mutable std::unordered_map<text::Buffer*, std::size_t>                               codeLensSpansGeneration_;
+    std::unordered_map<text::Buffer*, std::size_t>                                       codeLensRequestedGeneration_;
+    std::unordered_map<text::Buffer*, std::size_t>                                       codeLensRequestCounter_;
+    mutable std::unordered_map<text::Buffer*, std::vector<ResolvedCodeLens>>             codeLensSpans_;
+    std::unordered_set<std::string>                                                      codeLensUnsupported_;
 
     // documentLink follow-up: only the "learned once, stop asking" half of
     // the group above -- an on-demand request keeps no per-buffer spans/

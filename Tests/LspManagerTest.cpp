@@ -3562,6 +3562,60 @@ TEST_CASE("No textDocument/diagnostic request is sent when lsp-pull-diagnostics 
 // Semantic-token spans are byte ranges resolved against the document as it
 // stood when the response landed, and nothing relocates them across later
 // edits -- so they recolour the wrong characters rather than moving any text.
+// Code lenses are the last member of the stale-offset family, and the one with
+// the loudest failure: a lens owns a whole extra screen row above the line it
+// annotates, so a stale offset does not merely misplace a label -- it puts
+// that row above the wrong line and everything below it moves.
+TEST_CASE("Code lenses land on the right line however far the buffer has moved", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-codelens-stale-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int alpha = 1;\nint beta = 2;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestCodeLenses(buffer, "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/codeLens");
+
+    // The buffer moves on while the server is still thinking -- a whole line
+    // added above both, which is the edit that actually moves a lens's row.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("// header\n");
+
+    client->DispatchFrame(Json{
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"range",
+                                  {{"start", {{"line", 1}, {"character", 0}}}, {"end", {{"line", 1}, {"character", 3}}}}},
+                                 {"command", {{"title", "2 references"}, {"command", "noop"}}}}})},
+    }
+                              .dump());
+
+    // The server answered about line 1 of the document it was sent -- "int
+    // beta". After one line was inserted above, that is line 2 here.
+    REQUIRE(manager.CodeLensSpans(buffer).size() == 1);
+    const auto lineOf = [&](std::size_t byteOffset) { return buffer.Content().ByteOffsetToLine(byteOffset); };
+    REQUIRE(lineOf(manager.CodeLensSpans(buffer)[0].startByte) == 2);
+
+    // And it keeps up as editing continues: another line above moves it again,
+    // with no new response involved.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("// second header\n");
+    REQUIRE(lineOf(manager.CodeLensSpans(buffer)[0].startByte) == 3);
+
+    // Typing *within* a line above must not move it at all -- the case that
+    // already worked, pinned so the relocation cannot overshoot.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("xx");
+    REQUIRE(lineOf(manager.CodeLensSpans(buffer)[0].startByte) == 3);
+}
+
 TEST_CASE("Semantic token spans stop being served once the buffer has moved on", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
