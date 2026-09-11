@@ -39,6 +39,7 @@
 #include "Editor/Project/Root.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "Editor/RenameReviewSettings.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/SnippetRegistry.h"
@@ -9659,6 +9660,18 @@ TEST_CASE("A character no completion item declared as a commit character just se
 }
 
 namespace {
+// rename-review follow-up: the review is on by default, so a test pinning
+// the direct-apply path has to say so.
+struct RenameReviewGuard {
+    explicit RenameReviewGuard(bool enabled) : previous_(ned::editor::RenameThroughReview()) {
+        ned::editor::SetRenameThroughReview(enabled);
+    }
+    ~RenameReviewGuard() {
+        ned::editor::SetRenameThroughReview(previous_);
+    }
+    bool previous_;
+};
+
 struct CommitCharactersDisabledGuard {
     CommitCharactersDisabledGuard() : previous_(ned::editor::lsp::CommitCharactersEnabled()) {
         ned::editor::lsp::SetLspCommitCharactersEnabled(false);
@@ -10917,6 +10930,7 @@ TEST_CASE("M-o reports \"Buffer has no associated file.\" for a scratch buffer",
 
 TEST_CASE("C-c C-M-r prompts for a new name, then applies a multi-file rename across two buffers directly",
           "[BufferView]") {
+    const RenameReviewGuard     direct(false); // the pre-review path, still reachable via ned/set-rename-review
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_rename_a_test.txt";
     ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
@@ -10991,6 +11005,103 @@ TEST_CASE("C-c C-M-r prompts for a new name, then applies a multi-file rename ac
     REQUIRE(fixture.statusMessage.find("Renamed") == 0);
     REQUIRE(fixture.statusMessage.find("2 edits across 2 files") != std::string::npos);
 
+    std::filesystem::remove(otherPath);
+}
+
+// rename-review follow-up: the same multi-file rename, reviewed rather than
+// applied. The local (no-server) tier is covered in
+// BufferViewRenameReviewTest.cpp; this pins the LSP tier's own conversion --
+// a server's UTF-16 positions resolved against text the review read itself,
+// with neither source buffer touched until the commit.
+TEST_CASE("lsp-rename builds a review buffer and writes nothing until it's committed", "[BufferView]") {
+    const RenameReviewGuard     reviewed(true);
+    Fixture                     fixture;
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_rename_review_a_test.txt";
+    {
+        std::ofstream(path) << "old_name\n";
+    }
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.activeBuffer.Set(buffer);
+
+    const std::filesystem::path otherPath = std::filesystem::temp_directory_path() / "ned_rename_review_b_test.txt";
+    std::filesystem::remove(otherPath);
+    {
+        std::ofstream(otherPath) << "use old_name here\n";
+    }
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(80, 21);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ManualRenameEvent());
+
+    const std::string prepareRaw = ReadRawLspFrame(server.serverStdinRead);
+    client->DispatchFrame(ned::editor::lsp::Json{{"jsonrpc", "2.0"},
+                                                 {"id", LspRequestIdFromFrame(prepareRaw)},
+                                                 {"result", ned::editor::lsp::Json{{"defaultBehavior", true}}}}
+                              .dump());
+    REQUIRE(fixture.statusMessage == "New name: ");
+
+    TypeText(view, "new_name");
+    view.OnEvent(ned::ui::test::Return());
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/rename");
+    const std::string ownUri = request["params"]["textDocument"]["uri"].get<std::string>();
+
+    client->DispatchFrame(
+        ned::editor::lsp::Json{
+            {"jsonrpc", "2.0"},
+            {"id", LspRequestIdFromFrame(raw)},
+            {"result",
+             {{"changes",
+               {
+                   {ownUri, ned::editor::lsp::Json::array({{{"range",
+                                                             {{"start", {{"line", 0}, {"character", 0}}},
+                                                              {"end", {{"line", 0}, {"character", 8}}}}},
+                                                            {"newText", "new_name"}}})},
+                   {"file://" + otherPath.string(),
+                    ned::editor::lsp::Json::array({{{"range",
+                                                     {{"start", {{"line", 0}, {"character", 4}}},
+                                                      {"end", {{"line", 0}, {"character", 12}}}}},
+                                                    {"newText", "new_name"}}})},
+               }}}},
+        }
+            .dump());
+
+    // Neither source is touched; the review is what came up.
+    REQUIRE(buffer.Text() == "old_name\n");
+    ned::text::Buffer* const reviewBuffer = fixture.bufferList.Find("*rename*");
+    REQUIRE(reviewBuffer != nullptr);
+    REQUIRE(&fixture.activeBuffer.Get() == reviewBuffer);
+    REQUIRE(reviewBuffer->ExcerptRanges().size() == 2);
+    const std::string composite = reviewBuffer->Content().Substring(0, reviewBuffer->Content().ByteLength());
+    REQUIRE(composite.find("new_name") != std::string::npos);
+    REQUIRE(composite.find("use new_name here") != std::string::npos);
+
+    // C-c C-c, then (b) into the open buffers.
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character("b"));
+
+    REQUIRE(buffer.Text() == "new_name\n");
+    ned::text::Buffer* other = fixture.bufferList.FindByPath(otherPath);
+    REQUIRE(other != nullptr);
+    REQUIRE(other->Text() == "use new_name here\n");
+
+    std::filesystem::remove(path);
     std::filesystem::remove(otherPath);
 }
 

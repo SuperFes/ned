@@ -58,6 +58,7 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
+#include "Editor/RenameReview.h"
 #include "Editor/Snippet.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/TestRun/TestRunner.h"
@@ -1989,6 +1990,49 @@ class BufferView : public Widget {
     // step. Re-resolves first and refuses on any disagreement -- see its own
     // comment in Rename.cpp.
     void ApplyLocalRename(const std::string& newName);
+    // rename-review follow-up (BufferView/Rename.cpp): stitches every hit
+    // into the "*rename*" review multibuffer instead of applying it --
+    // classifying each one against its own file's highlighter, adding the
+    // comment/string occurrences the rename itself skipped (excluded until
+    // opted into), and writing the proposed text into the review buffer so
+    // an untouched excerpt commits nothing.
+    //
+    // Returns false without building anything when the review can't
+    // faithfully represent the edit -- no hits, or a huge/unreadable source
+    // among them -- which is the caller's cue to apply directly instead.
+    // files carries only file/hits; text and displayPath are resolved here.
+    bool BuildRenameReview(std::vector<editor::rename::FileRenameHits> files, const std::string& oldName,
+                           const std::string& newName);
+    // ApplyRename's own review gate: turns a server's ResolvedRename into
+    // review rows, or returns false for an edit a review can't faithfully
+    // represent (a resource op, a huge source, a replacement that isn't the
+    // new name verbatim) so ApplyRename falls through to the direct apply.
+    // declineNote is filled with a short ", not reviewed: ..." clause
+    // whenever the answer is false for an interesting reason -- ApplyRename
+    // appends it to the status message the apply itself writes, which would
+    // otherwise overwrite any explanation set here.
+    bool TryReviewRename(const editor::lsp::Manager::ResolvedRename& result, std::string& declineNote);
+    // Live first, always -- the same rule ReadExcerptText follows, and for
+    // the same reason: an open buffer's own content is what the user is
+    // looking at, what a server's positions were computed against, and what
+    // a commit writes back into. Nullopt for a huge or unreadable source,
+    // which is the caller's cue to skip the review rather than read a file
+    // whole that nothing else here ever does.
+    [[nodiscard]] std::optional<std::string> ReviewSourceTextForRename(const std::filesystem::path& path) const;
+    // M-a in a rename review: steps the excerpt under point toward "apply"
+    // (original -> references only -> every occurrence), the inverse of the
+    // M-r revert the generic review layer already provides. Which step is
+    // next is derived from the excerpt's own current text, not from stored
+    // state, so it survives an undo or a hand edit. False when point isn't
+    // in a rename review at all, which is what lets M-a mean whatever it
+    // ordinarily does everywhere else.
+    bool HandleRenameReviewIncludeKey();
+    // Drops the proposal table if it belongs to buffer -- called wherever a
+    // buffer goes away, so a freed Buffer* can't be matched by a later one
+    // landing at the same address (the same hazard Multibuffer.h's own
+    // registry documents).
+    void ClearRenameProposals(const text::Buffer& buffer);
+
     // Thin wrapper over ApplyResolvedWorkspaceEdit below (statusMessage_-only
     // reporting, no return value -- callers driven from a rename response
     // don't need a bool the way the server-push path does).
@@ -4318,6 +4362,18 @@ class BufferView : public Widget {
     // them rewrites the wrong text rather than merely showing something
     // stale.
     std::optional<editor::locals::LocalBinding> pendingLocalRename_;
+    // rename-review follow-up: the rows BuildRenameReview stitched, index-
+    // aligned with the review buffer's own ExcerptRanges() (which is why the
+    // excerpt cap is applied there rather than left to BuildMultibuffer).
+    // Read only by HandleRenameReviewIncludeKey, which needs each row's two
+    // proposed bodies; the review buffer itself carries everything else.
+    // The name being replaced and the name replacing it, captured when the
+    // request goes out -- the review needs both, and a server's response
+    // carries neither.
+    std::string                                renameOldName_;
+    std::string                                renameNewName_;
+    std::vector<editor::rename::ReviewExcerpt> renameProposals_;
+    const text::Buffer*                        renameProposalOwner_ = nullptr;
     // prepareRename follow-up: same staleness-guard shape once more, for the
     // request RequestPrepareRenameAtPoint sends before lsp-rename opens its
     // prompt.

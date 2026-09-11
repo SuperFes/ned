@@ -64,6 +64,16 @@ struct Range {
 // satisfy startByte <= endByte <= content.size().
 [[nodiscard]] Range ByteRangeToLspRange(std::string_view content, std::size_t startByte, std::size_t endByte);
 
+// PositionToByte's plain-string sibling, and ByteRangeToLspRange's exact
+// inverse -- for a caller holding a file's text but no ITextStorage over it.
+// rename-review follow-up: the review resolves a server's edit positions
+// against text it read itself (live buffer first, disk otherwise), precisely
+// so that reviewing a rename doesn't have to open every file it touches the
+// way applying one does. Same bounding as PositionToByte: a line past the
+// end clamps to content.size(), and an out-of-range character clamps to that
+// line's own end.
+[[nodiscard]] std::size_t PositionToByte(std::string_view content, Position position);
+
 // UTF-16 code-unit length of content[startByte, endByte) --
 // contentChanges[0].rangeLength, deprecated by the LSP spec but still
 // required by some servers. Same content contract as ByteRangeToLspRange.

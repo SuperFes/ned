@@ -23,6 +23,7 @@
 #include "Editor/MultibufferFoldSettings.h"
 #include "Editor/PageScroll.h"
 #include "Editor/Project/Root.h"
+#include "Editor/RenameReviewSettings.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/SnippetRegistry.h"
@@ -288,6 +289,27 @@ TEST_CASE("ned/set-code-folding-enabled configures the process-wide toggle", "[E
 
     env.DoString(R"((ned/set-code-folding-enabled true))");
     REQUIRE(ned::editor::CodeFoldingEnabled());
+}
+
+TEST_CASE("ned/set-rename-review configures the process-wide toggle", "[EditorBindings]") {
+    // rename-review follow-up: RenameThroughReview is process-wide state
+    // (see RenameReviewSettings.h), on by default.
+    struct RenameReviewGuard {
+        ~RenameReviewGuard() {
+            ned::editor::SetRenameThroughReview(true);
+        }
+    } guard;
+
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    REQUIRE(ned::editor::RenameThroughReview());
+
+    env.DoString(R"((ned/set-rename-review false))");
+    REQUIRE_FALSE(ned::editor::RenameThroughReview());
+
+    env.DoString(R"((ned/set-rename-review true))");
+    REQUIRE(ned::editor::RenameThroughReview());
 }
 
 TEST_CASE("ned/set-multibuffer-auto-collapse-* bindings configure the three process-wide thresholds",
