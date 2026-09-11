@@ -18,6 +18,7 @@
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
+#include "UI/Minimap.h"
 #include "UI/Theme.h"
 
 // A diagnostic, not an assertion -- hidden from the default run by Catch2's
@@ -164,10 +165,31 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
         // Two consumers asking for the same buffer's spans in one frame --
         // BufferView and Minimap. Through the shared cache the second is a
         // hit; before it, this was two whole-document highlights.
-        timeIt("two consumers, one frame ", [&] {
-            return ned::editor::CachedHighlightSpans(md, mdMode)->size() +
-                   ned::editor::CachedHighlightSpans(md, mdMode)->size();
-        });
+        // The real editor: a BufferView *and* a Minimap painting the same
+        // buffer every frame, which is the default configuration.
+        {
+            ned::ui::Minimap minimap(mdActive, mdMode, theme);
+            const ned::ui::Box mmBox{.x_min = 150, .x_max = 159, .y_min = 0, .y_max = 44};
+            minimap.SetBox_(mmBox);
+            mdView.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 149, .y_min = 0, .y_max = 44});
+            for (int i = 0; i < 3; ++i) {
+                ned::ui::Canvas c(screen, ned::ui::Box{.x_min = 0, .x_max = 149, .y_min = 0, .y_max = 44});
+                mdView.Paint(c);
+                ned::ui::Canvas mc(screen, mmBox);
+                minimap.Paint(mc);
+            }
+            const auto begin = std::chrono::steady_clock::now();
+            for (int i = 0; i < 10; ++i) {
+                mdView.OnEvent(ned::ui::test::Character('z'));
+                ned::ui::Canvas c(screen, ned::ui::Box{.x_min = 0, .x_max = 149, .y_min = 0, .y_max = 44});
+                mdView.Paint(c);
+                ned::ui::Canvas mc(screen, mmBox);
+                minimap.Paint(mc);
+            }
+            const auto each =
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count() / 10;
+            WARN("    buffer + minimap, per keystroke: " << each << " us");
+        }
 
         timeIt("buffer.Text() copy alone ", [&] { return md.Text().size(); });
         timeIt("mode.highlight(text)     ", [&] { return mdMode.highlight ? mdMode.highlight(md.Text()).size() : 0U; });

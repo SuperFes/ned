@@ -60,14 +60,17 @@
 #ifndef NED_UI_MINIMAP_H
 #define NED_UI_MINIMAP_H
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "ActiveBuffer.h"
 #include "Editor/Mode.h"
+#include "EventLoop.h"
 #include "Text/Buffer.h"
 #include "Theme.h"
 #include "Widget.h"
@@ -99,6 +102,24 @@ class Minimap : public Widget {
     // configuration (mirrors every other widget's Set* hooks; not expected
     // in practice, since WindowManager::SetEventLoop wires this at startup).
     void SetEventLoop(EventLoop* eventLoop);
+
+    // How long the buffer must be quiet before the minimap re-highlights.
+    //
+    // The minimap colours the *whole document*, so its highlight is the
+    // expensive one -- and unlike the buffer's own text it does not have to
+    // be right this instant: it is a zoomed-out overview a few pixels wide.
+    // Refreshing it only once typing pauses takes the whole-document cost off
+    // the keystroke path entirely, which is worth far more than the colours
+    // being current mid-burst.
+    //
+    // Deliberately a debounce rather than a background thread, which is the
+    // obvious alternative and is not safe here: a Mode's highlight closure
+    // captures a shared Parser and IncrementalParseCache (Mode.cpp), so
+    // running it off-thread races the main thread's own call on that shared
+    // state -- the same shape as the dynamic-mode SIGSEGV this codebase
+    // already hit. A real background highlight would need its own Parser and
+    // Query instances, which is a bigger change than this buys.
+    static constexpr std::chrono::milliseconds kHighlightDebounce{250};
 
     // Tears down plane_ if present, idempotent. Called from the destructor
     // and from BufferView's toggle-minimap handler the instant
@@ -133,6 +154,18 @@ class Minimap : public Widget {
     bool OnEvent(const Event& event) override;
 
   private:
+    // Debounced whole-document highlighting -- see kHighlightDebounce.
+    // lastSpans_ is what gets painted; pending* tracks a content generation
+    // that has arrived but is not yet quiet enough to be worth re-running.
+    // mutable for the same reason every other cache here is: EnsurePlane is
+    // const and is where the raster (and now the highlight) is rebuilt.
+    mutable std::shared_ptr<const std::vector<editor::HighlightSpan>> lastSpans_;
+    mutable std::size_t                                               lastSpansGeneration_ = 0;
+    mutable std::string                                               lastSpansModeName_;
+    mutable std::size_t                                               pendingGeneration_ = 0;
+    mutable std::chrono::steady_clock::time_point                     pendingSince_;
+    mutable DeadlineTimer                                             highlightRefreshTimer_;
+
     // Line/column -> density-map walk: at whatever subRows x subCols
     // resolution the caller asks for, calls visit(subRow, subCol, offset,
     // linesInRow) for the first non-blank character found within each
