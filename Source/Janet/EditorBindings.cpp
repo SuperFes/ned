@@ -528,6 +528,18 @@ namespace {
         editor::SetInlineDiagnosticsEnabled(enabled);
     }
 
+    void NedSetInlineDiagnosticStyle(std::string style) {
+        if (style == "end-of-line") {
+            editor::SetInlineDiagnosticStyle(editor::InlineDiagnosticStyle::EndOfLine);
+            return;
+        }
+        if (style == "callout") {
+            editor::SetInlineDiagnosticStyle(editor::InlineDiagnosticStyle::Callout);
+            return;
+        }
+        throw std::runtime_error("unknown inline diagnostic style: " + style + " (expected \"end-of-line\" or \"callout\")");
+    }
+
     void NedSetRecencyGlow(bool enabled) {
         editor::SetRecencyGlowEnabled(enabled);
     }
@@ -1470,8 +1482,13 @@ void InstallEditorBindings(Environment& env) {
         "(ned/theme-surface \"buffer.recency\" \"fill\" ...).");
     env.Register<&NedSetInlineDiagnostics>(
         "ned", "set-inline-diagnostics",
-        "Enable/disable inline diagnostic annotation rows (carets + message under a line with an LSP diagnostic; "
-        "default true).");
+        "Enable/disable inline diagnostics (the LSP message shown against the line it flags; default true).");
+    env.Register<&NedSetInlineDiagnosticStyle>(
+        "ned", "set-inline-diagnostic-style",
+        "How an inline diagnostic is drawn: \"end-of-line\" (default) puts the message after the line's own text, "
+        "on a row the line already occupies, so a diagnostic appearing or clearing never shifts anything else on "
+        "screen; \"callout\" is the original block below the line with carets under the flagged span, which points "
+        "at exact columns but costs a screen row that comes and goes as you type.");
     env.Register<&NedRegisterLanguageGrammar>(
         "ned", "register-language-grammar",
         "Load a tree-sitter grammar at runtime: (name library-path queries-dir). library-path is a shared library "
