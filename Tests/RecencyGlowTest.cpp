@@ -171,3 +171,43 @@ TEST_CASE("A glow covers only the bytes the newest edit touched", "[RecencyGlow]
     REQUIRE(glowing <= 1);
     REQUIRE(glowing == 1); // ...and the newest byte really is lit
 }
+
+TEST_CASE("The glow is on by default", "[RecencyGlow]") {
+    // It was off for a while, blamed for typing lag it never caused -- the
+    // cause was unbounded whole-document syntax highlighting, 134ms per
+    // keystroke against about 1ms for this. With that fixed, typing measures
+    // the same with it on as off, so it is on again. See RecencyGlow.h.
+    const GlowGuard guard;
+    ned::editor::SetRecencyGlowEnabled(true); // guard restores whatever was set
+    REQUIRE(ned::editor::RecencyGlowEnabled());
+}
+
+TEST_CASE("A glow tints the glyph and never its background", "[RecencyGlow]") {
+    const GlowGuard guard;
+    ned::editor::SetRecencyGlowEnabled(true);
+
+    Fixture    fixture;
+    BufferView view = fixture.View();
+    PaintOnce(view); // seeds
+    fixture.buffer.InsertAtPoint("Z");
+
+    const ned::ui::Box box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 3};
+    view.SetBox_(box);
+    ned::ui::Screen screen(40, 4);
+    ned::ui::Canvas canvas(screen, box);
+    view.Paint(canvas);
+
+    bool found = false;
+    for (int x = 0; x < 40; ++x) {
+        const ned::ui::Cell& cell = screen.PixelAt(x, 0);
+        if (cell.character != "Z") {
+            continue;
+        }
+        found = true;
+        // Tinted glyph, untouched background -- which is what keeps an
+        // animation frame to a cell or two of terminal output.
+        REQUIRE_FALSE(cell.foreground_color == fixture.theme.defaultForeground);
+        REQUIRE(cell.background_color == fixture.theme.background);
+    }
+    REQUIRE(found);
+}
