@@ -15,6 +15,15 @@
 // "indent.body" (a Lisp special form's body, a fixed 2 columns past the
 // form's own column, Emacs' lisp-indent-function convention -- never falls
 // back, see janet-indents.scm/clojure-indents.scm for real usage of both).
+// lambda-body-alignment follow-up added a fourth, "align.barrier": a
+// brace-delimited statement/declaration body an OUTER "aligned" container's
+// column alignment does not reach through, since alignment is a
+// continuation-line rule and a block-bodied callable argument
+// ("std::jthread t([fd] {") is not a continuation of the argument list at
+// all. Carried by the query rather than hardcoded node types precisely
+// because the right answer is per-language: janet/clojure DO want a nested
+// "[...]" to inherit the enclosing call's alignment, and simply never use
+// the capture.
 //
 // BuildIndentFunction below is what TreeSitterModeFromLanguage (Mode.cpp)
 // calls to construct Mode::indentColumn for most bundled modes, mirroring
@@ -100,7 +109,11 @@ struct IndentComputation {
 // own line -- e.g. "foo(a," -- the result is that content's own COLUMN, not
 // one level deeper; an @aligned container whose opener is alone on its own
 // line, with nothing following it, falls back to behaving exactly like a
-// plain "indent" capture instead, since there's no column to align to). See
+// plain "indent" capture instead, since there's no column to align to), and
+// "align.barrier" (lambda-body-alignment follow-up: contributes no level and
+// no column of its own -- it only stops an "aligned" ancestor FARTHER OUT
+// from short-circuiting, so that ancestor degrades to an ordinary "indent"
+// for lines inside the barrier). See
 // Indent.cpp for the walk itself -- the short version: seed a (node,
 // lastRow) pair (either the target line's own innermost containing node, or
 // -- when a dedent capture starts on this line -- the matching opener's own

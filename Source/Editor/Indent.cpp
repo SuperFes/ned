@@ -148,6 +148,24 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     // janet-indents.scm/clojure-indents.scm's own comments) is treated as
     // indent.body, checked first in the walk below.
     std::unordered_set<const void*> bodyIndentIds;
+    // lambda-body-alignment follow-up: a container captured "align.barrier"
+    // -- a brace-delimited STATEMENT/DECLARATION body (C/C++'s
+    // compound_statement, JS's statement_block, Java's block/class_body,
+    // ...) through which an OUTER @aligned container's column alignment does
+    // not reach. Alignment is a continuation-line rule ("foo(a,\n    b)");
+    // a callable argument with a real block body ("std::jthread t([fd] {")
+    // is not a continuation of the argument list at all, and clang-format/
+    // prettier/gofmt all indent its body from the statement's own column,
+    // not from the "(" it happens to sit behind. Deliberately NOT applied to
+    // data literals (initializer_list/object/array/literal_value): a
+    // multi-line literal argument aligning its own body relative to the
+    // call's alignment column is existing, documented, tested behavior (see
+    // the walk's own comment below), and only statement bodies change here.
+    // Carried by the query rather than hardcoded node types, so a language
+    // whose nested @indent containers genuinely SHOULD inherit an outer
+    // alignment (janet/clojure -- a "[...]" inside a "(foo ...)" call) just
+    // never uses the capture.
+    std::unordered_set<const void*> barrierIds;
     const void*                     dedentNodeId = nullptr; // set only when a dedent capture starts this line
     // smart-blank-line-on-newline follow-up: every dedent capture's own
     // [startByte, endByte) range, not just whichever one (if any) starts at
@@ -166,6 +184,9 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
         else if (capture.name == "indent.body") {
             bodyIndentIds.insert(capture.nodeId);
         }
+        else if (capture.name == "align.barrier") {
+            barrierIds.insert(capture.nodeId);
+        }
         else if (capture.name == "dedent") {
             dedentRanges.emplace_back(capture.startByte, capture.endByte);
             if (capture.startByte == contentStart) {
@@ -179,6 +200,7 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     const auto isBodyIndentCaptured = [&bodyIndentIds](const treesitter::Node& node) {
         return bodyIndentIds.contains(node.Id());
     };
+    const auto isBarrierCaptured = [&barrierIds](const treesitter::Node& node) { return barrierIds.contains(node.Id()); };
 
     // Resolves `position` (either a real line's contentStart, or -- for the
     // dedent branch below -- an align target's own StartByte, computing "as
@@ -267,6 +289,19 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
                                     walkStart.StartByte() == position;
         std::size_t lastRow       = selfOpensHere ? walkStart.StartRow() : kNoRow;
         int         level         = 0;
+        // lambda-body-alignment follow-up: set once the walk has passed an
+        // @align.barrier-captured body, after which no OUTER @aligned
+        // ancestor may short-circuit with a column any more (it still counts
+        // as an ordinary level). Set at the END of an iteration, not the
+        // start, so a node captured both ways would still align itself --
+        // a barrier blocks alignment from outside it, not its own.
+        // Deliberately NOT gated on !opensAtPosition the way the @aligned/
+        // @indent.body checks are: the dedent branch computes a closing
+        // line ("    });") "as if for the opener's own line," which seeds
+        // walkStart AT the barrier itself, and that line must still resolve
+        // to the enclosing statement's own level rather than the call's
+        // alignment column.
+        bool crossedBarrier = false;
         for (treesitter::Node node = walkStart; !node.IsNull(); node = node.Parent()) {
             const bool opensAtPosition = node.StartByte() == position;
             if (isBodyIndentCaptured(node) && !opensAtPosition) {
@@ -277,7 +312,7 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
                 const int column = ContainerOwnColumn(node, bufferText, style.width) + 2;
                 return IndentComputation{IndentComputation::Kind::Column, column + IndentColumnForLevel(level, style)};
             }
-            if (isAlignedCaptured(node) && !opensAtPosition) {
+            if (isAlignedCaptured(node) && !opensAtPosition && !crossedBarrier) {
                 if (const std::optional<int> column = ResolveAlignedColumn(node, bufferText, style.width)) {
                     return IndentComputation{IndentComputation::Kind::Column, *column + IndentColumnForLevel(level, style)};
                 }
@@ -289,6 +324,9 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
                 node.StartRow() != lastRow) {
                 ++level;
                 lastRow = node.StartRow();
+            }
+            if (isBarrierCaptured(node)) {
+                crossedBarrier = true;
             }
         }
         return IndentComputation{IndentComputation::Kind::Level, level};
