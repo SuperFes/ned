@@ -891,11 +891,15 @@ and moving a file fixes up what pointed at it. Ned already owns most of the subs
 lands through `ApplyProjectEdit` as one `ProjectUndoManager` transaction; `rename-file` and
 the sidebar's own rename already send `workspace/willRenameFiles`/`didRenameFiles` and apply
 the resource operations a server sends back, and `rename-symbol` now resolves a local
-binding from the mode's own `locals.scm` with no server involved at all. What is still
-missing is everything that should be reviewable before it lands, and the file/class
-relationship an IDE keeps in sync.
+binding from the mode's own `locals.scm` with no server involved at all, routing the result
+through a review buffer rather than applying it blind. What is still missing is the
+file/class relationship an IDE keeps in sync.
 
-Shipped here, one slug each for `git log --grep=`: `lisp-shell-locals` (fish, janet and
+Shipped here, one slug each for `git log --grep=`: `rename-review` (both rename tiers hand
+their edits to an editable `*rename*` review multibuffer before anything lands, default on
+via `ned/set-rename-review`; every hit classified against its own file's highlighter, the
+comment/string occurrences the rename never asked for listed and excluded until `M-a`
+includes them, `Editor/RenameReview.h` holding the pure half), `lisp-shell-locals` (fish, janet and
 clojure/jank locals queries, closing the coverage gap `scope-aware-rename` left. HTML and
 CSS were dropped from that gap rather than filled: both have a binding construct, but a
 CSS custom property is scoped to matching elements *and their descendants*, which is DOM
@@ -936,18 +940,22 @@ parameters became a designated-initializer `TreeSitterQuerySources` on the way p
       occurrence set is only complete if the whole file was parsed, so a windowed answer
       would be a partial *rename*, not a partial display (`scope-aware-rename`).
 
-- [ ] **Rename through the review multibuffer, not blind.** JetBrains previews a refactor's
-      usages before applying it, and ned has the better version of that already built: the
-      editable multibuffer `project-replace` produces -- one excerpt per usage, `M-n`/`M-p`
-      to step, edit an excerpt back to its original text to exclude it, `M-c` to apply one
-      file, `C-c C-c` to commit the lot into live buffers or straight to disk, all as one
-      undo transaction. Route both rename paths through it: an LSP `WorkspaceEdit` becomes
-      a review buffer rather than an immediate apply, and the no-server path
-      `scope-aware-rename` shipped gets one for free. The piece that makes it *better*
-      than project-replace is classification: a tree-sitter parse knows whether a hit is
-      a real reference, a comment, or a string, so the review buffer can group them and
-      default the risky ones to excluded -- which is the actual difference between a
-      rename and a project-wide search-and-replace.
+- [ ] A rename carrying filesystem resource operations (a `documentChanges` edit that also
+      creates, deletes or renames a file) is applied directly rather than reviewed -- a
+      multibuffer has no way to represent a resource op, and reviewing half an edit is
+      worse than reviewing none of it. Same for a huge source among the touched files, and
+      for a server whose `newText` isn't the new name verbatim (a qualified or re-cased
+      replacement, which the review has no way to propose). All three say so in the echo
+      area rather than behaving differently in silence (`rename-review`).
+- [ ] An excerpt mixing a real reference with a comment/string hit on the same line is one
+      row with three states, not two independently togglable hits -- `M-a` steps it from
+      original to references-only to every occurrence. Per-hit granularity would need the
+      review to carry sub-excerpt ranges, which nothing else in the multibuffer does
+      (`rename-review`).
+- [ ] The comment/string candidate scan covers only the files the rename already touches.
+      A name that appears in a comment in a file with no code reference at all is never
+      offered -- that would be a project-wide search, which `project-replace` already is
+      (`rename-review`).
 
 - [ ] **File rename/move propagates, in both directions.** Renaming from inside ned already
       tells the language server; what it does not do is fix references when no server is

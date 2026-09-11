@@ -51,6 +51,7 @@
 #include "Editor/Project/Trust.h"
 #include "Editor/RecencyGlow.h"
 #include "Editor/RelativeLineNumberSettings.h"
+#include "Editor/RenameReviewSettings.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
@@ -502,6 +503,10 @@ namespace {
 
     void NedSetMultibufferScopedSearch(bool enabled) {
         editor::SetMultibufferScopedSearch(enabled);
+    }
+
+    void NedSetRenameReview(bool enabled) {
+        editor::SetRenameThroughReview(enabled);
     }
 
     void NedSetMultibufferAutoCollapseExcerptCap(std::int64_t count) {
@@ -1456,6 +1461,14 @@ void InstallEditorBindings(Environment& env) {
         "replacement inside chrome the buffer would then silently refuse. Turn it off to search a review buffer's "
         "whole composite text, e.g. to find the excerpt whose header names a particular file. No effect on an "
         "ordinary buffer.");
+    env.Register<&NedSetRenameReview>(
+        "ned", "set-rename-review",
+        "Enable/disable handing a rename's edits to an editable review multibuffer before they land (default true) "
+        "-- one excerpt per occurrence, M-n/M-p to step, M-a to include an excerpt, M-r to exclude it, C-c C-c to "
+        "commit the lot as one undo transaction. The review is also the only place the comment and string "
+        "occurrences a rename deliberately skipped are visible, each excluded until opted into. Turn it off to "
+        "apply a rename immediately, as rename-symbol and lsp-rename did before. A rename that also creates, "
+        "deletes or renames files is applied directly either way -- a multibuffer cannot represent that.");
     env.Register<&NedSetStickyScrollEnabled>(
         "ned", "set-sticky-scroll-enabled",
         "Enable/disable pinned namespace/class/method breadcrumb rows at the top of a pane while scrolled into "

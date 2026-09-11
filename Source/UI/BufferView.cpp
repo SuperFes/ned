@@ -138,6 +138,11 @@ void BufferView::ClearBufferCaches(text::Buffer& buffer) {
         highlightCacheSpans_.clear();
     }
     gutters_.ForgetBuffer(buffer);
+    // rename-review follow-up: the proposal table is keyed by raw Buffer*
+    // identity like every cache above it, so it has to be dropped on the
+    // same funnel -- a later buffer landing at the same address would
+    // otherwise inherit another rename's proposals.
+    ClearRenameProposals(buffer);
 }
 
 std::optional<std::string> BufferView::EmbeddedLanguageAtPoint() {

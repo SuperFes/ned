@@ -2101,6 +2101,15 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
     // identical comment above.
     const std::string serverKey = ResolvedLspServerKey(point);
 
+    // rename-review follow-up: the review needs the name being replaced --
+    // to scan each touched file for the comment/string occurrences the
+    // server's own edit list won't carry. Read here rather than from the
+    // prompt's prefill, which a server that answers prepareRename with
+    // {defaultBehavior: true} never provides.
+    const std::optional<std::pair<std::size_t, std::size_t>> word = WordRegionAtPoint(buffer.Content(), point);
+    renameOldName_                                                = word ? buffer.Content().Substring(word->first, word->second - word->first) : std::string();
+    renameNewName_                                                = newName;
+
     statusMessage_ = "Requesting rename...";
     lspManager_->RequestRename(
         buffer, point, newName,
@@ -2156,7 +2165,78 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
 }
 
 void BufferView::ApplyRename(const editor::lsp::Manager::ResolvedRename& result) {
-    ApplyResolvedWorkspaceEdit(result, "Renamed (" + renameTitle_ + ").");
+    std::string declineNote;
+    if (TryReviewRename(result, declineNote)) {
+        return;
+    }
+    // The note (if any) rides along in the same status message the apply
+    // writes -- it would otherwise be overwritten the moment the edit lands,
+    // leaving the user with a rename that silently skipped the review.
+    ApplyResolvedWorkspaceEdit(result, "Renamed (" + renameTitle_ + ")" + declineNote + ".");
+}
+
+bool BufferView::TryReviewRename(const editor::lsp::Manager::ResolvedRename& result, std::string& declineNote) {
+    if (!editor::RenameThroughReview() || renameOldName_.empty() || renameNewName_.empty()) {
+        return false;
+    }
+    // A rename that also creates, deletes or moves files is applied directly:
+    // a multibuffer has no way to show a resource operation, and reviewing
+    // half of an edit is worse than reviewing none of it. Says so, rather
+    // than silently behaving differently from the rename before it.
+    for (const editor::lsp::Manager::ResolvedDocumentChangeOp& op : result.documentChangeOps) {
+        if (op.kind != editor::lsp::DocumentChangeOp::Kind::EditFile) {
+            declineNote = ", not reviewed: it also creates or moves files";
+            return false;
+        }
+    }
+
+    // Both edit forms collapse to the same per-file shape here; the review
+    // never needs the ordering guarantee ApplyResolvedWorkspaceEdit keeps
+    // for documentChanges, since without resource ops there is nothing for
+    // a later edit to depend on.
+    std::vector<std::pair<std::filesystem::path, const std::vector<editor::lsp::WorkspaceTextEdit>*>> perFile;
+    for (const editor::lsp::Manager::ResolvedRenameEdit& edit : result.edits) {
+        perFile.emplace_back(edit.path, &edit.edits);
+    }
+    for (const editor::lsp::Manager::ResolvedDocumentChangeOp& op : result.documentChangeOps) {
+        perFile.emplace_back(op.path, &op.edits);
+    }
+
+    std::vector<editor::rename::FileRenameHits> files;
+    files.reserve(perFile.size());
+    for (const auto& [path, edits] : perFile) {
+        // Positions are resolved against the same text BuildRenameReview
+        // reads for the excerpt bodies (live buffer first), which is what
+        // keeps a reviewed offset and the text shown at it in agreement.
+        const std::optional<std::string> text = ReviewSourceTextForRename(path);
+        if (!text) {
+            declineNote = ", not reviewed: " + path.filename().string() + " is huge or unreadable";
+            return false;
+        }
+        editor::rename::FileRenameHits file;
+        file.file = path;
+        for (const editor::lsp::WorkspaceTextEdit& edit : *edits) {
+            const std::size_t start = editor::lsp::PositionToByte(std::string_view(*text), edit.start);
+            const std::size_t end   = editor::lsp::PositionToByte(std::string_view(*text), edit.end);
+            if (end < start) {
+                return false;
+            }
+            // A server is free to send a replacement that isn't the new name
+            // verbatim (a qualified form, a different case). The review only
+            // knows how to propose "this span becomes the new name", so
+            // anything else goes down the direct path untouched.
+            if (edit.newText != renameNewName_) {
+                declineNote = ", not reviewed: the server proposed text other than the new name";
+                return false;
+            }
+            file.hits.push_back(editor::rename::RenameHit{start, end, editor::rename::HitKind::Reference});
+        }
+        if (!file.hits.empty()) {
+            files.push_back(std::move(file));
+        }
+    }
+
+    return BuildRenameReview(std::move(files), renameOldName_, renameNewName_);
 }
 
 bool BufferView::ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {

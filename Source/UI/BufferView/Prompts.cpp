@@ -115,6 +115,13 @@ bool BufferView::HandleMultibufferQuickKey(const editor::KeyChord& chord) {
     }
     const char* commandName = nullptr;
     switch (chord.Codepoint) {
+        case U'a':
+            // rename-review follow-up: the inverse of M-r below, and the
+            // only one of these keys that isn't a generic multibuffer
+            // gesture -- it needs the proposed text a rename review holds
+            // per excerpt, so it declines (and M-a means what it ordinarily
+            // does) in every other review buffer.
+            return HandleRenameReviewIncludeKey();
         case U'n':
             commandName = "next-excerpt";
             break;
