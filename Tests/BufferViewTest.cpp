@@ -4541,6 +4541,72 @@ TEST_CASE("A stored file place's topLine is restored when its buffer becomes act
     ned::editor::ResetFilePlacesForTesting();
 }
 
+TEST_CASE("A stored place past a shrunken file's end still shows content, not blank rows",
+          "[BufferView][Session]") {
+    // Real reported bug, with a real repro: ROADMAP.md was pruned from 2301
+    // lines to 1617 between two runs, and reopening it presented a blank
+    // screen -- the stored topLine sat past the file's new end.
+    //
+    // RestoreFilePlace already clamps *point* (Session.h stores line/column
+    // precisely so it can), and SessionTest covers that. What this pins is the
+    // viewport: a clamped point with an unclamped topLine renders nothing at
+    // all, which is strictly worse than landing in the wrong place.
+    ned::editor::ResetFilePlacesForTesting();
+
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_session_shrunk";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path file = dir / "roadmap.md";
+
+    auto writeLines = [&file](int count, const std::string& prefix) {
+        std::ofstream out(file, std::ios::trunc);
+        for (int i = 0; i < count; ++i) {
+            out << prefix << i << "\n";
+        }
+    };
+
+    writeLines(100, "line ");
+    {
+        Fixture            recording;
+        ned::text::Buffer& before = recording.bufferList.OpenFile(file);
+        before.SetPoint(before.ByteOffsetForLineAndColumn(90, 0));
+        ned::editor::RecordFilePlace(before, 88, 4);
+    }
+
+    // The file shrank between runs -- exactly the ROADMAP.md prune.
+    writeLines(10, "line ");
+
+    Fixture            fixture;
+    ned::text::Buffer& reopened = fixture.bufferList.OpenFile(file);
+    ned::editor::RestoreFilePlace(reopened, 4); // main.cpp's own open-time call
+    fixture.activeBuffer.Set(reopened);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(40, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+    // The rule: a file shorter than the viewport tops out at line 0, and a
+    // longer one puts its last line on the bottom row -- never a topLine that
+    // leaves rows past the end of the file.
+    INFO("topLine=" << view.TopLine() << " lineCount=" << reopened.Content().LineCount());
+    CHECK(view.TopLine() + 5 <= reopened.Content().LineCount());
+
+    // The actual complaint: the pane must not be empty.
+    bool anyContent = false;
+    for (int row = 0; row < 5; ++row) {
+        for (int col = 0; col < 40; ++col) {
+            const std::string& ch = screen.PixelAt(col, row).character;
+            if (ch != " " && !ch.empty()) {
+                anyContent = true;
+            }
+        }
+    }
+    CHECK(anyContent);
+
+    ned::editor::ResetFilePlacesForTesting();
+}
+
 TEST_CASE("Secondary cursors render as inverted cells with their selections highlighted", "[BufferView][MultiCursor]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("foo bar\nfoo baz\n");

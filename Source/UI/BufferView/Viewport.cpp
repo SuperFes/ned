@@ -252,8 +252,20 @@ bool Viewport::VisibleRowCountAtLeast(std::size_t startLine, std::size_t endLine
 void Viewport::EnsureTopLineValidForActiveBuffer() {
     text::Buffer& buffer = context_.activeBuffer.Get();
     if (topLineValidatedBuffer_ == &buffer) {
+        // A place restored at construction was clamped by point's own line
+        // rather than by MaxTopLine(), which was unknowable then (0x0 widget).
+        // Redo it properly now that there is a size: a file that shrank
+        // between runs clamps point to its new last line, and a topLine_ equal
+        // to that line puts it on the top row with nothing but past-the-end
+        // rows beneath -- a blank pane. Real report: ROADMAP.md, pruned from
+        // 2301 lines to 1617, reopened empty.
+        if (topLineNeedsSizeClamp_ && host_.size().height > 0) {
+            topLineNeedsSizeClamp_ = false;
+            topLine_               = std::min(topLine_, MaxTopLine());
+        }
         return;
     }
+    topLineNeedsSizeClamp_ = false;
     topLineValidatedBuffer_ = &buffer;
     host_.dismissHover(); // hover-tooltips follow-up: a tooltip from the previous buffer means nothing here
     // session-persistence slice 1: a stored viewport for this buffer wins
@@ -308,7 +320,18 @@ void Viewport::ScrollToShowOffset(std::size_t offset) {
     const std::size_t         pointLine = content.ByteOffsetToLine(offset);
 
     if (pointLine < topLine_) {
-        topLine_ = pointLine;
+        // Clamped by MaxTopLine() rather than set to pointLine outright.
+        // Real reported bug: a file that shrank between runs (ROADMAP.md,
+        // pruned 2301 -> 1617 lines) clamps its restored point to the new
+        // last line, and pinning *that* line to the top row leaves every row
+        // beneath it past the end of the file -- a wholly blank pane. The
+        // same failure EnsureTopLineValidForActiveBuffer's else-branch
+        // already guards for a carried-over topLine_; a stored place fell
+        // through to here instead. MaxTopLine() is by definition the largest
+        // topLine_ that still fills the viewport, and point stays visible
+        // because it sits at or below the last line, which MaxTopLine() puts
+        // on the bottom row.
+        topLine_ = std::min(pointLine, MaxTopLine());
     }
     else if (host_.size().height > 0) {
         // main-editor-sticky-scroll follow-up: same host_.stickyRowCount()
@@ -615,6 +638,9 @@ void Viewport::RestoreInitialPlace() {
         const text::Buffer& buffer    = context_.activeBuffer.Get();
         const std::size_t   pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
         topLine_                      = std::min(*place->topLine, pointLine);
+        // See topLineNeedsSizeClamp_'s own comment: this min is a placeholder
+        // for the MaxTopLine() clamp no size is available for yet.
+        topLineNeedsSizeClamp_ = true;
     }
 }
 
