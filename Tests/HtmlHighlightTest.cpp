@@ -31,7 +31,7 @@ TEST_CASE("HtmlMode has a highlighting hook installed", "[Html]") {
 TEST_CASE("HtmlMode <script> content gets real JavaScript highlighting", "[Html]") {
     const auto        mode  = HtmlMode();
     const std::string text  = "<html><script>function greet() { return 1; }</script></html>";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     const std::size_t functionOffset = text.find("function");
     REQUIRE(functionOffset != std::string::npos);
@@ -45,7 +45,7 @@ TEST_CASE("HtmlMode <script> content gets real JavaScript highlighting", "[Html]
 TEST_CASE("HtmlMode <style> content gets real CSS highlighting", "[Html]") {
     const auto        mode  = HtmlMode();
     const std::string text  = "<html><style>body { color: red; }</style></html>";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     const std::size_t bodyOffset = text.find("body");
     REQUIRE(bodyOffset != std::string::npos);
@@ -61,7 +61,7 @@ TEST_CASE("HtmlMode <style> content gets real CSS highlighting", "[Html]") {
 TEST_CASE("HtmlMode ordinary markup outside <script>/<style> is unaffected by injection", "[Html]") {
     const auto        mode  = HtmlMode();
     const std::string text  = "<div class=\"a\">hello</div>";
-    const auto        spans = mode.highlight(text);
+    const auto        spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     // Just a basic sanity check that plain markup still highlights (tag
     // name/attribute) the same way it always has -- injection only ever

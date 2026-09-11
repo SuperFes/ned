@@ -11,7 +11,9 @@ namespace ned::editor {
 Mode BuildWarmModeForPath(const std::filesystem::path& path, std::string_view text) {
     Mode mode = ModeForPath(path);
     if (mode.highlight && text.size() <= MaxHighlightBytes()) {
-        mode.highlight(text);
+        // Whole document on purpose: prewarming exists to pay the parse
+        // cost before a buffer is ever shown, off the keystroke path.
+        mode.highlight(text, HighlightWindow{});
         if (mode.fold) {
             // Shares the same tree-sitter parse highlight() above just
             // cached (Mode.cpp's SharedParse) -- see

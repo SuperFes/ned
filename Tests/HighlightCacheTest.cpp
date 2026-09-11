@@ -29,7 +29,7 @@ struct CacheGuard {
 ned::editor::Mode CountingMode(std::shared_ptr<int> calls, std::string name = "counting-mode") {
     ned::editor::Mode mode;
     mode.name      = std::move(name);
-    mode.highlight = [calls](std::string_view text) {
+    mode.highlight = [calls](std::string_view text, ned::editor::HighlightWindow) {
         ++*calls;
         return std::vector<ned::editor::HighlightSpan>{
             {.startByte = 0, .endByte = text.size(), .syntaxClass = ned::editor::SyntaxClass::Comment}};

@@ -704,7 +704,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     HighlightFunction highlight;
     if (!queries.highlights.empty()) {
         const auto query = std::make_shared<treesitter::Query>(language, queries.highlights);
-        highlight        = [parser, query, sharedParse, languageKey](std::string_view bufferText) -> std::vector<HighlightSpan> {
+        highlight        = [parser, query, sharedParse, languageKey](std::string_view bufferText,
+                                                                     HighlightWindow  window) -> std::vector<HighlightSpan> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
@@ -1336,8 +1337,8 @@ Mode HtmlMode() {
     const auto sharedParse           = std::make_shared<treesitter::IncrementalParseCache>();
     const auto embeddedLanguageCache = std::make_shared<EmbeddedLanguageCache>();
 
-    mode.highlight = [parser, query, injectionQuery, sharedParse,
-                      embeddedLanguageCache](std::string_view bufferText) -> std::vector<HighlightSpan> {
+    mode.highlight = [parser, query, injectionQuery, sharedParse, embeddedLanguageCache](
+                         std::string_view bufferText, HighlightWindow window) -> std::vector<HighlightSpan> {
         const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
         if (tree.IsNull()) {
             return {};
@@ -1345,7 +1346,7 @@ Mode HtmlMode() {
         const treesitter::Node root = tree.RootNode();
 
         SpanCollector collector;
-        for (const treesitter::QueryCapture& capture : query->Captures(root, bufferText)) {
+        for (const treesitter::QueryCapture& capture : query->CapturesInRange(root, bufferText, window.startByte, window.endByte)) {
             if (!IsHighlightableCapture(capture.name)) {
                 continue;
             }
@@ -1355,7 +1356,7 @@ Mode HtmlMode() {
 
         // <script>/<style> content, appended last so it wins over anything
         // the base query above captured in that range.
-        CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans);
+        CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans, window);
 
         return spans;
     };
@@ -1535,8 +1536,8 @@ Mode MarkdownMode() {
     // shared_ptr-captured-by-value idiom.
     const auto embeddedLanguageCache = std::make_shared<EmbeddedLanguageCache>();
 
-    mode.highlight = [blockParser, blockQuery, injectionQuery, sharedParse,
-                      embeddedLanguageCache](std::string_view bufferText) -> std::vector<HighlightSpan> {
+    mode.highlight = [blockParser, blockQuery, injectionQuery, sharedParse, embeddedLanguageCache](
+                         std::string_view bufferText, HighlightWindow window) -> std::vector<HighlightSpan> {
         const treesitter::Tree& tree = sharedParse->Update(*blockParser, bufferText);
         if (tree.IsNull()) {
             return {};
@@ -1557,7 +1558,7 @@ Mode MarkdownMode() {
         // (language-scoped-capture-rules follow-up; see Mode.cpp's own
         // SyntaxClassForCapture doc comment).
         SpanCollector blockCollector;
-        for (const treesitter::QueryCapture& capture : blockQuery->Captures(root, bufferText)) {
+        for (const treesitter::QueryCapture& capture : blockQuery->CapturesInRange(root, bufferText, window.startByte, window.endByte)) {
             if (!IsHighlightableCapture(capture.name)) {
                 continue;
             }
@@ -1577,7 +1578,7 @@ Mode MarkdownMode() {
         // Appended last so it wins over everything above, including a
         // heading's own whole-line span and Pass 1's whole-fenced-block
         // "text.literal" (String) span.
-        CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans);
+        CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans, window);
 
         return spans;
     };
@@ -1835,14 +1836,14 @@ Mode OrgMode() {
     // against the previous tree instead of from scratch.
     const auto sharedParse = std::make_shared<treesitter::IncrementalParseCache>();
 
-    HighlightFunction highlight = [parser, query, injectionQuery, embeddedLanguageCache,
-                                   sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
+    HighlightFunction highlight = [parser, query, injectionQuery, embeddedLanguageCache, sharedParse](
+                                      std::string_view bufferText, HighlightWindow window) -> std::vector<HighlightSpan> {
         const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
         if (tree.IsNull()) {
             return {};
         }
         const treesitter::Node                      root     = tree.RootNode();
-        const std::vector<treesitter::QueryCapture> captures = query->Captures(root, bufferText);
+        const std::vector<treesitter::QueryCapture> captures = query->CapturesInRange(root, bufferText, window.startByte, window.endByte);
 
         // Four passes, concatenated in this order so a later, narrower
         // span visually wins over an earlier, broader one via
@@ -1915,7 +1916,7 @@ Mode OrgMode() {
         // whatever Pass 3's generic capture table resolved the block's
         // "contents" node to (typically Default -- OrgHighlights.scm has no
         // pattern for it at all).
-        CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans);
+        CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans, window);
 
         return spans;
     };

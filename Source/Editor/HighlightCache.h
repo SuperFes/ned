@@ -34,8 +34,15 @@
 namespace ned::editor {
 
 // Never null; an empty span list for a mode with no highlight function.
-[[nodiscard]] std::shared_ptr<const std::vector<HighlightSpan>> CachedHighlightSpans(const text::Buffer& buffer,
-                                                                                     const Mode&         mode);
+//
+// `window` is how much of the document the caller actually needs covered.
+// A cached entry answers any request its own window *contains*, so the
+// minimap's whole-document result serves the buffer's viewport for free,
+// and scrolling inside an already-computed window is a hit. Spans are never
+// clipped to the window -- a construct overlapping its edge keeps its true
+// extents -- which is what makes that containment rule sound.
+[[nodiscard]] std::shared_ptr<const std::vector<HighlightSpan>>
+CachedHighlightSpans(const text::Buffer& buffer, const Mode& mode, HighlightWindow window = {});
 
 // Drops every entry -- a reset seam for tests, and for anything that
 // invalidates highlighting wholesale.

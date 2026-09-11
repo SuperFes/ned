@@ -336,10 +336,30 @@ Query& Query::operator=(Query&& other) noexcept {
     return *this;
 }
 
+namespace {
+
+    // A range covering everything, for the unbounded entry point.
+    constexpr std::size_t kWholeDocumentEnd = static_cast<std::size_t>(-1);
+
+} // namespace
+
 std::vector<QueryCapture> Query::Captures(const Node& root, std::string_view sourceText) const {
+    return CapturesInRange(root, sourceText, 0, kWholeDocumentEnd);
+}
+
+std::vector<QueryCapture> Query::CapturesInRange(const Node& root, std::string_view sourceText, std::size_t startByte,
+                                                 std::size_t endByte) const {
+    if (startByte >= endByte) {
+        return {};
+    }
     std::vector<QueryCapture> captures;
 
     TSQueryCursor* cursor = ts_query_cursor_new();
+    // Bounds the cursor, not the tree: a node starting before startByte and
+    // reaching into the range still matches, with its real extents.
+    if (endByte != kWholeDocumentEnd) {
+        ts_query_cursor_set_byte_range(cursor, static_cast<uint32_t>(startByte), static_cast<uint32_t>(endByte));
+    }
     ts_query_cursor_exec(cursor, query_, root.Raw());
 
     // ts_query_cursor_next_capture yields one capture per call but can call

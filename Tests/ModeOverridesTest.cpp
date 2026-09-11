@@ -86,7 +86,7 @@ TEST_CASE("RegisterDynamicMode + ModeByName round-trip with a real system gramma
     REQUIRE(mode.has_value());
     REQUIRE(static_cast<bool>(mode->highlight));
 
-    const auto spans = mode->highlight("-- a comment\nlocal x = 1");
+    const auto spans = mode->highlight("-- a comment\nlocal x = 1", ned::editor::HighlightWindow{});
     REQUIRE_FALSE(spans.empty());
 }
 

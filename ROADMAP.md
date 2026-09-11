@@ -219,70 +219,47 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       in, repeatedly, and a decoration does not get the benefit of the doubt against that.
       Still open: virtual text (inline diagnostics, blame, fold placeholders) at real
       alpha. `buffer` is the last surface with no consumer.
-- [ ] **Syntax highlighting costs 45-79ms per keystroke.** The biggest responsiveness
-      problem in the editor, measured 2026-09-10, and **not** a regression: the same
-      benchmark against `939d3b5` reports 48.7ms for the C++ case. `Tests/KeystrokeBench.cpp`
-      (hidden; `ned_tests "[keybench]"`) times a real self-insert plus repaint on a 160x45
-      view.
+- [x] **Syntax highlighting cost 134ms per keystroke; it is now ~25ms.** Measured
+      2026-09-10 with `Tests/KeystrokeBench.cpp` (hidden; `ned_tests "[keybench]"`), on a
+      160x45 view of ROADMAP.md -- 128 KiB of markdown, the file actually reported as
+      unusable. Not a regression at any point: the same benchmark against `939d3b5` gave
+      48.7ms for the C++ case.
 
-          ROADMAP.md, 125 KiB, markdown-mode       74,006 us   <- the reported case
-          Paint.cpp,  196 KiB, cpp-mode            45,516 us
-          same buffer, no syntax mode                  204 us
+          buffer + minimap, before          134,477 us
+          ...one shared highlight cache      ~76,000 us
+          ...minimap debounced               80,267 us
+          ...highlight query windowed        25,280 us
 
-      Linear in document size, and markdown is roughly twice a C++ file of the same size:
-
-          200 lines (9 KiB)     2,718 us      1000 lines (55 KiB)   18,718 us
-          500 lines (27 KiB)    8,000 us      2000 lines (108 KiB)  37,472 us
-
-      Attribution on ROADMAP.md, per keystroke:
-
-          mode.highlight(text)    66,697 us   (90%)
-          mode.symbolKind(text)    5,826 us   (8%)
-          buffer.Text() copy           3 us   <- not the problem, despite looking like it
-          mode.fold / testDiscovery    ~0 us
-
-      `perf` puts ~50% in tree-sitter traversal (`ts_node_child_iterator_next` 28%,
-      `ts_tree_cursor_child_iterator_next` 8.6%, `ts_query_cursor__advance` 5.5%) and 4.5%
-      in `std::regex` (`#match?` predicates).
-      Two compounding causes, both "whole document work to paint 45 rows":
-      - **The query is never ranged.** `Query::Captures` calls `ts_query_cursor_exec` with
-        no range. `ts_query_cursor_set_byte_range` bounds the *cursor* while leaving the
-        *tree* whole, so a multi-line construct overlapping the window still matches -- no
-        windowing traps, because the parse is not being windowed. The highlight cache is
-        keyed on `ContentGeneration()`, so every edit re-runs all of it.
-      - **Markdown re-parses every injection.** markdown's `injections.scm` injects
-        `markdown_inline` into *every* `inline` node, and `CollectInjectedHighlightSpans`
-        parses each one afresh per keystroke. Controlled test, same 120 KiB: ~4000 short
-        lines 58,924 us against one huge paragraph 33,199 us -- so injections roughly
-        double it, and the 33ms floor is the unranged whole-document work underneath.
-        Injections outside the visible window need not be parsed at all.
-      **Halved already** (`shared-highlight-cache`): `BufferView` and `Minimap` each kept
-      their own per-buffer cache, keyed identically and filled by the same
-      `mode.highlight(buffer.Text())` call, so with the minimap on -- the default -- every
-      keystroke ran the whole-document highlight *twice*: 134,477us against 67ms for one.
-      `Editor/HighlightCache.h` is now the single cache both read, and two consumers in one
-      frame measure the same as one (76,509us). It hands back a `shared_ptr`, which also
-      removed a full span-vector copy `BufferView` was doing every frame even on a hit.
-      **And the minimap no longer re-highlights per keystroke at all**
-      (`minimap-highlight-debounce`): it colours the whole document, which makes its
-      highlight the expensive one, and it is a few pixels wide, so it does not have to be
-      current mid-burst. It now refreshes only once the buffer has been quiet for 250ms,
-      riding out a typing burst on the spans it already has. A frame painting both a
-      `BufferView` and a `Minimap` over the 127 KiB markdown buffer costs 80ms per
-      keystroke against 134ms before -- the minimap adds ~5ms now rather than doubling.
-      Deliberately a debounce and not a background thread, which was the obvious
-      suggestion: a `Mode`'s highlight closure captures a shared `Parser` and
-      `IncrementalParseCache` (`Mode.cpp`), so running it off-thread races the main
-      thread's own call on that shared state -- the same shape as the dynamic-mode SIGSEGV
-      already in this file's history. A real background highlight needs its own `Parser`
-      and `Query` instances first.
-      That leaves the ~71ms single whole-document highlight on the *buffer's* own path,
-      which is what the two ranged fixes above are for -- and which the minimap's debounce
-      has now unblocked, since nothing else still needs whole-document spans synchronously.
-      `mode.symbolKind` deserves the same treatment (its own whole-file query, its own
-      `ContentGeneration` key) but is 8% of the problem, not 90%.
-      Note for whoever picks this up: whole-process CPU measurements are useless here and
-      actively misleading -- they read "fine" throughout. Time the keystroke path.
+      Three separate causes, none of which was the animation everyone suspected:
+      - **The minimap doubled everything.** It kept its own per-buffer highlight cache,
+        keyed identically to `BufferView`'s and filled by the same whole-document call, and
+        it is on by default. `Editor/HighlightCache.h` is the one cache both read now.
+      - **The minimap re-highlighted per keystroke.** It colours the whole document and is
+        a few pixels wide, so it now refreshes 250ms after the buffer goes quiet and rides
+        out a typing burst. Debounced rather than backgrounded: a `Mode`'s highlight
+        closure captures a shared `Parser` and `IncrementalParseCache`, so off-thread would
+        race the main thread on it.
+      - **The query was never bounded.** `HighlightFunction` takes a `HighlightWindow` now,
+        `Query::CapturesInRange` bounds the *cursor* while leaving the *tree* whole (so a
+        construct overlapping the window keeps its true extents), and
+        `CollectInjectedHighlightSpans` skips injected regions with no bytes in it --
+        markdown injects `markdown_inline` into *every* inline node, which was thousands of
+        sub-parses per keystroke to paint one screen. `BufferView` asks for the viewport
+        padded a screenful each way; the cache serves any request an existing entry's
+        window contains, so ordinary scrolling is a hit.
+      Verified live, not just benchmarked: a C++ file shows 45 distinct syntax colours at
+      the top and 46 after paging deep into it; markdown likewise.
+- [ ] **Highlighting is still parse-bound for large non-markdown files.** The windowing
+      above bounds the *query*; the incremental re-parse underneath it is untouched, and
+      for C++ that is what dominates -- 2000 lines still measures ~32ms per keystroke while
+      markdown of the same size dropped to ~25ms. `IncrementalParseCache` reconstructs each
+      edit by diffing its own last text, so every keystroke also walks the whole document
+      twice before tree-sitter starts. Worth attacking the same way: give it the edit
+      directly instead of making it rediscover one.
+- [ ] **`mode.symbolKind` runs its own whole-file query per keystroke**, keyed on
+      `ContentGeneration` like highlighting was -- 5,826us of the original 74ms on
+      ROADMAP.md. It wants the same `HighlightWindow` treatment, or the same shared-cache
+      treatment, and is now the largest remaining per-keystroke cost after the parse.
 
 - [ ] **Dirty-region flush, and the animation question behind it.** `Screen::Flush` writes
       *every* cell of both planes every frame -- 14,400 `ncplane_putstr_yx` calls at 160x45

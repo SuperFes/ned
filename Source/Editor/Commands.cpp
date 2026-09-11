@@ -205,7 +205,8 @@ namespace {
         if (!mode || !mode->highlight || point == 0) {
             return SyntaxClass::Default;
         }
-        const std::vector<HighlightSpan> spans  = mode->highlight(buffer.Text());
+        // A one-shot command, not a paint -- whole document is fine.
+        const std::vector<HighlightSpan> spans  = mode->highlight(buffer.Text(), HighlightWindow{});
         const std::size_t                probe  = point - 1;
         SyntaxClass                      winner = SyntaxClass::Default;
         for (const HighlightSpan& span : spans) {

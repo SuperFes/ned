@@ -1149,6 +1149,33 @@ bool BufferView::HasLiveRecencyGlow() const {
     });
 }
 
+editor::HighlightWindow BufferView::VisibleHighlightWindow() const {
+    const text::Buffer&       buffer     = activeBuffer_.Get();
+    const text::ITextStorage& content    = buffer.Content();
+    const std::size_t         byteLength = content.ByteLength();
+
+    const std::size_t topLine    = viewport_.TopLine();
+    const std::size_t lineCount  = content.LineCount();
+    const auto        viewHeight = static_cast<std::size_t>(std::max(1, Widget::size().height));
+
+    // A screenful of slack above and below, so scrolling reuses one query
+    // rather than forcing a fresh one per row.
+    const std::size_t padLines  = viewHeight * 2;
+    const std::size_t firstLine = topLine > padLines ? topLine - padLines : 0;
+    const std::size_t lastLine  = std::min(lineCount, topLine + viewHeight + padLines);
+
+    editor::HighlightWindow window;
+    window.startByte = firstLine < lineCount ? content.LineToByteOffset(firstLine) : 0;
+    window.endByte   = lastLine < lineCount ? content.LineToByteOffset(lastLine) : byteLength;
+
+    // A window covering everything is reported as such, so it matches the
+    // minimap's own whole-document entry instead of sitting beside it.
+    if (window.startByte == 0 && window.endByte >= byteLength) {
+        return editor::HighlightWindow{};
+    }
+    return window;
+}
+
 Color BufferView::OverlayWashAt(std::string_view surfaceName, const Color& fallback, const Canvas& c, int col,
                                 int row) const {
     const Surface surface = SurfaceFor(theme_, surfaceName);
@@ -1718,7 +1745,19 @@ void BufferView::Paint(Canvas paneCanvas) {
             HighlightCacheEntry entry;
             // Editor/HighlightCache.h, shared with Minimap -- see its header
             // for why the two kept separate caches and what that cost.
-            entry.spans = *editor::CachedHighlightSpans(buffer, mode_);
+            //
+            // Only what is on screen, generously padded. Querying the whole
+            // document to paint a screenful was the single biggest cost in
+            // the editor (~70ms per keystroke on a 125 KiB markdown file):
+            // the parse still covers everything, so spans overlapping the
+            // window keep their true extents, but the *query* and any
+            // injected sub-parses are bounded to the region being painted.
+            //
+            // The padding is what keeps scrolling from missing the cache on
+            // every row: the cache serves any request its window contains,
+            // so a screenful of slack each way absorbs ordinary scrolling
+            // before another query is needed.
+            entry.spans = *editor::CachedHighlightSpans(buffer, mode_, VisibleHighlightWindow());
             // semanticTokens follow-up: appended *after* tree-sitter's own
             // spans so LSP-informed classification wins at overlapping
             // bytes -- the exact "later span wins" convention the

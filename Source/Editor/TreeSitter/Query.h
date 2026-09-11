@@ -111,6 +111,23 @@ class Query {
     // (a Mode's HighlightFunction is itself handed the buffer's full text).
     [[nodiscard]] std::vector<QueryCapture> Captures(const Node& root, std::string_view sourceText) const;
 
+    // The same run, bounded to [startByte, endByte).
+    //
+    // This exists because highlighting a document does not require querying
+    // all of it: painting 45 rows of a 125 KiB file was running the whole-file
+    // query on every keystroke, which measured ~70ms. Bounding the *cursor*
+    // and leaving the *tree* whole is what makes that safe -- tree-sitter
+    // still returns matches whose nodes merely intersect the range, so a
+    // multi-line string or comment that starts far above the window is still
+    // captured with its true extents. Nothing about the parse is windowed,
+    // so none of the traps that come with feeding a parser a substring
+    // apply.
+    //
+    // An empty or inverted range yields nothing; a range wider than the
+    // document behaves exactly like the unbounded overload.
+    [[nodiscard]] std::vector<QueryCapture> CapturesInRange(const Node& root, std::string_view sourceText,
+                                                            std::size_t startByte, std::size_t endByte) const;
+
     // Match-grouped view of the same run Captures() does (same predicate
     // filtering, same "unrecognized predicate never suppresses a match"
     // default) -- for a consumer that needs several captures from one

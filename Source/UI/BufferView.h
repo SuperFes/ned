@@ -2920,6 +2920,11 @@ class BufferView : public Widget {
     // Blur and Stack are not sampleable per cell (they need the destination
     // and only exist through Fill), so a selection paint is Solid, Gradient
     // or Pattern; anything else falls back.
+    // The byte range highlighting actually has to cover this frame: what is
+    // on screen, padded by a screenful each way so scrolling reuses one
+    // query. See its definition for why the padding matters.
+    [[nodiscard]] editor::HighlightWindow VisibleHighlightWindow() const;
+
     [[nodiscard]] Color OverlayWashAt(std::string_view surfaceName, const Color& fallback, const Canvas& c, int col,
                                       int row) const;
 

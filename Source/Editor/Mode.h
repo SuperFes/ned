@@ -172,7 +172,39 @@ struct HighlightSpan {
 // Given a buffer's full text (UTF-8), returns every highlighted span in it.
 // Called once per BufferView::paint() call, not once per visible line --
 // see that function for how the returned spans get sliced per line.
-using HighlightFunction = std::function<std::vector<HighlightSpan>(std::string_view bufferText)>;
+// Which part of the document a highlight call actually has to cover.
+//
+// A highlight function is still handed the *whole* buffer text -- the parse
+// must see all of it, and an incremental parse cache needs a stable view to
+// diff against -- but it only has to return spans for this range. Painting 45
+// rows of a 125 KiB file was running the whole-file query every keystroke, at
+// ~70ms; a window takes that to the size of what is on screen.
+//
+// Spans overlapping the window's edges come back with their true extents, not
+// clipped to it: the parse is whole, so a multi-line comment starting far
+// above the window is still one span. Callers can therefore hand this to a
+// cache and reuse the result for any *narrower* window.
+//
+// The default covers everything, so a caller that genuinely needs the whole
+// document (the minimap) says nothing and an unmigrated Mode keeps working.
+struct HighlightWindow {
+    std::size_t startByte = 0;
+    std::size_t endByte   = static_cast<std::size_t>(-1);
+
+    [[nodiscard]] bool CoversWholeDocument() const {
+        return startByte == 0 && endByte == static_cast<std::size_t>(-1);
+    }
+
+    // Whether every byte `other` asks about is inside this one -- the test a
+    // cache uses to decide a wider cached result still answers a narrower
+    // question.
+    [[nodiscard]] bool Contains(const HighlightWindow& other) const {
+        return startByte <= other.startByte && endByte >= other.endByte;
+    }
+};
+
+using HighlightFunction =
+    std::function<std::vector<HighlightSpan>(std::string_view bufferText, HighlightWindow window)>;
 
 // Byte ranges [startByte, endByte) of every foldable block in a buffer's
 // full text (a function body, a class body, an object literal, ...),
