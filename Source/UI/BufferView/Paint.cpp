@@ -2020,19 +2020,60 @@ void BufferView::Paint(Canvas paneCanvas) {
                 offset += decoded.byteLength;
             }
 
-            // wrap-continuation-indicator follow-up: every row that hands
-            // off to another wrap segment of the same line gets this glyph
-            // pinned to the true right edge (the column ComputeWrapSegments'
-            // own caller reserved above) rather than trailing wherever the
-            // segment's own last word happened to end -- a smart/word-aware
-            // wrap segment routinely ends well short of the edge, and the
-            // point is a clearly-positioned "this continues" cue, not a
-            // caret glued to the last rendered word.
-            if (segmentIndex + 1 < lineState.segments.size()) {
-                const Brush wrapContinuationBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
-                Cell&       cell = c[{.x = c.size().width - 1, .y = row}];
-                cell.character   = text::EncodeCodepointUtf8(kWrapContinuationIndicator);
+            // gutter-wrap-indicator follow-up: the continuation cue, in
+            // whichever of its two positions is available. Both mean the
+            // same thing -- this line wraps -- and each is placed where it
+            // reads correctly from, which is why the two branches key off
+            // different rows.
+            //
+            // With line numbers on (the normal case) it goes in the digits
+            // column of every CONTINUATION row (segmentIndex > 0): exactly
+            // where that row's line number would be if it had one, which is
+            // the whole reason this reads at a glance. PaintLineGutter runs
+            // for segmentIndex == 0 only, so the column is blank here and
+            // this is a single cell write, no reserved width anywhere.
+            //
+            // With line numbers off there is no digits column, so it goes
+            // after the content of every row that HANDS OFF to another
+            // segment (segmentIndex + 1 < size) -- the wrap point itself.
+            // Word-aware wrapping ends a segment at a word boundary, so
+            // that cell is virtually always free; when it genuinely isn't
+            // (a hard-broken token filling the row exactly) the glyph is
+            // skipped rather than clobbering real content, the same
+            // trade-off kNoTrailingNewlineIndicator just below makes, and
+            // for the same reason: an opportunistic marker must never cost
+            // a reserved column or the reservation is back. A hand-off row
+            // is never also a last row, so this can never contend with the
+            // fold ellipsis or the no-trailing-newline glyph below.
+            //
+            // Deliberately dimmer than the line number it sits beside: it
+            // is structural chrome, not content, and an undimmed glyph in
+            // the number column reads as a number. indentGuideForeground
+            // rather than a blend of lineNumberForeground toward the
+            // background -- ThemeFromPalette already defines it as exactly
+            // that blend (Interpolate(0.5, subtleForeground, background),
+            // and lineNumberForeground IS subtleForeground), computed where
+            // the real background is known. Computing it here instead was
+            // tried and is wrong: theme_.background is legitimately
+            // Color::Kind::Default on a translucent theme, which
+            // Color::Interpolate approximates as neutral mid-gray, so the
+            // blend came out BRIGHTER than the number it was meant to
+            // recede behind (confirmed live, not reasoned). Every theme --
+            // hand-built, palette-derived, light or dark -- already carries
+            // the right value in this field.
+            const Brush wrapContinuationBrush{.background = theme_.background,
+                                              .foreground = theme_.indentGuideForeground};
+            if (LineNumberGutterActive() && segmentIndex > 0 && gutter.digits > 0) {
+                Cell& cell     = c[{.x = static_cast<int>(gutter.digitsStart + gutter.digits) - 1, .y = row}];
+                cell.character = text::EncodeCodepointUtf8(kWrapContinuationIndicator);
                 wrapContinuationBrush.ApplyTo(cell);
+            }
+            else if (!LineNumberGutterActive() && segmentIndex + 1 < lineState.segments.size() &&
+                     col < c.size().width) {
+                Cell& cell     = c[{.x = col, .y = row}];
+                cell.character = text::EncodeCodepointUtf8(kWrapContinuationIndicator);
+                wrapContinuationBrush.ApplyTo(cell);
+                ++col;
             }
 
             // line-truncation-indicator follow-up: offset < endByte here
