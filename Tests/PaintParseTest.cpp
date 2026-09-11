@@ -324,6 +324,8 @@ TEST_CASE("Every surface a widget actually paints is one a theme can discover", 
         "tab.active",          // TabBar.cpp
         "tab.active.focused",  // TabBar.cpp
         "panel",               // LeftDock.cpp, ProjectSidebar.cpp, VcsPanel.cpp
+        "popup",               // Overlay.cpp (shadow), ListPopup.cpp, TreeView.cpp
+        "scrim",               // Overlay.cpp
     };
 
     const std::vector<std::string> published = ned::ui::SurfaceNames();

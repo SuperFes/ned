@@ -385,7 +385,18 @@ covers. `radius` softens its edge; `0` is a hard-edged offset block. The colour 
 the same parser paint stops do, so `$slot` references and `#rrggbbaa` both work -- a shadow
 tinted toward the theme's own background reads better than flat black on some themes. Names: `buffer`, `buffer.current_line`,
 `buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab.strip`, `tab`,
-`tab.active`, `tab.active.focused`, `echo`, `scrollbar`, `panel`, `popup`.
+`tab.active`, `tab.active.focused`, `echo`, `scrollbar`, `panel`, `popup`, `scrim`.
+
+`scrim` is the **focus scrim**: while an overlay holds the keyboard -- the terminal drawer,
+the chat panel, a tree view -- everything it does not cover is washed with this surface, so
+the thing you are typing into reads as the thing you are typing into. It is gated on
+*focus*, not on visibility: a completion popup is up while you type into the buffer behind
+it, and dimming that would be backwards. The default is the theme's own background at ~31%.
+It washes both the background and the **foreground**, which is the part that actually does
+the work -- over an opaque theme the buffer's cells already hold the theme background, so a
+background-only scrim would composite that colour onto itself and be invisible exactly
+where it is most needed. Text is dimmed, never covered: `(ned/theme-surface "scrim" "fill"
+"#00000000")` turns it off.
 
 `buffer` is the body's own background -- the bottom layer every other overlay here sits on.
 It paints only where nothing louder already claimed the cell, so a selection, a search hit,
