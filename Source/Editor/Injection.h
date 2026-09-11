@@ -56,9 +56,14 @@ using EmbeddedLanguageCache = std::unordered_map<std::string, std::optional<High
 // injection.content capture, or an unresolvable language tag contributes
 // nothing -- the host's own existing span for that range is left as-is. A
 // match with several same-named injection.language captures uses the first.
+// `window` bounds which injected regions are highlighted at all -- one
+// outside it is skipped entirely rather than parsed and discarded, which is
+// where most of the cost lives (markdown injects markdown_inline into every
+// inline node). A region merely *intersecting* the window is kept, so one
+// straddling its edge is still highlighted. Defaults to the whole document.
 void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_view bufferText,
                                    const treesitter::Query& injectionQuery, EmbeddedLanguageCache& cache,
-                                   std::vector<HighlightSpan>& spans);
+                                   std::vector<HighlightSpan>& spans, HighlightWindow window = {});
 
 // embedded-language-documents follow-up: the same match-walk/resolution
 // CollectInjectedHighlightSpans does, but returning the raw (host-buffer

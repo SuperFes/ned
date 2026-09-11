@@ -101,7 +101,7 @@ TEST_CASE("JanetMode has a highlighting hook installed", "[Mode]") {
 
 TEST_CASE("JanetMode highlights only the numeric literals in plain code, symbols stay Default", "[Mode]") {
     const auto mode  = JanetMode();
-    const auto spans = mode.highlight("(+ 1 2)");
+    const auto spans = mode.highlight("(+ 1 2)", ned::editor::HighlightWindow{});
 
     // `+`, the parens, and the spaces are all Default -- no span covers them.
     // Only the two num_lit tokens get a real capture.
@@ -112,7 +112,7 @@ TEST_CASE("JanetMode highlights only the numeric literals in plain code, symbols
 
 TEST_CASE("JanetMode highlights a full-line comment as entirely Comment", "[Mode]") {
     const auto mode  = JanetMode();
-    const auto spans = mode.highlight("# this is a comment");
+    const auto spans = mode.highlight("# this is a comment", ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 19, SyntaxClass::Comment));
 }
@@ -120,7 +120,7 @@ TEST_CASE("JanetMode highlights a full-line comment as entirely Comment", "[Mode
 TEST_CASE("JanetMode highlights a string literal, code around it stays Default", "[Mode]") {
     const auto             mode  = JanetMode();
     const std::string_view line  = R"((print "hi"))";
-    const auto             spans = mode.highlight(line);
+    const auto             spans = mode.highlight(line, ned::editor::HighlightWindow{});
 
     // (print␣  -> Default (7 bytes: '(', p, r, i, n, t, ' ') -- no span
     // "hi" -> String (4 bytes: '"', h, i, '"'), starting at byte 7
@@ -135,7 +135,7 @@ TEST_CASE("JanetMode highlights a string literal, code around it stays Default",
 TEST_CASE("JanetMode treats a backslash-escaped quote as staying inside the string", "[Mode]") {
     const auto             mode  = JanetMode();
     const std::string_view line  = R"("a\"b")"; // "a\"b" -- 6 bytes: " a \ " b "
-    const auto             spans = mode.highlight(line);
+    const auto             spans = mode.highlight(line, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, line.size(), SyntaxClass::String)); // the whole thing is one string literal
 }
@@ -143,7 +143,7 @@ TEST_CASE("JanetMode treats a backslash-escaped quote as staying inside the stri
 TEST_CASE("JanetMode switches from string to comment correctly on the same line", "[Mode]") {
     const auto             mode  = JanetMode();
     const std::string_view line  = R"("str" # comment)";
-    const auto             spans = mode.highlight(line);
+    const auto             spans = mode.highlight(line, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 5, SyntaxClass::String));   // `"str"`
     REQUIRE(HasSpan(spans, 6, 15, SyntaxClass::Comment)); // `# comment`
@@ -151,7 +151,7 @@ TEST_CASE("JanetMode switches from string to comment correctly on the same line"
 
 TEST_CASE("JanetMode's spans use byte offsets, correctly spanning a multi-byte codepoint", "[Mode]") {
     const auto mode  = JanetMode();
-    const auto spans = mode.highlight("# caf\xC3\xA9"); // "# café" -- 'é' is 2 bytes
+    const auto spans = mode.highlight("# caf\xC3\xA9", ned::editor::HighlightWindow{}); // "# café" -- 'é' is 2 bytes
 
     REQUIRE(HasSpan(spans, 0, 7, SyntaxClass::Comment)); // 7 bytes total, not 6 codepoints
 }
@@ -164,14 +164,14 @@ TEST_CASE("JanetMode highlights a long string literal as one continuous span acr
     // backtick-delimited long string is exactly that construct.
     const auto             mode  = JanetMode();
     const std::string_view text  = "`line1\nline2`";
-    const auto             spans = mode.highlight(text);
+    const auto             spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, text.size(), SyntaxClass::String));
 }
 
 TEST_CASE("JanetMode does not classify an unterminated string literal", "[Mode]") {
     const auto mode  = JanetMode();
-    const auto spans = mode.highlight("\"unterminated\nplain code");
+    const auto spans = mode.highlight("\"unterminated\nplain code", ned::editor::HighlightWindow{});
 
     REQUIRE(spans.empty()); // no valid str_lit node for the parser to capture
 }
@@ -185,7 +185,7 @@ TEST_CASE("JsonMode has a highlighting hook installed", "[Mode]") {
 TEST_CASE("JsonMode highlights strings, numbers, and literal keywords via a real tree-sitter parse", "[Mode]") {
     const auto             mode  = JsonMode();
     const std::string_view text  = R"({"a": 1, "b": true, "c": null})";
-    const auto             spans = mode.highlight(text);
+    const auto             spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 1, 4, SyntaxClass::String));            // "a"
     REQUIRE(HasSpan(spans, 6, 7, SyntaxClass::Number));            // 1
@@ -198,7 +198,7 @@ TEST_CASE("JsonMode highlights strings, numbers, and literal keywords via a real
 TEST_CASE("Highlight spans carry the interned capture id of the producing capture", "[Mode]") {
     const auto             mode  = JsonMode();
     const std::string_view text  = R"({"a": 1})";
-    const auto             spans = mode.highlight(text);
+    const auto             spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     // The number 1 is tree-sitter-json's own "@number" capture -- its span
     // must carry a real capture id resolving back to that name, the
@@ -225,7 +225,7 @@ TEST_CASE("An equal-range double capture keeps the more specific capture name, r
     // tie by specificity now.
     const auto             mode  = JsonMode();
     const std::string_view text  = R"({"a": 1})";
-    const auto             spans = mode.highlight(text);
+    const auto             spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     bool found = false;
     for (const ned::editor::HighlightSpan& span : spans) {
@@ -245,7 +245,7 @@ TEST_CASE("A ned/set-capture-class remap re-bases what a capture resolves to at 
     } guard;
     ned::editor::SetSyntaxClassForCapture("number", SyntaxClass::Comment);
 
-    const auto spans = JsonMode().highlight("[1]");
+    const auto spans = JsonMode().highlight("[1]", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(spans, 1, 2, SyntaxClass::Comment)); // "1" -- remapped away from Number
 }
 
@@ -258,7 +258,7 @@ TEST_CASE("A ned/set-capture-class remap re-bases what a capture resolves to at 
 // just the removed special case's old behavior.
 TEST_CASE("MarkdownMode's list marker capture resolves to MarkupMarker via the language-scoped built-in default",
           "[Mode]") {
-    const auto spans = MarkdownMode().highlight("- item\n");
+    const auto spans = MarkdownMode().highlight("- item\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(spans, 0, 2, SyntaxClass::MarkupMarker)); // "- " -- list_marker_minus
 }
 
@@ -271,7 +271,7 @@ TEST_CASE("A language-scoped ned/set-capture-class remap re-bases only that lang
     } guard;
     ned::editor::SetSyntaxClassForCapture("markdown/punctuation.special", SyntaxClass::Comment);
 
-    const auto spans = MarkdownMode().highlight("- item\n");
+    const auto spans = MarkdownMode().highlight("- item\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(spans, 0, 2, SyntaxClass::Comment)); // remapped away from MarkupMarker
 }
 
@@ -288,7 +288,7 @@ TEST_CASE("An unscoped ned/set-capture-class remap still wins over a language-sc
     // ned/set-capture-class already had before language scoping existed.
     ned::editor::SetSyntaxClassForCapture("punctuation.special", SyntaxClass::Comment);
 
-    const auto spans = MarkdownMode().highlight("- item\n");
+    const auto spans = MarkdownMode().highlight("- item\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(spans, 0, 2, SyntaxClass::Comment));
 }
 
@@ -307,7 +307,7 @@ TEST_CASE("CppMode gives an access specifier its own KeywordModifier class, dist
     const auto             mode  = CppMode();
     const std::string_view text  = "class Widget {\npublic:\n    int getValue() const { return value_; }\nprivate:\n"
                                    "    int value_ = 0;\n};\n";
-    const auto             spans = mode.highlight(text);
+    const auto spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 15, 21, SyntaxClass::KeywordModifier)); // "public"
     REQUIRE(HasSpan(spans, 67, 74, SyntaxClass::KeywordModifier)); // "private"
@@ -320,7 +320,7 @@ TEST_CASE("CppMode splits a \"<system>\" include from a \"\\\"local\\\"\" one, e
           "[Mode]") {
     const auto             mode  = CppMode();
     const std::string_view text  = "#include <vector>\n#include \"local.h\"\n";
-    const auto             spans = mode.highlight(text);
+    const auto             spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 9, 17, SyntaxClass::IncludePath)); // <vector>
     REQUIRE(HasSpan(spans, 27, 36, SyntaxClass::String));     // "local.h" -- plain string, not IncludePath
@@ -336,7 +336,7 @@ TEST_CASE("CppMode gives a function's parameters Parameter and a return type Ret
           "[Mode]") {
     const auto             mode  = CppMode();
     const std::string_view text  = "int add(int a, int b) { return a + b; }";
-    const auto             spans = mode.highlight(text);
+    const auto             spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 3, SyntaxClass::ReturnType));  // "int" (add's own return type)
     REQUIRE(HasSpan(spans, 12, 13, SyntaxClass::Parameter)); // "a"
@@ -347,7 +347,7 @@ TEST_CASE("CppMode distinguishes a method call from a free function call", "[Mod
     const auto             mode = CppMode();
     const std::string_view text =
         "struct S { void go() {} };\nvoid free_func() {}\nint main() { S s; s.go(); free_func(); }\n";
-    const auto spans = mode.highlight(text);
+    const auto spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 67, 69, SyntaxClass::Method));   // s.go()'s own "go"
     REQUIRE(HasSpan(spans, 73, 82, SyntaxClass::Function)); // free_func() -- a plain free function call
@@ -358,7 +358,7 @@ TEST_CASE("CMode also gets the richer query -- an access specifier isn't valid C
           "[Mode]") {
     const auto             mode  = CMode();
     const std::string_view text  = "int add(int a, int b) { return a + b; }";
-    const auto             spans = mode.highlight(text);
+    const auto             spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 3, SyntaxClass::ReturnType));
     REQUIRE(HasSpan(spans, 12, 13, SyntaxClass::Parameter));
@@ -435,7 +435,7 @@ TEST_CASE("lineInspect caps its result count on a dense line", "[Mode]") {
 
 TEST_CASE("JsonMode highlights nothing for a JSON value with no strings/numbers/literals", "[Mode]") {
     const auto mode  = JsonMode();
-    const auto spans = mode.highlight("{}");
+    const auto spans = mode.highlight("{}", ned::editor::HighlightWindow{});
 
     REQUIRE(spans.empty());
 }
@@ -448,7 +448,7 @@ TEST_CASE("OrgMode has a highlighting hook installed", "[Mode]") {
 
 TEST_CASE("OrgMode cycles headline levels every 3 stars, coloring the whole line", "[Mode]") {
     const auto mode  = OrgMode();
-    const auto spans = mode.highlight("* L1\n** L2\n*** L3\n**** L4\n");
+    const auto spans = mode.highlight("* L1\n** L2\n*** L3\n**** L4\n", ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 4, SyntaxClass::HeadlineLevel1));
     REQUIRE(HasSpan(spans, 5, 10, SyntaxClass::HeadlineLevel2));
@@ -459,7 +459,7 @@ TEST_CASE("OrgMode cycles headline levels every 3 stars, coloring the whole line
 TEST_CASE("OrgMode colors a default-keyword TODO/DONE distinctly, DONE as the last-configured state",
           "[Mode]") {
     const auto mode  = OrgMode();
-    const auto spans = mode.highlight("* TODO Buy milk\n* DONE Clean\n");
+    const auto spans = mode.highlight("* TODO Buy milk\n* DONE Clean\n", ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 2, 6, SyntaxClass::TodoKeyword));
     REQUIRE(HasSpan(spans, 18, 22, SyntaxClass::DoneKeyword));
@@ -467,7 +467,7 @@ TEST_CASE("OrgMode colors a default-keyword TODO/DONE distinctly, DONE as the la
 
 TEST_CASE("OrgMode gives no keyword span when a headline's first word isn't a configured keyword", "[Mode]") {
     const auto mode  = OrgMode();
-    const auto spans = mode.highlight("* Buy eggs\n");
+    const auto spans = mode.highlight("* Buy eggs\n", ned::editor::HighlightWindow{});
 
     for (const HighlightSpan& span : spans) {
         REQUIRE(span.syntaxClass != SyntaxClass::TodoKeyword);
@@ -485,7 +485,7 @@ TEST_CASE("OrgMode respects a custom configured keyword list, not hardcoded TODO
     ned::editor::org::SetTodoKeywords({"TODO", "IN-PROGRESS", "DONE"});
 
     const auto mode  = OrgMode();
-    const auto spans = mode.highlight("* IN-PROGRESS Ship it\n");
+    const auto spans = mode.highlight("* IN-PROGRESS Ship it\n", ned::editor::HighlightWindow{});
 
     // The middle keyword in a 3-item list is still "open," not "done" --
     // only the LAST configured keyword is DoneKeyword.
@@ -495,24 +495,24 @@ TEST_CASE("OrgMode respects a custom configured keyword list, not hardcoded TODO
 TEST_CASE("OrgMode highlights tags, checkboxes, and comments", "[Mode]") {
     const auto mode = OrgMode();
 
-    const auto tagSpans = mode.highlight("* TODO Buy milk :tag1:tag2:\n");
+    const auto tagSpans = mode.highlight("* TODO Buy milk :tag1:tag2:\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(tagSpans, 17, 21, SyntaxClass::Tag));
     REQUIRE(HasSpan(tagSpans, 22, 26, SyntaxClass::Tag));
 
-    const auto checkboxSpans = mode.highlight("- [X] done item\n");
+    const auto checkboxSpans = mode.highlight("- [X] done item\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(checkboxSpans, 2, 5, SyntaxClass::Checkbox));
 
-    const auto commentSpans = mode.highlight("# a comment\n");
+    const auto commentSpans = mode.highlight("# a comment\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(commentSpans, 0, 12, SyntaxClass::Comment)); // spans through its own trailing newline
 }
 
 TEST_CASE("OrgMode highlights a directive name and a block's begin/end names", "[Mode]") {
     const auto mode = OrgMode();
 
-    const auto directiveSpans = mode.highlight("#+TITLE: My Title\n");
+    const auto directiveSpans = mode.highlight("#+TITLE: My Title\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(directiveSpans, 2, 7, SyntaxClass::Keyword));
 
-    const auto blockSpans = mode.highlight("#+begin_src python\ncode\n#+end_src\n");
+    const auto blockSpans = mode.highlight("#+begin_src python\ncode\n#+end_src\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(blockSpans, 8, 11, SyntaxClass::Keyword));  // "src" (begin name)
     REQUIRE(HasSpan(blockSpans, 30, 33, SyntaxClass::Keyword)); // "src" (end name)
 }
@@ -520,21 +520,21 @@ TEST_CASE("OrgMode highlights a directive name and a block's begin/end names", "
 TEST_CASE("OrgMode highlights a table's horizontal rule and a timestamp", "[Mode]") {
     const auto mode = OrgMode();
 
-    const auto tableSpans = mode.highlight("| a | b |\n|---+---|\n| c | d |\n");
+    const auto tableSpans = mode.highlight("| a | b |\n|---+---|\n| c | d |\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(tableSpans, 10, 20, SyntaxClass::Punctuation)); // spans through its own trailing newline
 
     // A bare timestamp isn't its own construct anywhere in body text --
     // only ever real inside a headline's own "plan" line (e.g. a
     // SCHEDULED:/DEADLINE: entry), confirmed via a real parse before
     // writing this test, not assumed.
-    const auto timestampSpans = mode.highlight("* Heading\nSCHEDULED: <2024-01-01 Mon>\n");
+    const auto timestampSpans = mode.highlight("* Heading\nSCHEDULED: <2024-01-01 Mon>\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(timestampSpans, 21, 37, SyntaxClass::Constant));
 }
 
 TEST_CASE("OrgMode highlights all six inline emphasis markers as real spans", "[Mode]") {
     const auto mode = OrgMode();
     const auto spans =
-        mode.highlight("This is *bold* and /italic/ and _underline_ and =verbatim= and ~code~ and +strike+.\n");
+        mode.highlight("This is *bold* and /italic/ and _underline_ and =verbatim= and ~code~ and +strike+.\n", ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 8, 14, SyntaxClass::Strong));
     REQUIRE(HasSpan(spans, 19, 27, SyntaxClass::Emphasis));
@@ -546,7 +546,7 @@ TEST_CASE("OrgMode highlights all six inline emphasis markers as real spans", "[
 
 TEST_CASE("OrgMode never opens emphasis mid-word", "[Mode]") {
     const auto mode  = OrgMode();
-    const auto spans = mode.highlight("2*3 is six\n");
+    const auto spans = mode.highlight("2*3 is six\n", ned::editor::HighlightWindow{});
 
     for (const HighlightSpan& span : spans) {
         REQUIRE(span.syntaxClass != SyntaxClass::Strong);
@@ -556,7 +556,7 @@ TEST_CASE("OrgMode never opens emphasis mid-word", "[Mode]") {
 TEST_CASE("OrgMode doesn't parse markup inside verbatim/code as nested emphasis", "[Mode]") {
     const auto mode = OrgMode();
 
-    const auto verbatimSpans = mode.highlight("=a /b/ c=\n");
+    const auto verbatimSpans = mode.highlight("=a /b/ c=\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(verbatimSpans, 0, 9, SyntaxClass::String));
     for (const HighlightSpan& span : verbatimSpans) {
         REQUIRE(span.syntaxClass != SyntaxClass::Emphasis);
@@ -565,7 +565,7 @@ TEST_CASE("OrgMode doesn't parse markup inside verbatim/code as nested emphasis"
 
 TEST_CASE("OrgMode highlights nested emphasis of different markers", "[Mode]") {
     const auto mode  = OrgMode();
-    const auto spans = mode.highlight("*bold /italic/*\n");
+    const auto spans = mode.highlight("*bold /italic/*\n", ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 15, SyntaxClass::Strong));
     REQUIRE(HasSpan(spans, 6, 14, SyntaxClass::Emphasis));
@@ -657,7 +657,7 @@ TEST_CASE("CMode's fold query finds a function body", "[Mode]") {
 // before a HighlightSpan is ever created, not just for comments).
 TEST_CASE("CMode classifies a comment as Comment, not clobbered to Default by @spell", "[Mode]") {
     const auto mode  = CMode();
-    const auto spans = mode.highlight("// a comment\nint x;\n");
+    const auto spans = mode.highlight("// a comment\nint x;\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(spans, 0, 12, SyntaxClass::Comment));
     for (const HighlightSpan& span : spans) {
         if (span.startByte == 0 && span.endByte == 12) {
@@ -668,7 +668,7 @@ TEST_CASE("CMode classifies a comment as Comment, not clobbered to Default by @s
 
 TEST_CASE("CppMode classifies a comment as Comment, not clobbered to Default by @spell", "[Mode]") {
     const auto mode  = CppMode();
-    const auto spans = mode.highlight("// a comment\nint x;\n");
+    const auto spans = mode.highlight("// a comment\nint x;\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(spans, 0, 12, SyntaxClass::Comment));
 }
 
@@ -677,7 +677,7 @@ TEST_CASE("YamlMode has a highlighting hook installed and classifies a comment a
     REQUIRE(mode.name == "yaml-mode");
     REQUIRE(static_cast<bool>(mode.highlight));
 
-    const auto spans = mode.highlight("# a comment\nkey: value\n");
+    const auto spans = mode.highlight("# a comment\nkey: value\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(spans, 0, 11, SyntaxClass::Comment));
 }
 
@@ -686,7 +686,7 @@ TEST_CASE("TomlMode has a highlighting hook installed and classifies a string as
     REQUIRE(mode.name == "toml-mode");
     REQUIRE(static_cast<bool>(mode.highlight));
 
-    const auto spans = mode.highlight("key = \"value\"\n");
+    const auto spans = mode.highlight("key = \"value\"\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(spans, 6, 13, SyntaxClass::String));
 }
 
@@ -695,7 +695,7 @@ TEST_CASE("ClojureMode has a highlighting hook installed and classifies core con
     REQUIRE(mode.name == "clojure-mode");
     REQUIRE(static_cast<bool>(mode.highlight));
 
-    const auto spans = mode.highlight("; a comment\n(defn greet [name]\n  (str \"hi \" name))\n");
+    const auto spans = mode.highlight("; a comment\n(defn greet [name]\n  (str \"hi \" name))\n", ned::editor::HighlightWindow{});
     // [0,12), not [0,11): sogaiu's COMMENT token regex is `(;|#!).*\n?` --
     // the trailing newline is part of the comment node, unlike C/YAML/....
     REQUIRE(HasSpan(spans, 0, 12, SyntaxClass::Comment));
@@ -711,7 +711,7 @@ TEST_CASE("JankMode shares ClojureMode's grammar and query under its own name", 
     REQUIRE(mode.name == "jank-mode");
     REQUIRE(static_cast<bool>(mode.highlight));
 
-    const auto spans = mode.highlight("(defn add [a b]\n  (cpp/+ a b))\n");
+    const auto spans = mode.highlight("(defn add [a b]\n  (cpp/+ a b))\n", ned::editor::HighlightWindow{});
     REQUIRE(HasSpan(spans, 1, 5, SyntaxClass::Keyword)); // `defn`, same query as clojure-mode
 }
 
@@ -1008,7 +1008,7 @@ TEST_CASE("JavaMode highlights a keyword, a type name, a number, and a comment v
           "[Mode]") {
     const auto             mode  = JavaMode();
     const std::string_view text  = "class Widget {\n    int n = 1; // note\n}\n";
-    const auto             spans = mode.highlight(text);
+    const auto             spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 5, SyntaxClass::Keyword));   // class
     REQUIRE(HasSpan(spans, 6, 12, SyntaxClass::Type));     // Widget
@@ -1020,7 +1020,7 @@ TEST_CASE("KotlinMode highlights a keyword, a type name, a number, and a comment
           "[Mode]") {
     const auto             mode  = KotlinMode();
     const std::string_view text  = "class Widget {\n    val n: Int = 1 // note\n}\n";
-    const auto             spans = mode.highlight(text);
+    const auto             spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 0, 5, SyntaxClass::Keyword)); // class
     REQUIRE(HasSpan(spans, 6, 12, SyntaxClass::Type));   // Widget

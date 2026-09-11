@@ -14,6 +14,7 @@ namespace {
         std::size_t                                       contentGeneration = 0;
         std::size_t                                       classGeneration   = 0;
         std::string                                       modeName;
+        HighlightWindow                                   window;
         std::shared_ptr<const std::vector<HighlightSpan>> spans;
     };
 
@@ -30,7 +31,8 @@ namespace {
 
 } // namespace
 
-std::shared_ptr<const std::vector<HighlightSpan>> CachedHighlightSpans(const text::Buffer& buffer, const Mode& mode) {
+std::shared_ptr<const std::vector<HighlightSpan>> CachedHighlightSpans(const text::Buffer& buffer, const Mode& mode,
+                                                                       HighlightWindow window) {
     static const auto kEmpty = std::make_shared<const std::vector<HighlightSpan>>();
     if (!mode.highlight) {
         return kEmpty;
@@ -42,7 +44,8 @@ std::shared_ptr<const std::vector<HighlightSpan>> CachedHighlightSpans(const tex
     std::deque<Entry>& entries = Entries();
     for (Entry& entry : entries) {
         if (entry.buffer == &buffer && entry.contentGeneration == contentGeneration &&
-            entry.classGeneration == classGeneration && entry.modeName == mode.name) {
+            entry.classGeneration == classGeneration && entry.modeName == mode.name &&
+            entry.window.Contains(window)) {
             return entry.spans;
         }
     }
@@ -56,7 +59,8 @@ std::shared_ptr<const std::vector<HighlightSpan>> CachedHighlightSpans(const tex
     fresh.contentGeneration = contentGeneration;
     fresh.classGeneration   = classGeneration;
     fresh.modeName          = mode.name;
-    fresh.spans             = std::make_shared<const std::vector<HighlightSpan>>(mode.highlight(buffer.Text()));
+    fresh.window            = window;
+    fresh.spans             = std::make_shared<const std::vector<HighlightSpan>>(mode.highlight(buffer.Text(), window));
 
     entries.push_back(std::move(fresh));
     while (entries.size() > kMaxEntries) {

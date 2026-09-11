@@ -143,12 +143,12 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
 
             const auto timeHighlight = [&](const char* label, const std::string& text) {
                 ned::editor::Mode m = ned::editor::MarkdownMode();
-                m.highlight(text); // warm
+                m.highlight(text, ned::editor::HighlightWindow{}); // warm
                 const auto begin = std::chrono::steady_clock::now();
                 for (int i = 0; i < 5; ++i) {
                     std::string edited = text;
                     edited += static_cast<char>('a' + i); // force a fresh parse each time
-                    m.highlight(edited);
+                    m.highlight(edited, ned::editor::HighlightWindow{});
                 }
                 const auto each =
                     std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count() / 5;
@@ -192,7 +192,7 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
         }
 
         timeIt("buffer.Text() copy alone ", [&] { return md.Text().size(); });
-        timeIt("mode.highlight(text)     ", [&] { return mdMode.highlight ? mdMode.highlight(md.Text()).size() : 0U; });
+        timeIt("mode.highlight(text, ned::editor::HighlightWindow{})     ", [&] { return mdMode.highlight ? mdMode.highlight(md.Text(), ned::editor::HighlightWindow{}).size() : 0U; });
         timeIt("mode.fold(text)          ", [&] { return mdMode.fold ? mdMode.fold(md.Text()).size() : 0U; });
         timeIt("mode.symbolKind(text)    ", [&] { return mdMode.symbolKind ? mdMode.symbolKind(md.Text()).size() : 0U; });
         timeIt("mode.testDiscovery(text) ", [&] { return mdMode.testDiscovery ? mdMode.testDiscovery(md.Text()).size() : 0U; });
