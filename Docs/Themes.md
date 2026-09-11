@@ -410,17 +410,22 @@ unambiguous. Measured on gruvbox-dark, the current line costs 0.6 of a contrast 
 (10.7 -> 10.1) and the selection lands at 8.7, both far above the 4.5 body-text floor;
 `M-x theme-gallery` reports the same numbers for whatever theme you are on.
 
-`buffer.recency` is the **recency glow**: a brief accent wash over text that was just
-edited, fading out over ~200ms. It uses the accent for the same reason the current line
-does, so "something happened here" and "you are here" read as one colour language rather
-than two competing hues. `(ned/set-recency-glow false)` turns it off; setting the surface
-retunes its colour and peak.
+`buffer.recency` is the **recency glow**: the characters you just edited are tinted toward
+the accent and fade back over ~200ms. **Off by default** -- `(ned/set-recency-glow true)`
+opts in.
 
-It animates, so it is worth knowing what that costs. ned's event loop has no free-running
-render tick -- it wakes for real input or posted work -- and the glow re-arms a short
-one-shot timer only *while something is still fading*, stopping the moment the last one
-expires. Measured on a 120x40 viewport: three seconds of continuous typing costs one tick
-of CPU time, and an idle editor costs nothing at all.
+Everything measurable about it is cheap. It tints *glyphs* rather than washing the row
+behind them, which is the difference between one changed cell per frame and a hundred and
+sixty -- and since Notcurses emits only what changed, that is the number that decides what
+an animation costs. Its thread is created once and parked on a condition variable; the
+render thread never creates, joins or waits on one. Typing cost measures the same with it on
+as off.
+
+It is off anyway, because it was reported as making the editor feel slow to type in, and an
+editor that feels slow is slow -- a decoration does not get the benefit of the doubt against
+that. If it still feels wrong when enabled, the remaining suspect is `Screen::Flush`, which
+writes every cell of two planes every frame, so *any* clock-driven repaint costs a full-grid
+write however few cells it changes. See `ROADMAP.md`.
 
 `panel` is the other derived default that is not simply the flat colour its widgets used
 to paint: it is a horizontal walk, ~4% lifted at the left dock's outer edge and settling to

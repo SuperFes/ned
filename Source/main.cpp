@@ -1317,7 +1317,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // re-runs render, which re-arms. Self-stopping: an idle frame doesn't
     // re-arm, so the chain ends one no-op repaint after the last activity.
     DeadlineTimer activityAnimationTimer;
-    DeadlineTimer recencyGlowTimer;
+    AnimationTimer recencyGlowTimer;
 
     // Terminal-panel follow-up: the floating-widget layer (see Overlay.h's
     // own header comment for the three hooks below and why keyboard needs
@@ -2648,8 +2648,14 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         // fading and stopped the instant the last one expires, because this
         // event loop has no free-running render tick and must not grow one:
         // an idle editor costs zero wakeups, and a glow costs ten.
+        // Both calls are a mutex and a bool on a thread that already exists.
+        // Nothing here creates, joins or waits on a thread -- see
+        // AnimationTimer for the two designs that did, and what they cost.
         if (windowManager->AnyPaneHasLiveRecencyGlow()) {
-            recencyGlowTimer.Arm(eventLoop, ned::editor::kRecencyGlowInterval, [] {});
+            recencyGlowTimer.Start(eventLoop, ned::editor::kRecencyGlowInterval);
+        }
+        else {
+            recencyGlowTimer.Stop();
         }
 
         if (const Widget* focused = FocusedWidget()) {

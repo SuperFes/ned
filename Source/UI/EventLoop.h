@@ -253,6 +253,93 @@ class EventLoop {
 // DeadlineTimer instance, matching how completionDebounceDeadline_/
 // statusMessageChangedAt_ were each a single optional<time_point>, never a
 // queue.
+// A persistent animation thread: parked on a condition variable when nothing
+// is animating, ticking while something is.
+//
+// The render thread must never create or join a thread to drive an
+// animation, and this class exists because the two obvious designs both do.
+// DeadlineTimer re-armed per frame spawns and joins per frame. A
+// start/stop-per-animation timer looks like it fixes that, and does not: with
+// a 200ms effect and ordinary typing gaps, every keystroke starts an
+// animation and every expiry stops one, so the render thread pays a thread
+// spawn *and* a join per keystroke -- and pays it worst when typing slowly,
+// which is precisely when an editor must feel immediate. That was reported
+// live, twice, and neither of my measurements caught it because both typed
+// fast enough to keep the animation continuously alive.
+//
+// So: the thread is created once, on first use, and lives until this object
+// dies. Start() and Stop() take a mutex and set a bool -- nanoseconds, no
+// scheduling, nothing to wait for. Start() is idempotent so a render callback
+// can call it every frame.
+class AnimationTimer {
+  public:
+    AnimationTimer()                                 = default;
+    AnimationTimer(const AnimationTimer&)            = delete;
+    AnimationTimer& operator=(const AnimationTimer&) = delete;
+
+    ~AnimationTimer() {
+        if (thread_.joinable()) {
+            thread_.request_stop();
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                animating_ = false;
+            }
+            cv_.notify_all();
+        }
+    }
+
+    void Start(EventLoop& loop, std::chrono::milliseconds interval) {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            if (animating_) {
+                return; // already ticking -- the common per-frame case, and free
+            }
+            animating_ = true;
+            interval_  = interval;
+        }
+        if (!thread_.joinable()) {
+            thread_ = std::jthread([this, &loop](const std::stop_token& stopToken) { Run(loop, stopToken); });
+        }
+        cv_.notify_all();
+    }
+
+    // Just clears the flag. No join, no notify: the thread notices on its
+    // next tick and parks itself. Stopping must never make the render thread
+    // wait for anything.
+    void Stop() {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        animating_ = false;
+    }
+
+  private:
+    void Run(EventLoop& loop, const std::stop_token& stopToken) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        while (!stopToken.stop_requested()) {
+            // Parked: costs nothing at all while the editor is idle.
+            cv_.wait(lock, stopToken, [this] { return animating_; });
+            if (stopToken.stop_requested()) {
+                return;
+            }
+            const std::chrono::milliseconds interval = interval_;
+            // A tick is a wait that *times out*; waking early means Stop()
+            // or shutdown, and neither should post a frame.
+            if (!cv_.wait_for(lock, stopToken, interval, [this, &stopToken] {
+                    return !animating_ || stopToken.stop_requested();
+                })) {
+                lock.unlock();
+                loop.Post([] {});
+                lock.lock();
+            }
+        }
+    }
+
+    std::jthread                thread_;
+    std::mutex                  mutex_;
+    std::condition_variable_any cv_;
+    bool                        animating_ = false;
+    std::chrono::milliseconds   interval_{16};
+};
+
 class DeadlineTimer {
   public:
     ~DeadlineTimer() {

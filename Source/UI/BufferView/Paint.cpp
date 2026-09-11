@@ -1105,6 +1105,14 @@ void BufferView::RefreshRecencyGlows() {
     // Re-settled after this paint's own stamping, so an edit glows on the
     // very frame it happened rather than one frame later.
     recencyGlowActive_ = editor::RecencyGlowEnabled() && !recencyGlows_.empty();
+    if (recencyGlowActive_) {
+        // Resolved here rather than per cell: SurfaceFor takes a mutex and
+        // returns a Surface by value (three Paints, each holding vectors).
+        const Surface surface = SurfaceFor(theme_, "buffer.recency");
+        recencyGlowColour_    = PaintsColour(surface.fill)
+                                    ? PaintColourAt(surface.fill, 0.0, 0.0, 0, 0).WithAlpha(255)
+                                    : Color::Default;
+    }
 }
 
 double BufferView::RecencyGlowStrengthAt(std::size_t byteOffset) const {
@@ -1275,22 +1283,25 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
         // own doc comment), so no codepoint check is needed here.
         brush.background = OverlayBackground(theme_, theme_.trailingWhitespaceBackground);
     }
-    else if (const double glow = RecencyGlowStrengthAt(offset); glow > 0.0) {
-        // Translucency phase 6: the recency glow, last in the chain because
-        // it is the only purely decorative thing in it -- every overlay
-        // above says something about state the user asked about, and a
-        // momentary "this just changed" must never hide one of them.
-        //
-        // Its own fade scales the surface's alpha rather than replacing it,
-        // so a theme retunes the peak by setting buffer.recency and the
-        // shape of the fade stays this file's business.
-        const Color peak = OverlayWashAt("buffer.recency", theme_.background, c, col, row);
-        if (peak.Composable()) {
-            const Color faded =
-                theme_.background.Composable()
-                    ? Color::Interpolate(static_cast<float>(glow), theme_.background, peak)
-                    : peak;
-            brush.background = faded;
+    // Translucency phase 6: the recency glow, applied to the *glyph* rather
+    // than the cell's background, and outside the chain above rather than as
+    // one more branch in it.
+    //
+    // Both of those are the same decision. A background wash repaints a whole
+    // row -- 160 cells on an ordinary terminal -- every animation frame, and
+    // since Notcurses emits what changed, that is a lot of escape sequences
+    // pushed at the terminal 36 times a second on the thread handling input.
+    // Tinting the foreground changes only the characters that were actually
+    // edited, usually a handful, so the same fade costs a fraction of the
+    // output. It is Compositing.h's T3 by another name.
+    //
+    // Being outside the chain also means it composes: a glow inside a
+    // selection or a search hit still shows, where a background branch would
+    // have been shadowed by the one above it.
+    if (const double glow = RecencyGlowStrengthAt(offset); glow > 0.0) {
+        const Color target = RecencyGlowColour();
+        if (target.Composable() && brush.foreground.Composable()) {
+            brush.foreground = Color::Interpolate(static_cast<float>(glow), brush.foreground, target);
         }
     }
     return brush;
@@ -1576,6 +1587,13 @@ void BufferView::PaintFoldEllipsis(Canvas& c, int row, int& col, std::size_t lin
 }
 
 void BufferView::Paint(Canvas paneCanvas) {
+    // First thing in the frame, deliberately. BrushForCell reads the cached
+    // glow state for every cell it paints, so refreshing afterwards meant
+    // every cell used the *previous* frame's answer -- an edit painted with
+    // the glow still switched off, and every later frame one tick stale.
+    // Found by instrumenting after the glow stopped appearing at all live.
+    RefreshRecencyGlows();
+
     viewport_.EnsureTopLineValidForActiveBuffer();
     EnsureStatusMessageFreshness();
 
@@ -2021,7 +2039,6 @@ void BufferView::Paint(Canvas paneCanvas) {
         }
     }
 
-    RefreshRecencyGlows();
     PaintCurrentLineHighlight(c, rowLine);
 
     PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutter.totalWidth);

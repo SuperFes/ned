@@ -12,7 +12,7 @@ namespace {
     }
 
     bool& EnabledStorage() {
-        static bool enabled = true;
+        static bool enabled = false; // opt-in -- see RecencyGlow.h
         return enabled;
     }
 

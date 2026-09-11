@@ -213,8 +213,26 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       re-arms a 60ms one-shot only while something is fading, the background spinner's
       exact shape, so an idle editor costs zero wakeups -- measured at 0.06 CPU-seconds for
       three seconds of continuous typing and nothing measurable once it stops.
+      The glow ships **off by default**, which is the honest outcome of building it: see
+      below.
       Still open: virtual text (inline diagnostics, blame, fold placeholders) at real
       alpha. `buffer` is the last surface with no consumer.
+- [ ] **Dirty-region flush, and the animation question behind it.** `Screen::Flush` writes
+      *every* cell of both planes every frame -- 14,400 `ncplane_putstr_yx` calls at 160x45
+      -- and Notcurses then diffs that to decide what to emit. Fine for an editor that
+      repaints when something happens, which is what ned was until the recency glow asked
+      it to repaint on a clock: an animation frame is a full-screen redraw, ~36 a second,
+      on the thread that also handles input. Reported live as an editor that felt slow to
+      type in, and the glow now defaults off because of it.
+      What makes that hard to catch: the editor's own CPU stays *low* (forty keystrokes at
+      160x45 measures two ticks), because the expensive part is the terminal consuming the
+      output, not ned producing it. Every CPU measurement said "fine" while the thing felt
+      bad -- worth remembering before the next animated feature.
+      Writing only cells that changed since the last frame would fix it at the source, let
+      the glow default back on, and speed up every ordinary repaint too. Two known traps:
+      the backing plane is cleared wholesale each frame (`ClearBacking`), so it needs the
+      same treatment or it defeats the point; and a `Screen` is reconstructed on resize, so
+      the first frame after one must write everything.
 - [x] **`echo` and `scrollbar` adopted; four advertised surfaces still have no consumer.**
       The 2026-09-10 audit found six surfaces derived and listed but painted by nothing, so
       `ned/theme-surface` on any of them parsed, stored, and did nothing visible. `echo` and

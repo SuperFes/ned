@@ -1465,8 +1465,9 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetRecencyGlow>(
         "ned", "set-recency-glow",
         "Enable/disable the recency glow -- a brief accent wash over text that was just edited, fading out over "
-        "~600ms (default true). Retune its colour and peak with (ned/theme-surface \"buffer.recency\" \"fill\" ...); "
-        "the animation only runs while something is actually fading, so an idle editor does no work either way.");
+        "~200ms (default FALSE -- opt in). Tints the edited characters rather than washing the line behind them, "
+        "what keeps it cheap -- see Editor/RecencyGlow.h. Retune its colour with "
+        "(ned/theme-surface \"buffer.recency\" \"fill\" ...).");
     env.Register<&NedSetInlineDiagnostics>(
         "ned", "set-inline-diagnostics",
         "Enable/disable inline diagnostic annotation rows (carets + message under a line with an LSP diagnostic; "
