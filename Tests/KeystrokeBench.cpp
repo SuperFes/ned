@@ -218,6 +218,17 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
         timeIt("mode.fold(text)          ", [&] { return mdMode.fold ? mdMode.fold(md.Text()).size() : 0U; });
         timeIt("mode.symbolKind(text)    ", [&] { return mdMode.symbolKind ? mdMode.symbolKind(md.Text()).size() : 0U; });
         timeIt("mode.testDiscovery(text) ", [&] { return mdMode.testDiscovery ? mdMode.testDiscovery(md.Text()).size() : 0U; });
+
+        // The line above is an upper bound, not what a real frame pays:
+        // every Mode capability shares one Parser/IncrementalParseCache, and
+        // in a real Paint highlight runs first and leaves the tree current.
+        // Timed alone, symbolKind therefore buys the parse itself. Run it in
+        // the real order to separate "the query" from "the parse it shares".
+        timeIt("  highlight then symbolKind", [&] {
+            const std::string text = md.Text();
+            const std::size_t h    = mdMode.highlight ? mdMode.highlight(text, ned::editor::HighlightWindow{}).size() : 0U;
+            return h + (mdMode.symbolKind ? mdMode.symbolKind(text).size() : 0U);
+        });
     }
 
     // How the cost scales with document size -- the practical question is
