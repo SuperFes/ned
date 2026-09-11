@@ -16,6 +16,11 @@ namespace {
         return enabled;
     }
 
+    InlineDiagnosticStyle& StyleStorage() {
+        static InlineDiagnosticStyle style = InlineDiagnosticStyle::EndOfLine;
+        return style;
+    }
+
 } // namespace
 
 void SetInlineDiagnosticsEnabled(bool enabled) {
@@ -26,6 +31,16 @@ void SetInlineDiagnosticsEnabled(bool enabled) {
 bool InlineDiagnosticsEnabled() {
     const std::lock_guard<std::mutex> lock(EnabledMutex());
     return EnabledStorage();
+}
+
+void SetInlineDiagnosticStyle(InlineDiagnosticStyle style) {
+    const std::lock_guard<std::mutex> lock(EnabledMutex());
+    StyleStorage() = style;
+}
+
+InlineDiagnosticStyle GetInlineDiagnosticStyle() {
+    const std::lock_guard<std::mutex> lock(EnabledMutex());
+    return StyleStorage();
 }
 
 } // namespace ned::editor

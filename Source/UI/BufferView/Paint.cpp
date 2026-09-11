@@ -21,6 +21,11 @@ std::size_t BufferView::AnnotationRowsForLine(std::size_t line) const {
     if (!editor::InlineDiagnosticsEnabled()) {
         return 0;
     }
+    // EndOfLine draws on the line's own last row and costs no row of its own,
+    // which is the entire point of that style -- see InlineDiagnostics.h.
+    if (editor::GetInlineDiagnosticStyle() != editor::InlineDiagnosticStyle::Callout) {
+        return 0;
+    }
     return gutters_.InlineDiagnosticsByLine().contains(line) ? 1 : 0;
 }
 
@@ -2138,6 +2143,8 @@ void BufferView::Paint(Canvas paneCanvas) {
 
     PaintCurrentLineHighlight(c, rowLine);
 
+    PaintEndOfLineDiagnostics(c, rowLine, rowContentEndColumn, gutter.totalWidth);
+
     PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutter.totalWidth);
 
     // completion-popup follow-up: activeCompletion_ mutation sites already
@@ -2151,6 +2158,84 @@ void BufferView::Paint(Canvas paneCanvas) {
     // popup model on every ordinary repaint while nothing about it changed.
     if (activeCompletion_ && CompletionAnchorNow() != lastNotifiedCompletionAnchor_) {
         NotifyCompletionChanged();
+    }
+}
+
+// The EndOfLine style: the diagnostic's glyph and message drawn after the
+// line's own text, on the line's own last row.
+//
+// The reason this style exists is layout, not looks. A Callout row is a real
+// screen row that appears and disappears as the server re-publishes, and
+// while you type it re-publishes constantly -- so every line below a
+// diagnostic jumped a row each time one arrived or cleared. Reported twice
+// against a live session as "lines move around in a wonky way"; confirmed by
+// counting rows across screencast frames (two annotation rows in one frame,
+// one in the next). Drawing on a row the line already occupies cannot change
+// the row count, so nothing moves.
+//
+// What it gives up, stated plainly: the carets. EndOfLine says *what* is
+// wrong on this line and Callout says which columns -- the gutter glyph and
+// the underline on the span itself still carry the location either way, which
+// is why this is a reasonable default rather than a strict loss.
+//
+// Painted after the content loop, like the callout rows, because it needs
+// rowContentEndColumn: where the line's real text actually stopped.
+void BufferView::PaintEndOfLineDiagnostics(Canvas& c, const std::vector<std::size_t>& rowLine,
+                                           const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth) {
+    if (!editor::InlineDiagnosticsEnabled() ||
+        editor::GetInlineDiagnosticStyle() != editor::InlineDiagnosticStyle::EndOfLine) {
+        return;
+    }
+    if (gutters_.InlineDiagnosticsByLine().empty()) {
+        return;
+    }
+
+    const int height = c.size().height;
+    const int width  = c.size().width;
+
+    for (int row = 0; row < height; ++row) {
+        if (row >= static_cast<int>(rowLine.size()) || rowLine[row] == kNoRowLine) {
+            continue;
+        }
+        // The line's LAST row: a wrapped line's message belongs after the end
+        // of its text, not in the middle of it.
+        if (row + 1 < height && row + 1 < static_cast<int>(rowLine.size()) && rowLine[row + 1] == rowLine[row]) {
+            continue;
+        }
+        const auto it = gutters_.InlineDiagnosticsByLine().find(rowLine[row]);
+        if (it == gutters_.InlineDiagnosticsByLine().end()) {
+            continue;
+        }
+        const InlineDiagnostic& diagnostic = it->second;
+        const Color             color      = DiagnosticSeverityColor(theme_, diagnostic.severity);
+
+        // Two columns of gap, so the message never reads as a continuation of
+        // the code it follows. Never left of the gutter, for an empty line.
+        int col = std::max(static_cast<int>(gutterWidth), rowContentEndColumn[row]) + 2;
+        if (col >= width) {
+            continue;
+        }
+
+        const DiagnosticGlyph glyph     = DiagnosticGlyphFor(diagnostic.severity);
+        Cell&                 glyphCell = c[{.x = col, .y = row}];
+        glyphCell.character             = glyph.glyph;
+        Brush{.foreground = color, .bold = glyph.bold}.ApplyTextTo(glyphCell);
+        col += 2;
+
+        // Italic, matching the callout's own message styling -- a user report
+        // drove that choice (plain severity-coloured text read as ordinary
+        // code), and it applies at least as strongly here, where the message
+        // sits on the same row as real code.
+        const Brush messageBrush{.foreground = color, .italic = true};
+        for (const char ch : diagnostic.message) {
+            if (col >= width) {
+                break;
+            }
+            Cell& cell     = c[{.x = col, .y = row}];
+            cell.character = std::string(1, ch);
+            messageBrush.ApplyTextTo(cell);
+            ++col;
+        }
     }
 }
 
