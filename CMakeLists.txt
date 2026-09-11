@@ -797,6 +797,7 @@ add_library(ned_lib STATIC
         Source/Editor/AutoMerge.cpp
         Source/Editor/FileWatch.cpp
         Source/Editor/BackgroundActivity.cpp
+        Source/Editor/HighlightCache.cpp
         Source/Editor/InlineDiagnostics.cpp
         Source/Editor/RecencyGlow.cpp
         Source/Editor/ScratchPad.cpp
@@ -1214,6 +1215,7 @@ if (NED_BUILD_TESTS)
             Tests/InitFileThemeWriteTest.cpp
             Tests/OverlayShadowTest.cpp
             Tests/RecencyGlowTest.cpp
+            Tests/HighlightCacheTest.cpp
             Tests/KeystrokeBench.cpp
             Tests/BufferViewTintCompositingTest.cpp
             Tests/DesktopThemeProbeTest.cpp

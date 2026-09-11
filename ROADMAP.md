@@ -256,6 +256,15 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
         lines 58,924 us against one huge paragraph 33,199 us -- so injections roughly
         double it, and the 33ms floor is the unranged whole-document work underneath.
         Injections outside the visible window need not be parsed at all.
+      **Halved already** (`shared-highlight-cache`): `BufferView` and `Minimap` each kept
+      their own per-buffer cache, keyed identically and filled by the same
+      `mode.highlight(buffer.Text())` call, so with the minimap on -- the default -- every
+      keystroke ran the whole-document highlight *twice*: 134,477us against 67ms for one.
+      `Editor/HighlightCache.h` is now the single cache both read, and two consumers in one
+      frame measure the same as one (76,509us). It hands back a `shared_ptr`, which also
+      removed a full span-vector copy `BufferView` was doing every frame even on a hit.
+      That leaves the ~77ms single highlight, which is what the two ranged fixes above are
+      for.
       `mode.symbolKind` deserves the same treatment (its own whole-file query, its own
       `ContentGeneration` key) but is 8% of the problem, not 90%.
       Note for whoever picks this up: whole-process CPU measurements are useless here and
