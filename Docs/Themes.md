@@ -385,7 +385,8 @@ covers. `radius` softens its edge; `0` is a hard-edged offset block. The colour 
 the same parser paint stops do, so `$slot` references and `#rrggbbaa` both work -- a shadow
 tinted toward the theme's own background reads better than flat black on some themes. Names: `buffer`, `buffer.current_line`,
 `buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab.strip`, `tab`,
-`tab.active`, `tab.active.focused`, `echo`, `scrollbar`, `panel`, `popup`, `scrim`.
+`tab.active`, `tab.active.focused`, `modeline.activity`, `echo`, `scrollbar`, `panel`,
+`popup`, `scrim`.
 
 A **translucent** popup fill composites against what the popup covers rather than against
 the theme's background — the same way a `blur` does, and for the same reason: a paint that
@@ -394,6 +395,14 @@ to any paint carrying an alpha channel. An opaque fill, and one that paints noth
 still clear first, which is what stops a previous frame's cells showing through. Note the
 limit this cannot cross: a cell holds one glyph, so the *text* under a popup is always
 overwritten. A translucent body blends backgrounds, never text.
+
+`modeline.activity` is the **background-activity sweep**: while an LSP is indexing, a test
+run is going or a large file is loading, a band of this surface travels along the mode
+line, wrapping within the bar so the motion never stops and never leaves. It is the visual
+half of the spinner beside it and shares its clock, so the two cannot disagree about
+whether something is happening. It defaults to the detected desktop accent at ~22% and
+tints the bar's background under the glyphs rather than writing cells of its own.
+`(ned/theme-surface "modeline.activity" "fill" "#00000000")` turns it off.
 
 `scrim` is the **focus scrim**: while an overlay holds the keyboard -- the terminal drawer,
 the chat panel, a tree view -- everything it does not cover is washed with this surface, so

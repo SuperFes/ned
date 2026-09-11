@@ -84,7 +84,15 @@ struct Fixture {
     std::string           statusMessage;
     ned::ui::ActiveBuffer activeBuffer{buffer};
 
-    explicit Fixture(std::string_view content) : buffer(Buffer::FromHugeFile(WriteTempFile("ned_huge_structural_gutter.c", content))) {
+    // `name` per TEST_CASE, not one shared filename -- ctest runs each case
+    // in its own process and several at once under -j8, so a shared path had
+    // three processes writing different content to the file the others were
+    // reading through a live mmap. That is the root cause of both flakes this
+    // file was on the watch list for: a reader seeing another case's content
+    // fails an assertion, and one whose file is replaced underneath its
+    // mapping takes SIGBUS. Neither ever reproduced standalone, which is
+    // exactly what a cross-process race looks like.
+    Fixture(std::string_view name, std::string_view content) : buffer(Buffer::FromHugeFile(WriteTempFile(std::string(name), content))) {
     }
 
     BufferView View() {
@@ -109,7 +117,7 @@ TEST_CASE("Fold gutter finds no block on a huge buffer whose closing brace lies 
     }
     content += "    return 0;\n}\n";
 
-    Fixture fixture{content};
+    Fixture fixture{"ned_huge_structural_gutter_fold_window.c", content};
     REQUIRE(fixture.buffer.Content().IsHuge());
 
     BufferView view = fixture.View();
@@ -155,7 +163,7 @@ TEST_CASE("Fold gutter remaps a huge buffer's window-relative offsets back to th
         content += "// trailing filler so SetTopLine has room to scroll this far\n";
     }
 
-    Fixture fixture{content};
+    Fixture fixture{"ned_huge_structural_gutter_fold_deep.c", content};
     REQUIRE(fixture.buffer.Content().IsHuge());
 
     ned::editor::SetHugeStructuralWindowBytes(4096);
@@ -192,7 +200,7 @@ TEST_CASE("Symbol gutter remaps a huge buffer's window-relative offsets back to 
         content += "// trailing filler so SetTopLine has room to scroll this far\n";
     }
 
-    Fixture fixture{content};
+    Fixture fixture{"ned_huge_structural_gutter_symbol_deep.c", content};
     REQUIRE(fixture.buffer.Content().IsHuge());
 
     ned::editor::SetHugeStructuralWindowBytes(4096);

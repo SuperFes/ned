@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 
+#include "Editor/BackgroundActivity.h"
 #include "Editor/Mode.h"
 #include "Editor/ThemeSetting.h"
 #include "Janet/EditorBindings.h"
@@ -565,6 +566,68 @@ TEST_CASE("A themed popup paints its own fill under the rows", "[ChromeSurface]"
 // cleared to the theme background first and therefore composited against
 // that, not against the code the popup covers -- which on a transparent theme
 // meant it dithered instead of blending at all.
+// Translucency phase 5, the state-driven mode-line fill: a band of the
+// "modeline.activity" surface travels along the bar while background work is
+// live. Inert when nothing is happening, which is most of the time.
+TEST_CASE("The mode line sweeps a band while a background activity is live", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+
+    Screen idle = PaintModeLine(theme, 40);
+
+    ned::editor::BeginBackgroundActivity("LSP");
+    Screen busy = PaintModeLine(theme, 40);
+    ned::editor::EndBackgroundActivity("LSP");
+
+    // The band wraps within the bar rather than entering from off-screen, so
+    // a fixed number of columns differ at every instant and this needs no
+    // control over the clock.
+    int tinted = 0;
+    for (int x = 0; x < 40; ++x) {
+        if (!(busy.PixelAt(x, 0).background_color == idle.PixelAt(x, 0).background_color)) {
+            ++tinted;
+        }
+    }
+    INFO("tinted columns: " << tinted);
+    REQUIRE(tinted > 0);
+    REQUIRE(tinted <= 12); // kActivityBandColumns
+
+    // The bar's own text survives: the sweep tints the background under the
+    // glyphs, it does not write cells of its own.
+    REQUIRE(busy.PixelAt(1, 0).character == idle.PixelAt(1, 0).character);
+}
+
+TEST_CASE("The mode line sweeps nothing when no activity is live", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+
+    // Two paints at different instants must be identical: the sweep is the
+    // only time-varying thing in this bar's background, and it must not run.
+    Screen first  = PaintModeLine(theme, 40);
+    Screen second = PaintModeLine(theme, 40);
+    for (int x = 0; x < 40; ++x) {
+        INFO("column " << x);
+        REQUIRE(first.PixelAt(x, 0).background_color == second.PixelAt(x, 0).background_color);
+    }
+}
+
+TEST_CASE("A theme can silence the mode line's activity sweep", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+
+    ned::ui::SetSurfaceOverride("modeline.activity", ned::ui::Surface{});
+
+    Screen idle = PaintModeLine(theme, 40);
+    ned::editor::BeginBackgroundActivity("LSP");
+    Screen busy = PaintModeLine(theme, 40);
+    ned::editor::EndBackgroundActivity("LSP");
+
+    for (int x = 0; x < 40; ++x) {
+        INFO("column " << x);
+        REQUIRE(busy.PixelAt(x, 0).background_color == idle.PixelAt(x, 0).background_color);
+    }
+}
+
 TEST_CASE("A translucent popup body composites against what it covers", "[ChromeSurface]") {
     const SurfaceGuard   guard;
     const Theme          theme   = DarkTheme();

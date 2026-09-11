@@ -59,6 +59,13 @@ namespace {
     // muddy a light one.
     constexpr std::uint8_t kFocusScrimAlpha = 80;
 
+    // The mode line's background-activity sweep: a soft band of the desktop
+    // accent travelling along the bar while something is working. Kept well
+    // under the selection's own strength -- this runs unattended, sometimes
+    // for minutes during an LSP index, and anything louder would be the most
+    // distracting thing on screen precisely when you are trying to ignore it.
+    constexpr std::uint8_t kActivitySweepAlpha = 55;
+
     std::mutex& Lock() {
         static std::mutex mutex;
         return mutex;
@@ -242,6 +249,17 @@ namespace {
             // a scrim with nothing to tint toward has nothing to say.
             const Color backdrop = ChromeBackdrop(theme);
             surface.fill         = backdrop.Composable() ? SolidPaint(backdrop.WithAlpha(kFocusScrimAlpha)) : Paint{};
+            return surface;
+        }
+        if (name == "modeline.activity") {
+            // Painted over the mode line's own fill by ModeLine while a
+            // background activity is live -- the visual half of the spinner
+            // it shares a clock with. Transparent at both ends so it reads
+            // as a travelling band rather than a block with edges.
+            const Color accent = DetectedAccent().value_or(theme.modeLineFocusedGradientStart);
+            surface.fill       = GradientPaint(PaintAxis::X, {ColorStop{.colour = accent.WithAlpha(0)},
+                                                              ColorStop{.colour = accent.WithAlpha(kActivitySweepAlpha)},
+                                                              ColorStop{.colour = accent.WithAlpha(0)}});
             return surface;
         }
         if (name == "buffer.current_line") {
@@ -571,7 +589,7 @@ std::vector<std::string> SurfaceNames() {
     // M-x theme-gallery and Docs/Themes.md despite working perfectly if you
     // already knew the name.
     return {"buffer", "buffer.current_line", "buffer.selection", "buffer.search",
-            "buffer.recency", "modeline", "modeline.focused", "tab.strip", "tab", "tab.active",
+            "buffer.recency", "modeline", "modeline.focused", "modeline.activity", "tab.strip", "tab", "tab.active",
             "tab.active.focused", "echo", "scrollbar", "panel",
             "popup", "scrim"};
 }
