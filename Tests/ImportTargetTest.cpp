@@ -289,3 +289,64 @@ TEST_CASE("RustMode importTarget does not match a \"use\" path", "[ImportTarget]
     const std::string text = "use foo::bar::Baz;\n";
     CHECK_FALSE(mode.importTarget(text, text.find("Baz")).has_value());
 }
+
+// file-rename-propagation follow-up: the same query, every match instead of
+// the one at point, plus the specifier's own byte range a rewrite replaces.
+
+TEST_CASE("importTargets is set exactly when importTarget is", "[ImportTarget]") {
+    CHECK_FALSE(static_cast<bool>(ned::editor::JsonMode().importTargets));
+    CHECK(static_cast<bool>(CppMode().importTargets));
+    CHECK(static_cast<bool>(PythonMode().importTargets));
+}
+
+TEST_CASE("importTargets returns every import in the document", "[ImportTarget]") {
+    const auto        mode = CppMode();
+    const std::string text = "#include \"a.h\"\n#include <vector>\n#include \"b/c.h\"\n";
+    const auto        all  = mode.importTargets(text);
+    REQUIRE(all.size() == 3);
+    CHECK(all[0].target == "a.h");
+    CHECK(all[1].target == "vector");
+    CHECK(all[2].target == "b/c.h");
+}
+
+TEST_CASE("A literal target's byte range excludes its own delimiters", "[ImportTarget]") {
+    const auto        mode = CppMode();
+    const std::string text = "#include \"foo/bar.h\"\n";
+    const auto        all  = mode.importTargets(text);
+    REQUIRE(all.size() == 1);
+    CHECK(text.substr(all[0].targetStartByte, all[0].targetEndByte - all[0].targetStartByte) == "foo/bar.h");
+}
+
+TEST_CASE("An angle-form target's byte range excludes its brackets too", "[ImportTarget]") {
+    const auto        mode = CppMode();
+    const std::string text = "#include <vector>\n";
+    const auto        all  = mode.importTargets(text);
+    REQUIRE(all.size() == 1);
+    CHECK(text.substr(all[0].targetStartByte, all[0].targetEndByte - all[0].targetStartByte) == "vector");
+}
+
+TEST_CASE("A JS specifier's byte range is the string's own content", "[ImportTarget]") {
+    const auto        mode = JavaScriptMode();
+    const std::string text = "import x from './widget';\n";
+    const auto        all  = mode.importTargets(text);
+    REQUIRE(all.size() == 1);
+    CHECK(text.substr(all[0].targetStartByte, all[0].targetEndByte - all[0].targetStartByte) == "./widget");
+}
+
+TEST_CASE("A Python relative import's byte range keeps its leading dots", "[ImportTarget]") {
+    const auto        mode = PythonMode();
+    const std::string text = "from ..pkg.widget import Thing\n";
+    const auto        all  = mode.importTargets(text);
+    REQUIRE(all.size() == 1);
+    CHECK(all[0].target == "pkg.widget"); // dots split off into relativeLevel
+    CHECK(all[0].relativeLevel == 2);
+    CHECK(text.substr(all[0].targetStartByte, all[0].targetEndByte - all[0].targetStartByte) == "..pkg.widget");
+}
+
+TEST_CASE("A dotted Python module's byte range is the dotted name itself", "[ImportTarget]") {
+    const auto        mode = PythonMode();
+    const std::string text = "from pkg.widget import Thing\n";
+    const auto        all  = mode.importTargets(text);
+    REQUIRE(all.size() == 1);
+    CHECK(text.substr(all[0].targetStartByte, all[0].targetEndByte - all[0].targetStartByte) == "pkg.widget");
+}

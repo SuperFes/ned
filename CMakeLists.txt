@@ -747,6 +747,8 @@ add_library(ned_lib STATIC
         Source/Editor/CodeFold.cpp
         Source/Editor/LocalScopes.cpp
         Source/Editor/RenameReview.cpp
+        Source/Editor/ImportFixup.cpp
+        Source/Editor/ImportFixupSettings.cpp
         Source/Editor/RenameReviewSettings.cpp
         Source/Editor/CodeFoldSettings.cpp
         Source/Editor/StickyScroll.cpp
@@ -795,6 +797,7 @@ add_library(ned_lib STATIC
         Source/Editor/ToolchainIncludePaths.cpp
         Source/Editor/NodeModules.cpp
         Source/Editor/ImportResolutionConfig.cpp
+        Source/Editor/ImportResolve.cpp
         Source/Editor/Project/FileOps.cpp
         Source/Editor/AutoRevert.cpp
         Source/Editor/AutoMerge.cpp
@@ -1120,8 +1123,10 @@ if (NED_BUILD_TESTS)
             Tests/LocalScopesTest.cpp
             Tests/ModeLocalsTest.cpp
             Tests/RenameReviewTest.cpp
+            Tests/ImportFixupTest.cpp
             Tests/BufferViewRenameSymbolTest.cpp
             Tests/BufferViewRenameReviewTest.cpp
+            Tests/BufferViewImportFixupTest.cpp
             Tests/SnippetTest.cpp
             Tests/SnippetRegistryTest.cpp
             Tests/BundledSnippetsTest.cpp

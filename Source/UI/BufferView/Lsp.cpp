@@ -2749,9 +2749,27 @@ void BufferView::PerformProjectRename(const std::filesystem::path& source, const
         // a server's willRenameFiles response typically fixes up *other*
         // files' import paths while source still exists at its pre-rename
         // location.
+        const bool serverFixedReferences = willRenameEdit && willRenameEdit->hasEdit;
         if (willRenameEdit) {
             ApplyResolvedWorkspaceEdit(*willRenameEdit, "Fixed up references before rename");
         }
+
+        // file-rename-propagation follow-up: the same job without a server,
+        // and planned here for the same reason the server's own answer is
+        // requested here -- resolving an import is an on-disk question, and
+        // after the rename every import worth fixing is precisely the one
+        // that no longer resolves. A server that answered with edits of its
+        // own wins outright: it knows things (a compile_commands.json
+        // include path) no filesystem arithmetic does, and applying both
+        // would rewrite the same specifier twice.
+        std::vector<editor::importfix::MovedFile> moves;
+        if (!serverFixedReferences) {
+            for (const editor::lsp::Manager::FileRenameEntry& entry : renamedFiles) {
+                moves.push_back({entry.oldPath, entry.newPath});
+            }
+        }
+        const editor::importfix::FixupPlan fixups = PlanImportFixups(moves);
+
         try {
             editor::RenameProjectPath(source, destination);
 
@@ -2789,6 +2807,10 @@ void BufferView::PerformProjectRename(const std::filesystem::path& source, const
             if (lspManager_) {
                 lspManager_->NotifyFilesRenamed(renamedFiles);
             }
+            // Presented last so its own status line is the one that stays,
+            // and only when it found something -- a rename nothing imported
+            // reads exactly as it did before this feature existed.
+            BuildImportFixupReview(fixups, "Renamed " + source.filename().string());
         }
         catch (const std::exception& e) {
             ReportError(e.what());
