@@ -11285,16 +11285,17 @@ TEST_CASE("A wrap-enabled buffer breaks a long line at a word boundary, not mid-
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
     view.Paint(canvas);
 
-    // Content width is 15 - gutter columns (10), minus one more column
-    // wrap-continuation-indicator's own caller reserves for "↵" once a line
-    // is known to wrap at all (9) -- "aaaa " (5 cols) fits, "bbbb" (4 more)
-    // would push past it, so the break lands after "aaaa ", then again
-    // after "bbbb ", leaving "cccc dddd" (9 cols) as the third row.
+    // gutter-wrap-indicator follow-up: content width is the full 15 minus
+    // the gutter columns (10) -- nothing is reserved at the right edge any
+    // more, the continuation glyph lives in the line-number column now. So
+    // "aaaa bbbb " (10 cols) fits exactly, "cccc" would push past it, and
+    // the line breaks into two rows rather than the three the reserved
+    // column used to force.
     REQUIRE(RowText(screen, 0, 15).find("aaaa") != std::string::npos);
-    REQUIRE(RowText(screen, 0, 15).find("bbbb") == std::string::npos);
-    REQUIRE(RowText(screen, 1, 15).find("bbbb") != std::string::npos);
-    REQUIRE(RowText(screen, 1, 15).find("cccc") == std::string::npos);
-    REQUIRE(RowText(screen, 2, 15).find("cccc") != std::string::npos);
+    REQUIRE(RowText(screen, 0, 15).find("bbbb") != std::string::npos);
+    REQUIRE(RowText(screen, 0, 15).find("cccc") == std::string::npos);
+    REQUIRE(RowText(screen, 1, 15).find("cccc") != std::string::npos);
+    REQUIRE(RowText(screen, 1, 15).find("dddd") != std::string::npos);
 }
 
 TEST_CASE("A wrap-enabled buffer hard-breaks a single token wider than the whole viewport", "[BufferView]") {
@@ -11382,9 +11383,7 @@ TEST_CASE("CursorPosition() lands on the correct wrapped row/column for point pl
     fixture.buffer.InsertAtPoint("aaaa bbbb cccc dddd");
     fixture.buffer.SetPoint(0);
     // Move point into "cccc", which the previous test already established
-    // lands on the third wrapped row (wrap-continuation-indicator's own
-    // reserved right-edge column splits this line into "aaaa "/"bbbb "/
-    // "cccc dddd" rather than two rows).
+    // lands on the second wrapped row ("aaaa bbbb " / "cccc dddd").
     for (int i = 0; i < 11; ++i) {
         fixture.buffer.MoveForward();
     }
@@ -11395,7 +11394,7 @@ TEST_CASE("CursorPosition() lands on the correct wrapped row/column for point pl
     view.Paint(canvas);
 
     REQUIRE(view.CursorPosition().has_value());
-    REQUIRE(view.CursorPosition()->y == 2); // third visual row
+    REQUIRE(view.CursorPosition()->y == 1); // second visual row
 }
 
 TEST_CASE("A mouse click on a wrapped continuation row resolves to the correct byte offset", "[BufferView]") {
@@ -11409,20 +11408,72 @@ TEST_CASE("A mouse click on a wrapped continuation row resolves to the correct b
     view.Paint(canvas); // establish the wrap-segment layout the click below expects
 
     const int gutter = GutterWidth(1);
-    // Row 1 is "bbbb " (the second wrap segment, wrap-continuation-
-    // indicator's own reserved right-edge column splits this line into
-    // three rows rather than two) -- clicking right at its own start should
-    // land point at the byte offset of the first 'b' (byte 5).
+    // Row 1 is "cccc dddd" (the second and last wrap segment) -- clicking
+    // right at its own start should land point at the byte offset of the
+    // 'c' in "cccc" (byte 10: "aaaa bbbb " is 10 bytes).
     view.OnEvent(MousePress(gutter, 1));
     view.OnEvent(MouseRelease(gutter, 1));
-    REQUIRE(fixture.buffer.Point() == 5);
-
-    // Row 2 is "cccc dddd" (the third wrap segment) -- clicking right at
-    // its own start should land point at the byte offset of the 'c' in
-    // "cccc" (byte 10 in the original text: "aaaa bbbb " is 10 bytes).
-    view.OnEvent(MousePress(gutter, 2));
-    view.OnEvent(MouseRelease(gutter, 2));
     REQUIRE(fixture.buffer.Point() == 10);
+
+    // Clicking one column further in lands one byte further along, which is
+    // what pins the continuation row's own column origin rather than just
+    // its start byte.
+    view.OnEvent(MousePress(gutter + 1, 1));
+    view.OnEvent(MouseRelease(gutter + 1, 1));
+    REQUIRE(fixture.buffer.Point() == 11);
+}
+
+// gutter-wrap-indicator follow-up. The indicator used to be pinned to the
+// row's own right edge, which forced ComputeWrappedLineSegments to compute
+// twice -- once at full width, then again one column narrower once a line
+// was known to wrap. Moving it into the line-number column deleted that
+// second pass; these two pin where it actually lands in both gutter states.
+TEST_CASE("A wrapped line's continuation rows carry the wrap glyph in the line-number column", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint("aaaa bbbb cccc dddd");
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(15, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(1);
+    // First row: the real line number, never the glyph.
+    REQUIRE(RowText(screen, 0, gutter).find('1') != std::string::npos);
+    REQUIRE(RowText(screen, 0, gutter).find("↳") == std::string::npos);
+    // Continuation row: the glyph, in the gutter, not at the right edge.
+    REQUIRE(RowText(screen, 1, gutter).find("↳") != std::string::npos);
+    REQUIRE(RowText(screen, 1, 15).find('1') == std::string::npos);
+    // Nothing is pinned to the row's own last column any more -- that is
+    // the reservation this change removed, and content may now use it.
+    REQUIRE(RowText(screen, 0, 15).substr(14) != "↳");
+    REQUIRE(RowText(screen, 1, 15).substr(14) != "↳");
+}
+
+TEST_CASE("With line numbers off the wrap glyph follows the content instead of the gutter", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint("aaaa bbbb cccc dddd");
+    // The only way the line-number column is off is a multibuffer, which
+    // replaces it with a per-line tint rather than a column of its own --
+    // so a search-results or project-replace-review buffer with a long line
+    // in it is exactly the case this branch exists for.
+    ned::editor::multibuffer::SetMultibufferIndexFor(fixture.buffer, ned::editor::multibuffer::MultibufferIndex{});
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(15, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    // There is no digits column to sit in, so the glyph marks the wrap
+    // point itself: just past the content of the row that hands off. Word
+    // wrapping ends a segment at a word boundary, so that cell is free.
+    const std::string handOffRow = RowText(screen, 0, 15);
+    const std::string lastRow    = RowText(screen, 1, 15);
+    REQUIRE(handOffRow.find("↳") != std::string::npos);
+    // The last row of the line continues nowhere, so it is never marked.
+    REQUIRE(lastRow.find("↳") == std::string::npos);
 }
 
 TEST_CASE("Line numbers appear only on a wrapped line's first row, not its continuation rows", "[BufferView]") {
@@ -11437,16 +11488,16 @@ TEST_CASE("Line numbers appear only on a wrapped line's first row, not its conti
 
     // Row 0 is line 1's first segment -- digit "1" appears in the gutter.
     REQUIRE(RowText(screen, 0, 15).find('1') != std::string::npos);
-    // Row 1 is line 1's continuation -- no digit anywhere in the gutter
-    // columns (blank), only line content further right.
+    // Row 1 is line 1's continuation -- no digit in the gutter columns, but
+    // gutter-wrap-indicator follow-up: not blank either. The continuation
+    // glyph sits exactly where that row's line number would have been.
     const int         gutter             = GutterWidth(2);
     const std::string continuationGutter = RowText(screen, 1, gutter);
-    REQUIRE(continuationGutter.find_first_not_of(' ') == std::string::npos);
-    // Row 3 (the next real buffer line, "second line") shows its own "2" --
-    // line 1's own content now spans three rows (wrap-continuation-
-    // indicator's own reserved column pushes its break points earlier: rows
-    // 0/1 are "aaaa "/"bbbb ", row 2 is "cccc dddd").
-    REQUIRE(RowText(screen, 3, 15).find('2') != std::string::npos);
+    REQUIRE(continuationGutter.find_first_of("0123456789") == std::string::npos);
+    REQUIRE(continuationGutter.find("\u21b3") != std::string::npos);
+    // Row 2 (the next real buffer line, "second line") shows its own "2" --
+    // line 1 spans rows 0-1 ("aaaa bbbb " / "cccc dddd").
+    REQUIRE(RowText(screen, 2, 15).find('2') != std::string::npos);
 }
 
 TEST_CASE("A per-extension wrap override changes the effective behavior for a buffer whose Mode says otherwise",
@@ -13648,8 +13699,8 @@ TEST_CASE("The current-line highlight covers every row a wrapped line occupies",
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
     view.Paint(canvas);
 
-    // Same wrap geometry the word-boundary test above pins: "aaaa " /
-    // "bbbb " / "cccc dddd" across rows 0-2, with "second line" on row 3.
+    // Same wrap geometry the word-boundary test above pins: "aaaa bbbb " /
+    // "cccc dddd" across rows 0-1, with "second line" on row 2.
     //
     // Layer-agnostic on purpose: the highlight composites in place where the
     // theme's own background already fills the cell and drops to the backing
@@ -13672,6 +13723,5 @@ TEST_CASE("The current-line highlight covers every row a wrapped line occupies",
 
     REQUIRE(highlighted(0));
     REQUIRE(highlighted(1));
-    REQUIRE(highlighted(2));
-    REQUIRE_FALSE(highlighted(3)); // a different buffer line
+    REQUIRE_FALSE(highlighted(2)); // a different buffer line
 }
