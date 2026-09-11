@@ -1022,6 +1022,11 @@ class Buffer {
     // the five content-mutation sites.
     void RelocateSecondaryCursorsForInsert(std::size_t insertOffset, std::size_t length);
     void RelocateSecondaryCursorsForDelete(std::size_t rangeStart, std::size_t rangeEnd);
+    // Diagnostics are relocated across edits like every other tracked field
+    // here -- see the definitions in Buffer.cpp for why these relocate rather
+    // than being suppressed while stale, unlike the sibling LSP results.
+    void RelocateDiagnosticsForInsert(std::size_t insertOffset, std::size_t length);
+    void RelocateDiagnosticsForDelete(std::size_t rangeStart, std::size_t rangeEnd);
     // Snippet-expansion follow-up: SnippetRanges_'s own leg of the same
     // per-field relocation, called beside the two above at each of the five
     // content-mutation sites. The insert half implements the active-aware

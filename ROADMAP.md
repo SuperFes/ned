@@ -186,6 +186,30 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       highlighting underneath is a complete answer on its own, and is exactly what the
       buffer shows before the server first replies.
 
+- [x] **Diagnostic ranges are relocated across edits now (2026-09-11).** Fourth and last
+      instance of the stale-LSP-offset class, and the one the "colours, underlines, bolds
+      and italics" report was really about: `Buffer::Diagnostic` ranges were replaced
+      wholesale on each publish and never relocated, so between publishes the underline sat
+      on whatever bytes the old offsets now named. Reproduced exactly — typing two
+      characters ahead of a flagged `alpha` left the underline on `"t alp"`.
+      Relocated rather than suppressed, unlike inlay hints and semantic tokens: those are
+      whole-result sets a fresh response replaces cheaply, and whose absence costs nothing
+      visible. A diagnostic also drives the gutter glyph, next-error navigation, the
+      echo-area hint and the inline message, so blanking it every keystroke would trade one
+      flicker for a louder one. It is the sixth tracked field kind in `Buffer`, using the
+      same `RelocateForInsert`/`RelocateForDelete` rule as point, mark, folds, snippet
+      fields and excerpts.
+
+      The **test shape** came from the report and is worth reusing for this whole class:
+      drive the real sequence headlessly (LSP feedback lands, then type), and assert an
+      *invariant* rather than a snapshot. The invariant that does the work here is a
+      negative one — **no underlined cell may hold a space**. An underline is the one
+      styling attribute that comes solely from a diagnostic (tree-sitter will happily
+      italicise the spaces inside a comment, but nothing legitimately underlines the gap
+      between two tokens), so an underlined space is a stale byte range every time, with no
+      false positives to sift. It catches drift that any "is the word still underlined?"
+      assertion passes straight through.
+
 - [ ] **Code lenses drift the same way inlay hints did, one step removed.** Found while
       fixing the inlay-hint garbling (below) and deliberately left alone rather than given
       the same guard. `codeLensSpans_` resolves its byte offsets against the content as it
