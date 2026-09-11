@@ -21,16 +21,21 @@
 
 namespace ned::editor {
 
-// How long one edit's glow takes to fade to nothing. Long enough to notice
-// out of the corner of an eye while typing, short enough that it is gone
-// before it becomes the thing you are looking at.
-inline constexpr std::chrono::milliseconds kRecencyGlowDuration{600};
+// How long one edit's glow takes to fade to nothing.
+//
+// 600ms was the first try and was much too slow, reported live. The reason
+// is not really the fade's own speed: at 600ms an ordinary typing rate keeps
+// six or seven glows alive at once, so the effect stops reading as "that
+// character just landed" and becomes a smear trailing the cursor that never
+// settles while you type. At 200ms roughly two overlap, the trail stays
+// close to the caret, and the screen is still between bursts.
+inline constexpr std::chrono::milliseconds kRecencyGlowDuration{200};
 
-// One animation frame. 60ms is ~10 repaints across a whole glow, which reads
-// as a smooth fade at terminal refresh rates while costing an order of
-// magnitude less than a real per-frame render loop -- and only for the
-// 600ms a glow actually lasts.
-inline constexpr std::chrono::milliseconds kRecencyGlowInterval{60};
+// One animation frame. ~7 repaints across a whole glow, which reads as a
+// smooth fade at terminal refresh rates while costing an order of magnitude
+// less than a real per-frame render loop -- and only for the 200ms a glow
+// actually lasts.
+inline constexpr std::chrono::milliseconds kRecencyGlowInterval{28};
 
 void               SetRecencyGlowEnabled(bool enabled);
 [[nodiscard]] bool RecencyGlowEnabled();
