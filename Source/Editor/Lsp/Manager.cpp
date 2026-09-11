@@ -1473,6 +1473,8 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     codeLensRequestedGeneration_.erase(&buffer);
     codeLensRequestCounter_.erase(&buffer);
     codeLensSpans_.erase(&buffer);
+    codeLensSpansContent_.erase(&buffer);
+    codeLensSpansGeneration_.erase(&buffer);
 }
 
 void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
@@ -2089,9 +2091,21 @@ void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverK
     text::Buffer* const bufferPtr     = &buffer;
     const std::string   connectionKey = state->connectionKey; // per-connection latch, see RequestSemanticTokens
     const Json          params        = {{"textDocument", {{"uri", state->uri}}}};
+    // stale-offset-class follow-up. The document as it stands at *request*
+    // time, which is the one the server will answer about -- the guard above
+    // already refuses to ask unless the server is in sync with it. Kept so the
+    // response's {line, character} positions can be converted against the
+    // right text however long it takes to arrive, and then remapped onto
+    // whatever the buffer has become.
+    //
+    // Clone() is O(1): storage is structurally shared and never materialized
+    // (see Buffer's own use of it across undo), so this costs a pointer, not a
+    // copy of the document -- which is what makes holding it per in-flight
+    // request reasonable at all.
+    std::shared_ptr<const text::ITextStorage> requestedContent = buffer.Content().Clone();
     client->SendRequest(
         "textDocument/codeLens", params,
-        [this, bufferPtr, requestId, connectionKey](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, connectionKey, requestedContent](std::optional<Json> result, std::optional<Json> error) {
             const auto counterIt = codeLensRequestCounter_.find(bufferPtr);
             if (counterIt == codeLensRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
@@ -2104,7 +2118,7 @@ void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverK
                 return;
             }
             const std::vector<CodeLens>   lenses  = ExtractCodeLenses(*result);
-            const text::ITextStorage&     content = bufferPtr->Content();
+            const text::ITextStorage&     content = *requestedContent;
             std::vector<ResolvedCodeLens> resolved;
             resolved.reserve(lenses.size());
             for (const CodeLens& lens : lenses) {
@@ -2120,14 +2134,68 @@ void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverK
             }
             std::sort(resolved.begin(), resolved.end(),
                       [](const ResolvedCodeLens& a, const ResolvedCodeLens& b) { return a.startByte < b.startByte; });
-            codeLensSpans_[bufferPtr] = std::move(resolved);
+            // Resolved against the requested document; carry them forward to
+            // whatever the buffer is now, and record the content they are
+            // valid against so CodeLensSpans can keep doing that as editing
+            // continues.
+            RemapCodeLensSpans(resolved, *requestedContent, bufferPtr->Content());
+            codeLensSpans_[bufferPtr]           = std::move(resolved);
+            codeLensSpansContent_[bufferPtr]    = bufferPtr->Content().Clone();
+            codeLensSpansGeneration_[bufferPtr] = bufferPtr->ContentGeneration();
         });
+}
+
+// Carries a resolved lens set from the document it was resolved against onto a
+// newer one. Shared by the receipt path (request-time document -> live) and by
+// CodeLensSpans' own lazy catch-up (last-known document -> live).
+void Manager::RemapCodeLensSpans(std::vector<ResolvedCodeLens>& lenses, const text::ITextStorage& from,
+                                 const text::ITextStorage& to) {
+    if (lenses.empty()) {
+        return;
+    }
+    const std::optional<text::ChangedSpan> span = text::ChangedByteRange(from, to);
+    if (!span) {
+        return; // byte-identical: nothing to carry
+    }
+    for (ResolvedCodeLens& lens : lenses) {
+        lens.startByte = text::RemapOffset(lens.startByte, *span);
+        lens.endByte   = std::max(lens.startByte, text::RemapOffset(lens.endByte, *span));
+    }
 }
 
 const std::vector<Manager::ResolvedCodeLens>& Manager::CodeLensSpans(const text::Buffer& buffer) const {
     static const std::vector<ResolvedCodeLens> kEmpty;
-    const auto                                 it = codeLensSpans_.find(const_cast<text::Buffer*>(&buffer));
-    return it != codeLensSpans_.end() ? it->second : kEmpty;
+    text::Buffer* const                        key = const_cast<text::Buffer*>(&buffer);
+    const auto                                 it  = codeLensSpans_.find(key);
+    if (it == codeLensSpans_.end()) {
+        return kEmpty;
+    }
+
+    // Lazy catch-up, the last member of the stale-offset family. A lens owns a
+    // whole extra screen row above the line it annotates, so a stale offset
+    // does not merely misplace a label -- it puts that row above the wrong
+    // line, and every line below moves.
+    //
+    // Relocated rather than suppressed, for the same reason diagnostics were:
+    // blanking the set would make the row itself blink in and out as you type,
+    // which is the movement this is meant to stop. Done here on read rather
+    // than at each edit because Manager has no hook into Buffer's own edits --
+    // and it is cheap: one bounded diff per generation change, amortized
+    // across however many reads that generation sees (Paint asks twice a
+    // frame), with the snapshot advanced so the next diff starts from here.
+    //
+    // Holding a snapshot is affordable only because ITextStorage::Clone is
+    // O(1) -- structurally shared, never materialized. A std::string copy per
+    // buffer would not have been.
+    const auto generationIt = codeLensSpansGeneration_.find(key);
+    const auto contentIt    = codeLensSpansContent_.find(key);
+    if (generationIt != codeLensSpansGeneration_.end() && contentIt != codeLensSpansContent_.end() &&
+        contentIt->second != nullptr && generationIt->second != buffer.ContentGeneration()) {
+        RemapCodeLensSpans(it->second, *contentIt->second, buffer.Content());
+        contentIt->second    = buffer.Content().Clone();
+        generationIt->second = buffer.ContentGeneration();
+    }
+    return it->second;
 }
 
 void Manager::ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& lens, ResolveCodeLensCallback callback,
