@@ -3503,11 +3503,58 @@ TEST_CASE("No textDocument/diagnostic request is sent when lsp-pull-diagnostics 
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad code");
 
-    Client* client = nullptr;
+    Client*    client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen -- nothing else was ever queued behind it
     REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+// Live-reported 2026-09-10, right after the inline-diagnostic rows stopped
+// moving and made this the visible artifact: "the colours, underlines, bolds
+// and italics start wrapping weird, but the text stays where it should".
+// Semantic-token spans are byte ranges resolved against the document as it
+// stood when the response landed, and nothing relocates them across later
+// edits -- so they recolour the wrong characters rather than moving any text.
+TEST_CASE("Semantic token spans stop being served once the buffer has moved on", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-stale-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting("test-lang",
+                                              SemanticTokensLegend{.tokenTypes = {"keyword", "variable"}, .tokenModifiers = {}});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", {{"data", Json::array({0, 0, 3, 0, 0, 0, 4, 1, 1, 0})}}},
+    }
+                              .dump());
+
+    REQUIRE(manager.SemanticTokenSpans(buffer).size() == 2); // "int" and "x", against this content
+
+    // Type ahead of both spans. Their offsets now name different bytes, and
+    // nothing here can know which -- so they must not be served at all. Empty
+    // is the right answer rather than a lossy one: the tree-sitter
+    // highlighting underneath is a complete answer on its own, and is what the
+    // buffer showed before the server ever replied.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("yy");
+    REQUIRE(manager.SemanticTokenSpans(buffer).empty());
+
+    // Recovery is the ordinary request path and is deliberately not asserted
+    // here: SyncToServer's didChange is debounced, so driving it from a test
+    // means waiting on a real timer, and the first version of this test hung
+    // on exactly that. What matters is that a stale set is never served.
 }
 
 TEST_CASE("RequestSemanticTokens sends a plain full request when a legend is set and applies decoded, byte-resolved "

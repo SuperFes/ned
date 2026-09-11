@@ -1691,6 +1691,13 @@ class Manager {
     std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensRequestedGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensRequestCounter_;
     std::unordered_map<text::Buffer*, std::vector<editor::HighlightSpan>> semanticTokenSpans_;
+    // The content generation semanticTokenSpans_ above was resolved against.
+    // Distinct from semanticTokensGeneration_ right below, which is a cache
+    // *invalidation* counter for BufferView's highlight cache; this one is a
+    // validity stamp, and SemanticTokenSpans refuses to hand out a set the
+    // buffer has since edited past. See that accessor for why a stale set is
+    // worse than none.
+    std::unordered_map<text::Buffer*, std::size_t>                        semanticTokenSpansContentGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensGeneration_;
 
     // semanticTokens range/delta follow-up. requestedRange_ mirrors

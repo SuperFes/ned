@@ -169,6 +169,23 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       The guard that matters is one assertion: the second line lands on the same screen row
       whether or not the first is carrying a diagnostic.
 
+- [x] **Semantic-token spans drifted too — fixed 2026-09-11.** Reported as "the colours,
+      underlines, bolds and italics start wrapping weird, but the text stays where it
+      should", immediately after the inline-diagnostic rows stopped moving and made this
+      the visible artifact. Third instance of one bug class, after inlay hints and (still
+      open) code lenses: an LSP result resolved to byte offsets at receipt, kept across the
+      edits that follow, and nothing relocating it.
+      The symptom is what makes it distinctive and is worth reading twice — *nothing moves*.
+      Semantic tokens only recolour, so a stale span does not misplace any text; it applies
+      the right styling to the wrong characters, and the run of colour/bold/italic/underline
+      drifts out of step with the code it belongs to as you type. It was written off here
+      earlier as "a cosmetic colour smear", which was accurate and still the wrong call.
+      Guarded the same way inlay hints were: stamp the applied set with the content
+      generation it was resolved against, serve nothing once the buffer moves past it.
+      Cheap and lossless here in a way it would not be elsewhere — the tree-sitter
+      highlighting underneath is a complete answer on its own, and is exactly what the
+      buffer shows before the server first replies.
+
 - [ ] **Code lenses drift the same way inlay hints did, one step removed.** Found while
       fixing the inlay-hint garbling (below) and deliberately left alone rather than given
       the same guard. `codeLensSpans_` resolves its byte offsets against the content as it
