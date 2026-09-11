@@ -73,6 +73,129 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
     };
 
     ned::editor::SetRecencyGlowEnabled(false);
+
+    // The file that was actually reported slow, with the Mode ned really
+    // resolves for it -- rather than a same-sized C++ file, which is what the
+    // first version of this benchmark assumed and is not the same workload.
+    {
+        std::ifstream      roadmapIn("ROADMAP.md");
+        std::ostringstream roadmapContent;
+        roadmapContent << roadmapIn.rdbuf();
+        const std::string roadmap = roadmapContent.str();
+        REQUIRE(roadmap.size() > 10000);
+
+        ned::text::Buffer md{"ROADMAP.md"};
+        md.InsertAtPoint(roadmap);
+        ned::editor::Mode     mdMode = ned::editor::MarkdownMode();
+        ned::ui::ActiveBuffer mdActive{md};
+        ned::ui::BufferView   mdView(mdActive, killRing, registers, promptHistory, bufferList, dispatcher, status,
+                                     mdMode, theme);
+        mdView.SetBox_(box);
+        md.SetPoint(roadmap.size() / 2);
+        for (int i = 0; i < 5; ++i) {
+            ned::ui::Canvas c(screen, box);
+            mdView.Paint(c);
+        }
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < 20; ++i) {
+            mdView.OnEvent(ned::ui::test::Character('x'));
+            ned::ui::Canvas c(screen, box);
+            mdView.Paint(c);
+        }
+        const auto us =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+        WARN("  ROADMAP.md (" << (roadmap.size() / 1024) << " KiB, markdown-mode): " << (us / 20)
+                              << " us per keystroke");
+
+        // Attribution. BufferView asks the Mode for several different things
+        // per frame, each its own whole-file tree-sitter query, and the
+        // caches for all of them are keyed on ContentGeneration -- so an edit
+        // invalidates every one at once. Time them individually.
+        const auto timeIt = [&](const char* label, auto&& fn) {
+            fn(); // warm
+            const auto begin = std::chrono::steady_clock::now();
+            for (int i = 0; i < 10; ++i) {
+                md.InsertAtPoint("y"); // force a real generation change each time
+                fn();
+            }
+            const auto each =
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count() / 10;
+            WARN("    " << label << ": " << each << " us");
+        };
+
+        // Controlled: same byte count, different numbers of `inline` nodes.
+        // markdown's injections.scm injects markdown_inline into *every*
+        // inline node, and each injection is its own parse -- so if that is
+        // the cost, many short lines must be far worse than one long
+        // paragraph of identical size.
+        {
+            const std::string word = "alpha beta gamma delta epsilon ";
+            std::string       manyLines;
+            while (manyLines.size() < 120000) {
+                manyLines += word + "\n"; // ~4000 short paragraphs
+            }
+            std::string onePara;
+            while (onePara.size() < 120000) {
+                onePara += word; // one enormous paragraph, no newlines
+            }
+
+            const auto timeHighlight = [&](const char* label, const std::string& text) {
+                ned::editor::Mode m = ned::editor::MarkdownMode();
+                m.highlight(text); // warm
+                const auto begin = std::chrono::steady_clock::now();
+                for (int i = 0; i < 5; ++i) {
+                    std::string edited = text;
+                    edited += static_cast<char>('a' + i); // force a fresh parse each time
+                    m.highlight(edited);
+                }
+                const auto each =
+                    std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count() / 5;
+                WARN("    " << label << ": " << each << " us");
+            };
+            timeHighlight("~4000 short lines (120 KiB)", manyLines);
+            timeHighlight("1 huge paragraph  (120 KiB)", onePara);
+        }
+
+        timeIt("buffer.Text() copy alone ", [&] { return md.Text().size(); });
+        timeIt("mode.highlight(text)     ", [&] { return mdMode.highlight ? mdMode.highlight(md.Text()).size() : 0U; });
+        timeIt("mode.fold(text)          ", [&] { return mdMode.fold ? mdMode.fold(md.Text()).size() : 0U; });
+        timeIt("mode.symbolKind(text)    ", [&] { return mdMode.symbolKind ? mdMode.symbolKind(md.Text()).size() : 0U; });
+        timeIt("mode.testDiscovery(text) ", [&] { return mdMode.testDiscovery ? mdMode.testDiscovery(md.Text()).size() : 0U; });
+    }
+
+    // How the cost scales with document size -- the practical question is
+    // "how big a file before typing stops feeling instant".
+    for (const std::size_t lines : {200U, 500U, 1000U, 2000U}) {
+        std::string trimmed;
+        std::size_t count = 0;
+        for (std::size_t i = 0; i < source.size(); ++i) {
+            trimmed += source[i];
+            if (source[i] == '\n' && ++count >= lines) {
+                break;
+            }
+        }
+        ned::text::Buffer sized{"sized.cpp"};
+        sized.InsertAtPoint(trimmed);
+        ned::ui::ActiveBuffer sizedActive{sized};
+        ned::ui::BufferView   sizedView(sizedActive, killRing, registers, promptHistory, bufferList, dispatcher,
+                                        status, mode, theme);
+        sizedView.SetBox_(box);
+        sized.SetPoint(trimmed.size() / 2);
+        for (int i = 0; i < 5; ++i) {
+            ned::ui::Canvas c(screen, box);
+            sizedView.Paint(c);
+        }
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < 20; ++i) {
+            sizedView.OnEvent(ned::ui::test::Character('x'));
+            ned::ui::Canvas c(screen, box);
+            sizedView.Paint(c);
+        }
+        const auto us =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+        WARN("  " << lines << " lines (" << (trimmed.size() / 1024) << " KiB): " << (us / 20) << " us per keystroke");
+    }
+
     bench("glow off, no selection");
 
     ned::editor::SetRecencyGlowEnabled(true);
