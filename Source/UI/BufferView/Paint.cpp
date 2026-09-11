@@ -6,6 +6,7 @@
 // per-cell brush and selection predicates it consults.
 //
 
+#include "Editor/HighlightCache.h"
 #include "Editor/RecencyGlow.h"
 #include "UI/BufferView/Internal.h"
 
@@ -1715,7 +1716,9 @@ void BufferView::Paint(Canvas paneCanvas) {
             it->second.classGeneration != editor::CaptureClassGeneration() || it->second.modeName != mode_.name ||
             it->second.semanticTokensGeneration != semanticTokensGeneration) {
             HighlightCacheEntry entry;
-            entry.spans = mode_.highlight(buffer.Text());
+            // Editor/HighlightCache.h, shared with Minimap -- see its header
+            // for why the two kept separate caches and what that cost.
+            entry.spans = *editor::CachedHighlightSpans(buffer, mode_);
             // semanticTokens follow-up: appended *after* tree-sitter's own
             // spans so LSP-informed classification wins at overlapping
             // bytes -- the exact "later span wins" convention the
