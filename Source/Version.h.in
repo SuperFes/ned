@@ -1,0 +1,32 @@
+//
+// ned's version, as C++ sees it. Generated from this template by CMake's
+// configure_file -- edit Source/Version.h.in, never the generated copy.
+//
+// The single source of truth is `project(Ned VERSION ...)` in CMakeLists.txt.
+// This header exists so that number is reachable from C++ at all: before it,
+// the CMake version was dead metadata nothing consumed, which is how it came
+// to say 0.5.0 while the only git tag said v0.1.0 and `ned` itself could not
+// report either. Anything that wants to show a version reads it from here, so
+// the two can't drift again.
+//
+// configure_file leaves the output's timestamp alone when the content is
+// unchanged, so including this header does not drag a rebuild behind every
+// reconfigure the way the file(WRITE)-based generators in CMakeLists.txt
+// would.
+//
+
+#ifndef NED_VERSION_H
+#define NED_VERSION_H
+
+namespace Ned {
+
+// "MAJOR.MINOR.PATCH", exactly as CMakeLists.txt spells it.
+inline constexpr const char* kVersion = "@Ned_VERSION@";
+
+inline constexpr int kVersionMajor = @Ned_VERSION_MAJOR@;
+inline constexpr int kVersionMinor = @Ned_VERSION_MINOR@;
+inline constexpr int kVersionPatch = @Ned_VERSION_PATCH@;
+
+} // namespace Ned
+
+#endif // NED_VERSION_H

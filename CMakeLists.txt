@@ -6,6 +6,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# project(Ned VERSION ...) above is the single source of truth for ned's
+# version; this is what makes it reachable from C++ (`ned --version`). Without
+# it the CMake version was metadata nothing consumed, which is how it came to
+# read 0.5.0 while the only git tag read v0.1.0 and the binary could report
+# neither. Generated into ned_generated/ alongside the embedded-query sources,
+# and added to ned_lib's PUBLIC include path further down so the `ned`
+# executable picks it up through the link. configure_file (rather than the
+# file(WRITE) the query embedders use) leaves the output's timestamp alone when
+# nothing changed, so a reconfigure doesn't rebuild every translation unit that
+# includes it.
+configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/Source/Version.h.in"
+        "${CMAKE_BINARY_DIR}/ned_generated/NedVersion.h"
+        @ONLY)
+
 option(NED_BUILD_TESTS "Build the ned_tests target" ON)
 option(NED_ENABLE_SANITIZERS "Build with AddressSanitizer/UndefinedBehaviorSanitizer" OFF)
 option(NED_TEST_TERMINAL_INTEGRATION "Include PtyProcessTest.cpp, which forkpty's real shells/processes, in ned_tests" OFF)
@@ -1025,6 +1040,7 @@ add_library(ned_lib STATIC
 
 target_include_directories(ned_lib
         PUBLIC Source
+        PUBLIC ${CMAKE_BINARY_DIR}/ned_generated
         PUBLIC ${Janet_INCLUDE_DIRS})
 
 # Janet_LIBRARIES is just the bare library name ("janet"), not a full path --
