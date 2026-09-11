@@ -1489,9 +1489,12 @@ void Buffer::RelocateDiagnosticsForInsert(std::size_t insertOffset, std::size_t 
     for (Diagnostic& diagnostic : Diagnostics_) {
         // Text inserted exactly at a diagnostic's start pushes it along rather
         // than extending it: the new character was not part of what the server
-        // flagged. Text at its end does extend it, matching the
-        // at-or-after rule RelocateForInsert uses everywhere else.
-        if (insertOffset < diagnostic.startByte) {
+        // flagged, and the alternative is an underline that swallows whatever
+        // you just typed in front of the flagged token. Text at its end does
+        // extend it, matching the at-or-after rule RelocateForInsert uses
+        // everywhere else -- so the start test is at-or-before and the end
+        // test is at-or-after, deliberately not the same comparison.
+        if (insertOffset <= diagnostic.startByte) {
             diagnostic.startByte += length;
         }
         if (insertOffset <= diagnostic.endByte) {
