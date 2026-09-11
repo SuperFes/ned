@@ -210,6 +210,39 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       false positives to sift. It catches drift that any "is the word still underlined?"
       assertion passes straight through.
 
+- [ ] **A publish's own diagnostic positions are converted against the wrong document.**
+      Re-reported 2026-09-11 after the relocation fix landed: "the underlines still shift
+      waiting for LSP redraw instead of working with offsets." Relocation closed the drift
+      *between* publishes; this is the other half, and the two are genuinely separate bugs.
+
+      `Manager::HandlePublishDiagnostics` converts each diagnostic's `{line, character}`
+      to a byte offset against `buffer->Content()` **as it is at receipt**, not against the
+      document the server actually analysed. Confirmed by inspection: `"version"` appears in
+      this file only on the outgoing `didOpen`/`didChange`
+      (`Manager.cpp` lines 1091/1166/1178) — the incoming `PublishDiagnosticsParams.version`
+      is never read, and there is no generation check of the kind `RequestSemanticTokens`
+      and `RequestInlayHints` both have. So a publish for version N lands against version
+      N+3's text, is converted there, and relocation then faithfully preserves that wrong
+      position until the next publish catches up. Exactly "shifts until the LSP redraws".
+
+      The fix needs a version→generation map, which `BufferSyncState` already has both
+      halves of (`version`, `lastSyncedGeneration`) but never pairs up or retains. Two
+      shapes worth weighing:
+      - **Drop a publish whose version is not the newest we sent** — one line, matches the
+        two sibling features, and costs a redraw of stale-but-approximately-right
+        underlines while typing.
+      - **Convert against the content of the version it names**, which needs that version's
+        text (or a stored edit log to replay), and is the only one that keeps diagnostics
+        visible *and* correct mid-burst.
+      A server that omits `version` (it is optional) has to fall back to today's behaviour
+      either way, so neither shape can be unconditional.
+
+      Second, smaller gap found while writing this up, worth doing in the same pass:
+      `Buffer::UpdateExcerptRangesForRestore`'s undo/redo path relocates excerpt ranges
+      across a `ChangedByteRange` diff, and diagnostics were **not** added beside it — so
+      an undo moves the text without moving the underlines. Ordinary editing is covered
+      (the five insert/delete sites are wired); this is the restore path only.
+
 - [ ] **Code lenses drift the same way inlay hints did, one step removed.** Found while
       fixing the inlay-hint garbling (below) and deliberately left alone rather than given
       the same guard. `codeLensSpans_` resolves its byte offsets against the content as it
