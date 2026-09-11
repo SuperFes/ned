@@ -1566,6 +1566,55 @@ TEST_CASE("A publish's positions are converted against the version the server wa
     REQUIRE(buffer.Text().substr(diagnostic.startByte, diagnostic.endByte - diagnostic.startByte) == "alpha");
 }
 
+// stale-publish-position follow-up, second half. The publish above is
+// converted correctly at *receipt* -- and then held for
+// DiagnosticsDebounceMs() while typing carries on, and applied with the
+// offsets it had on arrival. Reported as underlines that sit a couple of
+// columns off the token while typing and snap back once the burst ends.
+TEST_CASE("Edits made during the diagnostics debounce move the pending publish with them", "[Lsp]") {
+    const int originalDebounceMs = ned::editor::lsp::DiagnosticsDebounceMs();
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(300);
+
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-debounce-window-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int alpha = 1;");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    // The server answers for exactly what it was sent -- correct on arrival.
+    client->DispatchFrame(Json{
+        {"jsonrpc", "2.0"},
+        {"method", "textDocument/publishDiagnostics"},
+        {"params",
+         {{"uri", "file://" + path.string()},
+          {"diagnostics",
+           Json::array({{{"range", {{"start", {{"line", 0}, {"character", 4}}}, {"end", {{"line", 0}, {"character", 9}}}}},
+                         {"severity", 2},
+                         {"message", "unused variable alpha"}}})}}},
+    }
+                              .dump());
+
+    // Typing does not stop for the debounce. These two characters land after
+    // the publish was parsed and before the timer fires.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("yy");
+    REQUIRE(buffer.Text() == "yyint alpha = 1;");
+
+    WaitForDiagnosticCount(eventLoop, buffer, 1);
+
+    REQUIRE(buffer.Diagnostics().size() == 1);
+    const Buffer::Diagnostic& diagnostic = buffer.Diagnostics()[0];
+    REQUIRE(buffer.Text().substr(diagnostic.startByte, diagnostic.endByte - diagnostic.startByte) == "alpha");
+
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(originalDebounceMs);
+}
+
 TEST_CASE("A publishDiagnostics notification is not applied until the debounce delay elapses", "[Lsp]") {
     const int originalDebounceMs = ned::editor::lsp::DiagnosticsDebounceMs();
     ned::editor::lsp::SetLspDiagnosticsDebounceMs(100);
@@ -3450,6 +3499,72 @@ TEST_CASE("A second publish from one source replaces only that source's own diag
     REQUIRE(sawSecondError);
     REQUIRE_FALSE(sawFirstError); // primary's own stale diagnostic is gone
     REQUIRE(sawTypo);             // prose's diagnostic from before is untouched
+}
+
+// debounce-window-drift follow-up, the cross-source half of the same bug.
+// PushMergedDiagnostics rebuilds the whole set from every source's stored
+// slice, so a source that has not published in a while has its offsets
+// re-applied verbatim -- undoing the relocation Buffer did for it in the
+// meantime -- the moment any *other* source fires.
+TEST_CASE("A quiet source's diagnostics stay on their token when another source republishes after edits", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-cross-source-drift-test.md";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("bad_code teh");
+
+    Client*    primaryClient = nullptr;
+    Client*    proseClient   = nullptr;
+    FakeServer primaryServer = FakeServer::Create(manager, "markdown", eventLoop, primaryClient);
+    FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
+    manager.SyncBuffer(buffer, "markdown");
+    (void)ReadRawFrame(primaryServer.serverStdinRead);
+    (void)ReadRawFrame(proseServer.serverStdinRead);
+
+    const std::string uri          = "file://" + path.string();
+    auto              publishRange = [&](const std::string& message, int startChar, int endChar) {
+        return Json{
+            {"jsonrpc", "2.0"},
+            {"method", "textDocument/publishDiagnostics"},
+            {"params",
+             {{"uri", uri},
+              {"diagnostics",
+               Json::array({{{"range", {{"start", {{"line", 0}, {"character", startChar}}}, {"end", {{"line", 0}, {"character", endChar}}}}},
+                             {"severity", 2},
+                             {"message", message}}})}}},
+        };
+    };
+
+    // The prose checker flags "teh" at 9..12 and then goes quiet.
+    proseClient->DispatchFrame(publishRange("possible typo: teh", 9, 12).dump());
+    WaitForDiagnosticCount(eventLoop, buffer, 1);
+    REQUIRE(buffer.Diagnostics().size() == 1);
+
+    // Editing ahead of it relocates it in the Buffer, which is the behaviour
+    // that must survive the next merge.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("zz ");
+    REQUIRE(buffer.Text() == "zz bad_code teh");
+
+    // The primary server publishes against what it was sent, naming
+    // "bad_code" at 0..8, and its push rebuilds the merged set from scratch.
+    primaryClient->DispatchFrame(publishRange("first error", 0, 8).dump());
+    WaitUntil(eventLoop, [&] {
+        return std::any_of(buffer.Diagnostics().begin(), buffer.Diagnostics().end(),
+                           [](const Buffer::Diagnostic& d) { return d.message == "first error"; });
+    });
+
+    REQUIRE(buffer.Diagnostics().size() == 2);
+    for (const Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        const std::string named = buffer.Text().substr(diagnostic.startByte, diagnostic.endByte - diagnostic.startByte);
+        if (diagnostic.message == "possible typo: teh") {
+            REQUIRE(named == "teh"); // not "ode", which is where 9..12 now points
+        }
+        else {
+            REQUIRE(named == "bad_code");
+        }
+    }
 }
 
 namespace {
