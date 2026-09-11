@@ -219,32 +219,47 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       in, repeatedly, and a decoration does not get the benefit of the doubt against that.
       Still open: virtual text (inline diagnostics, blame, fold placeholders) at real
       alpha. `buffer` is the last surface with no consumer.
-- [ ] **Syntax highlighting costs ~45ms per keystroke.** The single biggest responsiveness
-      problem in the editor, measured 2026-09-10 and **not** a regression -- the same
-      benchmark against `939d3b5` reports 48.7ms, so it has been there a long time.
-      `Tests/KeystrokeBench.cpp` (hidden; run with `ned_tests "[keybench]"`) times a real
-      self-insert plus repaint on a 160x45 view of `Source/UI/BufferView/Paint.cpp` in
-      `CppMode`:
+- [ ] **Syntax highlighting costs 45-79ms per keystroke.** The biggest responsiveness
+      problem in the editor, measured 2026-09-10, and **not** a regression: the same
+      benchmark against `939d3b5` reports 48.7ms for the C++ case. `Tests/KeystrokeBench.cpp`
+      (hidden; `ned_tests "[keybench]"`) times a real self-insert plus repaint on a 160x45
+      view.
 
-          keystroke + repaint, CppMode          45,516 us
-          keystroke + repaint, no syntax mode        208 us
+          ROADMAP.md, 125 KiB, markdown-mode       74,006 us   <- the reported case
+          Paint.cpp,  196 KiB, cpp-mode            45,516 us
+          same buffer, no syntax mode                  204 us
 
-      That is 216x, and it is all in one line of `BufferView/Paint.cpp`:
-      `entry.spans = mode_.highlight(buffer.Text())`. Per keystroke, on every edit (the
-      cache is keyed on `ContentGeneration()`), that materialises the *whole buffer* into a
-      `std::string` and runs a *whole-file* tree-sitter query collecting every span in the
-      file -- to paint 45 visible rows.
-      Two independent fixes, either worth having:
-      - **Range the query.** `Query::Captures` calls `ts_query_cursor_exec` with no range;
-        tree-sitter offers `ts_query_cursor_set_byte_range`. Bounding the *cursor* while
-        leaving the *tree* whole is the correct shape -- a multi-line string or comment
-        overlapping the window still matches, because the tree is intact. Same idea as the
-        huge-file fold/symbol gutter windowing, without that one's edge traps, since the
-        parse is not being windowed.
-      - **Stop copying the buffer.** `buffer.Text()` allocates and copies the entire
-        document per keystroke before the query even starts. `ITextStorage::ForEachChunk`
-        and `Substring` already exist for exactly this.
-      Worth doing before anything else in the UI: it is every keystroke in every real file.
+      Linear in document size, and markdown is roughly twice a C++ file of the same size:
+
+          200 lines (9 KiB)     2,718 us      1000 lines (55 KiB)   18,718 us
+          500 lines (27 KiB)    8,000 us      2000 lines (108 KiB)  37,472 us
+
+      Attribution on ROADMAP.md, per keystroke:
+
+          mode.highlight(text)    66,697 us   (90%)
+          mode.symbolKind(text)    5,826 us   (8%)
+          buffer.Text() copy           3 us   <- not the problem, despite looking like it
+          mode.fold / testDiscovery    ~0 us
+
+      `perf` puts ~50% in tree-sitter traversal (`ts_node_child_iterator_next` 28%,
+      `ts_tree_cursor_child_iterator_next` 8.6%, `ts_query_cursor__advance` 5.5%) and 4.5%
+      in `std::regex` (`#match?` predicates).
+      Two compounding causes, both "whole document work to paint 45 rows":
+      - **The query is never ranged.** `Query::Captures` calls `ts_query_cursor_exec` with
+        no range. `ts_query_cursor_set_byte_range` bounds the *cursor* while leaving the
+        *tree* whole, so a multi-line construct overlapping the window still matches -- no
+        windowing traps, because the parse is not being windowed. The highlight cache is
+        keyed on `ContentGeneration()`, so every edit re-runs all of it.
+      - **Markdown re-parses every injection.** markdown's `injections.scm` injects
+        `markdown_inline` into *every* `inline` node, and `CollectInjectedHighlightSpans`
+        parses each one afresh per keystroke. Controlled test, same 120 KiB: ~4000 short
+        lines 58,924 us against one huge paragraph 33,199 us -- so injections roughly
+        double it, and the 33ms floor is the unranged whole-document work underneath.
+        Injections outside the visible window need not be parsed at all.
+      `mode.symbolKind` deserves the same treatment (its own whole-file query, its own
+      `ContentGeneration` key) but is 8% of the problem, not 90%.
+      Note for whoever picks this up: whole-process CPU measurements are useless here and
+      actively misleading -- they read "fine" throughout. Time the keystroke path.
 
 - [ ] **Dirty-region flush, and the animation question behind it.** `Screen::Flush` writes
       *every* cell of both planes every frame -- 14,400 `ncplane_putstr_yx` calls at 160x45
