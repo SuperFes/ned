@@ -14,8 +14,34 @@
 
 namespace ned::editor {
 
+// How an inline diagnostic is drawn. This exists because the two styles
+// differ in one way that is not cosmetic at all: whether showing a diagnostic
+// changes the number of screen rows a line occupies.
+//
+//  - EndOfLine draws the message after the line's own text, on the line's
+//    own (last) row. A line is always exactly as many rows tall as its text
+//    needs, so a diagnostic appearing, moving or clearing never shifts
+//    anything else on screen.
+//  - Callout is the original jank-compiler-style block: a row of its own
+//    below the line, carets under the flagged span, then the message. It
+//    points at the exact columns, which EndOfLine cannot, and it costs an
+//    extra row that comes and goes with the diagnostic.
+//
+// EndOfLine is the default. Reported twice against a live session: typing
+// makes diagnostics appear and clear constantly, and under Callout every one
+// of those shoved every line below it up or down a row. The movement was
+// traced to exactly this by counting rows, after frames from a screencast
+// showed two annotation rows in one frame and one in the next.
+enum class InlineDiagnosticStyle {
+    EndOfLine,
+    Callout,
+};
+
 void               SetInlineDiagnosticsEnabled(bool enabled);
 [[nodiscard]] bool InlineDiagnosticsEnabled();
+
+void                                SetInlineDiagnosticStyle(InlineDiagnosticStyle style);
+[[nodiscard]] InlineDiagnosticStyle GetInlineDiagnosticStyle();
 
 } // namespace ned::editor
 

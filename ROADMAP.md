@@ -137,35 +137,37 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       painted before, pinned by `Tests/ChromeSurfaceTest.cpp`. Verified live: a theme
       setting `modeline.fill` to `[:x "$spectrum"]` ramps blue→teal→yellow→magenta across
       the row, text intact.
-- [ ] **Lines still move around while typing, after the inlay-hint fix.** Re-reported
-      2026-09-10 against `7050577`: the *garbling* is gone (hints no longer render inside
-      tokens), but the view still shifts in a way that reads as wonky while typing. No root
-      cause yet — what follows is evidence and candidates, not a diagnosis.
+- [x] **Lines moving around while typing — fixed 2026-09-10 by making inline diagnostics
+      end-of-line.** Reported twice against live sessions; the inlay-hint fix (`7050577`)
+      removed the *garbling* but not the movement.
 
-      Evidence, from the reported screencast (frames extracted at 2fps, `ffmpeg -vf fps=2`;
-      `main.cpp` under clangd, ~1200x800 Konsole): between two adjacent frames the inline
-      *diagnostic* annotation row moves from under line 202 to under line 204, and a second
-      from under 222 to under 223. Those rows are real extra screen rows, so every line
-      below one shifts vertically the instant it appears, moves or goes away.
+      Found by counting rows instead of watching a terminal, which is what the previous
+      version of this entry said to do. Two measurements settled it:
+      - A headless probe (`Tests/LayoutStabilityProbe.cpp`, `ned_tests "[layoutprobe]"`)
+        typed 40 characters into a 2600-line C++ buffer and recorded the cursor's row and
+        column each frame: **zero** horizontal jumps and **zero** row moves. So the
+        structural gutters are not it — they never changed width, and nothing above the
+        cursor added or removed a row. That ruled out the candidate this entry had listed
+        first.
+      - The reported screencast's own frames, cropped to the gutter and compared pairwise:
+        the left edge of the text does **not** move (an earlier automated "leftmost ink"
+        measurement said it did, and was wrong — it was seeing the diff bar's own glyph
+        appear in a column that was already reserved). What does change is the annotation
+        rows: two in one frame, one in the next.
 
-      Candidates, most to least likely:
-      - **Annotation rows changing count per keystroke.** `AnnotationRowsForLine` (inline
-        diagnostics) and `LeadingAnnotationRowsForLine` (code lens) each add rows, and both
-        are driven by async LSP responses that land mid-typing. A diagnostic that appears,
-        moves and clears as the parse recovers takes every line below it along with it.
-        This is the one the frames actually show.
-      - **Code-lens drift** (its own entry below) — same shape, and it owns a whole row.
-      - **Structural gutters transiently emptying.** The symbol/fold/test columns are keyed
-        on `ContentGeneration`, so they recompute against a half-typed document whose parse
-        is briefly broken; a column that goes empty changes `GutterWidth` and shifts every
-        line *horizontally*. Worth ruling in or out first, since it is cheap to test: pin
-        the gutter width across a keystroke burst in a headless test.
+      So the movement was entirely vertical and entirely the inline-diagnostic annotation
+      row. A server republishes constantly while you type, so diagnostics appear, move and
+      clear constantly — and each one was a real screen row arriving or leaving, shoving
+      every line below it.
 
-      How to investigate: instrument `RowsForLine`/`GutterWidth` per frame during a
-      scripted keystroke burst and log where the deltas come from, rather than watching a
-      terminal. Video was the right instrument for finding the garbling and is the wrong
-      one for this — the movement is a row-count question, and a headless test can answer
-      it exactly.
+      `Editor/InlineDiagnostics.h` now carries a style. **EndOfLine is the default**: the
+      message is drawn after the line's own text, on a row the line already occupies, so
+      the row count cannot change. **Callout** is the original block with carets under the
+      flagged span, still available via `(ned/set-inline-diagnostic-style "callout")`, and
+      still what the three existing tests pin. What EndOfLine gives up is the carets; the
+      gutter glyph and the underline on the span still carry the location either way.
+      The guard that matters is one assertion: the second line lands on the same screen row
+      whether or not the first is carrying a diagnostic.
 
 - [ ] **Code lenses drift the same way inlay hints did, one step removed.** Found while
       fixing the inlay-hint garbling (below) and deliberately left alone rather than given
@@ -178,6 +180,13 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       be trying to cure. The right fix is relocation (what `Buffer` already does for its six
       tracked field kinds), not suppression — or accepting a stale reference count, which
       is what every other editor does.
+
+      Re-measured 2026-09-10 while fixing the diagnostic rows, and it is milder than it
+      first looked: `LeadingAnnotationRowsForLine` recomputes a lens's line from its byte
+      offset every frame, and ordinary typing moves every offset after the caret by one
+      byte — which keeps a lens on the same line unless you insert or delete a *newline*
+      above it. So the row churn here is confined to line-count-changing edits, not to
+      typing in general. Worth fixing, not urgent.
 
 - [x] **Phase 5 — focus scrim.** Shipped 2026-09-10. While an overlay holds the keyboard,
       everything it does not cover is washed with a new `scrim` surface. The

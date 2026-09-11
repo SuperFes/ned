@@ -3912,6 +3912,13 @@ class BufferView : public Widget {
     // between covering the syntax colour and being visible. Empty by default.
     void PaintCurrentLineHighlight(Canvas& c, const std::vector<std::size_t>& rowLine) const;
 
+    // The EndOfLine inline-diagnostic style: message after the line's own
+    // text, on a row the line already occupies, so showing or clearing a
+    // diagnostic never changes how many rows a line is tall. See
+    // Editor/InlineDiagnostics.h for why that is the default.
+    void PaintEndOfLineDiagnostics(Canvas& c, const std::vector<std::size_t>& rowLine,
+                                   const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
+
     void PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
                                       const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
 

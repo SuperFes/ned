@@ -1213,6 +1213,7 @@ if (NED_BUILD_TESTS)
             Tests/ThemeGalleryTest.cpp
             Tests/ThemeKeyDocsTest.cpp
             Tests/InitFileThemeWriteTest.cpp
+            Tests/LayoutStabilityProbe.cpp
             Tests/OverlayScrimTest.cpp
             Tests/OverlayShadowTest.cpp
             Tests/RecencyGlowTest.cpp

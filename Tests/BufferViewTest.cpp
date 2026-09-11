@@ -12394,7 +12394,98 @@ TEST_CASE("C-c C-q with no actions reports \"No quick fix available.\"", "[Buffe
 
 // inline-diagnostics follow-up.
 
+namespace {
+
+// The three tests below are about the Callout style specifically -- the one
+// that spends a screen row of its own. EndOfLine is the default now (see
+// Editor/InlineDiagnostics.h), so they ask for Callout explicitly and put it
+// back afterwards, rather than being rewritten: what they pin is still real
+// behaviour, just no longer the default.
+struct CalloutStyleGuard {
+    CalloutStyleGuard() {
+        ned::editor::SetInlineDiagnosticStyle(ned::editor::InlineDiagnosticStyle::Callout);
+    }
+    ~CalloutStyleGuard() {
+        ned::editor::SetInlineDiagnosticStyle(ned::editor::InlineDiagnosticStyle::EndOfLine);
+    }
+};
+
+} // namespace
+
+// The default style, and the reason it is the default. Reported twice against
+// a live session as "lines move around in a wonky way while typing": a server
+// republishes constantly as you edit, and under Callout every diagnostic that
+// appeared or cleared shoved every line below it a row.
+TEST_CASE("An end-of-line diagnostic never changes how many rows a line occupies", "[BufferView]") {
+    const auto rowOfSecondLine = [](bool withDiagnostic) {
+        Fixture fixture;
+        fixture.buffer.InsertAtPoint("int x = 1;\nint y = 2;");
+        if (withDiagnostic) {
+            fixture.buffer.SetDiagnostics({
+                ned::text::Buffer::Diagnostic{.startByte = 4,
+                                              .endByte   = 5,
+                                              .severity  = ned::text::Buffer::Diagnostic::Severity::Warning,
+                                              .message   = "unused variable x"},
+            });
+        }
+        fixture.buffer.SetPoint(0);
+
+        ned::ui::BufferView view = fixture.View();
+        view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+        ned::ui::Screen screen = ned::ui::Screen(40, 3);
+        ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+        view.Paint(canvas);
+
+        for (int row = 0; row < 3; ++row) {
+            if (RowText(screen, row, 40).find("int y = 2;") != std::string::npos) {
+                return row;
+            }
+        }
+        return -1;
+    };
+
+    // This is the whole fix in one assertion: the second line is on the same
+    // screen row whether or not the first line is carrying a diagnostic.
+    REQUIRE(rowOfSecondLine(false) == 1);
+    REQUIRE(rowOfSecondLine(true) == 1);
+}
+
+TEST_CASE("An end-of-line diagnostic renders after the line's own text", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("int x = 1;\nint y = 2;");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{
+            .startByte = 4, .endByte = 5, .severity = ned::text::Buffer::Diagnostic::Severity::Warning, .message = "unused variable x"},
+    });
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screen = ned::ui::Screen(80, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    const int         gutter = GutterWidth(2);
+    const std::string row0   = RowText(screen, 0, 80);
+    // The code is untouched and the message follows it on the same row.
+    REQUIRE(row0.find("int x = 1;") != std::string::npos);
+    REQUIRE(row0.find("unused variable x") != std::string::npos);
+    REQUIRE(row0.find("int x = 1;") < row0.find("unused variable x"));
+
+    // Same distinct-at-a-glance styling the callout uses, and for the same
+    // user-reported reason -- more so here, where the message shares a row
+    // with real code: the severity glyph, then an italic message.
+    REQUIRE(screen.PixelAt(gutter + 12, 0).character == "▲"); // text ends at +10, two-column gap
+    REQUIRE(screen.PixelAt(gutter + 14, 0).character == "u");
+    REQUIRE(screen.PixelAt(gutter + 14, 0).italic);
+    REQUIRE(screen.PixelAt(gutter + 14, 0).foreground_color == fixture.theme.diagnosticWarning);
+
+    // The second line is still the second row: no annotation row exists.
+    REQUIRE(RowText(screen, 1, 80).find("int y = 2;") != std::string::npos);
+}
+
 TEST_CASE("An inline diagnostic annotation row renders carets and message under the flagged line", "[BufferView]") {
+    const CalloutStyleGuard styleGuard;
     Fixture fixture;
     fixture.buffer.InsertAtPoint("int x = 1;\nint y = 2;");
     fixture.buffer.SetDiagnostics({
@@ -12433,6 +12524,7 @@ TEST_CASE("An inline diagnostic annotation row renders carets and message under 
 }
 
 TEST_CASE("Inline diagnostic rows shift cursor position and are click-transparent", "[BufferView]") {
+    const CalloutStyleGuard styleGuard;
     Fixture fixture;
     fixture.buffer.InsertAtPoint("bad line\ngood line");
     fixture.buffer.SetDiagnostics({
@@ -12485,6 +12577,7 @@ TEST_CASE("toggle-inline-diagnostics / the settings flag suppress annotation row
 }
 
 TEST_CASE("The most severe diagnostic wins the line's single annotation row", "[BufferView]") {
+    const CalloutStyleGuard styleGuard;
     Fixture fixture;
     fixture.buffer.InsertAtPoint("bad line");
     fixture.buffer.SetDiagnostics({
