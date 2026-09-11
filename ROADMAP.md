@@ -198,9 +198,21 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
         its own comment claimed Blend would "tint its foreground" over a glyph, and the
         default space made that false. Fixed and pinned in the same pass, with a test that
         fails against the old code.
-- [ ] **Phase 5 remainder — state-driven mode-line fills** (LSP indexing / test-run / load
-      progress as a sweep across the bar). Unstarted; the scrim above was the other half of
-      this entry.
+- [x] **Phase 5 remainder — state-driven mode-line fills.** Shipped 2026-09-10. A band of a
+      new `modeline.activity` surface travels along the bar while any background activity is
+      live (LSP indexing, a test run, a large load), painted over the mode line's own fill
+      and under its glyphs so it tints the bar rather than the text.
+      Indeterminate rather than a progress bar, and that is a data decision rather than a
+      shortcut: `BackgroundActivity` carries only a free-text `detail` ("indexing (45%)"),
+      so a determinate fill would mean parsing a percentage back out of a human-readable
+      string per frame. If a structured percentage ever lands on that struct, this becomes
+      a real progress fill without touching the theme side.
+      It advances one column per `kBackgroundActivitySpinnerInterval`, deliberately the same
+      clock the spinner beside it reads — two views of one fact, and deriving them from
+      separate timers is how they end up disagreeing on screen. No animation machinery of
+      its own: the composition root already re-arms a timer while activity is live. The band
+      wraps within the bar rather than entering from off-screen, which keeps the motion
+      continuous and, incidentally, makes it testable without controlling the clock.
 - [x] **Dock edge falloff.** `panel`'s derived default is a horizontal walk now rather than
       a flat colour -- ~4% lifted at the dock's outer edge, settling to exactly the buffer
       background at the seam, direction chosen by the background's own luminance (a fixed
@@ -1593,7 +1605,8 @@ for closed-issue history.
 As of 2026-09-08: `ctest -j8` is clean under the `default` preset, and so is the
 single-process `./build/ned_tests` (see the build/test note at the end of this file for
 why that is a separate check worth making). The `sanitize` preset has one reproducible
-failure, below. Two flakes and one documented behavioral limitation:
+failure, below. Two flakes, one resolved entry kept for the lesson, and one documented
+behavioral limitation:
 
 - **The `[Performance]` tests flake under `ctest -j8`** (seen repeatedly 2026-09-09:
   `Point navigation across a huge (piece-table-backed) buffer stays fast`). They budget
@@ -1602,13 +1615,6 @@ failure, below. Two flakes and one documented behavioral limitation:
   the next parallel run. Worth either gating them behind a serial ctest fixture or moving
   them to a `RUN_SERIAL` property rather than continuing to eyeball each occurrence.
 
-- **`Symbol gutter remaps a huge buffer's window-relative offsets...` died with a bus
-  error once under `ctest -j8`** (2026-09-09), and passed both on its own immediately
-  afterwards and on the very next full `-j8` run, with no source change in between. SIGBUS
-  on a huge-file test points at the mmap path rather than the gutter logic: a page fault on
-  a mapping whose backing file could not be grown is exactly this signal, and these tests
-  write GB-scale files into a tmpfs `/tmp` that several parallel huge-file tests share. If
-  it recurs, check tmpfs headroom during the run before suspecting `MappedFile` itself.
 
 - **`ResolvePsr4Namespace strips a leading fully-qualified backslash` aborted once
   under `ctest -j8`** (seen 2026-09-09, passed on immediate rerun and on a full clean
@@ -1637,21 +1643,22 @@ failure, below. Two flakes and one documented behavioral limitation:
   signal the tests exist for. Until then, treat a `[Performance]` failure under
   `sanitize -j8` as noise, and confirm any real perf work against the `default` preset.
 
-- **Fold gutter huge-buffer window remap test, under `ctest -j8` only.** "Fold gutter
-  remaps a huge buffer's window-relative offsets back to the correct absolute line when
-  the window starts deep in the file" (`BufferViewHugeStructuralGutterTest.cpp`) failed
-  once during the BufferView decomposition work on 2026-09-08, then passed on
-  `--rerun-failed` and on two consecutive full `-j8` runs. **Recurred 2026-09-10**, same
-  test, same shape: plain `Failed` under `-j8`, passing immediately on `--rerun-failed`,
-  against a tree whose only changes were one benchmark line and this file. Two sightings
-  two days apart now, both load-dependent and neither reproducible in isolation. The test
-  builds a genuinely huge buffer and is one of the slower ones, so parallel-execution
-  timing remains the likeliest cause rather than anything in the fold windowing itself --
-  and note its sibling `Symbol gutter remaps a huge buffer's...` entry above, which SIGBUS'd
-  under the same conditions: these huge-file tests share a tmpfs `/tmp` and compete for it.
-  If a third sighting lands, treat the shared-tmpfs theory as the lead and check headroom
-  during the run before touching the windowing code, which is separately covered by the
-  rest of that file.
+- ~~**Two `BufferViewHugeStructuralGutterTest` flakes under `ctest -j8`**~~ — *root-caused
+  and fixed 2026-09-10.* The fold-gutter one failed plainly (2026-09-08, twice on
+  2026-09-10) and its sibling symbol-gutter one died with SIGBUS (2026-09-09); both passed
+  standalone every time, and both were logged here as load-dependent timing with a
+  shared-tmpfs theory. Neither was about timing or headroom.
+  All three `TEST_CASE`s in that file built their huge buffer from one shared path,
+  `/tmp/ned_huge_structural_gutter.c`. ctest runs each case in its own process and several
+  at once under `-j8`, so three processes wrote different content to the file the others
+  were reading through a live `mmap`. Both symptoms fall straight out of that: a reader
+  seeing another case's content fails an assertion, and one whose backing file is replaced
+  underneath its mapping takes SIGBUS. "Never reproduces standalone" was the tell, and it
+  is exactly what a cross-process race looks like.
+  Fixed by giving each case its own filename — the convention every other temp-file test
+  here already follows. Five consecutive clean `-j8` runs after, against two failures in
+  the six runs before. The general lesson for this list: a test that passes alone and fails
+  in parallel is a *shared resource* question first and a timing question second.
 
 One documented behavioral limitation, not a flake:
 

@@ -319,6 +319,7 @@ TEST_CASE("Every surface a widget actually paints is one a theme can discover", 
         "buffer.current_line", // BufferView/Paint.cpp
         "modeline",            // ModeLine.cpp
         "modeline.focused",    // ModeLine.cpp
+        "modeline.activity",   // ModeLine.cpp
         "tab.strip",           // TabBar.cpp
         "tab",                 // TabBar.cpp
         "tab.active",          // TabBar.cpp

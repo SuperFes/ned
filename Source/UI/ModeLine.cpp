@@ -31,6 +31,12 @@ namespace {
     // below works in per-column cell strings rather than raw bytes.
     constexpr std::array<std::string_view, 10> kSpinnerFrames = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
 
+    // Translucency phase 5, state-driven mode-line fill: how wide the
+    // travelling activity band is, in columns. Wide enough to read as motion
+    // on a 160-column bar, narrow enough that most of the bar is never tinted
+    // at any one moment.
+    constexpr int kActivityBandColumns = 12;
+
     std::string_view CurrentSpinnerFrame() {
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch());
         return kSpinnerFrames[static_cast<std::size_t>((elapsed / editor::kBackgroundActivitySpinnerInterval) % kSpinnerFrames.size())];
@@ -300,6 +306,7 @@ void ModeLine::Paint(Canvas c) {
     // gaps, and cells persist between frames.
     ClearCanvas(c, ChromeBackdrop(theme_));
     Fill(c, surface.fill);
+    PaintActivitySweep(c, !activities.empty());
 
     for (int x = 0; x < c.size().width; ++x) {
         const Point at{.x = x, .y = 0};
@@ -310,6 +317,62 @@ void ModeLine::Paint(Canvas c) {
     }
 
     ApplyTextFade(c, surface);
+}
+
+// Translucency phase 5: the state-driven half of "something is working".
+// A band of the "modeline.activity" surface travelling along the bar, over
+// the mode line's own fill and under its glyphs -- so it tints the bar rather
+// than the text, and needs no cooperation from anything that writes to it.
+//
+// It advances one column per kBackgroundActivitySpinnerInterval, deliberately
+// the same clock and cadence CurrentSpinnerFrame reads: the sweep and the
+// spinner are two views of one fact, and deriving them from different timers
+// is how they end up visibly disagreeing. No animation machinery of its own
+// either -- the composition root already re-arms a timer while any activity
+// is live, for the spinner.
+//
+// Gated on the same `activities` the spinner is, which means it also inherits
+// the minimum-visible-duration hold: a burst of work too short to see still
+// shows both, and neither outlives the other.
+void ModeLine::PaintActivitySweep(Canvas& c, bool active) const {
+    if (!active) {
+        return;
+    }
+    const Surface sweep = SurfaceFor(theme_, "modeline.activity");
+    if (!PaintsColour(sweep.fill)) {
+        return;
+    }
+    const int width = c.size().width;
+    if (width <= 0) {
+        return;
+    }
+
+    const int  band    = std::min(kActivityBandColumns, width);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch());
+    const auto ticks   = static_cast<long long>(elapsed / editor::kBackgroundActivitySpinnerInterval);
+    // Wraps within the bar rather than sweeping in from off-screen and out
+    // the far side. Two reasons, and the second is the real one: motion stays
+    // continuous (the band re-enters on the left as it leaves on the right,
+    // with no dead interval where nothing is moving), and exactly `band`
+    // columns are tinted at every instant, so the effect is observable
+    // without a test having to control the clock.
+    const int   start  = static_cast<int>(ticks % width);
+    const Point origin = c.Origin();
+
+    for (int i = 0; i < band; ++i) {
+        const int    x      = (start + i) % width;
+        const double u      = band > 1 ? static_cast<double>(i) / (band - 1) : 0.0;
+        const Color  colour = PaintColourAt(sweep.fill, u, 0.0, origin.x + x, origin.y);
+        if (colour.alpha == 0) {
+            continue;
+        }
+        // Empty character: a space would replace the bar's own glyph. See
+        // Overlay.cpp's PaintScrim for the same trap, and what it cost.
+        Cell wash;
+        wash.character.clear();
+        wash.background_color = colour;
+        c.Blend({.x = x, .y = 0}, wash);
+    }
 }
 
 void ModeLine::SetFocusProvider(std::function<bool()> provider) {

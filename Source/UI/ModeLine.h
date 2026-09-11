@@ -62,6 +62,11 @@ class ModeLine : public Widget {
     void SetLanguageAtPointProvider(std::function<std::optional<std::string>()> provider);
 
   private:
+    // The travelling background-activity band, painted over the mode line's
+    // own fill and under its glyphs. See the definition for why it shares the
+    // spinner's clock rather than owning a timer.
+    void PaintActivitySweep(Canvas& c, bool active) const;
+
     const ActiveBuffer&                         activeBuffer_;
     const editor::Mode&                         mode_;
     const Theme&                                theme_;
