@@ -19,6 +19,7 @@
 #include "Text/Buffer.h"
 #include "Text/Rope.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/Compositing.h"
 #include "UI/EchoArea.h"
 #include "UI/ListPopup.h"
 #include "UI/ModeLine.h"
@@ -558,6 +559,52 @@ TEST_CASE("A themed popup paints its own fill under the rows", "[ChromeSurface]"
     // Row text survives the fill: the glyph pass no longer writes background.
     REQUIRE(screen.PixelAt(4, 1).character == "o");
     REQUIRE(screen.PixelAt(4, 2).character == "t");
+}
+
+// Translucency phase 7's translucent-body step. A translucent fill used to be
+// cleared to the theme background first and therefore composited against
+// that, not against the code the popup covers -- which on a transparent theme
+// meant it dithered instead of blending at all.
+TEST_CASE("A translucent popup body composites against what it covers", "[ChromeSurface]") {
+    const SurfaceGuard   guard;
+    const Theme          theme   = DarkTheme();
+    const ned::ui::Color beneath = ned::ui::Color::RGB(0x80, 0x00, 0x00);
+    const ned::ui::Color wash    = ned::ui::Color::RGB(0x00, 0x00, 0xFF).WithAlpha(128);
+
+    ned::ui::Surface popup;
+    popup.fill = ned::ui::SolidPaint(wash);
+    ned::ui::SetSurfaceOverride("popup", popup);
+
+    Screen screen = PaintPopupOver(theme, beneath, 20, 8);
+
+    // PaintPopupOver lays the left half in `beneath` and the right half in
+    // 0xF0F0F0, so one uniform wash over the two must produce two different
+    // results -- which is only possible if it read what it covered.
+    const ned::ui::Color left  = screen.PixelAt(2, 3).background_color;
+    const ned::ui::Color right = screen.PixelAt(17, 3).background_color;
+    REQUIRE(left == ned::ui::BlendOver(beneath, wash));
+    REQUIRE(right == ned::ui::BlendOver(ned::ui::Color::RGB(0xF0, 0xF0, 0xF0), wash));
+    REQUIRE_FALSE(left == right);
+
+    // The glyph pass still runs unconditionally, so nothing of the text
+    // underneath shows through a translucent body.
+    REQUIRE(screen.PixelAt(4, 1).character == "o");
+}
+
+TEST_CASE("An opaque popup fill still clears first, so no stale cell survives", "[ChromeSurface]") {
+    const SurfaceGuard guard;
+    const Theme        theme = DarkTheme();
+
+    // PaintReadsDestination says false for an opaque paint and for one that
+    // paints nothing at all, so both keep the pre-existing clear -- the
+    // stale-cell bleed guard, not merely tidiness.
+    ned::ui::Surface popup;
+    popup.fill = ned::ui::SolidPaint(ned::ui::Color::RGB(0x10, 0x20, 0x30));
+    ned::ui::SetSurfaceOverride("popup", popup);
+
+    Screen screen = PaintPopupOver(theme, ned::ui::Color::RGB(0x80, 0x00, 0x00), 20, 8);
+    REQUIRE(screen.PixelAt(2, 3).background_color == ned::ui::Color::RGB(0x10, 0x20, 0x30));
+    REQUIRE(screen.PixelAt(17, 3).background_color == ned::ui::Color::RGB(0x10, 0x20, 0x30));
 }
 
 TEST_CASE("A blurred popup samples what it is covering", "[ChromeSurface]") {
