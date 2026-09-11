@@ -228,7 +228,7 @@ construction. A driver shipped tomorrow works on all 29 languages the day it
 lands; a language added tomorrow gets all 8 drivers the day it lands.
 
 That is also the pluggability answer. Drivers register the way
-`Vcs/VcsProvider.h` providers and `TestRun/TestRunConfig.h`'s parsers already
+`Vcs/Provider.h` providers and `TestRun/Config.h`'s parsers already
 do, including from Janet. A driver declares which traits it consumes, so the
 registry can report -- statically, at load time -- which languages can serve it
 and which cannot.
@@ -298,7 +298,7 @@ live, and it stays a separate decision:
 - **Injections as a real tree.** `Editor/EmbeddedDocuments.cpp` builds a virtual
   document in which every codepoint outside the embedded language is replaced by
   a same-byte-length, same-UTF-16-width Unicode whitespace filler, purely so
-  `Lsp/LspPosition.h`'s position math works unmodified. It is a good trick and
+  `Lsp/Position.h`'s position math works unmodified. It is a good trick and
   it is a trick. First-class injected subtrees plus a coordinate mapper replace
   it.
 - **Error recovery.** The standing external criticism is that tree-sitter errs
