@@ -79,8 +79,8 @@ would make the number mean nothing.
       `php` have LSP root markers, formatter and test-runner config;
       `java`/`kotlin`/`csharp`/`go`/`rust`/`bash` have the grammars and none of it. Someone
       arriving with a Go project gets a visibly worse editor than someone arriving with C++,
-      for no reason except nobody wrote the table. Pure config — `LspServerConfig.h`,
-      `DapConfig.h` and `TestRunConfig.h` already take this as data. See
+      for no reason except nobody wrote the table. Pure config — `Lsp/ServerConfig.h`,
+      `Dap/Config.h` and `TestRun/Config.h` already take this as data. See
       `Docs/LanguageCoverage.md` for the tier definitions.
 - [ ] **Add Lua and CMake grammars.** Both are Tier A by usage and both are absent; CMake is
       ned's own build system and Lua is the configuration language of half the tooling
@@ -107,449 +107,15 @@ regardless of how usable ned feels. Candidate criteria, all already present belo
 frozen · parsing-engine decision made either way · no known data-loss paths · release
 artifacts · the mdBook docs site.
 
-### Translucent UI & Theme Engine v2
+### Rendering & Keystroke Performance
 
-Full design: `Docs/Translucency.md` (techniques, compositing rules, phasing, risks).
-Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlphaProbe.cpp`.
+What is left of the translucency/theme-v2 work is performance, not appearance: the
+compositor and theme engine shipped, and these are the costs that surfaced while building
+them. Compositing design and the measurements behind it: `Docs/Translucency.md`,
+`Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlphaProbe.cpp`.
+`Tests/KeystrokeBench.cpp` is the instrument for all three — it exists because every CPU
+measurement said "fine" while typing felt bad.
 
-- [x] **Phase 1 — alpha in the compositor.** `Color::alpha`, `Screen::Blend` with all five
-      resolution rules numbered in its own body, `Compositing.h`'s `BlendOver`/`TintToward`/
-      `DitherGlyph`, unit-tested headlessly. (Was still marked open; verified against the
-      code 2026-09-10.)
-- [x] **Phase 2 — Paint/Surface types.** `Paint` with Solid/Gradient/Fade/Pattern/Blur/Stack,
-      `Shadow`, `Surface`, `Fill(canvas, box, paint)`, per-Paint `AlphaPolicy`, and
-      `EnsureContrast` as the contrast guard. (Same: marked open, verified built.)
-- [x] **Phase 3 follow-up — the last named-colour call sites.** Already closed by the
-      "No widget hard-codes a colour any more" audit below; re-verified 2026-09-10 (no
-      `Color::Bright*` use survives outside `Widget.h`'s own constant definitions).
-- [x] **Phase 4 — theme v2 (core).** Landed: `#rrggbbaa` tokens, the paint grammar and its
-      one-line string form (`Source/UI/PaintParse.h`), `$slot+8`-style references resolved
-      against the theme's own fields, named paints and per-surface overrides
-      (`Source/UI/ThemePaints.h`), the `ned/theme-gradient`/`ned/theme-surface` bindings
-      with the same deferred-until-a-real-Theme application `ned/theme-set` uses, and the
-      bundled `gradients.janet` presets plus its array sugar. Surfaces are *additive* over
-      Theme's flat colour fields rather than a replacement: every derived default is
-      byte-identical to what the widget paints today, so widgets migrate one at a time in
-      phases 5-7 instead of in one flag day.
-- [x] **Phase 4 remainder.** `Shadow`/`elevation` are settable from Janet now, alongside the
-      popup phase that consumes them: `ned/theme-surface "popup" "shadow" "dx dy radius
-      colour"` and `... "elevation" "<int>"`. They were held back because an authoring
-      surface for something nothing paints is worse than none; that is no longer the case.
-- [x] **Current-line highlight: the two-pass layering.** Settled, and by real planes
-      rather than the "no second `Screen` needed" this entry guessed at: `Screen` carries a
-      second cell grid flushed to an ncplane *below* the text one (`backing-plane`), and a
-      text cell with no background of its own emits `NCALPHA_TRANSPARENT` so it renders
-      against whatever the backing layer put down. That is what lets a wash run in its own
-      pass without the text pass clobbering it — the ordering problem this entry describes
-      simply stops existing when the two passes write different grids.
-      `buffer.current_line` is no longer empty either: it defaults to the detected desktop
-      accent at ~16% (`f8b91f0`).
-      The other half of this entry's wording — the *rest* of the washes — landed
-      separately: every tint below selection in `BrushForCell` (conflict ours/theirs/base,
-      documentHighlight, line-inspect, execution line, multibuffer diff, trailing
-      whitespace) used to assign a theme colour straight into the cell, so none of them
-      could carry alpha (`Screen::Flush` reads only a background's RGB) and all of them
-      plugged the hole outright over a transparent theme. They composite through
-      `OverlayBackground` now, like isearch/snippet-field/selection already did; an opaque
-      value composites to itself, so every existing theme is byte-identical.
-- [x] **Phase 4b — `M-x theme-gallery`.** Every themed surface and named paint as a live
-      swatch, with a WCAG contrast readout measured from the *composited* cells rather than
-      from theme fields — so a dithered fill, a translucent one and a `Fade` are each
-      reported as what they became. A `Widget`, not the buffer the design doc imagined: a
-      buffer is text and a swatch is a painted region. It reads the live registries every
-      `Paint()`, so a theme switch repaints it with no refresh step of its own.
-      The pipeline main.cpp ran inline became `UI/ThemeResolve.h` on the way past, because
-      the picker needs it too — swapping the base theme invalidates every paint that
-      resolved a `$slot` against the old one, which was a real pre-existing bug.
-      This entry originally also scoped `M-x reload-theme`, which shipped and was then
-      removed with `save-theme` and the whole theme-file story (below). Also picked up here:
-      a picker row for "None (detect)" that unpins the remembered theme, proper-case theme
-      display names with normalized `ThemeByName` lookup so existing `ned/set-theme` strings
-      keep working, and real pinning in `CandidateList` (the synthetic "Current theme" row
-      had been staying at the top only because ASCII uppercase sorts before lowercase).
-- [x] **The theme is config, not state.** The select-theme picker used to persist its pick
-      to `$XDG_STATE_HOME/ned/variables.json`, and that pin outranked `ned/set-theme` — so
-      `(ned/set-theme "nord")` in an init.janet was silently ignored once you had picked
-      anything else, with nothing on screen to say why. Two places to look, and the
-      implicit one won.
-      The pin is gone. Precedence is now one rule — *a theme is whatever a config file
-      says*: `ned/set-theme` (a project's `<root>/.ned/init.janet` beating the global one),
-      then the desktop probe, then `DarkTheme()`, with `ned/theme-set` overrides on top.
-      `Enter` in the picker applies for the session and then **asks** whether to write
-      `(ned/set-theme "...")` into the global init.janet — trying a theme and keeping one
-      are different acts, and ned never edits a config file unasked. The write
-      (`janet::WithSetThemeCall`, pure and unit-tested) replaces the last line that is
-      exactly a simple call, preserving indentation, else appends; it leaves a computed or
-      inline call alone and appends instead, which is correct rather than cautious since a
-      later `ned/set-theme` is the one that wins. Permissions are preserved.
-      Per-project themes stay `<root>/.ned/init.janet` — checked in, so a team shares them —
-      and the picker deliberately does not write there. `Editor/Variables.h` keeps its other
-      keys (sidebar width/visibility, active left panel, minimap), which really are state.
-- [x] **A trust-prompted project init's theme calls were dropped.** Found by testing the
-      precedence rather than by a report: `<root>/.ned/init.janet` loads inline *before* the
-      theme is resolved when it is already trusted, but a first open (or any content-hash
-      change) defers it to the y/n/a prompt, which runs long after. Its `ned/set-theme`/
-      `ned/theme-set`/`ned/theme-gradient` calls landed in the override store with nothing
-      left to apply them — the file loaded, said so, and half of it silently did nothing
-      until the next launch. `main.cpp`'s prompt callback re-runs
-      `ResolveConfiguredTheme()` now. Verified live: 0 matching cells before, 13 after.
-- [x] **No theme file, no theme generator.** `save-theme`, `reload-theme`,
-      `SerializeThemeJanet` and `ThemeJanetFilePath` are gone: a theme is `ned/theme-set`
-      calls in the user's own `init.janet`, over a bundled base. With 30 bundled themes and
-      `ThemeFromPalette` deriving a full theme from ~15 semantic colours, a theme worth
-      writing is a handful of overrides rather than a 117-key snapshot, which is what the
-      generator existed to produce.
-      That makes `Docs/Themes.md` load-bearing rather than explanatory — it is now the only
-      way to find out what is settable — so `ThemeKeys`/`ThemeValueByKey` expose the key
-      table directly and `Tests/ThemeKeyDocsTest.cpp` holds the docs' key reference against
-      it in both directions: a key cannot be added without being documented, and cannot be
-      documented after it stops existing. The theme tests that walked a serializer's output
-      to reach every field now walk that table instead.
-- [x] **Phase 5 — chrome adoption (widgets).** `ModeLine`, `TabBar` and `ProjectSidebar`
-      paint through themed Surfaces; derived defaults are byte-identical to what they
-      painted before, pinned by `Tests/ChromeSurfaceTest.cpp`. Verified live: a theme
-      setting `modeline.fill` to `[:x "$spectrum"]` ramps blue→teal→yellow→magenta across
-      the row, text intact.
-- [x] **Lines moving around while typing — fixed 2026-09-10 by making inline diagnostics
-      end-of-line.** Reported twice against live sessions; the inlay-hint fix (`7050577`)
-      removed the *garbling* but not the movement.
-
-      Found by counting rows instead of watching a terminal, which is what the previous
-      version of this entry said to do. Two measurements settled it:
-      - A headless probe (`Tests/LayoutStabilityProbe.cpp`, `ned_tests "[layoutprobe]"`)
-        typed 40 characters into a 2600-line C++ buffer and recorded the cursor's row and
-        column each frame: **zero** horizontal jumps and **zero** row moves. So the
-        structural gutters are not it — they never changed width, and nothing above the
-        cursor added or removed a row. That ruled out the candidate this entry had listed
-        first.
-      - The reported screencast's own frames, cropped to the gutter and compared pairwise:
-        the left edge of the text does **not** move (an earlier automated "leftmost ink"
-        measurement said it did, and was wrong — it was seeing the diff bar's own glyph
-        appear in a column that was already reserved). What does change is the annotation
-        rows: two in one frame, one in the next.
-
-      So the movement was entirely vertical and entirely the inline-diagnostic annotation
-      row. A server republishes constantly while you type, so diagnostics appear, move and
-      clear constantly — and each one was a real screen row arriving or leaving, shoving
-      every line below it.
-
-      `Editor/InlineDiagnostics.h` now carries a style. **EndOfLine is the default**: the
-      message is drawn after the line's own text, on a row the line already occupies, so
-      the row count cannot change. **Callout** is the original block with carets under the
-      flagged span, still available via `(ned/set-inline-diagnostic-style "callout")`, and
-      still what the three existing tests pin. What EndOfLine gives up is the carets; the
-      gutter glyph and the underline on the span still carry the location either way.
-      The guard that matters is one assertion: the second line lands on the same screen row
-      whether or not the first is carrying a diagnostic.
-
-- [x] **Semantic-token spans drifted too — fixed 2026-09-11.** Reported as "the colours,
-      underlines, bolds and italics start wrapping weird, but the text stays where it
-      should", immediately after the inline-diagnostic rows stopped moving and made this
-      the visible artifact. Third instance of one bug class, after inlay hints and (still
-      open) code lenses: an LSP result resolved to byte offsets at receipt, kept across the
-      edits that follow, and nothing relocating it.
-      The symptom is what makes it distinctive and is worth reading twice — *nothing moves*.
-      Semantic tokens only recolour, so a stale span does not misplace any text; it applies
-      the right styling to the wrong characters, and the run of colour/bold/italic/underline
-      drifts out of step with the code it belongs to as you type. It was written off here
-      earlier as "a cosmetic colour smear", which was accurate and still the wrong call.
-      Guarded the same way inlay hints were: stamp the applied set with the content
-      generation it was resolved against, serve nothing once the buffer moves past it.
-      Cheap and lossless here in a way it would not be elsewhere — the tree-sitter
-      highlighting underneath is a complete answer on its own, and is exactly what the
-      buffer shows before the server first replies.
-
-- [x] **Diagnostic ranges are relocated across edits now (2026-09-11).** Fourth and last
-      instance of the stale-LSP-offset class, and the one the "colours, underlines, bolds
-      and italics" report was really about: `Buffer::Diagnostic` ranges were replaced
-      wholesale on each publish and never relocated, so between publishes the underline sat
-      on whatever bytes the old offsets now named. Reproduced exactly — typing two
-      characters ahead of a flagged `alpha` left the underline on `"t alp"`.
-      Relocated rather than suppressed, unlike inlay hints and semantic tokens: those are
-      whole-result sets a fresh response replaces cheaply, and whose absence costs nothing
-      visible. A diagnostic also drives the gutter glyph, next-error navigation, the
-      echo-area hint and the inline message, so blanking it every keystroke would trade one
-      flicker for a louder one. It is the sixth tracked field kind in `Buffer`, using the
-      same `RelocateForInsert`/`RelocateForDelete` rule as point, mark, folds, snippet
-      fields and excerpts.
-
-      The **test shape** came from the report and is worth reusing for this whole class:
-      drive the real sequence headlessly (LSP feedback lands, then type), and assert an
-      *invariant* rather than a snapshot. The invariant that does the work here is a
-      negative one — **no underlined cell may hold a space**. An underline is the one
-      styling attribute that comes solely from a diagnostic (tree-sitter will happily
-      italicise the spaces inside a comment, but nothing legitimately underlines the gap
-      between two tokens), so an underlined space is a stale byte range every time, with no
-      false positives to sift. It catches drift that any "is the word still underlined?"
-      assertion passes straight through.
-
-- [x] **A publish's diagnostic positions are converted against the version the server was
-      sent — fixed 2026-09-11.** Closes the last piece of the underline drift: relocation
-      handled the edits *after* a publish, this handles the publish itself being computed
-      against an older document than the one it lands in.
-
-      `HandlePublishDiagnostics` converted `{line, character}` against `buffer->Content()`
-      as it stood at receipt. The sync is debounced and typing does not stop while it
-      waits, so a publish for version N routinely landed against version N+3's text — and
-      relocation then faithfully preserved the wrong position until the next publish caught
-      up. Reported as "the underlines still shift waiting for LSP redraw instead of working
-      with offsets", and reproduced exactly: a diagnostic on `alpha` came back naming
-      `"t alp"`.
-
-      No new storage was needed, which is the pleasing part: `BufferSyncState::lastSyncedText`
-      already holds the exact text the server was last sent (it exists as the
-      incremental-sync baseline). So convert against that, then remap the offsets onto the
-      live content. The `version` field stays unread deliberately — it is optional in the
-      spec, and `lastSyncedText` is the closest document we hold whether or not a server
-      sends one, so using it unconditionally beats dropping a publish and leaving the line
-      unmarked.
-
-      **`Text/OffsetRemap.h`** is the extraction that made it possible: `ChangedByteRange`,
-      `StorageContentEquals` and the bounded common-prefix/suffix walks moved out of
-      `Buffer.cpp`'s anonymous namespace, joined by `RemapOffset`/`RemapOffsetBetween`, and
-      `Buffer` now uses the shared copy. Pure and storage-only, so it unit-tests with no
-      `Buffer`, no `Manager` and no `Screen`. The model is one contiguous changed region
-      rather than a real diff — exact for what an editing session produces between two
-      nearby versions, and its limit (two distant edits report as one span) is pinned by a
-      test rather than left to be discovered.
-
-      The undo/redo gap noted below is closed in the same pass:
-      `Buffer::UpdateDiagnosticsForRestore` relocates diagnostics across a restore the way
-      `UpdateExcerptRangesForRestore` already did for excerpts, recovering the
-      offset/length a restore does not have in hand from the diff. Verified by watching the
-      test produce `"pha ="` without it.
-
-- [x] **The debounce window itself was the last place a diagnostic could drift — fixed
-      2026-09-11.** Re-reported the same day with a screencast, against a build that
-      already had the fix above: the underline still slides a couple of columns off the
-      token while typing and snaps back when the burst ends. Two distinct gaps, both
-      between a slice being *resolved* and that slice reaching `SetDiagnostics`:
-
-      - **The debounce delay.** `HandlePublishDiagnostics` converts correctly on arrival
-        and then arms a `DiagnosticsDebounceMs()` (500ms default) timer. Typing does not
-        stop for it, so the offsets that finally land are however many keystrokes behind.
-        At a measured ~3 characters/second that is the two-column shift the screencast
-        shows, exactly.
-      - **Every other source's slice.** `PushMergedDiagnostics` rebuilds the whole set
-        from `diagnosticsBySource_`, so a source that has not published in a while — the
-        prose checker, typically — has its original offsets re-applied verbatim the moment
-        any *other* source fires, throwing away every relocation `Buffer` had done for it
-        in between. Unbounded, not 500ms.
-
-      One fix for both: each slice now carries the document its offsets were resolved
-      against (`DiagnosticSlice::resolvedAgainst`, plus the generation stamp that makes
-      "nothing changed" O(1) instead of a full byte-compare), and `PushMergedDiagnostics`
-      remaps through `Text/OffsetRemap.h` and rebases the slice before merging. Affordable
-      for the same reason the code-lens snapshot is: `ITextStorage::Clone` is O(1).
-
-      Found while pinning the cross-source case: `Buffer::RelocateDiagnosticsForInsert`
-      did the **opposite of its own comment** at one boundary. The comment promised that
-      text inserted exactly at a diagnostic's start pushes it along rather than extending
-      it; the test was `insertOffset < startByte`, so typing in front of a flagged token
-      grew the underline over what you had just typed. `<=` now, with both boundaries
-      pinned by their own sections, and `RebaseSliceOntoLiveContent` gives a start the same
-      right gravity (`RemapOffset` itself stays gravity-free — that is the caller's call to
-      make, and `Buffer`'s other tracked fields want the other answer).
-
-- [x] **Code lenses relocate now too (2026-09-11) — the stale-offset family is closed.**
-      The loudest failure of the four, once it does happen: a lens owns a whole extra
-      screen row above the line it annotates, so a stale offset does not merely misplace a
-      label, it puts that row above the wrong line and every line below moves.
-
-      Two halves, and the test exercises them separately because either alone leaves a
-      real case broken:
-      - **At receipt**, positions are converted against the document as it stood when the
-        *request* went out (`RequestCodeLenses` already refuses to ask unless the server is
-        in sync with it), then carried onto whatever the buffer has become. Previously they
-        were converted against the live buffer, which by then was several edits ahead.
-      - **On read**, `CodeLensSpans` carries its cached set forward whenever the buffer's
-        generation has moved. Relocated rather than suppressed for the same reason
-        diagnostics were: blanking the set would make the row itself blink in and out while
-        you type, which is the movement this exists to stop.
-
-      The catch-up lives on the read rather than at each edit because `Manager` has no hook
-      into `Buffer`'s edits — and it is cheap: one bounded diff per generation change,
-      amortized over however many reads that generation sees. What makes holding a document
-      snapshot per buffer affordable at all is that `ITextStorage::Clone` is O(1)
-      (structurally shared, never materialized); a `std::string` copy per buffer would not
-      have been.
-
-- [x] **Phase 5 — focus scrim.** Shipped 2026-09-10. While an overlay holds the keyboard,
-      everything it does not cover is washed with a new `scrim` surface. The
-      "composition-root hook" this entry said it needed turned out to already exist:
-      `OverlayHost` knows its entries, their boxes and the theme, and paints between the
-      widget tree and the overlays, so it owns the pass outright and `main.cpp` is
-      untouched. Gated on *focus* rather than visibility — a completion popup is up while
-      you type into the buffer behind it.
-      Two things the implementation had to be corrected on, both caught by tests that
-      failed first:
-      - **A background-only scrim is invisible where it matters.** Over an opaque theme the
-        buffer's cells already hold the theme background, so washing the background
-        composites that colour onto itself. It is the *foreground* wash (Blend's "a colour
-        with no glyph of its own moves the colour already there") that dims the text.
-      - **`Cell::character` defaults to `" "`, and `Screen::Blend` treats a space as a
-        glyph the caller meant to write.** A wash left at the default erases the text it
-        lands on. This also means **`PaintShadow` had been erasing glyphs since phase 7c** —
-        its own comment claimed Blend would "tint its foreground" over a glyph, and the
-        default space made that false. Fixed and pinned in the same pass, with a test that
-        fails against the old code.
-- [x] **Phase 5 remainder — state-driven mode-line fills.** Shipped 2026-09-10. A band of a
-      new `modeline.activity` surface travels along the bar while any background activity is
-      live (LSP indexing, a test run, a large load), painted over the mode line's own fill
-      and under its glyphs so it tints the bar rather than the text.
-      Indeterminate rather than a progress bar, and that is a data decision rather than a
-      shortcut: `BackgroundActivity` carries only a free-text `detail` ("indexing (45%)"),
-      so a determinate fill would mean parsing a percentage back out of a human-readable
-      string per frame. If a structured percentage ever lands on that struct, this becomes
-      a real progress fill without touching the theme side.
-      It advances one column per `kBackgroundActivitySpinnerInterval`, deliberately the same
-      clock the spinner beside it reads — two views of one fact, and deriving them from
-      separate timers is how they end up disagreeing on screen. No animation machinery of
-      its own: the composition root already re-arms a timer while activity is live. The band
-      wraps within the bar rather than entering from off-screen, which keeps the motion
-      continuous and, incidentally, makes it testable without controlling the clock.
-- [x] **Dock edge falloff.** `panel`'s derived default is a horizontal walk now rather than
-      a flat colour -- ~4% lifted at the dock's outer edge, settling to exactly the buffer
-      background at the seam, direction chosen by the background's own luminance (a fixed
-      "toward white" measured as a 1-level no-op on gruvbox-light). `LeftDock` and
-      `VcsPanel` paint through the `panel` surface `ProjectSidebar` already used, so the
-      rail and border columns ramp with the interior instead of sitting flat beside it. A
-      transparent theme is untouched by construction.
-- [x] **Surfaces do not carry traits, and that is settled.** Decided rather than deferred:
-      a `Surface` is *paints for a region*, and a paint interpolates -- that is what makes a
-      gradient a gradient. A trait is binary per cell, with no meaningful "60% bold", so it
-      would be a field that cannot take part in the one thing the type exists for. Traits
-      stay a `Brush` concern, written into `Paint.h` beside `Surface` so it is not
-      re-litigated.
-      The maintenance complaint behind the entry was real and is fixed separately:
-      `Brush::ApplyTextTo` is `ApplyTo` minus the background a surface fill owns, and it
-      replaced nine hand-unrolled copies of the same four trait assignments across
-      `EchoArea`, `ScrollBar`, `ListPopup`, `TreeView`, `TabBar`, `VcsDiffPreview`,
-      `MemoryImageView` and `ThemeGallery` -- duplication that appeared purely because every
-      surface adoption had to drop `ApplyTo`'s one background line by hand. `ApplyTo` is
-      defined in terms of it now, with a test pinning that the two cannot drift.
-      Note the asymmetry this leaves, since it is a real one: a surface derived from a
-      `Brush` (`tab`, `tab.active`, `echo`, `scrollbar`) inherits that Brush's 28 trait keys
-      for free, so `active_tab_bold` already works; a surface with no Brush behind it
-      (`popup`, `panel`, `modeline`) has no trait expression at all. Nothing has needed one.
-- [x] **`DarkTheme`'s ANSI colour names are real RGB now** (`LightTheme` never had any).
-      One colour per constant, so every equality the theme expressed survives; the two
-      *background* uses got purpose-chosen values instead, since a colour that reads as
-      text is not a colour text reads on. `Tests/ThemeTest.cpp` now enforces a contrast
-      floor across every bundled theme, with the eight known deviations (two low-contrast
-      light clones, plus solarized-dark's search highlight) listed by name.
-- [x] **No widget hard-codes a colour any more.** Audited and fixed: the sidebar and VCS
-      panel's status rows, `VcsDiffPreview`, the diff/coverage/test gutters, the blame age
-      ramp, and the REPL/ACP/debug-console caret cells. Five new semantic `Theme` fields
-      carry what the diagnostics did not (`successForeground`, `vcsModifiedForeground`,
-      `vcsUntrackedForeground`, `blameRecentForeground`, `blameOldForeground`); everything
-      else reuses an existing field whose meaning already matched — a failed test is
-      `diagnosticError`, an uncovered line is too, a dim gutter affordance is
-      `lineNumberForeground`. All five derive from the palette in `ThemeFromPalette`, so
-      every cloned theme got them for free.
-- [x] **`--detect-theme` removed, and with it `BuildDetectedTheme`'s seven-ANSI-slot gap.**
-      The terminal-colour probe had to run before anything read stdin, so it could only ever
-      be a separate CLI invocation writing a `theme.txt` cache — and a cache goes stale,
-      which is exactly what made a detected theme show the fallback's colours through for
-      every field the probe never mapped. Deleted rather than extended: the desktop probe
-      (`UI/DesktopThemeProbe.h`) needs no raw stdin, no cache and no separate invocation, and
-      runs on every launch. Gone with it: `UI/TerminalColorProbe.*`, the `--detect-theme`/
-      `--transparent` flags, precedence step 3, and `ThemeFile`'s plain `key=value` format.
-      `ThemeFile` keeps its Janet half (`SerializeThemeJanet`/`SaveThemeJanetFile`/
-      `ThemeJanetFilePath`/`SetThemeColorByKey`) and the shared `kColorKeys`/`kBrushKeys`
-      table — that is `save-theme` and `ned/theme-set`. The theme tests that walked the
-      `key=value` output to enumerate every field now walk the Janet output instead, so the
-      per-field coverage survived the format going away.
-- [x] **Phase 6 — text-layer adoption.** The tint half is done (every wash in
-      `BrushForCell` composites, so all of them carry alpha), and `buffer.selection` /
-      `buffer.search` are real Surfaces now -- sampled across the whole viewport, so a
-      gradient selection is one wash the selection reveals rather than a ramp per selected
-      run. Aligning the derived default with what the buffer paints turned up a latent
-      mismatch on the way: `buffer.selection` derived from the raw `selectionBackground`
-      while the buffer painted `SelectionFill`'s softened version, so the gallery had been
-      showing a selection swatch nothing on screen matched.
-      The current-line gradient wash ships now, and so does a selection one -- see
-      `Docs/Themes.md`; the bundled `focus` preset had been written for exactly the former
-      ("current-line wash", in gradients.janet) and never wired to anything.
-      The recency glow ships too (`Editor/RecencyGlow.h`, `buffer.recency`): edited ranges
-      are derived by diffing `UnsavedChangeRanges()` on a `ContentGeneration()` move and
-      *subtracting the previous set*, since those ranges are merged and continuous typing
-      grows one rather than appending -- without the subtraction every edit re-glows
-      everything typed since the last save. Timestamps live in `BufferView`, not `Buffer`:
-      `Text/` knows nothing above it, and a timestamp is a UI concern. The animation
-      re-arms a 60ms one-shot only while something is fading, the background spinner's
-      exact shape, so an idle editor costs zero wakeups. It tints the edited *glyphs*
-      rather than washing the row behind them, which keeps an animation frame to one or two
-      changed cells instead of a hundred and sixty, and its thread is created once and
-      parked (`UI/EventLoop.h`'s `AnimationTimer`) rather than spawned per tick.
-      It was **off by default** for a while, blamed -- in good faith, three times -- for
-      typing lag it never caused; the cause was unbounded whole-document syntax
-      highlighting, 134ms per keystroke against about 1ms for this. With that fixed
-      (~25ms), typing measures the same with the glow on as off (24,588us against
-      24,650us), so it is on again.
-      Closed 2026-09-10 with the last two pieces:
-      **`buffer` has a consumer.** It was derived, published in `SurfaceNames()` and
-      documented while being painted by nothing, so `ned/theme-surface "buffer" ...`
-      parsed, stored and did nothing. `BufferView::PaintBufferSurface` paints it after the
-      content loop, not before -- "has anything louder claimed this cell" is a question
-      about the painted *result*, not about paint order, and a cell still holding exactly
-      `theme_.background` is one no selection, search hit, snippet field, diff tint or
-      conflict wash wanted. Same three-way rule the current-line wash already used
-      (backing plane / composite in place / yield), and a derived default that composites
-      the theme background onto itself, so an unthemed buffer is byte-identical.
-      That change moved the goalposts for every wash painted after it, which is the
-      interesting part: `PaintCurrentLineHighlight` tested
-      `cell.background_color == theme_.background` to mean "unclaimed", and the moment a
-      themed `buffer` fill composited into those same cells the current line silently
-      vanished. `BaseBackgroundAt` is that predicate extracted and made per-cell (a
-      gradient body means the base differs by column). Pinned by a test that fails
-      against the old predicate -- and only on an *opaque* theme: `DarkTheme`'s background
-      is `Color::Default`, which sends every wash down the backing-plane branch instead,
-      so the fixture default would have passed either way.
-      **Virtual text at real alpha.** An inlay hint now takes its background from the
-      anchoring byte's own `BrushForCell` rather than assigning `theme_.background` -- it
-      is virtual text drawn *inside* a real line, and writing the theme background punched
-      a visible hole through a selection at exactly the hint's width (a real bug, found by
-      writing the test first and watching it fail). Sampled per column, since those washes
-      are Surfaces now and a gradient one differs across the hint.
-      `GhostForegroundOver` then resolves a translucent `ghost_text_foreground` against
-      what is behind the cell; an opaque one -- every bundled theme -- is returned
-      untouched, so this is opt-in. Stated limit rather than hidden: the two washes that
-      run after the content loop can still composite into a cell whose ghost foreground
-      was already resolved, so virtual text over the current line resolves against that
-      line's background as it was a moment earlier. Both are deliberately faint; closing
-      it means a second full walk of the viewport, which is not worth it for the size of
-      the error.
-- [x] **Syntax highlighting cost 134ms per keystroke; it is now ~25ms.** Measured
-      2026-09-10 with `Tests/KeystrokeBench.cpp` (hidden; `ned_tests "[keybench]"`), on a
-      160x45 view of ROADMAP.md -- 128 KiB of markdown, the file actually reported as
-      unusable. Not a regression at any point: the same benchmark against `939d3b5` gave
-      48.7ms for the C++ case.
-
-          buffer + minimap, before          134,477 us
-          ...one shared highlight cache      ~76,000 us
-          ...minimap debounced               80,267 us
-          ...highlight query windowed        25,280 us
-
-      Three separate causes, none of which was the animation everyone suspected:
-      - **The minimap doubled everything.** It kept its own per-buffer highlight cache,
-        keyed identically to `BufferView`'s and filled by the same whole-document call, and
-        it is on by default. `Editor/HighlightCache.h` is the one cache both read now.
-      - **The minimap re-highlighted per keystroke.** It colours the whole document and is
-        a few pixels wide, so it now refreshes 250ms after the buffer goes quiet and rides
-        out a typing burst. Debounced rather than backgrounded: a `Mode`'s highlight
-        closure captures a shared `Parser` and `IncrementalParseCache`, so off-thread would
-        race the main thread on it.
-      - **The query was never bounded.** `HighlightFunction` takes a `HighlightWindow` now,
-        `Query::CapturesInRange` bounds the *cursor* while leaving the *tree* whole (so a
-        construct overlapping the window keeps its true extents), and
-        `CollectInjectedHighlightSpans` skips injected regions with no bytes in it --
-        markdown injects `markdown_inline` into *every* inline node, which was thousands of
-        sub-parses per keystroke to paint one screen. `BufferView` asks for the viewport
-        padded a screenful each way; the cache serves any request an existing entry's
-        window contains, so ordinary scrolling is a hit.
-      Verified live, not just benchmarked: a C++ file shows 45 distinct syntax colours at
-      the top and 46 after paging deep into it; markdown likewise.
 - [ ] **Highlighting is still parse-bound for large non-markdown files.** The windowing
       above bounds the *query*; the incremental re-parse underneath it is untouched, and
       for C++ that is what dominates -- 2000 lines still measures ~32ms per keystroke while
@@ -607,271 +173,6 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       the backing plane is cleared wholesale each frame (`ClearBacking`), so it needs the
       same treatment or it defeats the point; and a `Screen` is reconstructed on resize, so
       the first frame after one must write everything.
-- [x] **`echo` and `scrollbar` adopted; four advertised surfaces still have no consumer.**
-      The 2026-09-10 audit found six surfaces derived and listed but painted by nothing, so
-      `ned/theme-surface` on any of them parsed, stored, and did nothing visible. `echo` and
-      `scrollbar` were the two that were never scoped into a phase at all — both widgets
-      applied a flat `Brush` per cell — and they now paint through their Surface on
-      `ModeLine`'s clear/fill/glyphs/fade order, with byte-identical derived defaults pinned
-      in `ChromeSurfaceTest`. `ScrollBar` takes the whole `Theme` rather than one `Brush` to
-      get there; its thumb still reads by inverting, so it survives whatever a fill turns
-      out to be. The echo area's dim/ghost shades now interpolate toward the *painted*
-      background rather than the flat Brush colour — identical for the default, and the only
-      reading that stays right under a gradient.
-      Every advertised surface has a consumer now: `buffer.selection`, `buffer.search` and
-      `buffer` in phase 6, `popup`'s translucent bodies in phase 7d, and `scrim` arrived
-      with a consumer in phase 5.
-      (`tab.strip` was a seventh case in the other direction — painted by `TabBar` and
-      derived by `DerivedSurface`, but missing from `SurfaceNames()`, so it was invisible to
-      the gallery and the docs while working perfectly for anyone who knew the name.
-      Published, and `PaintParseTest` now fails if a widget paints a surface the list does
-      not carry.)
-- [x] **Phase 7 — popups.** 7a landed: `ListPopup` and `TreeView` paint their
-      bodies through the `popup` Surface, derived defaults byte-identical, and **blur works**
-      -- an overlay paints after the tree beneath it, so the cells under a popup already
-      hold what it covers, which is exactly what `FillBlur` samples. Confirmed live: an
-      M-x popup over code shows a range of backgrounds rather than one flat colour.
-      A blur must not have its destination cleared first, so the interior's background is
-      cleared only when the fill does *not* read it — which also keeps the transparent-theme
-      case (a derived fill that paints nothing) from bleeding stale cells, the bug the
-      pre-existing "leaves no stale cells" tests caught during this work.
-      Still open:
-      - [x] **7b — border as a paint.** `Border.h`'s `RecolourBorder` walks the frame ring
-        after `DrawBorder` and re-samples each cell's *foreground* from the surface's border
-        paint, at that cell's own position in the canvas -- so `x` sweeps the top and bottom
-        edges, `y` runs down the sides, `diag` goes corner to corner. Foreground only: a
-        border is a line, and leaving the background lets a widget's fill run underneath the
-        frame. A translucent border tints the existing glyph colour rather than dithering,
-        since a frame cell already carries a glyph. Runs between `DrawBorder` and
-        `DrawBorderTitle`, so the title stays its own accent rather than being swept
-        through. The derived solid default recolours to the colour `DrawBorder` already
-        used, so an unthemed frame is byte-identical.
-      - [x] **7c — `Shadow` and `elevation`.** `OverlayHost` paints each overlay's shadow,
-        since it falls outside the widget's own `Box` and a `Canvas` clips to its box --
-        the host is the only thing knowing both the box and the whole `Screen`.
-        `overlays.Add(...)` learns each overlay's surface name (defaulting to `"popup"`),
-        and `SetTheme` wires the theme; unset means no shadows, so every headless test is
-        unaffected. `PaintParse`'s `ParseShadow` reads `dx dy radius colour`, the colour
-        through the same `ParseColorStop` paint stops use.
-        Elevation multiplies the offset and **defaults to 0, meaning no shadow**, which is
-        what keeps this inert until a theme asks. It deliberately does *not* affect
-        z-order: overlays still stack in add/show order, and sorting by elevation would
-        change existing behaviour nobody asked to change. The shadow never darkens cells
-        the overlay itself covers, and blends rather than assigns, so `Screen::Blend`'s own
-        rules decide what a shadow means over a glyph (tint) versus an empty cell
-        (composite, or dither on a transparent theme).
-      - [x] **7d — translucent bodies.** Closed 2026-09-10, and this entry's own premise
-        was wrong: it said the fix was "the backing-plane approach, not another clear rule",
-        and it is in fact exactly a clear rule. The reasoning that changed it — a cell grid
-        holds one glyph per cell, so what is *under* a popup is overwritten no matter which
-        plane its background lives on. There is no arrangement of planes that shows the
-        text beneath a popup through it. What a translucent body can honestly mean is that
-        the popup's background composites with the *colours* the cells held, which is
-        precisely what blur already does successfully by skipping the clear.
-        So `PaintReadsDestination` replaced the hand-rolled `Blur || Stack` test duplicated
-        across all five popup-shaped widgets, and now answers true for a Fade and for any
-        paint carrying a translucent stop. The stale-cell guard is untouched: a paint
-        contributing nothing still answers false and still clears, which is the case that
-        rule existed for. The glyph/trait reset was always unconditional, so no text
-        underneath shows through either way.
-        Pinned by a test that fails against the old rule: one uniform translucent wash over
-        a two-colour backdrop has to produce two different results.
-      - [x] **Every popup-shaped widget adopted.** `ThemeGallery`, `MemoryImageView` and
-        `VcsDiffPreview` join `ListPopup`/`TreeView` on the same `popup` Surface and the
-        same clear-unless-the-fill-reads-it rule, so one `ned/theme-surface "popup" ...`
-        reaches all five. `VcsDiffPreview`'s rows write foreground and traits only -- every
-        brush there varies only its foreground (added green, removed red, context dim), so
-        the fill is what the row sits on. The gallery now shows its own `popup` row applied
-        to itself, which is the most direct feedback it can give.
-      - Deferred until someone wants it: per-popup surface names (`popup.completion` →
-        `popup`, dotted fallback like `SyntaxTheme`'s capture inheritance). One shared
-        `popup` is what the design doc asks for.
-- [ ] **Jank replaces Janet** — replace the internal scripting representation with
-    [jank](https://github.com/jank-lang/jank). Feasibility was investigated against a
-    real local install on 2026-09-08 (`jank-0.1-alpha`, `~/.local`, Clang/LLVM 23);
-    everything below is measured on this machine, not read off documentation. **Verdict:
-    an embedded jank with a working JIT is real and already builds today** — a
-    from-scratch host program that initializes the runtime, loads `clojure.core`, evals
-    new source at runtime, and calls jank functions from C++ took an afternoon. The
-    blockers are not "can it be embedded"; they are memory footprint, a
-    garbage-collector/threading contract that ned currently violates 39 times over, and
-    0.1-alpha API ergonomics.
-
-    **The central fork: static vs. dynamic runtime.** The install ships two archives.
-    `libjank-static-runtime.a` links no LLVM at all (a hello-world embed is 2.7 MB, 0.5
-    ms to init) but refuses at runtime with *"The 'eval' feature is unsupported in a
-    static runtime"* — it is AOT-only. `libjank-dynamic-runtime.a` carries the codegen
-    and C++-interop objects (`cpp_*`, `builder`, `clang`) and does eval, at the cost of
-    dynamically linking `libclang-cpp.so.23` (84 MB) and `libLLVM.so.23` (182 MB). Ned's
-    whole scripting model — `init.janet` evaluated at startup, `ned/register-command`
-    defining commands at runtime, a REPL panel, project-local plugins — is eval. **Ned
-    needs the dynamic runtime, and therefore ships a hard dependency on a matching
-    Clang/LLVM.** That is the single largest difference from Janet, which is a ~1 MB
-    library with no toolchain dependency at all.
-
-    **Measured, embedded, on this machine** (host program in
-    `git log --grep=jank-feasibility` if kept; recipe below):
-
-    | | |
-    |---|---|
-    | PCH read (68 MB, warm page cache) | ~20 ms |
-    | `runtime::context` construction | ~80 ms |
-    | `clojure.core` load (AOT-compiled into the archive) | ~25 ms |
-    | first eval — runtime usable | **~170 ms** |
-    | first `defn` after that (one-time JIT warm-up) | ~85 ms |
-    | every subsequent form | **0.1–0.2 ms** |
-    | 50-form config file (the `init.janet` shape) | ~5 ms |
-    | 100k C++→jank calls | ~19 ms (0.19 µs/call) |
-    | process wall time, start to exit | 0.32 s |
-    | **peak RSS** | **~237 MB** |
-
-    Startup and call cost are fine — a realistic config file is ~5 ms, and the
-    per-form cost after warm-up is negligible. **RSS is the problem**: ned with a file
-    open is currently ~28 MB resident. Embedding jank makes the floor ~10× that before
-    a single buffer is loaded, which sits badly beside the huge-file work that went in
-    specifically to keep memory bounded.
-
-    **Boehm GC and ned's threads — smaller than it first looks.** The GC is not a choice:
-    BDWGC (`pthread_support.c.o`, `mark.c.o`, `thread_local_alloc.c.o`, ...) is statically
-    baked into both jank archives, and jank's object model is built on it
-    (`new (UseGC) context{}`, `IMMER_HAS_LIBGC=1`). Swapping in another GC library is not
-    an available move; ned can only manage its *interaction* with the one jank brings.
-
-    Upstream bdwgc already ships the fix, and ned would invent nothing — but its
-    *zero-effort* mechanism doesn't reach us. `gc_pthread_redirects.h` macro-redirects
-    `pthread_create` → `GC_pthread_create` (present in the archive, along with
-    `GC_pthread_join`/`_detach`/`_exit`/`_cancel`/`_sigmask`), which auto-registers the
-    thread with no application code at all. Verified: a raw `pthread_create` through
-    that macro survives allocation + collection cleanly. Equally verified: **the same
-    build with `std::thread` still aborts**, because libstdc++ makes the `pthread_create`
-    call inside an already-compiled `.so` where no macro of ned's can reach it.
-    `-Wl,--wrap=pthread_create` (bdwgc's `GC_USE_LD_WRAP` path) doesn't rescue it either
-    — same reason, and this jank build ships no `__wrap_pthread_create` anyway.
-
-    For `std::thread` the answer is bdwgc's explicit API, which is all the "wrapper"
-    anyone needs — `GC_get_stack_base` + `GC_register_my_thread` on entry,
-    `GC_unregister_my_thread` on exit, about eight lines of RAII over the library's own
-    functions. Verified under load: four `std::thread`s doing 500 allocations and 40
-    collections each, concurrently, all clean. `gc_cpp.h` is no help here; it covers
-    allocation (`class gc`, `gc_cleanup`), not threads.
-
-    Three thread classes, each measured:
-
-    | thread does | result |
-    |---|---|
-    | never touches jank | **safe unregistered** — 50 main-thread collections, 15k spins, fine |
-    | allocates / calls into jank | **hard abort** — `Collecting from unknown thread`, core dump |
-    | merely *holds* a jank ref | **silent corruption** — object collected and its memory reused under load |
-
-    That third row is the dangerous one, and it only shows up under pressure: with light
-    load the held value looks intact, and it takes ~400k allocations plus 200 collections
-    on another thread before the contents turn to garbage. So the rule is not "threads
-    that allocate" but **"any thread that touches a jank object at all must be
-    registered"** — there is no safe read-only tier.
-
-    The good news is that ned already satisfies this almost for free. Scripting is
-    main-thread-only *by existing design*: every background subsystem marshals through
-    `EventLoop::Post`, and the contract is written down (`TestRunner.h`: "including a
-    Janet-backed parser -- always runs on the main thread"; `VcsRunner.h` the same, which
-    is precisely why a Janet VCS provider splits argv-building from subprocess-running).
-    None of the four files including a Janet header creates a thread. BDWGC registers the
-    main thread itself at `GC_init`. So the initial port needs **zero** thread
-    registration — the 39 `std::thread`/`std::jthread` in the tree are all in the
-    "oblivious" row.
-
-    What that buys is an invariant to *defend*, not a migration to perform: the
-    eight-line RAII scope above, kept on the shelf for the day some thread legitimately
-    needs to touch scripting, plus a debug-build assertion in the binding layer that it is
-    running on the registered thread. Worth having early, because the failure it guards is
-    silent corruption rather than a crash.
-
-    **What ned would actually have to change.** Smaller than it looks: only four files
-    outside `Source/Janet/` include a Janet header (`Editor/JanetSymbolComplete.cpp`,
-    `UI/JanetReplPanel.cpp`, `UI/BufferView.cpp`, `main.cpp`). `ScriptingSession`'s
-    language-agnostic seam did its job — the other ~117 files mentioning Janet only name
-    `ned/set-*` bindings in comments. The real work is the 149 `env.Register<>` bindings
-    in `EditorBindings.cpp` (3.2k lines across `Source/Janet/`), `JanetVcsProvider`, the
-    bundled `vcs-git.janet` plugin, ~1.2k lines of Janet-specific tests, and every
-    user's `init.janet`.
-
-    One genuine architectural *win* to weigh against all this: `jank_closure_create`
-    takes a `void *context`. Janet's `JanetCFunction` has a fixed signature with nowhere
-    to put one, which is the entire reason `ScriptingSession`'s
-    `ScriptingSessionScope`/`CommandContextScope` current-session globals exist — the
-    codebase's one deliberate piece of global-ish state. Closures with context delete
-    that workaround outright. (Partially verified: a native closure interned as
-    `ned/insert` *is* invoked from jank source, but neither shape tried for retrieving
-    the context inside the callback worked, and both failed by crashing rather than
-    erroring — representative of the alpha's rough edges.)
-
-    **Things not yet raised that will need answers:**
-    - **`clojure.core` cannot be bootstrapped through the C API.** `jank/c_api.h` has no
-      module loader; `main.cpp`'s sequence (`__rt_ctx = new (UseGC) context{}`,
-      `jank_load_clojure_core_native()`, `module_loader.add_load_fn`, `load_module`) is
-      C++-only. Ned must adopt jank's C++ headers, not just the C shim.
-    - **Inversion of control.** `jank_init_dynamic(argc, argv, ..., fn)` calls *your*
-      function; jank wants to own the outermost frame. Ned's `main.cpp` composition root
-      and `EventLoop::Run` would have to move inside that callback.
-    - **`-rdynamic` is mandatory and conflicts with `--gc-sections`.** The JIT resolves
-      symbols against the host executable's dynamic symbol table; without it, evaluating
-      anything fails with `Symbols not found: [...jank::runtime::obj::small_integer...]`.
-      Verified both ways. Ned's link line and binary size are both affected.
-    - **PCH as a deployment artifact.** The dynamic runtime needs a 68 MB
-      `incremental.pch`, generated per install into
-      `~/.cache/jank/<target-triple>-<binary-version-hash>/`. Ned would have to locate,
-      version-match, and possibly generate it — and decide what happens when it's absent
-      or stale.
-    - **Sanitizers.** ned's suite is expected to stay clean under ASan/UBSan and treats
-      findings as real bugs. An ASan build of the embed links and runs, but
-      LeakSanitizer reports jank's own allocations (`jit::processor` `strdup`s and
-      similar). A suppression file becomes a permanent fixture, which weakens the
-      guarantee the current policy rests on.
-    - **`jank print-cflags` is not yet a usable build integration.** It emits
-      `-I/Development/Jank/compiler+runtime/...` build-tree paths from wherever jank was
-      compiled, an unresolved `-Ljank_lib_link_dirs_prop-NOTFOUND`, and omits the
-      LLVM/clang/crypto libs the dynamic runtime actually needs (`-lclang-cpp -lLLVM
-      -lcrypto` had to be added by hand). It also emits `-l` flags mixed with `-I`, so
-      argument order matters. A CMake integration would be hand-rolled today.
-    - **Invasive global compile flags.** jank's flags include `-femulated-tls`,
-      `-fno-stack-protector`, `-D_FORTIFY_SOURCE=0`, `-fwrapv`, `-DPOINTER_MASK=...`,
-      `-DGC_THREADS`, `-D_GLIBCXX_USE_CXX11_ABI=1`. How far these have to propagate
-      through `ned_lib` (versus being confined to the TUs that include jank) is
-      unresolved and matters for the rest of the codebase's codegen.
-    - **C++23 is fine.** jank ships `-std=c++20`, but its headers compile clean in a
-      C++23 TU — ned does not have to downgrade. (Verified.)
-    - **Two languages at once, or a hard cut?** `ScriptingSession` could host both
-      during a transition, at the cost of carrying two runtimes (and two GCs) in one
-      process. Worth deciding early; it changes everything downstream.
-    - **User-facing cost.** Every `init.janet` in the world becomes an `init.jank`.
-      Ned's own `vcs-git.janet` plugin, the Janet REPL panel, `JanetSymbolComplete`'s
-      binding-aware completion, and the `ned/register-test-parser` callback convention
-      all get rewritten.
-
-    **Suggested sequencing** (nothing here commits to the swap):
-    1. Add a debug assertion that scripting entry points run on the registered thread,
-       and a small RAII `GcThread` for future use. Cheap, and it turns the
-       main-thread-only rule from an undocumented convention into something enforced
-       before it can be broken.
-    2. Stand up a throwaway `ned_lib`-linked spike that embeds jank beside Janet and
-       exposes ~5 real bindings through it — enough to feel the closure-context
-       ergonomics and confirm the RSS number in a real ned process rather than a toy.
-    3. Only then decide static-vs-dynamic, dual-runtime-vs-hard-cut, and whether 237 MB
-       of baseline RSS is a price this editor is willing to pay.
-
-    **Reproduction recipe** (what worked, after several that didn't): compile with
-    `jank print-cflags`, source file *before* the flags (they contain `-l`s), swap
-    `-ljank-static-runtime` → `-ljank-dynamic-runtime`, drop `-Wl,--gc-sections`, add
-    `-rdynamic -L/usr/lib/llvm/23/lib64 -lclang-cpp -lLLVM -lcrypto`, read
-    `~/.cache/jank/$(jank print-binary-version)/incremental.pch` into memory and hand it
-    to `jank_init_dynamic`, then do `main.cpp`'s `clojure.core` bootstrap inside the
-    callback. Note `jank print-cflags` must not be word-split by a shell that doesn't
-    (fish keeps it as one argument — build the argv programmatically).
-
-    Upstream is reportedly making embedded builds easier in the coming weeks (noted
-    2026-09-08); several rough edges above — `print-cflags` build-tree leakage, the
-    C-API module-loading gap, PCH distribution — are exactly the kind of thing that
-    might disappear on their own. Worth re-checking before investing in workarounds.
-
 ### Language Intelligence
 
 - [ ] **Android device tooling** (the one part of the Java/Kotlin work below that
@@ -902,7 +203,7 @@ Surefire/Gradle reports, and `java-debug` needs no new `DapManager` work),
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
-- [ ] `LspManager.cpp`'s `PathToUri` doesn't percent-encode, while its `UriToPath` now
+- [ ] `Lsp/Manager.cpp`'s `PathToUri` doesn't percent-encode, while its `UriToPath` now
       decodes (`lsp-document-link`, after clangd's own encoded targets proved every
       URI-carrying response was missing paths outside the unreserved set). Nothing has
       needed the outgoing direction yet — it would change the URI every `didOpen` sends,
@@ -990,7 +291,7 @@ day it is dropped in); **Tier 1** is ~30-40 composable declared traits (`Binding
 first-class escapes — arbitrary predicates and Janet host callouts, which is where Org's
 `*`-counting heading level and its runtime-configured TODO keywords belong instead of
 forcing a hand-built C++ mode against a forked grammar. Drivers consume traits and never
-node names, registering the way `Vcs/VcsProvider.h` providers already do, so N x M becomes
+node names, registering the way `Vcs/Provider.h` providers already do, so N x M becomes
 **N mappings + M drivers** — 37 things to write instead of 232, with no gaps by
 construction.
 
@@ -1455,7 +756,7 @@ the entire point.
       codebase's own precedent (hand-rolled LSP/DAP/ACP framing) better than pulling in
       a full crypto library for one function.
 - [ ] The client itself is the same shape already proven three times over
-      (`Lsp/LspClient.h`, `Dap/DapClient.h`, `Acp/AcpClient.h`): background `jthread`
+      (`Lsp/Client.h`, `Dap/Client.h`, `Acp/Client.h`): background `jthread`
       read loop, `EventLoop::Post` marshaling every frame onto the main thread, a
       manager above it owning lifecycle/handshake/in-flight-request bookkeeping — the
       wire format differs (ZMQ multipart + HMAC vs. `Content-Length` or
@@ -1547,7 +848,7 @@ rather than embedding it directly in `NotebookView` for exactly this reason.
 
 ### Named Projects & Multi-Project Sidebar (New Feature)
 
-Local-only slice shipped (`Editor/ProjectRegistry.h`, `switch-project`/`open-project`
+Local-only slice shipped (`Editor/Project/Registry.h`, `switch-project`/`open-project`
 on `C-c P s`/`C-c P o`, `Editor/TerminalTabLauncher.h` for opening a picked project in a
 new terminal tab — tmux, screen, Konsole, WezTerm, Ghostty, kitty live-verified; GNOME
 Terminal shipped but unverified) — see `git log --grep=named-projects`.
@@ -1632,7 +933,7 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
     envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an
     `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
     - an unbounded blocking `connect()` froze a live editor when the daemon's backlog
-      filled (`LspBrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
+      filled (`Lsp/BrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
     - joining a reader thread under a held mutex wedged the daemon for hours;
     - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the
       `ctest -j8` timeouts;
@@ -1663,7 +964,7 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
       prerequisite for the protocol work above, and worth doing on its own merits).
       `LspClient`, `DapClient` and `AcpClient` each hand-roll the same machine, and the
       headers say so outright: *"Threading, lifetime, and member-declaration order all
-      mirror LspClient"* (`DapClient.h`), *"mirrors LspClient's own stderrThread_ exactly"*
+      mirror LspClient"* (`Dap/Client.h`), *"mirrors LspClient's own stderrThread_ exactly"*
       (both), *"see LspClient.h's own comment on writeCv_"* (both). All three carry the
       identical member set — `readThread_`/`stderrThread_` declared *before* `transport_`
       so its destructor's fd close unblocks them, then `writeThread_` with
@@ -1693,7 +994,7 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
     the managers works exactly this way.
     - `Transport` becomes a concept with concrete implementations rather than one class:
       child-process pipes (today's `Process/ChildProcess`), `AF_UNIX`
-      (`LspBrokerConnect.cpp`'s non-blocking-connect + `poll` dance, currently 326 lines
+      (`Lsp/BrokerConnect.cpp`'s non-blocking-connect + `poll` dance, currently 326 lines
       living alone), and later TCP/stdio-over-ssh for the remote protocol.
     - `FramedConnection` owns the threads, the queue, the member order and the shutdown
       sequence exactly once, parameterized by a read-a-frame callable and an on-frame
@@ -1823,7 +1124,7 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       selection, jump-host/bastion support. Sourcing defaults from `~/.ssh/config` and
       the remembered-projects list are covered by "Named Projects & Multi-Project
       Sidebar" above rather than a separate mechanism here.
-- [ ] Host-key verification / first-connection trust prompt — `ProjectTrust.h`'s
+- [ ] Host-key verification / first-connection trust prompt — `Project/Trust.h`'s
       existing hash-based, disuse-expiring trust registry (built for `.ned/init.janet`)
       is a good precedent for this UX rather than silently trusting or reimplementing
       OpenSSH's own `known_hosts` handling from scratch.
@@ -1948,6 +1249,11 @@ non-goal, see below).
 Not submitted anywhere yet — a deliberate choice (2026-09-06), not an oversight. Recorded
 so the research doesn't have to be redone before actually opening anything.
 
+The mechanical barrier is gone now: `Patches/notcurses/` carries all three as real
+`git am`-able files with proper commit messages, generated from the CMake scripts by
+`Patches/notcurses/regenerate.sh` and verified to apply against pristine v3.0.17. Opening
+a PR is a `git am` and a push rather than a re-derivation.
+
 - [ ] **`CMake/PatchNotcursesNulKey.cmake`** (Ctrl+Space/Ctrl+@ swallowed as a NUL byte)
       and **`CMake/PatchNotcursesMouseWheel.cmake`** (SGR wheel-right, Cb=67, misdecoded
       as a motion+release) are both still-reproducible bugs against upstream
@@ -1987,7 +1293,6 @@ behavioral limitation:
   budget the same binary clears comfortably on its own. Each one passes standalone and on
   the next parallel run. Worth either gating them behind a serial ctest fixture or moving
   them to a `RUN_SERIAL` property rather than continuing to eyeball each occurrence.
-
 
 - **`ResolvePsr4Namespace strips a leading fully-qualified backslash` aborted once
   under `ctest -j8`** (seen 2026-09-09, passed on immediate rerun and on a full clean
@@ -2072,15 +1377,16 @@ call sites, so "port" means replacing the platform layer wholesale:
 - **The embedded terminal panel** (`Editor/Terminal/PtyProcess.h`, `forkpty`) needs
   ConPTY (`CreatePseudoConsole`) instead — a real API, but a different threading/
   handle-lifetime shape than a POSIX pty fd pair.
-- **Raw terminal I/O** (`UI/TerminalColorProbe.h`'s `termios`/`poll` raw-mode probe, and
-  OSC 52) needs the Win32 console API or, on a recent-enough Windows Terminal, VT
-  passthrough.
+- **Raw terminal I/O** — the `termios`/`poll` raw-mode work now lives in
+  `Editor/Clipboard.h`'s OSC 52 path and `UI/EventLoop.cpp` (the earlier
+  `UI/TerminalColorProbe.*` this used to name was removed with `--detect-theme`). Needs
+  the Win32 console API, or VT passthrough on a recent-enough Windows Terminal.
 - **Notcurses itself** would need to build and run against the Win32 console/Windows
   Terminal target — worth checking Notcurses' own upstream platform support before
   committing, since ned's `UI/` layer sits directly on it with no abstraction gap.
 - A PowerShell-flavored bundled theme would be a small addition once the port exists —
   `UI/ThemeRegistry.h`'s fixed name→factory table is exactly the extension point.
-- **LSP broker self-staleness detection** (`Editor/Lsp/LspBrokerMain.cpp`'s executable-
+- **LSP broker self-staleness detection** (`Editor/Lsp/BrokerMain.cpp`'s executable-
   identity check) is Linux-specific (`/proc/self/exe`, and depends on rename-over-a-
   running-binary being legal at all — the exact thing that lets a rebuild replace
   `build/ned` while the broker daemon still has the old inode mapped). Windows
@@ -2099,6 +1405,20 @@ Ideas worth remembering but not worth scoping yet — too undecided for "Open It
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
 
+- [ ] **Jank replaces Janet** — swapping the scripting layer for
+      [jank](https://github.com/jank-lang/jank), a Clojure dialect on LLVM. Full
+      measured feasibility record: `Docs/JankFeasibility.md` (investigated 2026-09-08
+      against a real local install, not from documentation). Verdict: embedding works
+      today and per-form cost after warm-up is negligible, but three things block it.
+      **Peak RSS ~237 MB** against ned's current ~28 MB with a file open — a 10x floor
+      before a single buffer loads, which sits badly beside the huge-file work done
+      specifically to keep memory bounded. **Eval forces the dynamic runtime**, so ned
+      would ship a hard dependency on a matching Clang/LLVM (`libclang-cpp.so` 84 MB +
+      `libLLVM.so` 182 MB) where Janet is a ~1 MB library with no toolchain dependency.
+      And **BDWGC is statically baked into both jank archives**, so every `std::thread`
+      in ned needs explicit `GC_register_my_thread` bracketing — about eight lines of
+      RAII, but at 39 call sites. Upstream was reportedly easing embedded builds around
+      the time this was measured; re-check before investing in any workaround.
 - [ ] **ned in Carbon, eventually.** Speculative and deliberately unscoped, but worth
       remembering: ned is C++23 throughout, and Carbon's entire pitch is C++ interop as a
       migration path for large existing C++ codebases — which describes this one. Carbon is
@@ -2222,7 +1542,7 @@ these accumulate detail in place.
 - [ ] **LSP broker "server mode"** (raised 2026-09-06, following the fileOperations
       capabilities fix and its live fallout) — today's `Editor/Lsp/LspBroker*` daemon
       always self-terminates ~1 minute after its last attached client disconnects
-      (`LspBrokerMain.cpp`'s `kWholeDaemonIdleTimeout`), specifically so a stale process
+      (`Lsp/BrokerMain.cpp`'s `kWholeDaemonIdleTimeout`), specifically so a stale process
       never outlives a `ned` binary rebuild for long: `BrokerRouter` caches one real
       `initialize` handshake result — success *or* failure — per `(root, language)` key
       for its own process lifetime, and a live bug showed this can otherwise strand every
@@ -2242,7 +1562,7 @@ daemon deadlocking in its own idle sweep — the bug is why `Tests/LspBrokerDaem
 and the daemon's ASan coverage exist at all, both of which any server-mode work should
 build on), `code-coverage-gutter`.
 
-- [ ] Raw per-file `.gcov` output has no parser — `Editor/Coverage/CoverageOutputParser.h`
+- [ ] Raw per-file `.gcov` output has no parser — `Editor/Coverage/OutputParser.h`
       handles lcov's `.info` format only (which covers `lcov`, `llvm-cov export
       -format=lcov`, and `gcovr --lcov`). `.gcov` is a directory-scan problem rather than
       the single-document parse every other `Editor/*OutputParser.h` does, so it was left

@@ -35,7 +35,7 @@ target rather than a boast.
 |---|---|---|
 | **D0 — Structural** | Highlighting, folds, indent/dedent, structural selection, brace match, sticky-scroll containers | **Nothing.** Add the grammar. Tier 0 inference derives it from `grammar.json`. |
 | **D1 — Navigational** | Symbol gutter and outline, go-to-file-at-point through imports, test discovery, scope-aware rename | One trait declaration file. Tier 1 vocabulary, ~30-40 composable traits. |
-| **D2 — Integrated** | LSP, DAP, formatter, test-runner format, root markers | Config plus docs. **No parsing work at all** -- `LspServerConfig.h`, `DapConfig.h`, `TestRunConfig.h` already take this as data. |
+| **D2 — Integrated** | LSP, DAP, formatter, test-runner format, root markers | Config plus docs. **No parsing work at all** -- `Lsp/ServerConfig.h`, `Dap/Config.h`, `TestRun/Config.h` already take this as data. |
 | **D3 — Bespoke** | Language-specific semantics (Org outline/agenda/clocking, Markdown tables, Janet binding completion) | Tier 2 escapes and real C++. Expensive, and rightly rare. |
 
 D0 is free, D1 is cheap, **D2 is not a parsing problem at all**, and D3 is where
@@ -58,7 +58,7 @@ is here because it is what documentation is written in, including this file.
 world; already named four times in `ROADMAP.md`) and **CMake** (named six times;
 it is *ned's own build system*, and not speaking it is embarrassing).
 
-The current LSP root-marker set (`LspRootResolver.h`) covers c/cpp/python/
+The current LSP root-marker set (`Lsp/RootResolver.h`) covers c/cpp/python/
 javascript/typescript/tsx/php. Closing Tier A means bringing java/kotlin/csharp/
 go/rust/bash/lua/cmake up to the same standard -- that is a D2 config gap, not a
 grammar gap, and it can be closed today without any of the engine work.

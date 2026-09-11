@@ -1309,6 +1309,7 @@ if (NED_BUILD_TESTS)
             Tests/ThemeFileTest.cpp
             Tests/ThemeResolveTest.cpp
             Tests/ThemeGalleryTest.cpp
+            Tests/DocSourcePathsTest.cpp
             Tests/ThemeKeyDocsTest.cpp
             Tests/InitFileThemeWriteTest.cpp
             Tests/LayoutStabilityProbe.cpp
