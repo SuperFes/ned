@@ -267,6 +267,16 @@ bool BufferView::OnKeyEvent(const Event& event) {
             ClampPointToNarrowing();
             return true;
 
+        case InputMode::ConfirmRenameFileToMatchType:
+            HandleConfirmRenameFileToMatchTypeKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::ConfirmRenameTypeToMatchFile:
+            HandleConfirmRenameTypeToMatchFileKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
         case InputMode::ConfirmOpenBinary:
             HandleConfirmOpenBinaryKey(*chord);
             ClampPointToNarrowing();

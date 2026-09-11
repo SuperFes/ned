@@ -318,11 +318,15 @@ using ImportTargetsFunction = std::function<std::vector<ImportTarget>(std::strin
 // fields of its own for this.
 enum class SymbolKind {
     Callable,  // a function or method definition
-    TypeLike,  // a class/interface/type-alias/enum/struct/module definition
+    TypeLike,  // a class/interface/type-alias/enum/struct definition
     Data,      // a constant/variable-like definition
     Namespace, // main-editor-sticky-scroll follow-up: a namespace definition
                // -- distinct from TypeLike so a breadcrumb (or gutter glyph)
-               // doesn't conflate "namespace foo" with a class/struct
+               // doesn't conflate "namespace foo" with a class/struct. Also
+               // where a tags.scm's "definition.module" lands (PHP, C#,
+               // TypeScript, Rust all emit it for a real namespace) --
+               // see SymbolKindFromCaptureName's own body for why that
+               // moved here out of TypeLike.
 };
 
 // The SyntaxClass a SymbolKind's gutter glyph borrows its color from --
@@ -347,6 +351,14 @@ struct SymbolMarker {
     std::size_t endByte = 0;
     SymbolKind  kind;
     std::string name;
+    // class-file-sync follow-up: where `name` itself sits, as distinct from
+    // where the declaration does -- [nameStartByte, nameStartByte +
+    // name.size()) is exactly the tags query's own "@name" capture. Renaming
+    // a type needs the identifier's range, not the declaration's, and the
+    // capture was already being read to produce the text; only its offsets
+    // were being thrown away. Falls back to startByte when the match had no
+    // "@name" capture at all, which is also when `name` is empty.
+    std::size_t nameStartByte = 0;
 };
 
 // Given a buffer's full text, returns every definition-site landmark in it

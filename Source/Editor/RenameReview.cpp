@@ -94,39 +94,59 @@ HitKind ClassifyHit(const std::vector<HighlightSpan>& spans, std::size_t startBy
     return kind;
 }
 
-std::vector<RenameHit> FindExtraCandidates(std::string_view text, const std::vector<HighlightSpan>& spans,
-                                           std::string_view name, const std::vector<RenameHit>& covered) {
-    std::vector<RenameHit> found;
-    if (name.empty() || text.empty()) {
+namespace {
+
+    // The whole-word scan both public entry points below share. A hit is
+    // kept when it is on an identifier boundary, is not already covered by
+    // the caller's own edit set, and -- unless referencesToo -- is not a
+    // plain code reference.
+    std::vector<RenameHit> ScanWholeWord(std::string_view text, const std::vector<HighlightSpan>& spans,
+                                         std::string_view name, const std::vector<RenameHit>& covered,
+                                         bool referencesToo) {
+        std::vector<RenameHit> found;
+        if (name.empty() || text.empty()) {
+            return found;
+        }
+
+        std::size_t coveredIndex = 0;
+        std::size_t at           = text.find(name, 0);
+        while (at != std::string_view::npos) {
+            const std::size_t end = at + name.size();
+
+            const bool leftBoundary = at == 0 || !IsIdentifierByte(static_cast<unsigned char>(text[at - 1]), name);
+            const bool rightBoundary =
+                end >= text.size() || !IsIdentifierByte(static_cast<unsigned char>(text[end]), name);
+
+            if (leftBoundary && rightBoundary) {
+                // covered is sorted and this scan runs left to right, so the
+                // cursor only ever moves forward.
+                while (coveredIndex < covered.size() && covered[coveredIndex].endByte <= at) {
+                    ++coveredIndex;
+                }
+                const bool alreadyCovered = coveredIndex < covered.size() &&
+                                            covered[coveredIndex].startByte < end && at < covered[coveredIndex].endByte;
+                if (!alreadyCovered) {
+                    const HitKind kind = ClassifyHit(spans, at);
+                    if (referencesToo || kind != HitKind::Reference) {
+                        found.push_back(RenameHit{at, end, kind});
+                    }
+                }
+            }
+            at = text.find(name, at + 1);
+        }
         return found;
     }
 
-    std::size_t coveredIndex = 0;
-    std::size_t at           = text.find(name, 0);
-    while (at != std::string_view::npos) {
-        const std::size_t end = at + name.size();
+} // namespace
 
-        const bool leftBoundary  = at == 0 || !IsIdentifierByte(static_cast<unsigned char>(text[at - 1]), name);
-        const bool rightBoundary = end >= text.size() || !IsIdentifierByte(static_cast<unsigned char>(text[end]), name);
+std::vector<RenameHit> FindWholeWordOccurrences(std::string_view text, const std::vector<HighlightSpan>& spans,
+                                                std::string_view name) {
+    return ScanWholeWord(text, spans, name, {}, /*referencesToo=*/true);
+}
 
-        if (leftBoundary && rightBoundary) {
-            // covered is sorted and this scan runs left to right, so the
-            // cursor only ever moves forward.
-            while (coveredIndex < covered.size() && covered[coveredIndex].endByte <= at) {
-                ++coveredIndex;
-            }
-            const bool alreadyCovered =
-                coveredIndex < covered.size() && covered[coveredIndex].startByte < end && at < covered[coveredIndex].endByte;
-            if (!alreadyCovered) {
-                const HitKind kind = ClassifyHit(spans, at);
-                if (kind != HitKind::Reference) {
-                    found.push_back(RenameHit{at, end, kind});
-                }
-            }
-        }
-        at = text.find(name, at + 1);
-    }
-    return found;
+std::vector<RenameHit> FindExtraCandidates(std::string_view text, const std::vector<HighlightSpan>& spans,
+                                           std::string_view name, const std::vector<RenameHit>& covered) {
+    return ScanWholeWord(text, spans, name, covered, /*referencesToo=*/false);
 }
 
 std::vector<ReviewExcerpt> BuildReviewExcerpts(const std::vector<FileRenameHits>& files, const std::string& newName) {

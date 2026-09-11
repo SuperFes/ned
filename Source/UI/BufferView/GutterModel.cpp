@@ -1,6 +1,7 @@
 #include "UI/BufferView/GutterModel.h"
 
 #include <algorithm>
+#include <functional>
 #include <unordered_map>
 
 #include <string>
@@ -126,6 +127,28 @@ void GutterModel::EnsureConflictHunks() const {
     conflictHunks_     = text::ParseConflictHunks(buffer.Text());
     conflictHunkStamp_ = stamp;
 }
+
+namespace {
+
+    // Every cache below that runs one of the MODE's own tree-sitter queries
+    // has to carry the mode in its key, not just the buffer and its
+    // generations -- see CacheStamp.h's own header, which names this trap.
+    // Switching to a buffer of another language and back leaves content
+    // generation untouched, so without this a result computed under the
+    // previous buffer's mode compares "still good" and survives until the
+    // next edit. Found live: after a detour through a .java buffer, a C++
+    // file's "namespace" row lost its gutter glyph while its class and
+    // method kept theirs -- exactly the captures java's own tags.scm has
+    // patterns for, run against C++ text.
+    //
+    // The fold cache and the highlight cache already guard this with an
+    // explicit modeName field on their own per-buffer entries; these are the
+    // caches that key purely on a CacheStamp, so the mode goes in as a value.
+    std::size_t ModeKeyFor(const editor::Mode& mode) {
+        return std::hash<std::string>{}(mode.name);
+    }
+
+} // namespace
 
 void GutterModel::EnsureFoldableBlocks() const {
     text::Buffer& buffer = context_.activeBuffer.Get();
@@ -298,7 +321,7 @@ void GutterModel::EnsureSymbolMarkers() const {
         symbolMarkers_.clear();
         // Narrower key than the eligible path below, for the same reason
         // EnsureFoldableBlocks's own ineligible path is.
-        symbolMarkersStamp_ = CacheStamp::For(&buffer, {buffer.ContentGeneration()});
+        symbolMarkersStamp_ = CacheStamp::For(&buffer, {buffer.ContentGeneration(), ModeKeyFor(context_.mode)});
         return;
     }
 
@@ -307,7 +330,7 @@ void GutterModel::EnsureSymbolMarkers() const {
     const auto [windowStart, windowEnd] = structuralWindow_(content);
 
     const CacheStamp stamp =
-        CacheStamp::For(&buffer, {buffer.ContentGeneration(), windowStart, windowEnd});
+        CacheStamp::For(&buffer, {buffer.ContentGeneration(), windowStart, windowEnd, ModeKeyFor(context_.mode)});
     if (symbolMarkersStamp_.Matches(stamp)) {
         return;
     }
@@ -336,7 +359,7 @@ void GutterModel::EnsureSymbolLineKinds() const {
 
     const CacheStamp stamp =
         CacheStamp::For(&buffer, {buffer.ContentGeneration(), symbolMarkersWindow_.first,
-                                  symbolMarkersWindow_.second});
+                                  symbolMarkersWindow_.second, ModeKeyFor(context_.mode)});
     if (symbolLineKindsStamp_.Matches(stamp)) {
         return;
     }
@@ -403,7 +426,7 @@ void GutterModel::EnsureTestEntries() const {
     // rows exist without touching content, outcome, or window generation.
     const CacheStamp stamp = CacheStamp::For(
         &buffer, {buffer.ContentGeneration(), context_.testRunner->OutcomeGeneration(), windowStart, windowEnd,
-                  static_cast<std::size_t>(runnableAffordance)});
+                  static_cast<std::size_t>(runnableAffordance), ModeKeyFor(context_.mode)});
     if (testEntriesStamp_.Matches(stamp)) {
         return;
     }
@@ -648,8 +671,21 @@ void GutterModel::ForgetBuffer(text::Buffer& buffer) {
 }
 
 void GutterModel::InvalidateModeDependentCaches() {
-    // Both are derived through a Mode query, so a stamp left current under the
-    // previous mode would hand back that mode's answers for this buffer.
+    // Every one of these is derived through a Mode query, so a stamp left
+    // current under the previous mode would hand back that mode's answers for
+    // this buffer.
+    //
+    // class-file-sync follow-up: symbolMarkersStamp_ was missing here, and
+    // invalidating only what it FEEDS was not enough -- EnsureSymbolLineKinds
+    // calls EnsureSymbolMarkers, which found its own stamp still matching and
+    // handed back the previous mode's markers to be re-binned. Found live: a
+    // C++ file visited after a .java one kept its class and method glyphs and
+    // lost its namespace one, which is exactly the capture set java's own
+    // tags.scm has patterns for. The mode is part of each of these keys now
+    // as well (see ModeKeyFor), which covers the paths that never reach this
+    // function at all -- a mode reassigned under a buffer that never changed,
+    // via ned/set-mode-for-extension or a rename that changes the extension.
+    symbolMarkersStamp_.Invalidate();
     symbolLineKindsStamp_.Invalidate();
     testEntriesStamp_.Invalidate();
 }

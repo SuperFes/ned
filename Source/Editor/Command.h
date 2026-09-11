@@ -411,6 +411,23 @@ enum class InteractiveRequest { None,
                                 // otherwise -- so a loop variable costs no round trip, and a
                                 // symbol other files can see still gets the server's answer.
                                 RenameSymbol,
+                                // class-file-sync follow-up: the two explicit,
+                                // best-effort halves of keeping a file's name and the
+                                // type declared inside it in agreement. Both are
+                                // direct actions that open their own y/n
+                                // (BufferView::RequestRenameFileToMatchType /
+                                // RequestRenameTypeToMatchFile) rather than prompt
+                                // sessions -- there is nothing for the user to type,
+                                // only a proposal to accept. Deliberately MORE
+                                // permissive than the unprompted offers ned makes
+                                // after a rename: these take the outermost type when
+                                // a file holds several and never require the file to
+                                // have matched beforehand, because the user asking is
+                                // itself the evidence the offers have to infer. See
+                                // Editor/ClassFileSync.h's own header for the two
+                                // strictness tiers.
+                                RenameFileToMatchType,
+                                RenameTypeToMatchFile,
                                 // prepareRename/linkedEditingRange follow-up: one more one-shot
                                 // async direct action, same "async request, own session" shape
                                 // as LspGotoSymbol above -- BufferView::

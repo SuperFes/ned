@@ -153,3 +153,58 @@ TEST_CASE("Symbol gutter cache recomputes after an edit that adds a new definiti
     const int         symbolStart = GutterWidthWithSymbol(totalLines, true) - 1;
     REQUIRE(screen.PixelAt(symbolStart, 2).character == "ƒ");
 }
+
+// class-file-sync follow-up. A trap test, driving the real sequence rather
+// than asserting on a cache: paint a C++ buffer, switch the pane to a Java
+// one, switch back, and check the namespace glyph is still there.
+//
+// Found live, and the failure is specific rather than a blanket blank:
+// java's own tags.scm has patterns for class_declaration and
+// method_declaration but none for a namespace, so run against C++ text it
+// produced the class and method glyphs and dropped the namespace one -- which
+// then compared "still good" (same buffer, same content generation) and
+// survived every repaint until the next edit. CacheStamp.h's header names
+// this trap; the fold and highlight caches already guard it with their own
+// modeName field, and the symbol/test caches now carry the mode in their key.
+TEST_CASE("Symbol glyphs survive a detour through a buffer in another language", "[BufferView][Symbol]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CppMode();
+    fixture.buffer.InsertAtPoint("namespace outer {\nclass Thing {\n};\n}\n");
+
+    ned::text::Buffer& other = fixture.bufferList.CreateBuffer("Other.java");
+    other.InsertAtPoint("public class Alpha {\n}\n");
+
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    ned::ui::Screen screen = ned::ui::Screen(40, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+
+    const std::size_t totalLines  = fixture.buffer.Content().LineCount();
+    const int         symbolStart = GutterWidthWithSymbol(totalLines, true) - 1;
+
+    view.Paint(canvas);
+    REQUIRE(screen.PixelAt(symbolStart, 0).character == "§"); // namespace outer
+    REQUIRE(screen.PixelAt(symbolStart, 1).character == "◇"); // class Thing
+
+    // The detour, in the order the real editor does it. The pane's mode
+    // follows the active buffer only on the next Paint(), so there is a
+    // window in which the NEW buffer is active under the OLD mode -- and
+    // anything that measures the gutter in that window (CursorPosition here;
+    // ScrollToShowPoint in the real switch's own event handling) runs the
+    // mode-derived caches and stamps them. Setting the mode first, as a
+    // tidier-looking test would, never reproduces this at all.
+    fixture.activeBuffer.Set(other);
+    (void)view.CursorPosition(); // measures the gutter under the OLD mode
+    fixture.mode = ned::editor::JavaMode();
+    view.Paint(canvas);
+
+    fixture.activeBuffer.Set(fixture.buffer);
+    (void)view.CursorPosition(); // ...and again, now java's query over C++ text
+    fixture.mode = ned::editor::CppMode();
+    view.Paint(canvas);
+
+    // Nothing was edited in between, so content generation is unchanged --
+    // the mode has to be part of the key for these to come back.
+    CHECK(screen.PixelAt(symbolStart, 0).character == "§");
+    CHECK(screen.PixelAt(symbolStart, 1).character == "◇");
+}

@@ -2307,6 +2307,26 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::RenameFile;
                       });
+
+    // class-file-sync follow-up. M-x-only, no default keybinding: the
+    // automatic offers cover the moment these matter most, so a chord would
+    // be spent on the rarer, deliberate case -- and C-c C-n (rename-file) is
+    // the neighbouring binding either way. Both are best-effort by design;
+    // see Editor/ClassFileSync.h's own header for how they differ from the
+    // offers, and ned/set-class-file-sync (which gates only the offers).
+    registry.Register("rename-file-to-match-type",
+                      "Rename this file after the type declared in it (class/interface/enum/struct/record), keeping "
+                      "any compound suffix -- Thing.class.php stays *.class.php. Confirms first; takes the outermost "
+                      "type if the file holds several.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::RenameFileToMatchType;
+                      });
+    registry.Register("rename-type-to-match-file",
+                      "Rename the type declared in this file after the file's own name -- the inverse of "
+                      "rename-file-to-match-type. Confirms first, then renames through the usual review.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::RenameTypeToMatchFile;
+                      });
     registry.Register(
         "find-scratch",
         "Open or create a named scratch note (prompts for its name; not tied to any project, auto-saved).",

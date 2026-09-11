@@ -977,7 +977,7 @@ inline const char* SymbolGlyphFor(editor::SymbolKind kind) {
         case editor::SymbolKind::Callable:
             return "ƒ"; // LATIN SMALL LETTER F WITH HOOK -- the standard "function" glyph
         case editor::SymbolKind::TypeLike:
-            return "◇"; // WHITE DIAMOND -- a class/interface/type/module definition
+            return "◇"; // WHITE DIAMOND -- a class/interface/type/struct/enum definition
         case editor::SymbolKind::Data:
             return "="; // a constant/variable-like definition
         case editor::SymbolKind::Namespace:

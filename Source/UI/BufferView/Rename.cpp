@@ -179,6 +179,16 @@ bool BufferView::BuildRenameReview(std::vector<editor::rename::FileRenameHits> f
         return false;
     }
 
+    // class-file-sync follow-up: the names this review is about, recorded
+    // for its commit rather than read back out of renameOldName_/
+    // renameNewName_ -- those belong to the SERVER tier's own request and
+    // are never set when the scope-aware tier builds a review. Cleared by
+    // PresentReviewExcerpts, so an *imports* review (which shares that
+    // function and therefore renameProposalOwner_) can never be mistaken for
+    // a rename that named something.
+    renameReviewOldName_ = oldName;
+    renameReviewNewName_ = newName;
+
     std::string message = "Rename \"" + oldName + "\" to \"" + newName + "\": " + std::to_string(counts->applied) +
                           " reference" + (counts->applied == 1 ? "" : "s");
     if (counts->risky != 0) {
@@ -382,6 +392,8 @@ std::optional<BufferView::ReviewCounts> BufferView::PresentReviewExcerpts(
 
     renameProposals_     = std::move(rows);
     renameProposalOwner_ = &review;
+    renameReviewOldName_.clear();
+    renameReviewNewName_.clear();
 
     activeBuffer_.Set(review);
     if (stale != nullptr) {
@@ -446,6 +458,8 @@ void BufferView::ClearRenameProposals(const text::Buffer& buffer) {
     if (renameProposalOwner_ == &buffer) {
         renameProposals_.clear();
         renameProposalOwner_ = nullptr;
+        renameReviewOldName_.clear();
+        renameReviewNewName_.clear();
     }
 }
 
