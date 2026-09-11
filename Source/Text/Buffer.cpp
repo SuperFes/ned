@@ -1558,6 +1558,53 @@ void Buffer::RelocateExcerptRangesForInsert(std::size_t insertOffset, std::size_
     }
 }
 
+// Diagnostics are byte ranges an LSP computed against the document as it stood
+// when it answered, and a server answers on its own schedule -- so between one
+// publish and the next, every edit moves the text out from under them.
+//
+// Left unrelocated (which is what this used to be), that does not misplace any
+// *text*: a diagnostic only underlines, so a stale range simply marks the
+// wrong characters. Live-reported 2026-09-11 as "the colours, underlines,
+// bolds and italics start wrapping weird, but the text stays where it should",
+// and reproduced exactly: typing two characters ahead of a flagged `alpha`
+// left the underline sitting on "t alp".
+//
+// Relocating rather than suppressing, unlike the sibling fixes for inlay hints
+// and semantic tokens: those two are whole-result sets that a fresh response
+// replaces cheaply and whose absence costs nothing visible (a hint vanishes; a
+// colour falls back to tree-sitter's own). A diagnostic drives the gutter
+// glyph, next-error navigation, the echo-area hint and the inline message as
+// well as the underline, and blanking all of that on every keystroke would
+// trade one flicker for a louder one. The edit-relocation rule is exactly the
+// one Buffer already applies to point, mark, folds, snippet fields and
+// excerpts, so this is the sixth tracked field kind rather than a new idea.
+void Buffer::RelocateDiagnosticsForInsert(std::size_t insertOffset, std::size_t length) {
+    for (Diagnostic& diagnostic : Diagnostics_) {
+        // Text inserted exactly at a diagnostic's start pushes it along rather
+        // than extending it: the new character was not part of what the server
+        // flagged. Text at its end does extend it, matching the
+        // at-or-after rule RelocateForInsert uses everywhere else.
+        if (insertOffset < diagnostic.startByte) {
+            diagnostic.startByte += length;
+        }
+        if (insertOffset <= diagnostic.endByte) {
+            diagnostic.endByte += length;
+        }
+        diagnostic.endByte = std::max(diagnostic.startByte, diagnostic.endByte);
+    }
+}
+
+void Buffer::RelocateDiagnosticsForDelete(std::size_t rangeStart, std::size_t rangeEnd) {
+    for (Diagnostic& diagnostic : Diagnostics_) {
+        diagnostic.startByte = RelocateForDelete(diagnostic.startByte, rangeStart, rangeEnd);
+        diagnostic.endByte   = RelocateForDelete(diagnostic.endByte, rangeStart, rangeEnd);
+        // A diagnostic whose whole span was deleted collapses to a degenerate
+        // range and is kept, not dropped: the server's next publish is what
+        // decides whether the problem is gone, and guessing here would make
+        // the gutter disagree with the message list until it arrives.
+    }
+}
+
 void Buffer::RelocateExcerptRangesForDelete(std::size_t rangeStart, std::size_t rangeEnd) {
     for (ExcerptRange& range : ExcerptRanges_) {
         range.start = RelocateForDelete(range.start, rangeStart, rangeEnd);
@@ -1624,6 +1671,7 @@ void Buffer::InsertAtPoint(std::string_view text) {
     RelocateSecondaryCursorsForInsert(insertOffset, text.size());
     RelocateSnippetRangesForInsert(insertOffset, text.size());
     RelocateExcerptRangesForInsert(insertOffset, text.size());
+    RelocateDiagnosticsForInsert(insertOffset, text.size());
     MarkUnsavedRangeInserted(insertOffset, text.size());
 
     RecordOrAmendUndo(/*canAmend=*/true);
@@ -1662,6 +1710,7 @@ void Buffer::DeleteBackwardAtPoint() {
     RelocateSecondaryCursorsForDelete(start, end);
     RelocateSnippetRangesForDelete(start, end);
     RelocateExcerptRangesForDelete(start, end);
+    RelocateDiagnosticsForDelete(start, end);
     MarkUnsavedRangeDeleted(start, end);
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -1700,6 +1749,7 @@ void Buffer::DeleteForwardAtPoint() {
     RelocateSecondaryCursorsForDelete(start, end);
     RelocateSnippetRangesForDelete(start, end);
     RelocateExcerptRangesForDelete(start, end);
+    RelocateDiagnosticsForDelete(start, end);
     MarkUnsavedRangeDeleted(start, end);
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -1746,6 +1796,7 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
     RelocateSecondaryCursorsForDelete(byteOffset, rangeEnd);
     RelocateSnippetRangesForDelete(byteOffset, rangeEnd);
     RelocateExcerptRangesForDelete(byteOffset, rangeEnd);
+    RelocateDiagnosticsForDelete(byteOffset, rangeEnd);
     MarkUnsavedRangeDeleted(byteOffset, rangeEnd);
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -1793,6 +1844,7 @@ void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
     RelocateSecondaryCursorsForInsert(byteOffset, text.size());
     RelocateSnippetRangesForInsert(byteOffset, text.size());
     RelocateExcerptRangesForInsert(byteOffset, text.size());
+    RelocateDiagnosticsForInsert(byteOffset, text.size());
     MarkUnsavedRangeInserted(byteOffset, text.size());
 
     RecordOrAmendUndo(/*canAmend=*/false);
