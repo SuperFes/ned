@@ -41,6 +41,7 @@
 #include "Editor/Dispatcher.h"
 #include "Editor/EmbeddedDocuments.h"
 #include "Editor/ExpandableTree.h"
+#include "Editor/ImportFixup.h"
 #include "Editor/IncrementalSearch.h"
 #include "Editor/Link.h"
 #include "Editor/LinkedEditingSession.h"
@@ -542,6 +543,12 @@ class BufferView : public Widget {
     // silently doing nothing) if another interactive session is already in
     // progress -- same guard RequestCloseBuffer uses.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
+    // file-rename-propagation follow-up: a move ned did not make, detected
+    // by Editor/FileWatch.h's inotify cookie pairing and routed here by
+    // WindowManager the same way a y/n prompt is -- to whichever pane has
+    // focus. Plans the import fixups it implies and opens the review;
+    // silent when nothing imported the moved file.
+    void ReviewExternalMoves(const std::vector<editor::importfix::MovedFile>& moves);
 
     // sidebar-context-menu follow-up: entry points for ProjectSidebar's
     // right-click menu -- each prefills/skips straight to the stage a blind
@@ -2003,6 +2010,31 @@ class BufferView : public Widget {
     // files carries only file/hits; text and displayPath are resolved here.
     bool BuildRenameReview(std::vector<editor::rename::FileRenameHits> files, const std::string& oldName,
                            const std::string& newName);
+    // file-rename-propagation follow-up: the same review for an import
+    // fixup's edits, each hit carrying its own replacement text rather than
+    // sharing one new name. `what` is the sentence's own subject ("Renamed
+    // Widget.h", "Detected move of Widget.h") -- the only thing that differs
+    // between the in-editor rename and the externally-detected move.
+    bool BuildImportFixupReview(const editor::importfix::FixupPlan& plan, const std::string& what);
+    // The candidate walk plus the plan (Editor/ImportFixup.h), reading live
+    // buffer content for any file that is open. Empty -- costing nothing --
+    // when ned/set-import-fixup is off or nothing moved. MUST be called
+    // before the move actually happens; see ImportFixup.h.
+    [[nodiscard]] editor::importfix::FixupPlan PlanImportFixups(
+        const std::vector<editor::importfix::MovedFile>& moves);
+    // What PresentReviewExcerpts stitched: how many excerpts carry a
+    // proposed rewrite, and how many carry a comment/string occurrence
+    // excluded until opted into (always 0 for an import fixup, which has no
+    // risky tier).
+    struct ReviewCounts {
+        std::size_t applied = 0;
+        std::size_t risky   = 0;
+    };
+    // The half BuildRenameReview and BuildImportFixupReview share: cap the
+    // rows, stitch them into bufferName, write each proposal into the review
+    // buffer, make it active. nullopt when there was nothing to show.
+    std::optional<ReviewCounts> PresentReviewExcerpts(std::vector<editor::rename::ReviewExcerpt> rows,
+                                                      const std::string&                         bufferName);
     // ApplyRename's own review gate: turns a server's ResolvedRename into
     // review rows, or returns false for an edit a review can't faithfully
     // represent (a resource op, a huge source, a replacement that isn't the

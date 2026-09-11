@@ -544,71 +544,18 @@ void BufferView::OpenDetectedLink(const editor::link::DetectedLink& detected) {
         return;
     }
 
-    text::Buffer&         buffer = activeBuffer_.Get();
-    std::filesystem::path baseDirectory =
-        buffer.Path() ? buffer.Path()->parent_path() : editor::ProjectRoot();
-    // resolver-gaps follow-up: Python's own leading-dot relative-import
-    // level -- 1 dot means "this file's own directory" (baseDirectory
-    // already computed above, no ascension), each additional dot ascends
-    // one more parent directory (Mode.h's ImportTarget::relativeLevel doc
-    // comment has the full semantics). Stops early if parent_path() stops
-    // making progress (the filesystem root), the same guard
-    // NodeModules.cpp's own upward walk uses.
-    for (int level = 1; level < detected.relativeLevel; ++level) {
-        const std::filesystem::path parent = baseDirectory.parent_path();
-        if (parent == baseDirectory) {
-            break;
-        }
-        baseDirectory = parent;
-    }
-    // resolver-gaps follow-up: Rust's own bodyless "mod foo;" declaration
-    // (Mode.h's ImportTarget::isModDeclaration doc comment) -- a submodule
-    // of any file other than a crate root/mod.rs lives one directory level
-    // below the importing file, under a subdirectory named after that
-    // file's own stem (e.g. "src/foo.rs"'s own "mod bar;" resolves against
-    // "src/foo/bar.rs", not "src/bar.rs"). "main"/"lib"/"mod" are Rust's own
-    // three file-name conventions where the importing file already sits at
-    // the level its submodules resolve from, so no adjustment applies.
-    if (detected.isModDeclaration && buffer.Path()) {
-        const std::string stem = buffer.Path()->stem().string();
-        if (stem != "main" && stem != "lib" && stem != "mod") {
-            baseDirectory /= stem;
-        }
-    }
-    const editor::ProjectSettings projectSettings = editor::LoadProjectSettings(editor::ProjectRoot());
-
-    // toolchain-include-paths follow-up: project-configured includePaths
-    // always come first (a user override outranks a guessed default), with
-    // the real compiler's own system search paths appended as a last-resort
-    // fallback for an angle-form/system include ProjectSettings never
-    // mentioned at all.
-    const std::string                        languageKey    = editor::LanguageKeyForMode(mode_);
-    std::vector<std::filesystem::path>       includePaths   = editor::IncludePathsForMode(projectSettings, mode_.name);
-    const std::vector<std::filesystem::path> toolchainPaths = editor::ToolchainIncludePathsForLanguage(languageKey);
-    includePaths.insert(includePaths.end(), toolchainPaths.begin(), toolchainPaths.end());
-
-    // import-target-tree-sitter follow-up: per-language extension/index-file/
-    // package-dir parameters (Editor/ImportResolutionConfig.h) widen what
-    // ResolveFileLink can find beyond an exact on-disk match -- a relative
-    // JS/TS import written without its real extension, a Python package's
-    // __init__.py, a bare "import x from 'lodash'" package specifier.
-    const editor::ImportResolutionConfig importConfig =
-        editor::ResolveImportResolutionConfig(projectSettings, languageKey);
-    if (importConfig.searchPackageDirs) {
-        const std::vector<std::filesystem::path> packageDirs =
-            editor::NodeModulesSearchPaths(baseDirectory, editor::ProjectRoot());
-        includePaths.insert(includePaths.end(), packageDirs.begin(), packageDirs.end());
-    }
-
-    const auto resolved = editor::link::ResolveFileLink(detected.target, baseDirectory, includePaths,
-                                                        importConfig.extensions, importConfig.indexBasenames);
+    text::Buffer& buffer = activeBuffer_.Get();
+    // file-rename-propagation follow-up: the resolution rule itself now
+    // lives in Editor/ImportResolve.h, so the fixup planner resolves an
+    // import exactly the way go-to-file-at-point does.
+    const auto resolved = editor::ResolveImportLink(detected, buffer.Path() ? *buffer.Path() : std::filesystem::path{}, mode_);
     if (!resolved) {
         statusMessage_ = "No such file: " + detected.target;
         return;
     }
 
     try {
-        text::Buffer& opened = bufferList_.OpenOrCreateFile(*resolved);
+        text::Buffer& opened = bufferList_.OpenOrCreateFile(resolved->path);
         activeBuffer_.Set(opened);
         statusMessage_.clear();
     }

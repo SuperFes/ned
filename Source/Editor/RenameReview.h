@@ -57,10 +57,19 @@ enum class HitKind { Reference,
 
 // One occurrence within a single file's text. startByte/endByte are that
 // file's own byte offsets, endByte exclusive.
+// file-rename-propagation follow-up: `replacement`, empty by default, is
+// what this hit's bytes become. Empty means "the new name" -- the single
+// name every hit of an ordinary rename shares, passed once to
+// BuildReviewExcerpts. A per-hit replacement is what lets the same review
+// carry edits that are not all the same text: an import fixup rewrites each
+// specifier to a different path (Editor/ImportFixup.h), and reusing this
+// layer is what gives it the excerpt rows, the exclude-by-editing rule and
+// the commit path for free.
 struct RenameHit {
     std::size_t startByte = 0;
     std::size_t endByte   = 0;
     HitKind     kind      = HitKind::Reference;
+    std::string replacement;
 };
 
 // Every hit in one file, plus what the review needs to render it. text is

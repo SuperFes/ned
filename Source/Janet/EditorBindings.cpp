@@ -27,6 +27,7 @@
 #include "Editor/FormatOnSave.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/HugeStructuralWindow.h"
+#include "Editor/ImportFixupSettings.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/LineEndingPolicy.h"
@@ -507,6 +508,14 @@ namespace {
 
     void NedSetRenameReview(bool enabled) {
         editor::SetRenameThroughReview(enabled);
+    }
+
+    void NedSetImportFixup(bool enabled) {
+        editor::SetImportFixupEnabled(enabled);
+    }
+
+    void NedSetImportFixupMaxFiles(std::int64_t count) {
+        editor::SetImportFixupMaxFiles(count > 0 ? static_cast<std::size_t>(count) : 0);
     }
 
     void NedSetMultibufferAutoCollapseExcerptCap(std::int64_t count) {
@@ -1469,6 +1478,21 @@ void InstallEditorBindings(Environment& env) {
         "occurrences a rename deliberately skipped are visible, each excluded until opted into. Turn it off to "
         "apply a rename immediately, as rename-symbol and lsp-rename did before. A rename that also creates, "
         "deletes or renames files is applied directly either way -- a multibuffer cannot represent that.");
+    env.Register<&NedSetImportFixup>(
+        "ned", "set-import-fixup",
+        "Enable/disable rewriting imports when a file is renamed or moved (default true) -- both the imports in "
+        "other files that named it and the relative imports the moved file wrote itself. Resolved with the same "
+        "tree-sitter import queries go-to-file-at-point uses, and handed to the same editable review multibuffer a "
+        "rename is (C-c C-c to commit, M-r to drop an excerpt), so nothing lands unseen. A language server that "
+        "answered workspace/willRenameFiles with edits of its own wins outright -- this is the no-server path. An "
+        "import whose own style cannot express the new location (an angle-form include, a PHP namespace, a Rust "
+        "mod declaration, a target that left the root its specifier counts from) is reported as declined rather "
+        "than guessed at.");
+    env.Register<&NedSetImportFixupMaxFiles>(
+        "ned", "set-import-fixup-max-files",
+        "How many project files one rename's import scan will consider (default 20000; 0 means unlimited). Only "
+        "files whose language has an import query are counted at all. Raise it for a very large repository, lower "
+        "it if a rename feels slow.");
     env.Register<&NedSetStickyScrollEnabled>(
         "ned", "set-sticky-scroll-enabled",
         "Enable/disable pinned namespace/class/method breadcrumb rows at the top of a pane while scrolled into "

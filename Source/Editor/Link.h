@@ -122,10 +122,20 @@ struct DetectedLink {
 // language-appropriate lists via ImportResolutionConfig.h, keyed by
 // Editor/Mode.h's LanguageKeyForMode -- these two lists are themselves never
 // hardcoded per-language logic here, just parameters.
+//
+// resolvedBase (file-rename-propagation follow-up, defaulted null and
+// ignored by every existing caller): the directory the target was actually
+// found under -- baseDirectory, ProjectRoot(), or one includePaths entry.
+// A specifier resolved against baseDirectory is relative to the file that
+// wrote it; one resolved against a root is not, and rewriting the second
+// kind as though it were the first would turn a root-relative
+// "Editor/Mode.h" into "../Editor/Mode.h". Left empty for an absolute
+// target, which is relative to nothing.
 [[nodiscard]] std::optional<std::filesystem::path> ResolveFileLink(
     const std::string& target, const std::filesystem::path& baseDirectory,
     const std::vector<std::filesystem::path>& includePaths = {},
-    const std::vector<std::string>& candidateExtensions = {}, const std::vector<std::string>& indexBasenames = {});
+    const std::vector<std::string>& candidateExtensions = {}, const std::vector<std::string>& indexBasenames = {},
+    std::filesystem::path* resolvedBase = nullptr);
 
 // Process-wide, mutex-guarded static state (mirrors TabWidth.h's exact
 // pattern) -- unlike FormatOnSave.h's FormatCommand, which defaults unset

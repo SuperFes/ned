@@ -4,7 +4,9 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #include "Editor/FileWatch.h"
 
@@ -193,4 +195,151 @@ TEST_CASE("SetFileWatchEnabled round-trips and defaults on", "[FileWatch]") {
     REQUIRE(FileWatchEnabled());
     SetFileWatchEnabled(false);
     REQUIRE_FALSE(FileWatchEnabled());
+}
+
+//
+// file-rename-propagation follow-up: a rename reported AS a rename. Without
+// the cookie pairing below, all of these look identical to an unrelated
+// delete plus create.
+//
+
+TEST_CASE("Renaming a watched file in place reports the move", "[FileWatch]") {
+    const std::filesystem::path dir  = MakeTempDir("ned_filewatch_move_same_dir");
+    const std::filesystem::path file = dir / "old.txt";
+    WriteFile(file, "content\n");
+
+    std::mutex            movesMutex;
+    std::vector<FileMove> moves;
+    FileWatcher           watcher([] {}, [&](std::vector<FileMove> reported) {
+        const std::lock_guard lock(movesMutex);
+        moves.insert(moves.end(), reported.begin(), reported.end()); });
+    REQUIRE(watcher.Active());
+    watcher.SetWatchedFiles({file});
+
+    std::filesystem::rename(file, dir / "new.txt");
+
+    REQUIRE(WaitFor([&] {
+        const std::lock_guard lock(movesMutex);
+        return !moves.empty();
+    }));
+    const std::lock_guard lock(movesMutex);
+    REQUIRE(moves.size() == 1);
+    CHECK(moves[0].from == file);
+    CHECK(moves[0].to == dir / "new.txt");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A move between two watched directories is paired across them", "[FileWatch]") {
+    const std::filesystem::path dir = MakeTempDir("ned_filewatch_move_cross_dir");
+    std::filesystem::create_directories(dir / "a");
+    std::filesystem::create_directories(dir / "b");
+    const std::filesystem::path file  = dir / "a" / "moved.txt";
+    const std::filesystem::path other = dir / "b" / "open.txt";
+    WriteFile(file, "content\n");
+    WriteFile(other, "content\n");
+
+    std::mutex            movesMutex;
+    std::vector<FileMove> moves;
+    FileWatcher           watcher([] {}, [&](std::vector<FileMove> reported) {
+        const std::lock_guard lock(movesMutex);
+        moves.insert(moves.end(), reported.begin(), reported.end()); });
+    // Both directories are watched only because a file is open in each --
+    // exactly the condition the header documents as the limit of what can
+    // be paired.
+    watcher.SetWatchedFiles({file, other});
+
+    std::filesystem::rename(file, dir / "b" / "moved.txt");
+
+    REQUIRE(WaitFor([&] {
+        const std::lock_guard lock(movesMutex);
+        return !moves.empty();
+    }));
+    const std::lock_guard lock(movesMutex);
+    REQUIRE(moves.size() == 1);
+    CHECK(moves[0].from == file);
+    CHECK(moves[0].to == dir / "b" / "moved.txt");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A move into an unwatched directory still fires the change callback", "[FileWatch]") {
+    const std::filesystem::path dir = MakeTempDir("ned_filewatch_move_unwatched");
+    std::filesystem::create_directories(dir / "a");
+    std::filesystem::create_directories(dir / "elsewhere");
+    const std::filesystem::path file = dir / "a" / "moved.txt";
+    WriteFile(file, "content\n");
+
+    std::atomic<int>      changes{0};
+    std::mutex            movesMutex;
+    std::vector<FileMove> moves;
+    FileWatcher           watcher([&] { ++changes; }, [&](std::vector<FileMove> reported) {
+        const std::lock_guard lock(movesMutex);
+        moves.insert(moves.end(), reported.begin(), reported.end()); });
+    watcher.SetWatchedFiles({file});
+
+    std::filesystem::rename(file, dir / "elsewhere" / "moved.txt");
+
+    // The file under the buffer did change, so the sweep still runs; there
+    // is simply no destination to name, and none is guessed at.
+    REQUIRE(WaitFor([&] { return changes.load() > 0; }));
+    const std::lock_guard lock(movesMutex);
+    CHECK(moves.empty());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A move of an unopened file in a watched directory is reported too", "[FileWatch]") {
+    // The file worth following is routinely one no buffer has open (a git
+    // mv of a header nobody is editing); the directory is watched either
+    // way, so the events arrive either way. Deciding which of these is
+    // meaningful is the consumer's job -- WindowManagerTest pins that half.
+    const std::filesystem::path dir   = MakeTempDir("ned_filewatch_move_unopened");
+    const std::filesystem::path open  = dir / "open.txt";
+    const std::filesystem::path other = dir / "other.txt";
+    WriteFile(open, "content\n");
+    WriteFile(other, "content\n");
+
+    std::mutex            movesMutex;
+    std::vector<FileMove> moves;
+    FileWatcher           watcher([] {}, [&](std::vector<FileMove> reported) {
+        const std::lock_guard lock(movesMutex);
+        moves.insert(moves.end(), reported.begin(), reported.end()); });
+    watcher.SetWatchedFiles({open}); // only open.txt has a buffer
+
+    std::filesystem::rename(other, dir / "renamed.txt");
+
+    REQUIRE(WaitFor([&] {
+        const std::lock_guard lock(movesMutex);
+        return !moves.empty();
+    }));
+    const std::lock_guard lock(movesMutex);
+    REQUIRE(moves.size() == 1);
+    CHECK(moves[0].from == other);
+    CHECK(moves[0].to == dir / "renamed.txt");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Churn in a watched directory that is not a rename reports no move", "[FileWatch]") {
+    const std::filesystem::path dir  = MakeTempDir("ned_filewatch_move_unrelated");
+    const std::filesystem::path file = dir / "watched.txt";
+    WriteFile(file, "content\n");
+
+    std::mutex            movesMutex;
+    std::vector<FileMove> moves;
+    FileWatcher           watcher([] {}, [&](std::vector<FileMove> reported) {
+        const std::lock_guard lock(movesMutex);
+        moves.insert(moves.end(), reported.begin(), reported.end()); });
+    watcher.SetWatchedFiles({file});
+
+    WriteFile(dir / "sibling.txt", "content\n");
+    std::filesystem::remove(dir / "sibling.txt");
+    WriteFile(file, "changed\n");
+
+    SettleNegative();
+    const std::lock_guard lock(movesMutex);
+    CHECK(moves.empty());
+
+    std::filesystem::remove_all(dir);
 }

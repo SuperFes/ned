@@ -561,6 +561,135 @@ namespace {
         };
     }
 
+    // import-target-tree-sitter follow-up, lifted out of that feature's own
+    // closure by the file-rename-propagation one: the capture vocabulary
+    // every *-imports.scm query speaks, now shared by Mode::importTarget
+    // (the one enclosing point) and Mode::importTargets (every one in the
+    // document). No per-language branching lives here or in either closure
+    // -- a query does its language's own work by choosing which of these
+    // five capture names to tag a node with.
+    enum class ImportTargetKind { Literal,
+                                  Module,
+                                  Relative,
+                                  Namespace,
+                                  ModDeclaration };
+
+    struct ImportCapture {
+        std::size_t      targetStart = 0;
+        std::size_t      targetEnd   = 0;
+        ImportTargetKind kind        = ImportTargetKind::Literal;
+    };
+
+    struct ImportCaptures {
+        std::vector<ImportCapture>                       targets;
+        std::vector<std::pair<std::size_t, std::size_t>> statements;
+    };
+
+    ImportCaptures CollectImportCaptures(const treesitter::Query& query, const treesitter::Node& root,
+                                         std::string_view bufferText) {
+        ImportCaptures captures;
+        for (const treesitter::QueryCapture& capture : query.Captures(root, bufferText)) {
+            if (capture.name == "import.statement") {
+                captures.statements.emplace_back(capture.startByte, capture.endByte);
+            }
+            else if (capture.name == "import.target") {
+                captures.targets.push_back({capture.startByte, capture.endByte, ImportTargetKind::Literal});
+            }
+            else if (capture.name == "import.module") {
+                captures.targets.push_back({capture.startByte, capture.endByte, ImportTargetKind::Module});
+            }
+            else if (capture.name == "import.relative") {
+                // resolver-gaps follow-up: Python's own leading-dot relative
+                // import ("from . import x", "from ..foo import x") -- the
+                // captured node is the whole relative_import, e.g.
+                // ".foo.bar"/"..", dots included.
+                captures.targets.push_back({capture.startByte, capture.endByte, ImportTargetKind::Relative});
+            }
+            else if (capture.name == "import.namespace") {
+                // resolver-gaps follow-up: PHP's own backslash-separated
+                // `use` namespace -- resolved via PSR-4, not a dotted module
+                // path.
+                captures.targets.push_back({capture.startByte, capture.endByte, ImportTargetKind::Namespace});
+            }
+            else if (capture.name == "import.moddecl") {
+                // resolver-gaps follow-up: Rust's own bodyless "mod foo;"
+                // declaration -- resolved via a baseDirectory adjustment
+                // (the importing file's own stem), not a dotted module path.
+                captures.targets.push_back({capture.startByte, capture.endByte, ImportTargetKind::ModDeclaration});
+            }
+        }
+        return captures;
+    }
+
+    // The resolvable range for a target is the tightest "import.statement"
+    // range enclosing it (so point anywhere in e.g. "from foo.bar import
+    // baz" resolves, not just on "foo.bar" itself), falling back to the
+    // target's own range when no enclosing statement capture exists at all
+    // (e.g. Python's plain "import a.b, c.d", where each name's own range is
+    // already the most specific answer).
+    std::pair<std::size_t, std::size_t> ImportStatementRangeFor(const ImportCaptures& captures,
+                                                                const ImportCapture&  target) {
+        std::size_t rangeStart    = target.targetStart;
+        std::size_t rangeEnd      = target.targetEnd;
+        bool        haveStatement = false;
+        for (const auto& [statementStart, statementEnd] : captures.statements) {
+            if (statementStart <= target.targetStart && target.targetEnd <= statementEnd &&
+                (!haveStatement || (statementEnd - statementStart) < (rangeEnd - rangeStart))) {
+                rangeStart    = statementStart;
+                rangeEnd      = statementEnd;
+                haveStatement = true;
+            }
+        }
+        return {rangeStart, rangeEnd};
+    }
+
+    ImportTarget MakeImportTarget(std::string_view bufferText, const ImportCapture& capture, std::size_t rangeStart,
+                                  std::size_t rangeEnd) {
+        const std::string_view raw = bufferText.substr(capture.targetStart, capture.targetEnd - capture.targetStart);
+
+        std::string text(raw);
+        std::size_t targetStart   = capture.targetStart;
+        std::size_t targetEnd     = capture.targetEnd;
+        int         relativeLevel = 0;
+        switch (capture.kind) {
+            case ImportTargetKind::Literal: {
+                const std::string_view stripped = link::StripDelimiters(raw);
+                targetStart += static_cast<std::size_t>(stripped.data() - raw.data());
+                targetEnd = targetStart + stripped.size();
+                text      = std::string(stripped);
+                break;
+            }
+            case ImportTargetKind::Module:
+            case ImportTargetKind::Namespace:
+            case ImportTargetKind::ModDeclaration:
+                break; // kept as raw captured text
+            case ImportTargetKind::Relative:
+                // "from . import x" / "from ..foo import x" -- the captured
+                // relative_import node's own text starts with one-or-more
+                // literal '.' characters (import_prefix); strip them into
+                // relativeLevel, leaving just the remaining dotted module
+                // suffix, if any ("" for a bare "from . import x"). The byte
+                // range deliberately keeps the dots: a rewrite of this
+                // target (file-rename-propagation) has to change the dot
+                // count itself, so they are part of what it replaces.
+                while (relativeLevel < static_cast<int>(text.size()) && text[relativeLevel] == '.') {
+                    ++relativeLevel;
+                }
+                text.erase(0, static_cast<std::size_t>(relativeLevel));
+                break;
+        }
+        const bool isModulePath = capture.kind == ImportTargetKind::Module || capture.kind == ImportTargetKind::Relative;
+        return ImportTarget{.target           = std::move(text),
+                            .isModulePath     = isModulePath,
+                            .startByte        = rangeStart,
+                            .endByte          = rangeEnd,
+                            .relativeLevel    = relativeLevel,
+                            .isNamespacePath  = capture.kind == ImportTargetKind::Namespace,
+                            .isModDeclaration = capture.kind == ImportTargetKind::ModDeclaration,
+                            .targetStartByte  = targetStart,
+                            .targetEndByte    = targetEnd};
+    }
+
 } // namespace
 
 std::vector<std::string> BuiltinCaptureNames() {
@@ -979,7 +1108,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // specific work by tagging its own captures "import.target"/
     // "import.module"/"import.statement" (see Mode.h's ImportTarget doc
     // comment); this closure only ever looks for those three fixed names.
-    ImportTargetFunction importTarget;
+    ImportTargetFunction  importTarget;
+    ImportTargetsFunction importTargets;
     if (!queries.imports.empty()) {
         const auto importQuery = std::make_shared<treesitter::Query>(language, queries.imports);
         importTarget           = [parser, importQuery, sharedParse](std::string_view bufferText,
@@ -988,72 +1118,13 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             if (tree.IsNull()) {
                 return std::nullopt;
             }
+            const ImportCaptures captures = CollectImportCaptures(*importQuery, tree.RootNode(), bufferText);
 
-            enum class TargetKind { Literal,
-                                    Module,
-                                    Relative,
-                                    Namespace,
-                                    ModDeclaration };
-            struct TargetCapture {
-                std::size_t targetStart, targetEnd;
-                TargetKind  kind;
-            };
-            std::vector<TargetCapture>                       targets;
-            std::vector<std::pair<std::size_t, std::size_t>> statements;
-            for (const treesitter::QueryCapture& capture : importQuery->Captures(tree.RootNode(), bufferText)) {
-                if (capture.name == "import.statement") {
-                    statements.emplace_back(capture.startByte, capture.endByte);
-                }
-                else if (capture.name == "import.target") {
-                    targets.push_back({capture.startByte, capture.endByte, TargetKind::Literal});
-                }
-                else if (capture.name == "import.module") {
-                    targets.push_back({capture.startByte, capture.endByte, TargetKind::Module});
-                }
-                else if (capture.name == "import.relative") {
-                    // resolver-gaps follow-up: Python's own leading-dot
-                    // relative import ("from . import x", "from ..foo
-                    // import x") -- the captured node is the whole
-                    // relative_import, e.g. ".foo.bar"/"..", dots included.
-                    targets.push_back({capture.startByte, capture.endByte, TargetKind::Relative});
-                }
-                else if (capture.name == "import.namespace") {
-                    // resolver-gaps follow-up: PHP's own backslash-separated
-                    // `use` namespace -- resolved via PSR-4, not a dotted
-                    // module path.
-                    targets.push_back({capture.startByte, capture.endByte, TargetKind::Namespace});
-                }
-                else if (capture.name == "import.moddecl") {
-                    // resolver-gaps follow-up: Rust's own bodyless "mod
-                    // foo;" file-per-module declaration -- resolved via a
-                    // baseDirectory adjustment (the importing file's own
-                    // stem), not a dotted module path.
-                    targets.push_back({capture.startByte, capture.endByte, TargetKind::ModDeclaration});
-                }
-            }
-
-            // The resolvable range for a target is the tightest
-            // "import.statement" range enclosing it (so point anywhere in
-            // e.g. "from foo.bar import baz" resolves, not just on "foo.bar"
-            // itself), falling back to the target's own range when no
-            // enclosing statement capture exists at all (e.g. Python's plain
-            // "import a.b, c.d", where each name's own range is already the
-            // most specific answer).
-            const TargetCapture* best      = nullptr;
+            const ImportCapture* best      = nullptr;
             std::size_t          bestStart = 0;
             std::size_t          bestEnd   = 0;
-            for (const TargetCapture& target : targets) {
-                std::size_t rangeStart    = target.targetStart;
-                std::size_t rangeEnd      = target.targetEnd;
-                bool        haveStatement = false;
-                for (const auto& [statementStart, statementEnd] : statements) {
-                    if (statementStart <= target.targetStart && target.targetEnd <= statementEnd &&
-                        (!haveStatement || (statementEnd - statementStart) < (rangeEnd - rangeStart))) {
-                        rangeStart    = statementStart;
-                        rangeEnd      = statementEnd;
-                        haveStatement = true;
-                    }
-                }
+            for (const ImportCapture& target : captures.targets) {
+                const auto [rangeStart, rangeEnd] = ImportStatementRangeFor(captures, target);
                 if (rangeStart <= point && point <= rangeEnd && (!best || (rangeEnd - rangeStart) < (bestEnd - bestStart))) {
                     best      = &target;
                     bestStart = rangeStart;
@@ -1063,38 +1134,27 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             if (!best) {
                 return std::nullopt;
             }
+            return MakeImportTarget(bufferText, *best, bestStart, bestEnd);
+        };
 
-            std::string text(bufferText.substr(best->targetStart, best->targetEnd - best->targetStart));
-            int         relativeLevel = 0;
-            switch (best->kind) {
-                case TargetKind::Literal:
-                    text = std::string(link::StripDelimiters(text));
-                    break;
-                case TargetKind::Module:
-                case TargetKind::Namespace:
-                case TargetKind::ModDeclaration:
-                    break; // kept as raw captured text
-                case TargetKind::Relative:
-                    // "from . import x" / "from ..foo import x" -- the
-                    // captured relative_import node's own text starts with
-                    // one-or-more literal '.' characters (import_prefix);
-                    // strip them into relativeLevel, leaving just the
-                    // remaining dotted module suffix, if any ("" for a bare
-                    // "from . import x").
-                    while (relativeLevel < static_cast<int>(text.size()) && text[relativeLevel] == '.') {
-                        ++relativeLevel;
-                    }
-                    text.erase(0, relativeLevel);
-                    break;
+        // file-rename-propagation follow-up: the same query, every match
+        // instead of the one at point -- what tells the fixup planner
+        // whether a candidate file imports the file that just moved. Its own
+        // closure rather than a parameter on the one above, so every
+        // existing caller's signature is untouched.
+        importTargets = [parser, importQuery, sharedParse](std::string_view bufferText) -> std::vector<ImportTarget> {
+            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            if (tree.IsNull()) {
+                return {};
             }
-            const bool isModulePath = best->kind == TargetKind::Module || best->kind == TargetKind::Relative;
-            return ImportTarget{.target           = std::move(text),
-                                .isModulePath     = isModulePath,
-                                .startByte        = bestStart,
-                                .endByte          = bestEnd,
-                                .relativeLevel    = relativeLevel,
-                                .isNamespacePath  = best->kind == TargetKind::Namespace,
-                                .isModDeclaration = best->kind == TargetKind::ModDeclaration};
+            const ImportCaptures      captures = CollectImportCaptures(*importQuery, tree.RootNode(), bufferText);
+            std::vector<ImportTarget> targets;
+            targets.reserve(captures.targets.size());
+            for (const ImportCapture& target : captures.targets) {
+                const auto [rangeStart, rangeEnd] = ImportStatementRangeFor(captures, target);
+                targets.push_back(MakeImportTarget(bufferText, target, rangeStart, rangeEnd));
+            }
+            return targets;
         };
     }
 
@@ -1242,6 +1302,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 .autoPairs       = DefaultAutoPairs(),
                 .symbolKind      = std::move(symbolKind),
                 .importTarget    = std::move(importTarget),
+                .importTargets   = std::move(importTargets),
                 .testDiscovery   = std::move(testDiscovery),
                 .indentColumn    = std::move(indentColumn),
                 .lineInspect     = std::move(lineInspect),

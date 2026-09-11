@@ -19,10 +19,13 @@
 
 #include "UI/BufferView/Internal.h"
 
+#include "Editor/ImportFixup.h"
+#include "Editor/ImportFixupSettings.h"
 #include "Editor/LocalScopes.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/NextError.h"
 #include "Editor/Project/Root.h"
+#include "Editor/Project/Search.h"
 #include "Editor/RenameReview.h"
 #include "Editor/RenameReviewSettings.h"
 
@@ -71,7 +74,8 @@ std::optional<editor::locals::LocalBinding> BufferView::ResolveLocalBindingAtPoi
 
 namespace {
 
-    constexpr std::string_view kRenameReviewBufferName = "*rename*";
+    constexpr std::string_view kRenameReviewBufferName      = "*rename*";
+    constexpr std::string_view kImportFixupReviewBufferName = "*imports*";
 
     // A composite excerpt's body range covers the newline BuildMultibuffer
     // appended after its last line; RenameReview's proposals are line text
@@ -169,8 +173,159 @@ bool BufferView::BuildRenameReview(std::vector<editor::rename::FileRenameHits> f
     }
 
     std::vector<editor::rename::ReviewExcerpt> rows = editor::rename::BuildReviewExcerpts(files, newName);
-    if (rows.empty()) {
+    const std::optional<BufferView::ReviewCounts> counts =
+        PresentReviewExcerpts(std::move(rows), std::string(kRenameReviewBufferName));
+    if (!counts) {
         return false;
+    }
+
+    std::string message = "Rename \"" + oldName + "\" to \"" + newName + "\": " + std::to_string(counts->applied) +
+                          " reference" + (counts->applied == 1 ? "" : "s");
+    if (counts->risky != 0) {
+        message += ", " + std::to_string(counts->risky) + " comment/string occurrence" +
+                   (counts->risky == 1 ? "" : "s") + " excluded (M-a includes one)";
+    }
+    message += " -- C-c C-c apply, M-a/M-r include/exclude, M-n/M-p move";
+    statusMessage_ = message;
+    return true;
+}
+
+// The half every review shares: cap, stitch, write the proposals in, make
+// the buffer active. Split out of BuildRenameReview by the
+// file-rename-propagation follow-up, whose import fixups are the second
+// caller -- same rows, same commit path, a different sentence about them.
+// The walk plus the plan, in one place because both callers -- an in-editor
+// rename and an externally detected move -- want exactly the same thing.
+// Reads live buffer content in place of any file that is open, the rule
+// every project-wide operation here follows.
+editor::importfix::FixupPlan BufferView::PlanImportFixups(const std::vector<editor::importfix::MovedFile>& rawMoves) {
+    if (rawMoves.empty() || !editor::ImportFixupEnabled()) {
+        return {};
+    }
+    // Absolute first, always: a rename's paths come from whatever the user
+    // typed at the prompt, which is routinely relative to the working
+    // directory, and every comparison below -- against the project root,
+    // against a resolved import -- is meaningless against one of those.
+    std::vector<editor::importfix::MovedFile> moves;
+    moves.reserve(rawMoves.size());
+    for (const editor::importfix::MovedFile& move : rawMoves) {
+        std::error_code             ec;
+        const std::filesystem::path from = std::filesystem::weakly_canonical(move.from, ec);
+        std::error_code             toEc;
+        const std::filesystem::path to = std::filesystem::weakly_canonical(move.to, toEc);
+        moves.push_back({ec ? move.from : from, toEc ? move.to : to});
+    }
+
+    // A move with no end inside the project is not this project's business:
+    // nothing here can be importing it, and scanning to prove that is the
+    // one cost worth refusing to pay. (The moved file's own imports are
+    // skipped along with it -- a file outside the root was never part of
+    // what this feature covers.)
+    const std::filesystem::path root      = editor::ProjectRoot();
+    const auto                  underRoot = [&root](const std::filesystem::path& path) {
+        const std::filesystem::path relative = path.lexically_normal().lexically_relative(root.lexically_normal());
+        return !relative.empty() && *relative.begin() != "..";
+    };
+    if (std::none_of(moves.begin(), moves.end(), [&](const editor::importfix::MovedFile& move) {
+            return underRoot(move.from) || underRoot(move.to);
+        })) {
+        return {};
+    }
+
+    // The "which files might import this?" question, asked of the machinery
+    // built for exactly that: threaded, .gitignore-aware, and reading an
+    // open buffer's live content in place of its file.
+    const std::string pattern = editor::importfix::CandidatePattern(moves);
+    if (pattern.empty()) {
+        return {};
+    }
+    std::vector<std::filesystem::path> candidates;
+    try {
+        std::filesystem::path previous;
+        const std::size_t     limit = editor::ImportFixupMaxFiles();
+        for (const editor::SearchMatch& match : editor::SearchDirectory(root, pattern, bufferList_)) {
+            if (match.file == previous) {
+                continue; // matches arrive grouped by file, several lines per file
+            }
+            previous = match.file;
+            candidates.push_back(match.file);
+            if (limit != 0 && candidates.size() >= limit) {
+                break;
+            }
+        }
+    }
+    catch (const editor::SearchPatternError&) {
+        return {}; // a filename this pattern can't express: decline, don't guess
+    }
+
+    return editor::importfix::PlanImportFixups(moves, candidates, [this](const std::filesystem::path& path) {
+        return ReviewSourceTextForRename(path);
+    });
+}
+
+// file-watcher follow-up to the above: a move ned did not make (a git mv, a
+// file manager, a build script). The planner needs no special mode for it --
+// resolution simply fails for every import that named the file, and its
+// inverse question answers instead (Editor/ImportFixup.h's MatchMovedTarget)
+// -- so this is the same plan-and-review, with a different sentence.
+void BufferView::ReviewExternalMoves(const std::vector<editor::importfix::MovedFile>& moves) {
+    const editor::importfix::FixupPlan plan = PlanImportFixups(moves);
+    if (plan.files.empty()) {
+        return; // nothing imported it: the move needs no comment
+    }
+    const std::string what = moves.size() == 1
+                                 ? "Detected move of " + moves.front().from.filename().string()
+                                 : "Detected " + std::to_string(moves.size()) + " moved files";
+    BuildImportFixupReview(plan, what);
+}
+// file-rename-propagation follow-up: the same review, for edits that are not
+// all the same text. Every specifier rewrite is a Reference hit carrying its
+// own replacement (Editor/RenameReview.h's RenameHit::replacement), so the
+// classification pass a symbol rename runs -- which would read an import
+// path as a string and exclude it -- is deliberately skipped: these hits are
+// not candidates to weigh up, they are the edit.
+bool BufferView::BuildImportFixupReview(const editor::importfix::FixupPlan& plan, const std::string& what) {
+    if (plan.files.empty()) {
+        return false;
+    }
+
+    std::vector<editor::rename::FileRenameHits> files;
+    std::size_t                                 edits = 0;
+    for (const editor::importfix::FileFixup& fixup : plan.files) {
+        editor::rename::FileRenameHits file;
+        file.file        = fixup.file;
+        file.displayPath = ProjectRelativeDisplayPath(fixup.file);
+        file.text        = fixup.text;
+        for (const editor::importfix::SpecEdit& edit : fixup.edits) {
+            file.hits.push_back(editor::rename::RenameHit{.startByte   = edit.startByte,
+                                                          .endByte     = edit.endByte,
+                                                          .kind        = editor::rename::HitKind::Reference,
+                                                          .replacement = edit.newText});
+            ++edits;
+        }
+        files.push_back(std::move(file));
+    }
+
+    const std::optional<BufferView::ReviewCounts> counts = PresentReviewExcerpts(
+        editor::rename::BuildReviewExcerpts(files, std::string()), std::string(kImportFixupReviewBufferName));
+    if (!counts) {
+        return false;
+    }
+
+    std::string message = what + ": " + std::to_string(edits) + " import" + (edits == 1 ? "" : "s") + " in " +
+                          std::to_string(plan.files.size()) + " file" + (plan.files.size() == 1 ? "" : "s");
+    if (plan.declined != 0) {
+        message += ", " + std::to_string(plan.declined) + " left alone (no way to write the new location in its own style)";
+    }
+    message += " -- C-c C-c apply, M-r exclude, M-n/M-p move";
+    statusMessage_ = message;
+    return true;
+}
+
+std::optional<BufferView::ReviewCounts> BufferView::PresentReviewExcerpts(
+    std::vector<editor::rename::ReviewExcerpt> rows, const std::string& bufferName) {
+    if (rows.empty()) {
+        return std::nullopt;
     }
 
     // Same cap, and the same honest note about what it dropped, as every
@@ -192,10 +347,9 @@ bool BufferView::BuildRenameReview(std::vector<editor::rename::FileRenameHits> f
     // Same stale-singleton dance BuildProjectReplaceReview documents: the
     // new buffer is built and made active before the old one is closed, so
     // activeBuffer_ never points at a buffer being erased.
-    text::Buffer* const stale = bufferList_.Find(std::string(kRenameReviewBufferName));
+    text::Buffer* const stale = bufferList_.Find(bufferName);
 
-    text::Buffer& review = editor::multibuffer::BuildMultibuffer(bufferList_, std::string(kRenameReviewBufferName),
-                                                                 excerpts, total);
+    text::Buffer& review = editor::multibuffer::BuildMultibuffer(bufferList_, bufferName, excerpts, total);
 
     // The proposals applied into the review buffer rather than into any
     // file, which is what makes a row read as "changed" against the
@@ -233,19 +387,11 @@ bool BufferView::BuildRenameReview(std::vector<editor::rename::FileRenameHits> f
     if (stale != nullptr) {
         editor::multibuffer::ClearMultibufferIndexFor(*stale);
         CloseBufferNow(*stale);
-        review.Rename(std::string(kRenameReviewBufferName));
+        review.Rename(bufferName);
     }
-    editor::SetLastResultsBuffer(std::string(kRenameReviewBufferName));
+    editor::SetLastResultsBuffer(bufferName);
 
-    std::string message = "Rename \"" + oldName + "\" to \"" + newName + "\": " + std::to_string(applied) +
-                          " reference" + (applied == 1 ? "" : "s");
-    if (risky != 0) {
-        message += ", " + std::to_string(risky) + " comment/string occurrence" + (risky == 1 ? "" : "s") +
-                   " excluded (M-a includes one)";
-    }
-    message += " -- C-c C-c apply, M-a/M-r include/exclude, M-n/M-p move";
-    statusMessage_ = message;
-    return true;
+    return ReviewCounts{.applied = applied, .risky = risky};
 }
 
 bool BufferView::HandleRenameReviewIncludeKey() {

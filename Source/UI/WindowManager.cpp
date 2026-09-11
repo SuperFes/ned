@@ -1190,13 +1190,107 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
 }
 
 void WindowManager::StartFileWatcher(EventLoop& eventLoop) {
-    fileWatcher_ = std::make_unique<editor::FileWatcher>([this, &eventLoop] {
-        eventLoop.Post([this] {
-            SweepExternalChanges();
-            ResyncFileWatcher();
+    fileWatcher_ = std::make_unique<editor::FileWatcher>(
+        [this, &eventLoop] {
+            eventLoop.Post([this] {
+                SweepExternalChanges();
+                ResyncFileWatcher();
+            });
+        },
+        // file-rename-propagation follow-up: posted on the same queue and
+        // therefore always ahead of the sweep above, which is what lets the
+        // sweep see a followed buffer at its new path rather than a file
+        // that has vanished from under it.
+        [this, &eventLoop](std::vector<editor::FileMove> moves) {
+            eventLoop.Post([this, moves = std::move(moves)] { HandleExternalMoves(moves); });
         });
-    });
     ResyncFileWatcher();
+}
+
+void WindowManager::HandleExternalMoves(const std::vector<editor::FileMove>& moves) {
+    // A directory rename arrives as one event for the directory itself;
+    // everything downstream (a server's didRenameFiles, an import fixup)
+    // works per file, the same expansion BufferView::PerformProjectRename
+    // does for a rename ned made itself.
+    // What the watcher hands over is every rename pair in a directory some
+    // buffer is open in, which includes ned's own atomic saves -- a save of
+    // foo.cpp is literally a rename of foo.cpp.ned-tmp onto it. A move is
+    // worth acting on only when what moved was a file this editor could
+    // have something to say about: one a buffer has open, or one whose
+    // language has an import query at all. Everything else (a temp file, a
+    // lock file, an editor backup) is churn that happens to be atomic.
+    const auto worthFollowing = [this](const std::filesystem::path& from) {
+        for (const auto& buffer : bufferList_.Buffers()) {
+            if (buffer->Path().has_value() && *buffer->Path() == from) {
+                return true;
+            }
+        }
+        return static_cast<bool>(editor::ModeForPath(from).importTargets);
+    };
+
+    std::vector<editor::importfix::MovedFile> expanded;
+    for (const editor::FileMove& move : moves) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(move.to, ec) && !worthFollowing(move.from)) {
+            continue;
+        }
+        if (std::filesystem::is_directory(move.to, ec)) {
+            std::error_code walkEc;
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(
+                     move.to, std::filesystem::directory_options::skip_permission_denied, walkEc)) {
+                if (entry.is_regular_file(walkEc)) {
+                    const std::filesystem::path relative = entry.path().lexically_relative(move.to);
+                    expanded.push_back({move.from / relative, entry.path()});
+                }
+            }
+            continue;
+        }
+        expanded.push_back({move.from, move.to});
+    }
+    if (expanded.empty()) {
+        return;
+    }
+
+    // Follow any open buffer to where its file went, exactly as an
+    // in-editor rename does -- including the mode cache, since a move can
+    // change which Mode applies without touching a byte of content.
+    std::size_t followed = 0;
+    for (const auto& buffer : bufferList_.Buffers()) {
+        if (!buffer->Path().has_value()) {
+            continue;
+        }
+        const std::filesystem::path current = std::filesystem::weakly_canonical(*buffer->Path());
+        for (const editor::importfix::MovedFile& move : expanded) {
+            if (current != std::filesystem::weakly_canonical(move.from)) {
+                continue;
+            }
+            buffer->SetPath(move.to);
+            buffer->Rename(move.to.filename().string());
+            editor::ClearModeCacheFor(*buffer);
+            ++followed;
+            break;
+        }
+    }
+    if (followed != 0) {
+        statusMessage_ = followed == 1 ? "Followed a file moved on disk: " + expanded.front().to.filename().string()
+                                       : "Followed " + std::to_string(followed) + " files moved on disk";
+        ResyncFileWatcher();
+    }
+
+    if (lspManager_ != nullptr) {
+        std::vector<editor::lsp::Manager::FileRenameEntry> renamed;
+        renamed.reserve(expanded.size());
+        for (const editor::importfix::MovedFile& move : expanded) {
+            renamed.push_back({move.from, move.to});
+        }
+        // didRenameFiles only: willRenameFiles is a request for edits to
+        // apply *before* a rename, and this one already happened.
+        lspManager_->NotifyFilesRenamed(renamed);
+    }
+
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().ReviewExternalMoves(expanded);
+    }
 }
 
 void WindowManager::ResyncFileWatcher() {
