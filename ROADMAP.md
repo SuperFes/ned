@@ -263,8 +263,22 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       `Editor/HighlightCache.h` is now the single cache both read, and two consumers in one
       frame measure the same as one (76,509us). It hands back a `shared_ptr`, which also
       removed a full span-vector copy `BufferView` was doing every frame even on a hit.
-      That leaves the ~77ms single highlight, which is what the two ranged fixes above are
-      for.
+      **And the minimap no longer re-highlights per keystroke at all**
+      (`minimap-highlight-debounce`): it colours the whole document, which makes its
+      highlight the expensive one, and it is a few pixels wide, so it does not have to be
+      current mid-burst. It now refreshes only once the buffer has been quiet for 250ms,
+      riding out a typing burst on the spans it already has. A frame painting both a
+      `BufferView` and a `Minimap` over the 127 KiB markdown buffer costs 80ms per
+      keystroke against 134ms before -- the minimap adds ~5ms now rather than doubling.
+      Deliberately a debounce and not a background thread, which was the obvious
+      suggestion: a `Mode`'s highlight closure captures a shared `Parser` and
+      `IncrementalParseCache` (`Mode.cpp`), so running it off-thread races the main
+      thread's own call on that shared state -- the same shape as the dynamic-mode SIGSEGV
+      already in this file's history. A real background highlight needs its own `Parser`
+      and `Query` instances first.
+      That leaves the ~71ms single whole-document highlight on the *buffer's* own path,
+      which is what the two ranged fixes above are for -- and which the minimap's debounce
+      has now unblocked, since nothing else still needs whole-document spans synchronously.
       `mode.symbolKind` deserves the same treatment (its own whole-file query, its own
       `ContentGeneration` key) but is 8% of the problem, not 90%.
       Note for whoever picks this up: whole-process CPU measurements are useless here and
