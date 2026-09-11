@@ -201,20 +201,27 @@ int RunMcpStdioRelay(const std::string& socketPathStr) {
     // loops are simpler than one poll() loop for no real cost.
     std::jthread stdinToSocket([fd] {
         char buffer[4096];
+
         while (true) {
             const ssize_t n = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+
             if (n <= 0) {
                 break;
             }
+
             ssize_t written = 0;
+
             while (written < n) {
                 const ssize_t result = ::write(fd, buffer + written, static_cast<std::size_t>(n - written));
+
                 if (result <= 0) {
                     return;
                 }
+
                 written += result;
             }
         }
+
         ::shutdown(fd, SHUT_WR);
     });
 
