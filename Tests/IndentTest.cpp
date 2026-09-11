@@ -37,6 +37,7 @@ using ned::editor::OrgMode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::RigidShiftRegion;
+using ned::editor::RustMode;
 using ned::editor::SetIndentStyleForMode;
 using ned::editor::TomlMode;
 using ned::editor::TsxMode;
@@ -740,6 +741,130 @@ TEST_CASE("CppMode indentColumn aligns a wrapped call's continuation argument to
     const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "(" -- same as CMode
+}
+
+// lambda-body-alignment follow-up. A block-bodied callable passed as a call
+// argument used to inherit the argument list's own @aligned column, so every
+// line of the lambda's body landed at "(" + one level per nesting depth
+// instead of one level past the owning statement -- a live-reported bug
+// ("really deep tabulation"), reproduced here byte-for-byte from the real
+// main.cpp construct that surfaced it. @align.barrier on compound_statement
+// (cpp-indents.scm) is what stops the argument_list's alignment reaching in.
+TEST_CASE("CppMode indentColumn indents a lambda argument's body from the statement, not the call's paren column",
+          "[Indent]") {
+    const auto mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("void f() {\n"
+                         "    std::jthread stdinToSocket([fd] {\n"
+                         "        char buffer[4096];\n"
+                         "        while (true) {\n"
+                         "            if (n <= 0) {\n"
+                         "                break;\n"
+                         "            }\n"
+                         "        }\n"
+                         "    });\n"
+                         "}\n");
+
+    const auto columnOfLine = [&](std::size_t line) {
+        const auto [start, end] = LineRange(buffer, line);
+        const auto column       = mode.indentColumn(buffer.Text(), start, end);
+        REQUIRE(column.has_value());
+        return *column;
+    };
+
+    REQUIRE(columnOfLine(2) == 8);  // "char buffer[4096];" -- f's body + the lambda's
+    REQUIRE(columnOfLine(3) == 8);  // "while (true) {"
+    REQUIRE(columnOfLine(4) == 12); // "if (n <= 0) {"
+    REQUIRE(columnOfLine(5) == 16); // "break;"
+    REQUIRE(columnOfLine(6) == 12); // the if's own "}"
+    REQUIRE(columnOfLine(7) == 8);  // the while's own "}"
+    // The closing "});" resolves through the dedent branch, which computes
+    // "as if for the barrier's own opening line" -- seeding the walk AT the
+    // barrier itself. It must still land on the owning statement's level,
+    // which is why the barrier is deliberately not gated on opensAtPosition.
+    REQUIRE(columnOfLine(8) == 4);
+}
+
+TEST_CASE("JavaScriptMode indentColumn indents a callback body from the statement, not the call's paren column",
+          "[Indent]") {
+    const auto mode = JavaScriptMode();
+    Buffer     buffer("test.js");
+    buffer.InsertAtPoint("setTimeout(() => {\n"
+                         "    doThing();\n"
+                         "}, 100);\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 1);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 4);
+}
+
+TEST_CASE("GoMode indentColumn indents a func literal's body from the statement, not the call's paren column",
+          "[Indent]") {
+    const auto mode = GoMode();
+    Buffer     buffer("test.go");
+    buffer.InsertAtPoint("func main() {\n"
+                         "\tgo doStuff(func() {\n"
+                         "\t\tx()\n"
+                         "\t})\n"
+                         "}\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 2);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 2 * EffectiveIndentStyle("go-mode").width);
+}
+
+TEST_CASE("RustMode indentColumn indents a closure body from the statement, not the call's paren column",
+          "[Indent]") {
+    const auto mode = RustMode();
+    Buffer     buffer("test.rs");
+    buffer.InsertAtPoint("fn main() {\n"
+                         "    thread::spawn(move || {\n"
+                         "        work();\n"
+                         "    });\n"
+                         "}\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 2);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 8);
+}
+
+TEST_CASE("JavaMode indentColumn indents an anonymous class body from the statement, not the call's paren column",
+          "[Indent]") {
+    const auto mode = JavaMode();
+    Buffer     buffer("Test.java");
+    buffer.InsertAtPoint("class C {\n"
+                         "    void m() {\n"
+                         "        submit(new Runnable() {\n"
+                         "            public void run() {\n"
+                         "                work();\n"
+                         "            }\n"
+                         "        });\n"
+                         "    }\n"
+                         "}\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 3);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 12);
+}
+
+// @align.barrier is opt-in per query precisely so a language whose nested
+// @indent containers SHOULD inherit an enclosing call's alignment keeps
+// doing so -- janet/clojure never use the capture, and a "[...]" inside a
+// "(foo ...)" call still resolves through the call's own @aligned column.
+// This pins the pass-through, not the (separately imperfect) column itself.
+TEST_CASE("JanetMode indentColumn still lets a nested bracket inherit the enclosing call's alignment", "[Indent]") {
+    const auto mode = JanetMode();
+    Buffer     buffer("test.janet");
+    buffer.InsertAtPoint("(foo bar [a\n          b])\n");
+
+    const auto [contStart, contEnd] = LineRange(buffer, 1);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
+    REQUIRE(contColumn.has_value());
+    REQUIRE(*contColumn == 5); // under "bar", the enclosing par_tup_lit's own alignment column
 }
 
 TEST_CASE("CppMode indentColumn does not indent a top-level namespace's own body", "[Indent]") {
