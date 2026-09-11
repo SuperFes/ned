@@ -469,12 +469,24 @@ constexpr char32_t kTruncationIndicator = U'»';
 // render loop's own use below.
 constexpr char32_t kIndentGuide = U'│';
 
-// wrap-continuation-indicator follow-up: painted in the one column
-// ComputeWrapSegments' own caller deliberately reserves at the right
-// edge of every row when wrap is on -- U+21B5, the same glyph printed
-// on a physical Return/Enter keycap, so it reads unambiguously as "this
-// line keeps going" without being mistaken for real content.
-constexpr char32_t kWrapContinuationIndicator = U'↵';
+// gutter-wrap-indicator follow-up: marks a row that continues a line
+// begun above -- U+21B3, Kate's own gutter cue, which reads as "came
+// down from the line before" in a left-hand column the way the earlier
+// right-edge U+21B5 ("this keeps going") read at the end of a row.
+//
+// It moved from the right edge into the line-number column, and that is
+// what let ComputeWrappedLineSegments below stop reserving a column and
+// become a single pass. Painted right-aligned in the digits column on a
+// continuation row, where the line number of a first row would sit;
+// with line numbers off there is no such column, and it is painted
+// immediately after the segment's own content instead -- word-aware
+// wrapping ends a segment at a word boundary, so that cell is virtually
+// always free, and when it genuinely isn't (a hard-broken token filling
+// the row exactly) the glyph is skipped rather than clobbering real
+// content. That is kNoTrailingNewlineIndicator's own trade-off just
+// below, for the same reason: an opportunistic marker must never cost a
+// reserved column, or the reservation is back.
+constexpr char32_t kWrapContinuationIndicator = U'↳';
 
 // trailing-blank-line-gutter follow-up: painted after the buffer's true
 // last line when it has content but no trailing newline follows it --
@@ -804,33 +816,31 @@ inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& co
     return segments;
 }
 
-// wrap-continuation-indicator follow-up: the one true source every
-// consumer of wrap-segment row/column math shares -- Paint()'s own
-// render loop, RowsForLine's row-count cache, CursorPosition, and
-// ByteOffsetForPoint's click resolution. All four used to call
-// ComputeWrapSegments directly with their own "full width" value; only
-// Paint() knew to knock one column off once a line is confirmed to
-// wrap (reserving the row's own right edge for
-// kWrapContinuationIndicator), so the other three would report
-// different segment boundaries than what was actually painted --
-// observed live as an undercounted row total (MaxTopLine/
-// ScrollToShowPoint couldn't scroll far enough to reveal a wrapped
-// line's true last row), a cursor drawn past its real character (the
-// column math still assumed the wider, unreserved layout), and motion
-// that appeared to stop dead once the two disagreed enough. `fullWidth`
-// here must be the same "size().width - gutterWidth" value at every
-// call site -- see ComputeWrapSegments's own doc comment for why
-// reducing width can only ever add segments, never remove one, so this
-// can't oscillate.
+// The one true source every consumer of wrap-segment row/column math
+// shares -- Paint()'s own render loop, RowsForLine's row-count cache,
+// CursorPosition, and ByteOffsetForPoint's click resolution. All four
+// used to call ComputeWrapSegments directly with their own "full width"
+// value; only Paint() knew to knock one column off once a line was
+// confirmed to wrap (reserving the row's own right edge for the
+// continuation glyph), so the other three would report different
+// segment boundaries than what was actually painted -- observed live as
+// an undercounted row total (MaxTopLine/ScrollToShowPoint couldn't
+// scroll far enough to reveal a wrapped line's true last row), a cursor
+// drawn past its real character (the column math still assumed the
+// wider, unreserved layout), and motion that appeared to stop dead once
+// the two disagreed enough.
+//
+// gutter-wrap-indicator follow-up: the reservation itself is gone --
+// the glyph moved into the line-number column (see
+// kWrapContinuationIndicator above), so nothing narrows the content
+// width any more and this is a single pass. The seam stays anyway: it
+// is what made that whole class of bug findable and fixable in one
+// place, and `fullWidth` must still be the same
+// "size().width - gutterWidth" value at every call site.
 inline std::vector<WrapSegment> ComputeWrappedLineSegments(const text::ITextStorage& content, std::size_t lineStart,
                                                            std::size_t lineEnd, int fullWidth,
                                                            const std::vector<RenderedLink>& lineLinks) {
-    std::vector<WrapSegment> segments = ComputeWrapSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
-    if (segments.size() > 1) {
-        const int reservedWidth = std::max(1, fullWidth - 1);
-        segments                = ComputeWrapSegments(content, lineStart, lineEnd, reservedWidth, lineLinks);
-    }
-    return segments;
+    return ComputeWrapSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
 }
 
 // Filters mode_.highlight's whole-buffer HighlightSpan list down to just
