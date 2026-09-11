@@ -193,7 +193,7 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       table — that is `save-theme` and `ned/theme-set`. The theme tests that walked the
       `key=value` output to enumerate every field now walk the Janet output instead, so the
       per-field coverage survived the format going away.
-- [ ] **Phase 6 remainder — text-layer adoption.** The tint half is done (every wash in
+- [x] **Phase 6 — text-layer adoption.** The tint half is done (every wash in
       `BrushForCell` composites, so all of them carry alpha), and `buffer.selection` /
       `buffer.search` are real Surfaces now -- sampled across the whole viewport, so a
       gradient selection is one wash the selection reveals rather than a ramp per selected
@@ -220,8 +220,39 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       highlighting, 134ms per keystroke against about 1ms for this. With that fixed
       (~25ms), typing measures the same with the glow on as off (24,588us against
       24,650us), so it is on again.
-      Still open: virtual text (inline diagnostics, blame, fold placeholders) at real
-      alpha. `buffer` is the last surface with no consumer.
+      Closed 2026-09-10 with the last two pieces:
+      **`buffer` has a consumer.** It was derived, published in `SurfaceNames()` and
+      documented while being painted by nothing, so `ned/theme-surface "buffer" ...`
+      parsed, stored and did nothing. `BufferView::PaintBufferSurface` paints it after the
+      content loop, not before -- "has anything louder claimed this cell" is a question
+      about the painted *result*, not about paint order, and a cell still holding exactly
+      `theme_.background` is one no selection, search hit, snippet field, diff tint or
+      conflict wash wanted. Same three-way rule the current-line wash already used
+      (backing plane / composite in place / yield), and a derived default that composites
+      the theme background onto itself, so an unthemed buffer is byte-identical.
+      That change moved the goalposts for every wash painted after it, which is the
+      interesting part: `PaintCurrentLineHighlight` tested
+      `cell.background_color == theme_.background` to mean "unclaimed", and the moment a
+      themed `buffer` fill composited into those same cells the current line silently
+      vanished. `BaseBackgroundAt` is that predicate extracted and made per-cell (a
+      gradient body means the base differs by column). Pinned by a test that fails
+      against the old predicate -- and only on an *opaque* theme: `DarkTheme`'s background
+      is `Color::Default`, which sends every wash down the backing-plane branch instead,
+      so the fixture default would have passed either way.
+      **Virtual text at real alpha.** An inlay hint now takes its background from the
+      anchoring byte's own `BrushForCell` rather than assigning `theme_.background` -- it
+      is virtual text drawn *inside* a real line, and writing the theme background punched
+      a visible hole through a selection at exactly the hint's width (a real bug, found by
+      writing the test first and watching it fail). Sampled per column, since those washes
+      are Surfaces now and a gradient one differs across the hint.
+      `GhostForegroundOver` then resolves a translucent `ghost_text_foreground` against
+      what is behind the cell; an opaque one -- every bundled theme -- is returned
+      untouched, so this is opt-in. Stated limit rather than hidden: the two washes that
+      run after the content loop can still composite into a cell whose ghost foreground
+      was already resolved, so virtual text over the current line resolves against that
+      line's background as it was a moment earlier. Both are deliberately faint; closing
+      it means a second full walk of the viewport, which is not worth it for the size of
+      the error.
 - [x] **Syntax highlighting cost 134ms per keystroke; it is now ~25ms.** Measured
       2026-09-10 with `Tests/KeystrokeBench.cpp` (hidden; `ned_tests "[keybench]"`), on a
       160x45 view of ROADMAP.md -- 128 KiB of markdown, the file actually reported as
@@ -320,9 +351,9 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       out to be. The echo area's dim/ghost shades now interpolate toward the *painted*
       background rather than the flat Brush colour — identical for the default, and the only
       reading that stays right under a gradient.
-      Still inert: `buffer.selection` and `buffer.search` (phase 6 — they already composite,
-      this is about letting a theme express them as a *paint*), `buffer`, and `popup`
-      (phase 7).
+      Still inert: `popup` (phase 7 — a translucent body composites against the theme
+      background rather than against what the popup covers). `buffer.selection`,
+      `buffer.search` and `buffer` all have consumers now (phase 6, above).
       (`tab.strip` was a seventh case in the other direction — painted by `TabBar` and
       derived by `DerivedSurface`, but missing from `SurfaceNames()`, so it was invisible to
       the gallery and the docs while working perfectly for anyone who knew the name.

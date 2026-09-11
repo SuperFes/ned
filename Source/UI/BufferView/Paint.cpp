@@ -78,7 +78,9 @@ void BufferView::PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::siz
         return; // shouldn't happen (RowsForLine/LeadingAnnotationRowsForLine agree with this scan) -- leave the blanked row
     }
 
-    const Brush titleBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
+    const Brush titleBrush{.background = theme_.background,
+                           .foreground = GhostForegroundOver(theme_.background),
+                           .italic     = true};
     const int   width = c.size().width;
     const int   col   = static_cast<int>(gutterWidth);
     // A lens title comes from real LSP text (symbol names, reference counts,
@@ -1191,6 +1193,43 @@ Color BufferView::OverlayWashAt(std::string_view surfaceName, const Color& fallb
     return OverlayBackground(theme_, colour.alpha == 0 ? fallback : colour);
 }
 
+// Synthetic "virtual text" -- inlay hints, code-lens titles -- at real alpha.
+// theme_.ghostTextForeground is a pre-dimmed grey by default, chosen against
+// the theme background, and an opaque one is returned untouched so every
+// existing theme paints exactly what it painted before. A theme that gives it
+// alpha instead gets text that fades toward whatever is genuinely behind that
+// cell -- a selection wash, a current-line tint, the desktop through a
+// transparent theme -- rather than toward a colour picked once at theme-author
+// time.
+//
+// Resolved here rather than left in the Cell because Screen::Flush reads only
+// a foreground's RGB: an unresolved translucent foreground renders fully
+// opaque, which is the same trap the background washes above were in before
+// they went through OverlayBackground.
+//
+// Known limit, stated rather than hidden: `beneath` is what the cell holds
+// during the content loop, and the two washes that run *after* it
+// (PaintBufferSurface, PaintCurrentLineHighlight) can still composite into
+// that same cell afterwards. So a ghost foreground over the current line
+// resolves against the line's background as it was a moment earlier, not as
+// it ends up. Both of those are deliberately faint, so the difference is
+// small; closing it properly means resolving virtual-text foregrounds in a
+// pass after every background is final, which is not worth a second walk of
+// the viewport for the size of the error.
+Color BufferView::GhostForegroundOver(const Color& beneath) const {
+    const Color ghost = theme_.ghostTextForeground;
+    if (ghost.Opaque()) {
+        return ghost;
+    }
+    Color base = beneath;
+    if (!base.Composable()) {
+        base = AssumedBackground().value_or(theme_.background);
+    }
+    // Nothing known to composite against: keep the authored colour rather
+    // than blending toward a colour we would be inventing.
+    return base.Composable() ? BlendOver(base, ghost) : ghost.WithAlpha(255);
+}
+
 Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineState, const Canvas& c, int col,
                                int row) const {
     const editor::HighlightSpan span  = SpanAtOffset(lineState.spans, offset);
@@ -1454,14 +1493,28 @@ void BufferView::EmitInlayHint(Canvas& c, int row, int& col, std::size_t offset,
     // raw control byte, matching every other glyph-writing loop
     // in this function.
     if (const RenderedInlayHint* hint = InlayHintStartingAt(lineState.inlayHints, offset)) {
-        const Brush      hintBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
         std::size_t      hintTextOffset = 0;
         const text::Rope hintRope(hint->label);
         while (hintTextOffset < hintRope.ByteLength() && col < c.size().width) {
             const auto glyph = hintRope.CodepointAt(hintTextOffset);
             if (glyph.codepoint >= 0x20 && glyph.codepoint != 0x7F) {
-                Cell& cell     = c[{.x = col, .y = row}];
-                cell.character = text::EncodeCodepointUtf8(glyph.codepoint);
+                // translucency phase 6 (virtual text): the background comes
+                // from the anchoring byte's own BrushForCell rather than
+                // being theme_.background outright. A hint is virtual text
+                // drawn *inside* a real line, so whatever wash that line is
+                // under -- a selection, an isearch hit, a snippet field, a
+                // conflict tint -- covers the hint's columns too. Assigning
+                // the theme background punched a visible hole through the
+                // selection at exactly the hint's own width.
+                //
+                // Sampled per column, not once: those washes are Surfaces
+                // now, and a gradient one differs across the hint.
+                const Color beneath = BrushForCell(offset, lineState, c, col, row).background;
+                const Brush hintBrush{.background = beneath,
+                                      .foreground = GhostForegroundOver(beneath),
+                                      .italic     = true};
+                Cell&       cell = c[{.x = col, .y = row}];
+                cell.character   = text::EncodeCodepointUtf8(glyph.codepoint);
                 hintBrush.ApplyTo(cell);
                 ++col;
             }
@@ -2081,6 +2134,8 @@ void BufferView::Paint(Canvas paneCanvas) {
         }
     }
 
+    PaintBufferSurface(c);
+
     PaintCurrentLineHighlight(c, rowLine);
 
     PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutter.totalWidth);
@@ -2178,6 +2233,67 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
     }
 }
 
+// The buffer body's own background -- the bottom layer every other wash here
+// sits on, and the last of the advertised surfaces to get a consumer. A theme
+// setting `ned/theme-surface "buffer" "fill" ...` used to parse, store, and
+// do nothing at all.
+//
+// Painted after the content loop rather than before it, which reads backwards
+// for a bottom layer but is the only order that works: "has anything louder
+// claimed this cell" is a question about the *painted result*, not about
+// paint order. A cell still holding exactly theme_.background is one no
+// selection, search hit, snippet field, diff tint or conflict wash wanted --
+// exactly the test PaintCurrentLineHighlight below already relies on.
+//
+// Same three-way rule as that function, for the same reasons: a cell with
+// nothing in it defers to the backing plane (so the fill tints whatever is
+// showing through -- the desktop, for a transparent theme -- rather than
+// plugging the hole); an opaque theme has already painted its background into
+// the text cell, where the plane beneath is invisible, so composite in place;
+// anything else is louder and is left alone.
+void BufferView::PaintBufferSurface(Canvas& c) const {
+    const Surface surface = SurfaceFor(theme_, "buffer");
+    if (!PaintsColour(surface.fill)) {
+        return;
+    }
+
+    const int   width  = c.size().width;
+    const int   height = c.size().height;
+    const Point origin = c.Origin();
+
+    for (int row = 0; row < height; ++row) {
+        const double v = height > 1 ? static_cast<double>(row) / (height - 1) : 0.0;
+        for (int col = 0; col < width; ++col) {
+            const double u      = width > 1 ? static_cast<double>(col) / (width - 1) : 0.0;
+            const Color  colour = PaintColourAt(surface.fill, u, v, origin.x + col, origin.y + row);
+            if (colour.alpha == 0) {
+                continue;
+            }
+
+            Cell& cell = c[{.x = col, .y = row}];
+            if (cell.background_color.kind == Color::Kind::Default) {
+                c.Backing({.x = col, .y = row}).background_color = OverlayBackground(theme_, colour);
+            }
+            else if (cell.background_color == theme_.background) {
+                cell.background_color = BlendOver(theme_.background, colour);
+            }
+        }
+    }
+}
+
+Color BufferView::BaseBackgroundAt(const Surface& surface, const Canvas& c, int col, int row) const {
+    if (!PaintsColour(surface.fill) || !theme_.background.Composable()) {
+        return theme_.background;
+    }
+    const int    width  = c.size().width;
+    const int    height = c.size().height;
+    const Point  origin = c.Origin();
+    const double u      = width > 1 ? static_cast<double>(col) / (width - 1) : 0.0;
+    const double v      = height > 1 ? static_cast<double>(row) / (height - 1) : 0.0;
+    const Color  colour = PaintColourAt(surface.fill, u, v, origin.x + col, origin.y + row);
+    return colour.alpha == 0 ? theme_.background : BlendOver(theme_.background, colour);
+}
+
 // The current line's own background, painted into the layer *below* the text
 // rather than into the text cells themselves. That is the whole point of the
 // backing plane: a wash here never has to choose between covering the
@@ -2199,6 +2315,9 @@ void BufferView::PaintCurrentLineHighlight(Canvas& c, const std::vector<std::siz
     const std::size_t   pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
     const int           width     = c.size().width;
     const Point         origin    = c.Origin();
+    // Resolved once, not per cell: SurfaceFor derives a whole Surface, and
+    // BaseBackgroundAt is asked about every column of the current line.
+    const Surface bodySurface = SurfaceFor(theme_, "buffer");
 
     for (int row = 0; row < c.size().height; ++row) {
         if (row >= static_cast<int>(rowLine.size()) || rowLine[row] != pointLine) {
@@ -2216,14 +2335,29 @@ void BufferView::PaintCurrentLineHighlight(Canvas& c, const std::vector<std::siz
                 // Nothing in the cell: the wash goes on the layer beneath, so
                 // it tints whatever is showing through -- the desktop, for a
                 // transparent theme -- instead of plugging the hole.
-                c.Backing({.x = col, .y = row}).background_color = OverlayBackground(theme_, colour);
+                //
+                // Blended onto whatever the backing already holds rather than
+                // assigned over it: PaintBufferSurface runs first and may have
+                // put the `buffer` surface's own fill there, and the current
+                // line sits on top of that, not instead of it. An untouched
+                // backing cell is Default, which is the assignment this used
+                // to do unconditionally.
+                Cell& backing            = c.Backing({.x = col, .y = row});
+                backing.background_color = backing.background_color.kind == Color::Kind::Default
+                                               ? OverlayBackground(theme_, colour)
+                                               : BlendOver(backing.background_color, colour);
             }
-            else if (cell.background_color == theme_.background) {
+            else if (cell.background_color == BaseBackgroundAt(bodySurface, c, col, row)) {
                 // An opaque theme paints the row's own background into these
                 // cells, which hides the backing layer completely. There is
                 // nothing to gain from a lower plane when the upper one is
                 // solid, so composite in place instead.
-                cell.background_color = BlendOver(theme_.background, colour);
+                //
+                // Compared (and blended) against the *base* background rather
+                // than theme_.background: a themed `buffer` fill means the two
+                // are no longer the same colour, and a gradient one means the
+                // base differs per cell.
+                cell.background_color = BlendOver(cell.background_color, colour);
             }
             // Any other background is something louder that already owns this
             // cell -- a selection, a search hit, a diff tint, a gutter
