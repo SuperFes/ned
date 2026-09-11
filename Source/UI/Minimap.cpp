@@ -458,9 +458,33 @@ void Minimap::EnsurePlane() const {
         // the same whole-document mode_.highlight call -- so with the minimap
         // on (the default) a keystroke paid for it twice. Measured on a
         // 125 KiB markdown buffer: 67ms once, 134ms twice.
-        const std::shared_ptr<const std::vector<editor::HighlightSpan>> cached =
-            editor::CachedHighlightSpans(buffer, mode_);
-        const std::vector<editor::HighlightSpan>* spans = cached.get();
+        // Debounced: the whole-document highlight is the expensive one, and a
+        // zoomed-out overview does not have to be current mid-keystroke. See
+        // kHighlightDebounce in Minimap.h for why this is a debounce and not
+        // a background thread.
+        const std::size_t generation = buffer.ContentGeneration();
+        const auto        now        = std::chrono::steady_clock::now();
+        if (!lastSpans_ || lastSpansGeneration_ != generation || lastSpansModeName_ != mode_.name) {
+            if (pendingGeneration_ != generation) {
+                pendingGeneration_ = generation;
+                pendingSince_      = now;
+            }
+            // Nothing painted yet, or a mode switch: no point being stale
+            // about content that has never been shown at all.
+            const bool firstPaint = !lastSpans_ || lastSpansModeName_ != mode_.name;
+            if (firstPaint || now - pendingSince_ >= kHighlightDebounce) {
+                lastSpans_           = editor::CachedHighlightSpans(buffer, mode_);
+                lastSpansGeneration_ = generation;
+                lastSpansModeName_   = mode_.name;
+            }
+            else if (eventLoop_ != nullptr) {
+                // Come back once the burst is over -- without this the
+                // minimap would stay stale until something else happened to
+                // repaint, since an idle editor does not repaint at all.
+                highlightRefreshTimer_.Arm(*eventLoop_, kHighlightDebounce, [] {});
+            }
+        }
+        const std::vector<editor::HighlightSpan>* spans = lastSpans_.get();
         sortedSpans.reserve(spans->size());
         for (std::size_t i = 0; i < spans->size(); ++i) {
             sortedSpans.push_back(IndexedSpan{(*spans)[i].startByte, (*spans)[i].endByte, (*spans)[i].syntaxClass, (*spans)[i].captureId, i});
