@@ -219,6 +219,33 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       in, repeatedly, and a decoration does not get the benefit of the doubt against that.
       Still open: virtual text (inline diagnostics, blame, fold placeholders) at real
       alpha. `buffer` is the last surface with no consumer.
+- [ ] **Syntax highlighting costs ~45ms per keystroke.** The single biggest responsiveness
+      problem in the editor, measured 2026-09-10 and **not** a regression -- the same
+      benchmark against `939d3b5` reports 48.7ms, so it has been there a long time.
+      `Tests/KeystrokeBench.cpp` (hidden; run with `ned_tests "[keybench]"`) times a real
+      self-insert plus repaint on a 160x45 view of `Source/UI/BufferView/Paint.cpp` in
+      `CppMode`:
+
+          keystroke + repaint, CppMode          45,516 us
+          keystroke + repaint, no syntax mode        208 us
+
+      That is 216x, and it is all in one line of `BufferView/Paint.cpp`:
+      `entry.spans = mode_.highlight(buffer.Text())`. Per keystroke, on every edit (the
+      cache is keyed on `ContentGeneration()`), that materialises the *whole buffer* into a
+      `std::string` and runs a *whole-file* tree-sitter query collecting every span in the
+      file -- to paint 45 visible rows.
+      Two independent fixes, either worth having:
+      - **Range the query.** `Query::Captures` calls `ts_query_cursor_exec` with no range;
+        tree-sitter offers `ts_query_cursor_set_byte_range`. Bounding the *cursor* while
+        leaving the *tree* whole is the correct shape -- a multi-line string or comment
+        overlapping the window still matches, because the tree is intact. Same idea as the
+        huge-file fold/symbol gutter windowing, without that one's edge traps, since the
+        parse is not being windowed.
+      - **Stop copying the buffer.** `buffer.Text()` allocates and copies the entire
+        document per keystroke before the query even starts. `ITextStorage::ForEachChunk`
+        and `Substring` already exist for exactly this.
+      Worth doing before anything else in the UI: it is every keystroke in every real file.
+
 - [ ] **Dirty-region flush, and the animation question behind it.** `Screen::Flush` writes
       *every* cell of both planes every frame -- 14,400 `ncplane_putstr_yx` calls at 160x45
       -- and Notcurses then diffs that to decide what to emit. Fine for an editor that
@@ -230,9 +257,12 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       per *keystroke* once start/stop straddled the 200ms effect; a background wash
       repainting a whole row per frame. None of them was the last one.
       What makes that hard to catch: the editor's own CPU stays *low* (forty keystrokes at
-      160x45 measures two ticks), because the expensive part is the terminal consuming the
-      output, not ned producing it. Every CPU measurement said "fine" while the thing felt
-      bad -- worth remembering before the next animated feature.
+      160x45 measures two ticks). Every CPU measurement said "fine" while typing felt bad,
+      which sent the investigation through three wrong culprits before
+      `Tests/KeystrokeBench.cpp` timed the keystroke path itself and found the 45ms
+      highlight above -- a cost the glow never contributed to and could not have.
+      The lesson is about instruments, not about animation: measure the latency of the
+      thing being complained about, not the CPU of the process containing it.
       Writing only cells that changed since the last frame would fix it at the source, let
       the glow default back on, and speed up every ordinary repaint too. Two known traps:
       the backing plane is cleared wholesale each frame (`ClearBacking`), so it needs the
