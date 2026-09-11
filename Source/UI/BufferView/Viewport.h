@@ -166,6 +166,15 @@ class Viewport {
     // distinguishable from the first paint.
     text::Buffer* topLineValidatedBuffer_ = nullptr;
 
+    // RestoreInitialPlace() runs before this widget has a size, so it cannot
+    // clamp a restored topLine_ by MaxTopLine() -- it settles for point's own
+    // line, which is wrong exactly when the file shrank between runs and point
+    // was itself clamped to the last line. This defers that clamp to the first
+    // Paint with a real size. It is not a second "has this buffer been
+    // validated" flag: the seeding in RestoreInitialPlace() must stay, or a
+    // genuine buffer switch becomes indistinguishable from the first paint.
+    bool topLineNeedsSizeClamp_ = false;
+
     mutable CacheStamp                                       hiddenLineRangesStamp_;
     mutable std::vector<std::pair<std::size_t, std::size_t>> hiddenLineRanges_;
 
