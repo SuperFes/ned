@@ -896,7 +896,24 @@ through a review buffer rather than applying it blind, and a file rename now fix
 imports that named it in both directions. What is still missing is the file/class
 relationship an IDE keeps in sync.
 
-Shipped here, one slug each for `git log --grep=`: `file-rename-propagation` (renaming or
+Shipped here, one slug each for `git log --grep=`: `class-file-sync` (a file's name and
+the single type declared in it kept in agreement, both directions:
+`rename-file-to-match-type`/`rename-type-to-match-file` on M-x, plus an unprompted y/n
+after a rename lands. Two strictness tiers, and the split is the design --
+`Editor/ClassFileSync.h`'s pure half is strict for what ned volunteers (exactly one
+top-level type, and the file was demonstrably named after it a moment ago, which is why
+arming happens BEFORE the edits land) and best-effort for what the user asks for (the
+outermost of several, compound suffixes preserved so `Thing.class.php` stays
+`*.class.php`). Direction A routes through `PerformProjectRename`, so the import fixup and
+`willRenameFiles` come along free. `ned/set-class-file-sync` gates only the offers.
+Three real bugs found on the way: `definition.module` was classed `TypeLike` though every
+grammar emitting it emits it for a real namespace, which made every namespaced PHP file
+read as two top-level types; tree-sitter-typescript's `tags.scm` is a delta on
+JavaScript's and carries no `class_declaration` at all, so every TypeScript class and
+function had NO symbol marker whatsoever; and `InvalidateModeDependentCaches` cleared what
+the symbol cache feeds but not the cache itself, so a buffer visited after one in another
+language kept that language's answers until the next edit),
+`file-rename-propagation` (renaming or
 moving a file now rewrites the imports that named it and the relative imports it wrote
 itself, with no server involved -- `Editor/ImportFixup.h`'s pure specifier arithmetic plus
 a planner over `Mode::importTargets`, routed through the same editable review multibuffer
@@ -997,13 +1014,24 @@ parameters became a designated-initializer `TreeSitterQuerySources` on the way p
       move with no end inside the project root. Worth moving off-thread only if a real
       repository makes the pause visible (`file-rename-propagation`).
 
-- [ ] **Class/file name sync.** When a type's name matches its file's stem, renaming either
-      should offer the other -- JetBrains' most-used refactor after rename itself. The
-      lookup is `Mode::symbolKind`'s own `tags.scm` markers, so the work is mostly coverage:
-      three languages have a tags query today (C, C++, Kotlin) against ten with imports.
-      Java and C# want it most, since their languages *require* the match. Offer, never
-      assume: a prompt with the proposed rename, and a hard skip when the file holds more
-      than one top-level type.
+- [ ] The automatic offers ride on a SERVER rename landing, or on a `*rename*` review being
+      committed -- never on the no-server in-buffer rewrite, because renaming a top-level
+      type is always cross-file and `rename-symbol`'s scope-aware tier declines it by
+      construction (`LocalBinding::scopeIsFile`). With no server configured for a language,
+      `rename-file-to-match-type`/`rename-type-to-match-file` are the whole feature; they
+      need none (`class-file-sync`).
+- [ ] `rename-type-to-match-file` with no server renames the declaration and its whole-word
+      occurrences **in that file only**, and says so. The "top-scoped name pair" is the
+      reliable half -- this file's one top-level type is named after this file -- and the
+      dependency tree is the half it cannot follow. The obvious lift is a project-wide
+      whole-word scan into the same review (`Project/Search.h` plus `ClassifyHit`, which is
+      what `project-replace` already is), deliberately not built into this: a rename that
+      silently rewrote matches across a repository on a name match alone is a different,
+      riskier feature than the one asked for (`class-file-sync`).
+- [ ] Java/C#/PHP/TypeScript tags coverage is now upstream's file plus a repo-local delta
+      (`ned_embed_treesitter_query_concat`). The deltas are small and current; the thing to
+      watch is a grammar bump making one redundant, which shows up as a duplicate marker
+      rather than a wrong one (`class-file-sync`).
 
 - [ ] **Change signature (the hard one, scoped honestly).** LSP has no request for this --
       JetBrains does it from its own index, and no server offers an equivalent -- so it is

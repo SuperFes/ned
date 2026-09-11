@@ -15,6 +15,7 @@
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
 #include "Editor/BlankLineCleanup.h"
+#include "Editor/ClassFileSyncSettings.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/Coverage/Config.h"
@@ -508,6 +509,10 @@ namespace {
 
     void NedSetRenameReview(bool enabled) {
         editor::SetRenameThroughReview(enabled);
+    }
+
+    void NedSetClassFileSync(bool enabled) {
+        editor::SetClassFileSync(enabled);
     }
 
     void NedSetImportFixup(bool enabled) {
@@ -1470,6 +1475,15 @@ void InstallEditorBindings(Environment& env) {
         "replacement inside chrome the buffer would then silently refuse. Turn it off to search a review buffer's "
         "whole composite text, e.g. to find the excerpt whose header names a particular file. No effect on an "
         "ordinary buffer.");
+    env.Register<&NedSetClassFileSync>(
+        "ned", "set-class-file-sync",
+        "Enable/disable offering, unprompted, to keep a file's name and the single type declared inside it in "
+        "agreement (default true) -- after renaming a class/enum/struct/record, a y/n to rename the file after it; "
+        "after renaming the file, a y/n to rename the type. Both fire only when the file was demonstrably named "
+        "after that type a moment ago and no longer is, and never when the file holds more than one top-level type "
+        "-- whether a file *should* be named after its type is a per-project question this does not try to answer. "
+        "Turning it off stops the offers only: rename-file-to-match-type and rename-type-to-match-file keep working "
+        "when you ask for them, and are more permissive than the offers are.");
     env.Register<&NedSetRenameReview>(
         "ned", "set-rename-review",
         "Enable/disable handing a rename's edits to an editable review multibuffer before they land (default true) "

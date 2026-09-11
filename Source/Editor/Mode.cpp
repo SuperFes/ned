@@ -732,10 +732,10 @@ SyntaxClass SyntaxClassFor(SymbolKind kind) {
 std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName) {
     // The ctags/nvim-treesitter tags.scm convention -- checked directly
     // against every bundled grammar that ships one (C/C++/PHP/JavaScript/
-    // TypeScript/Python), not assumed; a few extra plausible names
-    // (struct/enum/variable/property) are included defensively for a future
-    // language's own tags.scm, which may spell these slightly differently
-    // than the ones actually observed. Anything not starting with
+    // TypeScript/Python/Rust/Go/C#/Java/Kotlin), not assumed; a few extra
+    // plausible names (variable/property) are included defensively for a
+    // future language's own tags.scm, which may spell these slightly
+    // differently than the ones actually observed. Anything not starting with
     // "definition." (a "@reference.*" capture, or a nested "@name"/"@doc"/
     // "@local.scope" from the same pattern match) is deliberately not a
     // match here -- see this function's own doc comment in Mode.h.
@@ -743,8 +743,8 @@ std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName
         return SymbolKind::Callable;
     }
     if (captureName == "definition.class" || captureName == "definition.interface" ||
-        captureName == "definition.type" || captureName == "definition.module" ||
-        captureName == "definition.struct" || captureName == "definition.enum") {
+        captureName == "definition.type" || captureName == "definition.struct" ||
+        captureName == "definition.enum") {
         return SymbolKind::TypeLike;
     }
     if (captureName == "definition.constant" || captureName == "definition.var" ||
@@ -753,9 +753,22 @@ std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName
         return SymbolKind::Data;
     }
     // main-editor-sticky-scroll follow-up: a distinct capture name, not
-    // folded into "definition.module" above -- see SymbolKind::Namespace's
+    // folded into the TypeLike bucket above -- see SymbolKind::Namespace's
     // own doc comment for why namespace stays its own bucket.
-    if (captureName == "definition.namespace") {
+    //
+    // class-file-sync follow-up: "definition.module" belongs here beside it,
+    // not in TypeLike where it started. Every bundled grammar emitting that
+    // capture emits it for a real namespace -- PHP's namespace_definition,
+    // C#'s namespace_declaration, TypeScript's module/namespace, Rust's
+    // mod_item (checked against each query directly, not assumed) -- so the
+    // old classification conflated "namespace foo" with a class, which is
+    // exactly what SymbolKind::Namespace exists to prevent and what C++'s
+    // own "definition.namespace" already avoided. It also left the
+    // namespaced-file case unresolvable for Editor/ClassFileSync.h: PHP's
+    // statement-form "namespace App;" is a SIBLING of the class that follows
+    // it rather than a parent, so a file holding one class inside a
+    // namespace read as two top-level types.
+    if (captureName == "definition.namespace" || captureName == "definition.module") {
         return SymbolKind::Namespace;
     }
     return std::nullopt;
@@ -924,10 +937,11 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 if (nameCapture) {
                     name = std::string(bufferText.substr(nameCapture->startByte, nameCapture->endByte - nameCapture->startByte));
                 }
-                markers.push_back({.startByte = definitionCapture->startByte,
-                                   .endByte   = definitionCapture->endByte,
-                                   .kind      = *kind,
-                                   .name      = std::move(name)});
+                markers.push_back({.startByte     = definitionCapture->startByte,
+                                   .endByte       = definitionCapture->endByte,
+                                   .kind          = *kind,
+                                   .name          = std::move(name),
+                                   .nameStartByte = nameCapture ? nameCapture->startByte : definitionCapture->startByte});
             }
             // resolver-gaps follow-up (Rust bundling): a query can also
             // double-match one definition onto the exact same range, not
