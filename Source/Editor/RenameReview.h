@@ -124,6 +124,16 @@ struct ReviewExcerpt {
 [[nodiscard]] std::vector<RenameHit> FindExtraCandidates(std::string_view text, const std::vector<HighlightSpan>& spans,
                                                          std::string_view name, const std::vector<RenameHit>& covered);
 
+// class-file-sync follow-up: the same scan, unfiltered -- EVERY whole-word
+// occurrence, classified, references included. FindExtraCandidates above is
+// this plus "drop the references", which is right when a language server has
+// already supplied them; it is exactly wrong when there is no server and this
+// scan is the only source of hits there is. Same boundary rule, stated once,
+// in one place.
+[[nodiscard]] std::vector<RenameHit> FindWholeWordOccurrences(std::string_view                  text,
+                                                              const std::vector<HighlightSpan>& spans,
+                                                              std::string_view                  name);
+
 // Lays every file's hits out as review rows: one row per line-range a
 // group of hits shares, its body the original line(s), its header the
 // project-relative path, line and a tag naming what the row contains

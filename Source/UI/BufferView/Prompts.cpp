@@ -99,11 +99,26 @@ void BufferView::HandleMultibufferApplyTargetKey(const editor::KeyChord& chord) 
         commandName = toDisk ? "multibuffer-commit-to-disk" : "multibuffer-commit-changes";
     }
 
+    // class-file-sync follow-up: read before the commit, because committing a
+    // *rename* review is the moment its edits become real -- and afterwards
+    // the review buffer is still what is on screen, so the file that declared
+    // the renamed type has to be recovered from the excerpt sources rather
+    // than from the active buffer. Empty for every other kind of review.
+    if (renameProposalOwner_ == &activeBuffer_.Get()) {
+        ArmClassFileRenameOffer(editor::multibuffer::ExcerptSourcePaths(activeBuffer_.Get()), renameReviewOldName_,
+                                renameReviewNewName_);
+    }
+
     editor::CommandContext context = MakeContext();
     RunCommandAndHandleOutcome(context, [&] {
         dispatcher_.Registry().Invoke(commandName, context);
         return true;
     });
+
+    // No session is up by this point (EndInteractiveSession ran above), so
+    // the armed offer opens straight away rather than waiting for a
+    // consumption point the way a rename landing from inside a prompt does.
+    MaybeOfferClassFileRename();
 }
 
 bool BufferView::HandleMultibufferQuickKey(const editor::KeyChord& chord) {
@@ -584,6 +599,12 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::RenameSymbol:
             RequestRenameSymbolAtPoint();
+            return;
+        case editor::InteractiveRequest::RenameFileToMatchType:
+            RequestRenameFileToMatchType();
+            return;
+        case editor::InteractiveRequest::RenameTypeToMatchFile:
+            RequestRenameTypeToMatchFile();
             return;
         case editor::InteractiveRequest::LspLinkedEditingRange:
             RequestLinkedEditingRangeAtPoint();
@@ -2758,6 +2779,12 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         }
         promptHistory_.Record(HistoryKeyForInputMode(inputMode_), input);
         EndInteractiveSession();
+        // class-file-sync follow-up: a rename that landed from this prompt
+        // may have armed an offer, which could not open its own y/n before
+        // now -- EndInteractiveSession would have wiped the inputMode_ it
+        // just set. Safe for every other prompt: nothing is armed, and this
+        // is a no-op.
+        MaybeOfferClassFileRename();
         return;
     }
     if (IsQuit(chord)) {

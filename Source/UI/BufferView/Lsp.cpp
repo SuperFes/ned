@@ -2169,10 +2169,30 @@ void BufferView::ApplyRename(const editor::lsp::Manager::ResolvedRename& result)
     if (TryReviewRename(result, declineNote)) {
         return;
     }
+    // class-file-sync follow-up: armed BEFORE the edit is applied, which is
+    // the whole point -- the evidence it records ("this file was named after
+    // its own single type") stops existing the moment the rename lands. Every
+    // edited file is offered as a candidate; the arm keeps at most the one
+    // still named after the old symbol, which is the only one this could be
+    // about.
+    std::vector<std::filesystem::path> touched;
+    for (const editor::lsp::Manager::ResolvedRenameEdit& edit : result.edits) {
+        touched.push_back(edit.path);
+    }
+    for (const editor::lsp::Manager::ResolvedDocumentChangeOp& op : result.documentChangeOps) {
+        touched.push_back(op.path);
+    }
+    ArmClassFileRenameOffer(std::move(touched), renameOldName_, renameNewName_);
+
     // The note (if any) rides along in the same status message the apply
     // writes -- it would otherwise be overwritten the moment the edit lands,
     // leaving the user with a rename that silently skipped the review.
     ApplyResolvedWorkspaceEdit(result, "Renamed (" + renameTitle_ + ")" + declineNote + ".");
+
+    // This runs from a response callback, so no session is up and the offer
+    // can open straight away -- unlike a rename landing from inside a
+    // prompt's own Enter branch, which has to wait for the session to end.
+    MaybeOfferClassFileRename();
 }
 
 bool BufferView::TryReviewRename(const editor::lsp::Manager::ResolvedRename& result, std::string& declineNote) {
@@ -2810,7 +2830,16 @@ void BufferView::PerformProjectRename(const std::filesystem::path& source, const
             // Presented last so its own status line is the one that stays,
             // and only when it found something -- a rename nothing imported
             // reads exactly as it did before this feature existed.
-            BuildImportFixupReview(fixups, "Renamed " + source.filename().string());
+            const bool reviewed = BuildImportFixupReview(fixups, "Renamed " + source.filename().string());
+
+            // class-file-sync follow-up: ...unless nothing was imported, in
+            // which case the file rename may still imply a type rename. Not
+            // offered on top of an import review: that one has just taken
+            // over the pane and is waiting on its own C-c C-c, so a y/n
+            // stacked in front of it would be answered by reflex.
+            if (!reviewed) {
+                OfferTypeRenameAfterFileMove(source, destination);
+            }
         }
         catch (const std::exception& e) {
             ReportError(e.what());

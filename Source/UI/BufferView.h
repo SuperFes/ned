@@ -31,6 +31,7 @@
 #include "ActiveBuffer.h"
 #include "Editor/Acp/Manager.h"
 #include "Editor/Backup.h"
+#include "Editor/ClassFileSync.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
 #include "Editor/CompletionSession.h"
@@ -1036,6 +1037,13 @@ class BufferView : public Widget {
                            // revert -- y/n before discarding uncommitted work, same shape
                            // as ConfirmOverwriteSave/ConfirmSaveWithConflicts above.
                            ConfirmRevertHunk,
+                           // class-file-sync follow-up: two more of the same y/n
+                           // shape, one per direction. Both are reached from an
+                           // explicit command AND from the unprompted offer ned
+                           // makes after a rename lands -- the prompt text differs
+                           // between the two entry points, the handling does not.
+                           ConfirmRenameFileToMatchType,
+                           ConfirmRenameTypeToMatchFile,
                            ExecuteCommand,
                            ProjectFindFile,
                            // named-projects follow-up: ProjectFindFile's own fuzzy-narrowed
@@ -1496,6 +1504,9 @@ class BufferView : public Widget {
     void               HandleMultibufferApplyTargetKey(const editor::KeyChord& chord);
     void               StartMultibufferApply(bool fileOnly);
     void               HandleConfirmRevertHunkKey(const editor::KeyChord& chord);        // mouse-ergonomics follow-up: y -> RevertHunkAtPoint
+    // class-file-sync follow-up: see UI/BufferView/ClassFileSync.cpp.
+    void               HandleConfirmRenameFileToMatchTypeKey(const editor::KeyChord& chord);
+    void               HandleConfirmRenameTypeToMatchFileKey(const editor::KeyChord& chord);
     void               HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);        // see pendingBinaryOpenPath_
     void               HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord);  // see pendingTrustInitPath_
     // Shared by HandlePromptKey's FindFile branch and the public
@@ -1988,6 +1999,55 @@ class BufferView : public Widget {
     // binding this buffer wholly owns; otherwise falls through to
     // RequestPrepareRenameAtPoint above unchanged.
     void RequestRenameSymbolAtPoint();
+    // class-file-sync follow-up (BufferView/ClassFileSync.cpp): the two
+    // explicit commands, and the two unprompted offers ned makes after a
+    // rename lands. All four end in the same y/n; they differ only in how
+    // sure they have to be before opening it, which is
+    // Editor/ClassFileSync.h's Strictness and nothing else.
+    void RequestRenameFileToMatchType();
+    void RequestRenameTypeToMatchFile();
+    // Two tiers, chosen at accept time: a running language server renames
+    // across the dependency tree; with none, a best-guess rename of the
+    // declaration and its whole-word occurrences in THIS FILE only, which
+    // says so rather than implying more than it did.
+    void ApplyTypeRenameToMatchFile(const std::string& oldName, const std::string& newName, std::size_t nameOffset);
+    // The unprompted half. A rename has just landed across `touched`,
+    // turning oldName into newName; this decides whether that makes a file
+    // rename plainly right and, if so, ARMS the offer rather than opening it
+    // -- a rename typically lands from inside a prompt session whose own
+    // EndInteractiveSession would wipe a freshly set inputMode_, the same
+    // ordering ConfirmPrompt.h documents for onConfirm. MaybeOfferClassFile-
+    // Rename is the consumption point, called once no session is in the way.
+    // MUST be called before the edits land: it records that the file was
+    // named after its own single type BEFORE the rename, which is the half
+    // of the evidence that stops a rename of some unrelated symbol -- one
+    // that merely ends up spelled like the file's type -- from looking
+    // identical to a real type rename afterwards.
+    void ArmClassFileRenameOffer(std::vector<std::filesystem::path> touched, std::string oldName,
+                                 std::string newName);
+    bool MaybeOfferClassFileRename();
+    // Direction B's own unprompted offer, after a file rename has landed and
+    // the open buffer has followed it. Needs no arming: unlike a symbol
+    // rename, a file rename leaves both halves of the evidence readable
+    // afterwards -- the old filename is the caller's own argument, and the
+    // type it names is still declared in the buffer.
+    bool OfferTypeRenameAfterFileMove(const std::filesystem::path& previousPath,
+                                      const std::filesystem::path& newPath);
+    // Runs a file's own mode's tags query over its live text (an open
+    // buffer's content first, its file otherwise -- the rule every
+    // project-wide operation here follows). The active-buffer overload is
+    // the common case; the path one is what lets a rename that landed
+    // through the review buffer still ask about the file that declared the
+    // type, which by then is not what is on screen.
+    [[nodiscard]] std::optional<editor::classfile::Resolution> ResolveTopLevelTypeIn(
+        const std::filesystem::path& path, editor::classfile::Strictness strictness);
+    // Runs the mode's tags query over the whole buffer and picks the file's
+    // one top-level type. nullopt for a mode with no tags query at all, and
+    // for a huge buffer -- the fold/symbol/test gutters window for those, but
+    // a windowed answer here would silently mean "the one type in the part I
+    // looked at", which is a wrong rename rather than a partial display.
+    [[nodiscard]] std::optional<editor::classfile::Resolution> ResolveTopLevelTypeInBuffer(
+        editor::classfile::Strictness strictness);
     // Runs the mode's locals query over the whole buffer and resolves point
     // against it -- nullopt for a mode with no locals query, a huge buffer
     // (a windowed answer would be a partial rename, not a partial display),
@@ -2200,6 +2260,9 @@ class BufferView : public Widget {
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmSaveWithConflictsPrompt();
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmOpenBinaryPrompt();
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmRevertHunkPrompt();
+    // class-file-sync follow-up.
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmRenameFileToMatchTypePrompt();
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmRenameTypeToMatchFilePrompt();
     // The second stage of the two-stage delete/recover prompts, which is an
     // ordinary confirmation once the target has been chosen.
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmDeleteFilePrompt();
@@ -4406,6 +4469,35 @@ class BufferView : public Widget {
     std::string                                renameNewName_;
     std::vector<editor::rename::ReviewExcerpt> renameProposals_;
     const text::Buffer*                        renameProposalOwner_ = nullptr;
+    // class-file-sync follow-up: the old/new name the review buffer above is
+    // about, set by BuildRenameReview whichever tier called it -- distinct
+    // from renameOldName_/renameNewName_, which are the SERVER request's own
+    // and stay empty for a scope-aware rename. Empty for an *imports* review,
+    // which shares renameProposalOwner_ but renames no symbol.
+    std::string renameReviewOldName_;
+    std::string renameReviewNewName_;
+    // class-file-sync follow-up: what the pending y/n would do, captured when
+    // the prompt opens rather than re-derived when it is answered -- the same
+    // rule deleteTarget_/renameSource_ follow, and load-bearing here because
+    // answering "y" re-enters PerformProjectRename, which starts its own
+    // session. Direction A holds a source/destination path pair; direction B
+    // holds the new type name plus the byte offset of the declaration to put
+    // point on before handing over to the ordinary rename flow.
+    std::filesystem::path classFileRenameSource_;
+    std::filesystem::path classFileRenameDestination_;
+    // The armed-but-not-yet-opened offer -- see ArmClassFileRenameOffer.
+    // Empty oldName means nothing is armed; it is cleared on consumption
+    // whether or not a prompt ends up opening, so a rename that turns out
+    // not to warrant one cannot leak into the next one.
+    struct PendingClassFileOffer {
+        std::filesystem::path file; // the one file that was named after the symbol being renamed
+        std::string           oldName;
+        std::string           newName;
+    };
+    std::optional<PendingClassFileOffer> pendingClassFileOffer_;
+    std::string                          classTypeRenameOldName_;
+    std::string                          classTypeRenameNewName_;
+    std::size_t                          classTypeRenameOffset_ = 0;
     // prepareRename follow-up: same staleness-guard shape once more, for the
     // request RequestPrepareRenameAtPoint sends before lsp-rename opens its
     // prompt.

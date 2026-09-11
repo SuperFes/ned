@@ -141,16 +141,30 @@ extern const char* const kRustImports;
 // vendored files (Source/Editor/TreeSitter/queries/c-tags.scm/cpp-tags.scm)
 // instead of the grammar's own; see c-tags.scm's own header comment for the
 // full story.
+//
+// class-file-sync follow-up: four of these are now a CONCATENATION rather
+// than one file (CMakeLists.txt's ned_embed_treesitter_query_concat) --
+// upstream's own tags.scm still consumed whole, with a small repo-local
+// delta appended. Vendoring a whole corrected copy would have worked too and
+// was rejected: it stops inheriting upstream's own fixes on the next grammar
+// bump, which is the entire reason these are fetched rather than written.
+// Each delta file's own header says what it adds and why; the short version:
+// PHP/Java/C# predate language constructs that are ordinary today (8.1
+// enums, records, structs, file-scoped namespaces), and TypeScript's
+// upstream file is a delta on JavaScript's rather than a standalone query --
+// it carries no class_declaration at all, so kTypeScriptTags embedded alone
+// (as it was) left every TypeScript class and function unmarked.
+//
 extern const char* const kCTags;
 extern const char* const kCppTags;
-extern const char* const kPhpTags;
+extern const char* const kPhpTags; // upstream + queries/php-tags.scm (enum)
 extern const char* const kJavaScriptTags;
-extern const char* const kTypeScriptTags;
+extern const char* const kTypeScriptTags; // javascript's + typescript's + queries/typescript-tags.scm
 extern const char* const kPythonTags;
 extern const char* const kRustTags;   // tree-sitter/tree-sitter-rust's own real queries/tags.scm, unmodified
 extern const char* const kGoTags;     // tree-sitter/tree-sitter-go's own real queries/tags.scm, unmodified
-extern const char* const kCSharpTags; // tree-sitter/tree-sitter-c-sharp's own real queries/tags.scm, unmodified
-extern const char* const kJavaTags;   // tree-sitter/tree-sitter-java's own real queries/tags.scm, unmodified
+extern const char* const kCSharpTags; // upstream + queries/csharp-tags.scm (enum/struct/record/file-scoped namespace)
+extern const char* const kJavaTags;   // upstream + queries/java-tags.scm (enum/record)
 // Repo-local (Source/Editor/TreeSitter/queries/kotlin-tags.scm) -- fwcd/
 // tree-sitter-kotlin ships no tags.scm at all, so unlike kCTags/kCppTags (which
 // exist to correct an ambiguous upstream file) this one substitutes for an

@@ -888,8 +888,18 @@ TEST_CASE("SymbolKindFromCaptureName maps the ctags/nvim-treesitter definition v
     REQUIRE(SymbolKindFromCaptureName("definition.class") == SymbolKind::TypeLike);
     REQUIRE(SymbolKindFromCaptureName("definition.interface") == SymbolKind::TypeLike);
     REQUIRE(SymbolKindFromCaptureName("definition.type") == SymbolKind::TypeLike);
-    REQUIRE(SymbolKindFromCaptureName("definition.module") == SymbolKind::TypeLike);
+    REQUIRE(SymbolKindFromCaptureName("definition.struct") == SymbolKind::TypeLike);
+    REQUIRE(SymbolKindFromCaptureName("definition.enum") == SymbolKind::TypeLike);
     REQUIRE(SymbolKindFromCaptureName("definition.constant") == SymbolKind::Data);
+
+    // class-file-sync follow-up: "definition.module" is a namespace, not a
+    // type. Every bundled grammar emitting it emits it for one (PHP's
+    // namespace_definition, C#'s namespace_declaration, TypeScript's
+    // module/namespace, Rust's mod_item), and Editor/ClassFileSync.h counts
+    // on being able to tell the two apart -- a namespaced PHP file holds one
+    // class and one namespace, not two types.
+    REQUIRE(SymbolKindFromCaptureName("definition.namespace") == SymbolKind::Namespace);
+    REQUIRE(SymbolKindFromCaptureName("definition.module") == SymbolKind::Namespace);
     REQUIRE(SymbolKindFromCaptureName("definition.field") == SymbolKind::Data);
 
     // Everything a real tags.scm mixes into the same query but isn't itself
@@ -1150,6 +1160,125 @@ TEST_CASE("CppMode's symbolKind ranges nest properly -- a method's range sits in
     // Editor/StickyScroll.h's own doc comment).
     REQUIRE(markers[1].startByte > markers[0].startByte);
     REQUIRE(markers[1].endByte < markers[0].endByte);
+}
+
+// class-file-sync follow-up: every bundled grammar emitting the ctags
+// "@definition.module" capture emits it for a real namespace, so all four
+// land in SymbolKind::Namespace alongside C++'s own "@definition.namespace"
+// above. PHP's is the case that forced the classification: its statement
+// form is a SIBLING of the class that follows it rather than a parent, so
+// while it was TypeLike a one-class namespaced file read as two types.
+TEST_CASE("PhpMode's symbolKind classifies a namespace distinctly from the class beside it", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode    = PhpMode();
+    const auto markers = mode.symbolKind("<?php\nnamespace App\\Models;\n\nclass Widget {\n}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::Namespace, SymbolKind::TypeLike});
+    REQUIRE(markers[1].name == "Widget");
+    // The statement form encloses nothing: Widget starts after the
+    // namespace marker has already ended, which is exactly why counting
+    // "top-level types" needs the two kinds kept apart.
+    REQUIRE(markers[0].endByte <= markers[1].startByte);
+}
+
+TEST_CASE("CSharpMode's symbolKind classifies a namespace distinctly from the class inside it", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode    = CSharpMode();
+    const auto markers = mode.symbolKind("namespace App {\n    class Widget {\n    }\n}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::Namespace, SymbolKind::TypeLike});
+    REQUIRE(markers[0].name == "App");
+    REQUIRE(markers[1].name == "Widget");
+    // The block form does enclose, so here the class has to be found by
+    // descending through the namespace rather than beside it.
+    REQUIRE(markers[1].startByte > markers[0].startByte);
+    REQUIRE(markers[1].endByte < markers[0].endByte);
+}
+
+TEST_CASE("TypeScriptMode's symbolKind classifies a namespace distinctly from the class inside it", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode    = TypeScriptMode();
+    const auto markers = mode.symbolKind("namespace App {\n    export class Widget {\n    }\n}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::Namespace, SymbolKind::TypeLike});
+    REQUIRE(markers[0].name == "App");
+    REQUIRE(markers[1].name == "Widget");
+}
+
+TEST_CASE("RustMode's symbolKind classifies a mod declaration distinctly from the struct inside it", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode    = RustMode();
+    const auto markers = mode.symbolKind("mod inner {\n    pub struct Widget {\n        value: i32,\n    }\n}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::Namespace, SymbolKind::TypeLike});
+    REQUIRE(markers[0].name == "inner");
+    REQUIRE(markers[1].name == "Widget");
+}
+
+// class-file-sync follow-up: the language constructs each grammar's own
+// tags.scm predates, added back as a repo-local delta appended to it (see
+// each queries/*-tags.scm header and CMakeLists.txt's
+// ned_embed_treesitter_query_concat). Every one of these produced NO marker
+// at all before -- an empty symbol gutter and an empty sticky-scroll
+// breadcrumb for a file whose only declaration is an enum or a record.
+TEST_CASE("PhpMode's symbolKind classifies a PHP 8.1 enum", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto markers = PhpMode().symbolKind("<?php\nenum Status: string {\n    case Active = 'active';\n}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike});
+    REQUIRE(markers[0].name == "Status");
+}
+
+TEST_CASE("JavaMode's symbolKind classifies an enum and a record", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto enums = JavaMode().symbolKind("public enum Status { ACTIVE, IDLE }\n");
+    REQUIRE(KindsInOrder(enums) == std::vector{SymbolKind::TypeLike});
+    REQUIRE(enums[0].name == "Status");
+
+    const auto records = JavaMode().symbolKind("public record Point(int x, int y) {}\n");
+    REQUIRE(KindsInOrder(records) == std::vector{SymbolKind::TypeLike});
+    REQUIRE(records[0].name == "Point");
+}
+
+TEST_CASE("CSharpMode's symbolKind classifies an enum, a struct, a record and a record struct", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = CSharpMode();
+
+    REQUIRE(mode.symbolKind("public enum Status { Active, Idle }\n")[0].name == "Status");
+    REQUIRE(mode.symbolKind("public struct Point { public int X; }\n")[0].name == "Point");
+    REQUIRE(mode.symbolKind("public record Person(string Name);\n")[0].name == "Person");
+    // "record struct" is not a node type of its own -- the same
+    // record_declaration pattern covers it, confirmed against the grammar.
+    REQUIRE(mode.symbolKind("public record struct Vec(int X, int Y);\n")[0].name == "Vec");
+}
+
+TEST_CASE("CSharpMode's symbolKind classifies a file-scoped namespace, which encloses nothing", "[Mode]") {
+    using ned::editor::SymbolKind;
+    // C# 10's "namespace App;" is file_scoped_namespace_declaration, a
+    // different node type from the block form upstream's query matches -- so
+    // it went entirely unmarked. Like PHP's statement form it is a sibling
+    // of the types below it, not a parent.
+    const auto markers = CSharpMode().symbolKind("namespace App;\n\npublic class Widget { }\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::Namespace, SymbolKind::TypeLike});
+    REQUIRE(markers[0].name == "App");
+    REQUIRE(markers[1].name == "Widget");
+    REQUIRE(markers[0].endByte <= markers[1].startByte);
+}
+
+// The TypeScript hole was the widest of the four: its upstream tags.scm is a
+// delta on JavaScript's, so with only that file embedded a .ts buffer showed
+// no class and no function in the symbol gutter whatsoever.
+TEST_CASE("TypeScriptMode's symbolKind classifies a class and a function, not just an interface", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode    = TypeScriptMode();
+    const auto markers = mode.symbolKind("class Widget {\n    size(): number { return 1; }\n}\n\nfunction go() {}\n");
+    REQUIRE(KindsInOrder(markers) ==
+            std::vector{SymbolKind::TypeLike, SymbolKind::Callable, SymbolKind::Callable});
+    REQUIRE(markers[0].name == "Widget");
+    REQUIRE(markers[1].name == "size");
+    REQUIRE(markers[2].name == "go");
+}
+
+TEST_CASE("TsxMode's symbolKind classifies a class, sharing TypeScript's own combined tags query", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto markers = TsxMode().symbolKind("export class Widget {\n    render() { return <div/>; }\n}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::Callable});
+    REQUIRE(markers[0].name == "Widget");
 }
 
 TEST_CASE("MarkdownMode's symbolKind synthesizes one marker per heading, properly nested by level",
