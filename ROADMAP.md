@@ -882,6 +882,133 @@ plus `preselect` and `commitCharacters`.
       the fallback sources still synthesize LSP items to fit it. Bigger than the
       fidelity work above and independent of it.
 
+### Parsing Engine: Trait Vocabulary over Per-Language Queries (Design Sketch Only)
+
+Full design in `Docs/ParsingEngine.md`, which carries the measurements this summary
+compresses. Unstarted, and deliberately staged so each phase can be the last one.
+
+The problem, measured against this checkout: a tree-sitter grammar carries structure and
+no meaning, a `.scm` query carries meaning and no structure, and nothing connects or
+validates the two — so ned's 79 query files are not queries, they are *the missing shared
+vocabulary, hand-written once per language*. There are 114 distinct node names meaning
+"a delimited body" across 18 grammars (52 for "parameter", 44 for "string", 43 for
+"import"); 61% of the 1,391 visible rule names across all 30 grammars appear in exactly
+one of them.
+
+Two numbers carry the case:
+
+- **96% of every fold rule is restated verbatim as an indent rule** (53 of 55 nodes
+  identical across the 12 languages having both), and 78% of `@dedent` captures are
+  mechanically `(X close-token @dedent)` for an `X` already in that file's `@indent` list.
+  One fact — *this node is a delimited body* — currently gets stated two to three times
+  per language, 21 languages over.
+- `Queries.h` holds **113 embedded query constants over 29 languages x 8 driver kinds =
+  232 cells, so 119 gaps (51%)**. Highlights is the only column at 29/29, and only because
+  upstream ships `highlights.scm`; every column ned authors itself is 34–72% empty, each
+  empty cell a language silently missing a feature.
+
+The proposal is to declare structure and meaning in **one artifact per language**, so a
+trait travels with the rule it is attached to and an unsatisfiable trait is a build error
+rather than an empty runtime result. Three tiers: **Tier 0** infers delimited bodies,
+token spans, nesting depth and matched delimiters straight from `grammar.json` with *no
+per-language work at all* (a grammar for a language invented next year folds correctly the
+day it is dropped in); **Tier 1** is ~30-40 composable declared traits (`Binding`, `Scope`,
+`Callable`, `TypeDecl`, `Parameter`, ...), open rather than a closed enum; **Tier 2** is
+first-class escapes — arbitrary predicates and Janet host callouts, which is where Org's
+`*`-counting heading level and its runtime-configured TODO keywords belong instead of
+forcing a hand-built C++ mode against a forked grammar. Drivers consume traits and never
+node names, registering the way `Vcs/VcsProvider.h` providers already do, so N x M becomes
+**N mappings + M drivers** — 37 things to write instead of 232, with no gaps by
+construction.
+
+The risk worth arguing before starting: Tier 1 is where judgement lives, and a universal
+vocabulary can degenerate into another hand-maintained translation table wearing a better
+name. The early falsifiable test is **Lisp**, the case that already broke —
+`queries/clojure-locals.scm` unrolls binding vectors by pair index and documents its own
+cliff (*"the unrolling stops at eight pairs"*), so a ninth binding is silently
+unrenameable. If Tiers 1+2 express `(let [a 1 b c] ...)` without a cliff the vocabulary is
+real; if not, that is worth learning at language 3 rather than language 15.
+
+- [ ] **Phase 0 — Oracle.** Checked-in snapshot of tree-sitter's tree plus all 8 fact
+      kinds over a corpus of real files. Everything after validates against it; without it
+      none of the rest is falsifiable.
+- [ ] **Phase 1 — Language-definition format and compiler.** Ingest `grammar.json`,
+      declare traits alongside, emit one artifact, implement Tier 0 inference. Exit
+      criterion: **53 of 55 fold nodes reproduced with zero hand-written rules**.
+- [ ] **Phase 2 — Trait-driven structural drivers.** Fold, indent, dedent, structural
+      selection, sticky scroll, brace match. Exit criterion is *deletable files*: roughly
+      half the `.scm` corpus, and the Folds/Indents columns at 29/29 with no adapter
+      authored.
+- [ ] **Phase 3 — Semantic drivers.** Scopes/bindings/references as a real resolution
+      layer rather than query captures. Exit criterion: the Lisp eight-pair cliff is gone,
+      or Tier 1 is proven insufficient and the design is revised before any engine work.
+- [ ] **Phase 4 — The engine, a separate decision.** Only once the vocabulary is proven
+      against 29 real languages. This is where the remaining tree-sitter complaints live:
+      stable node identity across a reparse (a red-green tree, so a node handle is
+      storable and `Node::Id()`'s byte-range-collision workaround goes away); incremental
+      per-subtree facts (today `symbolKind` is O(document) per keystroke and cannot be
+      windowed, because `StickyScroll` needs enclosing definitions); an edit-driven API
+      (today `IncrementalParseCache` walks the whole document twice per keystroke to
+      rediscover an edit ned already knew); native ranged parsing (removing
+      `HugeStructuralWindow`'s two empirically-found corrections); injected subtrees as
+      real children (removing `EmbeddedDocuments.cpp`'s width-preserving whitespace
+      padding); and GLR error recovery with anchor sets plus missing-token insertion.
+      Packaging follows for free — `grammar.json` ships in all 24 repos, the parse tables
+      are already data, and only the lexer DFA and the external scanners are code. The 19
+      upstream external scanners (~10,600 LOC of C) keep working unmodified behind a shim:
+      `TSLexer` is 7 function pointers and the scanner vtable is 5 slots. Conformance is
+      free — upstream ships 235 corpus files, ~109,000 lines.
+- [ ] Recorded as a conscious call rather than a default: **keeping `grammar.json`
+      ingestion is a hard constraint**, and it permanently forecloses the resilient-LL
+      path (matklad's) that would give better error recovery, because LL means
+      hand-written grammars and therefore losing every language nobody here personally
+      writes a grammar for.
+- [ ] Also a conscious call: **not** extracting this as a standalone library. Phases 2-3
+      have legitimate pull into ned specifics (Janet host callouts, `Mode`'s capability
+      surface, `SyntaxClass`); designing library-first would make it worse at the job it
+      exists for. Extract later if it earns it.
+
+**Language coverage** — full catalogue in `Docs/LanguageCoverage.md`: the depth ladder
+(D0 structural / D1 navigational / D2 integrated / D3 bespoke), Tier A flagship through
+Tier D parked, a graveyard with revisit triggers, and an 8-point grammar admission policy.
+The reframe that makes it affordable: **a tier is a commitment to a depth, not a decision
+about whether a language works at all** — D0 falls out of Tier 0 inference for free, so
+"basically every known language" becomes a real target rather than a boast, and the honest
+answer to a request for an obscure DSL becomes "yes, next release".
+
+The first four items below are **independent of the engine work and deliverable today** —
+they are configuration and grammar additions, not parsing:
+
+- [ ] **Close Tier A's D2 gap.** java/kotlin/csharp/go/rust/bash have no LSP root markers,
+      formatter or test-runner config, while c/cpp/python/javascript/typescript/tsx/php do
+      (`Lsp/LspRootResolver.h`). Pure config — `LspServerConfig.h`/`DapConfig.h`/
+      `TestRunConfig.h` already take this as data.
+- [ ] **Add Lua and CMake grammars.** Both are Tier A by usage and both are absent; CMake
+      is ned's own build system, and Lua is named four times elsewhere in this file.
+      Sourcing: `tree-sitter-grammars/tree-sitter-lua` (2026-06-19), `uyha/tree-sitter-cmake`
+      (2026-07-08).
+- [ ] **Add diff/unified-diff.** Cheapest high-value entry in the catalogue: ned owns a VCS
+      side panel, hunk-level staging (`Vcs/DiffPatch.h`) and a merge-conflict mode, all of
+      which currently read diff output as untyped text. `tree-sitter-grammars/tree-sitter-diff`
+      is live (2026-08-14).
+- [ ] **Add the tree-sitter query language (`.scm`).** ned authors 79 of them and edits
+      them with no highlighting at all.
+- [ ] **SQL, as the acceptance test for Tier 1 rule inheritance.** ned has no SQL today and
+      upstream is fragmented — four grammars for one language family because tree-sitter
+      cannot express "T-SQL is ANSI SQL plus these deltas", so every dialect forks the whole
+      grammar and drifts. `DerekStride/tree-sitter-sql` (2026-09-10, 245★) as the core plus
+      per-dialect trait deltas would be a better answer than anything upstream currently
+      offers, which makes it the strongest demo of the architecture rather than a line item.
+      Graveyarded en route: `dhcmrlchtdj/tree-sitter-sqlite` (archived 2023),
+      `m-novikov/tree-sitter-sql` (stale 2024-03).
+- [ ] Admission policy worth knowing before adding any grammar: **prefer
+      `tree-sitter-grammars/*` over the original personal repo, and never use star count as
+      a health signal.** Measured 2026-09-11 — `alemuller/tree-sitter-make` is 51★ and stale
+      since 2024-01 while `tree-sitter-grammars/tree-sitter-make` is 17★ and current;
+      `MunifTanjim/tree-sitter-lua` is a 1★ fork against the org's 104★. Use `pushed_at` and
+      `archived`, pin by tag, and record ABI version + external-scanner LOC + corpus presence
+      at admission.
+
 ### Refactoring
 
 JetBrains-class rename/move refactoring, scoped the way an IDE scopes it: a local
@@ -1911,6 +2038,17 @@ else works without it.
 Ideas worth remembering but not worth scoping yet — too undecided for "Open Items",
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
+
+- [ ] **ned in Carbon, eventually.** Speculative and deliberately unscoped, but worth
+      remembering: ned is C++23 throughout, and Carbon's entire pitch is C++ interop as a
+      migration path for large existing C++ codebases — which describes this one. Carbon is
+      pre-0.1 (its own roadmap says end of 2026 is the *soonest* 0.1 could ship) and no
+      admissible tree-sitter grammar exists — six `tree-sitter-carbon` repos, all zero
+      stars, one archived — so the correct action is to watch, not wire. Full entry with
+      the admission trigger in `Docs/LanguageCoverage.md` ("Ahead of the catalogue").
+      Relevant to the parsing-engine work rather than separate from it: Carbon names *"low
+      context-sensitivity"* as an explicit design principle, which is exactly the property
+      Tier 0 structural inference relies on, so it is an easy case rather than a hard one.
 
 - [ ] **Configurable indicator glyphs** — the five render-indicator characters
       (`Source/UI/BufferView/Internal.h`) are `constexpr char32_t`: `…` fold ellipsis,
