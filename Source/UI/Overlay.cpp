@@ -120,8 +120,68 @@ namespace {
                     continue;
                 }
 
+                // Empty rather than the default " " -- see PaintScrim below
+                // for the same trap. This comment's own claim ("Blend's
+                // rules decide what a shadow means over a glyph: tint it")
+                // was false while the default space was left in place: the
+                // glyph was replaced, not tinted.
                 Cell wash;
+                wash.character.clear();
                 wash.background_color = shadow.colour.WithAlpha(alpha);
+                screen.Blend(x, y, wash);
+            }
+        }
+    }
+
+    // Translucency phase 5. Everything the focused overlay does not cover,
+    // washed with the "scrim" surface -- the de-emphasis half of "this is
+    // what you are typing into", the other half being the focused mode
+    // line's own accent.
+    //
+    // Blended rather than assigned, so Screen::Blend's rules decide what a
+    // scrim means per cell: over a glyph it tints the foreground (dimming
+    // the text rather than covering it), over an empty cell it composites,
+    // and over a transparent theme it dithers. That is also why it reads
+    // correctly over the buffer, the gutters, the mode line and the tab bar
+    // without any of them knowing about it.
+    //
+    // Gated on an overlay actually holding keyboard focus, not merely being
+    // visible: a completion popup is up while you type into the buffer
+    // behind it, and dimming what you are typing would be exactly backwards.
+    void PaintScrim(Screen& screen, const Box& exempt, const Surface& surface) {
+        if (!PaintsColour(surface.fill)) {
+            return;
+        }
+        const int width  = screen.Width();
+        const int height = screen.Height();
+        for (int y = 0; y < height; ++y) {
+            const double v = height > 1 ? static_cast<double>(y) / (height - 1) : 0.0;
+            for (int x = 0; x < width; ++x) {
+                if (exempt.Contain(x, y)) {
+                    continue;
+                }
+                const double u      = width > 1 ? static_cast<double>(x) / (width - 1) : 0.0;
+                const Color  colour = PaintColourAt(surface.fill, u, v, x, y);
+                if (colour.alpha == 0) {
+                    continue;
+                }
+                // An EMPTY character, not the default " ": Screen::Blend
+                // treats a space as a glyph the caller meant to write and
+                // overwrites the destination's own. A scrim that erased the
+                // text it is meant to de-emphasise would be a curtain.
+                //
+                // Foreground as well as background, which the shadow above
+                // does not do and needs to be said plainly: over an *opaque*
+                // theme the buffer's cells already hold the theme
+                // background, so a background-only scrim composites that
+                // colour onto itself and changes nothing visible. It is the
+                // foreground wash (Blend's "a colour with no glyph of its
+                // own moves the colour already there") that actually dims
+                // the text. Confirmed by a test that failed on exactly this.
+                Cell wash;
+                wash.character.clear();
+                wash.background_color = colour;
+                wash.foreground_color = colour;
                 screen.Blend(x, y, wash);
             }
         }
@@ -130,6 +190,18 @@ namespace {
 } // namespace
 
 void OverlayHost::Paint(Screen& screen) const {
+    // Topmost focused overlay wins, matching paint order: entries_ is in
+    // back-to-front order, so the last focused one is the one on top.
+    const Entry* focusedEntry = nullptr;
+    for (const Entry& entry : entries_) {
+        if (entry.widget->active && entry.widget->Focused()) {
+            focusedEntry = &entry;
+        }
+    }
+    if (theme_ != nullptr && focusedEntry != nullptr) {
+        PaintScrim(screen, focusedEntry->widget->Box_(), SurfaceFor(*theme_, "scrim"));
+    }
+
     for (const Entry& entry : entries_) {
         if (entry.widget->active) {
             if (theme_ != nullptr) {

@@ -46,6 +46,19 @@ namespace {
     constexpr double       kPanelEdgeLift     = 4.0;
     constexpr std::uint8_t kModeLineFadeAlpha = 165;
 
+    // The focus scrim, in alpha of the theme's own background laid over
+    // everything the focused overlay does not cover. ~31%: enough that the
+    // overlay reads as the thing being interacted with, light enough that
+    // the code behind it stays legible -- a scrim is a de-emphasis, not a
+    // curtain, and you often want to read what you are about to act on.
+    //
+    // Deliberately the background rather than black: over a glyph a wash
+    // tints the *foreground* (Docs/Translucency.md's T3), so a background
+    // scrim pulls text toward the page it sits on and dims it evenly on a
+    // light theme and a dark one alike. Black would dim a dark theme and
+    // muddy a light one.
+    constexpr std::uint8_t kFocusScrimAlpha = 80;
+
     std::mutex& Lock() {
         static std::mutex mutex;
         return mutex;
@@ -219,6 +232,16 @@ namespace {
         if (name == "buffer") {
             surface.fill = SolidOrNothing(theme.background);
             surface.text = SolidOrNothing(theme.defaultForeground);
+            return surface;
+        }
+        if (name == "scrim") {
+            // Laid over everything a focused overlay does not cover, by
+            // OverlayHost::Paint. Derived from whatever background is
+            // actually behind the editor -- ChromeBackdrop resolves the
+            // transparent-theme case to the detected desktop colour -- since
+            // a scrim with nothing to tint toward has nothing to say.
+            const Color backdrop = ChromeBackdrop(theme);
+            surface.fill         = backdrop.Composable() ? SolidPaint(backdrop.WithAlpha(kFocusScrimAlpha)) : Paint{};
             return surface;
         }
         if (name == "buffer.current_line") {
@@ -550,7 +573,7 @@ std::vector<std::string> SurfaceNames() {
     return {"buffer", "buffer.current_line", "buffer.selection", "buffer.search",
             "buffer.recency", "modeline", "modeline.focused", "tab.strip", "tab", "tab.active",
             "tab.active.focused", "echo", "scrollbar", "panel",
-            "popup"};
+            "popup", "scrim"};
 }
 
 } // namespace ned::ui

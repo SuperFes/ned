@@ -168,3 +168,40 @@ TEST_CASE("A malformed shadow or elevation spec is rejected, not half-applied", 
     REQUIRE(ned::ui::ApplyPaintOverrides(DarkTheme()) == 5);
     REQUIRE(ned::ui::SurfaceFor(DarkTheme(), "popup").elevation == 0);
 }
+
+// Found 2026-09-10 while building the focus scrim, which walks the same code
+// path: PaintShadow's own comment claimed "Screen::Blend's rules decide what
+// a shadow means over a glyph (tint it)", and that was false. Cell::character
+// defaults to " ", and Blend treats a space as a glyph the caller meant to
+// write -- so a shadow falling across real text replaced it with blanks
+// instead of darkening it.
+TEST_CASE("A shadow darkens text it falls across rather than erasing it", "[OverlayShadow]") {
+    const SurfaceGuard guard;
+    SetShadow("2 1 0 #000000a0", 1); // hard-edged, offset right 2 and down 1
+
+    Screen screen(20, 10);
+    for (int y = 0; y < 10; ++y) {
+        for (int x = 0; x < 20; ++x) {
+            screen.PixelAt(x, y).background_color = Color::RGB(0xC0, 0xC0, 0xC0);
+        }
+    }
+    // (12, 3) is inside the shifted box for the overlay at (4,2)-(11,6):
+    // the same cell the "darkens the cells its shadow falls on" case above
+    // asserts against, but carrying real text this time.
+    screen.PixelAt(12, 3).character        = "M";
+    screen.PixelAt(12, 3).foreground_color = Color::RGB(0xFF, 0xFF, 0xFF);
+
+    static SolidWidget   widget;
+    ned::ui::OverlayHost host;
+    const Theme          theme = DarkTheme();
+    host.SetTheme(&theme);
+    host.Add(widget, [](ned::ui::Size) {
+        return Box{.x_min = 4, .x_max = 11, .y_min = 2, .y_max = 6};
+    });
+    host.Reflow(ned::ui::Size{20, 10});
+    host.Show(widget);
+    host.Paint(screen);
+
+    REQUIRE(screen.PixelAt(12, 3).character == "M");
+    REQUIRE(screen.PixelAt(12, 3).background_color != Color::RGB(0xC0, 0xC0, 0xC0));
+}

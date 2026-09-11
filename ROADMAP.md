@@ -179,10 +179,28 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       tracked field kinds), not suppression — or accepting a stale reference count, which
       is what every other editor does.
 
-- [ ] **Phase 5 remainder — focus scrim**, and the state-driven mode-line fills (LSP
-      indexing / test-run / load progress as a sweep across the bar). The scrim needs a
-      composition-root hook for "a docked panel or overlay holds focus", which is why it
-      is not in with the widget migrations.
+- [x] **Phase 5 — focus scrim.** Shipped 2026-09-10. While an overlay holds the keyboard,
+      everything it does not cover is washed with a new `scrim` surface. The
+      "composition-root hook" this entry said it needed turned out to already exist:
+      `OverlayHost` knows its entries, their boxes and the theme, and paints between the
+      widget tree and the overlays, so it owns the pass outright and `main.cpp` is
+      untouched. Gated on *focus* rather than visibility — a completion popup is up while
+      you type into the buffer behind it.
+      Two things the implementation had to be corrected on, both caught by tests that
+      failed first:
+      - **A background-only scrim is invisible where it matters.** Over an opaque theme the
+        buffer's cells already hold the theme background, so washing the background
+        composites that colour onto itself. It is the *foreground* wash (Blend's "a colour
+        with no glyph of its own moves the colour already there") that dims the text.
+      - **`Cell::character` defaults to `" "`, and `Screen::Blend` treats a space as a
+        glyph the caller meant to write.** A wash left at the default erases the text it
+        lands on. This also means **`PaintShadow` had been erasing glyphs since phase 7c** —
+        its own comment claimed Blend would "tint its foreground" over a glyph, and the
+        default space made that false. Fixed and pinned in the same pass, with a test that
+        fails against the old code.
+- [ ] **Phase 5 remainder — state-driven mode-line fills** (LSP indexing / test-run / load
+      progress as a sweep across the bar). Unstarted; the scrim above was the other half of
+      this entry.
 - [x] **Dock edge falloff.** `panel`'s derived default is a horizontal walk now rather than
       a flat colour -- ~4% lifted at the dock's outer edge, settling to exactly the buffer
       background at the seam, direction chosen by the background's own luminance (a fixed
