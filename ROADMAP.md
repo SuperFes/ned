@@ -246,24 +246,28 @@ Measured groundwork: `Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlp
       offset/length a restore does not have in hand from the diff. Verified by watching the
       test produce `"pha ="` without it.
 
-- [ ] **Code lenses drift the same way inlay hints did, one step removed.** Found while
-      fixing the inlay-hint garbling (below) and deliberately left alone rather than given
-      the same guard. `codeLensSpans_` resolves its byte offsets against the content as it
-      stood *at receipt*, so unlike a stale inlay hint its offsets start out valid — but
-      nothing relocates them across the edits that follow, so the lens row gradually
-      belongs to the wrong line. The inlay fix does not transfer: a lens occupies a whole
-      extra *row* above the line it annotates, so dropping the set on every keystroke would
-      make a row appear and disappear as you type, which is the vertical jumping this would
-      be trying to cure. The right fix is relocation (what `Buffer` already does for its six
-      tracked field kinds), not suppression — or accepting a stale reference count, which
-      is what every other editor does.
+- [x] **Code lenses relocate now too (2026-09-11) — the stale-offset family is closed.**
+      The loudest failure of the four, once it does happen: a lens owns a whole extra
+      screen row above the line it annotates, so a stale offset does not merely misplace a
+      label, it puts that row above the wrong line and every line below moves.
 
-      Re-measured 2026-09-10 while fixing the diagnostic rows, and it is milder than it
-      first looked: `LeadingAnnotationRowsForLine` recomputes a lens's line from its byte
-      offset every frame, and ordinary typing moves every offset after the caret by one
-      byte — which keeps a lens on the same line unless you insert or delete a *newline*
-      above it. So the row churn here is confined to line-count-changing edits, not to
-      typing in general. Worth fixing, not urgent.
+      Two halves, and the test exercises them separately because either alone leaves a
+      real case broken:
+      - **At receipt**, positions are converted against the document as it stood when the
+        *request* went out (`RequestCodeLenses` already refuses to ask unless the server is
+        in sync with it), then carried onto whatever the buffer has become. Previously they
+        were converted against the live buffer, which by then was several edits ahead.
+      - **On read**, `CodeLensSpans` carries its cached set forward whenever the buffer's
+        generation has moved. Relocated rather than suppressed for the same reason
+        diagnostics were: blanking the set would make the row itself blink in and out while
+        you type, which is the movement this exists to stop.
+
+      The catch-up lives on the read rather than at each edit because `Manager` has no hook
+      into `Buffer`'s edits — and it is cheap: one bounded diff per generation change,
+      amortized over however many reads that generation sees. What makes holding a document
+      snapshot per buffer affordable at all is that `ITextStorage::Clone` is O(1)
+      (structurally shared, never materialized); a `std::string` copy per buffer would not
+      have been.
 
 - [x] **Phase 5 — focus scrim.** Shipped 2026-09-10. While an overlay holds the keyboard,
       everything it does not cover is washed with a new `scrim` surface. The
