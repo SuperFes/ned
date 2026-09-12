@@ -1,5 +1,6 @@
 # sample.cpp  (cpp-mode)
-# 162 facts
+# 163 facts
+fold 52..434  "{\n\n// A type the oracle shou … rn sum;\n}\n\n}"
 fold 113..299  "{\n  public:\n    explicit Wid … ing name_;\n}"
 fold 188..195  "{\n    }"
 fold 233..262  "{\n        return name_;\n    }"

@@ -5,3 +5,8 @@
 ; class/struct member lists.
 (compound_statement) @fold
 (field_declaration_list) @fold
+;; namespace/extern-"C" bodies. Added after Tier 0 imprint inference
+;; (Editor/Imprint.h) reported it on a real file and the hand-written list
+;; did not -- C# and Rust already folded their own declaration_list, so this
+;; was an omission here rather than a considered exclusion.
+(declaration_list) @fold

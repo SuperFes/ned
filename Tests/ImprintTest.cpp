@@ -10,8 +10,17 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <vector>
+
+#include "Editor/CodeFold.h"
 #include "Editor/Imprint.h"
+#include "Editor/Mode.h"
 #include "Editor/TreeSitter/GrammarImprint.h"
+#include "Editor/TreeSitter/Languages.h"
+#include "Editor/TreeSitter/Node.h"
+#include "Editor/TreeSitter/Parser.h"
+#include "Editor/TreeSitter/Tree.h"
 
 // Two halves, deliberately.
 //
@@ -233,6 +242,104 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
     }
 
     INFO("reproduced " << reproduced << " of " << expected);
-    CHECK(expected == 55);     // the corpus itself changed if this trips
+    // The corpus itself changed if this trips. It has once: cpp-folds.scm
+    // gained (declaration_list) after inference reported a namespace body on
+    // a real file that the hand-written list missed, taking 55 to 56.
+    CHECK(expected == 56);
     CHECK(reproduced == expected);
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end: does the imprint actually DRIVE folding, not merely agree about
+// node names?
+//
+// The corpus case above compares node type names, which is necessary and not
+// sufficient -- names matching says nothing about the byte ranges a real parse
+// produces. This walks a real tree, emits a fold range for every node whose
+// type the imprint reports as foldable, and holds the result against what the
+// hand-written .scm queries produce on the same file.
+//
+// Both sides get the multi-line rule applied, because that is the one part of
+// "foldable" no static policy can answer (Editor/CodeFold.h enforces it on the
+// real path) and comparing without it is not like-for-like.
+//
+// This is the Phase 2 claim in miniature: the hand-written fold queries are
+// replaceable, not merely approximable.
+
+namespace {
+
+void CollectFoldable(const ned::editor::treesitter::Node&                                 node,
+                     const std::map<std::string, ned::editor::imprint::DelimitedBody>&    bodies,
+                     const ned::editor::imprint::FoldPolicy&                              policy,
+                     std::vector<std::pair<std::size_t, std::size_t>>&                    out) {
+    if (node.IsNull()) return;
+    if (const auto it = bodies.find(std::string(node.Type())); it != bodies.end()) {
+        if (ned::editor::imprint::ShouldFold(it->second, policy)) {
+            out.emplace_back(node.StartByte(), node.EndByte());
+        }
+    }
+    for (std::size_t i = 0; i < node.ChildCount(); ++i) CollectFoldable(node.Child(i), bodies, policy, out);
+}
+
+void KeepMultiLineOnly(std::vector<std::pair<std::size_t, std::size_t>>& blocks, const std::string& text) {
+    std::erase_if(blocks, [&text](const std::pair<std::size_t, std::size_t>& block) {
+        return text.find('\n', block.first) >= block.second;
+    });
+    std::sort(blocks.begin(), blocks.end());
+}
+
+} // namespace
+
+TEST_CASE("An imprint reproduces the hand-written fold ranges on real files", "[Imprint][Corpus]") {
+    struct Case {
+        std::string             file;
+        std::string             grammarDir;
+        ned::editor::Mode       mode;
+        std::string             language;
+    };
+
+    if (!fs::exists(DepsDir())) {
+        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
+        return;
+    }
+
+    std::vector<Case> cases;
+    cases.push_back({"sample.cpp", "tree-sitter-cpp-src", ned::editor::CppMode(), "cpp"});
+    cases.push_back({"sample.py", "tree-sitter-python-src", ned::editor::PythonMode(), "python"});
+    cases.push_back({"sample.json", "tree-sitter-json-src", ned::editor::JsonMode(), "json"});
+
+    for (const Case& testCase : cases) {
+        INFO("corpus file: " << testCase.file);
+
+        const fs::path grammarPath = DepsDir() / testCase.grammarDir / "src" / "grammar.json";
+        if (!fs::exists(grammarPath)) {
+            WARN("missing grammar.json for " << testCase.file);
+            continue;
+        }
+        std::ifstream grammarIn(grammarPath);
+        REQUIRE(grammarIn);
+        nlohmann::json grammar;
+        grammarIn >> grammar;
+
+        std::ifstream sourceIn(fs::path(NED_REPO_ROOT) / "Tests" / "Oracle" / "corpus" / testCase.file);
+        REQUIRE(sourceIn);
+        std::ostringstream sourceBuffer;
+        sourceBuffer << sourceIn.rdbuf();
+        const std::string text = sourceBuffer.str();
+
+        const auto language = ned::editor::treesitter::LanguageByName(testCase.language);
+        REQUIRE(language.has_value());
+        const ned::editor::treesitter::Parser parser(*language);
+        const ned::editor::treesitter::Tree   tree = parser.Parse(text);
+
+        std::vector<std::pair<std::size_t, std::size_t>> inferred;
+        CollectFoldable(tree.RootNode(), InferDelimitedBodies(grammar), ned::editor::imprint::FoldPolicy{}, inferred);
+        KeepMultiLineOnly(inferred, text);
+
+        auto handWritten = ned::editor::codefold::FoldableBlocks(testCase.mode, text);
+        KeepMultiLineOnly(handWritten, text);
+
+        INFO("inferred " << inferred.size() << " ranges, hand-written " << handWritten.size());
+        CHECK(inferred == handWritten);
+    }
 }

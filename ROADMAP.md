@@ -343,8 +343,20 @@ real; if not, that is worth learning at language 3 rather than language 15.
       (a body holding one subexpression has nothing to collapse) and only **41 are
       actually a matter of taste**, all the argument/parameter-list family, behind one
       flag rather than a per-language list. Defaulted ON, and both directions are pinned
-      by tests so neither rots. Still open, recorded rather than decided: whether `cpp`'s
-      missing `declaration_list` is an omission inference just caught.
+      by tests so neither rots.
+- [x] **`cpp`'s missing `declaration_list` was an omission, and inference proved it on a
+      real file.** Not decided by taste: the end-to-end check below reported a namespace
+      body the hand-written query did not, and C# and Rust already folded their own
+      `declaration_list`. Added; the corpus gate moved 55 → 56 and the oracle shows the
+      one new fold.
+- [x] **An imprint drives folding end to end, not just agreeing about node names.**
+      Walking a real parse tree and emitting a fold range for every node the imprint
+      reports as foldable reproduces the hand-written `.scm` output **byte for byte** on
+      the corpus — cpp, python and json all exact, once the multi-line rule is applied to
+      both sides (it is the one part of "foldable" no static policy can answer). Node
+      names matching was necessary and not sufficient; this is the Phase 2 claim in
+      miniature — the hand-written fold queries are replaceable, not merely
+      approximable. `Tests/ImprintTest.cpp`.
 - [ ] Fold semantics for indentation languages need their own pass, surfaced by the
       above and deliberately not bundled into it: a Python one-statement body is a block
       whose start and end land on the same line, so the "spans more than one line" rule
