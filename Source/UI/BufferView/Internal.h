@@ -982,6 +982,8 @@ inline const char* SymbolGlyphFor(editor::SymbolKind kind) {
             return "="; // a constant/variable-like definition
         case editor::SymbolKind::Namespace:
             return "§"; // SECTION SIGN -- a namespace definition, distinct from TypeLike's ◇
+        case editor::SymbolKind::Block:
+            return "▪"; // BLACK SMALL SQUARE -- a container the grammar knows and nothing names
     }
     return " "; // unreachable, same convention as DiagnosticGlyphFor above
 }

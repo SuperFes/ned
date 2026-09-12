@@ -679,6 +679,23 @@ real; if not, that is worth learning at language 3 rather than language 15.
       its own is not an identifier), which is the pre-existing degradation kept
       deliberately rather than quietly changed. Verified live: renaming the ninth binding
       in a real buffer rewrites its definition and its use, and nothing else.
+- [x] **A third driver off the same fact: sticky scroll for ten languages that had
+      none.** yaml, toml, json, css, bash, fish, clojure, janet, xml and html have an
+      imprint table and no `tags.scm`, so `Mode::symbolKind` is unset and the breadcrumb
+      rows had nothing to show. They show now, from the fold blocks those languages
+      already produce — scroll into a nested `docker-compose.yml` and `services:` /
+      `database:` / `volumes:` stay pinned above the viewport.
+      It works because of an invariant the indentation-fold work had to establish for its
+      own reasons: **a fold block's start byte sits on the row that stays visible when it
+      collapses**, which is exactly the row worth pinning. So this needed no new query, no
+      new `Mode` capability, and no extra per-frame work (the blocks are already cached for
+      the gutter) — about forty lines, most of them explaining themselves.
+      Two decisions worth keeping. The markers carry a new `SymbolKind::Block` rather than
+      borrowing `Data`: the grammar says "container" and nothing says what kind, and that
+      is a real thing to be able to say. And the fallback keys on the mode having no tags
+      query rather than on the marker list being empty — "this language has no tags query"
+      and "this file declares nothing" are different facts, so a C++ file of bare braces
+      still pins nothing.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** Now with the
       above in mind: it is a *unification* of vocabulary, not a reduction in authoring, and
       should be scoped and justified as such. With inference

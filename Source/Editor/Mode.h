@@ -328,6 +328,16 @@ enum class SymbolKind {
                // TypeScript, Rust all emit it for a real namespace) --
                // see SymbolKindFromCaptureName's own body for why that
                // moved here out of TypeLike.
+
+    // sticky-scroll-from-folds follow-up: a delimited body with NO declared
+    // meaning -- a YAML mapping, a JSON object, a TOML table, a Lisp form.
+    // Never produced by a tags query, and `SymbolKindFromCaptureName` cannot
+    // return it: it is what a landmark derived from the *fold* structure
+    // carries, for one of the ten bundled languages that has an imprint table
+    // and no `tags.scm` at all. The honest label for "the grammar says this
+    // is a container and nothing says what kind" -- which is exactly Tier 0's
+    // reach, and saying so beats borrowing `Data` and lying about it.
+    Block,
 };
 
 // The SyntaxClass a SymbolKind's gutter glyph borrows its color from --

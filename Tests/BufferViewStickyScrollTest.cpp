@@ -8,6 +8,7 @@
 #include "Editor/Mode.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "Editor/StickyScroll.h"
 #include "Editor/StickyScrollSettings.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
@@ -410,4 +411,74 @@ TEST_CASE("The pinned band paints on the backing layer, not into the header cell
 
     // The first real content row is nobody's header: no band under it.
     REQUIRE(screen.BackingAt(0, 3).background_color != band);
+}
+
+// ---------------------------------------------------------------------------
+// A language with no tags query pins its FOLD structure instead.
+//
+// Ten bundled languages have an imprint table and no tags.scm, so
+// Mode::symbolKind is unset and they had no sticky scroll at all. The fold
+// blocks they already produce carry the right rows, because of the invariant
+// the fold work had to establish anyway: a fold block's start byte sits on the
+// row that stays visible when it collapses.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A YAML buffer pins its enclosing keys with no tags query at all", "[BufferView][StickyScroll]") {
+    const StickyScrollSettingsGuard guard;
+    Fixture                         fixture;
+    fixture.mode = ned::editor::YamlMode();
+    REQUIRE_FALSE(fixture.mode.symbolKind);      // the premise: nothing to build a chain from
+    fixture.buffer.InsertAtPoint("root:\n"       // line 0
+                                 "  versions:\n" // line 1
+                                 "    - 0.5.0\n" // line 2
+                                 "    - 0.6.0\n" // line 3
+                                 "    - 0.7.0\n" // line 4
+                                 "other: 2\n");  // line 5
+
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    view.SetTopLine(3); // inside the sequence under `versions:`
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    CHECK(RowText(screen, 0, 40).find("root:") != std::string::npos);
+    CHECK(RowText(screen, 1, 40).find("versions:") != std::string::npos);
+    // Exactly two rows are pinned, and real content resumes under them --
+    // which line lands where is the viewport's business, tested elsewhere.
+    CHECK(RowText(screen, 2, 40).find("- 0.") != std::string::npos);
+}
+
+TEST_CASE("A mode WITH a tags query shows no fold-derived rows when the file declares nothing",
+          "[BufferView][StickyScroll]") {
+    // The distinction the fallback is keyed on: "this language has no tags
+    // query" is not "this file has no symbols". A C++ buffer of bare blocks
+    // pins nothing, rather than pinning its braces.
+    const StickyScrollSettingsGuard guard;
+    Fixture                         fixture;
+    fixture.buffer.InsertAtPoint("{\n    a;\n    b;\n    c;\n}\n");
+
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 3});
+    view.SetTopLine(2);
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 3});
+    view.Paint(canvas);
+
+    CHECK(RowText(screen, 0, 40).find("b;") != std::string::npos); // content at row 0, nothing pinned
+}
+
+TEST_CASE("MarkersFromFoldBlocks carries ranges through as Block landmarks", "[StickyScroll]") {
+    const auto markers = ned::editor::stickyscroll::MarkersFromFoldBlocks({{0, 40}, {10, 30}});
+    REQUIRE(markers.size() == 2);
+    CHECK(markers[0].startByte == 0);
+    CHECK(markers[0].endByte == 40);
+    CHECK(markers[0].kind == ned::editor::SymbolKind::Block);
+    CHECK(markers[0].name.empty()); // the row renders the source line, not a synthesized label
+
+    // And they feed the same chain query the tags-derived ones do.
+    const auto chain = ned::editor::stickyscroll::StickyChainForViewportTop(markers, 20);
+    REQUIRE(chain.size() == 2);
 }
