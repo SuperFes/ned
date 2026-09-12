@@ -3,13 +3,14 @@
 ; borrowed from nvim-treesitter/Helix as capture NAMES only, no upstream
 ; indents.scm exists for C to vendor (checked directly against
 ; tree-sitter/tree-sitter-c and neovim/neovim's own runtime/queries, the same
-; "hand-written, checked, not assumed" precedent c-folds.scm's own header
-; comment establishes). compound_statement covers function/control-flow
-; bodies; field_declaration_list covers struct/union member lists (a
-; genuinely different scope-cut than c-folds.scm's own deliberate omission of
-; it -- that was a folding-affordance decision, not an indentation one:
-; struct members still need to indent one level regardless of whether the
-; struct body itself is foldable). initializer_list covers multi-line
+; "hand-written, checked, not assumed" precedent the deleted c-folds.scm
+; established). compound_statement covers function/control-flow bodies;
+; field_declaration_list covers struct/union member lists (a genuinely
+; different scope-cut than that fold query's own deliberate omission of it --
+; that was a folding-affordance decision, not an indentation one: struct
+; members still need to indent one level regardless of whether the struct body
+; itself is foldable; folding is the imprint's job now either way, see
+; Editor/ImprintFold.h). initializer_list covers multi-line
 ; brace-initializers. parameter_list/argument_list (@aligned-paren-column-
 ; alignment follow-up) get "aligned" rather than "indent" -- a wrapped
 ; declaration/call's continuation lines conventionally line up under the

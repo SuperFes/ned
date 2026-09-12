@@ -573,9 +573,15 @@ TEST_CASE("OrgMode highlights nested emphasis of different markers", "[Mode]") {
 }
 
 // generic-code-folding follow-up: every in-scope mode has a real fold
-// query; every out-of-scope one stays exactly as it was (empty .fold) --
+// source; every out-of-scope one stays exactly as it was (empty .fold) --
 // this is the "no gutter affordance when we can't fold" contract, tested
 // directly at the Mode level rather than only via BufferView's gutter.
+//
+// It says "source" rather than "query" now because there are no bundled fold
+// queries left at all -- every one of these folds from the delimiter imprint.
+// JankMode is the entry that earned its keep: it was the single mode whose
+// language key had no imprint table, so deleting clojure-folds.scm took its
+// folding with it and this caught it.
 TEST_CASE("In-scope modes have a fold hook installed", "[Mode]") {
     REQUIRE(static_cast<bool>(CMode().fold));
     REQUIRE(static_cast<bool>(CppMode().fold));

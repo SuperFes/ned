@@ -29,11 +29,11 @@
 //
 // The crafted-grammar cases pin each inference rule in isolation, so a
 // failure names which shape broke. The corpus case is the Phase 1 gate from
-// Docs/ParsingEngine.md: inference must still reproduce every one of the 55
-// fold nodes hand-written across queries/*-folds.scm. That number was
-// established by a Python spike that this superseded; enforcing it here is what
-// makes a grammar bump that breaks inference fail the build instead of being
-// discovered much later.
+// Docs/ParsingEngine.md: inference must still fold every one of the 59 nodes
+// that queries/*-folds.scm named. Those files are deleted -- inference
+// replaced them -- so the list they carried is pinned in this file instead,
+// which is what still makes a grammar bump that breaks inference fail the
+// build instead of being discovered much later.
 
 using ned::editor::imprint::DelimitedBody;
 using ned::editor::imprint::DelimiterKind;
@@ -353,8 +353,52 @@ TEST_CASE("A token-wrapped rule is a leaf, not a delimited body", "[Imprint]") {
     CHECK(InferDelimitedBodies(grammar).empty());
 }
 
-TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus]") {
-    // The Phase 1 gate. See Docs/ParsingEngine.md.
+// The eleven `*-folds.scm` files this gate was written against are gone --
+// deleted, not moved, because inference reproduces them: over 66 real files
+// across those eleven languages the queries produced zero fold ranges the
+// imprint did not, and every node type they named is a delimited body the
+// shipping policy folds.
+//
+// Deleting them takes the ground truth with them, so it is pinned here
+// instead. This list is what those queries said, verbatim, and it is
+// deliberately frozen: it is not a thing to extend when a language gains a
+// construct (the imprint already covers that), it is a tripwire. If a grammar
+// bump renames `compound_statement` or makes `statements` non-list-like, this
+// fails by name -- which is exactly what the corpus gate did when the files
+// existed.
+//
+// The second half of each check is new and is the part the file-reading gate
+// could never make: being INFERRED as delimited is not the same as being
+// FOLDED. `ShouldFold` is the policy above `Delimited` (Editor/Imprint.h), and
+// a node that fell out of it would still have passed the old gate while
+// silently losing a fold.
+const std::map<std::string, std::set<std::string>> kDeletedFoldQueries = {
+    {"c", {"compound_statement", "field_declaration_list"}},
+    {"clojure", {"anon_fn_lit", "list_lit", "map_lit", "read_cond_lit", "set_lit", "vec_lit"}},
+    {"cpp", {"compound_statement", "declaration_list", "field_declaration_list"}},
+    {"csharp",
+     {"accessor_list", "block", "declaration_list", "enum_member_declaration_list", "initializer_expression",
+      "switch_body", "switch_expression"}},
+    {"go",
+     {"block", "expression_switch_statement", "field_declaration_list", "interface_type", "literal_value",
+      "select_statement", "type_switch_statement"}},
+    {"java",
+     {"annotation_type_body", "array_initializer", "block", "class_body", "constructor_body",
+      "element_value_array_initializer", "enum_body", "interface_body", "module_body", "switch_block"}},
+    {"javascript", {"class_body", "object", "statement_block"}},
+    {"json", {"array", "object"}},
+    {"kotlin",
+     {"anonymous_initializer", "catch_block", "class_body", "control_structure_body", "enum_class_body",
+      "finally_block", "function_body", "lambda_literal", "secondary_constructor", "when_expression"}},
+    {"rust",
+     {"block", "declaration_list", "enum_variant_list", "field_declaration_list", "field_initializer_list",
+      "match_block"}},
+    {"typescript", {"class_body", "object", "statement_block"}},
+};
+
+TEST_CASE("Every deleted fold query's nodes still fold from the imprint", "[Imprint][Corpus]") {
+    // The Phase 1 gate, outliving the queries it was written against. See
+    // Docs/ParsingEngine.md.
     const std::map<std::string, std::string> kGrammars = {
         {"c", "tree-sitter-c-src/src/grammar.json"},
         {"cpp", "tree-sitter-cpp-src/src/grammar.json"},
@@ -377,41 +421,62 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
 
     std::size_t reproduced = 0;
     std::size_t expected   = 0;
-    for (const auto& [language, relative] : kGrammars) {
-        const fs::path path = DepsDir() / relative;
+    for (const auto& [language, nodes] : kDeletedFoldQueries) {
+        const fs::path path = DepsDir() / kGrammars.at(language);
         INFO("language: " << language << "  grammar: " << path.string());
         if (!fs::exists(path)) {
             WARN("missing grammar.json for " << language << " -- not counted");
             continue;
         }
 
-        // python-folds.scm is gone: it said `(block) @fold` and the imprint
-        // says the same thing with better geometry (a suite folds from the
-        // row that names it, which a node range cannot express on its own --
-        // see Editor/Imprint.h's FoldAnchorStart). Deleting the query is the
-        // first file this work removes rather than reproduces, so a language
-        // with no fold query is skipped here rather than failing: what holds
-        // python now is the byte-range corpus check below and CodeFoldTest's
-        // end-to-end geometry cases.
-        const fs::path foldQuery =
-            fs::path(NED_REPO_ROOT) / "Source" / "Editor" / "TreeSitter" / "queries" / (language + "-folds.scm");
-        if (!fs::exists(foldQuery))
-            continue;
-
         std::ifstream in(path);
         REQUIRE(in);
         json grammar;
         in >> grammar;
 
-        const auto inferred  = InferDelimitedBodies(grammar);
-        const auto handWritten = HandWrittenNodes(language, "folds", "fold");
-        expected += handWritten.size();
+        const auto inferred = InferDelimitedBodies(grammar);
+        expected += nodes.size();
 
-        for (const std::string& node : handWritten) {
-            INFO("hand-written @fold node not inferred: " << language << " / " << node);
-            CHECK(inferred.count(node) == 1);
-            if (inferred.count(node) == 1) ++reproduced;
+        for (const std::string& node : nodes) {
+            INFO("deleted @fold node no longer folds: " << language << " / " << node);
+            const auto it = inferred.find(node);
+            CHECK(it != inferred.end());
+            if (it == inferred.end())
+                continue;
+            // Inferred AND folded. The old gate could only ask the first.
+            CHECK(ShouldFold(it->second));
+            if (ShouldFold(it->second))
+                ++reproduced;
         }
+    }
+
+    INFO("reproduced " << reproduced << " of " << expected);
+    // The pinned list itself changed if this trips, which it should not: it is
+    // a record of eleven deleted files, not a live inventory. 59 was the count
+    // the last of those files carried.
+    CHECK(expected == 59);
+    CHECK(reproduced == expected);
+}
+
+TEST_CASE("Inference reproduces every hand-written indent node", "[Imprint][Corpus]") {
+    const std::map<std::string, std::string> kGrammars = {
+        {"c", "tree-sitter-c-src/src/grammar.json"},
+        {"cpp", "tree-sitter-cpp-src/src/grammar.json"},
+        {"csharp", "tree-sitter-c-sharp-src/src/grammar.json"},
+        {"go", "tree-sitter-go-src/src/grammar.json"},
+        {"java", "tree-sitter-java-src/src/grammar.json"},
+        {"javascript", "tree-sitter-javascript-src/src/grammar.json"},
+        {"json", "tree-sitter-json-src/src/grammar.json"},
+        {"kotlin", "tree-sitter-kotlin-src/src/grammar.json"},
+        {"python", "tree-sitter-python-src/src/grammar.json"},
+        {"rust", "tree-sitter-rust-src/src/grammar.json"},
+        {"typescript", "tree-sitter-typescript-src-src/typescript/src/grammar.json"},
+        {"clojure", "tree-sitter-clojure-src/src/grammar.json"},
+    };
+
+    if (!fs::exists(DepsDir())) {
+        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
+        return;
     }
 
     // The same imprint also covers the hand-written @indent captures, which is
@@ -456,7 +521,7 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
     // other side's mistake.
     //
     // Two exceptions now, named rather than tolerated as a count, and both are
-    // the SAME limit the fold side already documents: a JSX element is
+    // the SAME limit the fold work documented: a JSX element is
     // delimited by a matched `<li>`/`</li>` tag pair, which is not a bracket
     // pair, so the imprint has nothing to say about it and says nothing. Note
     // which JSX captures are NOT here -- `jsx_expression` (`{...}`) and
@@ -466,40 +531,30 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
     const std::set<std::string> kTagDelimited = {"javascript/jsx_element", "javascript/jsx_self_closing_element"};
     CHECK(indentMissed == kTagDelimited);
     CHECK(indentCovered == indentTotal - kTagDelimited.size());
-
-    INFO("reproduced " << reproduced << " of " << expected);
-    // The corpus itself changed if this trips. Three times so far:
-    // cpp-folds.scm gained (declaration_list) and c-folds.scm gained
-    // (field_declaration_list), both after inference reported them on real
-    // files; and fixing this file's own node extractor to see the conditional
-    // form `(function_body "{") @fold` revealed three more Kotlin nodes the old
-    // regex simply could not read -- which means the number reported as 55/55
-    // and then 56/56 was measured against an incomplete ground truth.
-    //
-    // 60 -> 59 is the fourth, and the first that went DOWN: python-folds.scm
-    // was deleted, so its `(block)` is no longer a hand-written node to
-    // reproduce. A shrinking ground truth is the intended direction here --
-    // this number falls as queries are replaced rather than matched.
-    CHECK(expected == 59);
-    CHECK(reproduced == expected);
 }
 
 // ---------------------------------------------------------------------------
-// End-to-end: does the imprint actually DRIVE folding, not merely agree about
-// node names?
+// End-to-end: does the CHECKED-IN table actually drive folding the way live
+// inference does, not merely agree about map entries?
 //
-// The corpus case above compares node type names, which is necessary and not
-// sufficient -- names matching says nothing about the byte ranges a real parse
-// produces. This walks a real tree, emits a fold range for every node whose
-// type the imprint reports as foldable, and holds the result against what the
-// hand-written .scm queries produce on the same file.
+// The case above compares node types and their inferred signals, which is
+// necessary and not sufficient -- entries matching says nothing about the byte
+// ranges a real parse produces. This walks a real tree here in the test,
+// emitting a fold range for every node live inference reports as foldable, and
+// holds the result against what the shipping path produces from
+// `Editor/ImprintTables.cpp`.
+//
+// It was written against the hand-written fold queries and outlived them: with
+// those deleted, the two sides are `grammar.json` read at test time versus the
+// artifact generated from it, and the walk below is a second implementation of
+// `ImprintFold.cpp`'s rather than a reuse of it. Both halves are the point --
+// a stale checked-in table shows up as a range diff, and the walk itself is
+// cross-checked by an independent one.
 //
 // Both sides get the multi-line rule applied, because that is the one part of
 // "foldable" no static policy can answer (Editor/CodeFold.h enforces it on the
 // real path) and comparing without it is not like-for-like.
 //
-// This is the Phase 2 claim in miniature: the hand-written fold queries are
-// replaceable, not merely approximable.
 
 namespace {
 
@@ -602,6 +657,13 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
         {"xml", "tree-sitter-xml-src/xml/src/grammar.json"},
         {"yaml", "tree-sitter-yaml-src/src/grammar.json"},
         {"tsx", "tree-sitter-typescript-src-src/tsx/src/grammar.json"},
+        // jank shares Clojure's grammar outright, but a table is keyed by the
+        // MODE's language key rather than by the grammar, so it needs its own
+        // entry -- it had none, and folded only because it also shared
+        // clojure-folds.scm. Deleting that query is what surfaced it, and
+        // bracket matching (gated on the same table) had been silently missing
+        // for jank all along.
+        {"jank", "tree-sitter-clojure-src/src/grammar.json"},
     };
 
     if (!fs::exists(DepsDir())) {
@@ -701,7 +763,7 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
     }
 }
 
-TEST_CASE("An imprint reproduces the hand-written fold ranges on real files", "[Imprint][Corpus]") {
+TEST_CASE("The compiled table folds real files exactly as live inference does", "[Imprint][Corpus]") {
     struct Case {
         std::string             file;
         std::string             grammarDir;
@@ -758,47 +820,44 @@ TEST_CASE("An imprint reproduces the hand-written fold ranges on real files", "[
                         inferred);
         Normalize(inferred, text);
 
-        auto handWritten = ned::editor::codefold::FoldableBlocks(testCase.mode, text);
-        Normalize(handWritten, text);
-
-        // The shipping path: a Mode whose fold source is the compiled-in table
-        // rather than the hand-written query, run through the same
-        // FoldableBlocks every consumer uses. Nothing downstream can tell which
-        // it got -- that is the claim, so it is asserted rather than described.
+        // The shipping path: a Mode whose fold source is the compiled-in
+        // table, run through the same FoldableBlocks every consumer uses.
         ned::editor::Mode viaImprint = testCase.mode;
         viaImprint.fold = ned::editor::imprint::BuildFoldFunction(testCase.language);
         REQUIRE(static_cast<bool>(viaImprint.fold));
         auto compiled = ned::editor::codefold::FoldableBlocks(viaImprint, text);
         Normalize(compiled, text);
 
-        INFO("inferred " << inferred.size() << " ranges, hand-written " << handWritten.size()
-                         << ", compiled-table " << compiled.size());
-        CHECK(compiled == handWritten);
-        if (inferred != handWritten) {
+        INFO("live inference " << inferred.size() << " ranges, compiled table " << compiled.size());
+        if (inferred != compiled) {
             for (const auto& range : inferred) {
-                if (std::find(handWritten.begin(), handWritten.end(), range) == handWritten.end()) {
+                if (std::find(compiled.begin(), compiled.end(), range) == compiled.end()) {
                     std::string snippet = text.substr(range.first, std::min<std::size_t>(44, range.second - range.first));
                     for (char& ch : snippet) if (ch == '\n') ch = ' ';
                     WARN("  ONLY-INFERRED " << range.first << ".." << range.second << "  \"" << snippet << "\"");
                 }
             }
-            for (const auto& range : handWritten) {
+            for (const auto& range : compiled) {
                 if (std::find(inferred.begin(), inferred.end(), range) == inferred.end()) {
                     std::string snippet = text.substr(range.first, std::min<std::size_t>(44, range.second - range.first));
                     for (char& ch : snippet) if (ch == '\n') ch = ' ';
-                    WARN("  ONLY-HAND     " << range.first << ".." << range.second << "  \"" << snippet << "\"");
+                    WARN("  ONLY-TABLE    " << range.first << ".." << range.second << "  \"" << snippet << "\"");
                 }
             }
         }
-        CHECK(inferred == handWritten);
+        CHECK(inferred == compiled);
     }
 }
 
-TEST_CASE("Languages with no folds.scm get folding from the imprint alone", "[Imprint]") {
+TEST_CASE("Languages that never had a fold query fold from the imprint alone", "[Imprint]") {
     // The N x M argument arriving as a feature rather than a number: none of
-    // these has a hand-written fold query, and every one of them folds now
+    // these ever had a hand-written fold query, and every one of them folds
     // because the grammar already said enough. Nothing was authored per
     // language.
+    //
+    // Every language is in that position now -- the eleven that did have a
+    // query no longer do -- but these four are the ones that never needed one
+    // written in the first place, which is the claim worth keeping separate.
     struct Case {
         ned::editor::Mode mode;
         std::string       name;
