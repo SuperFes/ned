@@ -5,9 +5,9 @@
 // whatever those cannot express -- lives in one LanguageDefinition, and
 // ModeFromDefinition is the single path from that declaration to a Mode.
 //
-// This is the C++ shape of a language's `language.janet`; the bundled
-// definitions (BundledLanguages.h) are the literals that file will replace.
-// Two rules keep the shape honest:
+// This is the C++ shape of a language's `language.janet`
+// (Editor/LanguageParse.h reads one; BundledLanguages.h holds the bundled
+// set). Two rules keep the shape honest:
 //
 //   - A definition is data. It names a grammar, query sources and escapes; it
 //     holds no closures. Anything a language needs that the generic build
@@ -30,6 +30,7 @@
 #include <utility>
 #include <vector>
 
+#include "ImportResolutionConfig.h"
 #include "Mode.h"
 
 namespace ned::editor {
@@ -91,10 +92,30 @@ struct LanguageDefinition {
     // Punctuation). User remaps (SyntaxTheme.h) still win over these.
     std::vector<std::pair<std::string, SyntaxClass>> captureClasses;
     QueryFiles                                       queries;
+    // Query discovery borrows another language's directory (jank reads
+    // clojure's, tsx typescript's); explicit `queries` entries still win per
+    // kind. See LanguageParse.h.
+    std::string queriesFrom;
     // Names in the escape registry, applied in order after the generic
     // build. An unknown name is a build error (ModeFromDefinition throws),
     // never a silent no-op: a definition that names an escape means it.
     std::vector<std::string> escapes;
+    // Root-marker filenames for per-subpackage LSP roots
+    // (Lsp/RootResolver.h; "*.csproj" means any file with that extension).
+    // Empty is meaningful: the marker tier never matches and the buffer's
+    // root falls through to ProjectRoot().
+    std::vector<std::string> lspRootMarkers;
+    // How this language's import specifiers resolve to files
+    // (Editor/ImportResolutionConfig.h); unset = default-constructed config.
+    std::optional<ImportResolutionConfig> importResolution;
+    // Shorthand tags (a Markdown fence tag, an injections.scm #set! value)
+    // that mean this language -- "js" on javascript, "yml" on yaml.
+    // Injection.cpp builds the alias -> canonical map from these.
+    std::vector<std::string> injectionAliases;
+    // Bundled snippet (trigger, body) pairs, TextMate syntax
+    // (Editor/Snippet.h) -- installed into Editor/SnippetRegistry.h under
+    // this language's key at startup (Editor/BundledSnippets.h).
+    std::vector<std::pair<std::string, std::string>> snippets;
 };
 
 // The Mode name a definition builds under: "<name>-mode".

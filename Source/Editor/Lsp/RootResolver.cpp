@@ -4,6 +4,7 @@
 #include <system_error>
 #include <unordered_map>
 
+#include "Editor/BundledLanguages.h"
 #include "Editor/Project/Root.h"
 
 namespace ned::editor::lsp {
@@ -45,51 +46,6 @@ namespace {
         return overrides;
     }
 
-    // Compiled-in defaults for the languages this codebase bundles a mode
-    // for and that plausibly run a per-subpackage LSP server -- confirmed
-    // against each ecosystem's own real, conventional root-marker file, not
-    // guessed. Deliberately not exhaustive (html/css/json/yaml/toml/
-    // markdown/org/xml/janet/clojure get none): those rarely run a
-    // per-subdirectory server instance the way a monorepo's code languages
-    // do, and an empty list here is harmless -- ResolveLspRoot's marker tier
-    // just never matches, falling through to editor::ProjectRoot() exactly
-    // as before this file existed.
-    const std::unordered_map<std::string, std::vector<std::string>>& BuiltinDefaults() {
-        static const std::unordered_map<std::string, std::vector<std::string>> defaults = {
-            {"c", {"compile_commands.json", ".clangd", "CMakeLists.txt"}},
-            {"cpp", {"compile_commands.json", ".clangd", "CMakeLists.txt"}},
-            {"python", {"pyproject.toml", "setup.py", "setup.cfg"}},
-            {"javascript", {"package.json", "jsconfig.json"}},
-            {"typescript", {"package.json", "tsconfig.json"}},
-            {"tsx", {"package.json", "tsconfig.json"}},
-            {"php", {"composer.json"}},
-            {"rust", {"Cargo.toml"}},
-            {"go", {"go.mod"}},
-            // .NET has no fixed-name project marker -- a "*.<ext>" entry
-            // means "any file with this extension," see
-            // MarkerExistsInDirectory's own header comment. global.json (a
-            // real, if less common, fixed-name SDK-version-pin file) is
-            // checked first since it's a cheap exists() rather than a
-            // directory scan.
-            {"csharp", {"global.json", "*.csproj", "*.sln"}},
-            // Java/Kotlin share one marker set -- both build with Maven or
-            // Gradle, and a mixed-language module carries the same files
-            // either way. Note the walk below is nearest-ancestor-first and
-            // the order within a list is irrelevant, so in a multi-module
-            // build (a Maven module's own pom.xml, a Gradle subproject's own
-            // build.gradle) each module resolves as its own root rather than
-            // the aggregator above it. That is the intended shape: jdtls and
-            // kotlin-language-server both advertise workspaceFolders, so
-            // LspManager joins those sibling roots into one connection
-            // instead of spawning a server per module (TryJoinWorkspaceFolder
-            // -- see LspManager.cpp), and a server that doesn't advertise it
-            // falls back to the pre-multi-root process-per-root behavior.
-            {"java", {"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}},
-            {"kotlin", {"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}},
-        };
-        return defaults;
-    }
-
 } // namespace
 
 void SetLspRootMarkers(const std::string& language, std::vector<std::string> markers) {
@@ -107,11 +63,13 @@ std::vector<std::string> RootMarkers(const std::string& language) {
     if (const auto it = RootMarkersOverrides().find(language); it != RootMarkersOverrides().end()) {
         return it->second;
     }
-    const auto& defaults = BuiltinDefaults();
-    if (const auto it = defaults.find(language); it != defaults.end()) {
-        return it->second;
-    }
-    return {};
+    // The bundled defaults live in each language's own definition
+    // (language.janet's :lsp-root-markers). Most languages declare none --
+    // html/css/json/yaml/markdown/... rarely run a per-subdirectory server
+    // instance -- and an empty list is harmless: the marker tier never
+    // matches and the buffer's root falls through to editor::ProjectRoot().
+    const LanguageDefinition* definition = BundledLanguage(language);
+    return definition != nullptr ? definition->lspRootMarkers : std::vector<std::string>{};
 }
 
 std::filesystem::path ResolveLspRoot(const std::filesystem::path& bufferPath, const std::string& language) {

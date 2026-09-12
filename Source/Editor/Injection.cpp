@@ -2,7 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <string>
+#include <unordered_map>
 
+#include "BundledLanguages.h"
+#include "LanguageDefinition.h"
 #include "ModeOverrides.h"
 #include "TreeSitter/Languages.h"
 
@@ -12,32 +16,22 @@ namespace {
 
     // Common shorthand tags people actually type (a Markdown fence tag, an
     // HTML/injections.scm #set! value, ...), mapped to Ned's canonical
-    // treesitter::LanguageByName/ModeByName spelling. A tag not listed here
+    // treesitter::LanguageByName/ModeByName spelling -- each language's own
+    // definition declares the tags that mean it (language.janet's
+    // :injection-aliases: "js" on javascript, "yml" on yaml,
+    // "markdown_inline" on markdown-inline). A tag no definition claims
     // passes through unchanged (lowercased), so exact canonical names
-    // (python, html, ...) work with no entry.
+    // (python, html, ...) work with no entry anywhere.
     std::string CanonicalEmbeddedLanguageName(std::string_view tag) {
-        static const std::unordered_map<std::string, std::string> kAliases = {
-            {"js", "javascript"},
-            {"jsx", "tsx"},
-            {"ts", "typescript"},
-            {"py", "python"},
-            {"sh", "bash"},
-            {"shell", "bash"},
-            {"zsh", "bash"},
-            {"c++", "cpp"},
-            {"cc", "cpp"},
-            {"cxx", "cpp"},
-            {"hpp", "cpp"},
-            {"h", "c"},
-            {"yml", "yaml"},
-            {"clj", "clojure"},
-            // Upstream injections.scm files spell markdown's inline grammar
-            // with an underscore (Neovim's own parser-name convention);
-            // Ned's own treesitter::LanguageByName registers it with a
-            // hyphen (TreeSitter/Languages.cpp) since it isn't a real
-            // filetype name.
-            {"markdown_inline", "markdown-inline"},
-        };
+        static const std::unordered_map<std::string, std::string> kAliases = [] {
+            std::unordered_map<std::string, std::string> built;
+            for (const LanguageDefinition& definition : BundledLanguages()) {
+                for (const std::string& alias : definition.injectionAliases) {
+                    built.emplace(alias, definition.name);
+                }
+            }
+            return built;
+        }();
         std::string lower(tag);
         std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         const auto it = kAliases.find(lower);
