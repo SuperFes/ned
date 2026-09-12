@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -8,6 +9,10 @@
 #include "Editor/LocalScopes.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/TreeSitter/Languages.h"
+#include "Editor/TreeSitter/Node.h"
+#include "Editor/TreeSitter/Parser.h"
+#include "Editor/TreeSitter/Tree.h"
 
 using ned::editor::LocalCapture;
 using ned::editor::Mode;
@@ -444,4 +449,140 @@ TEST_CASE("a mode with no locals query leaves the capability unset", "[Mode][Loc
         REQUIRE(mode.has_value());
         REQUIRE_FALSE(static_cast<bool>(mode->localScopes));
     }
+}
+
+// ---------------------------------------------------------------------------
+// The eight-pair cliff, which was Phase 3's acceptance test.
+//
+// `Docs/ParsingEngine.md`: "If Tiers 1+2 express `(let [a 1 b c] ...)` without
+// a cliff the vocabulary is real; if not, that is worth learning at language 3
+// rather than language 15." The answer turned out to be that the query keeps
+// the language knowledge (which heads bind pairwise) and the quantifier moves
+// to code -- see clojure-locals.scm's own note and Mode.cpp's
+// ExpandPairwiseBindings.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("clojure-mode resolves the ninth binding in one vector", "[Mode][LocalScopes]") {
+    // Tests/Oracle/corpus/cliff.clj is this same shape, held in the snapshot.
+    // Every name here avoids appearing as a substring of anything earlier in
+    // the file -- Resolve() finds the Nth literal occurrence, so a function
+    // called `nine` would make Resolve("i") land inside its own name.
+    const std::string source = "(defn f []\n"
+                               "  (let [a 1\n"
+                               "        b 2\n"
+                               "        c 3\n"
+                               "        d 4\n"
+                               "        e 5\n"
+                               "        f 6\n"
+                               "        g 7\n"
+                               "        h 8\n"
+                               "        i 9]\n"
+                               "    (+ a b c d e f g h i)))\n";
+
+    const auto ninth = Resolve("clojure-mode", source, "i", 0);
+    REQUIRE(ninth.has_value());
+    REQUIRE_FALSE(ninth->scopeIsFile);
+    CHECK(ninth->occurrences.size() == 2); // the binding and its one use
+
+    // Not just the ninth: a twentieth would have needed twelve more patterns.
+    const auto first = Resolve("clojure-mode", source, "a", 0);
+    REQUIRE(first.has_value());
+    CHECK(first->occurrences.size() == 2);
+}
+
+TEST_CASE("janet-mode resolves the ninth binding in one tuple", "[Mode][LocalScopes]") {
+    const std::string source = "(defn nine []\n"
+                               "  (let [a 1 b 2 c 3 d 4 e 5 g 6 h 7 j 8 k 9]\n"
+                               "    (+ a k)))\n";
+
+    const auto ninth = Resolve("janet-mode", source, "k", 0);
+    REQUIRE(ninth.has_value());
+    REQUIRE_FALSE(ninth->scopeIsFile);
+    CHECK(ninth->occurrences.size() == 2);
+}
+
+TEST_CASE("A comment between binding pairs does not shift what binds", "[Mode][LocalScopes]") {
+    // The anchored patterns counted a comment as an element, so every name
+    // after one landed on an odd index and the VALUE there was captured as a
+    // definition instead -- a corrupted rename, which is the failure this
+    // file's design notes are most concerned with. Extras are now asked of the
+    // parser rather than assumed absent.
+    const std::string source = "(defn f [outer]\n"
+                               "  (let [a 1\n"
+                               "        ;; a note, then more pairs\n"
+                               "        b outer]\n"
+                               "    (+ a b)))\n";
+
+    const auto second = Resolve("clojure-mode", source, "b", 0);
+    REQUIRE(second.has_value());
+    CHECK(second->occurrences.size() == 2);
+
+    // `outer` is b's VALUE, so it must still be the parameter, with both of
+    // its occurrences -- not a binding of itself.
+    const auto param = Resolve("clojure-mode", source, "outer", 0);
+    REQUIRE(param.has_value());
+    CHECK(param->qualifier == "parameter");
+    CHECK(param->occurrences.size() == 2);
+}
+
+TEST_CASE("Janet reaches the same answer through the parser's own extras", "[Mode][LocalScopes]") {
+    // The two languages take different routes to the same rule, and both are
+    // live: tree-sitter-janet-simple declares `comment` in its `extras`, so
+    // Node::IsExtra answers here with nothing said per language, while
+    // tree-sitter-clojure declares `extras: []` and needs its query to name
+    // the comment. Worth one test each so neither path rots unnoticed.
+    const std::string source = "(defn f [outer]\n"
+                               "  (let [a 1\n"
+                               "        # a note, then more pairs\n"
+                               "        b outer]\n"
+                               "    (+ a b)))\n";
+
+    const auto second = Resolve("janet-mode", source, "b", 0);
+    REQUIRE(second.has_value());
+    CHECK(second->occurrences.size() == 2);
+
+    const auto param = Resolve("janet-mode", source, "outer", 0);
+    REQUIRE(param.has_value());
+    CHECK(param->qualifier == "parameter");
+    CHECK(param->occurrences.size() == 2);
+}
+
+TEST_CASE("A discarded form between binding pairs does not shift what binds", "[Mode][LocalScopes]") {
+    // `#_form` reads as an ordinary child and means "pretend this is not
+    // here". The query names it @local.skip; nothing in C++ knows what a
+    // reader macro is.
+    const std::string source = "(defn f [outer]\n"
+                               "  (let [a 1 #_ignored b outer]\n"
+                               "    (+ a b)))\n";
+
+    const auto second = Resolve("clojure-mode", source, "b", 0);
+    REQUIRE(second.has_value());
+    CHECK(second->occurrences.size() == 2);
+
+    const auto param = Resolve("clojure-mode", source, "outer", 0);
+    REQUIRE(param.has_value());
+    CHECK(param->qualifier == "parameter");
+    CHECK(param->occurrences.size() == 2);
+}
+
+TEST_CASE("A destructuring binding is declined rather than renamed wholesale", "[Mode][LocalScopes]") {
+    // The names inside `{:keys [x]}` are not direct children of the vector, so
+    // the expansion leaves the whole form alone rather than capturing it as if
+    // it were an identifier -- the same degradation the queries' own headers
+    // already document, kept rather than quietly changed.
+    const std::string source = "(defn f [m]\n"
+                               "  (let [{:keys [x]} m\n"
+                               "        z 2]\n"
+                               "    (+ x z)))\n";
+
+    // The pair AFTER the destructuring one still binds: parity counts
+    // elements, and the destructuring form is one element.
+    const auto after = Resolve("clojure-mode", source, "z", 0);
+    REQUIRE(after.has_value());
+    CHECK(after->occurrences.size() == 2);
+
+    // And `m`, the destructured value, is still the parameter.
+    const auto param = Resolve("clojure-mode", source, "m", 0);
+    REQUIRE(param.has_value());
+    CHECK(param->qualifier == "parameter");
 }

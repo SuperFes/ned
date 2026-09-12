@@ -805,6 +805,74 @@ std::optional<LocalCaptureKind> LocalCaptureKindFromCaptureName(std::string_view
     return std::nullopt;
 }
 
+// lisp-binding-pairs follow-up. A binding vector alternates name and value --
+// `[a 1 b 2]` -- and no tree-sitter query can say "every other child": a
+// pattern has no quantifier, so the only way to write it is one pattern per
+// index, anchored `. (_) . (_)` per preceding pair. Both Lisp queries did
+// exactly that and both stopped at eight pairs, after which a binding was
+// silently unresolvable (Tests/Oracle/corpus/cliff.clj exists to hold that
+// limit). The quantifier belongs in code; which forms bind pairwise stays in
+// the query, where the language knowledge is.
+//
+// Three rules, and each one is the difference between a miss and a corrupted
+// rename:
+//
+//  - **Extras are not elements.** A comment between two pairs would otherwise
+//    shift every later name onto an odd index, and the value there would be
+//    captured as a definition. Asked of the parser (Node::IsExtra) rather than
+//    by node type, since `comment` is only what this grammar calls it.
+//  - **`@local.skip` children are not elements either.** Clojure's `#_form`
+//    discard reads as an ordinary child and means "pretend this is not here",
+//    which is precisely a parity shift. The query names it; nothing here knows
+//    what a reader macro is.
+//  - **Only a leaf-shaped child is a name.** A destructuring form
+//    (`[{:keys [x]} m]`, `[[a b] pair]`) sits where a name would, and
+//    capturing it would make a rename rewrite the whole pattern. A node with
+//    named children of its own is therefore left alone -- the same "declines
+//    rather than guesses" degradation the queries' own headers already
+//    document for destructuring.
+void ExpandPairwiseBindings(const treesitter::Node& container, const std::string& qualifier,
+                            const std::vector<std::pair<std::size_t, std::size_t>>& skipRanges,
+                            std::vector<LocalCapture>&                              out) {
+    const auto skipped = [&skipRanges](const treesitter::Node& node) {
+        return std::any_of(skipRanges.begin(), skipRanges.end(),
+                           [&node](const std::pair<std::size_t, std::size_t>& range) {
+                               return node.StartByte() >= range.first && node.EndByte() <= range.second;
+                           });
+    };
+
+    std::size_t index = 0;
+    for (std::size_t i = 0; i < container.ChildCount(); ++i) {
+        const treesitter::Node child = container.Child(i);
+        if (!child.IsNamed() || child.IsExtra() || skipped(child)) {
+            continue;
+        }
+        const bool isName = index % 2 == 0;
+        ++index;
+        if (!isName) {
+            continue;
+        }
+
+        // The identifier's own text, which is what a rename edits: a grammar
+        // that gives its symbol a `name` field (Clojure's `sym_lit`) hands it
+        // over directly, and one that does not (Janet's) is already the name.
+        const treesitter::Node named  = child.ChildByFieldName("name");
+        const treesitter::Node target = named.IsNull() ? child : named;
+        if (named.IsNull()) {
+            // No field to descend into: accept only a leaf, so a destructuring
+            // form is declined rather than renamed wholesale.
+            bool hasNamedChild = false;
+            for (std::size_t c = 0; c < child.ChildCount(); ++c) {
+                hasNamedChild = hasNamedChild || (child.Child(c).IsNamed() && !child.Child(c).IsExtra());
+            }
+            if (hasNamedChild) {
+                continue;
+            }
+        }
+        out.push_back(LocalCapture{target.StartByte(), target.EndByte(), LocalCaptureKind::Definition, qualifier});
+    }
+}
+
 Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language, const TreeSitterQuerySources& queries) {
     const auto parser = std::make_shared<treesitter::Parser>(language);
 
@@ -1326,13 +1394,48 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             }
 
             std::vector<LocalCapture> captures;
+            // A "<qualifier>.pairs" capture names a CONTAINER whose children
+            // alternate name and value; "@local.skip" names a child that is
+            // not an element at all. Both are collected first and expanded
+            // afterwards, since a skip may be captured after the container it
+            // sits in -- see ExpandPairwiseBindings.
+            struct PairwiseContainer {
+                std::size_t startByte;
+                std::size_t endByte;
+                std::string qualifier;
+            };
+            std::vector<PairwiseContainer>                   pairwise;
+            std::vector<std::pair<std::size_t, std::size_t>> skipRanges;
+
             for (const treesitter::QueryCapture& capture : localsQuery->Captures(tree.RootNode(), bufferText)) {
+                if (capture.name == "local.skip") {
+                    skipRanges.emplace_back(capture.startByte, capture.endByte);
+                    continue;
+                }
                 std::string                           qualifier;
                 const std::optional<LocalCaptureKind> kind = LocalCaptureKindFromCaptureName(capture.name, &qualifier);
                 if (!kind) {
                     continue; // an unrelated or "_"-prefixed helper capture -- see LocalCaptureKindFromCaptureName
                 }
+                constexpr std::string_view kPairs = ".pairs";
+                if (*kind == LocalCaptureKind::Definition && qualifier.size() > kPairs.size() &&
+                    std::string_view(qualifier).ends_with(kPairs)) {
+                    pairwise.push_back(PairwiseContainer{capture.startByte, capture.endByte,
+                                                         qualifier.substr(0, qualifier.size() - kPairs.size())});
+                    continue;
+                }
                 captures.push_back(LocalCapture{capture.startByte, capture.endByte, *kind, std::move(qualifier)});
+            }
+
+            for (const PairwiseContainer& container : pairwise) {
+                treesitter::Node node =
+                    tree.RootNode().NamedDescendantForByteRange(container.startByte, container.endByte);
+                while (!node.IsNull() && (node.StartByte() != container.startByte || node.EndByte() != container.endByte)) {
+                    node = node.Parent();
+                }
+                if (!node.IsNull()) {
+                    ExpandPairwiseBindings(node, container.qualifier, skipRanges, captures);
+                }
             }
             return captures;
         };
