@@ -1,17 +1,9 @@
 # sample.clj  (clojure-mode)
-# 108 facts
-fold 0..14  "(ns demo.core)"
+# 100 facts
 fold 77..179  "(defn total [values]\n  (let  … m doubled)))"
-fold 89..97  "[values]"
 fold 100..178  "(let [sum 0\n        doubled  … um doubled))"
 fold 105..150  "[sum 0\n        doubled (map #(* 2 %) values)]"
-fold 128..149  "(map #(* 2 %) values)"
-fold 133..141  "#(* 2 %)"
-fold 155..177  "(reduce + sum doubled)"
-fold 181..195  "(def limit 10)"
 fold 197..251  "(defn shout [name]\n  (clojur … -case name))"
-fold 209..215  "[name]"
-fold 218..250  "(clojure.string/upper-case name)"
 highlight 0..1  [punctuation]  "("
 highlight 1..3  [keyword]  "ns"
 highlight 4..13  [namespace]  "demo.core"

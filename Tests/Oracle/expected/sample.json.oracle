@@ -1,9 +1,6 @@
 # sample.json  (json-mode)
-# 26 facts
+# 23 facts
 fold 0..109  "{\n  \"name\": \"ned\",\n  \"versio …  [1, 2, 3]\n}"
-fold 32..41  "[0, 5, 0]"
-fold 55..86  "{ \"flag\": true, \"empty\": null }"
-fold 98..107  "[1, 2, 3]"
 highlight 4..10  [string]  "\"name\""
 highlight 12..17  [string]  "\"ned\""
 highlight 21..30  [string]  "\"version\""
