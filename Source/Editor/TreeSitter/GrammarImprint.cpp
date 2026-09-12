@@ -1,6 +1,7 @@
 #include "GrammarImprint.h"
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <set>
 #include <string_view>
@@ -120,16 +121,25 @@ bool IsSymbolNamed(const json& member, const std::set<std::string>& names) {
 // SEQ[REPEAT(_metadata_lit), _bare_list_lit] with the parens inside
 // _bare_list_lit -- and without inlining all six of its fold nodes are
 // invisible.
-// `indirect` is set when the members came from somewhere other than this
-// rule's own top-level sequence -- through a CHOICE branch or a bare hidden
-// reference. That matters for indentation bodies specifically: an
-// indent-delimited body has no opener, only a closing dedent, so a rule that
-// merely *contains* one would otherwise inherit it. Python's class_definition
+// `indirect` reports whether the FINAL member -- the one that closes the
+// production -- was reached by inlining rather than written in this rule's own
+// sequence. That is the question worth asking, and asking it loosely was a bug
+// worth recording.
+//
+// An indent-delimited body has no opener, only a closing dedent, so a rule
+// that merely *contains* one must not inherit it: Python's class_definition
 // ends in a hidden `_suite` that bottoms out at `_dedent`, and reporting the
 // whole `class Widget:` header as the body is exactly wrong -- `block`, which
-// owns the dedent directly, is the body. Bracket delimiters are safe to
-// inherit this way (Kotlin's function_body genuinely is its `_block`); a
-// dedent is not.
+// owns the dedent directly, is the body.
+//
+// But the first version set this for inlining ANYWHERE in the sequence, which
+// silently disqualified rules whose closer is their own. YAML's block_mapping
+// is SEQ[_r_blk_map_itm, REPEAT(...), _bl] -- `_bl` is an external and is
+// written right there, while the inlining happened on an earlier member -- so
+// every YAML block was invisible and the language looked like it had nothing
+// foldable but the whole document. Bracket delimiters are safe to inherit
+// either way (Kotlin's function_body genuinely is its `_block`); only the
+// dedent case needs this, and only about its last member.
 bool FlattenSeq(const json& rule, const json& rules, std::vector<const json*>& out, int depth,
                 std::set<std::string>& seen, bool* indirect = nullptr) {
     const json& inner = Unwrap(rule);
@@ -187,8 +197,13 @@ bool FlattenSeq(const json& rule, const json& rules, std::vector<const json*>& o
                     if (target != rules.end()) {
                         seen.insert(symbol);
                         std::vector<const json*> nested;
-                        if (FlattenSeq(*target, rules, nested, depth + 1, seen, indirect)) {
+                        bool                     nestedIndirect = false;
+                        if (FlattenSeq(*target, rules, nested, depth + 1, seen, &nestedIndirect)) {
                             out.insert(out.end(), nested.begin(), nested.end());
+                            // Only the tail matters: this inline is the last
+                            // member *so far*, and a later direct member will
+                            // clear it again below.
+                            if (indirect != nullptr) *indirect = true;
                             continue;
                         }
                     }
@@ -196,6 +211,10 @@ bool FlattenSeq(const json& rule, const json& rules, std::vector<const json*>& o
             }
         }
         out.push_back(&member);
+        // A member written directly in this sequence becomes the tail, so
+        // whatever indirection an earlier member involved no longer describes
+        // the closer.
+        if (indirect != nullptr) *indirect = false;
     }
     return true;
 }
@@ -216,6 +235,52 @@ std::string OpenerFor(const std::string& closer) {
 
 // The bracket half of the match, shared by the ordinary path and the
 // optional-trailing-body path below it.
+// Every named alias in the grammar, mapped to the production it renames.
+// An ALIAS with `named: true` and a string `value` creates a visible node of
+// that name wrapping `content` -- which is how a grammar whose rules are all
+// hidden still produces a readable tree.
+void CollectAliasedNodes(const json& node, const json& rules, std::map<std::string, const json*>& out,
+                         int depth) {
+    if (depth > 24) return;
+    if (node.is_object()) {
+        if (TypeOf(node) == "ALIAS") {
+            const auto named = node.find("named");
+            const auto value = node.find("value");
+            const auto content = node.find("content");
+            if (named != node.end() && named->is_boolean() && named->get<bool>() && value != node.end() &&
+                value->is_string() && content != node.end()) {
+                // The content is almost always a SYMBOL naming the hidden rule
+                // being renamed -- alias($._block_mapping, 'block_mapping').
+                // Resolve it, so what gets analysed is the real production
+                // rather than a bare reference to it.
+                //
+                // Resolving here rather than letting FlattenSeq chase the
+                // symbol is not a shortcut: an alias is a RENAME, not
+                // containment, so it must not be treated as indirection. The
+                // indirect flag exists to stop a rule inheriting a dedent from
+                // a body it merely contains (Python's class_definition through
+                // _suite); an aliased rule IS the body, under another name, and
+                // blocking it there is what kept every YAML block invisible.
+                const json* target = &*content;
+                if (TypeOf(*target) == "SYMBOL") {
+                    if (const auto symbol = target->find("name");
+                        symbol != target->end() && symbol->is_string()) {
+                        if (const auto rule = rules.find(symbol->get<std::string>()); rule != rules.end()) {
+                            target = &*rule;
+                        }
+                    }
+                }
+                out.emplace(value->get<std::string>(), target);
+            }
+        }
+        for (const auto& [key, child] : node.items()) CollectAliasedNodes(child, rules, out, depth + 1);
+        return;
+    }
+    if (node.is_array()) {
+        for (const json& child : node) CollectAliasedNodes(child, rules, out, depth + 1);
+    }
+}
+
 std::optional<imprint::DelimitedBody> MatchBracketed(const std::vector<const json*>& core) {
     if (core.size() < 2) return std::nullopt;
 
@@ -261,7 +326,30 @@ std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const nlohman
         }
     }
 
-    for (const auto& [name, rule] : rules->items()) {
+    // A grammar may name its nodes with alias() rather than by rule name, and
+    // then every rule can be hidden. tree-sitter-yaml does exactly that: all
+    // 202 of its rules are `_`-prefixed, and `block_mapping`, `block_node` and
+    // `block_sequence` -- the nodes a reader actually folds -- exist only as
+    // ALIAS values. Unwrapping ALIAS (which Unwrap does, correctly, when
+    // looking at structure) sees through the very thing that creates the node,
+    // so those were invisible and YAML looked like it had nothing foldable but
+    // the whole document.
+    //
+    // Same mistake shape as TOKEN above: seeing through something that is not
+    // merely a wrapper. Collected first so an alias-named body is analysed
+    // like any other.
+    std::map<std::string, const json*> aliased;
+    CollectAliasedNodes(*rules, *rules, aliased, 0);
+
+    std::vector<std::pair<std::string, const json*>> candidates;
+    candidates.reserve(rules->size() + aliased.size());
+    for (const auto& [name, rule] : rules->items()) candidates.emplace_back(name, &rule);
+    for (const auto& [name, content] : aliased) {
+        if (!rules->contains(name)) candidates.emplace_back(name, content);
+    }
+
+    for (const auto& [name, rulePtr] : candidates) {
+        const json& rule = *rulePtr;
         if (!name.empty() && name.front() == '_') continue; // hidden: never a node
 
         if (IsSingleToken(rule)) continue; // a leaf, whatever it looks like inside

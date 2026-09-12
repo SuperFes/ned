@@ -1,5 +1,6 @@
 # sample.ts  (typescript-mode)
-# 73 facts
+# 74 facts
+fold 16..39  "{\n    size(): number;\n}"
 fold 71..181  "{\n    constructor(private na … gth;\n    }\n}"
 fold 111..118  "{\n    }"
 fold 139..179  "{\n        return this.name.length;\n    }"
