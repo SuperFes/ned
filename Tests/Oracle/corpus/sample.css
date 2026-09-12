@@ -1,0 +1,15 @@
+body {
+    color: red;
+    margin: 0;
+}
+
+.widget {
+    display: flex;
+    gap: 4px;
+}
+
+@media (min-width: 600px) {
+    .widget {
+        gap: 8px;
+    }
+}

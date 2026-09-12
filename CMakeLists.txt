@@ -1316,6 +1316,7 @@ if (NED_BUILD_TESTS)
             Tests/DocSourcePathsTest.cpp
             Tests/OracleTest.cpp
             Tests/ImprintTest.cpp
+            Tests/FormatterPropertiesTest.cpp
             Tests/ThemeKeyDocsTest.cpp
             Tests/InitFileThemeWriteTest.cpp
             Tests/LayoutStabilityProbe.cpp

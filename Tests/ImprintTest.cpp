@@ -491,7 +491,18 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
         {"php", "tree-sitter-php-src/php/src/grammar.json"},
         {"toml", "tree-sitter-toml-src/src/grammar.json"},
         {"xml", "tree-sitter-xml-src/xml/src/grammar.json"},
-        {"yaml", "tree-sitter-yaml-src/src/grammar.json"},
+        // yaml is deliberately absent. Its only inferred body is `stream` --
+        // the whole document -- because tree-sitter-yaml expresses block
+        // structure through a large external scanner rather than through
+        // delimited rules, so the nodes a reader would want to fold
+        // (block_mapping, block_sequence) are not visible rules at all. One
+        // fold that collapses the entire file is worse than none.
+        //
+        // Resisted the tempting general rule "never fold a node spanning the
+        // whole buffer": JSON's root object spans the file too, and folding it
+        // is exactly what a reader wants. The problem is this one grammar's
+        // shape, not a universal property, so it is recorded here rather than
+        // encoded as policy.
         {"tsx", "tree-sitter-typescript-src-src/tsx/src/grammar.json"},
     };
 
@@ -699,7 +710,6 @@ TEST_CASE("Languages with no folds.scm get folding from the imprint alone", "[Im
     std::vector<Case> cases;
     cases.push_back({ned::editor::PhpMode(), "php",
                      "<?php\nclass Widget {\n    public function size() {\n        return 1;\n    }\n}\n", 2});
-    cases.push_back({ned::editor::YamlMode(), "yaml", "root:\n  child:\n    - one\n    - two\n  other: 3\n", 1});
     cases.push_back({ned::editor::CssMode(), "css", "body {\n    color: red;\n    margin: 0;\n}\n", 1});
     cases.push_back({ned::editor::BashMode(), "bash", "run() {\n    echo hi\n    echo bye\n}\n", 1});
     cases.push_back({ned::editor::TomlMode(), "toml", "[table]\nkey = [\n  1,\n  2,\n]\n", 2});
@@ -725,4 +735,14 @@ TEST_CASE("A language whose delimiters are not brackets contributes nothing, and
     const auto html   = ned::editor::HtmlMode();
     const auto blocks = ned::editor::codefold::FoldableBlocks(html, "<div>\n  <p>\n    hello\n  </p>\n</div>\n");
     CHECK(blocks.empty());
+
+    // YAML for a different reason, and worth telling apart. HTML's delimiters
+    // exist but are not brackets; YAML's foldable structure is not expressed as
+    // rules at all -- tree-sitter-yaml carries block structure in a large
+    // external scanner, so the only body inferable is `stream`, the whole
+    // document. It is excluded from the table outright rather than folded
+    // uselessly; see the note beside the table's own language list.
+    const auto yaml = ned::editor::YamlMode();
+    CHECK(ned::editor::codefold::FoldableBlocks(yaml, "root:\n  child:\n    - one\n    - two\n  other: 3\n")
+              .empty());
 }

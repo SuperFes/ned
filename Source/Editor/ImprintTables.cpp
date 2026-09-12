@@ -464,10 +464,6 @@ constexpr Entry kXml[] = {
     {"children", DelimiterKind::Bracket, true, true},
 };
 
-constexpr Entry kYaml[] = {
-    {"stream", DelimiterKind::Indent, true, true},
-};
-
 const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
     static const std::map<std::string, std::map<std::string, DelimitedBody>> kTables = [] {
         std::map<std::string, std::map<std::string, DelimitedBody>> built;
@@ -501,7 +497,6 @@ const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
         load("tsx", kTsx, std::size(kTsx));
         load("typescript", kTypescript, std::size(kTypescript));
         load("xml", kXml, std::size(kXml));
-        load("yaml", kYaml, std::size(kYaml));
         return built;
     }();
     return kTables;
