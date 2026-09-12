@@ -631,6 +631,7 @@ add_library(ned_lib STATIC
         Source/Editor/LanguageFiles.cpp
         Source/Editor/JanetData.cpp
         Source/Editor/LanguageParse.cpp
+        Source/Editor/LanguageRegistry.cpp
         Source/Editor/QueryData.cpp
         Source/Editor/BundledLanguages.cpp
         Source/Editor/Languages/CLike.cpp

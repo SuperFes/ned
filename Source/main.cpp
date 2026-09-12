@@ -76,6 +76,7 @@
 #include "Editor/Variables.h"
 #include "Editor/Vcs/Runner.h"
 
+#include "Editor/LanguageRegistry.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "Janet/InitFile.h"
@@ -447,10 +448,28 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
     // Same placement reasoning as LoadBundledPlugins above -- before
     // LoadInitFile so a user's own ned/register-snippet call there can
-    // override or (with an empty body) erase a bundled default. Pure C++
-    // registration against a hardcoded table (Editor/BundledSnippets.h);
-    // never throws.
+    // override or (with an empty body) erase a bundled default. Reads the
+    // bundled definitions' own :snippets (Editor/BundledSnippets.h); never
+    // throws.
     ned::editor::RegisterBundledSnippets();
+
+    // The user's own language directories -- $XDG_CONFIG_HOME/ned/languages/
+    // <name>/language.janet, the exact bundled Source/Languages layout
+    // (Editor/LanguageRegistry.h). Before LoadInitFile for the same
+    // override-ordering reason as everything above; not trust-gated -- this
+    // is the user's own config directory, the same standing init.janet has.
+    // A packaged install would add /usr/share/ned/languages here as a
+    // lower-precedence sibling; the loader is path-parameterized for exactly
+    // that.
+    for (const std::filesystem::path& languageDir :
+         ned::editor::LanguageDirectories(ned::janet::InitFilePath().parent_path() / "languages")) {
+        try {
+            ned::editor::LoadLanguageDirectory(languageDir);
+        }
+        catch (const std::exception& e) {
+            statusMessage = std::string("language error: ") + e.what();
+        }
+    }
 
     try {
         ned::janet::LoadInitFile(janetEnv);
@@ -478,12 +497,31 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     const std::filesystem::path projectInitPath = projectRoot / ".ned" / "init.janet";
 
     std::vector<std::filesystem::path> projectTrustCandidates = ned::editor::ProjectPluginFiles(projectRoot);
+    // A project's own languages (.ned/languages/<name>/language.janet) go
+    // through the same per-file trust gate: the definition itself is data,
+    // but it may name a :grammar-library to dlopen, which is arbitrary code
+    // by any measure. The trusted-file loader below dispatches on the
+    // basename -- a language.janet is loaded through LoadLanguageDirectory,
+    // never evaluated as Janet.
+    for (const std::filesystem::path& languageDir :
+         ned::editor::LanguageDirectories(projectRoot / ".ned" / "languages")) {
+        projectTrustCandidates.push_back(languageDir / "language.janet");
+    }
     {
         std::error_code projectInitEc;
         if (std::filesystem::is_regular_file(projectInitPath, projectInitEc)) {
             projectTrustCandidates.push_back(projectInitPath);
         }
     }
+
+    const auto loadTrustedProjectFile = [&janetEnv](const std::filesystem::path& path) -> void {
+        if (path.filename() == "language.janet") {
+            ned::editor::LoadLanguageDirectory(path.parent_path());
+        }
+        else {
+            janetEnv.DoFile(path);
+        }
+    };
 
     std::deque<std::filesystem::path> deferredTrustPrompts;
     if (!projectTrustCandidates.empty()) {
@@ -492,7 +530,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             const std::optional<std::string> hash = ned::editor::HashFileContent(candidate);
             if (hash && ned::editor::IsProjectInitTrusted(candidate, *hash)) {
                 try {
-                    janetEnv.DoFile(candidate);
+                    loadTrustedProjectFile(candidate);
                 }
                 catch (const std::exception& e) {
                     statusMessage = candidate.string() + " error: " + e.what();
@@ -969,7 +1007,16 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                             }
                         }
                         try {
-                            janetEnv.DoFile(initPath);
+                            // Dispatches on basename: a .ned/languages/*/
+                            // language.janet loads through the language
+                            // registry, never evaluated as Janet code --
+                            // same rule as the trusted-at-startup branch.
+                            if (initPath.filename() == "language.janet") {
+                                ned::editor::LoadLanguageDirectory(initPath.parent_path());
+                            }
+                            else {
+                                janetEnv.DoFile(initPath);
+                            }
                             ned::editor::TouchProjectTrust(initPath);
                             statusMessage = "Loaded " + initPath.string();
 

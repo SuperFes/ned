@@ -33,53 +33,27 @@ class Buffer;
 
 namespace ned::editor {
 
-// Loads name's grammar from libraryPath (see TreeSitter/DynamicGrammar.h),
-// builds a Mode from it, and registers it under name -- overwriting any
-// previous registration under the same name, the same "re-registering is
-// expected use, not an error" convention CommandRegistry::Register already
-// established. Throws std::runtime_error (propagated from the grammar
-// load, or a malformed query) -- a bad Janet call here is expected to
-// surface as a real error to the user, not fail silently.
-//
-// queriesDir (register-language-grammar-directory-scan follow-up,
-// replacing three separate query-file params) is scanned for a fixed set
-// of conventional basenames instead of requiring the caller to name each
-// query file explicitly: "highlights.scm" (Mode::highlight),
-// "folds.scm" (generic-code-folding follow-up's "@fold"-capture query,
-// Mode::fold), and "imports.scm" (import-target-tree-sitter follow-up's
-// "@import.target"/"@import.module"/"@import.statement" query,
-// Mode::importTarget). Any file not present is silently skipped -- same
-// outcome an empty path had under the old explicit-paths signature, and
-// the same outcome any bundled mode missing one of those queries already
-// has. This also means a query file dropped into queriesDir later (e.g.
-// by a system package update) takes effect on the *next* registration
-// without init.janet needing to know its filename or even that it now
-// exists. queriesDir itself is optional (a grammar with no queries at
-// all, parser only) and doesn't need to exist -- a missing directory scans
-// as empty, it's not an error.
-void RegisterDynamicMode(const std::string& name, const std::filesystem::path& libraryPath,
-                         const std::filesystem::path& queriesDir = {});
-
-// Registers an already-built Mode directly under name, into the same table
-// RegisterDynamicMode populates (ModeByName checks it first) -- for a Mode
-// whose only job is a keymap/comment-prefix with no grammar of its own
-// (e.g. the VCS commit-message buffer's finish/abort bindings, see
-// Editor/Vcs/Runner.h). Overwrites any previous registration under name,
-// same "re-registering is expected use" convention RegisterDynamicMode
-// itself already follows.
+// Registers an already-built Mode directly under name (ModeByName checks
+// this table first) -- for a Mode whose only job is a keymap/comment-prefix
+// with no grammar of its own (e.g. the VCS commit-message buffer's
+// finish/abort bindings, see Editor/Vcs/Runner.h). Everything grammar-shaped
+// registers a DEFINITION instead (Editor/LanguageRegistry.h), which
+// ModeByName rebuilds fresh per lookup. Overwrites any previous
+// registration under name -- re-registering is expected use.
 void RegisterMode(const std::string& name, Mode mode);
 
-// Looks up a Mode by name. Checks names registered via RegisterDynamicMode
-// first, then the bundled *Mode() functions' own names ("c-mode",
-// "json-mode", ... see BundledLanguages.h) -- dynamic checked
-// first purely as a safe default (a name is only ever ambiguous between the
-// two if some future bundled mode's name happened to also be a valid
-// tree-sitter C symbol suffix; none of the current ones are, since they all
-// carry a "-mode" suffix and a hyphen can't appear in a C identifier, so
-// RegisterDynamicMode's own dlsym("tree_sitter_<name>") call would already
-// fail before a real collision could occur). std::nullopt if name matches
-// neither -- not an error, mirroring treesitter::LanguageByName's own
-// "caller falls back gracefully" convention.
+// Flushes the per-buffer mode cache -- what every mode-affecting
+// registration calls so an already-open buffer picks up the change on its
+// next resync (see CachedModeForBuffer). LanguageRegistry.h's registration
+// path is the out-of-file caller.
+void ClearAllModeCaches();
+
+// Looks up a Mode by name ("lua-mode", "c-mode"): RegisterMode's table
+// first, then "<key>-mode" against the language registry (registered
+// shadows bundled -- see LanguageRegistry.h), each definition-backed mode
+// rebuilt fresh per lookup. std::nullopt if name matches nothing -- not an
+// error, mirroring treesitter::LanguageByName's own "caller falls back
+// gracefully" convention.
 [[nodiscard]] std::optional<Mode> ModeByName(const std::string& name);
 
 // Points extension at modeName -- resolved lazily against ModeByName
