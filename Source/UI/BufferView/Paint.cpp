@@ -106,7 +106,22 @@ std::vector<editor::SymbolMarker> BufferView::StickyScrollChainForCurrentViewpor
     if (maxRows <= 0) {
         return {};
     }
-    if (gutters_.SymbolMarkers().empty()) {
+    // A mode with no tags query at all falls back to its FOLD structure --
+    // ten bundled languages are in that position and had no sticky scroll
+    // whatsoever (yaml, toml, json, css, bash, fish, clojure, janet, xml,
+    // html). See stickyscroll::MarkersFromFoldBlocks for why a fold block's
+    // start row is exactly the row worth pinning.
+    //
+    // Keyed on `mode_.symbolKind` being unset rather than on the marker list
+    // being empty, deliberately: a C file that happens to declare nothing
+    // should show no sticky rows, not fold-derived ones. "This language has no
+    // tags query" and "this file has no symbols" are different facts.
+    const bool                              fromFolds = !mode_.symbolKind;
+    const std::vector<editor::SymbolMarker> derived =
+        fromFolds ? editor::stickyscroll::MarkersFromFoldBlocks(gutters_.FoldableBlocks())
+                  : std::vector<editor::SymbolMarker>{};
+    const std::vector<editor::SymbolMarker>& markers = fromFolds ? derived : gutters_.SymbolMarkers();
+    if (markers.empty()) {
         return {};
     }
 
@@ -114,7 +129,7 @@ std::vector<editor::SymbolMarker> BufferView::StickyScrollChainForCurrentViewpor
     const text::ITextStorage&         content         = buffer.Content();
     const std::size_t                 viewportTopByte = content.LineToByteOffset(viewport_.TopLine());
     std::vector<editor::SymbolMarker> chain =
-        editor::stickyscroll::StickyChainForViewportTop(gutters_.SymbolMarkers(), viewportTopByte);
+        editor::stickyscroll::StickyChainForViewportTop(markers, viewportTopByte);
     if (static_cast<int>(chain.size()) > maxRows) {
         // Keep the INNERMOST rows (nearest ancestors) when the chain runs
         // deeper than the cap -- the immediate enclosing context is more

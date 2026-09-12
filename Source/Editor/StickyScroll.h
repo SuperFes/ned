@@ -15,6 +15,7 @@
 #define NED_EDITOR_STICKYSCROLL_H
 
 #include <cstddef>
+#include <utility>
 #include <vector>
 
 #include "Mode.h"
@@ -41,6 +42,30 @@ namespace ned::editor::stickyscroll {
 // this function only ever sees byte ranges and one offset.
 [[nodiscard]] std::vector<SymbolMarker> StickyChainForViewportTop(const std::vector<SymbolMarker>& markers,
                                                                   std::size_t                      viewportTopByte);
+
+// sticky-scroll-from-folds follow-up: the same landmarks, derived from a
+// buffer's FOLD structure instead of its tags query.
+//
+// Ten bundled languages have an imprint table and no `tags.scm` -- yaml, toml,
+// json, css, bash, fish, clojure, janet, xml, html -- so `Mode::symbolKind` is
+// unset for them and they had no sticky scroll at all. But the fold blocks
+// those languages already produce carry exactly the fact this needs, because
+// of an invariant the fold work had to establish for its own reasons: **a fold
+// block's start byte sits on the row that stays visible when it collapses.**
+// That row is, by construction, the row worth pinning -- `root:`, `[package]`,
+// `"dependencies": {`, a `function` line.
+//
+// So this is a third driver off one Tier 0 fact, and it needs no new query,
+// no new capability on Mode, and no extra work per frame (BufferView already
+// caches the fold blocks for the gutter). The markers carry
+// `SymbolKind::Block`: the grammar says "container", and nothing says what
+// kind, which is the honest label.
+//
+// `blocks` is expected to be `CodeFold.h`'s own FoldableBlocks output --
+// sorted by startByte, unique starts, and either disjoint or properly nested,
+// which is precisely what StickyChainForViewportTop above assumes.
+[[nodiscard]] std::vector<SymbolMarker>
+MarkersFromFoldBlocks(const std::vector<std::pair<std::size_t, std::size_t>>& blocks);
 
 } // namespace ned::editor::stickyscroll
 
