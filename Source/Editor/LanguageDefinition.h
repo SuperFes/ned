@@ -35,6 +35,12 @@
 
 namespace ned::editor {
 
+// How a capture's span is adjusted before it becomes a HighlightSpan --
+// see LanguageDefinition::captureSpans.
+enum class CaptureSpanRule {
+    LineEnd, // extend through the end of the line the capture ends on
+};
+
 // Which bracket/quote set self-insert pairs -- see AutoPair.h. A named choice
 // rather than a pair list because that is the whole variation today: the
 // Lisp set drops `'` (the reader's quote macro, not a delimiter).
@@ -91,6 +97,12 @@ struct LanguageDefinition {
     // "punctuation.special" is a MarkupMarker, everyone else's is
     // Punctuation). User remaps (SyntaxTheme.h) still win over these.
     std::vector<std::pair<std::string, SyntaxClass>> captureClasses;
+    // Declarative span adjustment per capture name, applied by the generic
+    // highlight before the span joins the collection: LineEnd extends the
+    // span through its last line's remaining text (Org's headline wash
+    // covers the whole line, not just the stars). Data rather than a hook:
+    // "how far the span reaches" has a small closed set of useful answers.
+    std::vector<std::pair<std::string, CaptureSpanRule>> captureSpans;
     QueryFiles                                       queries;
     // Query discovery borrows another language's directory (jank reads
     // clojure's, tsx typescript's); explicit `queries` entries still win per

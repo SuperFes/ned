@@ -172,6 +172,19 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                 }
             }
         }
+        else if (key == "capture-spans") {
+            if (!value.IsStruct()) {
+                Fail(directoryName, value.line, ":capture-spans is {\"capture.name\" :line-end ...}");
+            }
+            for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
+                const Value& capture = value.pairs[j];
+                const Value& rule    = value.pairs[j + 1];
+                if (!capture.IsString() || !rule.IsKeyword() || rule.text != "line-end") {
+                    Fail(directoryName, capture.line, ":capture-spans maps a \"capture.name\" to :line-end");
+                }
+                definition.captureSpans.emplace_back(capture.text, CaptureSpanRule::LineEnd);
+            }
+        }
         else if (key == "grammar-library") {
             definition.grammarLibrary = ExpectString(directoryName, value, ":grammar-library");
         }

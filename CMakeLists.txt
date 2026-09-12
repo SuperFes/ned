@@ -632,6 +632,7 @@ add_library(ned_lib STATIC
         Source/Editor/JanetData.cpp
         Source/Editor/LanguageParse.cpp
         Source/Editor/LanguageRegistry.cpp
+        Source/Editor/CaptureClassifiers.cpp
         Source/Editor/QueryData.cpp
         Source/Editor/BundledLanguages.cpp
         Source/Editor/Languages/CLike.cpp
@@ -1108,6 +1109,8 @@ if (NED_BUILD_TESTS)
             Tests/LanguageDefinitionTest.cpp
             Tests/QueryDataTest.cpp
             Tests/LanguageParseTest.cpp
+            Tests/CaptureClassifierTest.cpp
+            Tests/JanetCaptureClassifierTest.cpp
             Tests/CodeFoldTest.cpp
             Tests/IndentStyleTest.cpp
             Tests/IndentEngineTest.cpp
