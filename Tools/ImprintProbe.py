@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Tier 0 trait inference, measured against the hand-written fold corpus.
+"""Reading a language's imprint from grammar.json, scored against the fold corpus.
 
 Phase 1 of Docs/ParsingEngine.md rests on one claim: a delimited body is
 derivable from grammar.json with no per-language rules written. This probe is
-what makes that claim falsifiable. It infers the `Delimited` trait from each
+what makes that claim falsifiable. It reads the delimited-body imprint from each
 bundled grammar and scores it against the 55 fold nodes currently hand-written
 across Source/Editor/TreeSitter/queries/*-folds.scm.
 
-    python3 Tools/TraitInferenceProbe.py            # score against the corpus
-    python3 Tools/TraitInferenceProbe.py --extras   # also list over-inference
+    python3 Tools/ImprintProbe.py            # score against the corpus
+    python3 Tools/ImprintProbe.py --extras   # also list over-inference
 
 Requires a populated build/_deps (the grammars are FetchContent'd).
 

@@ -10,7 +10,8 @@
 
 #include <nlohmann/json.hpp>
 
-#include "Editor/TreeSitter/TraitInference.h"
+#include "Editor/Imprint.h"
+#include "Editor/TreeSitter/GrammarImprint.h"
 
 // Two halves, deliberately.
 //
@@ -18,15 +19,15 @@
 // failure names which shape broke. The corpus case is the Phase 1 gate from
 // Docs/ParsingEngine.md: inference must still reproduce every one of the 55
 // fold nodes hand-written across queries/*-folds.scm. That number was
-// established by Tools/TraitInferenceProbe.py; enforcing it here is what
+// established by Tools/ImprintProbe.py; enforcing it here is what
 // makes a grammar bump that breaks inference fail the build instead of being
 // discovered much later.
 
-using ned::editor::treesitter::DelimitedBody;
-using ned::editor::treesitter::DelimiterKind;
-using ned::editor::treesitter::FoldPolicy;
+using ned::editor::imprint::DelimitedBody;
+using ned::editor::imprint::DelimiterKind;
+using ned::editor::imprint::FoldPolicy;
+using ned::editor::imprint::ShouldFold;
 using ned::editor::treesitter::InferDelimitedBodies;
-using ned::editor::treesitter::ShouldFold;
 using nlohmann::json;
 
 namespace {
@@ -76,14 +77,14 @@ std::set<std::string> HandWrittenFoldNodes(const std::string& language) {
 
 } // namespace
 
-TEST_CASE("A bracket-delimited production is inferred", "[TraitInference]") {
+TEST_CASE("A bracket-delimited production is inferred", "[Imprint]") {
     const json grammar = Grammar({{"body", Seq({Str("{"), Repeat(Sym("statement")), Str("}")})}});
     const auto found   = InferDelimitedBodies(grammar);
     REQUIRE(found.count("body") == 1);
     CHECK(found.at("body").kind == DelimiterKind::Bracket);
 }
 
-TEST_CASE("A closer may be followed by optional members", "[TraitInference]") {
+TEST_CASE("A closer may be followed by optional members", "[Imprint]") {
     // JavaScript's statement_block: SEQ['{', REPEAT(statement), '}', <optional>],
     // wrapped in a precedence. Requiring the closer to be literally last
     // misses it in JavaScript, TypeScript and TSX alike.
@@ -92,7 +93,7 @@ TEST_CASE("A closer may be followed by optional members", "[TraitInference]") {
     CHECK(InferDelimitedBodies(grammar).count("statement_block") == 1);
 }
 
-TEST_CASE("Delimiters inside a hidden rule are inlined", "[TraitInference]") {
+TEST_CASE("Delimiters inside a hidden rule are inlined", "[Imprint]") {
     // Clojure's list_lit is SEQ[REPEAT(_metadata_lit), _bare_list_lit], with
     // the parens one level down. tree-sitter inlines hidden rules rather than
     // making them nodes, so inference must too -- without this all six
@@ -107,7 +108,7 @@ TEST_CASE("Delimiters inside a hidden rule are inlined", "[TraitInference]") {
     CHECK(found.count("_bare_list_lit") == 0); // hidden rules are never nodes
 }
 
-TEST_CASE("An external closer with no opener is an indent-delimited body", "[TraitInference]") {
+TEST_CASE("An external closer with no opener is an indent-delimited body", "[Imprint]") {
     // Python's block: SEQ[REPEAT(_statement), _dedent]. The matching _indent
     // is consumed by the parent, so there is no opener to pair with.
     const json grammar = Grammar({{"block", Seq({Repeat(Sym("_statement")), Sym("_dedent")})}},
@@ -117,7 +118,7 @@ TEST_CASE("An external closer with no opener is an indent-delimited body", "[Tra
     CHECK(found.at("block").kind == DelimiterKind::Indent);
 }
 
-TEST_CASE("Non-delimited and malformed productions are simply not reported", "[TraitInference]") {
+TEST_CASE("Non-delimited and malformed productions are simply not reported", "[Imprint]") {
     CHECK(InferDelimitedBodies(Grammar({{"plain", Seq({Sym("a"), Sym("b")})}})).empty());
     CHECK(InferDelimitedBodies(Grammar({{"mismatched", Seq({Str("{"), Str(")")})}})).empty());
     CHECK(InferDelimitedBodies(Grammar({{"unopened", Seq({Repeat(Sym("x")), Str("}")})}})).empty());
@@ -125,7 +126,7 @@ TEST_CASE("Non-delimited and malformed productions are simply not reported", "[T
     CHECK(InferDelimitedBodies(json{{"rules", 42}}).empty());      // "rules" of the wrong type
 }
 
-TEST_CASE("A self-referential hidden rule terminates", "[TraitInference]") {
+TEST_CASE("A self-referential hidden rule terminates", "[Imprint]") {
     // Inlining recurses, so a grammar whose hidden rule references itself
     // must not spin or blow the stack. Only termination is asserted: this
     // production genuinely does contain "{" before "}" once inlining stops,
@@ -141,7 +142,7 @@ TEST_CASE("A self-referential hidden rule terminates", "[TraitInference]") {
     CHECK_NOTHROW(InferDelimitedBodies(mutual));
 }
 
-TEST_CASE("Structural signals are reported, not pre-judged", "[TraitInference]") {
+TEST_CASE("Structural signals are reported, not pre-judged", "[Imprint]") {
     // A statement block opens its own production and holds a list.
     const json block = Grammar({{"block", Seq({Str("{"), Repeat(Sym("statement")), Str("}")})}});
     const auto b     = InferDelimitedBodies(block).at("block");
@@ -162,7 +163,7 @@ TEST_CASE("Structural signals are reported, not pre-judged", "[TraitInference]")
     CHECK_FALSE(p.listLikeInterior);
 }
 
-TEST_CASE("FoldPolicy keeps both answers reachable", "[TraitInference]") {
+TEST_CASE("FoldPolicy keeps both answers reachable", "[Imprint]") {
     const DelimitedBody block{.kind = DelimiterKind::Bracket, .openerIsFirst = true, .listLikeInterior = true};
     const DelimitedBody argumentList{.kind = DelimiterKind::Bracket, .openerIsFirst = false, .listLikeInterior = true};
     const DelimitedBody paren{.kind = DelimiterKind::Bracket, .openerIsFirst = true, .listLikeInterior = false};
@@ -183,7 +184,7 @@ TEST_CASE("FoldPolicy keeps both answers reachable", "[TraitInference]") {
     CHECK_FALSE(ShouldFold(argumentList, FoldPolicy{.foldArgumentLists = false}));
 }
 
-TEST_CASE("Inference reproduces every hand-written fold node", "[TraitInference][Corpus]") {
+TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus]") {
     // The Phase 1 gate. See Docs/ParsingEngine.md.
     const std::map<std::string, std::string> kGrammars = {
         {"c", "tree-sitter-c-src/src/grammar.json"},

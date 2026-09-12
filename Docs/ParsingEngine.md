@@ -167,6 +167,40 @@ The one thing that is *not* a problem, and the reason any of this is tractable:
 A runtime swap does not touch the editor. That precondition is already met and
 is worth not regressing.
 
+## Vocabulary
+
+Three words carry the design, and they are not interchangeable. The first
+describes the ordinary case; the other two name the exceptions, which is why
+they are the sharper words.
+
+- **grain** — structure legible from a construct's own shape. The ordinary
+  case, and the one Tier 0 reads: 11 of the 15 bundled `locals.scm` files
+  dispatch purely on shape, with zero text predicates.
+- **burl** — a language or region whose grain is systematically tangled, where
+  structure has to be read from *content* instead. Janet, Clojure and Fish are
+  the bundled ones (16, 15 and 6 text predicates against zero for C, Go, Java,
+  Python and the rest). In a Lisp, `(let [x 1] ...)`, `(defn f [a] ...)` and
+  `(println x)` are the same node type and every binding form is a macro the
+  grammar never heard of. Not a special case to escape — a different reading
+  strategy for the whole material.
+- **knot** — a single point where the declarative rules do not reach and a host
+  callout is needed. Org's `*`-counted heading level, its runtime-configured
+  TODO keywords. Discrete, and rare by design.
+
+The term earns its keep by being diagnostic rather than decorative: the burls
+and the open problems are the same list. The two oldest items under
+"Refactoring" in `ROADMAP.md` are the Lisp binding-vector cliff and Fish's
+`set -l -x count 0`.
+
+**The 55/55 Tier 0 result is a grain result.** It does not transfer to burls,
+and should not be quoted as though it does.
+
+In code the vocabulary is `ned::editor::imprint` — what a language's structure
+leaves behind, read rather than authored. `Editor/Imprint.h` holds it and knows
+nothing about tree-sitter; `TreeSitter/GrammarImprint.h` is the half that reads
+an imprint out of a `grammar.json`. That split is the Phase 4 seam: replacing
+the engine replaces the reader and leaves the vocabulary untouched.
+
 ## The design: traits, not node names
 
 Three tiers. The first one is where most of the value is.
@@ -183,7 +217,7 @@ containers are therefore derivable **for every grammar, including grammars that
 do not exist yet, with no rules written at all**.
 
 **Measured 2026-09-11: 55 of 55, with no per-language rules.**
-`Tools/TraitInferenceProbe.py` is the experiment, checked in so the number can
+`Tools/ImprintProbe.py` is the experiment, checked in so the number can
 be re-derived rather than trusted. Three refinements were needed beyond the
 naive "a SEQ that opens and closes with a literal", and each is a real property
 of how grammars are written rather than a fudge:
@@ -241,7 +275,7 @@ rather than a per-language list. `FoldPolicy::foldArgumentLists` defaults ON:
 a long or overloaded signature is exactly where collapsing parameters helps,
 and the hand-written queries that omit them describe themselves as
 "deliberately minimal" rather than as having ruled them out. The decision is
-deliberately cheap to reverse, and `Tests/TraitInferenceTest.cpp` pins both
+deliberately cheap to reverse, and `Tests/ImprintTest.cpp` pins both
 directions so neither can rot.
 
 Two things the policy deliberately does *not* decide. Whether a body spans

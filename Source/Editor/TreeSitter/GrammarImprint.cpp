@@ -1,4 +1,4 @@
-#include "TraitInference.h"
+#include "GrammarImprint.h"
 
 #include <algorithm>
 #include <set>
@@ -116,8 +116,8 @@ std::string OpenerFor(const std::string& closer) {
 
 } // namespace
 
-std::map<std::string, DelimitedBody> InferDelimitedBodies(const nlohmann::json& grammar) {
-    std::map<std::string, DelimitedBody> found;
+std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const nlohmann::json& grammar) {
+    std::map<std::string, imprint::DelimitedBody> found;
 
     const auto rules = grammar.find("rules");
     if (rules == grammar.end() || !rules->is_object()) return found;
@@ -151,8 +151,8 @@ std::map<std::string, DelimitedBody> InferDelimitedBodies(const nlohmann::json& 
             const auto        openerIt    = std::find_if(core.begin(), core.end() - 1,
                                                   [&](const json* m) { return Literal(*m) == opener; });
             if (openerIt != core.end() - 1) {
-                DelimitedBody body;
-                body.kind          = DelimiterKind::Bracket;
+                imprint::DelimitedBody body;
+                body.kind          = imprint::DelimiterKind::Bracket;
                 body.openerIsFirst = (openerIt == core.begin());
                 body.listLikeInterior =
                     std::any_of(openerIt + 1, core.end() - 1, [](const json* m) {
@@ -165,8 +165,8 @@ std::map<std::string, DelimitedBody> InferDelimitedBodies(const nlohmann::json& 
         }
 
         if (IsSymbolNamed(*core.back(), externals)) {
-            DelimitedBody body;
-            body.kind = DelimiterKind::Indent;
+            imprint::DelimitedBody body;
+            body.kind = imprint::DelimiterKind::Indent;
             // An indentation body has no opener of its own, and everything
             // before the closing dedent is its content -- which is a
             // statement list by construction.
@@ -177,30 +177,6 @@ std::map<std::string, DelimitedBody> InferDelimitedBodies(const nlohmann::json& 
     }
 
     return found;
-}
-
-bool ShouldFold(const DelimitedBody& body, const FoldPolicy& policy) {
-    // A body holding exactly one subexpression has nothing to collapse:
-    // `parenthesized_expression`, `decltype(x)`, `index_expression`.
-    if (!body.listLikeInterior) {
-        return false;
-    }
-    // An argument/parameter list is the list-like bracketed body that does
-    // not open its own production -- the callee or declarator precedes it.
-    // That is precisely the separable case the policy exists for; every
-    // statement/member block opens with its own brace.
-    if (!body.openerIsFirst && !policy.foldArgumentLists) {
-        return false;
-    }
-    return true;
-}
-
-std::string DelimiterKindName(DelimiterKind kind) {
-    switch (kind) {
-        case DelimiterKind::Bracket: return "Bracket";
-        case DelimiterKind::Indent:  return "Indent";
-    }
-    return "?";
 }
 
 } // namespace ned::editor::treesitter
