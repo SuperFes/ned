@@ -308,7 +308,7 @@ real; if not, that is worth learning at language 3 rather than language 15.
       none of the rest is falsifiable.
 - [x] **Phase 1 gate — Tier 0 inference proven.** The claim the whole design rests on
       (a delimited body is derivable from `grammar.json` with no per-language rules) is
-      measured, not assumed: **55/55**, via `Tools/TraitInferenceProbe.py`. Needed three
+      measured, not assumed: **55/55**, via `Tools/ImprintProbe.py`. Needed three
       refinements, each a real property of how grammars are written — inline hidden rules
       (Clojure hides its parens one level down), allow optional members after a closer
       (JavaScript's `statement_block`), and accept an external token as a closer with no
@@ -316,10 +316,10 @@ real; if not, that is worth learning at language 3 rather than language 15.
       211 nodes beyond the 55, all genuinely delimited and none worth folding, so Tier 0
       infers **`Delimited`** and `Foldable` is a small Tier 1 policy on top. See
       `Docs/ParsingEngine.md`.
-- [x] **Tier 0 inference is real code now.** `Editor/TreeSitter/TraitInference.h` —
+- [x] **Tier 0 inference is real code now, as `ned::editor::imprint`.** `Editor/Imprint.h`/`Editor/TreeSitter/GrammarImprint.h` —
       a pure function over parsed `grammar.json`, no `Parser`/`Buffer`/`Screen`, so the
       crafted-grammar cases pin each rule in isolation and name which shape broke.
-      `Tests/TraitInferenceTest.cpp` enforces the 55/55 gate against the real grammars,
+      `Tests/ImprintTest.cpp` enforces the 55/55 gate against the real grammars,
       so a grammar bump that breaks inference fails the build rather than being noticed
       much later. Verified the gate actually fails: disabling hidden-rule inlining
       reports the six Clojure nodes by name.
