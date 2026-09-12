@@ -215,13 +215,17 @@ extern const char* const kPythonIndents;
 // bundle-remaining-indents follow-up: the rest of the bundled grammars, each
 // a fast, mechanical addition once the engine itself was proven above -- no
 // engine changes, just a new query file per language (see each *-indents.scm
-// file's own header comment). kTypeScriptIndents is shared by TypeScriptMode
-// and TsxMode; kClojureIndents is shared by ClojureMode and JankMode -- same
-// sharing every other query constant in this file already uses. Janet/
+// file's own header comment). kClojureIndents is shared by ClojureMode and
+// JankMode -- same sharing every other query constant in this file already
+// uses. kTypeScriptIndents was shared with TsxMode the same way until JSX
+// needed indent rules: the tsx dialect's parser knows `jsx_element` and the
+// typescript dialect's does not, and a query naming an unknown node type
+// fails to compile, so kTsxIndents is its own constant. Janet/
 // Clojure are deliberately bracket-depth only, not real per-form Lisp
 // indent -- see janet-indents.scm's own header comment.
 extern const char* const kJavaScriptIndents;
 extern const char* const kTypeScriptIndents;
+extern const char* const kTsxIndents;
 extern const char* const kPhpIndents;
 extern const char* const kCssIndents;
 extern const char* const kHtmlIndents;

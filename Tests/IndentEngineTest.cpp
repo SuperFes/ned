@@ -310,3 +310,73 @@ TEST_CASE("A mode with no highlighter has no verbatim regions and still indents"
     CHECK(ned::editor::VerbatimRanges(mode, "anything").empty());
     CHECK(ned::editor::IndentColumnForLine(mode, "anything", 0, 8) == 7);
 }
+
+// ---------------------------------------------------------------------------
+// JSX indents by matched tags, which no bracket fact can supply.
+//
+// Asserted as agreement with already-correct code: every line below is written
+// the way a JSX author would write it, and the engine has to arrive at the same
+// column for each one. Before these rules existed the whole tree of elements
+// computed one flat level -- .tsx and .jsx files simply had no JSX indentation.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void CheckAgreesWithWrittenIndent(const ned::editor::Mode& mode, const std::string& text) {
+    std::size_t lineStart = 0;
+    std::size_t lineNo    = 0;
+    while (lineStart < text.size()) {
+        const std::size_t nl      = text.find('\n', lineStart);
+        const std::size_t lineEnd = (nl == std::string::npos) ? text.size() : nl;
+        const std::size_t written = text.find_first_not_of(' ', lineStart) - lineStart;
+        INFO("line " << lineNo << ": " << text.substr(lineStart, lineEnd - lineStart));
+        CHECK(mode.indentColumn(text, lineStart, lineEnd).value_or(-1) == static_cast<int>(written));
+        if (nl == std::string::npos)
+            break;
+        lineStart = nl + 1;
+        ++lineNo;
+    }
+}
+
+} // namespace
+
+TEST_CASE("TSX indents JSX elements, expressions and closing tags", "[Indent]") {
+    CheckAgreesWithWrittenIndent(ned::editor::TsxMode(),
+                                 "export function Panel(props: Props) {\n"
+                                 "    const items = props.items.map((item) => (\n"
+                                 "        <li key={item.id}>\n"
+                                 "            {item.label}\n"
+                                 "        </li>\n"
+                                 "    ));\n"
+                                 "    return (\n"
+                                 "        <ul className=\"panel\">\n"
+                                 "            {items}\n"
+                                 "        </ul>\n"
+                                 "    );\n"
+                                 "}\n");
+}
+
+TEST_CASE("A multi-line JSX attribute list indents its own attributes", "[Indent]") {
+    // The opening tag is a container in its own right, and its ">" closes it.
+    CheckAgreesWithWrittenIndent(ned::editor::TsxMode(),
+                                 "const view = (\n"
+                                 "    <section\n"
+                                 "        className=\"wide\"\n"
+                                 "        onClick={handler}\n"
+                                 "    >\n"
+                                 "        <Item />\n"
+                                 "    </section>\n"
+                                 ");\n");
+}
+
+TEST_CASE("JSX in a plain .jsx file indents the same way", "[Indent]") {
+    // javascript-indents.scm carries the same rules: JSX is not TypeScript's.
+    CheckAgreesWithWrittenIndent(ned::editor::JavaScriptMode(),
+                                 "function App() {\n"
+                                 "    return (\n"
+                                 "        <div>\n"
+                                 "            <span>hello</span>\n"
+                                 "        </div>\n"
+                                 "    );\n"
+                                 "}\n");
+}

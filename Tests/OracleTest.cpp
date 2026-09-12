@@ -215,16 +215,25 @@ std::string Render(const std::string& file, const ned::editor::Mode& mode, const
 // ModeOverrides' process-wide table happens to hold.
 const std::map<std::string, std::function<ned::editor::Mode()>>& ModeByExtension() {
     static const std::map<std::string, std::function<ned::editor::Mode()>> kModes = {
-        {".json", ned::editor::JsonMode},  {".cpp", ned::editor::CppMode},
-        {".py", ned::editor::PythonMode},  {".clj", ned::editor::ClojureMode},
-        {".html", ned::editor::HtmlMode},  {".c", ned::editor::CMode},
-        {".go", ned::editor::GoMode},      {".rs", ned::editor::RustMode},
-        {".java", ned::editor::JavaMode},  {".cs", ned::editor::CSharpMode},
+        {".json", ned::editor::JsonMode},
+        {".cpp", ned::editor::CppMode},
+        {".py", ned::editor::PythonMode},
+        {".clj", ned::editor::ClojureMode},
+        {".html", ned::editor::HtmlMode},
+        {".c", ned::editor::CMode},
+        {".go", ned::editor::GoMode},
+        {".rs", ned::editor::RustMode},
+        {".java", ned::editor::JavaMode},
+        {".cs", ned::editor::CSharpMode},
         {".js", ned::editor::JavaScriptMode},
         {".ts", ned::editor::TypeScriptMode},
-        {".kt", ned::editor::KotlinMode},   {".php", ned::editor::PhpMode},
-        {".yaml", ned::editor::YamlMode},  {".css", ned::editor::CssMode},
-        {".sh", ned::editor::BashMode},    {".toml", ned::editor::TomlMode},
+        {".tsx", ned::editor::TsxMode},
+        {".kt", ned::editor::KotlinMode},
+        {".php", ned::editor::PhpMode},
+        {".yaml", ned::editor::YamlMode},
+        {".css", ned::editor::CssMode},
+        {".sh", ned::editor::BashMode},
+        {".toml", ned::editor::TomlMode},
     };
     return kModes;
 }

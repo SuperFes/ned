@@ -1430,7 +1430,10 @@ Mode TypeScriptMode() {
 }
 
 Mode TsxMode() {
-    Mode mode              = TreeSitterMode("tsx-mode", "tsx", {.highlights = treesitter::queries::kTypeScript, .folds = treesitter::queries::kTypeScriptFolds, .imports = treesitter::queries::kTypeScriptImports, .tags = treesitter::queries::kTypeScriptTags, .tests = treesitter::queries::kTypeScriptTests, .indents = treesitter::queries::kTypeScriptIndents, .locals = treesitter::queries::kTypeScriptLocals});
+    // Every query here is TypeScript's except indents: JSX needs its own rules
+    // and only the tsx dialect's parser knows the node types they name (see
+    // tsx-indents.scm).
+    Mode mode              = TreeSitterMode("tsx-mode", "tsx", {.highlights = treesitter::queries::kTypeScript, .folds = treesitter::queries::kTypeScriptFolds, .imports = treesitter::queries::kTypeScriptImports, .tags = treesitter::queries::kTypeScriptTags, .tests = treesitter::queries::kTypeScriptTests, .indents = treesitter::queries::kTsxIndents, .locals = treesitter::queries::kTypeScriptLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
