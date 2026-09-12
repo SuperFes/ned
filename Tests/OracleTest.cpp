@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/CodeFold.h"
 #include "Editor/Mode.h"
 #include "Editor/SyntaxTheme.h"
 
@@ -44,6 +45,7 @@
 namespace {
 
 namespace fs = std::filesystem;
+namespace codefold = ned::editor::codefold;
 
 fs::path OracleDir() { return fs::path(NED_REPO_ROOT) / "Tests" / "Oracle"; }
 
@@ -141,7 +143,12 @@ std::vector<Fact> CollectFacts(const ned::editor::Mode& mode, const std::string&
         }
     }
     if (mode.fold) {
-        for (const auto& [s, e] : mode.fold(text)) add("fold", s, e);
+        // Through FoldableBlocks, not mode.fold directly: that is what every
+        // real consumer calls, and it is where the "a fold spans more than one
+        // line" rule lives. Recording the raw source instead would snapshot
+        // ranges -- a single-line `()` parameter list, an empty `[]` -- that
+        // never become fold affordances for anyone.
+        for (const auto& [s, e] : codefold::FoldableBlocks(mode, text)) add("fold", s, e);
     }
     if (mode.symbolKind) {
         for (const auto& m : mode.symbolKind(text)) add("symbol", m.startByte, m.endByte, KindName(m.kind) + " " + m.name);

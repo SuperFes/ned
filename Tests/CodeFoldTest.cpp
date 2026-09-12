@@ -41,19 +41,19 @@ TEST_CASE("FoldableBlocks finds a C++ struct body and a function body", "[CodeFo
 
 TEST_CASE("FoldableBlocks finds JSON objects and arrays", "[CodeFold]") {
     const auto mode   = JsonMode();
-    const auto blocks = FoldableBlocks(mode, R"({"a": [1, 2, 3]})");
+    const auto blocks = FoldableBlocks(mode, "{\n  \"a\": [\n    1,\n    2\n  ]\n}\n");
     REQUIRE(blocks.size() == 2); // the outer object and the inner array
 }
 
 TEST_CASE("FoldableBlocks finds a Python function body", "[CodeFold]") {
     const auto mode   = PythonMode();
-    const auto blocks = FoldableBlocks(mode, "def f():\n    return 1\n");
+    const auto blocks = FoldableBlocks(mode, "def f():\n    x = 1\n    return x\n");
     REQUIRE(blocks.size() == 1);
 }
 
 TEST_CASE("FoldableBlocks finds a JavaScript function body and object literal", "[CodeFold]") {
     const auto mode   = JavaScriptMode();
-    const auto blocks = FoldableBlocks(mode, "function f() {\n    return {a: 1};\n}\n");
+    const auto blocks = FoldableBlocks(mode, "function f() {\n    return {\n        a: 1,\n    };\n}\n");
     REQUIRE(blocks.size() == 2);
 }
 
@@ -74,7 +74,7 @@ TEST_CASE("FoldableBlocks finds a Go function body, a struct body, and an interf
 TEST_CASE("FoldableBlocks finds a C# class body, a method body, and an initializer expression", "[CodeFold]") {
     const auto mode   = CSharpMode();
     const auto blocks = FoldableBlocks(mode, "class Widget {\n"
-                                             "    int[] Xs = new int[] { 1, 2, 3 };\n"
+                                             "    int[] Xs = new int[] {\n        1, 2, 3,\n    };\n"
                                              "    int F() {\n"
                                              "        return 1;\n"
                                              "    }\n"
@@ -90,7 +90,7 @@ TEST_CASE("FoldableBlocks finds a Java class body, an interface body, a method b
                                              "}\n"
                                              "\n"
                                              "class Widget {\n"
-                                             "    int[] xs = { 1, 2, 3 };\n"
+                                             "    int[] xs = {\n        1, 2, 3,\n    };\n"
                                              "    int size() {\n"
                                              "        return 1;\n"
                                              "    }\n"
@@ -103,7 +103,9 @@ TEST_CASE("FoldableBlocks finds a Kotlin class body, a braced function body, a l
     const auto mode   = KotlinMode();
     const auto blocks = FoldableBlocks(mode, "class Widget {\n"
                                              "    fun size(): Int {\n"
-                                             "        return listOf(1, 2).map { it + 1 }.first()\n"
+                                             "        return listOf(1, 2).map {\n"
+                                             "            it + 1\n"
+                                             "        }.first()\n"
                                              "    }\n"
                                              "\n"
                                              "    fun kind(n: Int): String = when (n) {\n"
@@ -225,9 +227,12 @@ TEST_CASE("Folding a single-line block cannot hide the line below it", "[CodeFol
     buffer.InsertAtPoint("int f(void) { return 1; }\nint g(void) {\n    return 2;\n}\n");
 
     const auto blocks = FoldableBlocks(mode, buffer.Text());
-    REQUIRE(blocks.size() == 2); // the one-line body and g's multi-line one
+    // Stronger than when this test was written: the single-line block is no
+    // longer merely un-toggleable, it never reaches the list. FoldableBlocks
+    // enforces the rule for every fold source at once, which is what lets
+    // sources compose without each re-deriving it.
+    REQUIRE(blocks.size() == 1); // g's multi-line body only
 
-    // The single-line block is not offered as a fold at all.
     CHECK_FALSE(ToggleFoldAtLine(buffer, buffer.Content(), blocks, 0));
     CHECK(FoldedLineRanges(buffer, buffer.Content(), blocks).empty());
 

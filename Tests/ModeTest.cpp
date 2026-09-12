@@ -2,6 +2,7 @@
 
 #include "Editor/AutoPair.h"
 #include "Editor/Key.h"
+#include "Editor/CodeFold.h"
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
 #include "Editor/SyntaxTheme.h"
@@ -639,8 +640,14 @@ TEST_CASE("HtmlMode's embeddedRegions finds <script> and <style> content with ca
 }
 
 TEST_CASE("CMode's fold query finds a function body", "[Mode]") {
+    // Through FoldableBlocks rather than mode.fold directly: that is the only
+    // function meant to touch Mode::fold (CodeFold.h says so), and it is where
+    // the "a fold spans more than one line" rule lives. Mode::fold is now a
+    // union of sources -- the hand-written query plus the delimiter imprint --
+    // so its raw output legitimately includes things like a single-line
+    // `(void)` parameter list that never become fold affordances.
     const auto mode   = CMode();
-    const auto blocks = mode.fold("int main(void) {\n    return 0;\n}\n");
+    const auto blocks = ned::editor::codefold::FoldableBlocks(mode, "int main(void) {\n    return 0;\n}\n");
     REQUIRE(blocks.size() == 1);
 }
 

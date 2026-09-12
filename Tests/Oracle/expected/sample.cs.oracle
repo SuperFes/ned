@@ -1,11 +1,9 @@
 # sample.cs  (csharp-mode)
-# 138 facts
+# 136 facts
 fold 15..422  "{\n    enum Colour\n    {\n     …    }\n    }\n}"
 fold 37..72  "{\n        Red,\n        Green,\n    }"
 fold 95..420  "{\n        private int[] xs = …      }\n    }"
-fold 134..145  "{ 1, 2, 3 }"
 fold 180..229  "{\n            get { return x …  }\n        }"
-fold 198..219  "{ return xs.Length; }"
 fold 266..414  "{\n            var sum = 0;\n  … m;\n        }"
 fold 339..380  "{\n                sum += x;\n            }"
 highlight 0..9  [keyword]  "namespace"

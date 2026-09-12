@@ -1,5 +1,6 @@
 #include "ImprintFold.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -41,6 +42,34 @@ void Collect(const treesitter::Node& node, const std::map<std::string, Delimited
 
 } // namespace
 
+std::vector<std::pair<std::size_t, std::size_t>> CollectFoldBlocks(const treesitter::Node& root,
+                                                                   std::string_view language, FoldPolicy policy) {
+    const auto& table = TableFor(language);
+    if (table.empty() || root.IsNull()) {
+        return {};
+    }
+    std::vector<std::pair<std::size_t, std::size_t>> blocks;
+    Collect(root, table, policy, blocks);
+    return blocks;
+}
+
+FoldFunction MergeFoldSources(std::vector<FoldFunction> sources) {
+    std::erase_if(sources, [](const FoldFunction& source) { return !source; });
+    if (sources.empty()) return {};
+    if (sources.size() == 1) return std::move(sources.front());
+
+    return [sources = std::move(sources)](std::string_view bufferText) {
+        std::vector<std::pair<std::size_t, std::size_t>> merged;
+        for (const FoldFunction& source : sources) {
+            const auto blocks = source(bufferText);
+            merged.insert(merged.end(), blocks.begin(), blocks.end());
+        }
+        std::sort(merged.begin(), merged.end());
+        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+        return merged;
+    };
+}
+
 FoldFunction BuildFoldFunction(std::string_view language, FoldPolicy policy) {
     const auto& table = TableFor(language);
     if (table.empty()) {
@@ -66,7 +95,7 @@ FoldFunction BuildFoldFunction(std::string_view language, FoldPolicy policy) {
     return [parser, cache, &table, policy](std::string_view bufferText) {
         const treesitter::Tree&                         tree = cache->Update(*parser, bufferText);
         std::vector<std::pair<std::size_t, std::size_t>> blocks;
-        Collect(tree.RootNode(), table, policy, blocks);
+        if (!tree.IsNull()) Collect(tree.RootNode(), table, policy, blocks);
         return blocks;
     };
 }

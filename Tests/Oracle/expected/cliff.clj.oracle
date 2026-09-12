@@ -1,11 +1,8 @@
 # cliff.clj  (clojure-mode)
-# 107 facts
-fold 0..15  "(ns demo.cliff)"
+# 104 facts
 fold 318..477  "(defn nine-bindings []\n  (le … e f g h i)))"
-fold 338..340  "[]"
 fold 343..476  "(let [a 1\n        b 2\n       …  e f g h i))"
 fold 348..449  "[a 1\n        b 2\n        c 3 …         i 9]"
-fold 454..475  "(+ a b c d e f g h i)"
 highlight 0..1  [punctuation]  "("
 highlight 1..3  [keyword]  "ns"
 highlight 4..14  [namespace]  "demo.cliff"

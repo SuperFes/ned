@@ -1,5 +1,8 @@
 #include "Mode.h"
 
+#include "Editor/ImprintFold.h"
+#include "Editor/ImprintTables.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -870,6 +873,18 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // actually given; otherwise mode.fold stays a default-constructed,
     // empty std::function, which is exactly the "no fold support" signal
     // BufferView checks for.
+    // Fold sources compose: the imprint (Editor/ImprintFold.h) contributes the
+    // delimiter-derived blocks, the language's own folds.scm contributes
+    // whatever else it knows, and the answer is their union. Either may be
+    // absent -- a language with no compiled-in table (Org, Markdown, and
+    // anything that folds by its own structure rather than by delimiters)
+    // simply gets nothing from the imprint, and needs no special case to say
+    // so.
+    //
+    // Both ride `sharedParse`, so adding the imprint costs no second parse.
+    // That is not an optimisation detail: a per-buffer second parser would
+    // double the per-keystroke cost, which is a regression this codebase has
+    // already shipped and had to chase down once.
     FoldFunction fold;
     if (!queries.folds.empty()) {
         const auto foldQuery = std::make_shared<treesitter::Query>(language, queries.folds);
@@ -888,6 +903,18 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             std::sort(ranges.begin(), ranges.end());
             return ranges;
         };
+    }
+
+    if (!imprint::TableFor(languageKey).empty()) {
+        FoldFunction fromImprint = [parser, sharedParse,
+                                    languageKey](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
+            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            if (tree.IsNull()) {
+                return {};
+            }
+            return imprint::CollectFoldBlocks(tree.RootNode(), languageKey);
+        };
+        fold = imprint::MergeFoldSources({std::move(fold), std::move(fromImprint)});
     }
 
     // gutter-symbol-kind follow-up: a query against the same parser -- shares
