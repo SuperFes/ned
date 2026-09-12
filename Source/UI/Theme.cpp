@@ -347,6 +347,9 @@ Theme DarkTheme() {
         .currentLineNumberForeground = Color::RGB(0xf0f2f8),
         .selectionBackground         = Color::RGB(0x33406b), // deep indigo; keeps 6:1 against defaultForeground
         .isearchMatchBackground      = Color::RGB(0x5a4a1e), // warm amber wash, same family as lineInspectBackground
+        // Deliberately weaker than the search wash: a bracket match is ambient
+        // feedback you glance at, not a result you went looking for.
+        .matchingBracketBackground   = Color::RGB(0x3a4a5a),
         .snippetFieldBackground      = Color::RGB(0x3d3d5c),
         .documentHighlightBackground = Color::RGB(0x2a4a4a),
         .lineInspectBackground       = Color::RGB(0x5a3f1a),
@@ -457,6 +460,7 @@ Theme LightTheme() {
         .currentLineNumberForeground   = Color::RGB(0x202020),
         .selectionBackground           = Color::RGB(0xbcd4f0),
         .isearchMatchBackground        = Color::RGB(0xffe58a),
+        .matchingBracketBackground     = Color::RGB(0xcfe0f0),
         .snippetFieldBackground        = Color::RGB(0xd0e8c8),
         .documentHighlightBackground   = Color::RGB(0xd8ecec),
         .lineInspectBackground         = Color::RGB(0xf5ddc0),
