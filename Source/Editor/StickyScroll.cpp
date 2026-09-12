@@ -22,4 +22,21 @@ std::vector<SymbolMarker> StickyChainForViewportTop(const std::vector<SymbolMark
     return chain;
 }
 
+std::vector<SymbolMarker> MarkersFromFoldBlocks(const std::vector<std::pair<std::size_t, std::size_t>>& blocks) {
+    std::vector<SymbolMarker> markers;
+    markers.reserve(blocks.size());
+    for (const auto& [startByte, endByte] : blocks) {
+        // No name and no name offset: the sticky row renders the block's own
+        // source line verbatim (BufferView::PaintStickyScrollRows), which is
+        // what every sticky-scroll implementation shows anyway, so there is
+        // nothing here to invent an identifier for.
+        markers.push_back(SymbolMarker{.startByte     = startByte,
+                                       .endByte       = endByte,
+                                       .kind          = SymbolKind::Block,
+                                       .name          = {},
+                                       .nameStartByte = startByte});
+    }
+    return markers;
+}
+
 } // namespace ned::editor::stickyscroll

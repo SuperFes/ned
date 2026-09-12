@@ -729,6 +729,11 @@ SyntaxClass SyntaxClassFor(SymbolKind kind) {
             return SyntaxClass::Constant;
         case SymbolKind::Namespace:
             return SyntaxClass::Namespace;
+        case SymbolKind::Block:
+            // Punctuation, deliberately: a structural container has no
+            // semantic colour of its own, and a delimiter's colour is what it
+            // already reads as in the buffer.
+            return SyntaxClass::Punctuation;
     }
     return SyntaxClass::Default; // unreachable, same convention as SyntaxClassForCapture's own default
 }
