@@ -606,6 +606,48 @@ real; if not, that is worth learning at language 3 rather than language 15.
       Three corpus files gained a ragged multi-line docstring / raw string / heredoc,
       because the property was vacuous over the old corpus — every string in it was
       single-line — and a guard now fails if that becomes true again.
+- [x] **The imprint can drive indent, and measuring whether it should answered a
+      different question.** Wired as an optional second source into the indent walk and
+      diffed against every hand-written query over the corpus: **12 of 16 languages agree
+      line for line**, the imprint's extra containers (argument lists, parameter lists,
+      parenthesized expressions) landing exactly where the query already put the line.
+      The other three over-indent, and each one for the same reason — **a fold source is
+      an assertion and an indent source is a quantity.** `MergeFoldSources` composes by
+      union because "this range is foldable" cannot contradict another source; an indent
+      source contributes a *level*, and adding one changes the answer. All three
+      disagreements are places where a language deliberately says a real delimited body
+      does **not** indent: C++'s outermost namespace body (`cpp-indents.scm` indents one
+      only when nested in another namespace), TOML's `table`/`pair` (a TOML file is flat
+      under its headers), YAML's `stream`/`document` wrappers (which span the file, so
+      counting them indents column zero). A union has no way to state a negative, so the
+      Indents column cannot reach 29/29 by inference the way the Folds column did.
+      The wiring was then **reverted rather than shipped**: with the union unsound and
+      every bundled table language already carrying a query, it had no caller. (tsx
+      looked like the exception — it has no `tsx-indents.scm` — but it was *sharing
+      TypeScript's*, which is how the next item was found.)
+- [x] **JSX had no indent rules at all, in any file.** Falling out of the above: `.tsx`
+      and `.jsx` computed one flat level for an entire tree of elements, because JSX
+      nests by matched tags and neither the delimiter imprint (a tag pair is not a
+      bracket pair — the documented HTML limit) nor typescript-indents.scm had anything
+      to say about it. Now `(jsx_element)`/`(jsx_expression)`/`(jsx_opening_element)`/
+      `(jsx_self_closing_element)` with their closers as dedents, modelled on
+      `html-indents.scm`, which had solved the same shape for the same reason.
+      Two things worth keeping. **`grammar.json` declares node types the compiled parser
+      rejects**: the `typescript` dialect lists every `jsx_*` rule and its parser knows
+      none of them, and a query naming an unknown node type fails to *compile* — which
+      takes the whole mode's indentation down, not just the bad rule. Found by the query
+      erroring at runtime after checking grammar.json and believing it; `node-types.json`
+      is the file that answers to the parser. So `tsx-indents.scm` is now its own file
+      rather than a share. And capturing `jsx_opening_element` pays twice: it indents a
+      multi-line attribute list, and because the opening tag is a *named* node that
+      resolution stops at, capturing it is what makes the walk's self-exclusion fire on an
+      element's own line — HTML needs a hardcoded promotion in `Indent.cpp` for exactly
+      that, and JSX gets it from the query instead.
+      `(parenthesized_expression) @aligned` came with it, since `return (` + JSX is the
+      idiom this exists for: `@aligned` degrades to one plain level when the opener ends
+      its line (which is the JSX case) and aligns under the first argument when it does
+      not (which is `if (a &&`), so one capture serves both. `sample.tsx` joins the oracle
+      corpus — the one bundled mode that had its own query and no corpus coverage.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** Now with the
       above in mind: it is a *unification* of vocabulary, not a reduction in authoring, and
       should be scoped and justified as such. With inference
