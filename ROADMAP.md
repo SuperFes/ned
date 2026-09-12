@@ -323,6 +323,28 @@ real; if not, that is worth learning at language 3 rather than language 15.
       so a grammar bump that breaks inference fails the build rather than being noticed
       much later. Verified the gate actually fails: disabling hidden-rule inlining
       reports the six Clojure nodes by name.
+- [ ] **`Foldable` as the first Tier 1 policy over `Delimited` — partly answered, and it
+      moved the question.** Two static filters were measured against the corpus. "The
+      opener must be the node's first member" is **refuted**: it drops 16 of the 55
+      hand-written fold nodes, because plenty of real ones carry content before the
+      brace. "The interior must be list-like (a REPEAT or CHOICE between the
+      delimiters)" is safe — keeps 55/55 — but only removes 65 of the 211 extras.
+      The more interesting finding is that a large part of the answer is **not static at
+      all**: most of the remaining extras (`parenthesized_expression`, `index_expression`,
+      `string_literal`) are single-line in practice, and a fold that cannot span a line
+      is meaningless regardless of grammar. So `Foldable` ≈ `Delimited` + list-like
+      interior + spans more than one line, with the last term per-instance rather than
+      per-language — which still supports N + M, just not purely by static policy.
+      Remaining: decide whether `argument_list`/`parameter_list` are genuinely
+      unwanted (most IDEs fold them, and the hand-written queries call themselves
+      "deliberately minimal"), and whether `cpp`'s missing `declaration_list` is an
+      omission inference just found.
+- [ ] Fold semantics for indentation languages need their own pass, surfaced by the
+      above and deliberately not bundled into it: a Python one-statement body is a block
+      whose start and end land on the same line, so the "spans more than one line" rule
+      that is right for C would drop it, and `[startLine + 1, endLine + 1]` does not
+      obviously name the right rows for it either. Needs deciding on its own terms rather
+      than inheriting the brace-language rule.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over

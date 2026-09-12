@@ -187,9 +187,12 @@ TEST_CASE("ToggleFoldAtLine is a no-op when no block starts on that line", "[Cod
 TEST_CASE("ToggleFoldAtLine picks the outermost block when two start on the same line", "[CodeFold]") {
     const auto mode = CMode();
     Buffer     buffer("test.c");
-    // Both the outer function body and (degenerately) an inner compound
-    // statement start on the same line here.
-    buffer.InsertAtPoint("int main(void) { if (1) { return 0; } }\n");
+    // Both the outer function body and an inner compound statement start on
+    // the same line here. Deliberately wrapped across two lines: a block
+    // confined to a single line is no longer foldable at all (see
+    // "Folding a single-line block cannot hide the line below it"), so a
+    // one-line version of this would have nothing to choose between.
+    buffer.InsertAtPoint("int main(void) { if (1) {\n    return 0; } }\n");
 
     const auto blocks = FoldableBlocks(mode, buffer.Text());
     REQUIRE(blocks.size() >= 2);
@@ -205,6 +208,59 @@ TEST_CASE("ToggleFoldAtLine picks the outermost block when two start on the same
         }
     }
     REQUIRE(buffer.FoldMarkerAt(outermost->first).has_value());
+}
+
+TEST_CASE("Folding a single-line block cannot hide the line below it", "[CodeFold]") {
+    // Real bug, found while measuring Tier 0 trait inference against the
+    // hand-written fold corpus (Docs/ParsingEngine.md). `(compound_statement)
+    // @fold` matches the one-line body of `int f(void) { return 1; }`, and
+    // FoldedLineRanges' own [startLine + 1, endLine + 1] then named line 1 --
+    // the *next* function's opening line, which has nothing to do with the
+    // folded block.
+    //
+    // Nothing about this needed the new engine to surface; it was reachable
+    // with the queries exactly as they stand.
+    const auto mode = CMode();
+    Buffer     buffer("test.c");
+    buffer.InsertAtPoint("int f(void) { return 1; }\nint g(void) {\n    return 2;\n}\n");
+
+    const auto blocks = FoldableBlocks(mode, buffer.Text());
+    REQUIRE(blocks.size() == 2); // the one-line body and g's multi-line one
+
+    // The single-line block is not offered as a fold at all.
+    CHECK_FALSE(ToggleFoldAtLine(buffer, buffer.Content(), blocks, 0));
+    CHECK(FoldedLineRanges(buffer, buffer.Content(), blocks).empty());
+
+    // Its multi-line neighbour still folds normally.
+    REQUIRE(ToggleFoldAtLine(buffer, buffer.Content(), blocks, 1));
+    const auto ranges = FoldedLineRanges(buffer, buffer.Content(), blocks);
+    REQUIRE(ranges.size() == 1);
+    // [startLine, endLineExclusive) per FoldedLineRanges' own contract, so
+    // this is g's body and closing brace -- lines 2 and 3 -- and nothing of
+    // f's, which is the point.
+    CHECK(ranges[0].first == 2);
+    CHECK(ranges[0].second == 4);
+}
+
+TEST_CASE("A stale marker on a block that shrank to one line hides nothing", "[CodeFold]") {
+    // The defence in depth: a marker can outlive the shape that justified it
+    // if an edit pulls a multi-line block onto one line, and FoldedLineRanges
+    // must not start hiding the following line when that happens.
+    const auto mode = CMode();
+    Buffer     buffer("test.c");
+    buffer.InsertAtPoint("int f(void) {\n    return 1;\n}\nint g(void) { return 2; }\n");
+
+    auto blocks = FoldableBlocks(mode, buffer.Text());
+    REQUIRE(ToggleFoldAtLine(buffer, buffer.Content(), blocks, 0));
+    REQUIRE_FALSE(FoldedLineRanges(buffer, buffer.Content(), blocks).empty());
+
+    // Collapse f's body onto one line; the marker's byte offset still matches.
+    Buffer shrunk("test.c");
+    shrunk.InsertAtPoint("int f(void) { return 1; }\nint g(void) { return 2; }\n");
+    const auto shrunkBlocks = FoldableBlocks(mode, shrunk.Text());
+    shrunk.SetFoldMarker(shrunkBlocks.empty() ? 0 : shrunkBlocks[0].first,
+                         Buffer::FoldMarker::Collapsed);
+    CHECK(FoldedLineRanges(shrunk, shrunk.Content(), shrunkBlocks).empty());
 }
 
 TEST_CASE("FoldRegionsWithDepth gives disjoint siblings depth 0", "[CodeFold]") {

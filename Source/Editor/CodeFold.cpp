@@ -32,6 +32,15 @@ FoldedLineRanges(const text::Buffer& buffer, const text::ITextStorage& content,
         }
         const std::size_t startLine = content.ByteOffsetToLine(it->first);
         const std::size_t endLine   = content.ByteOffsetToLine(it->second);
+        if (endLine <= startLine) {
+            // A block confined to one line has nothing of its own to hide,
+            // and [startLine + 1, endLine + 1] would name the line *after*
+            // it. Real and reachable with the queries as they stand:
+            // `(compound_statement) @fold` matches the one-line body in
+            // `int f(void) { return 1; }`, and folding it hid the next
+            // function's opening line.
+            continue;
+        }
         ranges.emplace_back(startLine + 1, endLine + 1);
     }
     return ranges;
@@ -43,6 +52,9 @@ bool ToggleFoldAtLine(text::Buffer& buffer, const text::ITextStorage& content,
     for (const auto& block : blocks) {
         if (content.ByteOffsetToLine(block.first) != line) {
             continue;
+        }
+        if (content.ByteOffsetToLine(block.second) <= line) {
+            continue; // single-line block -- see FoldedLineRanges' own note
         }
         if (best == nullptr || (block.second - block.first) > (best->second - best->first)) {
             best = &block;
