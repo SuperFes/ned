@@ -92,20 +92,4 @@ std::string LanguageKeyForMode(std::string_view modeName) {
     return key;
 }
 
-std::optional<treesitter::Tree> ParseForBrackets(std::string_view text, std::string_view language) {
-    if (TableFor(language).empty()) {
-        return std::nullopt;
-    }
-    const std::optional<treesitter::Language> resolved = treesitter::LanguageByName(language);
-    if (!resolved.has_value()) {
-        return std::nullopt;
-    }
-    const treesitter::Parser parser(*resolved);
-    treesitter::Tree         tree = parser.Parse(text);
-    if (tree.IsNull()) {
-        return std::nullopt;
-    }
-    return tree;
-}
-
 } // namespace ned::editor::imprint
