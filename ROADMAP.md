@@ -313,9 +313,12 @@ cliff (*"the unrolling stops at eight pairs"*), so a ninth binding is silently
 unrenameable. If Tiers 1+2 express `(let [a 1 b c] ...)` without a cliff the vocabulary is
 real; if not, that is worth learning at language 3 rather than language 15.
 
-- [ ] **Phase 0 — Oracle.** Checked-in snapshot of tree-sitter's tree plus all 8 fact
-      kinds over a corpus of real files. Everything after validates against it; without it
-      none of the rest is falsifiable.
+- [x] **Phase 0 — Oracle.** `Tests/Oracle/` plus `Tests/OracleTest.cpp`: a checked-in
+      snapshot of every fact kind a Mode produces, over 20 corpus files in 17 languages,
+      regenerated with `NED_BLESS_ORACLE=1` and read as a diff. It has since caught or
+      proven every structural change made to the engine — the fold anchoring, the
+      TOML/YAML end trim, the verbatim-indent suppression, the ninth Lisp binding — which
+      is what "without it none of the rest is falsifiable" meant in practice.
 - [x] **Phase 1 gate — Tier 0 inference proven.** The claim the whole design rests on
       (a delimited body is derivable from `grammar.json` with no per-language rules) is
       refinements, each a real property of how grammars are written — inline hidden rules
@@ -706,9 +709,20 @@ real; if not, that is worth learning at language 3 rather than language 15.
       into a feature). Wiring the inferred facts into `Tests/Oracle` is the natural join
       with Phase 0 — the 55-vs-211 gap should be visible as a diff, not a number in a doc.
 - [ ] **Phase 2 — Trait-driven structural drivers.** Fold, indent, dedent, structural
-      selection, sticky scroll, brace match. Exit criterion is *deletable files*: roughly
-      half the `.scm` corpus, and the Folds/Indents columns at 29/29 with no adapter
-      authored.
+      selection, sticky scroll, brace match. **Three of the six run off the imprint today**
+      — folding (21 languages, nine of which had no query at all), brace matching (built
+      from nothing, it did not exist), and sticky scroll (ten languages that had none) —
+      and one hand-written query has been deleted.
+      The exit criterion as originally written is now known to be **wrong in one half**.
+      "Folds at 29/29 with no adapter authored" is the right shape and nearly reached.
+      "Indents at 29/29" is not reachable at all: an indent source contributes a *quantity*
+      rather than an assertion, so it cannot compose additively with a query, and three of
+      sixteen languages need to say a real container does **not** indent (measured — see
+      `Docs/ParsingEngine.md`). Restate the criterion before resuming: deletable files
+      remains right, symmetric column coverage across drivers does not.
+      Left: structural selection (already a generic AST walk — likely gains nothing, worth
+      confirming), and whether the remaining `.scm` corpus can shrink further now that
+      three drivers are inferred.
 - [ ] **Phase 3 — Semantic drivers.** Scopes/bindings/references as a real resolution
       layer rather than query captures. Exit criterion: the Lisp eight-pair cliff is gone,
       or Tier 1 is proven insufficient and the design is revised before any engine work.
