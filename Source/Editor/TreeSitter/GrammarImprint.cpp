@@ -15,8 +15,9 @@ using nlohmann::json;
 // them when building the parse table, so inference has to as well.
 bool IsWrapper(std::string_view type) {
     return type == "PREC" || type == "PREC_LEFT" || type == "PREC_RIGHT" || type == "PREC_DYNAMIC" ||
-           type == "FIELD" || type == "ALIAS" || type == "TOKEN" || type == "IMMEDIATE_TOKEN";
+           type == "FIELD" || type == "ALIAS";
 }
+
 
 std::string TypeOf(const json& rule) {
     if (!rule.is_object()) return "";
@@ -36,6 +37,17 @@ const json& Unwrap(const json& rule) {
     return *current;
 }
 
+// A rule wrapped in TOKEN produces a single leaf node: whatever structure is
+// written inside it is not in the tree at all. Looking through one is
+// therefore backwards -- it finds delimiters in something that has no
+// interior to delimit. C's `system_lib_string` (the `<stdio.h>` of an
+// #include) is exactly that: a TOKEN whose body happens to read as
+// '<' repeat(...) '>'.
+bool IsSingleToken(const json& rule) {
+    const std::string type = TypeOf(rule);
+    return type == "TOKEN" || type == "IMMEDIATE_TOKEN";
+}
+
 // A member that may match nothing, and so may legitimately trail a real
 // closer. JavaScript's statement_block is SEQ['{', REPEAT(statement), '}',
 // <optional>] -- requiring the closer to be the literal last member misses
@@ -53,11 +65,26 @@ bool IsOptional(const json& rule) {
     return false;
 }
 
-std::string Literal(const json& member) {
-    const json& inner = Unwrap(member);
-    if (TypeOf(inner) != "STRING") return "";
-    const auto value = inner.find("value");
-    return (value != inner.end() && value->is_string()) ? value->get<std::string>() : "";
+// Every literal this member could match: a STRING, or a CHOICE of them.
+// TypeScript's `object_type` opens with CHOICE["{", "{|"] -- one node, two
+// spellings -- so treating an opener as a single string misses it.
+std::set<std::string> Literals(const json& member) {
+    const json&           inner = Unwrap(member);
+    std::set<std::string> found;
+    const auto            add = [&found](const json& candidate) {
+        if (TypeOf(candidate) != "STRING") return;
+        const auto value = candidate.find("value");
+        if (value != candidate.end() && value->is_string()) found.insert(value->get<std::string>());
+    };
+    if (TypeOf(inner) == "CHOICE") {
+        if (const auto members = inner.find("members"); members != inner.end() && members->is_array()) {
+            for (const json& member2 : *members) add(Unwrap(member2));
+        }
+    }
+    else {
+        add(inner);
+    }
+    return found;
 }
 
 bool IsSymbolNamed(const json& member, const std::set<std::string>& names) {
@@ -106,8 +133,14 @@ bool FlattenSeq(const json& rule, const json& rules, std::vector<const json*>& o
     return true;
 }
 
-constexpr std::string_view kOpeners = "{([";
-constexpr std::string_view kClosers = "})]";
+// Angle brackets included: a template/type parameter list is a real
+// multi-element container that a long declaration wraps across, and a JSX
+// opening element is the same shape. Measured cost of adding them is 20 more
+// nodes across the bundled grammars, of which the only one that is not a
+// genuine container -- C's `system_lib_string` -- is excluded by IsSingleToken
+// above rather than by special-casing '<'.
+constexpr std::string_view kOpeners = "{([<";
+constexpr std::string_view kClosers = "})]>";
 
 std::string OpenerFor(const std::string& closer) {
     const std::size_t index = kClosers.find(closer);
@@ -135,6 +168,8 @@ std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const nlohman
     for (const auto& [name, rule] : rules->items()) {
         if (!name.empty() && name.front() == '_') continue; // hidden: never a node
 
+        if (IsSingleToken(rule)) continue; // a leaf, whatever it looks like inside
+
         std::vector<const json*> members;
         std::set<std::string>    seen;
         if (!FlattenSeq(rule, *rules, members, 0, seen) || members.size() < 2) continue;
@@ -145,11 +180,18 @@ std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const nlohman
         while (core.size() > 1 && IsOptional(*core.back())) core.pop_back();
         if (core.size() < 2) core = members;
 
-        const std::string closer = Literal(*core.back());
-        if (!closer.empty() && kClosers.find(closer) != std::string_view::npos) {
-            const std::string opener      = OpenerFor(closer);
-            const auto        openerIt    = std::find_if(core.begin(), core.end() - 1,
-                                                  [&](const json* m) { return Literal(*m) == opener; });
+        std::string closer;
+        for (const std::string& candidate : Literals(*core.back())) {
+            if (kClosers.find(candidate) != std::string_view::npos) {
+                closer = candidate;
+                break;
+            }
+        }
+        if (!closer.empty()) {
+            const std::string opener   = OpenerFor(closer);
+            const auto        openerIt = std::find_if(core.begin(), core.end() - 1, [&](const json* m) {
+                return Literals(*m).count(opener) > 0;
+            });
             if (openerIt != core.end() - 1) {
                 imprint::DelimitedBody body;
                 body.kind          = imprint::DelimiterKind::Bracket;

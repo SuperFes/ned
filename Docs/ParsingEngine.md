@@ -217,8 +217,8 @@ containers are therefore derivable **for every grammar, including grammars that
 do not exist yet, with no rules written at all**.
 
 **Measured 2026-09-11: 55 of 55, with no per-language rules.**
-`Tools/ImprintProbe.py` is the experiment, checked in so the number can
-be re-derived rather than trusted. Three refinements were needed beyond the
+`Tests/ImprintTest.cpp` is the experiment and the enforcement both -- the
+number is re-derived on every build rather than trusted. Three refinements were needed beyond the
 naive "a SEQ that opens and closes with a literal", and each is a real property
 of how grammars are written rather than a fudge:
 
