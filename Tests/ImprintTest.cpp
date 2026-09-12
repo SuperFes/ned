@@ -28,7 +28,7 @@
 // failure names which shape broke. The corpus case is the Phase 1 gate from
 // Docs/ParsingEngine.md: inference must still reproduce every one of the 55
 // fold nodes hand-written across queries/*-folds.scm. That number was
-// established by Tools/ImprintProbe.py; enforcing it here is what
+// established by a Python spike that this superseded; enforcing it here is what
 // makes a grammar bump that breaks inference fail the build instead of being
 // discovered much later.
 
@@ -62,9 +62,10 @@ json Grammar(const json& rules, const json& externals = json::array()) {
 // checkout, so the corpus case skips rather than fails there.
 fs::path DepsDir() { return fs::path(NED_REPO_ROOT) / "build" / "_deps"; }
 
-std::set<std::string> HandWrittenFoldNodes(const std::string& language) {
+std::set<std::string> HandWrittenNodes(const std::string& language, const std::string& kind,
+                                       const std::string& capture) {
     const fs::path path =
-        fs::path(NED_REPO_ROOT) / "Source" / "Editor" / "TreeSitter" / "queries" / (language + "-folds.scm");
+        fs::path(NED_REPO_ROOT) / "Source" / "Editor" / "TreeSitter" / "queries" / (language + "-" + kind + ".scm");
     std::ifstream in(path);
     REQUIRE(in);
     std::ostringstream buffer;
@@ -73,11 +74,11 @@ std::set<std::string> HandWrittenFoldNodes(const std::string& language) {
     // Strip comments first -- several of these files are more prose than rule.
     const std::string    text = std::regex_replace(buffer.str(), std::regex(R"(;[^\n]*)"), "");
     std::set<std::string> nodes;
-    const std::regex      capture(R"(\(\s*([a-z_][a-z_0-9]*)\b[^()]*@fold)");
-    for (auto it = std::sregex_iterator(text.begin(), text.end(), capture); it != std::sregex_iterator(); ++it) {
+    const std::regex      capture1(R"(\(\s*([a-z_][a-z_0-9]*)\b[^()]*@)" + capture + R"()");
+    for (auto it = std::sregex_iterator(text.begin(), text.end(), capture1); it != std::sregex_iterator(); ++it) {
         nodes.insert((*it)[1].str());
     }
-    const std::regex bare(R"(\(\s*([a-z_][a-z_0-9]*)\s*\)\s*@fold)");
+    const std::regex bare(R"(\(\s*([a-z_][a-z_0-9]*)\s*\)\s*@)" + capture + R"()");
     for (auto it = std::sregex_iterator(text.begin(), text.end(), bare); it != std::sregex_iterator(); ++it) {
         nodes.insert((*it)[1].str());
     }
@@ -193,6 +194,35 @@ TEST_CASE("FoldPolicy keeps both answers reachable", "[Imprint]") {
     CHECK_FALSE(ShouldFold(argumentList, FoldPolicy{.foldArgumentLists = false}));
 }
 
+TEST_CASE("An opener may be a choice of literals", "[Imprint]") {
+    // TypeScript's object_type opens with CHOICE["{", "{|"] -- one node, two
+    // spellings. Treating an opener as a single string misses it.
+    const json grammar = Grammar({{"object_type",
+                                   Seq({json{{"type", "CHOICE"},
+                                             {"members", json::array({Str("{"), Str("{|")})}},
+                                        Repeat(Sym("member")), Str("}")})}});
+    CHECK(InferDelimitedBodies(grammar).count("object_type") == 1);
+}
+
+TEST_CASE("Angle brackets delimit a body", "[Imprint]") {
+    // A template/type parameter list is a real multi-element container that a
+    // long declaration wraps across, and a JSX opening element is the same
+    // shape.
+    const json grammar = Grammar({{"type_parameters", Seq({Str("<"), Repeat(Sym("type_parameter")), Str(">")})}});
+    CHECK(InferDelimitedBodies(grammar).count("type_parameters") == 1);
+}
+
+TEST_CASE("A token-wrapped rule is a leaf, not a delimited body", "[Imprint]") {
+    // C's system_lib_string -- the <stdio.h> of an #include -- is a TOKEN
+    // whose body happens to read as '<' repeat(...) '>'. Whatever structure is
+    // written inside a TOKEN is not in the tree at all, so looking through one
+    // finds delimiters in something with no interior to delimit.
+    const json grammar = Grammar({{"system_lib_string",
+                                   json{{"type", "TOKEN"},
+                                        {"content", Seq({Str("<"), Repeat(Sym("chars")), Str(">")})}}}});
+    CHECK(InferDelimitedBodies(grammar).empty());
+}
+
 TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus]") {
     // The Phase 1 gate. See Docs/ParsingEngine.md.
     const std::map<std::string, std::string> kGrammars = {
@@ -231,7 +261,7 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
         in >> grammar;
 
         const auto inferred  = InferDelimitedBodies(grammar);
-        const auto handWritten = HandWrittenFoldNodes(language);
+        const auto handWritten = HandWrittenNodes(language, "folds", "fold");
         expected += handWritten.size();
 
         for (const std::string& node : handWritten) {
@@ -240,6 +270,39 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
             if (inferred.count(node) == 1) ++reproduced;
         }
     }
+
+    // The same imprint also covers the hand-written @indent captures, which is
+    // the N x M claim across two drivers rather than one: 96% of every fold
+    // rule was already restated verbatim as an indent rule.
+    std::size_t indentCovered = 0;
+    std::size_t indentTotal   = 0;
+    std::set<std::string> indentMissed;
+    for (const auto& [language, relative] : kGrammars) {
+        const fs::path path = DepsDir() / relative;
+        const fs::path query =
+            fs::path(NED_REPO_ROOT) / "Source" / "Editor" / "TreeSitter" / "queries" / (language + "-indents.scm");
+        if (!fs::exists(path) || !fs::exists(query)) continue;
+        std::ifstream in(path);
+        json          grammar;
+        in >> grammar;
+        const auto inferred = InferDelimitedBodies(grammar);
+        for (const std::string& node : HandWrittenNodes(language, "indents", "indent")) {
+            ++indentTotal;
+            if (inferred.count(node) == 1) ++indentCovered;
+            else indentMissed.insert(language + "/" + node);
+        }
+    }
+    // The single exception is real and is a defect in the query, not in
+    // inference: tree-sitter-typescript has no `interface_body` rule at all
+    // (its interface body is an `object_type`), so that capture can never
+    // match anything. Recorded rather than worked around.
+    INFO("indent nodes not covered: " << [&] {
+        std::string joined;
+        for (const std::string& node : indentMissed) joined += " " + node;
+        return joined;
+    }());
+    CHECK(indentMissed == std::set<std::string>{"typescript/interface_body"});
+    CHECK(indentCovered + 1 == indentTotal);
 
     INFO("reproduced " << reproduced << " of " << expected);
     // The corpus itself changed if this trips. It has once: cpp-folds.scm

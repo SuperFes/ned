@@ -308,7 +308,6 @@ real; if not, that is worth learning at language 3 rather than language 15.
       none of the rest is falsifiable.
 - [x] **Phase 1 gate — Tier 0 inference proven.** The claim the whole design rests on
       (a delimited body is derivable from `grammar.json` with no per-language rules) is
-      measured, not assumed: **55/55**, via `Tools/ImprintProbe.py`. Needed three
       refinements, each a real property of how grammars are written — inline hidden rules
       (Clojure hides its parens one level down), allow optional members after a closer
       (JavaScript's `statement_block`), and accept an external token as a closer with no
@@ -363,6 +362,25 @@ real; if not, that is worth learning at language 3 rather than language 15.
       that is right for C would drop it, and `[startLine + 1, endLine + 1]` does not
       obviously name the right rows for it either. Needs deciding on its own terms rather
       than inheriting the brace-language rule.
+- [x] **The same imprint drives indent too — the N x M claim across two drivers.**
+      96% of every fold rule was already restated verbatim as an indent rule, so this is
+      where the duplication actually lived. The imprint covers **80 of the 81**
+      hand-written `@indent` nodes. The single miss is a defect in the query rather than
+      in inference: tree-sitter-typescript has no `interface_body` rule at all (its
+      interface body is an `object_type`), so that capture can never match anything.
+      Pinned in CI alongside the fold gate.
+      Three refinements were needed and each is a real grammar shape: an opener may be a
+      **CHOICE of literals** (TypeScript's `object_type` is `{` or `{|`); **angle
+      brackets** delimit a body (template/type parameter lists, JSX opening elements — 20
+      more nodes, all genuine containers); and a **TOKEN-wrapped rule is a leaf**, since
+      whatever is written inside a TOKEN is not in the tree at all — C's
+      `system_lib_string` (`<stdio.h>`) is a TOKEN that reads as `'<' repeat(...) '>'`.
+      That last one was a pre-existing inference bug, not a cost of angle brackets.
+- [ ] `@aligned`, `@align.barrier` and `@indent.body` stay hand-written, and should: the
+      indent engine's own header says the right answer is per-language (janet/clojure
+      *want* a nested `[...]` to inherit the enclosing call's alignment; C++ does not).
+      That is the Tier 0 / Tier 1 line falling exactly where the engine already put it —
+      structure inferred, alignment declared.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over

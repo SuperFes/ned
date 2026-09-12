@@ -10,8 +10,7 @@
 //
 // Measured against the 55 fold nodes currently hand-written across
 // queries/*-folds.scm: this reproduces 55/55 with nothing authored per
-// language. `Tools/ImprintProbe.py` is the original spike and scores the
-// same corpus; `Tests/ImprintTest.cpp` enforces the number so a grammar bump
+// language. `Tests/ImprintTest.cpp` enforces the number, so a grammar bump
 // that breaks inference fails the build rather than being noticed later.
 //
 // This reads *grain* -- structure legible from a construct's shape. It does
