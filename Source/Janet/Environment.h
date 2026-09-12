@@ -121,8 +121,32 @@ class Environment {
     // .ned/init.janet trusted after startup.
     [[nodiscard]] std::vector<std::string> BindingNamesWithPrefix(std::string_view prefix) const;
 
+    // The same bindings, paired with the docstring Register<Fn> handed to
+    // janet_cfuns_prefix -- Janet keeps it as `:doc` on the binding, which is
+    // what `(doc ned/set-tab-width)` prints. Sorted by name.
+    //
+    // Exists so the scripting reference can be generated from the live binding
+    // table rather than hand-maintained: 160-odd entries written once at
+    // registration and otherwise visible only to someone already in a REPL.
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>>
+    BindingDocsWithPrefix(std::string_view prefix) const;
+
+    // Only the bindings registered from C++ through Register/RegisterRaw --
+    // ned's own API surface -- paired with their docstrings, sorted.
+    //
+    // Distinct from BindingDocsWithPrefix, which reports whatever is in the
+    // environment. That difference is the whole point: the environment is
+    // shared and mutable, so a Janet-defined function (a plugin's, or a test
+    // fixture's) is indistinguishable there from an editor binding. Anything
+    // generating a reference for ned's API wants this one.
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> RegisteredBindings(
+        std::string_view prefix = {}) const;
+
   private:
     void RegisterRaw(const char* prefix, const char* name, const char* docstring, JanetCFunction fn);
+
+    // name -> docstring, for everything RegisterRaw has seen.
+    std::vector<std::pair<std::string, std::string>> registered_;
 
     JanetTable* env_;
 };

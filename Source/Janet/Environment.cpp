@@ -105,6 +105,25 @@ void Environment::RegisterRaw(const char* prefix, const char* name, const char* 
         {nullptr, nullptr, nullptr},
     };
     janet_cfuns_prefix(env_, prefix, regs);
+
+    std::string qualified = prefix == nullptr ? std::string{} : std::string(prefix) + "/";
+    qualified += name == nullptr ? "" : name;
+    registered_.emplace_back(std::move(qualified), docstring == nullptr ? std::string{} : std::string(docstring));
+}
+
+std::vector<std::pair<std::string, std::string>> Environment::RegisteredBindings(std::string_view prefix) const {
+    std::vector<std::pair<std::string, std::string>> entries;
+    entries.reserve(registered_.size());
+    for (const auto& entry : registered_) {
+        if (entry.first.compare(0, prefix.size(), prefix) == 0) entries.push_back(entry);
+    }
+    std::sort(entries.begin(), entries.end());
+    // Re-registration is expected (a reload redefines), so the last write wins
+    // and duplicates collapse to one entry.
+    entries.erase(std::unique(entries.begin(), entries.end(),
+                              [](const auto& a, const auto& b) { return a.first == b.first; }),
+                  entries.end());
+    return entries;
 }
 
 int DoStringCapturingStacktrace(JanetTable* env, const std::string& code, const std::string& sourcePath, Janet* out,
@@ -182,6 +201,34 @@ std::vector<std::string> Environment::BindingNamesWithPrefix(std::string_view pr
     }
     std::sort(names.begin(), names.end());
     return names;
+}
+
+std::vector<std::pair<std::string, std::string>> Environment::BindingDocsWithPrefix(std::string_view prefix) const {
+    std::vector<std::pair<std::string, std::string>> entries;
+    const JanetKV*                                   kv = nullptr;
+    while ((kv = janet_dictionary_next(env_->data, env_->capacity, kv)) != nullptr) {
+        if (!janet_checktype(kv->key, JANET_SYMBOL)) {
+            continue;
+        }
+        const JanetSymbol      symbol = janet_unwrap_symbol(kv->key);
+        const std::string_view name(reinterpret_cast<const char*>(symbol), janet_string_length(symbol));
+        if (name.substr(0, prefix.size()) != prefix) {
+            continue;
+        }
+
+        // The binding's value is a table carrying :value and :doc.
+        std::string doc;
+        if (janet_checktype(kv->value, JANET_TABLE)) {
+            const Janet found = janet_table_get(janet_unwrap_table(kv->value), janet_ckeywordv("doc"));
+            if (janet_checktype(found, JANET_STRING)) {
+                const JanetString text = janet_unwrap_string(found);
+                doc.assign(reinterpret_cast<const char*>(text), janet_string_length(text));
+            }
+        }
+        entries.emplace_back(std::string(name), std::move(doc));
+    }
+    std::sort(entries.begin(), entries.end());
+    return entries;
 }
 
 } // namespace ned::janet
