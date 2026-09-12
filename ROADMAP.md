@@ -264,10 +264,10 @@ plus `preselect` and `commitCharacters`.
       the fallback sources still synthesize LSP items to fit it. Bigger than the
       fidelity work above and independent of it.
 
-### Parsing Engine: Trait Vocabulary over Per-Language Queries (Design Sketch Only)
+### Parsing Engine: Trait Vocabulary over Per-Language Queries
 
 Full design in `Docs/ParsingEngine.md`, which carries the measurements this summary
-compresses. Unstarted, and deliberately staged so each phase can be the last one.
+compresses. Phases 0–2 are closed; deliberately staged so each phase can be the last one.
 
 The problem, measured against this checkout: a tree-sitter grammar carries structure and
 no meaning, a `.scm` query carries meaning and no structure, and nothing connects or
@@ -336,7 +336,7 @@ real; if not, that is worth learning at language 3 rather than language 15.
       so a grammar bump that breaks inference fails the build rather than being noticed
       much later. Verified the gate actually fails: disabling hidden-rule inlining
       reports the six Clojure nodes by name.
-- [ ] **`Foldable` as the first Tier 1 policy over `Delimited` — partly answered, and it
+- [x] **`Foldable` as the first Tier 1 policy over `Delimited` — answered, and it
       moved the question.** Two static filters were measured against the corpus. "The
       opener must be the node's first member" is **refuted**: it drops 16 of the 55
       hand-written fold nodes, because plenty of real ones carry content before the
@@ -420,7 +420,7 @@ real; if not, that is worth learning at language 3 rather than language 15.
       whatever is written inside a TOKEN is not in the tree at all — C's
       `system_lib_string` (`<stdio.h>`) is a TOKEN that reads as `'<' repeat(...) '>'`.
       That last one was a pre-existing inference bug, not a cost of angle brackets.
-- [ ] `@aligned`, `@align.barrier` and `@indent.body` stay hand-written, and should: the
+- [x] Decided: `@aligned`, `@align.barrier` and `@indent.body` stay hand-written, and should: the
       indent engine's own header says the right answer is per-language (janet/clojure
       *want* a nested `[...]` to inherit the enclosing call's alignment; C++ does not).
       That is the Tier 0 / Tier 1 line falling exactly where the engine already put it —
@@ -700,15 +700,28 @@ real; if not, that is worth learning at language 3 rather than language 15.
       query rather than on the marker list being empty — "this language has no tags query"
       and "this file declares nothing" are different facts, so a C++ file of bare braces
       still pins nothing.
-- [ ] **Phase 1 remainder — the language-definition format and compiler.** Now with the
-      above in mind: it is a *unification* of vocabulary, not a reduction in authoring, and
-      should be scoped and justified as such. With inference
-      in place, the rest: the Janet trait-declaration format, a build-time compiler
-      emitting one artifact per language, and `Foldable` as the first Tier 1 policy over
-      `Delimited` (inference reports 211 nodes beyond the 55; the policy excluding
-      `parenthesized_expression`/`argument_list`/`string_literal` is what turns structure
-      into a feature). Wiring the inferred facts into `Tests/Oracle` is the natural join
-      with Phase 0 — the 55-vs-211 gap should be visible as a diff, not a number in a doc.
+- [x] **Phase 1 remainder — measured, and closed without a compiler.** The remaining
+      half was "declare traits alongside the grammar, emit one artifact per language",
+      justified as a *unification* of vocabulary across drivers. That justification
+      assumed Tier 1 duplicates the way Tier 0 did (96% of fold rules restated as indent
+      rules). Measured over the effective queries for all 16 languages: **221 distinct
+      node types across tags/locals/tests/imports, 22 named by two or more kinds (10%),
+      and zero of those with the same role in both** — `function_definition` is a
+      definition to tags and a scope to locals; `call_expression` is a call, a test and
+      an import to three different files. Scope was the one fact that looked derivable
+      and is not: of 94 `@local.scope` node types, 50 are neither a tags definition nor
+      an imprint body (loops, catch clauses, lambdas, Rust's `if`/`match_arm`). Every
+      `tests.scm` pattern is predicated on text, so no per-type declaration could carry
+      it at all. There is nothing to unify; a Janet format would restate 221 facts in a
+      second syntax and reduce none. **The Tier 1 format is the dotted `.scm` capture
+      convention the corpus already follows**, resolved most-specific-first, and the
+      `Foldable` policy is `ShouldFold`/`FoldPolicy` over the compiled table. What the
+      measurement did turn up: tree-sitter-cpp's upstream `tags.scm` captures a qualified
+      name's namespace as `@local.scope` — the same name `locals.scm` uses for a binding
+      scope — inert only because the two queries compile separately. Full numbers in
+      `Docs/ParsingEngine.md`. Not done, and deliberately: wiring inferred facts into
+      `Tests/Oracle` as a diff — the oracle already holds the fold *ranges* the imprint
+      produces, which is the stronger form of the same check.
 - [x] **The fold column is deleted — Phase 2's restated exit criterion, met.** All eleven
       remaining `*-folds.scm` are gone, not replaced: the evidence was gathered first, and
       both halves said the same thing. Statically, every one of the 59 node types those
@@ -792,7 +805,7 @@ real; if not, that is worth learning at language 3 rather than language 15.
       Ruby, Elixir, Erlang and Pascal are covered by the same rule the day they are
       bundled. `sample.fish` joins the oracle corpus, and matches the file's own layout
       line for line.
-- [ ] **Phase 2 — Trait-driven structural drivers.** Fold, indent, dedent, structural
+- [x] **Phase 2 — Trait-driven structural drivers.** Fold, indent, dedent, structural
       selection, sticky scroll, brace match. **All six run off the imprint today**
       — folding (21 languages, nine of which had no query at all), brace matching (built
       from nothing, it did not exist), sticky scroll (ten languages that had none), and
@@ -819,7 +832,49 @@ real; if not, that is worth learning at language 3 rather than language 15.
       needed nothing; the vocabulary added a step. Nothing structural is left on this
       item: the six drivers all run off the imprint, and what the queries still carry
       is alignment, one suppression, YAML's sequence convention, tag pairs and clause
-      headers. The Tier 1 format (Phase 1 remainder) is the open question, not Phase 2.
+      headers. The Tier 1 format question is answered above (Phase 1 remainder).
+- [ ] **One language, one file — the mechanism unification.** The Phase 1 measurement
+      above closed the *duplication* argument for a language-definition format and opened
+      the real one: a bundled language is stated in about nine places (a C++ factory, a
+      26-entry factory table, a 55-entry extension table, 91 CMake embed lines plus ~90
+      `Queries.h` externs, `Languages.cpp`'s 25 `if (name == …)` branches, root-marker
+      and import-resolution and injection-alias tables, hand-built keymaps, and `if`s
+      inside generic engines), and `RegisterDynamicMode` is a *second* loader knowing four
+      of eight query kinds and no imprint. Decided: one `Source/Languages/<name>/
+      language.janet` per language — evaluated Janet, so escapes are inline `fn`s —
+      holding every non-pattern fact and the patterns as Janet data (Janet reads query
+      syntax verbatim; only `#` predicates respell, as `(:eq? …)`), compiled to query
+      text in memory for tree-sitter's matcher now and consumed directly by ned's own
+      matcher in Phase 4. No `.scm` file anywhere; upstream's 32 vendored once through a
+      converter with an `ImprintTables.cpp`-style drift test. The declarative bulk stays
+      *data* because every measurement so far asked questions of data; Janet *code* is
+      the escape tier. Two constraints found before starting: Janet is main-thread-only
+      and `ModePrewarm` highlights on a background thread (prewarm without escapes), and
+      `Value.h`'s rooting caution means escapes are looked up per call, never held rooted.
+      - [x] **Step 0 — `LanguageDefinition` + `ModeFromDefinition` + escape registry, in
+            C++.** `Editor/LanguageDefinition.h`, `Editor/BundledLanguages.cpp` (the 26
+            definitions as literals), `Editor/Languages/{CLike,Markdown,Org}.cpp` (the
+            eight bundled escapes). All 26 factories, the factory table and the extension
+            table are gone, derived from the definitions; `Mode.cpp` is 1,524 lines from
+            2,325. The oracle is byte-identical. Three things came out in the wash:
+            `injections` is a query kind now, so HTML is a plain definition and Markdown
+            no longer runs a second parser for its highlight; the cpp `TEST_CASE` body
+            widening ran inside the generic test discovery for *every* language and is
+            now the `cpp.test-body` escape; and Org, built by hand until now, gains
+            `expandSelection`/`sexpMotion` for free because its escapes decorate the
+            generic build instead of replacing it. A definition naming an unknown escape or
+            grammar throws rather than building less.
+      - [ ] **Step 1 — query DSL + `.scm → .janet` converter**; every query file
+            converted, drift test for grammar bumps, `.scm` leaves the repo.
+      - [ ] **Step 2 — definitions move to `language.janet`**, loader in `Janet/`, every
+            remaining C++ per-language table (root markers, import resolution, injection
+            aliases, snippets) derived from them.
+      - [ ] **Step 3 — one loader** for user/project languages; `RegisterDynamicMode`
+            deleted.
+      - [ ] **Step 4 — Janet hooks in `Query.cpp` and the highlight pipeline** (predicate,
+            classifier, span transform), rooting-safe call path proven first.
+      - [ ] **Step 5 — Org and Markdown rewritten as language files**; the escapes in
+            `Languages/` deleted. The acceptance test for the whole thing.
 - [ ] **Phase 3 — Semantic drivers.** Scopes/bindings/references as a real resolution
       layer rather than query captures. Exit criterion: the Lisp eight-pair cliff is gone,
       or Tier 1 is proven insufficient and the design is revised before any engine work.
@@ -839,18 +894,20 @@ real; if not, that is worth learning at language 3 rather than language 15.
       upstream external scanners (~10,600 LOC of C) keep working unmodified behind a shim:
       `TSLexer` is 7 function pointers and the scanner vtable is 5 slots. Conformance is
       free — upstream ships 235 corpus files, ~109,000 lines.
-- [ ] Decided: **ned's own language definitions are authored in Janet, not in a
-      tree-sitter-style `.scm`.** Janet is already the extension language and is
-      homoiconic, so the declarative trait tier is plain Janet *data* while the escape
-      tier is Janet *code* — which is what buys arithmetic, real quantifiers and access
-      to runtime host state, the three things tree-sitter's predicate system
-      structurally cannot express. An `.scm` reader stays, but only to consume upstream:
-      ned uses 32 query files it does not write (20 `highlights.scm`, 9 `tags.scm`, 3
-      `injections.scm`), and highlighting is at full coverage precisely because upstream
-      ships it. Two disciplines make it hold: keep the declarative tier pure data (no
-      evaluation to *load* a language), and *declare* escapes rather than embed them, so
-      they live in the user's `init.janet` and the grammar corpus stays data — Org's
-      `TodoKeywords` is already this shape. Full reasoning in `Docs/ParsingEngine.md`.
+- [x] Decided, then narrowed by measurement: **Janet is the Tier 2 escape language, not
+      the declarative format.** The original decision put both tiers in Janet — the
+      declarative tier as plain Janet *data*, the escape tier as Janet *code*, which is
+      what buys arithmetic, real quantifiers and access to runtime host state, the three
+      things tree-sitter's predicate system structurally cannot express. The Phase 1
+      measurement above removed the declarative half's reason to exist: there is no
+      cross-driver duplication for a new format to collapse, so the declarative tier
+      stays `.scm` — ned's 60 own files and the 32 upstream ones it consumes unchanged
+      (20 `highlights.scm`, 9 `tags.scm`, 3 `injections.scm`). What remains of the
+      decision is exactly the escapes: an escape that needs arithmetic or host state is
+      *declared* in a query by name and supplied from Janet, so it lives in the user's
+      `init.janet` and the grammar corpus stays data — Org's `TodoKeywords` is already
+      this shape, and `.pairs` is the one quantifier so far (in C++, since nothing about
+      it is configurable). Full reasoning in `Docs/ParsingEngine.md`.
 - [ ] Recorded as a conscious call rather than a default: **keeping `grammar.json`
       ingestion is a hard constraint**, and it permanently forecloses the resilient-LL
       path (matklad's) that would give better error recovery, because LL means

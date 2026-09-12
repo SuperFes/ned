@@ -13,9 +13,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -24,6 +26,9 @@
 
 namespace ned::editor::treesitter {
 class Language;
+class Parser;
+class Query;
+class IncrementalParseCache;
 } // namespace ned::editor::treesitter
 
 namespace ned::editor {
@@ -580,10 +585,10 @@ struct Mode {
     // self-insert-command/backward-delete-char auto-close/skip-over/delete
     // as a unit for this mode -- empty (the default) means no pairing at
     // all, same "empty means not configured" convention as highlight/fold
-    // above. Most *Mode() factories set this to Editor/AutoPair.h's
-    // DefaultAutoPairs(); Lisp-family modes (Janet/Clojure/Jank) use
-    // LispAutoPairs() instead, dropping the '' entry since a bare quote
-    // there is the reader's own quote macro, not a paired delimiter.
+    // above. A definition's AutoPairSet picks Editor/AutoPair.h's
+    // DefaultAutoPairs() or, for the Lisp family (Janet/Clojure/Jank),
+    // LispAutoPairs(), which drops the '' entry since a bare quote there is
+    // the reader's own quote macro, not a paired delimiter.
     std::vector<std::pair<char, char>> autoPairs;
     // gutter-symbol-kind follow-up: empty function (the default) means no
     // symbol-kind support configured for this mode, same "empty means not
@@ -606,8 +611,8 @@ struct Mode {
     TestDiscoveryFunction testDiscovery;
     // embedded-language-documents follow-up: empty function (the default)
     // means this mode has no LSP-syncable embedded-language regions, same
-    // "empty means not configured" convention as everything above -- only
-    // html-mode sets this (see HtmlMode() in Mode.cpp).
+    // "empty means not configured" convention as everything above -- only a
+    // definition with `embeddedDocuments` set (html) keeps this.
     EmbeddedRegionFunction embeddedRegions;
     // smart-indentation follow-up: empty function (the default) means
     // indent-for-tab-command/newline/indent-region/indent-buffer report
@@ -630,19 +635,17 @@ struct Mode {
     // line-wrap follow-up: this mode's own default for whether BufferView
     // should soft-wrap long lines at word boundaries instead of scrolling
     // horizontally -- false (matching every bundled mode except the two
-    // prose ones below) unless a *Mode() factory sets it, same "plain
-    // scalar, most factories leave it alone" convention lineCommentPrefix
-    // already established. A per-file override (Editor/WrapOverrides.h)
+    // prose ones, markdown and org) unless its definition sets it. A
+    // per-file override (Editor/WrapOverrides.h)
     // takes precedence over this default when one is configured.
     bool wrapLines = false;
 };
 
 // LSP/DAP client follow-up: ServerConfig.h/Config.h's language keys
-// ("c", "python", ...) are Mode's own name minus its "-mode" suffix -- every
-// bundled *Mode() factory names itself exactly that way (see
-// ModeOverrides.cpp's BundledModeFactories table, e.g. "c-mode"/
-// "python-mode"), so this is a free derivation rather than a second naming
-// table to keep in sync. Shared by BufferView (LSP sync, DAP
+// ("c", "python", ...) are Mode's own name minus its "-mode" suffix -- a
+// definition's name is the key and its mode is named "<key>-mode"
+// (LanguageDefinition.h's ModeNameFor), so this is the inverse of one rule
+// rather than a second naming table to keep in sync. Shared by BufferView (LSP sync, DAP
 // start-or-continue) and ModeLine (the mode-line-lsp-indicator follow-up) --
 // lives here, not in Editor/Lsp/, since it's a property of Mode's own naming
 // convention, not anything LSP-specific. Modes with no "-mode" suffix (there
@@ -655,18 +658,16 @@ struct Mode {
 [[nodiscard]] Mode FundamentalMode();
 
 // The per-language tree-sitter query sources a Mode is built from -- one
-// field per query kind, every one optional. Built at each call site with
-// designated initializers, so a language that has only a highlights and an
-// indents query names exactly those two rather than padding the gap with
-// positional empties; the seven kinds arrived one at a time (folds, imports,
-// tags, tests, indents, locals) and a positional parameter list had stopped
-// being readable well before the last of them.
+// field per query kind, every one optional. Built with designated
+// initializers (LanguageDefinition::queries), so a language that has only a
+// highlights and an indents query names exactly those two rather than
+// padding the gap with positional empties.
 //
 // Every field is a std::string_view over text this does NOT own. Both
 // builders below read each source during construction and never retain it
 // (Query's constructor compiles the pattern immediately), so a caller
 // passing a compile-time-embedded constant (Source/Editor/TreeSitter/
-// Queries.h -- what every bundled *Mode() factory does) and one passing a
+// Queries.h -- what every bundled definition does) and one passing a
 // locally-owned std::string it destroys afterwards (ModeOverrides.cpp's
 // dynamic-grammar path) are equally safe.
 //
@@ -695,16 +696,41 @@ struct TreeSitterQuerySources {
     // locals.scm -> Mode::localScopes (scope-aware-rename follow-up, see
     // Editor/LocalScopes.h)
     std::string_view locals;
+    // an "@injection.language"/"@injection.content"-capture injections.scm
+    // -> the highlight closure appends Injection.h's embedded-language spans
+    // after its own, and Mode::embeddedRegions is offered to a definition
+    // that asks for it (LanguageDefinition::embeddedDocuments).
+    std::string_view injections;
 };
 
-// Builds a Mode backed by a real tree-sitter grammar and that grammar's own
-// embedded queries (see Source/Editor/TreeSitter/Queries.h) --
-// bundle-remaining-grammars follow-up. `languageName` is the name
-// treesitter::LanguageByName expects (e.g. "python"). Every *Mode() function
-// below is a one-line call to this -- factored out once all thirteen turned
-// out to be otherwise identical, rather than hand-duplicating the same
-// Parser/Query/HighlightFunction-construction logic JsonMode originally
-// wrote out in full during the tree-sitter foundation phase.
+// One HighlightFunction cache per distinct embedded language actually
+// encountered by an injection-bearing highlight closure (fenced-code
+// languages, "markdown-inline", <script>'s javascript), keyed by canonical
+// grammar name -- see Injection.h's ResolveEmbeddedLanguageHighlight, the one
+// writer. nullopt is a memoized "no highlighter for this tag".
+using EmbeddedLanguageCache = std::unordered_map<std::string, std::optional<HighlightFunction>>;
+
+// What TreeSitterModeFromLanguage built a Mode from, handed out so an escape
+// (Editor/LanguageDefinition.h) can install a closure that rides the SAME
+// parser and IncrementalParseCache as the generic capabilities rather than
+// starting a second parse per keystroke -- the regression a per-mode second
+// parser has already cost this codebase once. Every member is a shared_ptr
+// for the reason the generic closures capture them that way: Parser/Query are
+// move-only, and Mode must stay a plain copyable value.
+struct ModeBuildContext {
+    std::string                                        languageKey; // "cpp" -- the grammar's key, what SyntaxClassForCapture and the imprint want
+    std::shared_ptr<const treesitter::Language>        language;
+    std::shared_ptr<treesitter::Parser>                parser;
+    std::shared_ptr<treesitter::IncrementalParseCache> sharedParse;
+    std::shared_ptr<treesitter::Query>                 highlightQuery; // null without a highlights source
+    std::shared_ptr<treesitter::Query>                 injectionQuery; // null without an injections source
+    std::shared_ptr<EmbeddedLanguageCache>             embeddedLanguageCache;
+};
+
+// Builds a Mode backed by a bundled tree-sitter grammar and the given query
+// sources. `languageName` is the name treesitter::LanguageByName expects
+// (e.g. "python"). ModeFromDefinition (LanguageDefinition.h) is what the
+// bundled modes go through; this is the generic build underneath it.
 [[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const TreeSitterQuerySources& queries);
 
 // The shared construction logic TreeSitterMode above delegates to, split out
@@ -714,34 +740,27 @@ struct TreeSitterQuerySources {
 // registry TreeSitterMode's own languageName lookup searches -- doesn't need
 // to hand-duplicate the Parser/Query/HighlightFunction-construction logic a
 // second time.
+// `context`, when given, receives the shared parser/cache/queries the returned
+// Mode's closures were built over -- see ModeBuildContext.
 [[nodiscard]] Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language,
-                                              const TreeSitterQuerySources& queries = {});
+                                              const TreeSitterQuerySources& queries = {}, ModeBuildContext* context = nullptr);
 
-// A real tree-sitter-backed Janet mode (bundle-remaining-grammars
-// follow-up), replacing the original hand-rolled per-line #-comment/
-// "string" scanner from the tree-sitter foundation phase -- that scanner's
-// only job was proving the highlighting hook point worked at all, which the
-// JSON mode built alongside it already did more thoroughly; now that a real
-// Janet grammar (sogaiu/tree-sitter-janet-simple) is bundled, there's no
-// reason to keep the hand-rolled version around as anything but a strictly
-// worse duplicate.
+// The bundled modes, each its LanguageDefinition (Editor/BundledLanguages.h)
+// built through ModeFromDefinition -- a named function per language so a
+// caller (tests, most often) can ask for one without going through the
+// registry. Everything a language is -- grammar, extensions, comment
+// syntax, keymap, queries, escapes -- is stated in its definition, not here.
+// Two are worth knowing about: JankMode shares Clojure's grammar and queries
+// under its own name (so the mode line reads (jank-mode)), and Markdown/Org
+// carry the only non-empty keymaps and the only escapes -- see
+// Editor/Languages/ for the highlight/indent/symbol closures a plain query
+// cannot express (heading level is arithmetic over `*`/`#` counts,
+// TODO-vs-DONE compares against org::TodoKeywords(), a runtime-configured
+// list). Org's keymap deliberately shadows several global bindings while an
+// Org buffer is active (C-c C-p, C-c C-o, C-c C-s, C-c C-d) -- a mode layer
+// overriding the global layer per buffer is what KeymapStack exists for.
 [[nodiscard]] Mode JanetMode();
-
-// The first real tree-sitter-backed Mode (tree-sitter foundation follow-up),
-// proving the whole Parser -> Tree -> Query -> HighlightSpan pipeline end to
-// end. Originally a small, deliberately hand-written query (strings,
-// numbers, true/false/null); now upgraded to tree-sitter-json's own real
-// queries/highlights.scm like every other mode here, once the
-// bundle-remaining-grammars follow-up's CMake resource-embedding mechanism
-// existed to make that possible.
 [[nodiscard]] Mode JsonMode();
-
-// The remaining bundled grammars (bundle-remaining-grammars follow-up) --
-// see Languages.h for the full bundled-vs-Perl-skipped story. TsxMode shares
-// TypeScriptMode's query text (queries::kTypeScript) -- tree-sitter-
-// typescript's own repo has one top-level queries/highlights.scm covering
-// both the typescript/ and tsx/ grammars, confirmed by checking the actual
-// repo rather than assumed.
 [[nodiscard]] Mode CMode();
 [[nodiscard]] Mode CppMode();
 [[nodiscard]] Mode PhpMode();
@@ -752,114 +771,18 @@ struct TreeSitterQuerySources {
 [[nodiscard]] Mode CssMode();
 [[nodiscard]] Mode PythonMode();
 [[nodiscard]] Mode BashMode();
-// ram02z/tree-sitter-fish -- same "community-maintained, ships a real
-// queries/highlights.scm" bar as yaml/toml below.
 [[nodiscard]] Mode FishMode();
-// tree-sitter-grammars/tree-sitter-xml -- same community-maintained-grammar
-// bar as fish/yaml/toml above; a real generic XML/DTD grammar (elements,
-// attributes, entities, CDATA, DOCTYPE, processing instructions), not a
-// reuse of HtmlMode's HTML-specific one.
 [[nodiscard]] Mode XmlMode();
-// tree-sitter/tree-sitter-rust -- the tree-sitter org's own official
-// grammar, same provenance bar as CMode/CppMode/PythonMode/
-// JavaScriptMode above. Ships a real queries/highlights.scm and
-// queries/tags.scm, both consumed unmodified (no c-tags.scm/cpp-tags.scm-
-// style vendoring needed -- checked directly, no ambiguity found).
 [[nodiscard]] Mode RustMode();
-// tree-sitter/tree-sitter-go -- the tree-sitter org's own official grammar,
-// same provenance bar as RustMode above. Ships a real queries/highlights.scm
-// and queries/tags.scm, both consumed unmodified. No import-target support
-// (see Queries.h's own comment beside kRustImports/kGoTags for why Go's
-// package-based imports can't be resolved by a syntax-only query the way
-// Rust's file-per-module "mod foo;" can).
 [[nodiscard]] Mode GoMode();
-// tree-sitter/tree-sitter-c-sharp -- the tree-sitter org's own official
-// grammar, same provenance bar as GoMode above. Ships a real
-// queries/highlights.scm and queries/tags.scm, both consumed unmodified. No
-// import-target support (see Queries.h's own comment beside kRustImports
-// for why a namespace-based `using` directive can't be resolved by a
-// syntax-only query the way Rust's file-per-module "mod foo;" can).
 [[nodiscard]] Mode CSharpMode();
-// tree-sitter/tree-sitter-java -- the tree-sitter org's own official
-// grammar, same provenance bar as CSharpMode above. Ships a real
-// queries/highlights.scm and queries/tags.scm, both consumed unmodified. No
-// import-target support (see Queries.h's own comment beside kRustImports
-// for why a package-based `import` can't be resolved by a syntax-only query
-// the way Rust's file-per-module "mod foo;" can).
 [[nodiscard]] Mode JavaMode();
-// fwcd/tree-sitter-kotlin -- community-maintained, the same bar as
-// FishMode/XmlMode above rather than the tree-sitter org's own; see
-// CMakeLists.txt for why this repo over the tree-sitter-grammars fork.
-// Ships a real queries/highlights.scm but no tags.scm, so unlike every
-// other bundled language its symbol-kind query is repo-local
-// (queries/kotlin-tags.scm). No import-target support, same
-// package-not-a-file reasoning as JavaMode above.
 [[nodiscard]] Mode KotlinMode();
-// yaml/toml follow-up: tree-sitter-grammars/tree-sitter-yaml and
-// tree-sitter-grammars/tree-sitter-toml, both community-maintained, both
-// ship a pre-generated src/parser.c and a real queries/highlights.scm --
-// see Languages.h/.cpp.
 [[nodiscard]] Mode YamlMode();
 [[nodiscard]] Mode TomlMode();
-// clojure-and-jank follow-up: one grammar (sogaiu/tree-sitter-clojure) and
-// one vendored query (queries::kClojure) serving two distinct mode names --
-// jank is a Clojure dialect with no tree-sitter grammar of its own, so
-// JankMode shares ClojureMode's grammar/query wholesale (the TsxMode/
-// TypeScriptMode sharing pattern) while keeping its own name so the mode
-// line reads (jank-mode) in a .jank buffer.
 [[nodiscard]] Mode ClojureMode();
 [[nodiscard]] Mode JankMode();
-// Tables follow-up: unlike every other TreeSitterMode() call above, this
-// one's returned Mode gets a real keymap binding (TAB -> markdown-table-
-// align, see Editor/Markdown.h) layered on afterward -- the second Mode in
-// this codebase to ever construct a non-empty Keymap, OrgMode() below was
-// the first.
 [[nodiscard]] Mode MarkdownMode();
-
-// Org-like structured editing (v1 slice, see Org.h and ROADMAP.md's
-// "Org-like structured editing" entry) -- a real, non-empty keymap (the
-// first Mode in this codebase to actually have one; every *Mode() function
-// above still constructs a plain empty Keymap()).
-//
-// Org-mode syntax-highlighting follow-up: also a real `.highlight`, unlike
-// every other Mode above, NOT built via the shared TreeSitterMode()/
-// TreeSitterModeFromLanguage() template those all use -- OrgMode() builds
-// its own Parser/Query (against Ned's own forked "org" grammar and
-// Source/Editor/TreeSitter/OrgHighlights.scm) plus a custom
-// HighlightFunction that resolves two capture names
-// ("org.headline.stars"/"org.keyword.candidate") directly in C++ rather
-// than through the shared, generic CaptureTable()/SyntaxClassForCapture()
-// mechanism every other capture still goes through -- see Mode.cpp's own
-// implementation and OrgHighlights.scm's header comment for why (in short:
-// Query::Captures never evaluates tree-sitter predicates, so headline
-// level and TODO-vs-DONE, which every reference query for this grammar
-// resolves via predicates, have to be resolved here instead, from the
-// captured node's own text).
-// Binds org-cycle-todo/org-cycle-priority/org-toggle-checkbox under real
-// Org's own C-c C-t/C-c C-c bindings, plus C-c C-p for priority -- which
-// deliberately SHADOWS the global toggle-project-sidebar binding while an
-// Org buffer is active. That's intentional, not an oversight: KeymapStack
-// was built from Phase 2 onward specifically so a mode layer can override
-// the global layer per buffer (exactly how real Emacs major modes work,
-// e.g. C-c C-c means something different in every major mode) -- this is
-// simply the first Mode to actually exercise that with a real conflicting
-// binding, rather than only ever adding new bindings the global map never
-// had. toggle-project-sidebar is unaffected everywhere else. Also binds
-// org-cycle (real Org's own 3-state subtree fold cycle) to TAB, and
-// org-set-tags to C-c C-q (also real Org's own binding) -- neither shadows
-// anything: TAB is unbound in the global keymap (self-insert only covers
-// printable ASCII), and C-c C-q was never bound anywhere. Links follow-up:
-// also binds open-link-at-point to real Org's own C-c C-o -- this DOES
-// shadow the global find-scratch binding while an org-mode buffer is
-// active, the same kind of intentional, smoke-tested mode-over-global
-// shadow C-c C-p already established above (open-link-at-point is also
-// reachable everywhere, Org included, via the global C-c C-l binding --
-// C-c C-o is an additional, not exclusive, path to it in Org buffers).
-// Scheduling/recurrence follow-up: also binds org-schedule/org-deadline to
-// real Org's own C-c C-s/C-c C-d -- another deliberate mode-over-global
-// shadow (project-search/create-directory, respectively, same precedent
-// C-c C-p/C-c C-o already established), not reachable by any other global
-// binding while an Org buffer is focused.
 [[nodiscard]] Mode OrgMode();
 
 } // namespace ned::editor
