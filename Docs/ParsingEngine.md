@@ -294,6 +294,52 @@ inference reports and `cpp-folds.scm` omits: that looks like an omission the
 inference just caught rather than a considered exclusion, but it is recorded
 as an open question rather than quietly decided.
 
+### Tier 1 is not inferable, and that is now measured rather than assumed
+
+Tier 0's result was good enough to raise the obvious question: if delimited
+bodies fall out of the grammar, do *callables* and *types* too? Two hypotheses
+were tested against the 14 node types the hand-written `tags.scm` files mark
+`@definition.function` across 9 languages. Both are refuted, and recording that
+is the point -- otherwise it gets retried.
+
+**"A callable has a parameter list and a body."** Structural, and far too broad:
+11 to 41 candidates per language against a ground truth of about two, sweeping
+in `call_expression`, `for_statement`, `catch_clause` and `attribute`. Every one
+of those has a paren-delimited list and a body. Shape does not separate a
+*declaration* from a *call*.
+
+**"A declaration binds a name, and `grammar.json` records `field("name", ...)`."**
+Much sharper -- candidates drop to between 0 and 14, and the survivors are
+recognisable: `function_declaration`, `method_declaration`, `class_declaration`,
+`function_item`. But recall against the ground truth is **5 of 14, about 36%**,
+and the misses are not a long tail to be tidied up:
+
+- **C and C++** put the name behind `declarator:`, nested inside
+  `function_declarator`, so `function_definition`'s own production has no `name`
+  field at all.
+- **Kotlin** does not use `field("name")` anywhere; zero candidates.
+- **JavaScript**'s callables are *assignment* shapes -- `assignment_expression`,
+  `pair`, `variable_declarator` -- because `const f = () => {}` is a binding of a
+  function, not a function declaration. No amount of declaration-shaped
+  inference finds that.
+
+36% recall is worse than useless for a driver: you would ship both mechanisms
+and the inferred half would be the one nobody trusts.
+
+The reason is not incidental. Tier 0 asks *what shape is this*, which a grammar
+states completely. Tier 1 asks *what does this mean* -- specifically "is this
+name being introduced or used", which is the same question `locals.scm` exists
+to answer and which no production records. The tiers are split along exactly the
+line where grammars stop carrying the answer.
+
+**So the N x M win is asymmetric, and the honest version is worth stating.** For
+Tier 0 it is a genuine reduction in authoring: 21 languages fold, nine of which
+had nothing, with no per-language rules written. For Tier 1 it is *not* fewer
+things to author -- a declaration is about as much work as the `tags.scm` line
+it replaces. The win there is **one vocabulary consumed by many drivers**
+instead of one query per driver, which is real but smaller, and it should not be
+sold as the same result.
+
 ### Tier 1 must reuse the capture-name model, not invent an enum
 
 `Docs/HighlightCapabilities.md` settled this for highlighting and the same
