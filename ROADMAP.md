@@ -874,7 +874,7 @@ real; if not, that is worth learning at language 3 rather than language 15.
             name the file). `Editor/LanguageFiles.h` reads a query path from the
             compiled-in `Source/Languages/` table (one CMake glob,
             `ned_embed_language_files` — the 91 per-query embed lines and ~90
-            `Queries.h` externs are deleted with the header) or from disk, cached
+            Queries.h externs are deleted with the header) or from disk, cached
             per path. All 63 ned-authored files converted in place with comments
             and layout intact; upstream's 31 vendored as
             `<name>/upstream/<kind>.janet`, held against their FetchContent
@@ -886,9 +886,29 @@ real; if not, that is worth learning at language 3 rather than language 15.
             deleted `Injection.cpp`'s grammar-only special case. Oracle
             byte-identical; verified live (cpp + org buffers, fold cycle,
             headline levels, clangd/harper attach).
-      - [ ] **Step 2 — definitions move to `language.janet`**, loader in `Janet/`, every
-            remaining C++ per-language table (root markers, import resolution, injection
-            aliases, snippets) derived from them.
+      - [x] **Step 2 — definitions ARE `language.janet`.** Each bundled language is one
+            `Source/Languages/<name>/language.janet` — pure Janet *data*, read with no VM
+            (`Editor/JanetData.h`, a small struct/tuple/keyword reader; the doc's own
+            "nothing evaluates to load a language" discipline, and also a hard
+            constraint: modes rebuild on ModePrewarm's background thread and Janet is
+            main-thread-only, so the loader lives in `Editor/`, not `Janet/`).
+            `Editor/LanguageParse.h` maps the struct to `LanguageDefinition` (unknown
+            key/wrong type/name-vs-directory mismatch are loud `file:line` errors) and
+            **discovers query files by convention** — `<dir>/upstream/<kind>.janet` then
+            `<dir>/<kind>.janet`, upstream first so a tags delta concatenates right;
+            `:queries-from` redirects the directory (jank→clojure, tsx→typescript) and an
+            explicit `:queries` entry replaces discovery per kind (cpp's imports are c's
+            file) — so a definition names files only where convention fails. Four more
+            C++ tables became definition fields and their modules derive:
+            `:lsp-root-markers` (RootResolver's 12-entry map), `:import-resolution`
+            (ImportResolutionConfig's 11), `:injection-aliases` (Injection.cpp's 14,
+            each alias declared on the language it means), and `:snippets` (all 83
+            bundled snippets, extracted mechanically). `BundledLanguages.cpp` is down to
+            a ~60-line loader; `Tests/LanguageParseTest.cpp` freezes the derived sets so
+            a definition losing a fact fails as a diff, not feature-by-feature. Full
+            suite + oracle green, targeted ASan clean, live smoke fine. One real
+            transcription catch: janet's import-resolution entry was dropped on the
+            first pass and the frozen-set test caught it.
       - [ ] **Step 3 — one loader** for user/project languages; `RegisterDynamicMode`
             deleted.
       - [ ] **Step 4 — Janet hooks in `Query.cpp` and the highlight pipeline** (predicate,
