@@ -393,6 +393,26 @@ real; if not, that is worth learning at language 3 rather than language 15.
       the test is direct parentage in the *tree*, not containment in byte ranges); and
       **`c-folds.scm`'s documented "extend later"** struct/enum/union omission, now
       extended.
+- [x] **The imprint ships as a compiled-in table, and can drive folding without a
+      grammar.json.** `Editor/ImprintTables.cpp` is generated and checked in
+      (`NED_BLESS_IMPRINT=1 ./build/ned_tests "[Imprint]"`), because `grammar.json` lives
+      only in the FetchContent tree and an installed `ned` has no access to it.
+      `Editor/ImprintFold.h` turns that table into a `FoldFunction` — same contract as
+      `Mode::fold`, so nothing downstream can tell which it got. Asserted rather than
+      described: a Mode whose fold source is the compiled table produces **byte-identical**
+      blocks to the hand-written query across all 12 languages, through the same
+      `FoldableBlocks` every consumer uses.
+      Two guards, both verified to actually fail: the table is held against live inference
+      over the real grammars on every run (1,386 assertions; flipping one field of one
+      entry trips it), and the byte-for-byte equivalence is checked per language. A
+      build-time codegen binary would make staleness structurally impossible instead, at
+      the cost of a tool that must run on the build host — noted in `ImprintTables.h` as
+      the upgrade path if this ever outgrows a checked-in artifact.
+- [ ] **Turn it on.** Nothing in `Source/` selects the imprint fold source yet — the
+      capability exists and is proven, the switch is a separate decision. Wants a setting
+      in the `ned/set-*` shape and a think about precedence against a hand-written query
+      that a language may still want (Org and Markdown fold by their own rules, not by
+      delimiters).
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over
