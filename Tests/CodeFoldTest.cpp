@@ -131,6 +131,31 @@ TEST_CASE("FoldableBlocks offers no Kotlin fold for an expression-bodied functio
     REQUIRE(blocks.empty());
 }
 
+TEST_CASE("A Kotlin expression body is not foldable even when it spans lines", "[CodeFold]") {
+    // The case above passes for a reason that does not generalise -- those
+    // bodies are single-line, and NormalizeFoldBlocks drops single-line blocks
+    // whatever the source said. This one spans four lines and still must not
+    // fold: `function_body` is `{ ... }` OR `= expr`, and this instance carries
+    // no brackets at all.
+    //
+    // The deleted kotlin-folds.scm stated it by hand (`(function_body "{")`),
+    // which the union could never honour -- a fold source states only
+    // positives, so the imprint's unconditional capture won regardless. It is
+    // the instance check in Editor/ImprintBracket.h's DelimitersOf that
+    // actually answers it.
+    const auto mode   = KotlinMode();
+    const auto blocks = FoldableBlocks(mode, "fun describe(n: Int): String = if (n < 0)\n"
+                                             "    \"negative\"\n"
+                                             "else\n"
+                                             "    \"non-negative\"\n"
+                                             "\n"
+                                             "fun twice(n: Int): Int {\n"
+                                             "    return n * 2\n"
+                                             "}\n");
+    REQUIRE(blocks.size() == 1);
+    CHECK(blocks.front().first == 105); // the braced body, not the `= if`
+}
+
 TEST_CASE("FoldableBlocks returns nothing for a mode with no fold query", "[CodeFold]") {
     const ned::editor::Mode mode   = ned::editor::FundamentalMode();
     const auto              blocks = FoldableBlocks(mode, "anything at all");

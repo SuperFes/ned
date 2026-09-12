@@ -78,6 +78,39 @@ TEST_CASE("A brace inside a string or comment is not a delimiter", "[ImprintBrac
     CHECK(Match("c", text, open) == realClose);
 }
 
+TEST_CASE("The delimiters need not be the node's first and last children", "[ImprintBracket]") {
+    // `a[0]` parses as `identifier` `[` `number_literal` `]`, so reading child
+    // 0 as the opener reported the identifier and matching on `[` failed
+    // outright -- every `openerIsFirst == false` body was in that position.
+    const std::string text  = "int f(void) {\n    int a[3];\n    return a[0];\n}\n";
+    const std::size_t open  = text.find("a[0]") + 1;
+    const std::size_t close = text.find("a[0]") + 3;
+
+    CHECK(Match("c", text, open) == close);
+    CHECK(Match("c", text, close) == open);
+}
+
+TEST_CASE("A node whose production can be unbracketed reports no pair when it is", "[ImprintBracket]") {
+    // Kotlin's `function_body` is `{ ... }` or `= expr`. The table says the
+    // TYPE is delimited, which is true of one alternative; this instance is
+    // the other one.
+    const std::string expr = "fun double(n: Int): Int = n * 2\n";
+    CHECK(Match("kotlin", expr, expr.find('=')) == std::nullopt);
+
+    const std::string braced = "fun twice(n: Int): Int {\n    return n * 2\n}\n";
+    CHECK(Match("kotlin", braced, braced.find('{')) == braced.rfind('}'));
+}
+
+TEST_CASE("An unclosed brace still pairs, via the parser's own missing token", "[ImprintBracket]") {
+    // Requiring a real closer would break folding and matching mid-typing if
+    // error recovery dropped it. It does not: tree-sitter inserts a zero-width
+    // MISSING `}` at the end, which is found the same way a written one is.
+    // The missing token sits where the closer would have gone -- directly
+    // after the last statement, not at end of file.
+    const std::string text = "int f(void) {\n    int x = 1;\n";
+    CHECK(Match("c", text, text.find('{')) == text.rfind(';') + 1);
+}
+
 TEST_CASE("Point away from any delimiter matches nothing", "[ImprintBracket]") {
     const std::string text = "int f(void) {\n    return 1;\n}\n";
     CHECK(Match("c", text, text.find("return")) == std::nullopt);
@@ -160,6 +193,12 @@ TEST_CASE("The Mode capability is present exactly where brackets mean something"
     CHECK(static_cast<bool>(ned::editor::CMode().matchingDelimiters));
     CHECK(static_cast<bool>(ned::editor::PhpMode().matchingDelimiters));
     CHECK(static_cast<bool>(ned::editor::YamlMode().matchingDelimiters));
+    // jank shares Clojure's grammar but keys its own table by mode name, and
+    // had no entry until the fold queries were deleted and JankMode stopped
+    // folding. It had been missing bracket matching that whole time, silently,
+    // because nothing else consulted the table. Pinned so it cannot recur.
+    CHECK(static_cast<bool>(ned::editor::ClojureMode().matchingDelimiters));
+    CHECK(static_cast<bool>(ned::editor::JankMode().matchingDelimiters));
 
     CHECK_FALSE(static_cast<bool>(ned::editor::OrgMode().matchingDelimiters));
     CHECK_FALSE(static_cast<bool>(ned::editor::FundamentalMode().matchingDelimiters));

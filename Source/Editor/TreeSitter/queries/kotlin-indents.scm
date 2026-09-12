@@ -1,9 +1,9 @@
 ; smart-indentation follow-up. See c-indents.scm's own header comment for the
-; general convention, and kotlin-folds.scm's for why this language's
-; brace-delimited nodes are the ones they are (a hidden "_block" rule inlines
-; its braces into the parent, so "statements" is the wrong node to key on and
-; the sometimes-unbraced parents need an explicit "{" child). Mirrors that
-; file's node selection. "function_value_parameters" (a function's own
+; general convention, and the deleted kotlin-folds.scm (in `git log`) for why
+; this language's brace-delimited nodes are the ones they are (a hidden
+; "_block" rule inlines its braces into the parent, so "statements" is the
+; wrong node to key on and the sometimes-unbraced parents need an explicit
+; "{" child). Mirrors that file's node selection. "function_value_parameters" (a function's own
 ; parameter list), "value_arguments" (a call's own arguments) and
 ; "indexing_suffix" (an "arr[i]" subscript) get @aligned rather than @indent,
 ; same reasoning c-indents.scm's own parameter_list/argument_list do.

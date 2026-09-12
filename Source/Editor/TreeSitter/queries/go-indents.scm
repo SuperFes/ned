@@ -1,8 +1,8 @@
 ; smart-indentation follow-up. See c-indents.scm's own header comment for the
 ; general convention -- checked against tree-sitter/tree-sitter-go's own
 ; grammar.js/node-types.json directly, same discipline rust-indents.scm's own
-; header comment establishes, not assumed. Mirrors go-folds.scm's own node
-; selection (see that file's header comment for why
+; header comment establishes, not assumed. Mirrors the node selection the
+; deleted go-folds.scm made (`git log` carries the reasoning for why
 ; expression_switch_statement/type_switch_statement/select_statement/
 ; interface_type are each captured directly rather than via a child block --
 ; Go's switch/select/interface bodies have no separate wrapping node the way

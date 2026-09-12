@@ -8,8 +8,8 @@
 // nothing that answers "where is the partner of the bracket under my cursor".
 //
 // The imprint already knows. Every entry in `Editor/ImprintTables.h` is a node
-// whose production opens and closes with a matched pair, so the answer is that
-// node's own first and last children -- no bracket-counting scan, no confusion
+// whose production opens and closes with a matched pair, so the answer is
+// among that node's own children -- no bracket-counting scan, no confusion
 // about a brace inside a string or comment, because the parse already settled
 // that.
 //
@@ -33,6 +33,34 @@
 #include "Editor/TreeSitter/Tree.h"
 
 namespace ned::editor::imprint {
+
+// The bracket pair this ONE NODE actually carries, or nullopt.
+//
+// The imprint is a table of node TYPES, and a type that can be delimited is
+// not the same as an instance that is. Two shapes make that gap real, and both
+// were live defects before this existed:
+//
+//   - A production that is a CHOICE of a bracketed form and an unbracketed one
+//     is reported as delimited, correctly, because one alternative is. Kotlin's
+//     `function_body` is `{ ... }` or `= expr`; a multi-line `= if (n < 0) ...`
+//     was offered as a fold with no block to collapse. (The deleted
+//     kotlin-folds.scm guarded this by hand, with `(function_body "{")` --
+//     which the union could not honour, since a fold source states only
+//     positives.)
+//   - The delimiters are not the first and last children. `a[0]` is
+//     `identifier` `[` `number_literal` `]`, so reading child 0 as the opener
+//     reported the identifier and bracket matching on `[` simply failed.
+//
+// So: the closer is the LAST anonymous child that is a closing bracket (last
+// rather than final child, because a closer may be followed by optional
+// members -- JavaScript's `statement_block`), and the opener is the first
+// anonymous child before it carrying the matching bracket. A zero-width MISSING
+// closer from error recovery is found the same way, which is what keeps a
+// half-typed `{` foldable.
+//
+// Table-free on purpose: whether this node is a delimited body at all is the
+// caller's question, already answered by `Editor/ImprintTables.h`.
+[[nodiscard]] std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node);
 
 // The pair whose opener or closer point sits on or immediately after, or
 // nullopt when point is not on a delimiter at all.

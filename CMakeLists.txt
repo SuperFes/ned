@@ -402,13 +402,11 @@ ned_embed_janet_plugin("${CMAKE_CURRENT_SOURCE_DIR}/Source/Janet/Plugins/gradien
 ned_add_treesitter_grammar(tree-sitter-json https://github.com/tree-sitter/tree-sitter-json.git v0.24.8)
 
 ned_embed_treesitter_query("${tree-sitter-json_SOURCE_DIR}/queries/highlights.scm" Json)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/json-folds.scm" JsonFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/json-indents.scm" JsonIndents)
 
 ned_add_treesitter_grammar(tree-sitter-c https://github.com/tree-sitter/tree-sitter-c.git v0.24.2)
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c.scm" C)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-folds.scm" CFolds)
 # import-target-tree-sitter follow-up: shared by CMode and CppMode below --
 # both grammars define preproc_include identically.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-imports.scm" CImports)
@@ -426,7 +424,6 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-cpp https://github.com/tree-sitter/tree-sitter-cpp.git v0.23.4)
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp.scm" Cpp)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-folds.scm" CppFolds)
 # Same vendored-not-upstream reasoning as CTags above -- see cpp-tags.scm's
 # own header comment.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-tags.scm" CppTags)
@@ -458,7 +455,6 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
 
 ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/highlights.scm" JavaScript)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-folds.scm" JavaScriptFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-imports.scm" JavaScriptImports)
 # gutter-symbol-kind follow-up: see PhpTags' own comment above -- the
 # grammar's real, unmodified queries/tags.scm; no vendoring needed here
@@ -474,7 +470,6 @@ ned_add_treesitter_grammar_target(tree-sitter-typescript "${tree-sitter-typescri
 ned_add_treesitter_grammar_target(tree-sitter-tsx "${tree-sitter-typescript-src_SOURCE_DIR}/tsx")
 
 ned_embed_treesitter_query("${tree-sitter-typescript-src_SOURCE_DIR}/queries/highlights.scm" TypeScript)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-folds.scm" TypeScriptFolds)
 # import-target-tree-sitter follow-up: shared by TypeScriptMode and TsxMode,
 # same sharing as the highlight/fold queries above.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-imports.scm" TypeScriptImports)
@@ -576,7 +571,6 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-clojure https://github.com/sogaiu/tree-sitter-clojure.git v0.0.13)
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure.scm" Clojure)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-folds.scm" ClojureFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-imports.scm" ClojureImports)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-indents.scm" ClojureIndents)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-locals.scm" ClojureLocals)
@@ -614,7 +608,6 @@ ned_embed_treesitter_query("${tree-sitter-xml_SOURCE_DIR}/queries/xml/highlights
 ned_add_treesitter_grammar(tree-sitter-rust https://github.com/tree-sitter/tree-sitter-rust.git v0.24.2)
 
 ned_embed_treesitter_query("${tree-sitter-rust_SOURCE_DIR}/queries/highlights.scm" Rust)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-folds.scm" RustFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-imports.scm" RustImports)
 ned_embed_treesitter_query("${tree-sitter-rust_SOURCE_DIR}/queries/tags.scm" RustTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-tests.scm" RustTests)
@@ -643,7 +636,6 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-go https://github.com/tree-sitter/tree-sitter-go.git v0.25.0)
 
 ned_embed_treesitter_query("${tree-sitter-go_SOURCE_DIR}/queries/highlights.scm" Go)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/go-folds.scm" GoFolds)
 ned_embed_treesitter_query("${tree-sitter-go_SOURCE_DIR}/queries/tags.scm" GoTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/go-tests.scm" GoTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/go-indents.scm" GoIndents)
@@ -673,7 +665,6 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-c-sharp https://github.com/tree-sitter/tree-sitter-c-sharp.git v0.23.5)
 
 ned_embed_treesitter_query("${tree-sitter-c-sharp_SOURCE_DIR}/queries/highlights.scm" CSharp)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/csharp-folds.scm" CSharpFolds)
 # class-file-sync follow-up: upstream plus ned's delta (enum/struct/record,
 # and the file-scoped namespace form) -- see csharp-tags.scm's own header.
 ned_embed_treesitter_query_concat(CSharpTags
@@ -708,7 +699,6 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-java https://github.com/tree-sitter/tree-sitter-java.git v0.23.5)
 
 ned_embed_treesitter_query("${tree-sitter-java_SOURCE_DIR}/queries/highlights.scm" Java)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/java-folds.scm" JavaFolds)
 # class-file-sync follow-up: upstream plus ned's delta (enum/record) -- see
 # java-tags.scm's own header.
 ned_embed_treesitter_query_concat(JavaTags
@@ -746,7 +736,6 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-kotlin https://github.com/fwcd/tree-sitter-kotlin.git 0.3.8)
 
 ned_embed_treesitter_query("${tree-sitter-kotlin_SOURCE_DIR}/queries/highlights.scm" Kotlin)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-folds.scm" KotlinFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-tags.scm" KotlinTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-tests.scm" KotlinTests)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/kotlin-indents.scm" KotlinIndents)

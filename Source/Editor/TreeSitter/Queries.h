@@ -60,37 +60,30 @@ extern const char* const kJava;   // tree-sitter/tree-sitter-java's own real que
 // this repo rather than the tree-sitter-grammars fork.
 extern const char* const kKotlin;
 
-// generic-code-folding follow-up: hand-written "@fold" queries, one per
-// in-scope language (Source/Editor/TreeSitter/queries/*-folds.scm) -- no
-// upstream grammar repo or nvim-treesitter/Neovim-core query set ships a
-// folds.scm for any of these (checked directly, not assumed; see
-// ROADMAP.md). kTypeScriptFolds is shared by TypeScriptMode and TsxMode,
-// mirroring kTypeScript's own sharing above. Languages with no fold query
-// yet (PHP/HTML/CSS/Bash/Janet/Markdown) have no corresponding constant
-// here -- their Mode::fold simply stays empty.
-extern const char* const kCFolds;
-extern const char* const kCppFolds;
-extern const char* const kJsonFolds;
-extern const char* const kJavaScriptFolds;
-extern const char* const kTypeScriptFolds;
-extern const char* const kClojureFolds; // shared by ClojureMode and JankMode, same as kClojure above
-extern const char* const kRustFolds;
-extern const char* const kGoFolds;
-extern const char* const kCSharpFolds;
-extern const char* const kJavaFolds;
-// kotlin-folds.scm keys on the PARENT of this grammar's hidden "_block" rule
-// rather than on its visible "statements" node -- see that file's own header.
-extern const char* const kKotlinFolds;
+// No fold queries are declared here, and that is the point.
+//
+// There were eleven `*-folds.scm` files, one per bracket language, and every
+// one of them is gone. `Editor/ImprintFold.h` derives the same folds from the
+// delimiter imprint the grammar itself declares, so nothing had to be
+// authored per language and nothing downstream could tell the difference:
+// measured over 66 real files across those eleven languages, the queries
+// produced ZERO fold ranges the imprint did not. See ROADMAP.md and
+// `Tests/ImprintTest.cpp`, which keeps the deleted node lists as a pin so a
+// grammar renaming `compound_statement` still fails the build.
+//
+// `TreeSitterQuerySources::folds` itself stays: a runtime-`dlopen`'d grammar
+// has no imprint table compiled in, so `RegisterDynamicMode`'s discovered
+// `folds.scm` remains its only fold source.
 
 // import-target-tree-sitter follow-up: hand-written "@import.target"/
 // "@import.module"/"@import.statement" queries, one per in-scope language
 // (Source/Editor/TreeSitter/queries/*-imports.scm) -- no upstream grammar
 // repo or nvim-treesitter/Neovim-core query set ships one of these for any
-// language (same "checked directly, not assumed" convention the fold
-// queries above already established). kCImports is shared by CMode and
+// language (same "checked directly, not assumed" convention the now-deleted
+// fold queries above established). kCImports is shared by CMode and
 // CppMode; kTypeScriptImports is shared by TypeScriptMode and TsxMode;
 // kClojureImports is shared by ClojureMode and JankMode -- same sharing each
-// language's own highlight/fold query already uses. Languages with no
+// language's own highlight query already uses. Languages with no
 // import query (JSON/HTML/YAML/TOML/Markdown/Org/fundamental-mode -- no real
 // per-language import *statement* to key off of, or already otherwise
 // covered, see ROADMAP.md) have no corresponding constant here; their
@@ -131,7 +124,7 @@ extern const char* const kRustImports;
 // their grammar simply doesn't ship one; their Mode::symbolKind stays empty,
 // same "empty means not configured" convention every other optional Mode
 // capability already uses. kTypeScriptTags is shared by TypeScriptMode and
-// TsxMode, same sharing kTypeScript/kTypeScriptFolds/kTypeScriptImports
+// TsxMode, same sharing kTypeScript/kTypeScriptImports
 // already use. kCTags/kCppTags are the one exception to "unmodified" --
 // upstream's own @definition.function pattern is ambiguous with C/C++'s
 // "most vexing parse" (confirmed live against a real false positive, a local

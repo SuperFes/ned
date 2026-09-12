@@ -6,7 +6,7 @@
 ; Unlike the brace-delimited languages, Python's grammar already scopes every
 ; indented suite (function/class/if/for/while/with/try body) as one "block"
 ; node whose own byte range exactly matches the indented lines -- the same
-; single capture python-folds.scm already relies on. This is what makes
+; single capture python-folds.scm relied on before it was deleted. This is what makes
 ; end-of-block dedent free: once the ancestor walk climbs OUT of a block, it
 ; simply stops contributing, no closing-delimiter @dedent capture needed at
 ; all (there's no closing token to capture -- Python has none). Only a

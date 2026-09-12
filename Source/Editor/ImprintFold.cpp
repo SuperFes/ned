@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "Editor/ImprintBracket.h"
 #include "Editor/ImprintTables.h"
 #include "Editor/TreeSitter/IncrementalParse.h"
 #include "Editor/TreeSitter/Languages.h"
@@ -22,8 +23,16 @@ namespace {
         if (node.IsNull())
             return;
 
-        const auto        entry      = table.find(std::string(node.Type()));
-        const bool        foldable   = entry != table.end() && ShouldFold(entry->second, policy);
+        const auto entry = table.find(std::string(node.Type()));
+        // The table answers for the node TYPE; a bracket body still has to
+        // carry its brackets in this instance. Kotlin's `function_body` is
+        // `{ ... }` OR `= expr`, and a multi-line expression body was being
+        // offered as a fold with nothing to collapse -- see
+        // `Editor/ImprintBracket.h`'s DelimitersOf for the two shapes this
+        // rules out. An indentation body is exempt: its closer is a dedent,
+        // which is not a token at all.
+        const bool        foldable   = entry != table.end() && ShouldFold(entry->second, policy) &&
+                                       (entry->second.kind != DelimiterKind::Bracket || DelimitersOf(node).has_value());
         const std::size_t childCount = node.ChildCount();
 
         if (foldable) {
@@ -31,9 +40,11 @@ namespace {
             std::vector<ChildBody> children;
             children.reserve(childCount);
             for (std::size_t i = 0; i < childCount; ++i) {
-                const treesitter::Node child      = node.Child(i);
-                const auto             found      = table.find(std::string(child.Type()));
-                const bool             childFolds = found != table.end() && ShouldFold(found->second, policy);
+                const treesitter::Node child = node.Child(i);
+                const auto             found = table.find(std::string(child.Type()));
+                const bool             childFolds =
+                    found != table.end() && ShouldFold(found->second, policy) &&
+                    (found->second.kind != DelimiterKind::Bracket || DelimitersOf(child).has_value());
                 children.push_back(ChildBody{childFolds,
                                              childFolds ? FoldAnchorStart(found->second, child.StartByte(), text)
                                                         : child.StartByte(),

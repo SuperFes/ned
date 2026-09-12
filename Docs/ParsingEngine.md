@@ -13,11 +13,13 @@ languages plus matching-bracket lookup run on them. Everything from
 "Tier 1 -- declared concepts" onward is unbuilt. Every number
 below was measured against this repo's own checkout rather than estimated, so
 that a later reader can re-run the same counts and see what drifted. Re-counted
-2026-09-11 after the fold work below: 24 fetched grammar repos under
-`build/_deps/`, **77** `.scm` files under `Source/Editor/TreeSitter/queries/`
-and **105** embedded query constants in `Source/Editor/TreeSitter/Queries.h`.
-Both numbers were written here as 79 and 113; the corpus counts drift on their
-own, which is the argument for re-running them rather than quoting them.
+2026-09-12, after the fold column was deleted (see "The fold column is gone"
+below): 24 fetched grammar repos under `build/_deps/`, **67** `.scm` files
+under `Source/Editor/TreeSitter/queries/` and **95** embedded query constants
+in `Source/Editor/TreeSitter/Queries.h`, down from 78 and 106 the day before.
+Both numbers were once written here as 79 and 113; the corpus counts drift on
+their own, which is the argument for re-running them rather than quoting them.
+The direction of that drift is now deliberate.
 
 Ground-truthed against `CMakeLists.txt`'s grammar functions,
 `Source/Editor/TreeSitter/` (the RAII wrapper), `Source/Editor/Mode.h` (the
@@ -100,31 +102,37 @@ pure derivable boilerplate.
 
 One fact -- *this node is a delimited body* -- yields the fold range, the
 indent scope, the dedent trigger, the sticky-scroll container, the
-structural-selection step and the brace match. It is currently stated two to
-three times per language, across 21 languages, each restatement carrying a
-hand-written comment explaining which name this particular grammar chose for
-the concept.
+structural-selection step and the brace match. It was stated two to three times
+per language, across 21 languages, each restatement carrying a hand-written
+comment explaining which name this particular grammar chose for the concept.
+
+The table above is now history on one axis: the fold column of it no longer
+exists, so the restatement is down to the indent list alone (see "The fold
+column is gone"). It is kept here because it is the measurement the whole design
+rests on, and because the same duplication is still live between `indents.scm`
+and everything else the imprint could drive.
 
 ### The N x M matrix, and its hole
 
-`Queries.h` declares 105 embedded query constants across 29 languages and 8
+`Queries.h` declares 95 embedded query constants across 29 languages and 8
 driver kinds:
 
 ```
 29 languages x 8 driver kinds = 232 possible adapter files
-105 written  ->  127 GAPS (55% of the feature matrix)
+ 95 written  ->  137 GAPS (59% of the feature matrix)
 
 Highlights  29/29      Indents  21/29      Locals  15/29
-Imports     12/29      Folds    11/29      Tags    11/29
-Tests       10/29      Injections 3/29
+Imports     12/29      Tags     11/29      Tests   10/29
+Injections   3/29      Folds     0/29  <-- 21 languages fold
 ```
 
-The Folds column reads 11 rather than 12 because `python-folds.scm` is gone
-(see "Where a fold starts" below) -- and the *coverage* it measures went the
-other way, since 21 languages fold from the imprint whether or not a query
-exists for them. A gap in this matrix stopped meaning a missing feature the
-moment a driver could read the grammar directly, which is the whole argument
-in one cell.
+**The Folds column is empty and folding is at its widest ever.** It read 12,
+then 11 when `python-folds.scm` went (see "Where a fold starts" below), and now
+0: every remaining fold query was deleted rather than maintained, and 21
+languages fold from the imprint. A gap in this matrix stopped meaning a missing
+feature the moment a driver could read the grammar directly, and the fold row is
+that sentence carried to its end -- the column ned has to author is not
+72% empty, it does not exist.
 
 Highlights is the only column at 100%, and only because upstream ships
 `highlights.scm` for us. **Every column ned has to author itself is between 34%
@@ -134,12 +142,12 @@ of an N x M architecture maintained by hand.
 
 ### The corpus is already ours, which is what makes replacing it cheap
 
-Of the 111 `.scm` references embedded by `CMakeLists.txt`, **79 (71%) are
-ned-authored** files under `Source/Editor/TreeSitter/queries/`. The only
-upstream query files consumed at all are `highlights.scm` and `tags.scm` -- 32
-references, two kinds -- and four of the `tags.scm` consumptions only work via
-`ned_embed_treesitter_query_concat`, which exists precisely *because* upstream
-was incomplete.
+Of the 96 `.scm` references embedded by `CMakeLists.txt`, **64 (67%) are
+ned-authored** files under `Source/Editor/TreeSitter/queries/` (75 of 107
+before the fold column went). The only upstream query files consumed at all are
+`highlights.scm` and `tags.scm` -- 32 references, two kinds -- and four of the
+`tags.scm` consumptions only work via `ned_embed_treesitter_query_concat`,
+which exists precisely *because* upstream was incomplete.
 
 This matters for sequencing. The usual objection to replacing a query layer is
 "you forfeit the upstream query ecosystem," and here that is mostly already
@@ -378,11 +386,74 @@ its own. That makes it the first hand-written query this work removes rather
 than reproduces, and the corpus gate's hand-written total drops 60 -> 59 --
 the direction that number is supposed to move.
 
+### The fold column is gone
+
+The Phase 2 exit criterion, restated after the indent measurement below, was
+**deletable files** rather than symmetric column coverage. Eleven remained:
+one `*-folds.scm` per bracket language. All eleven are deleted.
+
+The evidence was gathered before anything was removed, in two forms. Statically,
+every one of the 59 node types those files named is present in the compiled
+imprint table *and* passes `ShouldFold` under the shipping policy -- being
+inferred as `Delimited` is not the same as being folded, and that second half is
+the question the old corpus gate could not ask. Dynamically, query-only folds
+were compared against imprint-only folds over 66 real files -- the grammar
+repos' own `examples/` trees plus the oracle corpus:
+
+```
+66 files, 11 languages
+ranges the QUERY produced that the imprint did not:      0
+ranges the imprint produced that the query did not:    663   (argument,
+                                                              parameter and
+                                                              initializer lists)
+```
+
+Zero, in every file. The 663 were already shipping -- `Mode::fold` has been the
+*union* of the two sources since they began composing -- so deleting the queries
+changes nothing a user sees, which is the point: re-blessing `Tests/Oracle/`
+afterwards produces a byte-identical snapshot.
+
+That empty diff is also what replaced the ground truth. A gate that reads the
+query files cannot outlive them, so the 59 node names are pinned in
+`Tests/ImprintTest.cpp` as a frozen record -- a tripwire for a grammar renaming
+`compound_statement`, not an inventory to extend -- and the fold *ranges* are
+held by the oracle, which is a stronger ground truth than a node list was.
+
+**A union cannot state a negative, and one query had been trying to.** Deleting
+the files surfaced two defects, both pre-existing and neither visible while a
+query was there to be blamed:
+
+- `jank-mode` keys its imprint table by mode name and shares Clojure's grammar,
+  so it had no table at all: it had been folding purely off the shared
+  `clojure-folds.scm`, and had silently never had bracket matching, which is
+  gated on the same table. Its own entry fixes both.
+- The table answers for a node **type**; an instance need not be delimited.
+  Kotlin's `function_body` is `{ ... }` *or* `= expr`, and a multi-line
+  expression body was offered as a fold with nothing to collapse. The deleted
+  query stated this by hand -- `(function_body "{") @fold` -- and it had been
+  dead for as long as the sources composed, because the imprint's
+  unconditional capture won the union regardless. The same gap made bracket
+  matching read child 0 as the opener, so `a[0]` -- an `openerIsFirst == false`
+  body, content before the bracket -- matched nothing at all.
+
+  `Editor/ImprintBracket.h`'s `DelimitersOf` answers it for both drivers: the
+  closer is the last anonymous child that is a closing bracket (last, not final,
+  because a closer may be followed by optional members), and the opener is the
+  first matching anonymous child before it. Error recovery is handled by the
+  parser rather than worked around -- an unclosed `{` gets a zero-width MISSING
+  `}`, found the same way a written one is, so a half-typed block still folds.
+
+The second one is the more useful finding, and it belongs next to the section
+below rather than in it: the additive principle is sound, but it means a query
+can only ever *add*. Every guard a hand-written fold query carries is already
+inert the moment an imprint composes with it. That is an argument for inference
+answering precisely rather than for keeping the queries.
+
 ### Fold sources compose; indent sources do not
 
 The additive-layer principle below ("a source asserts, never denies") is what
-lets a hand-written `folds.scm` and the delimiter imprint coexist with no
-precedence rule. Wiring the same imprint into the *indent* driver as a second
+let a hand-written `folds.scm` and the delimiter imprint coexist with no
+precedence rule -- for as long as both existed. Wiring the same imprint into the *indent* driver as a second
 source, and diffing it against every hand-written query over the corpus, shows
 the principle has a boundary:
 

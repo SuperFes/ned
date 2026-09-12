@@ -4,9 +4,10 @@
 //
 // Same contract as `Mode::fold` -- byte ranges of every foldable block in a
 // buffer's full text -- so a Mode can take either and nothing downstream can
-// tell the difference. That equivalence is not assumed: `Tests/ImprintTest.cpp`
-// holds this against the hand-written queries byte for byte across every
-// bundled language that has both.
+// tell the difference. That equivalence was not assumed, and it is why no
+// bundled language has a fold query any more: measured over 66 real files in
+// the eleven languages that had one, the queries produced zero fold ranges
+// this does not. `Tests/ImprintTest.cpp` pins what they said.
 //
 // Needs no grammar.json at runtime; `Editor/ImprintTables.h` carries the table.
 //
