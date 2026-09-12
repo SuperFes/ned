@@ -8,6 +8,7 @@
 #include <limits>
 
 #include "HugeStructuralWindow.h"
+#include "ImprintIndent.h"
 #include "TabWidth.h"
 #include "TreeSitter/Node.h"
 
@@ -112,8 +113,109 @@ namespace {
 
 } // namespace
 
+IndentCaptures IndentCapturesFromQuery(const treesitter::Tree& tree, std::string_view bufferText,
+                                       const treesitter::Query& indentQuery) {
+    // Keyed by the captured node's own stable identity (Node::Id()), NOT its
+    // byte range -- a (startByte, endByte) pair can't disambiguate two
+    // DIFFERENT nodes that happen to span the exact same bytes, which is a
+    // real, not hypothetical, case (see Node::Id()'s own doc comment for
+    // tree-sitter-python's "block" node coinciding byte-for-byte with its
+    // own single statement when that statement is the block's only one).
+    //
+    // "aligned" (@aligned-paren-column-alignment follow-up): a container
+    // captured "aligned" instead of "indent" -- see ResolveAlignedColumn/the
+    // walk for what distinguishes it.
+    //
+    // "indent.body" (real-per-form-lisp-indent follow-up): a Lisp special
+    // form (let/fn/defn/...) whose body indents a fixed 2 columns past the
+    // form's own column, Emacs' lisp-indent-function convention, rather than
+    // one style.width-multiple level or an @aligned first-argument column. A
+    // node captured BOTH this and "aligned" by the same query (the common
+    // case -- see janet-indents.scm/clojure-indents.scm's own comments) is
+    // treated as indent.body, checked first in the walk.
+    //
+    // "align.barrier" (lambda-body-alignment follow-up): a brace-delimited
+    // STATEMENT/DECLARATION body (C/C++'s compound_statement, JS's
+    // statement_block, Java's block/class_body, ...) through which an OUTER
+    // @aligned container's column alignment does not reach. Alignment is a
+    // continuation-line rule ("foo(a,\n    b)"); a callable argument with a
+    // real block body ("std::jthread t([fd] {") is not a continuation of the
+    // argument list at all, and clang-format/prettier/gofmt all indent its
+    // body from the statement's own column, not from the "(" it happens to
+    // sit behind. Deliberately NOT applied to data literals
+    // (initializer_list/object/array/literal_value): a multi-line literal
+    // argument aligning its own body relative to the call's alignment column
+    // is existing, documented, tested behavior (see the walk's own comment),
+    // and only statement bodies change here. Carried by the query rather
+    // than hardcoded node types, so a language whose nested @indent
+    // containers genuinely SHOULD inherit an outer alignment (janet/clojure
+    // -- a "[...]" inside a "(foo ...)" call) just never uses the capture.
+    //
+    // "dedent": every capture's own [startByte, endByte) range is kept, not
+    // just whichever one starts the target line -- the end-of-buffer rescue
+    // in the walk needs to recognize "the last real byte before this new
+    // blank line is itself a closing delimiter" in general.
+    IndentCaptures captures;
+    if (tree.IsNull()) {
+        return captures;
+    }
+    for (const treesitter::QueryCapture& capture : indentQuery.Captures(tree.RootNode(), bufferText)) {
+        if (capture.name == "indent") {
+            captures.indent.emplace(capture.nodeId, capture.startByte);
+        }
+        else if (capture.name == "aligned") {
+            captures.aligned.insert(capture.nodeId);
+        }
+        else if (capture.name == "indent.body") {
+            captures.body.insert(capture.nodeId);
+        }
+        else if (capture.name == "align.barrier") {
+            captures.barrier.insert(capture.nodeId);
+        }
+        else if (capture.name == "indent.suppress") {
+            captures.suppressed.insert(capture.nodeId);
+        }
+        else if (capture.name == "dedent") {
+            captures.dedents.push_back(IndentCaptures::Dedent{capture.startByte, capture.endByte, capture.nodeId});
+        }
+    }
+    return captures;
+}
+
+void AddImprintCaptures(IndentCaptures& captures, const treesitter::Tree& tree, std::string_view languageKey,
+                        std::string_view bufferText) {
+    if (tree.IsNull()) {
+        return;
+    }
+    const imprint::ImprintIndentCaptures fromImprint =
+        imprint::CollectIndentCaptures(tree.RootNode(), languageKey, bufferText);
+    for (const imprint::ImprintContainer& container : fromImprint.containers) {
+        if (!captures.suppressed.contains(container.nodeId)) {
+            // emplace, not assignment: a node the query also captured keeps
+            // the query's own interior start.
+            captures.indent.emplace(container.nodeId, container.interiorStart);
+        }
+    }
+    // A suppressed container's closer still dedents: the `}` of a top-level
+    // namespace aligns with the `namespace` line whether or not its body
+    // indented, which is what the hand-written query said too.
+    for (const imprint::ImprintDedent& dedent : fromImprint.dedents) {
+        captures.dedents.push_back(IndentCaptures::Dedent{dedent.startByte, dedent.endByte, dedent.nodeId});
+    }
+}
+
 std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree, std::string_view bufferText,
                                                     const treesitter::Query& indentQuery, std::size_t lineStart,
+                                                    std::size_t lineEnd, const IndentStyle& style) {
+    if (tree.IsNull()) {
+        return std::nullopt;
+    }
+    return IndentLevelForLine(tree, bufferText, IndentCapturesFromQuery(tree, bufferText, indentQuery), lineStart,
+                              lineEnd, style);
+}
+
+std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree, std::string_view bufferText,
+                                                    const IndentCaptures& captures, std::size_t lineStart,
                                                     std::size_t lineEnd, const IndentStyle& style) {
     if (tree.IsNull()) {
         return std::nullopt;
@@ -128,79 +230,27 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     // content ("1"), not from the trailing closer's own alignment rule.
     const std::size_t contentStart = FirstNonBlankByte(bufferText, lineStart, lineEnd);
 
-    // Keyed by the captured node's own stable identity (Node::Id()), NOT its
-    // byte range -- a (startByte, endByte) pair can't disambiguate two
-    // DIFFERENT nodes that happen to span the exact same bytes, which is a
-    // real, not hypothetical, case (see Node::Id()'s own doc comment for
-    // tree-sitter-python's "block" node coinciding byte-for-byte with its
-    // own single statement when that statement is the block's only one).
-    std::unordered_set<const void*> indentIds;
-    // @aligned-paren-column-alignment follow-up: a container captured
-    // "aligned" instead of "indent" -- see ResolveAlignedColumn/the walk
-    // below for what distinguishes it.
-    std::unordered_set<const void*> alignedIds;
-    // real-per-form-lisp-indent follow-up: a container captured
-    // "indent.body" -- a Lisp special form (let/fn/defn/...) whose body
-    // indents a fixed 2 columns past the form's own column, Emacs'
-    // lisp-indent-function convention, rather than one style.width-multiple
-    // level or an @aligned first-argument column. A node captured BOTH this
-    // and "aligned" by the same query (the common case -- see
-    // janet-indents.scm/clojure-indents.scm's own comments) is treated as
-    // indent.body, checked first in the walk below.
-    std::unordered_set<const void*> bodyIndentIds;
-    // lambda-body-alignment follow-up: a container captured "align.barrier"
-    // -- a brace-delimited STATEMENT/DECLARATION body (C/C++'s
-    // compound_statement, JS's statement_block, Java's block/class_body,
-    // ...) through which an OUTER @aligned container's column alignment does
-    // not reach. Alignment is a continuation-line rule ("foo(a,\n    b)");
-    // a callable argument with a real block body ("std::jthread t([fd] {")
-    // is not a continuation of the argument list at all, and clang-format/
-    // prettier/gofmt all indent its body from the statement's own column,
-    // not from the "(" it happens to sit behind. Deliberately NOT applied to
-    // data literals (initializer_list/object/array/literal_value): a
-    // multi-line literal argument aligning its own body relative to the
-    // call's alignment column is existing, documented, tested behavior (see
-    // the walk's own comment below), and only statement bodies change here.
-    // Carried by the query rather than hardcoded node types, so a language
-    // whose nested @indent containers genuinely SHOULD inherit an outer
-    // alignment (janet/clojure -- a "[...]" inside a "(foo ...)" call) just
-    // never uses the capture.
-    std::unordered_set<const void*> barrierIds;
-    const void*                     dedentNodeId = nullptr; // set only when a dedent capture starts this line
-    // smart-blank-line-on-newline follow-up: every dedent capture's own
-    // [startByte, endByte) range, not just whichever one (if any) starts at
-    // contentStart -- the end-of-buffer rescue below needs to recognize
-    // "the last real byte before this new blank line is itself a closing
-    // delimiter" in general, not only when it happens to be THIS line's own
-    // dedent.
+    const void*                                      dedentNodeId = nullptr; // set only when a dedent capture starts this line
     std::vector<std::pair<std::size_t, std::size_t>> dedentRanges;
-    for (const treesitter::QueryCapture& capture : indentQuery.Captures(tree.RootNode(), bufferText)) {
-        if (capture.name == "indent") {
-            indentIds.insert(capture.nodeId);
-        }
-        else if (capture.name == "aligned") {
-            alignedIds.insert(capture.nodeId);
-        }
-        else if (capture.name == "indent.body") {
-            bodyIndentIds.insert(capture.nodeId);
-        }
-        else if (capture.name == "align.barrier") {
-            barrierIds.insert(capture.nodeId);
-        }
-        else if (capture.name == "dedent") {
-            dedentRanges.emplace_back(capture.startByte, capture.endByte);
-            if (capture.startByte == contentStart) {
-                dedentNodeId = capture.nodeId;
-            }
+    dedentRanges.reserve(captures.dedents.size());
+    for (const IndentCaptures::Dedent& dedent : captures.dedents) {
+        dedentRanges.emplace_back(dedent.startByte, dedent.endByte);
+        if (dedent.startByte == contentStart) {
+            dedentNodeId = dedent.nodeId;
         }
     }
 
-    const auto isIndentCaptured     = [&indentIds](const treesitter::Node& node) { return indentIds.contains(node.Id()); };
-    const auto isAlignedCaptured    = [&alignedIds](const treesitter::Node& node) { return alignedIds.contains(node.Id()); };
-    const auto isBodyIndentCaptured = [&bodyIndentIds](const treesitter::Node& node) {
-        return bodyIndentIds.contains(node.Id());
+    const auto isIndentCaptured = [&captures](const treesitter::Node& node) { return captures.indent.contains(node.Id()); };
+    // Whether `position` sits inside an "indent"-captured node's interior --
+    // see IndentCaptures::indent. A node captured only "aligned"/"indent.body"
+    // has no entry and its own start is its opener, so the answer is yes.
+    const auto interiorContains = [&captures](const treesitter::Node& node, std::size_t position) {
+        const auto found = captures.indent.find(node.Id());
+        return found == captures.indent.end() || position >= found->second;
     };
-    const auto isBarrierCaptured = [&barrierIds](const treesitter::Node& node) { return barrierIds.contains(node.Id()); };
+    const auto isAlignedCaptured    = [&captures](const treesitter::Node& node) { return captures.aligned.contains(node.Id()); };
+    const auto isBodyIndentCaptured = [&captures](const treesitter::Node& node) { return captures.body.contains(node.Id()); };
+    const auto isBarrierCaptured    = [&captures](const treesitter::Node& node) { return captures.barrier.contains(node.Id()); };
 
     // Resolves `position` (either a real line's contentStart, or -- for the
     // dedent branch below -- an align target's own StartByte, computing "as
@@ -321,7 +371,7 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
                 // other captured container.
             }
             if ((isIndentCaptured(node) || isAlignedCaptured(node) || isBodyIndentCaptured(node)) &&
-                node.StartRow() != lastRow) {
+                node.StartRow() != lastRow && interiorContains(node, position)) {
                 ++level;
                 lastRow = node.StartRow();
             }
@@ -431,13 +481,17 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
 }
 
 IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser> parser, std::shared_ptr<treesitter::Query> indentQuery,
-                                   std::shared_ptr<treesitter::IncrementalParseCache> sharedParse, std::string modeName) {
-    return [parser, indentQuery, sharedParse, modeName](std::string_view bufferText, std::size_t lineStart,
-                                                        std::size_t lineEnd) -> std::optional<int> {
-        const treesitter::Tree&                tree  = sharedParse->Update(*parser, bufferText);
-        const IndentStyle                      style = EffectiveIndentStyle(modeName);
+                                   std::shared_ptr<treesitter::IncrementalParseCache> sharedParse, std::string modeName,
+                                   std::string languageKey) {
+    return [parser, indentQuery, sharedParse, modeName, languageKey](std::string_view bufferText, std::size_t lineStart,
+                                                                     std::size_t lineEnd) -> std::optional<int> {
+        const treesitter::Tree& tree     = sharedParse->Update(*parser, bufferText);
+        const IndentStyle       style    = EffectiveIndentStyle(modeName);
+        IndentCaptures          captures = indentQuery ? IndentCapturesFromQuery(tree, bufferText, *indentQuery)
+                                                       : IndentCaptures{};
+        AddImprintCaptures(captures, tree, languageKey, bufferText);
         const std::optional<IndentComputation> result =
-            IndentLevelForLine(tree, bufferText, *indentQuery, lineStart, lineEnd, style);
+            IndentLevelForLine(tree, bufferText, captures, lineStart, lineEnd, style);
         if (!result) {
             return std::nullopt;
         }

@@ -1,6 +1,6 @@
 ; smart-indentation follow-up. See c-indents.scm's own header comment for the
-; general convention. Checked against tree-sitter-janet-simple's own
-; node-types.json.
+; general convention and for what the delimiter imprint contributes without a
+; capture. Checked against tree-sitter-janet-simple's own node-types.json.
 ;
 ; real-per-form-lisp-indent follow-up: an ordinary call list (par_tup_lit)
 ; gets "aligned" -- Editor/Indent.h's engine aligns its continuation lines to
@@ -13,9 +13,12 @@
 ; "indent.body" on top of that via the SAME `.`-anchor + #any-of? idiom
 ; janet-imports.scm's own import-statement matching already uses; a node
 ; captured both ways (the common case for every special form below) is
-; resolved as indent.body, see Indent.cpp. Array/table/struct literals
-; (sqr_tup_lit/par_arr_lit/sqr_arr_lit/tbl_lit/struct_lit) aren't call forms
-; and stay plain bracket-depth "@indent", unchanged.
+; resolved as indent.body, see Indent.cpp. Every literal that isn't a call
+; form -- tuples, structs, and the MUTABLE array/table literals whose opener
+; is one sigil-prefixed token ("@(", "@[", "@{") -- stays plain bracket-depth,
+; which the delimiter imprint supplies without a capture (see c-indents.scm's
+; header; Editor/Imprint.h's OpensWithBracket is what reads "@[" as an
+; opener).
 (par_tup_lit
   .
   (sym_lit) @_head
@@ -26,15 +29,3 @@
     "with" "with-dyns" "with-syms" "match" "case" "try" "default" "comment")) @indent.body
 
 (par_tup_lit) @aligned
-(sqr_tup_lit) @indent
-(par_arr_lit) @indent
-(sqr_arr_lit) @indent
-(tbl_lit) @indent
-(struct_lit) @indent
-
-(par_tup_lit ")" @dedent)
-(sqr_tup_lit "]" @dedent)
-(par_arr_lit ")" @dedent)
-(sqr_arr_lit "]" @dedent)
-(tbl_lit "}" @dedent)
-(struct_lit "}" @dedent)

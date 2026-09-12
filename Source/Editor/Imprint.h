@@ -57,9 +57,26 @@ enum class DelimiterKind {
     // its own -- Python's `block` is SEQ[REPEAT(_statement), _dedent], with
     // the matching _indent consumed by the parent rule.
     Indent,
+    // Opens and closes with a matched pair of KEYWORDS rather than brackets:
+    // `if ... fi`, `do ... done`, `case ... esac`, fish's `begin ... end`,
+    // Lua/Ruby's `... end`. The pair itself is carried by `DelimitedBody::
+    // opener`/`closer`, since unlike a bracket a keyword pair cannot be
+    // recovered from the closer alone.
+    Keyword,
 };
 
 [[nodiscard]] std::string DelimiterKindName(DelimiterKind kind);
+
+// Whether a literal token opens a bracket body closed by `bracket`'s partner:
+// the bracket itself, or a sigil-prefixed spelling of it -- Janet's `@(` /
+// `@[` / `@{` (mutable literals), Clojure's `#{` and `#(`, JavaScript's `${`
+// (template substitution), Bash's `$(` / `${` / `<(`, PHP's `#[`. The token
+// ends in the bracket and everything before it is punctuation; `a(` would not
+// qualify, and no grammar spells one. Shared by inference over grammar.json
+// (`TreeSitter/GrammarImprint.h`) and the lookup over a parse tree's own
+// tokens (`ImprintBracket.h`), so the two cannot disagree about what an
+// opener looks like.
+[[nodiscard]] bool OpensWithBracket(std::string_view token, char bracket);
 
 // The structural facts about one delimited body. Everything here is read off
 // the grammar and nothing here is a decision -- a consumer that wants
@@ -92,6 +109,12 @@ struct DelimitedBody {
     // `'(' expression ')'`. A body that can hold a *list* of things is the
     // one worth collapsing; one holding exactly one subexpression is not.
     bool listLikeInterior = false;
+
+    // The pair, for a `Keyword` body only -- empty otherwise. A bracket body's
+    // pair is read off the node's own children (`ImprintBracket.h`), because
+    // one closing bracket names its opener; `fi` does not name `if`.
+    std::string opener;
+    std::string closer;
 };
 
 // How a consumer turns the structural facts above into "should this node be

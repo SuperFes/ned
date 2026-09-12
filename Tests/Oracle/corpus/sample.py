@@ -27,3 +27,8 @@ def usage() -> str:
     has edited what the program says.
     """
     return usage.__doc__
+
+
+def commented():
+    # A comment as the body's first line: the header is still the def.
+    return 1

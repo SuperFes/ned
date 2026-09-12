@@ -21,3 +21,8 @@ func Total(values []int) int {
 		return sum
 	}
 }
+
+var (
+	limit = 10
+	name  = "ned"
+)

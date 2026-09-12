@@ -735,23 +735,91 @@ real; if not, that is worth learning at language 3 rather than language 15.
       the opener, so `a[0]` matched nothing. `ImprintBracket.h`'s `DelimitersOf` answers
       it for both drivers, and handles an unclosed brace via the parser's own zero-width
       MISSING token rather than by special case.
+- [x] **The indent column shrinks, once minus is expressible.** `Editor/ImprintIndent.h`
+      is the fourth driver off the delimited-body fact, and the one the quantity/assertion
+      split said could not exist without something new. Three rules made it composable,
+      each forced by a measurement: `@indent.suppress` withdraws the imprint's container
+      for a node the query names, with the query's own assertions standing (C++'s
+      namespace rule is one blanket suppression plus the existing predicated re-add);
+      **a container counts only for a line that begins inside its brackets** — the first
+      run put every `a[i] = x` one level too deep, and every hand-written query had
+      quietly avoided the node types with content before their bracket, not because they
+      should not indent but because the walk could not handle them; and **an indentation
+      body counts only if it is indented relative to something**, which is
+      `FoldAnchorStart`'s own header search reused, and which in being reused was found
+      wrong for both drivers (a `# comment` as the first line under `def f():` was taken
+      as the header; it now steps over lines at the body's indent).
+      Measured: the oracle corpus is byte-identical with the imprint merged; over 400
+      YAML, 300 fish and ~100 of everything else from the grammar repos' own examples,
+      every remaining difference is a line the query had left flat and the file had
+      indented — Go's `import (` blocks, Kotlin's primary constructor, Rust's
+      `write!(` bodies (which `rust-indents.scm` had left out *on purpose*, since a single
+      `@dedent` capture can only name one closing token — the imprint reads the brackets
+      off each instance). **117 `@indent` captures deleted with their dedents, 257 lines
+      across nineteen files; css, json, php and toml emptied out and are gone** (126 and
+      twenty once the next item landed). What an
+      `indents.scm` still carries is what structure cannot state: alignment (67
+      captures), one suppression, YAML's "a sequence under a key indents" (a convention the
+      imprint deliberately does not say, since YAML allows both spellings and the imprint
+      reads whichever the author wrote), and the shapes the imprint cannot read — tag
+      pairs, clause headers, Janet's `@(` literals. Full numbers in
+      `Docs/ParsingEngine.md`.
+      Two findings beyond the column. **Keyword-delimited bodies were a delimiter shape the
+      imprint did not infer** (`do ... done`, `if ... fi`, fish's `... end` — 12 of bash
+      and fish's 14 containers), and nobody had noticed because the coverage gate only
+      spanned the twelve grammars with a fold query; see the next item. And **an unnamed
+      `alias()` with a value is a literal**: tree-sitter-rust opens `string_literal` with
+      `alias(/[bc]?"/, '"')`, inference read through to the pattern and called it an
+      indentation body, and a single-line `"{}"` under `println!(` became a two-row fold.
+      Reading it as the token it is fixed Rust's string, YAML's `block_scalar`, YAML's flow
+      collections (the "v1 gap" the old YAML query apologised for, closed with no rule) and
+      Bash's `brace_expression` at once. Same failure shape as the named `alias()` before
+      it.
+- [x] **Keyword pairs are a third delimiter kind, and they were exactly the nine.**
+      `DelimiterKind::Keyword`: a production opening on one keyword and closing on a
+      different one with a list between. Measured across all 23 grammars before any
+      driver consumed it, the rule reports precisely the nine nodes bash and fish had
+      written by hand and nothing else — provided list-likeness is part of the match.
+      Without it there are two more, bash's `elif <cond> then` and JavaScript's
+      `new . target`, and both are the same thing: a keyword pair around one item is a
+      phrase, not a body (an `elif`'s commands come after its `then`, and counting the
+      clause would put them two levels deep). The pair travels in the table because `fi`
+      does not name `if` the way `}` names `{`; `DelimitersOf(node, body)` reads an
+      instance against it exactly as it reads brackets, so all three drivers took it with
+      no per-driver code: `bash-indents.scm`/`fish-indents.scm` are two clause-header
+      lines each, bash folds `do … done` and `if … fi` where it never had a fold, and
+      `goto-matching-bracket` on `if` lands on `fi` — matchit, from the same entry. Lua,
+      Ruby, Elixir, Erlang and Pascal are covered by the same rule the day they are
+      bundled. `sample.fish` joins the oracle corpus, and matches the file's own layout
+      line for line.
 - [ ] **Phase 2 — Trait-driven structural drivers.** Fold, indent, dedent, structural
-      selection, sticky scroll, brace match. **Three of the six run off the imprint today**
+      selection, sticky scroll, brace match. **All six run off the imprint today**
       — folding (21 languages, nine of which had no query at all), brace matching (built
-      from nothing, it did not exist), and sticky scroll (ten languages that had none) —
-      and the entire hand-written fold corpus has been deleted.
-      The exit criterion as originally written is now known to be **wrong in one half**.
-      "Folds at 29/29 with no adapter authored" is reached, in the stronger sense that
-      there are no fold adapters left to author.
-      "Indents at 29/29" is not reachable at all: an indent source contributes a *quantity*
-      rather than an assertion, so it cannot compose additively with a query, and three of
-      sixteen languages need to say a real container does **not** indent (measured — see
-      `Docs/ParsingEngine.md`). Restated: deletable files was right, symmetric column
-      coverage across drivers was not.
-      Left: structural selection (already a generic AST walk — likely gains nothing, worth
-      confirming), and whether `indents.scm` can shrink the way `folds.scm` did — which the
-      quantity/assertion split says needs suppression to be expressible first, so it is a
-      Tier 1 format question rather than another deletion.
+      from nothing, it did not exist), sticky scroll (ten languages that had none), and
+      indent (four languages with no query at all, every other one down to its declared
+      remainder), and structural selection (the inside-of-a-body step) — the entire fold
+      corpus is deleted and the indent corpus is at 550 lines from 810, most of what
+      remains being prose.
+      The exit criterion as originally written was **wrong in one half**. "Folds at 29/29
+      with no adapter authored" is reached, in the stronger sense that there are no fold
+      adapters left to author. "Indents at 29/29" was never the right question: an indent
+      source contributes a *quantity*, so a language must be able to say minus, and three
+      of sixteen do (measured — see `Docs/ParsingEngine.md`). Restated: deletable files was
+      right, symmetric column coverage across drivers was not.
+      The last two items are closed. **A sigil-prefixed bracket is an opener**
+      (`OpensWithBracket`, shared by inference and the tree-side lookup): Janet's `@(`/
+      `@[`/`@{` — the last three captures its query declared — plus, once the table was
+      regenerated, Bash's `$(`/`${`/`<(`, JS/TS `${…}` substitutions and `${T}` template
+      types, Kotlin string interpolation and PHP `#[…]` attribute groups, all now
+      indenting and brace-matching. And **structural selection gained the one step no
+      tree has**: `expand-selection` offers the *inside* of a delimited body (`a, b` in
+      `f(a, b)`, the statements between braces — expand-region's "inside pairs", Vim's
+      `i(`) before the body itself, from `DelimitersOf`, appearing only where the node
+      walk would have skipped something. "Likely gains nothing" was half right — the walk
+      needed nothing; the vocabulary added a step. Nothing structural is left on this
+      item: the six drivers all run off the imprint, and what the queries still carry
+      is alignment, one suppression, YAML's sequence convention, tag pairs and clause
+      headers. The Tier 1 format (Phase 1 remainder) is the open question, not Phase 2.
 - [ ] **Phase 3 — Semantic drivers.** Scopes/bindings/references as a real resolution
       layer rather than query captures. Exit criterion: the Lisp eight-pair cliff is gone,
       or Tier 1 is proven insufficient and the design is revised before any engine work.
@@ -1731,6 +1799,16 @@ opportunistically rather than re-discovering from scratch. Add to this list inst
 just fixing-and-forgetting or letting it fade from memory between sessions. Fixed entries
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
+
+- **A comment as the first line of a Python body reindents to column 0.** Found by the
+  corpus addition for the indent-column work (2026-09-12), pre-existing and unrelated to
+  the imprint: a leading `# comment` under `def f():` is an extra node *before* the
+  `block`, not inside it, so the walk finds no container and `indent-buffer` moves it to
+  column 0 (the oracle records `indent … [0]` for it in `sample.py`). The fold anchor
+  now steps over such a line correctly; the indent walk still resolves it as though it
+  were outside the body. The fix is in `Indent.cpp`'s resolution, not in any source: a
+  comment whose next non-blank line is inside a container should take that container's
+  level. Same class as the "smart blank line" rescue that already exists there.
 
 As of 2026-09-08: `ctest -j8` is clean under the `default` preset, and so is the
 single-process `./build/ned_tests` (see the build/test note at the end of this file for

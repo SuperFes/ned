@@ -233,6 +233,7 @@ const std::map<std::string, std::function<ned::editor::Mode()>>& ModeByExtension
         {".yaml", ned::editor::YamlMode},
         {".css", ned::editor::CssMode},
         {".sh", ned::editor::BashMode},
+        {".fish", ned::editor::FishMode},
         {".toml", ned::editor::TomlMode},
     };
     return kModes;

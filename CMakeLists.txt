@@ -402,7 +402,6 @@ ned_embed_janet_plugin("${CMAKE_CURRENT_SOURCE_DIR}/Source/Janet/Plugins/gradien
 ned_add_treesitter_grammar(tree-sitter-json https://github.com/tree-sitter/tree-sitter-json.git v0.24.8)
 
 ned_embed_treesitter_query("${tree-sitter-json_SOURCE_DIR}/queries/highlights.scm" Json)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/json-indents.scm" JsonIndents)
 
 ned_add_treesitter_grammar(tree-sitter-c https://github.com/tree-sitter/tree-sitter-c.git v0.24.2)
 
@@ -449,7 +448,6 @@ ned_embed_treesitter_query_concat(PhpTags
     "${tree-sitter-php_SOURCE_DIR}/queries/tags.scm"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-tags.scm")
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-tests.scm" PhpTests)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-indents.scm" PhpIndents)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-locals.scm" PhpLocals)
 
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
@@ -502,7 +500,6 @@ ned_add_treesitter_grammar(tree-sitter-css https://github.com/tree-sitter/tree-s
 
 ned_embed_treesitter_query("${tree-sitter-css_SOURCE_DIR}/queries/highlights.scm" Css)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/css-imports.scm" CssImports)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/css-indents.scm" CssIndents)
 
 ned_add_treesitter_grammar(tree-sitter-python https://github.com/tree-sitter/tree-sitter-python.git v0.25.0)
 
@@ -559,7 +556,6 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-toml https://github.com/tree-sitter-grammars/tree-sitter-toml.git v0.7.0)
 
 ned_embed_treesitter_query("${tree-sitter-toml_SOURCE_DIR}/queries/highlights.scm" Toml)
-ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/toml-indents.scm" TomlIndents)
 
 # sogaiu/tree-sitter-clojure (same author as tree-sitter-janet-simple above);
 # one grammar serving both ClojureMode and JankMode -- jank is a Clojure
@@ -965,6 +961,7 @@ add_library(ned_lib STATIC
         Source/Editor/ImprintTables.cpp
         Source/Editor/ImprintFold.cpp
         Source/Editor/ImprintBracket.cpp
+        Source/Editor/ImprintIndent.cpp
         Source/Editor/TreeSitter/GrammarImprint.cpp
         Source/Editor/TreeSitter/Tree.cpp
         Source/Editor/TreeSitter/Parser.cpp
@@ -1306,6 +1303,7 @@ if (NED_BUILD_TESTS)
             Tests/DocSourcePathsTest.cpp
             Tests/OracleTest.cpp
             Tests/ImprintTest.cpp
+            Tests/ImprintIndentTest.cpp
             Tests/CommandReferenceTest.cpp
             Tests/ImprintBracketTest.cpp
             Tests/FormatterPropertiesTest.cpp

@@ -1,26 +1,31 @@
-; smart-indentation follow-up. Hand-written, ned-local "indent"/"dedent"
-; capture-name convention (Editor/Indent.h's generic tree-walk engine) --
-; borrowed from nvim-treesitter/Helix as capture NAMES only, no upstream
-; indents.scm exists for C to vendor (checked directly against
-; tree-sitter/tree-sitter-c and neovim/neovim's own runtime/queries, the same
-; "hand-written, checked, not assumed" precedent the deleted c-folds.scm
-; established). compound_statement covers function/control-flow bodies;
-; field_declaration_list covers struct/union member lists (a genuinely
-; different scope-cut than that fold query's own deliberate omission of it --
-; that was a folding-affordance decision, not an indentation one: struct
-; members still need to indent one level regardless of whether the struct body
-; itself is foldable; folding is the imprint's job now either way, see
-; Editor/ImprintFold.h). initializer_list covers multi-line
-; brace-initializers. parameter_list/argument_list (@aligned-paren-column-
-; alignment follow-up) get "aligned" rather than "indent" -- a wrapped
-; declaration/call's continuation lines conventionally line up under the
-; first parameter/argument's own column (e.g. "foo(a,\n    b)"), not one
-; flat indent level deeper; Editor/Indent.h's engine falls back to plain
-; @indent behavior automatically when the opener is alone on its own line
+; smart-indentation follow-up. Hand-written, ned-local capture-name convention
+; for Editor/Indent.h's generic tree-walk engine -- "indent"/"dedent" borrowed
+; from nvim-treesitter/Helix as capture NAMES only; "aligned", "indent.body",
+; "align.barrier" and "indent.suppress" are ned's own. No upstream indents.scm
+; exists for C to vendor.
+;
+; What is NOT here, and why. Every delimited body -- compound_statement,
+; field_declaration_list, initializer_list, parameter_list, argument_list,
+; and a dozen more the old query never named -- is an indent container with
+; its closer as a dedent, from the delimiter imprint (Editor/ImprintIndent.h,
+; Editor/ImprintTables.h) rather than from a capture. The imprint reads that
+; off the grammar for every bundled language at once; restating it here was
+; measured to change nothing over the oracle corpus and the grammar's own
+; example files, so it is not restated. What remains in an indents.scm is
+; the part structure cannot state: how a container aligns (@aligned,
+; @align.barrier, @indent.body), which containers a language's layout
+; convention says do NOT indent (@indent.suppress -- see cpp-indents.scm),
+; and the shapes the imprint cannot read at all -- keyword-delimited bodies
+; (bash, fish), tag pairs (html, xml, jsx) and clause headers (python's
+; else/elif). A query capture on a node the imprint also reports stands
+; alongside it; the walk counts a node once however many sources name it.
+;
+; parameter_list/argument_list (@aligned-paren-column-alignment follow-up)
+; get "aligned": a wrapped declaration/call's continuation lines
+; conventionally line up under the first parameter/argument's own column
+; (e.g. "foo(a,\n    b)"), not one flat indent level deeper. The engine falls
+; back to plain level counting when the opener is alone on its own line
 ; (nothing to align to), so this loses nothing for that shape.
-(compound_statement) @indent
-(field_declaration_list) @indent
-(initializer_list) @indent
 (parameter_list) @aligned
 (argument_list) @aligned
 
@@ -32,17 +37,11 @@
 ; cpp-indents.scm's own lambda case right, and is carried here purely so the
 ; two queries stay the divergence-free pair their headers already claim),
 ; but a statement body reached from inside an @aligned container is the same
-; situation wherever it arises. Contributes no indent level of its own
-; (the same node's @indent capture above still does that); it only
-; degrades an OUTER @aligned container back to plain level counting.
-; Deliberately never applied to a data literal -- a multi-line
-; initializer-list argument aligning its own body relative to the call's
-; alignment column is existing, intentional behavior. See Editor/Indent.h.
+; situation wherever it arises. Contributes no indent level of its own (the
+; imprint's container for the same node does that); it only degrades an
+; OUTER @aligned container back to plain level counting. Deliberately never
+; applied to a data literal -- a multi-line initializer-list argument
+; aligning its own body relative to the call's alignment column is existing,
+; intentional behavior. See Editor/Indent.h.
 (compound_statement) @align.barrier
 (field_declaration_list) @align.barrier
-
-(compound_statement "}" @dedent)
-(field_declaration_list "}" @dedent)
-(initializer_list "}" @dedent)
-(parameter_list ")" @dedent)
-(argument_list ")" @dedent)

@@ -9,3 +9,13 @@ root:
 list:
   - first
   - second
+compact:
+  - key: value
+    other: value
+flush:
+- a
+- b
+flow: [
+  one,
+  two
+]

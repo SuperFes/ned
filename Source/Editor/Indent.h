@@ -54,6 +54,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -76,10 +78,54 @@ namespace ned::editor {
 // resolved once at construction time), so a live ned/set-indent-style change
 // takes effect immediately, the same "read fresh each use" convention
 // TabWidth() already follows.
+//
+// languageKey ("python", "cpp", ...) selects the delimiter imprint
+// (Editor/ImprintIndent.h), which is merged into the query's own captures on
+// every call: every delimited body the imprint reports is an indent container
+// and its closer a dedent, unless the query captures it `@indent.suppress`.
+// A language with no compiled-in table gets the query alone, byte for byte
+// what it got before the imprint existed; one with a table and no query
+// (indentQuery null) gets the imprint alone.
 [[nodiscard]] IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser>                parser,
                                                  std::shared_ptr<treesitter::Query>                 indentQuery,
                                                  std::shared_ptr<treesitter::IncrementalParseCache> sharedParse,
-                                                 std::string                                        modeName);
+                                                 std::string modeName, std::string languageKey);
+
+// The capture sets IndentLevelForLine walks over, partitioned by name. Built
+// from a query (IndentCapturesFromQuery), from the imprint (AddImprintCaptures),
+// or both -- the walk cannot tell which, and counts a node once however many
+// sets name it.
+struct IndentCaptures {
+    struct Dedent {
+        std::size_t startByte = 0;
+        std::size_t endByte   = 0;
+        const void* nodeId    = nullptr; // the captured token; its Parent() is the container it closes
+    };
+    // "indent": container identity -> the byte its interior begins at. A
+    // container contributes a level only to a line that begins inside it. For
+    // a query capture that is the node's own start, so `(X) @indent` means
+    // what it always has; for an imprint bracket body it is the byte after
+    // the opener, which is what lets a body with content before its bracket
+    // (`a[i]`, `Foo(x) => ...`) count for its continuation lines and not for
+    // the line it opens on. The hand-written queries never captured those
+    // node types, and this is why.
+    std::unordered_map<const void*, std::size_t> indent;
+    std::unordered_set<const void*>              aligned;    // "aligned"
+    std::unordered_set<const void*>              body;       // "indent.body"
+    std::unordered_set<const void*>              barrier;    // "align.barrier"
+    std::unordered_set<const void*>              suppressed; // "indent.suppress" -- only ever consulted by AddImprintCaptures
+    std::vector<Dedent>                          dedents;    // "dedent"
+};
+
+[[nodiscard]] IndentCaptures IndentCapturesFromQuery(const treesitter::Tree& tree, std::string_view bufferText,
+                                                     const treesitter::Query& indentQuery);
+
+// Merges the imprint's containers and closers into `captures`. A container the
+// query marked `@indent.suppress` is left out; everything the query asserted
+// itself is untouched. Minus is expressible here and nowhere else, because an
+// indent source contributes a quantity -- see Editor/ImprintIndent.h.
+void AddImprintCaptures(IndentCaptures& captures, const treesitter::Tree& tree, std::string_view languageKey,
+                        std::string_view bufferText);
 
 // @aligned-paren-column-alignment follow-up: IndentLevelForLine's result is
 // tagged rather than a bare level, since an "@aligned" capture (see below)
@@ -130,6 +176,15 @@ struct IndentComputation {
 [[nodiscard]] std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree&  tree,
                                                                   std::string_view         bufferText,
                                                                   const treesitter::Query& indentQuery,
+                                                                  std::size_t lineStart, std::size_t lineEnd,
+                                                                  const IndentStyle& style);
+
+// The same walk over an already-partitioned capture set -- what
+// BuildIndentFunction calls after merging the query with the imprint. The
+// query overload above is IndentCapturesFromQuery followed by this.
+[[nodiscard]] std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree,
+                                                                  std::string_view        bufferText,
+                                                                  const IndentCaptures&   captures,
                                                                   std::size_t lineStart, std::size_t lineEnd,
                                                                   const IndentStyle& style);
 

@@ -1,6 +1,8 @@
 # sample.sh  (bash-mode)
-# 52 facts
+# 54 facts
 fold 47..148  "{\n    local sum=0\n    for va … cho \"$sum\"\n}"
+fold 88..130  "do\n        sum=$(( sum + value ))\n    done"
+fold 150..191  "if [ \"$#\" -gt 0 ]; then\n    total \"$@\"\nfi"
 highlight 0..19  [comment]  "#!/usr/bin/env bash"
 highlight 20..23  [function]  "set"
 highlight 24..28  [constant]  "-euo"
