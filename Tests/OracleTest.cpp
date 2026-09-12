@@ -235,6 +235,12 @@ const std::map<std::string, std::function<ned::editor::Mode()>>& ModeByExtension
         {".sh", ned::editor::BashMode},
         {".fish", ned::editor::FishMode},
         {".toml", ned::editor::TomlMode},
+        // Org/Markdown joined when their hand-built highlight escapes became
+        // queries + capture classifiers -- the corpus is what holds that
+        // rewrite (and the classifiers, which JanetTestSupport registers for
+        // the whole binary) to its rendered output.
+        {".md", ned::editor::MarkdownMode},
+        {".org", ned::editor::OrgMode},
     };
     return kModes;
 }

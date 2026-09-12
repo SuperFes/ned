@@ -21,6 +21,11 @@ extern const char* const kVcsGit;
 // redefining a preset by name wins.
 extern const char* const kGradients;
 
+// Source/Janet/Plugins/languages.janet -- the bundled capture classifiers
+// (Org headline level, TODO-vs-DONE), registered before the user's
+// init.janet so a re-registration there replaces one.
+extern const char* const kLanguages;
+
 } // namespace ned::janet::plugins
 
 #endif // NED_JANET_PLUGINS_H

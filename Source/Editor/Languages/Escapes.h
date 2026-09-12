@@ -13,9 +13,12 @@ namespace ned::editor::languages {
 
 // "c.line-inspect", "cpp.test-body"
 void RegisterCLikeEscapes();
-// "markdown.highlight", "markdown.indent", "markdown.symbols"
+// "markdown.indent" -- highlighting and section breadcrumbs moved to query
+// patterns (Source/Languages/markdown/), hanging list indent is the one
+// genuine tree walk left
 void RegisterMarkdownEscapes();
-// "org.highlight", "org.indent", "org.symbols"
+// "org.indent", "org.symbols" -- highlighting moved to queries + the
+// bundled capture classifiers (Plugins/languages.janet)
 void RegisterOrgEscapes();
 
 void RegisterBundledEscapes();

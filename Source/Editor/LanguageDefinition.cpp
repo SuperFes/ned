@@ -1,5 +1,6 @@
 #include "LanguageDefinition.h"
 
+#include <algorithm>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -47,7 +48,13 @@ namespace {
     // a span rule may change what range that text covers.
     void ApplyCaptureRules(std::vector<HighlightSpan>& spans, std::string_view bufferText,
                            const std::vector<std::pair<CaptureId, CaptureSpanRule>>& spanRules,
-                           std::string_view                                          languageKey) {
+                           const std::vector<CaptureId>& suppressedIds, std::string_view languageKey) {
+        if (!suppressedIds.empty()) {
+            std::erase_if(spans, [&suppressedIds](const HighlightSpan& span) {
+                return span.captureId != kNoCapture &&
+                       std::find(suppressedIds.begin(), suppressedIds.end(), span.captureId) != suppressedIds.end();
+            });
+        }
         if (HasCaptureClassifiers(languageKey)) {
             // Group span indices by capture id, then one batch call per
             // classified name -- see CaptureClassifiers.h for why batch.
@@ -120,11 +127,17 @@ namespace {
             for (const auto& [name, rule] : definition.captureSpans) {
                 spanRules.emplace_back(InternCaptureName(name), rule);
             }
+            std::vector<CaptureId> suppressedIds;
+            suppressedIds.reserve(definition.suppressedCaptures.size());
+            for (const std::string& name : definition.suppressedCaptures) {
+                suppressedIds.push_back(InternCaptureName(name));
+            }
             mode.highlight = [inner = std::move(mode.highlight), spanRules = std::move(spanRules),
-                              languageKey = definition.name](std::string_view bufferText,
+                              suppressedIds = std::move(suppressedIds),
+                              languageKey   = definition.name](std::string_view bufferText,
                                                              HighlightWindow  window) -> std::vector<HighlightSpan> {
                 std::vector<HighlightSpan> spans = inner(bufferText, window);
-                ApplyCaptureRules(spans, bufferText, spanRules, languageKey);
+                ApplyCaptureRules(spans, bufferText, spanRules, suppressedIds, languageKey);
                 return spans;
             };
         }
