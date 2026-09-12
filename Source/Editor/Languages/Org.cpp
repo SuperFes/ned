@@ -19,114 +19,6 @@ namespace ned::editor::languages {
 
 namespace {
 
-    // Org-mode syntax-highlighting follow-up: replaces the generic closure
-    // with one resolving two capture names directly -- headline level is a
-    // count of `*` characters and TODO-vs-DONE compares captured text against
-    // org::TodoKeywords(), a list configured from Janet at runtime; neither is
-    // expressible as a query predicate -- over the parser/query/cache the
-    // generic build already constructed.
-    void Highlight(Mode& mode, const LanguageDefinition&, const ModeBuildContext& context) {
-        mode.highlight = [parser = context.parser, query = context.highlightQuery, injectionQuery = context.injectionQuery,
-                          embeddedLanguageCache = context.embeddedLanguageCache, sharedParse = context.sharedParse,
-                          languageKey = context.languageKey](std::string_view bufferText, HighlightWindow window) -> std::vector<HighlightSpan> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
-            if (tree.IsNull()) {
-                return {};
-            }
-            const treesitter::Node                      root     = tree.RootNode();
-            const std::vector<treesitter::QueryCapture> captures = query->CapturesInRange(root, bufferText, window.startByte, window.endByte);
-
-            // Four passes, concatenated in this order so a later, narrower
-            // span visually wins over an earlier, broader one via
-            // HighlightSpan's own documented "later wins" rule -- e.g. a tag or
-            // a TODO/DONE keyword sitting inside a HeadlineLevelN span that
-            // covers the whole headline line.
-            std::vector<HighlightSpan> spans;
-
-            // Pass 1: "org.headline.stars" -> cyclic heading level, covering
-            // the WHOLE headline line (stars through its own end-of-line, not
-            // just the stars themselves) -- a headline reads as one visual
-            // unit, matching real Org's own convention.
-            for (const treesitter::QueryCapture& capture : captures) {
-                if (capture.name != "org.headline.stars") {
-                    continue;
-                }
-                const std::size_t starCount  = capture.endByte - capture.startByte; // stars are literal '*' bytes, one byte each
-                const std::size_t newlinePos = bufferText.find('\n', capture.startByte);
-                const std::size_t lineEnd    = (newlinePos == std::string_view::npos) ? bufferText.size() : newlinePos;
-                spans.push_back(HighlightSpan{
-                    .startByte   = capture.startByte,
-                    .endByte     = lineEnd,
-                    .syntaxClass = HeadlineLevelForStarCount(starCount),
-                });
-            }
-
-            // Pass 2: "org.keyword.candidate" -> TodoKeyword/DoneKeyword, but
-            // only for an EXACT match against org::TodoKeywords()'s own
-            // configured list -- a headline whose first word merely isn't a
-            // configured keyword gets no span here at all, falling through to
-            // Default, the same "exact match or nothing" rule Org.cpp's own
-            // ParseHeadlineLine already applies. The LAST configured keyword is
-            // treated as the "done" state, everything earlier as "still open"
-            // -- the standard single-sequence Org convention, no new config
-            // surface needed.
-            const std::vector<std::string>& todoKeywords = org::TodoKeywords();
-            for (const treesitter::QueryCapture& capture : captures) {
-                if (capture.name != "org.keyword.candidate") {
-                    continue;
-                }
-                const std::string_view candidate = bufferText.substr(capture.startByte, capture.endByte - capture.startByte);
-                for (std::size_t i = 0; i < todoKeywords.size(); ++i) {
-                    if (todoKeywords[i] == candidate) {
-                        spans.push_back(HighlightSpan{
-                            .startByte   = capture.startByte,
-                            .endByte     = capture.endByte,
-                            .syntaxClass = (i + 1 == todoKeywords.size()) ? SyntaxClass::DoneKeyword : SyntaxClass::TodoKeyword,
-                        });
-                        break;
-                    }
-                }
-            }
-
-            // Pass 3: everything else, through the same shared, generic
-            // CaptureTable()/SyntaxClassForCapture() mapping every other
-            // bundled grammar's Mode already uses.
-            SpanCollector genericCollector;
-            for (const treesitter::QueryCapture& capture : captures) {
-                if (capture.name == "org.headline.stars" || capture.name == "org.keyword.candidate") {
-                    continue;
-                }
-                genericCollector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name, languageKey));
-            }
-            for (const HighlightSpan& span : genericCollector.Take()) {
-                spans.push_back(span);
-            }
-
-            // Pass 4: real per-language highlighting inside #+BEGIN_SRC/
-            // #+BEGIN_EXPORT block bodies, appended last so it wins over
-            // whatever Pass 3's generic capture table resolved the block's
-            // "contents" node to (typically Default -- OrgHighlights.scm has no
-            // pattern for it at all).
-            if (injectionQuery) {
-                CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans, window);
-            }
-
-            return spans;
-        };
-    }
-
-    // smart-indentation follow-up: hand-rolled, mirroring Languages/Markdown.cpp's
-    // own bespoke closure -- real Org list continuation needs a hanging
-    // indent to the bullet's own content COLUMN (checked against a real
-    // parse dump: "listitem"'s children are [bullet, ...body], with the
-    // body's own start byte -- NOT bullet's own end byte, there's a
-    // separating space in between not covered by either -- giving the real
-    // hang width), so this doesn't fit Editor/Indent.h's generic
-    // @indent/@dedent engine any more than Markdown's own list handling
-    // does. Headline body text is deliberately NOT indented under its own
-    // stars here -- real Org's own long-standing convention keeps body text
-    // flush regardless of heading level, unlike list continuation. Shares
-    // parser/sharedParse with highlight above.
     void Indent(Mode& mode, const LanguageDefinition&, const ModeBuildContext& context) {
         mode.indentColumn = [parser = context.parser, sharedParse = context.sharedParse](
                                 std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd) -> std::optional<int> {
@@ -256,7 +148,9 @@ namespace {
 } // namespace
 
 void RegisterOrgEscapes() {
-    RegisterModeEscape("org.highlight", Highlight);
+    // org's highlighting is queries + the bundled capture classifiers
+    // (Plugins/languages.janet) + :capture-spans -- no escape any more; what
+    // stays here is what is genuinely a tree/line walk.
     RegisterModeEscape("org.indent", Indent);
     RegisterModeEscape("org.symbols", Symbols);
 }

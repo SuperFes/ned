@@ -142,11 +142,10 @@ namespace ned::editor::org {
 // decoupled from any global, mutable state in their own default argument
 // (tests call ParseOutline directly with an explicit list, or get
 // DefaultTodoKeywords() -- never whatever this happens to be set to).
-// No ned/set-org-todo-keywords Janet binding exists yet -- Value.h has no
-// std::vector<std::string> marshalling to build one on top of yet, a real
-// (if mechanical) piece of follow-up work, not attempted here; matches
-// this codebase's own repeated "hardcoded C++ for now" scope cut (e.g.
-// the page-scroll fraction, initial Theme selection).
+// ned/set-org-todo-keywords / ned/org-todo-keywords are the Janet
+// surface (EditorBindings.cpp); the bundled headline classifier
+// (Plugins/languages.janet) reads the getter per repaint, which is what
+// makes a runtime change take effect on the next paint.
 void                                          SetTodoKeywords(std::vector<std::string> keywords);
 [[nodiscard]] const std::vector<std::string>& TodoKeywords();
 

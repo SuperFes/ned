@@ -12,7 +12,6 @@
 #include "JanetTestSupport.h"
 
 using ned::editor::CaptureClassification;
-using ned::editor::ClearCaptureClassifiers;
 using ned::editor::FindCaptureClassifier;
 using ned::editor::HighlightSpan;
 using ned::editor::Mode;
@@ -22,7 +21,7 @@ namespace {
 
 struct ClassifierGuard {
     ~ClassifierGuard() {
-        ClearCaptureClassifiers();
+        ned_tests::RestoreBundledCaptureClassifiers();
     }
 };
 
