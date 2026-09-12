@@ -1,12 +1,15 @@
 #include "LanguageDefinition.h"
 
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 
 #include "AutoPair.h"
+#include "CaptureClassifiers.h"
 #include "Key.h"
 #include "LanguageFiles.h"
+#include "SyntaxTheme.h"
 #include "TreeSitter/Languages.h"
 #include "TreeSitter/Query.h"
 
@@ -38,10 +41,92 @@ namespace {
         }
     }
 
+    // The post-pass behind capture classifiers and :capture-spans, run over
+    // whatever the highlight (generic or escape-installed) produced.
+    // Classification first -- a classifier reads the capture's own text, and
+    // a span rule may change what range that text covers.
+    void ApplyCaptureRules(std::vector<HighlightSpan>& spans, std::string_view bufferText,
+                           const std::vector<std::pair<CaptureId, CaptureSpanRule>>& spanRules,
+                           std::string_view                                          languageKey) {
+        if (HasCaptureClassifiers(languageKey)) {
+            // Group span indices by capture id, then one batch call per
+            // classified name -- see CaptureClassifiers.h for why batch.
+            std::map<CaptureId, std::vector<std::size_t>> byId;
+            for (std::size_t i = 0; i < spans.size(); ++i) {
+                if (spans[i].captureId != kNoCapture) {
+                    byId[spans[i].captureId].push_back(i);
+                }
+            }
+            std::vector<bool> suppressed(spans.size(), false);
+            for (const auto& [id, indices] : byId) {
+                const CaptureClassifier classifier = FindCaptureClassifier(languageKey, CaptureNameForId(id));
+                if (!classifier) {
+                    continue;
+                }
+                std::vector<std::string_view> texts;
+                texts.reserve(indices.size());
+                for (const std::size_t i : indices) {
+                    texts.push_back(bufferText.substr(spans[i].startByte, spans[i].endByte - spans[i].startByte));
+                }
+                const std::vector<CaptureClassification> results = classifier(texts);
+                if (results.size() != texts.size()) {
+                    continue; // wrong-sized result: all-Fallthrough, per the contract
+                }
+                for (std::size_t j = 0; j < indices.size(); ++j) {
+                    switch (results[j].kind) {
+                        case CaptureClassification::Kind::Classified:
+                            spans[indices[j]].syntaxClass = results[j].cls;
+                            break;
+                        case CaptureClassification::Kind::Suppress:
+                            suppressed[indices[j]] = true;
+                            break;
+                        case CaptureClassification::Kind::Fallthrough:
+                            break;
+                    }
+                }
+            }
+            std::size_t kept = 0;
+            for (std::size_t i = 0; i < spans.size(); ++i) {
+                if (!suppressed[i]) {
+                    spans[kept++] = spans[i];
+                }
+            }
+            spans.resize(kept);
+        }
+        for (HighlightSpan& span : spans) {
+            for (const auto& [id, rule] : spanRules) {
+                if (span.captureId == id && rule == CaptureSpanRule::LineEnd) {
+                    const std::size_t newline = bufferText.find('\n', span.endByte);
+                    span.endByte              = newline == std::string_view::npos ? bufferText.size() : newline;
+                }
+            }
+        }
+    }
+
     Mode Finish(Mode mode, const LanguageDefinition& definition, const ModeBuildContext& context) {
         ApplyDefinition(mode, definition);
         for (const std::string& name : definition.escapes) {
             FindEscape(name)(mode, definition, context);
+        }
+        // After the escapes: an escape may install its own highlight, and
+        // the rules apply to whatever actually runs. Always wrapped (when
+        // there is a highlight at all) so a classifier registered later --
+        // init.janet loads after the first modes are built -- takes effect
+        // on the next repaint with no cache coupling; the no-rules,
+        // no-classifier run costs one registry check.
+        if (mode.highlight) {
+            std::vector<std::pair<CaptureId, CaptureSpanRule>> spanRules;
+            spanRules.reserve(definition.captureSpans.size());
+            for (const auto& [name, rule] : definition.captureSpans) {
+                spanRules.emplace_back(InternCaptureName(name), rule);
+            }
+            mode.highlight = [inner = std::move(mode.highlight), spanRules = std::move(spanRules),
+                              languageKey = definition.name](std::string_view bufferText,
+                                                             HighlightWindow  window) -> std::vector<HighlightSpan> {
+                std::vector<HighlightSpan> spans = inner(bufferText, window);
+                ApplyCaptureRules(spans, bufferText, spanRules, languageKey);
+                return spans;
+            };
         }
         return mode;
     }
