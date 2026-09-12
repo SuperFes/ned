@@ -27,6 +27,27 @@
 
 namespace ned::editor::codefold {
 
+// The text-level rules every fold source's output goes through, whatever
+// produced it. Public because `Tests/ImprintTest.cpp` compares raw inference
+// against a Mode's own output and has to normalize both sides the same way.
+//
+// Three rules, and each one is a property of the TEXT rather than of the
+// grammar -- which is why no fold source can answer them and why they live at
+// the single point every consumer comes through:
+//
+//   - A block's end is trimmed back over trailing whitespace. TOML's `table`
+//     node runs to the start of the next table's header line, and hiding
+//     "through the closing line" then hid that header.
+//   - A fold must span more than one line. The same node type is foldable or
+//     not depending on how it was written, so a source may report an empty
+//     `()` parameter list without that becoming an affordance.
+//   - One fold per start byte, the innermost. A block's start byte is a fold
+//     marker's key, so two blocks sharing one would let the toggle and the
+//     hidden range name different blocks. See the .cpp for why innermost is
+//     right here and outermost is right for a shared header *line*.
+[[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>>
+NormalizeFoldBlocks(std::vector<std::pair<std::size_t, std::size_t>> blocks, std::string_view bufferText);
+
 // Calls mode.fold(bufferText) if set, else returns {} -- the only function
 // here that touches Mode::fold. Callers (BufferView) are expected to cache
 // this result themselves rather than call it fresh on every use, the same

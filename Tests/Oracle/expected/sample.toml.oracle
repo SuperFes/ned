@@ -1,9 +1,9 @@
 # sample.toml  (toml-mode)
 # 49 facts
-fold 0..42  "[package]\nname = \"ned\"\nversion = \"0.5.0\"\n\n"
-fold 42..88  "[dependencies]\nitems = [\n  \" …   \"two\",\n]\n\n"
+fold 0..40  "[package]\nname = \"ned\"\nversion = \"0.5.0\""
+fold 42..86  "[dependencies]\nitems = [\n  \"one\",\n  \"two\",\n]"
 fold 65..86  "[\n  \"one\",\n  \"two\",\n]"
-fold 88..120  "[profile.release]\ndebug = false\n"
+fold 88..119  "[profile.release]\ndebug = false"
 highlight 0..1  [punctuation]  "["
 highlight 1..8  [type]  "package"
 highlight 8..9  [punctuation]  "]"

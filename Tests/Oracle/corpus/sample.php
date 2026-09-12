@@ -23,3 +23,12 @@ class Widget implements Sized
         return $total;
     }
 }
+
+function usage(): string
+{
+    return <<<EOT
+usage: demo [options]
+  --verbose        deliberately under-indented
+        --quiet    and deliberately over-indented
+EOT;
+}

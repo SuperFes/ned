@@ -293,6 +293,19 @@ semantics, is worse than none.
 > `parse(format(x))` has the same node-kind sequence as `parse(x)`. Both are cheap to
 > write against the existing tree-sitter layer and should exist from the first rule, not
 > be retrofitted. This is the single highest-value item in Tier C.
+>
+> **Built** — `Tests/FormatterPropertiesTest.cpp`, over the oracle corpus, and each of
+> the three properties it carries caught something on its first run. Idempotence caught
+> `indent-buffer` writing four spaces onto a trailing empty line, so every save churned
+> the file.
+>
+> The third property was not in the list above and had to be added: **the text of every
+> multi-line string is byte-identical**. A docstring, a C++ raw string literal and a PHP
+> heredoc had their interiors reindented, which edits what the program *says* — and the
+> node-kind sequence is identical either way, because a reindented docstring is still one
+> `string` node. Structural safety cannot see the one edit that is unambiguously illegal.
+> Worth generalising before the next rule lands: a property that compares *structure*
+> will not notice a rule that rewrites *content* inside a leaf.
 
 ## C2 — Don't want
 

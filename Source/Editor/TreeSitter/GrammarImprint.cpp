@@ -399,10 +399,18 @@ std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const nlohman
         if (!indirect && IsSymbolNamed(*core.back(), externals)) {
             imprint::DelimitedBody body;
             body.kind = imprint::DelimiterKind::Indent;
-            // An indentation body has no opener of its own, and everything
-            // before the closing dedent is its content -- which is a
-            // statement list by construction.
-            body.openerIsFirst    = true;
+            // Closing with a scanner token covers two genuinely different
+            // shapes, and folding needs them apart. Python's `block` is
+            // SEQ[REPEAT(_statement), _dedent] -- pure content, no introducer
+            // of its own, so the line that names it (`def f():`, `if x:`) is
+            // its PARENT's. Python's `if_statement` closes the same way but
+            // opens with the literal `if`, and TOML's `table` with `[`: those
+            // carry their own header on their own first line.
+            //
+            // An external counts as an introducer too -- Python's `string` is
+            // SEQ[string_start, ..., string_end], and string_start is the
+            // opening quote however the scanner spells it.
+            body.openerIsFirst    = !Literals(*core.front()).empty() || IsSymbolNamed(*core.front(), externals);
             body.listLikeInterior = true;
             found.emplace(name, body);
         }

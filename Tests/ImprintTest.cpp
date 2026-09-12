@@ -37,10 +37,11 @@
 
 using ned::editor::imprint::DelimitedBody;
 using ned::editor::imprint::DelimiterKind;
+using ned::editor::imprint::DelimiterKindName;
+using ned::editor::imprint::FoldAnchorStart;
 using ned::editor::imprint::FoldPolicy;
 using ned::editor::imprint::ShouldFold;
 using ned::editor::imprint::TableFor;
-using ned::editor::imprint::DelimiterKindName;
 using ned::editor::treesitter::InferDelimitedBodies;
 using nlohmann::json;
 
@@ -240,6 +241,68 @@ TEST_CASE("Structural signals are reported, not pre-judged", "[Imprint]") {
     CHECK_FALSE(p.listLikeInterior);
 }
 
+TEST_CASE("An indentation body reports whether it has an introducer of its own", "[Imprint]") {
+    // Two shapes close with a scanner token, and folding needs them apart.
+    // A suite is pure content: the line naming it belongs to its parent.
+    const json suite =
+        Grammar({{"block", Seq({Repeat(Sym("statement")), Sym("_dedent")})}}, json::array({Sym("_dedent")}));
+    const auto s = InferDelimitedBodies(suite).at("block");
+    REQUIRE(s.kind == DelimiterKind::Indent);
+    CHECK_FALSE(s.openerIsFirst);
+
+    // A headed statement closes the same way but opens with its own keyword,
+    // and `if x:` is its own first row.
+    const json headed = Grammar({{"if_statement", Seq({Str("if"), Sym("condition"), Sym("_dedent")})}},
+                                json::array({Sym("_dedent")}));
+    const auto h      = InferDelimitedBodies(headed).at("if_statement");
+    REQUIRE(h.kind == DelimiterKind::Indent);
+    CHECK(h.openerIsFirst);
+
+    // An external opener counts too -- Python's `string` is spelled
+    // SEQ[string_start, ..., string_end], and string_start is the quote.
+    const json quoted = Grammar({{"string", Seq({Sym("_start"), Repeat(Sym("content")), Sym("_end")})}},
+                                json::array({Sym("_start"), Sym("_end")}));
+    const auto q      = InferDelimitedBodies(quoted).at("string");
+    REQUIRE(q.kind == DelimiterKind::Indent);
+    CHECK(q.openerIsFirst);
+}
+
+TEST_CASE("FoldAnchorStart moves an indentation body onto its header row", "[Imprint]") {
+    const DelimitedBody suite{.kind = DelimiterKind::Indent, .openerIsFirst = false, .listLikeInterior = true};
+    const DelimitedBody headed{.kind = DelimiterKind::Indent, .openerIsFirst = true, .listLikeInterior = true};
+    const DelimitedBody braced{.kind = DelimiterKind::Bracket, .openerIsFirst = true, .listLikeInterior = true};
+
+    const std::string text = "def f():\n    x = 1\n    return x\n";
+    const std::size_t body = text.find("x = 1");
+
+    // The header is the line above, and the fold starts at its first byte.
+    CHECK(FoldAnchorStart(suite, body, text) == 0);
+
+    // A construct carrying its own header keeps its own start, or its fold
+    // would jump onto the enclosing one and be lost there.
+    CHECK(FoldAnchorStart(headed, body, text) == body);
+
+    // A bracket body is already on the row its opener is written on.
+    CHECK(FoldAnchorStart(braced, body, text) == body);
+
+    // Equal indentation means the line above is a sibling, not a header --
+    // TOML's `key = [` opens its own multi-line value.
+    const std::string flat = "one = 1\ntwo = [\n  2,\n]\n";
+    CHECK(FoldAnchorStart(suite, flat.find("two"), flat) == flat.find("two"));
+
+    // A body beginning mid-line owns that line already.
+    const std::string inline_ = "if x: foo(\n    bar)\n";
+    CHECK(FoldAnchorStart(suite, inline_.find("foo"), inline_) == inline_.find("foo"));
+
+    // Blank lines are stepped over rather than taken for the header.
+    const std::string spaced = "def f():\n\n    x = 1\n";
+    CHECK(FoldAnchorStart(suite, spaced.find("x = 1"), spaced) == 0);
+
+    // Nothing above it: a top-level body owns its own first row.
+    const std::string first = "    x = 1\n    y = 2\n";
+    CHECK(FoldAnchorStart(suite, first.find("x = 1"), first) == first.find("x = 1"));
+}
+
 TEST_CASE("FoldPolicy keeps both answers reachable", "[Imprint]") {
     const DelimitedBody block{.kind = DelimiterKind::Bracket, .openerIsFirst = true, .listLikeInterior = true};
     const DelimitedBody argumentList{.kind = DelimiterKind::Bracket, .openerIsFirst = false, .listLikeInterior = true};
@@ -322,6 +385,19 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
             continue;
         }
 
+        // python-folds.scm is gone: it said `(block) @fold` and the imprint
+        // says the same thing with better geometry (a suite folds from the
+        // row that names it, which a node range cannot express on its own --
+        // see Editor/Imprint.h's FoldAnchorStart). Deleting the query is the
+        // first file this work removes rather than reproduces, so a language
+        // with no fold query is skipped here rather than failing: what holds
+        // python now is the byte-range corpus check below and CodeFoldTest's
+        // end-to-end geometry cases.
+        const fs::path foldQuery =
+            fs::path(NED_REPO_ROOT) / "Source" / "Editor" / "TreeSitter" / "queries" / (language + "-folds.scm");
+        if (!fs::exists(foldQuery))
+            continue;
+
         std::ifstream in(path);
         REQUIRE(in);
         json grammar;
@@ -389,7 +465,12 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
     // form `(function_body "{") @fold` revealed three more Kotlin nodes the old
     // regex simply could not read -- which means the number reported as 55/55
     // and then 56/56 was measured against an incomplete ground truth.
-    CHECK(expected == 60);
+    //
+    // 60 -> 59 is the fourth, and the first that went DOWN: python-folds.scm
+    // was deleted, so its `(block)` is no longer a hand-written node to
+    // reproduce. A shrinking ground truth is the intended direction here --
+    // this number falls as queries are replaced rather than matched.
+    CHECK(expected == 59);
     CHECK(reproduced == expected);
 }
 
@@ -436,30 +517,44 @@ bool IsFoldable(const ned::editor::treesitter::Node&                            
 // vanished. Containment says nothing; direct parentage does.
 bool HasFoldableBodyChild(const ned::editor::treesitter::Node&                              node,
                           const std::map<std::string, ned::editor::imprint::DelimitedBody>& bodies,
-                          const ned::editor::imprint::FoldPolicy&                           policy) {
+                          const ned::editor::imprint::FoldPolicy&                           policy,
+                          std::string_view                                                  text) {
+    const auto anchored = [&](const ned::editor::treesitter::Node& n) {
+        const auto it = bodies.find(std::string(n.Type()));
+        return it == bodies.end() ? n.StartByte()
+                                  : ned::editor::imprint::FoldAnchorStart(it->second, n.StartByte(), text);
+    };
+    std::vector<ned::editor::imprint::ChildBody> children;
     for (std::size_t i = 0; i < node.ChildCount(); ++i) {
         const ned::editor::treesitter::Node child = node.Child(i);
-        if (child.EndByte() == node.EndByte() && IsFoldable(child, bodies, policy)) return true;
+        const bool                          folds = IsFoldable(child, bodies, policy);
+        children.push_back(ned::editor::imprint::ChildBody{folds, folds ? anchored(child) : child.StartByte(),
+                                                           child.EndByte()});
     }
-    return false;
+    const auto self = bodies.find(std::string(node.Type()));
+    return ned::editor::imprint::SupersededByChildBody(self->second, anchored(node), node.EndByte(),
+                                                       children, text);
 }
 
-void CollectFoldable(const ned::editor::treesitter::Node&                                 node,
-                     const std::map<std::string, ned::editor::imprint::DelimitedBody>&    bodies,
-                     const ned::editor::imprint::FoldPolicy&                              policy,
-                     std::vector<std::pair<std::size_t, std::size_t>>&                    out) {
+void CollectFoldable(const ned::editor::treesitter::Node&                              node,
+                     const std::map<std::string, ned::editor::imprint::DelimitedBody>& bodies,
+                     const ned::editor::imprint::FoldPolicy&                           policy,
+                     std::string_view                                                  text,
+                     std::vector<std::pair<std::size_t, std::size_t>>&                 out) {
     if (node.IsNull()) return;
-    if (IsFoldable(node, bodies, policy) && !HasFoldableBodyChild(node, bodies, policy)) {
-        out.emplace_back(node.StartByte(), node.EndByte());
+    if (IsFoldable(node, bodies, policy) && !HasFoldableBodyChild(node, bodies, policy, text)) {
+        const auto it = bodies.find(std::string(node.Type()));
+        out.emplace_back(ned::editor::imprint::FoldAnchorStart(it->second, node.StartByte(), text), node.EndByte());
     }
-    for (std::size_t i = 0; i < node.ChildCount(); ++i) CollectFoldable(node.Child(i), bodies, policy, out);
+    for (std::size_t i = 0; i < node.ChildCount(); ++i)
+        CollectFoldable(node.Child(i), bodies, policy, text, out);
 }
 
-void KeepMultiLineOnly(std::vector<std::pair<std::size_t, std::size_t>>& blocks, const std::string& text) {
-    std::erase_if(blocks, [&text](const std::pair<std::size_t, std::size_t>& block) {
-        return text.find('\n', block.first) >= block.second;
-    });
-    std::sort(blocks.begin(), blocks.end());
+// Both sides of every comparison below go through the same text-level rules a
+// real consumer does -- see CodeFold.h's NormalizeFoldBlocks for what they are
+// and why they are not the fold source's business.
+void Normalize(std::vector<std::pair<std::size_t, std::size_t>>& blocks, const std::string& text) {
+    blocks = ned::editor::codefold::NormalizeFoldBlocks(std::move(blocks), text);
 }
 
 } // namespace
@@ -649,11 +744,12 @@ TEST_CASE("An imprint reproduces the hand-written fold ranges on real files", "[
         const ned::editor::treesitter::Tree   tree = parser.Parse(text);
 
         std::vector<std::pair<std::size_t, std::size_t>> inferred;
-        CollectFoldable(tree.RootNode(), InferDelimitedBodies(grammar), ned::editor::imprint::FoldPolicy{}, inferred);
-        KeepMultiLineOnly(inferred, text);
+        CollectFoldable(tree.RootNode(), InferDelimitedBodies(grammar), ned::editor::imprint::FoldPolicy{}, text,
+                        inferred);
+        Normalize(inferred, text);
 
         auto handWritten = ned::editor::codefold::FoldableBlocks(testCase.mode, text);
-        KeepMultiLineOnly(handWritten, text);
+        Normalize(handWritten, text);
 
         // The shipping path: a Mode whose fold source is the compiled-in table
         // rather than the hand-written query, run through the same
@@ -663,7 +759,7 @@ TEST_CASE("An imprint reproduces the hand-written fold ranges on real files", "[
         viaImprint.fold = ned::editor::imprint::BuildFoldFunction(testCase.language);
         REQUIRE(static_cast<bool>(viaImprint.fold));
         auto compiled = ned::editor::codefold::FoldableBlocks(viaImprint, text);
-        KeepMultiLineOnly(compiled, text);
+        Normalize(compiled, text);
 
         INFO("inferred " << inferred.size() << " ranges, hand-written " << handWritten.size()
                          << ", compiled-table " << compiled.size());
@@ -735,8 +831,19 @@ TEST_CASE("A language whose delimiters are not brackets contributes nothing, and
     // block_mapping and block_sequence were invisible rather than absent. It
     // folds now -- nested, depth-first, exactly like Python -- and is asserted
     // as such below.
-    const auto yaml   = ned::editor::YamlMode();
-    const auto blocks2 = ned::editor::codefold::FoldableBlocks(
-        yaml, "root:\n  child:\n    - one\n    - two\n  other: 3\n");
-    CHECK(blocks2.size() >= 3); // the root mapping, the child mapping, the sequence
+    const std::string source  = "root:\n  child:\n    - one\n    - two\n  other: 3\n";
+    const auto        yaml    = ned::editor::YamlMode();
+    const auto        blocks2 = ned::editor::codefold::FoldableBlocks(yaml, source);
+
+    // Asserted as rows rather than as a count, which is what a reader sees and
+    // what the count quietly got wrong: `stream`, `document` and the top-level
+    // `block_mapping` are three nodes but one fold, and the mapping's own node
+    // begins on `  child:` -- a row it does not own. Each block folds from the
+    // line that NAMES it: `root:` hides its children, `  child:` hides the
+    // sequence under it.
+    std::vector<std::size_t> rows;
+    for (const auto& block : blocks2) {
+        rows.push_back(static_cast<std::size_t>(std::count(source.begin(), source.begin() + block.first, '\n')));
+    }
+    CHECK(rows == std::vector<std::size_t>{0, 1});
 }

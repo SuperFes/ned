@@ -1,15 +1,24 @@
 #include "CodeFold.h"
 
 #include <algorithm>
+#include <cctype>
 #include <optional>
 
 namespace ned::editor::codefold {
 
-std::vector<std::pair<std::size_t, std::size_t>> FoldableBlocks(const Mode& mode, std::string_view bufferText) {
-    if (!mode.fold) {
-        return {};
+std::vector<std::pair<std::size_t, std::size_t>>
+NormalizeFoldBlocks(std::vector<std::pair<std::size_t, std::size_t>> blocks, std::string_view bufferText) {
+    for (std::pair<std::size_t, std::size_t>& block : blocks) {
+        block.first  = std::min(block.first, bufferText.size());
+        block.second = std::min(block.second, bufferText.size());
+        // A node may run to the start of the line after it -- TOML's `table`
+        // ends only where the next `[header]` begins -- and the hidden range
+        // runs through the block's own end line, so an untrimmed end swallows
+        // a line that is not part of the block at all.
+        while (block.second > block.first && std::isspace(static_cast<unsigned char>(bufferText[block.second - 1]))) {
+            --block.second;
+        }
     }
-    std::vector<std::pair<std::size_t, std::size_t>> blocks = mode.fold(bufferText);
 
     // A fold must span more than one line, and this is the one place to say
     // so: every consumer -- the gutter affordance, ToggleFoldAtLine,
@@ -23,11 +32,42 @@ std::vector<std::pair<std::size_t, std::size_t>> FoldableBlocks(const Mode& mode
     // it, and it is what lets sources compose freely -- a source may report
     // an empty `()` parameter list without that becoming a fold affordance.
     std::erase_if(blocks, [bufferText](const std::pair<std::size_t, std::size_t>& block) {
-        const std::size_t start = std::min(block.first, bufferText.size());
-        const std::size_t end   = std::min(block.second, bufferText.size());
-        return start >= end || bufferText.find('\n', start) >= end;
+        return block.first >= block.second || bufferText.find('\n', block.first) >= block.second;
     });
-    return blocks;
+
+    // One block per start byte, the innermost of them. Two blocks can share a
+    // start: two sources reporting the same construct with different ends, and
+    // an indentation body anchored onto a row another block already starts on
+    // (`if x:` owns the whole if/else statement, and its own suite anchors
+    // there too; YAML's `document` and the mapping filling it both begin at
+    // byte 0). A fold marker's key is a start byte, so leaving both would let
+    // the toggle and the hidden range name different blocks.
+    //
+    // Innermost rather than outermost, which is the opposite of
+    // ToggleFoldAtLine's rule for two blocks opening on the same LINE -- and
+    // deliberately: that rule separates constructs that begin at different
+    // bytes (`{:dev {:deps [`), where the outer one is what a reader points
+    // at. At the same byte there is nothing to point at but the tighter
+    // structure, and it is the one that hides less: folding `if x:` collapses
+    // its own branch and leaves `else:` standing, folding YAML's top-level key
+    // hides its children rather than the whole file.
+    std::sort(blocks.begin(), blocks.end());
+    std::vector<std::pair<std::size_t, std::size_t>> innermost;
+    innermost.reserve(blocks.size());
+    for (const std::pair<std::size_t, std::size_t>& block : blocks) {
+        if (!innermost.empty() && innermost.back().first == block.first) {
+            continue; // sorted ascending: the one already kept ends soonest
+        }
+        innermost.push_back(block);
+    }
+    return innermost;
+}
+
+std::vector<std::pair<std::size_t, std::size_t>> FoldableBlocks(const Mode& mode, std::string_view bufferText) {
+    if (!mode.fold) {
+        return {};
+    }
+    return NormalizeFoldBlocks(mode.fold(bufferText), bufferText);
 }
 
 std::vector<std::pair<std::size_t, std::size_t>>

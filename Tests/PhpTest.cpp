@@ -1,8 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <string>
+
+#include <unistd.h>
 
 #include "Editor/Php.h"
 
@@ -15,12 +18,24 @@ namespace {
 struct TempTree {
     std::filesystem::path root;
 
-    explicit TempTree(const std::string& name = "ned-php-test") : root(std::filesystem::temp_directory_path() / name) {
+    // Unique per instance, exactly as NodeModulesTest.cpp's own TempTree is
+    // and for the same reason: ctest runs each Catch2 case as its own
+    // process, so under -j8 two [Php] cases sharing one fixed directory
+    // delete each other's composer.json mid-test. Seen here as "prefers the
+    // longest matching prefix" failing in a parallel run and passing every
+    // time on its own.
+    explicit TempTree(const std::string& name = "ned-php-test") : root(std::filesystem::temp_directory_path() / UniqueName(name)) {
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root);
     }
     ~TempTree() {
         std::filesystem::remove_all(root);
+    }
+
+  private:
+    static std::string UniqueName(const std::string& name) {
+        static std::atomic<unsigned> counter{0};
+        return name + "-" + std::to_string(::getpid()) + "-" + std::to_string(counter++);
     }
 };
 

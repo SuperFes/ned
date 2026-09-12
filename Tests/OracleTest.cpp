@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Editor/CodeFold.h"
+#include "Editor/Indent.h"
 #include "Editor/Mode.h"
 #include "Editor/SyntaxTheme.h"
 
@@ -173,11 +174,19 @@ std::vector<Fact> CollectFacts(const ned::editor::Mode& mode, const std::string&
         // Per line, since IndentFunction is the one capability that isn't a
         // whole-document query. Only lines it actually has an opinion on are
         // recorded, so an unchanged file's golden doesn't carry a row per line.
+        //
+        // Through IndentColumnForLine rather than Mode::indentColumn directly,
+        // because that is what every real caller goes through -- a line inside
+        // a multi-line string has no opinion recorded, and the snapshot should
+        // say what the editor would actually do.
+        const auto  verbatim  = ned::editor::VerbatimRanges(mode, text);
         std::size_t lineStart = 0;
         while (lineStart <= text.size()) {
             const std::size_t nl      = text.find('\n', lineStart);
             const std::size_t lineEnd = (nl == std::string::npos) ? text.size() : nl;
-            if (const std::optional<int> column = mode.indentColumn(text, lineStart, lineEnd); column) {
+            if (const std::optional<int> column =
+                    ned::editor::IndentColumnForLine(mode, text, lineStart, lineEnd, &verbatim);
+                column) {
                 add("indent", lineStart, lineEnd, std::to_string(*column));
             }
             if (nl == std::string::npos) break;

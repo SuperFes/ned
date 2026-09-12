@@ -1388,7 +1388,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 const auto&       content   = buffer.Content();
                 const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
                 const std::size_t lineStart = content.LineToByteOffset(line);
-                if (const std::optional<int> column = context.mode->indentColumn(buffer.Text(), lineStart, lineStart)) {
+                if (const std::optional<int> column = IndentColumnForLine(*context.mode, buffer.Text(), lineStart, lineStart)) {
                     const IndentStyle style = EffectiveIndentStyle(context.mode->name);
                     SetLineIndent(buffer, lineStart, *column, style);
                     buffer.SetPoint(lineStart + IndentString(*column, style).size());
@@ -1533,7 +1533,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                     if (line + 1 < content.LineCount() && lineEnd > lineStart) {
                         --lineEnd; // exclude the line's own trailing '\n'
                     }
-                    if (const std::optional<int> column = context.mode->indentColumn(buffer.Text(), lineStart, lineEnd)) {
+                    if (const std::optional<int> column = IndentColumnForLine(*context.mode, buffer.Text(), lineStart, lineEnd)) {
                         const IndentStyle style = EffectiveIndentStyle(context.mode->name);
                         buffer.ClearMark();
                         SetLineIndent(buffer, lineStart, *column, style);

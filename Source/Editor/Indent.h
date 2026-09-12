@@ -54,6 +54,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "IndentStyle.h"
 #include "Mode.h"
@@ -130,6 +132,55 @@ struct IndentComputation {
                                                                   const treesitter::Query& indentQuery,
                                                                   std::size_t lineStart, std::size_t lineEnd,
                                                                   const IndentStyle& style);
+
+// -- Verbatim regions: text a reindent must not touch.
+//
+// A multi-line string's interior IS its value. Reindenting a line inside a
+// Python docstring, a C++ raw string literal or a PHP heredoc rewrites what
+// the program says, not how it looks -- `indent-buffer` did exactly that, in
+// every language with such a construct, and the parse tree came out identical
+// afterwards so the structural-safety property could not see it.
+//
+// The rule is deliberately NOT "these node types are not indent containers".
+// Whether a body is verbatim turns out not to be inferable from a grammar's
+// production shape at all (measured: `Docs/ParsingEngine.md`) -- it lives in
+// the scanner, as an external token, or in nothing but convention. What DOES
+// know is the one query every bundled language already has: a
+// `highlights.scm` spans every string, and `SyntaxClass::String` is that fact
+// already extracted. Same move `Editor/RenameReview.h`'s ClassifyHit makes,
+// and for the same reason -- no new query for something already stated.
+//
+// Only the interior is protected: a line whose start is STRICTLY inside a
+// verbatim span. The line the string opens on (`s = """`) is ordinary code
+// and still indents; the line its closer sits on does not, because that
+// line's leading whitespace is part of the string's value.
+//
+// Comments are deliberately not protected. Reindenting inside a block comment
+// is conventional in every editor and changes no meaning -- it is a matter of
+// taste, where this is a matter of correctness.
+[[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> VerbatimRanges(const Mode&      mode,
+                                                                              std::string_view bufferText);
+
+// Whether `lineStart` falls strictly inside one of `ranges`.
+[[nodiscard]] bool LineIsVerbatim(const std::vector<std::pair<std::size_t, std::size_t>>& ranges,
+                                  std::size_t                                             lineStart);
+
+// **The only function that should call `Mode::indentColumn`.** Every caller --
+// the batch reindent below, `newline` and `indent-for-tab-command` in
+// Commands.cpp -- comes through here, so the verbatim rule above cannot be
+// enforced in one path and forgotten in another. (CodeFold.h's FoldableBlocks
+// is the same arrangement for Mode::fold, and it exists because its three
+// consumers had already drifted.)
+//
+// `ranges` is an optimization for a caller reindenting many lines: computing
+// verbatim ranges costs one highlight pass, and IndentRegion's loop would
+// otherwise pay it per line. Pass nullptr to have them computed here, which is
+// what a single interactive line does -- one pass, the same cost the repaint
+// after that keystroke pays anyway. std::nullopt means "no opinion, leave the
+// line as it is", which is what every caller already does with it.
+[[nodiscard]] std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view bufferText,
+                                                     std::size_t lineStart, std::size_t lineEnd,
+                                                     const std::vector<std::pair<std::size_t, std::size_t>>* ranges = nullptr);
 
 // level * style.width -- the only place an abstract indent LEVEL ever
 // becomes a real visual column (an IndentComputation::Kind::Column result

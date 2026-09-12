@@ -22,16 +22,67 @@ bool ShouldFold(const DelimitedBody& body, const FoldPolicy& policy) {
     // not open its own production -- the callee or declarator precedes it.
     // That is precisely the separable case the policy exists for; every
     // statement/member block opens with its own brace.
-    if (!body.openerIsFirst && !policy.foldArgumentLists) {
+    //
+    // Bracket-only, deliberately: an indentation body reports the same
+    // `openerIsFirst == false` for an unrelated reason -- it has no opener at
+    // all -- and an indented suite is never an argument list. Without this
+    // guard, turning argument lists off would stop Python folding.
+    if (body.kind == DelimiterKind::Bracket && !body.openerIsFirst && !policy.foldArgumentLists) {
         return false;
     }
     return true;
 }
 
-bool SupersededByChildBody(std::size_t nodeEndByte, const std::vector<std::pair<bool, std::size_t>>& children) {
-    return std::any_of(children.begin(), children.end(), [nodeEndByte](const std::pair<bool, std::size_t>& child) {
-        return child.first && child.second == nodeEndByte;
+bool SupersededByChildBody(const DelimitedBody& node, std::size_t nodeStartByte, std::size_t nodeEndByte,
+                           const std::vector<ChildBody>& children, std::string_view text) {
+    return std::any_of(children.begin(), children.end(), [&](const ChildBody& child) {
+        if (!child.foldable || child.endByte != nodeEndByte)
+            return false;
+        if (node.openerIsFirst)
+            return true; // this node's row is its own to give away
+        if (child.startByte <= nodeStartByte)
+            return true; // hides everything this node would
+        const std::size_t from = std::min(nodeStartByte, text.size());
+        const std::size_t to   = std::min(child.startByte, text.size());
+        return text.substr(from, to - from).find('\n') == std::string_view::npos; // same row
     });
+}
+
+std::size_t FoldAnchorStart(const DelimitedBody& body, std::size_t startByte, std::string_view text) {
+    if (body.kind != DelimiterKind::Indent || body.openerIsFirst || startByte == 0 || startByte > text.size()) {
+        return startByte;
+    }
+
+    const auto lineStartOf = [&text](std::size_t offset) -> std::size_t {
+        if (offset == 0)
+            return 0;
+        const std::size_t newline = text.rfind('\n', offset - 1);
+        return newline == std::string_view::npos ? 0 : newline + 1;
+    };
+    const auto indentWidth = [&text](std::size_t lineStart) -> std::size_t {
+        std::size_t width = lineStart;
+        while (width < text.size() && (text[width] == ' ' || text[width] == '\t'))
+            ++width;
+        return width - lineStart;
+    };
+
+    const std::size_t bodyLineStart = lineStartOf(startByte);
+    if (bodyLineStart + indentWidth(bodyLineStart) != startByte) {
+        return startByte; // the body begins mid-line; that line is its own
+    }
+
+    // The header is the nearest non-blank line above. Blank lines are stepped
+    // over rather than treated as the header, so a body separated from its
+    // `def` by an empty line still folds from the `def`.
+    std::size_t candidate = bodyLineStart;
+    while (candidate > 0) {
+        const std::size_t previous = lineStartOf(candidate - 1);
+        if (indentWidth(previous) + previous < candidate - 1) {
+            return indentWidth(previous) < indentWidth(bodyLineStart) ? previous : startByte;
+        }
+        candidate = previous;
+    }
+    return startByte; // nothing above it -- a top-level body owns its own line
 }
 
 } // namespace ned::editor::imprint
