@@ -306,9 +306,20 @@ real; if not, that is worth learning at language 3 rather than language 15.
 - [ ] **Phase 0 — Oracle.** Checked-in snapshot of tree-sitter's tree plus all 8 fact
       kinds over a corpus of real files. Everything after validates against it; without it
       none of the rest is falsifiable.
-- [ ] **Phase 1 — Language-definition format and compiler.** Ingest `grammar.json`,
-      declare traits alongside, emit one artifact, implement Tier 0 inference. Exit
-      criterion: **53 of 55 fold nodes reproduced with zero hand-written rules**.
+- [x] **Phase 1 gate — Tier 0 inference proven.** The claim the whole design rests on
+      (a delimited body is derivable from `grammar.json` with no per-language rules) is
+      measured, not assumed: **55/55**, via `Tools/TraitInferenceProbe.py`. Needed three
+      refinements, each a real property of how grammars are written — inline hidden rules
+      (Clojure hides its parens one level down), allow optional members after a closer
+      (JavaScript's `statement_block`), and accept an external token as a closer with no
+      opener (Python's `block`). It also corrected the criterion itself: inference reports
+      211 nodes beyond the 55, all genuinely delimited and none worth folding, so Tier 0
+      infers **`Delimited`** and `Foldable` is a small Tier 1 policy on top. See
+      `Docs/ParsingEngine.md`.
+- [ ] **Phase 1 remainder — the language-definition format and compiler.** With the gate
+      passed, build the real thing: ingest `grammar.json`, declare traits alongside in
+      Janet, emit one artifact per language. The probe is a Python spike against the
+      corpus, not the implementation.
 - [ ] **Phase 2 — Trait-driven structural drivers.** Fold, indent, dedent, structural
       selection, sticky scroll, brace match. Exit criterion is *deletable files*: roughly
       half the `.scm` corpus, and the Folds/Indents columns at 29/29 with no adapter
