@@ -1310,6 +1310,7 @@ if (NED_BUILD_TESTS)
             Tests/ThemeResolveTest.cpp
             Tests/ThemeGalleryTest.cpp
             Tests/DocSourcePathsTest.cpp
+            Tests/OracleTest.cpp
             Tests/ThemeKeyDocsTest.cpp
             Tests/InitFileThemeWriteTest.cpp
             Tests/LayoutStabilityProbe.cpp
