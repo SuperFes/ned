@@ -332,6 +332,18 @@ real; if not, that is worth learning at language 3 rather than language 15.
       upstream external scanners (~10,600 LOC of C) keep working unmodified behind a shim:
       `TSLexer` is 7 function pointers and the scanner vtable is 5 slots. Conformance is
       free — upstream ships 235 corpus files, ~109,000 lines.
+- [ ] Decided: **ned's own language definitions are authored in Janet, not in a
+      tree-sitter-style `.scm`.** Janet is already the extension language and is
+      homoiconic, so the declarative trait tier is plain Janet *data* while the escape
+      tier is Janet *code* — which is what buys arithmetic, real quantifiers and access
+      to runtime host state, the three things tree-sitter's predicate system
+      structurally cannot express. An `.scm` reader stays, but only to consume upstream:
+      ned uses 32 query files it does not write (20 `highlights.scm`, 9 `tags.scm`, 3
+      `injections.scm`), and highlighting is at full coverage precisely because upstream
+      ships it. Two disciplines make it hold: keep the declarative tier pure data (no
+      evaluation to *load* a language), and *declare* escapes rather than embed them, so
+      they live in the user's `init.janet` and the grammar corpus stays data — Org's
+      `TodoKeywords` is already this shape. Full reasoning in `Docs/ParsingEngine.md`.
 - [ ] Recorded as a conscious call rather than a default: **keeping `grammar.json`
       ingestion is a hard constraint**, and it permanently forecloses the resilient-LL
       path (matklad's) that would give better error recovery, because LL means
