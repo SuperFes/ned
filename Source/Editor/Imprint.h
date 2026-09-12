@@ -39,7 +39,10 @@
 #ifndef NED_EDITOR_IMPRINT_H
 #define NED_EDITOR_IMPRINT_H
 
+#include <cstddef>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace ned::editor::imprint {
 
@@ -110,6 +113,7 @@ struct FoldPolicy {
 // inferred facts rather than a grammar, so a caller can reuse one imprint
 // across several policies.
 [[nodiscard]] bool ShouldFold(const DelimitedBody& body, const FoldPolicy& policy = {});
+
 
 } // namespace ned::editor::imprint
 
