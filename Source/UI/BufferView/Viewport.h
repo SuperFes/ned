@@ -144,6 +144,19 @@ class Viewport {
     // clamped into the buffer when it falls outside any line.
     [[nodiscard]] std::size_t ByteOffsetForPoint(Point at) const;
 
+    // The buffer line drawn on local screen row `y`, and which wrapped
+    // segment of it: the same walk ByteOffsetForPoint takes -- past the
+    // sticky-scroll band, over folded lines, consuming every wrap and
+    // annotation row a line occupies. Every gutter click resolves through
+    // this rather than stepping visible LINES from the top row, which is
+    // how the fold affordance ended up one row off whenever a breadcrumb
+    // was pinned above it.
+    struct RowTarget {
+        std::size_t line          = 0;
+        std::size_t segmentInLine = 0;
+    };
+    [[nodiscard]] RowTarget LineForRow(int y) const;
+
     // The buffer's parsed org links. Here rather than in GutterModel because
     // wrapping has to know where link text sits to break around it.
     [[nodiscard]] const std::vector<editor::org::Link>& Links() const;

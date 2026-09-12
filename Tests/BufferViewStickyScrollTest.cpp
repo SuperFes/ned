@@ -482,3 +482,37 @@ TEST_CASE("MarkersFromFoldBlocks carries ranges through as Block landmarks", "[S
     const auto chain = ned::editor::stickyscroll::StickyChainForViewportTop(markers, 20);
     REQUIRE(chain.size() == 2);
 }
+
+TEST_CASE("Clicking a fold affordance below the pinned band toggles the block drawn on that row",
+          "[BufferView][StickyScroll]") {
+    // Every gutter click resolves its row the way ByteOffsetForPoint does
+    // (Viewport::LineForRow) -- it used to step visible lines from the top
+    // row without subtracting the sticky band, so with a breadcrumb pinned
+    // the fold glyph toggled only when the cell ABOVE it was clicked.
+    const StickyScrollSettingsGuard guard;
+    Fixture                         fixture;
+    fixture.buffer.InsertAtPoint(kSource);
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.SetTopLine(3); // "    void run() {" is the top content line; outer/Widget pin above it
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.Paint(canvas);
+    REQUIRE(RowText(screen, 2, 40).find("run") != std::string::npos); // two pinned rows, then run() on row 2
+
+    int foldX = -1;
+    for (int col = 0; col < 40; ++col) {
+        if (screen.PixelAt(col, 2).character == "⊟") {
+            foldX = col;
+            break;
+        }
+    }
+    REQUIRE(foldX >= 0);
+
+    view.OnEvent(MousePress(foldX, 2));
+    view.Paint(canvas);
+    CHECK(screen.PixelAt(foldX, 2).character == "⊞");
+    const std::size_t runBody = std::string(kSource).find("{", std::string(kSource).find("run()"));
+    CHECK(fixture.buffer.FoldMarkerAt(runBody).has_value());
+}

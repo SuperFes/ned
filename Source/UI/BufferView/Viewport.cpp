@@ -528,27 +528,17 @@ std::size_t Viewport::MaxTopLine() const {
     return newTop;
 }
 
-std::size_t Viewport::ByteOffsetForPoint(Point at) const {
-    // Org-mode fold/unfold follow-up: was topLine_ + at.y, a flat 1:1
-    // mapping -- a click on screen row N means the N-th *visible* buffer
-    // line below topLine_, not literally topLine_ + N, whenever a fold is
-    // hiding lines above the click. line-wrap follow-up: was
-    // AdvanceVisibleLines (pure line-stepping, 1 row per visible line);
-    // now a row-aware walk that consumes RowsForLine(line) rows per line
-    // instead, additionally reporting which segment of the landed-on line
-    // the target row corresponds to.
-    const text::Buffer&       buffer     = context_.activeBuffer.Get();
-    const text::ITextStorage& content    = buffer.Content();
+Viewport::RowTarget Viewport::LineForRow(int y) const {
+    const text::ITextStorage& content    = context_.activeBuffer.Get().Content();
     const std::size_t         totalLines = content.LineCount();
 
-    // main-editor-sticky-scroll follow-up: at.y is in this pane's own local
+    // main-editor-sticky-scroll follow-up: y is in this pane's own local
     // coordinates, unaware that Paint() may have pushed real content down by
     // host_.stickyRowCount() rows this frame -- subtracted here so a click below
     // the pinned rows still resolves to the buffer line actually drawn
     // there. A click landing IN the pinned band itself (result would be
-    // negative) clamps to row 0, same as the existing at.y<0 defensive
-    // clamp below.
-    std::size_t targetRow     = static_cast<std::size_t>(std::max(at.y - host_.stickyRowCount(), 0));
+    // negative) clamps to row 0, same as the y<0 defensive clamp.
+    std::size_t targetRow     = static_cast<std::size_t>(std::max(y - host_.stickyRowCount(), 0));
     std::size_t line          = topLine_;
     std::size_t segmentInLine = 0;
     while (line < totalLines) {
@@ -564,7 +554,23 @@ std::size_t Viewport::ByteOffsetForPoint(Point at) const {
         targetRow -= rows;
         line = NextVisibleLine(line + 1, totalLines);
     }
-    line = std::min(line, totalLines - 1); // mirrors Buffer::ByteOffsetForLineAndColumn's own clamp
+    // mirrors Buffer::ByteOffsetForLineAndColumn's own clamp
+    return RowTarget{std::min(line, totalLines > 0 ? totalLines - 1 : 0), segmentInLine};
+}
+
+std::size_t Viewport::ByteOffsetForPoint(Point at) const {
+    // Org-mode fold/unfold follow-up: was topLine_ + at.y, a flat 1:1
+    // mapping -- a click on screen row N means the N-th *visible* buffer
+    // line below topLine_, not literally topLine_ + N, whenever a fold is
+    // hiding lines above the click. line-wrap follow-up: was
+    // AdvanceVisibleLines (pure line-stepping, 1 row per visible line);
+    // now a row-aware walk that consumes RowsForLine(line) rows per line
+    // instead, additionally reporting which segment of the landed-on line
+    // the target row corresponds to.
+    const text::Buffer&       buffer     = context_.activeBuffer.Get();
+    const text::ITextStorage& content    = buffer.Content();
+    const std::size_t         totalLines = content.LineCount();
+    const auto [line, segmentInLine]     = LineForRow(at.y);
 
     const std::size_t x           = static_cast<std::size_t>(std::max(at.x, 0));
     const std::size_t gutterWidth = host_.gutterWidth();
