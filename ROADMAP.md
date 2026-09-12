@@ -316,10 +316,20 @@ real; if not, that is worth learning at language 3 rather than language 15.
       211 nodes beyond the 55, all genuinely delimited and none worth folding, so Tier 0
       infers **`Delimited`** and `Foldable` is a small Tier 1 policy on top. See
       `Docs/ParsingEngine.md`.
-- [ ] **Phase 1 remainder — the language-definition format and compiler.** With the gate
-      passed, build the real thing: ingest `grammar.json`, declare traits alongside in
-      Janet, emit one artifact per language. The probe is a Python spike against the
-      corpus, not the implementation.
+- [x] **Tier 0 inference is real code now.** `Editor/TreeSitter/TraitInference.h` —
+      a pure function over parsed `grammar.json`, no `Parser`/`Buffer`/`Screen`, so the
+      crafted-grammar cases pin each rule in isolation and name which shape broke.
+      `Tests/TraitInferenceTest.cpp` enforces the 55/55 gate against the real grammars,
+      so a grammar bump that breaks inference fails the build rather than being noticed
+      much later. Verified the gate actually fails: disabling hidden-rule inlining
+      reports the six Clojure nodes by name.
+- [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
+      in place, the rest: the Janet trait-declaration format, a build-time compiler
+      emitting one artifact per language, and `Foldable` as the first Tier 1 policy over
+      `Delimited` (inference reports 211 nodes beyond the 55; the policy excluding
+      `parenthesized_expression`/`argument_list`/`string_literal` is what turns structure
+      into a feature). Wiring the inferred facts into `Tests/Oracle` is the natural join
+      with Phase 0 — the 55-vs-211 gap should be visible as a diff, not a number in a doc.
 - [ ] **Phase 2 — Trait-driven structural drivers.** Fold, indent, dedent, structural
       selection, sticky scroll, brace match. Exit criterion is *deletable files*: roughly
       half the `.scm` corpus, and the Folds/Indents columns at 29/29 with no adapter

@@ -972,6 +972,7 @@ add_library(ned_lib STATIC
         Source/Editor/Terminal/Emulator.cpp
         Source/Editor/Terminal/PtyProcess.cpp
         Source/Editor/TreeSitter/Node.cpp
+        Source/Editor/TreeSitter/TraitInference.cpp
         Source/Editor/TreeSitter/Tree.cpp
         Source/Editor/TreeSitter/Parser.cpp
         Source/Editor/TreeSitter/IncrementalParse.cpp
@@ -1311,6 +1312,7 @@ if (NED_BUILD_TESTS)
             Tests/ThemeGalleryTest.cpp
             Tests/DocSourcePathsTest.cpp
             Tests/OracleTest.cpp
+            Tests/TraitInferenceTest.cpp
             Tests/ThemeKeyDocsTest.cpp
             Tests/InitFileThemeWriteTest.cpp
             Tests/LayoutStabilityProbe.cpp
