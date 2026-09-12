@@ -33,16 +33,11 @@ void BufferView::ShowContextMenuAt(Point localClick) {
     std::size_t codeActionPoint    = 0;
 
     if (inGutter) {
-        // Gutter menu: line-resolve the same way the existing fold-gutter
-        // click does (viewport_.AdvanceVisibleLines(viewport_.TopLine(), y, totalLines)), not
-        // ByteOffsetForPoint's fancier column-aware walk -- matching that
-        // precedent exactly rather than introducing a second,
-        // slightly-different line-resolution path for the gutter.
-        const text::ITextStorage& content    = buffer.Content();
-        const std::size_t         totalLines = content.LineCount();
-        const std::size_t         line       = std::min(
-            viewport_.AdvanceVisibleLines(viewport_.TopLine(), static_cast<std::size_t>(std::max(localClick.y, 0)), totalLines),
-            totalLines - 1);
+        // Gutter menu: the same row-to-line resolution every gutter click
+        // and ByteOffsetForPoint use (Viewport::LineForRow) -- there is one
+        // path, so nothing can be a row off from the text beside it.
+        const text::ITextStorage& content = buffer.Content();
+        const std::size_t         line    = viewport_.LineForRow(localClick.y).line;
         buffer.SetPoint(content.LineToByteOffset(line));
 
         // v1 simplification: gate each row by that command's own already-
@@ -325,13 +320,7 @@ bool BufferView::HandleTestGutterClick(Point at) {
         return false;
     }
 
-    // Line resolution matches the fold-gutter click's own
-    // AdvanceVisibleLines walk exactly, rather than introducing a second
-    // slightly-different gutter line-resolution path.
-    const text::ITextStorage& content    = activeBuffer_.Get().Content();
-    const std::size_t         totalLines = content.LineCount();
-    const std::size_t         line =
-        std::min(viewport_.AdvanceVisibleLines(viewport_.TopLine(), static_cast<std::size_t>(std::max(at.y, 0)), totalLines), totalLines - 1);
+    const std::size_t line = viewport_.LineForRow(at.y).line;
 
     const auto it = std::lower_bound(gutters_.TestEntries().begin(), gutters_.TestEntries().end(), line,
                                      [](const TestGutterEntry& entry, std::size_t target) { return entry.line < target; });
@@ -399,10 +388,7 @@ bool BufferView::HandleLeftPress(const MouseEvent& mouseEvent) {
     if (gutter.foldWidth > 0 && mouseEvent.at.x >= static_cast<int>(gutter.foldStart) &&
         static_cast<std::size_t>(mouseEvent.at.x) < gutter.foldStart + gutter.foldWidth) {
         text::Buffer&             buffer        = activeBuffer_.Get();
-        const text::ITextStorage& content       = buffer.Content();
-        const std::size_t         totalLines    = content.LineCount();
-        const std::size_t         line          = std::min(viewport_.AdvanceVisibleLines(viewport_.TopLine(), static_cast<std::size_t>(std::max(mouseEvent.at.y, 0)), totalLines),
-                                                           totalLines - 1);
+        const std::size_t         line          = viewport_.LineForRow(mouseEvent.at.y).line;
         const int                 clickedColumn = mouseEvent.at.x - static_cast<int>(gutter.foldStart);
         auto                      it            = std::lower_bound(gutters_.FoldEntries().begin(), gutters_.FoldEntries().end(), line,
                                                                    [](const FoldGutterEntry& entry, std::size_t targetLine) { return entry.headerLine < targetLine; });
