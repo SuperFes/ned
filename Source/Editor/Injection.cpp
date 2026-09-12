@@ -5,7 +5,6 @@
 
 #include "ModeOverrides.h"
 #include "TreeSitter/Languages.h"
-#include "TreeSitter/Queries.h"
 
 namespace ned::editor {
 
@@ -43,29 +42,6 @@ namespace {
         std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         const auto it = kAliases.find(lower);
         return it != kAliases.end() ? it->second : lower;
-    }
-
-    // Tier-2 resolution: a highlighting-only sub-grammar with no real
-    // ModeByName-reachable Mode. Currently just markdown-inline, built
-    // through the same generic TreeSitterModeFromLanguage(...) machinery
-    // every bundled Mode's own highlight closure goes through, rather than
-    // duplicating capture-to-SyntaxClass mapping here. The extra appended
-    // "(strikethrough)" pattern mirrors MarkdownMode()'s own addition (see
-    // Mode.cpp's CaptureTable() "text.strikethrough" doc comment) -- the
-    // grammar's own highlights.scm doesn't capture it, and this is the only
-    // other place that runs this grammar's highlighting.
-    std::optional<HighlightFunction> BuildGrammarOnlyHighlight(const std::string& canonicalName) {
-        if (canonicalName != "markdown-inline") {
-            return std::nullopt;
-        }
-        const auto language = treesitter::LanguageByName("markdown-inline");
-        if (!language) {
-            return std::nullopt;
-        }
-        const std::string querySource =
-            std::string(treesitter::queries::kMarkdownInline) + "\n(strikethrough) @text.strikethrough\n";
-        Mode mode = TreeSitterModeFromLanguage("markdown-inline-injection", *language, {.highlights = querySource});
-        return mode.highlight;
     }
 
     // Shared by CollectInjectedHighlightSpans and CollectInjectionRegions: one
@@ -112,12 +88,12 @@ const HighlightFunction* ResolveEmbeddedLanguageHighlight(std::string_view tag, 
     const std::string canonical = CanonicalEmbeddedLanguageName(tag);
     auto              it        = cache.find(canonical);
     if (it == cache.end()) {
+        // A highlighting-only grammar with no file type of its own
+        // (markdown-inline) is a bundled definition like any other, just one
+        // claiming no extensions -- so this one lookup covers it too.
         std::optional<HighlightFunction> resolved;
         if (const std::optional<Mode> subMode = ModeByName(canonical + "-mode"); subMode && subMode->highlight) {
             resolved = subMode->highlight;
-        }
-        else {
-            resolved = BuildGrammarOnlyHighlight(canonical);
         }
         it = cache.emplace(canonical, std::move(resolved)).first;
     }

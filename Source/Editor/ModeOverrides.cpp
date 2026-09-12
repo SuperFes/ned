@@ -1,14 +1,13 @@
 #include "ModeOverrides.h"
 
-#include <fstream>
 #include <functional>
 #include <mutex>
-#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 
 #include "BundledLanguages.h"
 #include "LanguageDefinition.h"
+#include "LanguageFiles.h"
 #include "Text/Buffer.h"
 #include "TreeSitter/DynamicGrammar.h"
 
@@ -34,10 +33,7 @@ namespace {
     // same "fresh Parser per call" contract for the dynamic case too.
     struct DynamicModeEntry {
         treesitter::Language language;
-        std::string          querySource;
-        std::string          foldQuerySource;
-        std::string          importQuerySource;
-        std::string          localsQuerySource;
+        QueryFiles           files; // absolute paths under the registered queries directory
     };
     std::mutex                                        g_mutex;
     std::unordered_map<std::string, DynamicModeEntry> g_dynamicModes;
@@ -110,46 +106,42 @@ namespace {
         return std::string(extension);
     }
 
-    std::string ReadFileOrThrow(const std::filesystem::path& path) {
-        std::ifstream file(path, std::ios::binary);
-        if (!file) {
-            throw std::runtime_error("ned: failed to open tree-sitter query file '" + path.string() + "'");
-        }
-        std::ostringstream contents;
-        contents << file.rdbuf();
-        return contents.str();
-    }
-
-    // register-language-grammar-directory-scan follow-up: reads
-    // queriesDir/basename's content if it exists, else "" (no error -- an
-    // absent conventional file just means that capability is unavailable
-    // for this grammar, same as an empty path did under the old explicit
-    // per-query-file signature). A queriesDir that doesn't exist at all
-    // scans every basename as absent, rather than throwing.
-    std::string ReadQueryIfPresent(const std::filesystem::path& queriesDir, const char* basename) {
+    // register-language-grammar-directory-scan follow-up: the conventional
+    // basename for a query kind, if the directory has it -- ned's own Janet
+    // spelling first, then tree-sitter's (what a system install under
+    // /usr/share/tree-sitter/queries/<lang>/ ships); both read through
+    // Editor/QueryData.h. An absent file just means that capability is
+    // unavailable for this grammar; a directory that doesn't exist at all
+    // scans every kind as absent rather than throwing.
+    std::vector<std::string> QueryFileIfPresent(const std::filesystem::path& queriesDir, const char* kind) {
         if (queriesDir.empty()) {
             return {};
         }
-        const std::filesystem::path path = queriesDir / basename;
-        return std::filesystem::exists(path) ? ReadFileOrThrow(path) : std::string();
+        for (const char* extension : {".janet", ".scm"}) {
+            const std::filesystem::path path = queriesDir / (std::string(kind) + extension);
+            if (std::filesystem::exists(path)) {
+                return {std::filesystem::absolute(path).string()};
+            }
+        }
+        return {};
     }
 
 } // namespace
 
 void RegisterDynamicMode(const std::string& name, const std::filesystem::path& libraryPath,
                          const std::filesystem::path& queriesDir) {
-    const treesitter::Language language          = treesitter::LoadDynamicLanguage(libraryPath, name);
-    std::string                querySource       = ReadQueryIfPresent(queriesDir, "highlights.scm");
-    std::string                foldQuerySource   = ReadQueryIfPresent(queriesDir, "folds.scm");
-    std::string                importQuerySource = ReadQueryIfPresent(queriesDir, "imports.scm");
-    std::string                localsQuerySource = ReadQueryIfPresent(queriesDir, "locals.scm");
+    const treesitter::Language language = treesitter::LoadDynamicLanguage(libraryPath, name);
+    QueryFiles                 files{.highlights = QueryFileIfPresent(queriesDir, "highlights"),
+                                     .folds      = QueryFileIfPresent(queriesDir, "folds"),
+                                     .imports    = QueryFileIfPresent(queriesDir, "imports"),
+                                     .tags       = QueryFileIfPresent(queriesDir, "tags"),
+                                     .tests      = QueryFileIfPresent(queriesDir, "tests"),
+                                     .indents    = QueryFileIfPresent(queriesDir, "indents"),
+                                     .locals     = QueryFileIfPresent(queriesDir, "locals"),
+                                     .injections = QueryFileIfPresent(queriesDir, "injections")};
 
     const std::lock_guard lock(g_mutex);
-    g_dynamicModes.insert_or_assign(name, DynamicModeEntry{.language          = language,
-                                                           .querySource       = std::move(querySource),
-                                                           .foldQuerySource   = std::move(foldQuerySource),
-                                                           .importQuerySource = std::move(importQuerySource),
-                                                           .localsQuerySource = std::move(localsQuerySource)});
+    g_dynamicModes.insert_or_assign(name, DynamicModeEntry{.language = language, .files = std::move(files)});
     // A re-registration under a name some already-cached buffer resolved to
     // would otherwise never take effect for it -- see g_modeCache's own
     // comment. Registration is rare (init.janet load time, or an
@@ -185,11 +177,22 @@ std::optional<Mode> ModeByName(const std::string& name) {
         }
     }
     if (dynamicEntry) {
+        // Kept on the registered name as-is (not "<name>-mode"), which is
+        // what ned/set-mode-for-extension callers already hand back.
+        const QueryFiles& f          = dynamicEntry->files;
+        const QueryText   highlights = CompileQueryFiles(f.highlights), folds = CompileQueryFiles(f.folds),
+                          imports = CompileQueryFiles(f.imports), tags = CompileQueryFiles(f.tags),
+                          tests = CompileQueryFiles(f.tests), indents = CompileQueryFiles(f.indents),
+                          locals = CompileQueryFiles(f.locals), injections = CompileQueryFiles(f.injections);
         return TreeSitterModeFromLanguage(name, dynamicEntry->language,
-                                          {.highlights = dynamicEntry->querySource,
-                                           .folds      = dynamicEntry->foldQuerySource,
-                                           .imports    = dynamicEntry->importQuerySource,
-                                           .locals     = dynamicEntry->localsQuerySource});
+                                          {.highlights = highlights.text,
+                                           .folds      = folds.text,
+                                           .imports    = imports.text,
+                                           .tags       = tags.text,
+                                           .tests      = tests.text,
+                                           .indents    = indents.text,
+                                           .locals     = locals.text,
+                                           .injections = injections.text});
     }
     return BundledModeByName(name);
 }

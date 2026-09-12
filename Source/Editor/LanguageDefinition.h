@@ -42,6 +42,23 @@ enum class AutoPairSet {
     Lisp,
 };
 
+// A language's query files, one list per kind, each entry a path
+// Editor/LanguageFiles.h can read -- "cpp/highlights.janet" for a bundled
+// file, an absolute path for a user's. Several files concatenate in order:
+// an upstream query ned consumes unmodified (`<name>/upstream/<kind>.janet`)
+// with ned's own delta after it. Empty = the language has no query of that
+// kind, and the corresponding Mode capability stays unset.
+struct QueryFiles {
+    std::vector<std::string> highlights;
+    std::vector<std::string> folds;
+    std::vector<std::string> imports;
+    std::vector<std::string> tags;
+    std::vector<std::string> tests;
+    std::vector<std::string> indents;
+    std::vector<std::string> locals;
+    std::vector<std::string> injections;
+};
+
 struct LanguageDefinition {
     // The language key -- "cpp", "python" -- which is also the LSP/DAP/task
     // config key and the imprint table key. The Mode is named "<name>-mode"
@@ -73,10 +90,7 @@ struct LanguageDefinition {
     // "punctuation.special" is a MarkupMarker, everyone else's is
     // Punctuation). User remaps (SyntaxTheme.h) still win over these.
     std::vector<std::pair<std::string, SyntaxClass>> captureClasses;
-    // The query sources, one per kind, every one optional. string_views over
-    // text the definition does not own -- compile-time embedded constants
-    // for the bundled set (TreeSitter/Queries.h).
-    TreeSitterQuerySources queries;
+    QueryFiles                                       queries;
     // Names in the escape registry, applied in order after the generic
     // build. An unknown name is a build error (ModeFromDefinition throws),
     // never a silent no-op: a definition that names an escape means it.
@@ -100,8 +114,9 @@ void               RegisterModeEscape(std::string name, ModeEscape escape);
 // The one path from a definition to a Mode. Resolves the grammar by name
 // (throws std::runtime_error for a grammar that is not bundled -- a
 // definition naming one is a build-time regression, not a runtime
-// condition), runs the generic tree-sitter build, applies the definition's
-// own fields, then each escape in order.
+// condition), compiles each query kind's files (Editor/LanguageFiles.h;
+// a malformed one throws naming `path:line`), runs the generic tree-sitter
+// build, applies the definition's own fields, then each escape in order.
 [[nodiscard]] Mode ModeFromDefinition(const LanguageDefinition& definition);
 
 // The same, for a grammar the caller already resolved -- a runtime-loaded

@@ -1,13 +1,10 @@
 #include "BundledLanguages.h"
 
 #include "Languages/Escapes.h"
-#include "TreeSitter/Queries.h"
 
 namespace ned::editor {
 
 namespace {
-
-    namespace q = treesitter::queries;
 
     // The Org/Markdown table-editing keys, mirrored between the two: S-TAB is
     // unbound globally; M-UP/M-DOWN deliberately shadow move-line-up/down
@@ -43,6 +40,12 @@ namespace {
         return a;
     }
 
+    // Locals coverage is a deliberate list, not a backlog: json, yaml, toml
+    // and xml have no binding construct to resolve, and html and css have
+    // one whose scoping is not lexical -- a CSS custom property is scoped to
+    // matching elements AND THEIR DESCENDANTS, which is DOM containment, so
+    // the byte containment Editor/LocalScopes.h resolves by would produce a
+    // rename that silently missed every descendant use.
     std::vector<LanguageDefinition> Build() {
         languages::RegisterBundledEscapes();
         std::vector<LanguageDefinition> out;
@@ -53,39 +56,39 @@ namespace {
                        .extensions        = {".janet"},
                        .lineCommentPrefix = ";",               // Lisp-family convention
                        .autoPairs         = AutoPairSet::Lisp, // '(...) is the reader's quote macro, not a paired delimiter
-                       .queries           = {.highlights = q::kJanet, .imports = q::kJanetImports, .indents = q::kJanetIndents, .locals = q::kJanetLocals}});
+                       .queries           = {.highlights = {"janet/upstream/highlights.janet"}, .imports = {"janet/imports.janet"}, .indents = {"janet/indents.janet"}, .locals = {"janet/locals.janet"}}});
 
         // No line comment: JSON has no comment syntax at all, real or
         // otherwise; toggle-line-comment correctly reports nothing configured
         // rather than inserting something that would make the file invalid.
-        out.push_back({.name = "json", .extensions = {".json"}, .queries = {.highlights = q::kJson}});
+        out.push_back({.name = "json", .extensions = {".json"}, .queries = {.highlights = {"json/upstream/highlights.janet"}}});
 
         out.push_back({.name              = "c",
                        .extensions        = {".c", ".h"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kC, .imports = q::kCImports, .tags = q::kCTags, .indents = q::kCIndents, .locals = q::kCLocals},
+                       .queries           = {.highlights = {"c/highlights.janet"}, .imports = {"c/imports.janet"}, .tags = {"c/tags.janet"}, .indents = {"c/indents.janet"}, .locals = {"c/locals.janet"}},
                        .escapes           = {"c.line-inspect"}});
 
         out.push_back({.name              = "cpp",
                        .extensions        = {".cpp", ".cc", ".cxx", ".hpp", ".hh"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kCpp, .imports = q::kCImports, .tags = q::kCppTags, .tests = q::kCppTests, .indents = q::kCppIndents, .locals = q::kCppLocals},
+                       .queries           = {.highlights = {"cpp/highlights.janet"}, .imports = {"c/imports.janet"}, .tags = {"cpp/tags.janet"}, .tests = {"cpp/tests.janet"}, .indents = {"cpp/indents.janet"}, .locals = {"cpp/locals.janet"}},
                        .escapes           = {"c.line-inspect", "cpp.test-body"}});
 
         out.push_back({.name              = "php",
                        .extensions        = {".php", ".phtml"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kPhp, .imports = q::kPhpImports, .tags = q::kPhpTags, .tests = q::kPhpTests, .locals = q::kPhpLocals}});
+                       .queries           = {.highlights = {"php/upstream/highlights.janet"}, .imports = {"php/imports.janet"}, .tags = {"php/upstream/tags.janet", "php/tags.janet"}, .tests = {"php/tests.janet"}, .locals = {"php/locals.janet"}}});
 
         out.push_back({.name              = "javascript",
                        .extensions        = {".js", ".mjs", ".cjs"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kJavaScript, .imports = q::kJavaScriptImports, .tags = q::kJavaScriptTags, .tests = q::kJavaScriptTests, .indents = q::kJavaScriptIndents, .locals = q::kJavaScriptLocals}});
+                       .queries           = {.highlights = {"javascript/upstream/highlights.janet"}, .imports = {"javascript/imports.janet"}, .tags = {"javascript/upstream/tags.janet"}, .tests = {"javascript/tests.janet"}, .indents = {"javascript/indents.janet"}, .locals = {"javascript/locals.janet"}}});
 
         out.push_back({.name              = "typescript",
                        .extensions        = {".ts", ".mts", ".cts"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kTypeScript, .imports = q::kTypeScriptImports, .tags = q::kTypeScriptTags, .tests = q::kTypeScriptTests, .indents = q::kTypeScriptIndents, .locals = q::kTypeScriptLocals}});
+                       .queries           = {.highlights = {"typescript/upstream/highlights.janet"}, .imports = {"typescript/imports.janet"}, .tags = {"javascript/upstream/tags.janet", "typescript/upstream/tags.janet", "typescript/tags.janet"}, .tests = {"typescript/tests.janet"}, .indents = {"typescript/indents.janet"}, .locals = {"typescript/locals.janet"}}});
 
         // Every query is TypeScript's except indents: JSX needs its own rules
         // and only the tsx dialect's parser knows the node types they name
@@ -93,69 +96,69 @@ namespace {
         out.push_back({.name              = "tsx",
                        .extensions        = {".tsx"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kTypeScript, .imports = q::kTypeScriptImports, .tags = q::kTypeScriptTags, .tests = q::kTypeScriptTests, .indents = q::kTsxIndents, .locals = q::kTypeScriptLocals}});
+                       .queries           = {.highlights = {"typescript/upstream/highlights.janet"}, .imports = {"typescript/imports.janet"}, .tags = {"javascript/upstream/tags.janet", "typescript/upstream/tags.janet", "typescript/tags.janet"}, .tests = {"typescript/tests.janet"}, .indents = {"tsx/indents.janet"}, .locals = {"typescript/locals.janet"}}});
 
         // No line comment: HTML/CSS/XML have block comments only. HTML's
         // <script>/<style> regions are synced to their own language servers.
         out.push_back({.name              = "html",
                        .extensions        = {".html", ".htm"},
                        .embeddedDocuments = true,
-                       .queries           = {.highlights = q::kHtml, .indents = q::kHtmlIndents, .injections = q::kHtmlInjections}});
+                       .queries           = {.highlights = {"html/upstream/highlights.janet"}, .indents = {"html/indents.janet"}, .injections = {"html/upstream/injections.janet"}}});
 
-        out.push_back({.name = "css", .extensions = {".css"}, .queries = {.highlights = q::kCss, .imports = q::kCssImports}});
+        out.push_back({.name = "css", .extensions = {".css"}, .queries = {.highlights = {"css/upstream/highlights.janet"}, .imports = {"css/imports.janet"}}});
 
         out.push_back({.name              = "python",
                        .extensions        = {".py", ".pyw"},
                        .lineCommentPrefix = "#",
-                       .queries           = {.highlights = q::kPython, .imports = q::kPythonImports, .tags = q::kPythonTags, .tests = q::kPythonTests, .indents = q::kPythonIndents, .locals = q::kPythonLocals}});
+                       .queries           = {.highlights = {"python/upstream/highlights.janet"}, .imports = {"python/imports.janet"}, .tags = {"python/upstream/tags.janet"}, .tests = {"python/tests.janet"}, .indents = {"python/indents.janet"}, .locals = {"python/locals.janet"}}});
 
         out.push_back({.name              = "bash",
                        .extensions        = {".sh", ".bash"},
                        .lineCommentPrefix = "#",
-                       .queries           = {.highlights = q::kBash, .imports = q::kBashImports, .indents = q::kBashIndents, .locals = q::kBashLocals}});
+                       .queries           = {.highlights = {"bash/upstream/highlights.janet"}, .imports = {"bash/imports.janet"}, .indents = {"bash/indents.janet"}, .locals = {"bash/locals.janet"}}});
 
         out.push_back({.name              = "fish",
                        .extensions        = {".fish"},
                        .lineCommentPrefix = "#",
-                       .queries           = {.highlights = q::kFish, .indents = q::kFishIndents, .locals = q::kFishLocals}});
+                       .queries           = {.highlights = {"fish/upstream/highlights.janet"}, .indents = {"fish/indents.janet"}, .locals = {"fish/locals.janet"}}});
 
         out.push_back({.name       = "xml",
                        .extensions = {".xml", ".xsd", ".xsl", ".xslt", ".svg"},
-                       .queries    = {.highlights = q::kXml, .indents = q::kXmlIndents}});
+                       .queries    = {.highlights = {"xml/upstream/highlights.janet"}, .indents = {"xml/indents.janet"}}});
 
         out.push_back({.name              = "rust",
                        .extensions        = {".rs"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kRust, .imports = q::kRustImports, .tags = q::kRustTags, .tests = q::kRustTests, .indents = q::kRustIndents, .locals = q::kRustLocals}});
+                       .queries           = {.highlights = {"rust/upstream/highlights.janet"}, .imports = {"rust/imports.janet"}, .tags = {"rust/upstream/tags.janet"}, .tests = {"rust/tests.janet"}, .indents = {"rust/indents.janet"}, .locals = {"rust/locals.janet"}}});
 
         out.push_back({.name              = "go",
                        .extensions        = {".go"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kGo, .tags = q::kGoTags, .tests = q::kGoTests, .indents = q::kGoIndents, .locals = q::kGoLocals}});
+                       .queries           = {.highlights = {"go/upstream/highlights.janet"}, .tags = {"go/upstream/tags.janet"}, .tests = {"go/tests.janet"}, .indents = {"go/indents.janet"}, .locals = {"go/locals.janet"}}});
 
         out.push_back({.name              = "csharp",
                        .extensions        = {".cs"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kCSharp, .tags = q::kCSharpTags, .tests = q::kCSharpTests, .indents = q::kCSharpIndents, .locals = q::kCSharpLocals}});
+                       .queries           = {.highlights = {"csharp/upstream/highlights.janet"}, .tags = {"csharp/upstream/tags.janet", "csharp/tags.janet"}, .tests = {"csharp/tests.janet"}, .indents = {"csharp/indents.janet"}, .locals = {"csharp/locals.janet"}}});
 
         out.push_back({.name              = "java",
                        .extensions        = {".java"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kJava, .tags = q::kJavaTags, .tests = q::kJavaTests, .indents = q::kJavaIndents, .locals = q::kJavaLocals}});
+                       .queries           = {.highlights = {"java/upstream/highlights.janet"}, .tags = {"java/upstream/tags.janet", "java/tags.janet"}, .tests = {"java/tests.janet"}, .indents = {"java/indents.janet"}, .locals = {"java/locals.janet"}}});
 
         // .kts is a Kotlin *script* (a Gradle build file, most often) -- the
         // same grammar and the same mode, no separate dialect.
         out.push_back({.name              = "kotlin",
                        .extensions        = {".kt", ".kts"},
                        .lineCommentPrefix = "//",
-                       .queries           = {.highlights = q::kKotlin, .tags = q::kKotlinTags, .tests = q::kKotlinTests, .indents = q::kKotlinIndents, .locals = q::kKotlinLocals}});
+                       .queries           = {.highlights = {"kotlin/upstream/highlights.janet"}, .tags = {"kotlin/tags.janet"}, .tests = {"kotlin/tests.janet"}, .indents = {"kotlin/indents.janet"}, .locals = {"kotlin/locals.janet"}}});
 
         out.push_back({.name              = "yaml",
                        .extensions        = {".yaml", ".yml"},
                        .lineCommentPrefix = "#",
-                       .queries           = {.highlights = q::kYaml, .indents = q::kYamlIndents}});
+                       .queries           = {.highlights = {"yaml/upstream/highlights.janet"}, .indents = {"yaml/indents.janet"}}});
 
-        out.push_back({.name = "toml", .extensions = {".toml"}, .lineCommentPrefix = "#", .queries = {.highlights = q::kToml}});
+        out.push_back({.name = "toml", .extensions = {".toml"}, .lineCommentPrefix = "#", .queries = {.highlights = {"toml/upstream/highlights.janet"}}});
 
         // .edn is data, not code, but it's read with Clojure's own reader
         // syntax -- same reasoning as .json. .bb is babashka, a Clojure
@@ -164,7 +167,7 @@ namespace {
                        .extensions        = {".clj", ".cljs", ".cljc", ".edn", ".bb"},
                        .lineCommentPrefix = ";",
                        .autoPairs         = AutoPairSet::Lisp,
-                       .queries           = {.highlights = q::kClojure, .imports = q::kClojureImports, .indents = q::kClojureIndents, .locals = q::kClojureLocals}});
+                       .queries           = {.highlights = {"clojure/highlights.janet"}, .imports = {"clojure/imports.janet"}, .indents = {"clojure/indents.janet"}, .locals = {"clojure/locals.janet"}}});
 
         // jank is a Clojure dialect with no grammar of its own: Clojure's
         // grammar and queries under a distinct name, so the mode line reads
@@ -174,7 +177,13 @@ namespace {
                        .extensions        = {".jank"},
                        .lineCommentPrefix = ";",
                        .autoPairs         = AutoPairSet::Lisp,
-                       .queries           = {.highlights = q::kClojure, .imports = q::kClojureImports, .indents = q::kClojureIndents, .locals = q::kClojureLocals}});
+                       .queries           = {.highlights = {"clojure/highlights.janet"}, .imports = {"clojure/imports.janet"}, .indents = {"clojure/indents.janet"}, .locals = {"clojure/locals.janet"}}});
+
+        // Not a file type: the inline grammar tree-sitter-markdown injects
+        // into every paragraph, resolved by name from Injection.cpp. Its
+        // highlights are upstream's plus ned's one addition (strikethrough).
+        out.push_back({.name    = "markdown-inline",
+                       .queries = {.highlights = {"markdown-inline/upstream/highlights.janet", "markdown-inline/highlights.janet"}}});
 
         // No line comment: Markdown has no comment-line convention of its
         // own. Prose wraps (WrapOverrides.h is the per-file override).
@@ -187,7 +196,7 @@ namespace {
                        .wrapLines      = true,
                        .keymap         = Concat({{"TAB", "markdown-table-align"}}, TableKeys("markdown")),
                        .captureClasses = {{"punctuation.special", SyntaxClass::MarkupMarker}},
-                       .queries        = {.highlights = q::kMarkdown, .injections = q::kMarkdownInjections},
+                       .queries        = {.highlights = {"markdown/upstream/highlights.janet"}, .injections = {"markdown/upstream/injections.janet"}},
                        .escapes        = {"markdown.highlight", "markdown.indent", "markdown.symbols"}});
 
         // Real Org's own bindings, with three deliberate mode-over-global
@@ -217,7 +226,7 @@ namespace {
                                                     {"C-c C-d", "org-deadline"},
                                                     {"C-c C-o", "open-link-at-point"}},
                                                    Concat(TableKeys("org"), {{"C-c -", "org-table-insert-hline"}})),
-                       .queries           = {.highlights = q::kOrg, .injections = q::kOrgInjections},
+                       .queries           = {.highlights = {"org/highlights.janet"}, .injections = {"org/upstream/injections.janet"}},
                        .escapes           = {"org.highlight", "org.indent", "org.symbols"}});
 
         return out;

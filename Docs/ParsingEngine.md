@@ -17,7 +17,8 @@ see what drifted. Re-counted 2026-09-12, after the fold column was deleted and
 the indent column shrunk to its declared remainder (see "The fold column is
 gone" and "The indent column shrinks" below): 24 fetched grammar repos under
 `build/_deps/`, **63** `.scm` files under `Source/Editor/TreeSitter/queries/`
-and **91** embedded query constants in `Source/Editor/TreeSitter/Queries.h`,
+and **91** embedded query constants in a TreeSitter/Queries.h header (since
+deleted -- queries are files under `Source/Languages/` now),
 down from 78 and 106 two days before. Both numbers were once written here as
 79 and 113; the corpus counts drift on their own, which is the argument for
 re-running them rather than quoting them. The direction of that drift is now
@@ -115,7 +116,8 @@ it is the measurement the whole design rests on.
 
 ### The N x M matrix, and its hole
 
-`Queries.h` declares 95 embedded query constants across 29 languages and 8
+Queries.h (the embedded-constant header this work later deleted) declared 95
+query constants across 29 languages and 8
 driver kinds:
 
 ```
@@ -927,23 +929,27 @@ do, including from Janet. A driver declares which traits it consumes, so the
 registry can report -- statically, at load time -- which languages can serve it
 and which cannot.
 
-## The authoring format: Janet for escapes, `.scm` for declarations
+## The authoring format: Janet syntax throughout, `.scm` nowhere
 
-As first decided, **ned's own language definitions were to be written in Janet**
--- both the Tier 1 trait declarations and the Tier 2 escapes -- rather than in
-a tree-sitter-style `.scm` query file. Recorded here because the syntax would
-otherwise look inherited rather than chosen. The measurement in "Tier 1 is not
-restated per driver either" then narrowed it: with no cross-driver duplication
-for a new declarative format to collapse, the declarative tier stays `.scm`,
-and the decision applies to the escapes alone. The reasoning below is kept as
-written, since the escape half of it is unchanged.
+Decided in three moves, each recorded because the syntax would otherwise look
+inherited rather than chosen. First: ned's own language definitions in Janet,
+both tiers. Then the Tier 1 measurement above seemed to narrow it -- with no
+cross-driver duplication for a new declarative format to collapse, the
+declarative tier could stay `.scm`. Then the mechanism-unification decision
+(one `language.janet` per language, no second format in the repo) reversed
+that narrowing, on a fact that made it nearly free: **Janet's reader reads
+tree-sitter query syntax verbatim** -- `(node)`, `field:`, `@capture`, `[alt]`,
+`.` anchors, `!field`, `_`, `*`/`+`/`?` quantifiers, strings -- with exactly
+two spellings that differ, the comment marker (`#` for `;`, since `#` is
+Janet's comment character and is also tree-sitter's predicate sigil) and the
+predicate head (`(:eq? ...)` for `(#eq? ...)`, a Janet keyword). A pattern
+file converts textually, layout and comments intact.
 
-Janet is already the extension language, and it is homoiconic, which is what
-would have let one file serve both tiers without the split feeling arbitrary:
+So query patterns are **Janet-syntax data** (`Editor/QueryData.h` -- read,
+never evaluated), and the split lands as:
 
-- **The declarative tier is plain *data*** -- and it turns out to be `.scm`
-  data, which nothing evaluates either. A pattern file is still just data on
-  disk.
+- **The declarative tier is plain data** in Janet's own surface syntax. A
+  pattern file is still just data on disk; nothing evaluates to load it.
 - **The escape tier is Janet *code***, and therefore gets a real language for
   free: arithmetic over captured text (Org's heading level is a count of `*`),
   quantifiers with index parity (the Lisp binding-vector cliff), and access to
@@ -958,20 +964,33 @@ parser, `Janet/JanetVcsProvider.h` implements a C++ interface from Janet
 callbacks, `ned/register-snippet` likewise. Janet over a compiled C++ core is
 how the rest of ned already extends.
 
-### What stays `.scm`, and why
+### Where `.scm` went
 
-An S-expression *reader* is kept, but only to **consume upstream** -- it is an
-input format, not an authoring one. Measured against `CMakeLists.txt` on
-2026-09-11, ned consumes **32 query files it does not write**: 20
-`highlights.scm`, 9 `tags.scm`, 3 `injections.scm`. Highlighting is the one
-driver column at full coverage precisely because upstream ships it, so dropping
-the ability to read those files means re-authoring highlighting for 29
-languages to buy nothing.
+**No `.scm` file exists in the repo.** Every query lives under
+`Source/Languages/<name>/` in the Janet spelling -- ned's own as
+`<kind>.janet`, and every upstream file ned consumes (31: the highlights,
+tags and injections queries the grammars ship) vendored once as
+`<name>/upstream/<kind>.janet` via `ConvertScmToJanet`. Vendoring is safe
+because grammar bumps are already manual and gated:
+`Tests/QueryDataTest.cpp` re-converts each source file from the FetchContent
+tree on every run and diffs it against the vendored copy, so a bump whose
+query changed fails the build until `NED_BLESS_QUERIES=1` re-vendors it and
+the diff is read -- `ImprintTables.cpp`'s exact bless shape.
 
-`/usr/bin/tree-sitter` is also installed on this machine, and `tree-sitter
-query` validates a pattern against a real grammar without a ned rebuild --
-worth keeping reachable for the upstream files, since it is the fastest
-authoring loop available.
+Two `.scm`-shaped things survive, deliberately. The *reader* for tree-sitter's
+own spelling stays (`ParseScm` -- one reader, two dialects), because a
+runtime-registered grammar points at a queries directory a system tree-sitter
+install shipped, and those files are upstream's own. And tree-sitter's query
+*text* is still emitted -- in memory, at load time (`ToQueryText`), because
+`ts_query_new` is the matcher ned currently runs patterns on. That text is
+compiler output, not a format anyone authors; when Phase 4's own matcher
+consumes the parsed forms directly, it goes away without a file changing.
+
+`/usr/bin/tree-sitter` (0.27) remains the fastest authoring loop for a
+*pattern* -- author in its syntax against a real grammar, then
+`ConvertScmToJanet` is the one-liner that respells it. `Tools/` has no
+converter binary because the converter lives in ned_tests, next to the gate
+that uses it.
 
 ### Two disciplines that make this hold up
 
@@ -989,7 +1008,7 @@ binding, and `Editor/Org.h`'s pure parsing functions deliberately do not read
 it.
 
 Together these mean a future scripting-runtime change touches the binding layer
-and a countable handful of host predicates -- never the languages. Relevant
+and a countable handful of host escapes -- never the languages. Relevant
 because `Docs/JankFeasibility.md` is a live Maybelist item: jank is also a Lisp,
 so the declarative tier would carry over as-is, but escapes are *code* and would
 be a rewrite (different standard library, different collections, different
