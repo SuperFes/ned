@@ -3326,6 +3326,18 @@ class BufferView : public Widget {
     // at byteOffset -- Paint() inverts that cell as the secondary caret.
     [[nodiscard]] bool IsSecondaryCursorAt(std::size_t byteOffset) const;
     [[nodiscard]] bool InIsearchMatch(std::size_t byteOffset) const;
+
+    // The bracket under point and its partner. InIsearchMatch's exact per-cell
+    // paint-loop shape, backed by matchingBracket_ below.
+    [[nodiscard]] bool InMatchingBracket(std::size_t byteOffset) const;
+
+    // Refreshed once per Paint rather than per cell: Mode::matchingDelimiters
+    // is a tree walk over the mode's shared incremental parse, which is cheap
+    // but not free, and the answer cannot change within a frame. Recomputed on
+    // every frame rather than cached against ContentGeneration because it also
+    // depends on POINT, which moves without the content changing -- and a
+    // cache keyed on both would be invalidated by every cursor motion anyway.
+    std::optional<editor::imprint::DelimiterPair> matchingBracket_;
     // snippet-expansion follow-up: whether byteOffset falls inside the live
     // session's active tabstop field -- InIsearchMatch's exact per-cell
     // paint-loop shape, backing the snippetFieldBackground wash.

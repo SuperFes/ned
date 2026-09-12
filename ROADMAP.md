@@ -503,10 +503,17 @@ real; if not, that is worth learning at language 3 rather than language 15.
       meant to feed, which recomputes as point moves. Now a `Mode::matchingDelimiters`
       capability riding the same shared incremental parse the fold and highlight closures
       already use, with the command routed through it. One path, no second parser.
-- [ ] Matching-bracket *highlighting* — now genuinely a `BufferView` paint change and
-      nothing more, since the capability hands back both ranges and costs a tree walk
-      rather than a parse. Wants a `Theme` field and a per-cell predicate in the
-      `InIsearchMatch`/`InActiveSnippetField` shape.
+- [x] **Matching-bracket highlighting.** `matching_bracket_background` (settable, in
+      `Docs/Themes.md`, derived in `ThemeFromPalette` so a cloned theme need not know the
+      field exists) plus `InMatchingBracket` in `InIsearchMatch`'s exact per-cell shape.
+      Verified in a real terminal by the escape codes rather than by inference: exactly
+      two cells carry the wash, `{` and `}`, and moving point off clears it.
+      Two placement decisions, both asserted rather than assumed. The pair is computed
+      **once per frame, not per cell** — it is a tree walk over the mode's shared parse,
+      cheap but not free — and recomputed every frame rather than cached, because it
+      depends on point, which moves without the content changing. And it sits **below
+      search, above selection** in the brush chain: a bracket match is ambient feedback,
+      an isearch match is something the user went looking for.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over
