@@ -316,9 +316,12 @@ Query::Query(const Language& language, std::string_view source) {
                           &errorType);
 
     if (query_ == nullptr) {
-        throw std::runtime_error("ned: tree-sitter query error (" + std::string(QueryErrorName(errorType)) +
-                                 ") at byte offset " + std::to_string(errorOffset));
+        throw QueryCompileError(errorOffset, QueryErrorName(errorType));
     }
+}
+
+QueryCompileError::QueryCompileError(std::size_t offset, std::string_view kind) : std::runtime_error("ned: tree-sitter query error (" + std::string(kind) + ") at byte offset " + std::to_string(offset)),
+                                                                                  offset_(offset), kind_(kind) {
 }
 
 Query::~Query() {

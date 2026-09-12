@@ -1543,12 +1543,12 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedRegisterLanguageGrammar>(
         "ned", "register-language-grammar",
         "Load a tree-sitter grammar at runtime: (name library-path queries-dir). library-path is a shared library "
-        "exporting tree_sitter_<name>; queries-dir is a directory scanned for conventional query filenames -- "
-        "\"highlights.scm\", \"folds.scm\" (a \"@fold\"-capture query), and \"imports.scm\" (an "
-        "\"@import.target\"/\"@import.module\"/\"@import.statement\"-capture query backing open-link-at-point's "
-        "go-to-file-at-point for this grammar's own import/include syntax) -- whichever of the three aren't present "
-        "in the directory are simply skipped (a grammar with no highlights.scm, no folds.scm, or no imports.scm is "
-        "fine), so a file added to queries-dir later (e.g. by a system package update) takes effect on the next "
+        "exporting tree_sitter_<name>; queries-dir is a directory scanned for every conventional query-kind "
+        "basename -- highlights, folds, imports, tags, tests, indents, locals and injections, as either "
+        "<kind>.janet (ned's own spelling: '#' comments, (:eq? ...) predicates) or <kind>.scm (tree-sitter's, "
+        "what a system install under /usr/share/tree-sitter/queries/<lang>/ ships) -- whichever aren't present "
+        "are simply skipped (a grammar with only a highlights file is fine), so a file added to queries-dir "
+        "later (e.g. by a system package update) takes effect on the next "
         "registration with no init.janet change needed. Pass \"\" for queries-dir to register the grammar for its "
         "parser alone. Re-registering the same name replaces it. The registered name can then be used as the "
         "mode-name argument to ned/set-mode-for-extension or ned/set-mode-for-filename.");

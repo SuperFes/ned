@@ -6,7 +6,9 @@
 
 #include "AutoPair.h"
 #include "Key.h"
+#include "LanguageFiles.h"
 #include "TreeSitter/Languages.h"
+#include "TreeSitter/Query.h"
 
 namespace ned::editor {
 
@@ -74,10 +76,70 @@ Mode ModeFromDefinition(const LanguageDefinition& definition) {
     return ModeFromDefinition(definition, *language);
 }
 
+namespace {
+
+    // The eight kinds, compiled; kept alive for the duration of the build
+    // (TreeSitterModeFromLanguage retains none of the text).
+    struct CompiledQueries {
+        QueryText highlights, folds, imports, tags, tests, indents, locals, injections;
+
+        [[nodiscard]] TreeSitterQuerySources Views() const {
+            return {.highlights = highlights.text,
+                    .folds      = folds.text,
+                    .imports    = imports.text,
+                    .tags       = tags.text,
+                    .tests      = tests.text,
+                    .indents    = indents.text,
+                    .locals     = locals.text,
+                    .injections = injections.text};
+        }
+    };
+
+    CompiledQueries Compile(const QueryFiles& files) {
+        return {.highlights = CompileQueryFiles(files.highlights),
+                .folds      = CompileQueryFiles(files.folds),
+                .imports    = CompileQueryFiles(files.imports),
+                .tags       = CompileQueryFiles(files.tags),
+                .tests      = CompileQueryFiles(files.tests),
+                .indents    = CompileQueryFiles(files.indents),
+                .locals     = CompileQueryFiles(files.locals),
+                .injections = CompileQueryFiles(files.injections)};
+    }
+
+    // Which kind tree-sitter rejected, and where in which file: the generic
+    // build compiles every kind in one go and its exception carries only a
+    // byte offset, so on failure each kind is compiled again alone -- an
+    // error path only, never paid on success.
+    [[noreturn]] void RethrowLocated(const LanguageDefinition& definition, const treesitter::Language& language,
+                                     const CompiledQueries& compiled, const treesitter::QueryCompileError& error) {
+        for (const QueryText* text : {&compiled.highlights, &compiled.folds, &compiled.imports, &compiled.tags, &compiled.tests,
+                                      &compiled.indents, &compiled.locals, &compiled.injections}) {
+            if (text->text.empty()) {
+                continue;
+            }
+            try {
+                treesitter::Query probe(language, text->text);
+            }
+            catch (const treesitter::QueryCompileError& kindError) {
+                throw std::runtime_error("language '" + definition.name + "': " + text->Locate(kindError.Offset()) +
+                                         ": tree-sitter query error (" + std::string(kindError.Kind()) + ")");
+            }
+        }
+        throw std::runtime_error("language '" + definition.name + "': " + error.what());
+    }
+
+} // namespace
+
 Mode ModeFromDefinition(const LanguageDefinition& definition, const treesitter::Language& language) {
-    ModeBuildContext context;
-    Mode             mode = TreeSitterModeFromLanguage(ModeNameFor(definition), language, definition.queries, &context);
-    return Finish(std::move(mode), definition, context);
+    const CompiledQueries compiled = Compile(definition.queries);
+    ModeBuildContext      context;
+    try {
+        Mode mode = TreeSitterModeFromLanguage(ModeNameFor(definition), language, compiled.Views(), &context);
+        return Finish(std::move(mode), definition, context);
+    }
+    catch (const treesitter::QueryCompileError& error) {
+        RethrowLocated(definition, language, compiled, error);
+    }
 }
 
 } // namespace ned::editor

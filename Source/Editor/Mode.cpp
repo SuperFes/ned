@@ -28,7 +28,6 @@
 #include "TreeSitter/IncrementalParse.h"
 #include "TreeSitter/Languages.h"
 #include "TreeSitter/Parser.h"
-#include "TreeSitter/Queries.h"
 #include "TreeSitter/Query.h"
 #include "TreeSitter/Tree.h"
 

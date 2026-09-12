@@ -11,7 +11,6 @@
 #include "Editor/LanguageDefinition.h"
 #include "Editor/ModeInternal.h"
 #include "Editor/ModeOverrides.h"
-#include "Editor/TreeSitter/Queries.h"
 
 using ned::editor::AutoPairSet;
 using ned::editor::BundledLanguage;
@@ -54,6 +53,7 @@ TEST_CASE("Every bundled definition builds, under its own '-mode' name", "[Langu
         "clojure",
         "jank",
         "markdown",
+        "markdown-inline",
         "org",
     };
     std::set<std::string> seen;
@@ -154,7 +154,7 @@ TEST_CASE("An escape decorates the generic build and sees the shared parse state
     });
     LanguageDefinition definition{.name              = "json",
                                   .lineCommentPrefix = "//",
-                                  .queries           = {.highlights = ned::editor::treesitter::queries::kJson},
+                                  .queries           = {.highlights = {"json/upstream/highlights.janet"}},
                                   .escapes           = {"test.probe"}};
     const Mode         mode = ModeFromDefinition(definition);
     REQUIRE(sawParser);
