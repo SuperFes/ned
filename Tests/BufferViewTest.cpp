@@ -7943,6 +7943,40 @@ TEST_CASE("Clicking the fold gutter column collapses a code block, hiding its bo
     REQUIRE(ContentRowText(screen, 1, 4, 3, /*foldColumn=*/4, /*symbolColumn=*/1) == "    ");
 }
 
+TEST_CASE("Folding keeps a function's signature on screen, brace style regardless", "[BufferView]") {
+    // Folding a body must never cost you the signature -- it is usually the
+    // one line you still want while the body is away.
+    //
+    // The attached-brace case is covered by "Clicking the fold gutter column
+    // collapses a code block", which asserts "int main(void) { … }". This
+    // pins the other style, where the brace sits on its own line: the fold
+    // block starts on the BRACE line, so the signature is simply the line
+    // above and stays rendered untouched. Worth a test of its own because
+    // nothing structurally guarantees it -- it falls out of folding the body
+    // rather than the declaration, and would break the day something folded
+    // a whole function_definition instead.
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    fixture.buffer.InsertAtPoint("int f(void)\n{\n    return 1;\n}\nint after;\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(30, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 4});
+    view.Paint(canvas); // establishes the foldable-blocks cache before the click
+
+    const int foldStart = GutterWidth(6, /*foldColumn=*/4, /*symbolColumn=*/1) - 4;
+    view.OnEvent(MousePress(foldStart, 1)); // the brace's own line
+    view.Paint(canvas);
+
+    // The signature is untouched on row 0, and the brace row carries the
+    // ellipsis plus the closing line's preview.
+    CHECK(ContentRowText(screen, 0, 11, 6, /*foldColumn=*/4, /*symbolColumn=*/1) == "int f(void)");
+    CHECK(ContentRowText(screen, 1, 5, 6, /*foldColumn=*/4, /*symbolColumn=*/1) == "{ … }");
+    // What followed the function is still there, pulled up under the fold.
+    CHECK(ContentRowText(screen, 2, 9, 6, /*foldColumn=*/4, /*symbolColumn=*/1) == "int after");
+}
+
 TEST_CASE("Nested fold regions render guide lines at increasing depth columns for an expanded block", "[BufferView]") {
     Fixture fixture;
     fixture.mode = ned::editor::CMode();
