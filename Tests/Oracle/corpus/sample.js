@@ -20,3 +20,10 @@ function total(values) {
     }
     return sum;
 }
+
+function fill(table, i) {
+    table[i] = 0;
+    return table[
+        i
+    ];
+}

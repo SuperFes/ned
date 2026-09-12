@@ -29,10 +29,10 @@ namespace {
 std::optional<DelimiterPair> PairFor(const treesitter::Node& node,
                                      const std::map<std::string, DelimitedBody>& table) {
     const auto entry = table.find(std::string(node.Type()));
-    if (entry == table.end() || entry->second.kind != DelimiterKind::Bracket) {
+    if (entry == table.end()) {
         return std::nullopt;
     }
-    return DelimitersOf(node);
+    return DelimitersOf(node, entry->second);
 }
 
 // Deepest-first, so an inner pair wins over the outer one that contains it.
@@ -81,12 +81,43 @@ std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node) {
         }
         for (std::size_t j = 0; j < i; ++j) {
             const treesitter::Node open = node.Child(j);
-            if (open.IsNull() || open.IsNamed() || open.Type().size() != 1 || open.Type()[0] != *opener) {
+            if (open.IsNull() || open.IsNamed() || !OpensWithBracket(open.Type(), *opener)) {
                 continue;
             }
             return DelimiterPair{open.StartByte(), open.EndByte(), close.StartByte(), close.EndByte()};
         }
         return std::nullopt; // a closer with no opener before it is not a pair
+    }
+    return std::nullopt;
+}
+
+std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node, const DelimitedBody& body) {
+    switch (body.kind) {
+        case DelimiterKind::Bracket:
+            return DelimitersOf(node);
+        case DelimiterKind::Indent:
+            return std::nullopt; // a dedent is not a token
+        case DelimiterKind::Keyword:
+            break;
+    }
+    if (node.IsNull() || node.ChildCount() < 2) {
+        return std::nullopt;
+    }
+    // Same shape as the bracket walk: the LAST anonymous child spelling the
+    // closer, then the first anonymous child before it spelling the opener --
+    // so a body whose closer is followed by optional members still pairs.
+    for (std::size_t i = node.ChildCount(); i-- > 0;) {
+        const treesitter::Node close = node.Child(i);
+        if (close.IsNull() || close.IsNamed() || close.Type() != body.closer) {
+            continue;
+        }
+        for (std::size_t j = 0; j < i; ++j) {
+            const treesitter::Node open = node.Child(j);
+            if (!open.IsNull() && !open.IsNamed() && open.Type() == body.opener) {
+                return DelimiterPair{open.StartByte(), open.EndByte(), close.StartByte(), close.EndByte()};
+            }
+        }
+        return std::nullopt;
     }
     return std::nullopt;
 }

@@ -63,7 +63,7 @@ Shipped and live today.
 |---|---|
 | Indent width, tabs-vs-spaces, per language | `Editor/IndentStyle.h`, `ned/set-indent-style` |
 | Tab display width | `Editor/TabWidth.h` |
-| Structural indentation, 21 languages | `Editor/Indent.h` + `*-indents.scm` (`@indent`/`@dedent`/`@aligned`/`@indent.body`/`@align.barrier`) |
+| Structural indentation, 21 languages | `Editor/Indent.h` + the delimiter imprint (`Editor/ImprintIndent.h`, every bracket/indentation body) + `*-indents.scm` for the remainder (`@aligned`/`@indent.body`/`@align.barrier`/`@indent.suppress`, and `@indent`/`@dedent` only for keyword bodies, tag pairs and clause headers) |
 | Continuation indent / align-to-opener | `@aligned` |
 | Live-while-typing indent | `newline`, `indent-for-tab-command` |
 | On-demand indent, any range | `indent-region`, `indent-buffer` |

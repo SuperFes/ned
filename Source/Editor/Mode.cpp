@@ -1120,8 +1120,19 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // Child/ChildCount, which are unnamed-inclusive) -- this is what keeps a
     // lone punctuation token (";", "(", ...) from ever being its own
     // expansion step, with no per-language "skip list" needed.
-    ExpandSelectionFunction expandSelection = [parser, sharedParse](std::string_view bufferText, std::size_t startByte,
-                                                                    std::size_t endByte) -> std::optional<std::pair<std::size_t, std::size_t>> {
+    //
+    // One step the tree cannot supply, and the delimiter imprint can: the
+    // INSIDE of a delimited body. No grammar has a node for "what sits between
+    // the parens" -- `a, b` in `f(a, b)`, the statements between `{` and `}`
+    // -- yet that is expand-region's "inside pairs" and Vim's `i(`, the most
+    // used expansion there is. So when the next enclosing node is a delimited
+    // body and the selection sits strictly inside its delimiters, the interior
+    // is offered first and the whole body on the following step. Nothing
+    // changes when the interior IS the next node (`"a": 1` inside
+    // `{"a": 1}`): the step only appears where the walk would have skipped
+    // something.
+    ExpandSelectionFunction expandSelection = [parser, sharedParse, languageKey](std::string_view bufferText, std::size_t startByte,
+                                                                                 std::size_t endByte) -> std::optional<std::pair<std::size_t, std::size_t>> {
         const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
         if (tree.IsNull()) {
             return std::nullopt;
@@ -1133,6 +1144,14 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         }
         if (node.IsNull()) {
             return std::nullopt; // already at the root -- nothing bigger to expand to
+        }
+        const auto& table = imprint::TableFor(languageKey);
+        if (const auto entry = table.find(std::string(node.Type())); entry != table.end()) {
+            if (const std::optional<imprint::DelimiterPair> pair = imprint::DelimitersOf(node, entry->second);
+                pair.has_value() && pair->openEnd <= startByte && endByte <= pair->closeStart &&
+                !(pair->openEnd == startByte && endByte == pair->closeStart)) {
+                return std::make_pair(pair->openEnd, pair->closeStart);
+            }
         }
         return std::make_pair(node.StartByte(), node.EndByte());
     };
@@ -1373,18 +1392,22 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
 
     // smart-indentation follow-up: an eighth closure sharing the same
     // parser/sharedParse as everything above, for the same "don't trigger a
-    // redundant full reparse on the same Paint() cycle" reason. Only built
-    // when an indent query source was actually given; otherwise
-    // mode.indentColumn stays a default-constructed, empty std::function,
-    // the same "no support" signal every other capability above uses.
-    // Captures `name` (the mode's own full name, e.g. "python-mode") by
-    // value into BuildIndentFunction BEFORE it's moved into the returned
-    // Mode below -- see BuildIndentFunction's own doc comment (Indent.h) for
-    // why the indent style lookup needs this rather than languageKey.
+    // redundant full reparse on the same Paint() cycle" reason. Built when an
+    // indent query was given OR the language has a delimiter imprint
+    // (Editor/ImprintIndent.h) -- json, css, toml and php indent from the
+    // imprint alone and carry no query at all; otherwise mode.indentColumn
+    // stays a default-constructed, empty std::function, the same "no
+    // support" signal every other capability above uses. Captures `name`
+    // (the mode's own full name, e.g. "python-mode") by value into
+    // BuildIndentFunction BEFORE it's moved into the returned Mode below --
+    // see BuildIndentFunction's own doc comment (Indent.h) for why the
+    // indent style lookup needs this rather than languageKey.
     IndentFunction indentColumn;
-    if (!queries.indents.empty()) {
-        const auto indentQuery = std::make_shared<treesitter::Query>(language, queries.indents);
-        indentColumn           = BuildIndentFunction(parser, indentQuery, sharedParse, name);
+    if (!queries.indents.empty() || !imprint::TableFor(languageKey).empty()) {
+        const auto indentQuery = queries.indents.empty()
+                                     ? std::shared_ptr<treesitter::Query>{}
+                                     : std::make_shared<treesitter::Query>(language, queries.indents);
+        indentColumn           = BuildIndentFunction(parser, indentQuery, sharedParse, name, languageKey);
     }
 
     // scope-aware-rename follow-up: a ninth closure sharing the same
@@ -1497,7 +1520,7 @@ Mode JsonMode() {
     // No lineCommentPrefix -- JSON has no comment syntax at all, real or
     // otherwise; toggle-line-comment correctly reports nothing configured
     // rather than inserting something that would make the file invalid JSON.
-    return TreeSitterMode("json-mode", "json", {.highlights = treesitter::queries::kJson, .indents = treesitter::queries::kJsonIndents});
+    return TreeSitterMode("json-mode", "json", {.highlights = treesitter::queries::kJson});
 }
 
 Mode CMode() {
@@ -1523,7 +1546,7 @@ Mode CppMode() {
 }
 
 Mode PhpMode() {
-    Mode mode              = TreeSitterMode("php-mode", "php", {.highlights = treesitter::queries::kPhp, .imports = treesitter::queries::kPhpImports, .tags = treesitter::queries::kPhpTags, .tests = treesitter::queries::kPhpTests, .indents = treesitter::queries::kPhpIndents, .locals = treesitter::queries::kPhpLocals});
+    Mode mode              = TreeSitterMode("php-mode", "php", {.highlights = treesitter::queries::kPhp, .imports = treesitter::queries::kPhpImports, .tags = treesitter::queries::kPhpTags, .tests = treesitter::queries::kPhpTests, .locals = treesitter::queries::kPhpLocals});
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -1613,7 +1636,7 @@ Mode HtmlMode() {
 Mode CssMode() {
     // No lineCommentPrefix -- same reasoning as HtmlMode, CSS only has
     // block comments (/* */).
-    return TreeSitterMode("css-mode", "css", {.highlights = treesitter::queries::kCss, .imports = treesitter::queries::kCssImports, .indents = treesitter::queries::kCssIndents});
+    return TreeSitterMode("css-mode", "css", {.highlights = treesitter::queries::kCss, .imports = treesitter::queries::kCssImports});
 }
 
 Mode PythonMode() {
@@ -1677,7 +1700,7 @@ Mode YamlMode() {
 }
 
 Mode TomlMode() {
-    Mode mode              = TreeSitterMode("toml-mode", "toml", {.highlights = treesitter::queries::kToml, .indents = treesitter::queries::kTomlIndents});
+    Mode mode              = TreeSitterMode("toml-mode", "toml", {.highlights = treesitter::queries::kToml});
     mode.lineCommentPrefix = "#";
     return mode;
 }

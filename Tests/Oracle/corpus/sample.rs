@@ -20,3 +20,10 @@ mod demo {
         }
     }
 }
+
+fn report(n: u32) {
+    println!(
+        "{}",
+        n
+    );
+}

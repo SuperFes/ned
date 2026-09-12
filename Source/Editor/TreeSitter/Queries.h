@@ -203,7 +203,6 @@ extern const char* const kKotlinTests;
 // configured" convention as fold/importTarget/symbolKind/testDiscovery.
 extern const char* const kCIndents;
 extern const char* const kCppIndents;
-extern const char* const kJsonIndents;
 extern const char* const kPythonIndents;
 // bundle-remaining-indents follow-up: the rest of the bundled grammars, each
 // a fast, mechanical addition once the engine itself was proven above -- no
@@ -219,8 +218,6 @@ extern const char* const kPythonIndents;
 extern const char* const kJavaScriptIndents;
 extern const char* const kTypeScriptIndents;
 extern const char* const kTsxIndents;
-extern const char* const kPhpIndents;
-extern const char* const kCssIndents;
 extern const char* const kHtmlIndents;
 extern const char* const kXmlIndents;
 extern const char* const kBashIndents;
@@ -228,7 +225,6 @@ extern const char* const kFishIndents;
 extern const char* const kJanetIndents;
 extern const char* const kClojureIndents;
 extern const char* const kYamlIndents;
-extern const char* const kTomlIndents;
 extern const char* const kRustIndents;
 extern const char* const kGoIndents;
 extern const char* const kCSharpIndents;

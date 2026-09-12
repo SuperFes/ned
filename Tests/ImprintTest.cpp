@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
-#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -11,7 +10,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <vector>
 
 #include "Editor/CodeFold.h"
@@ -67,91 +65,6 @@ json Grammar(const json& rules, const json& externals = json::array()) {
 // The FetchContent tree the real grammars live in. Absent in a source-only
 // checkout, so the corpus case skips rather than fails there.
 fs::path DepsDir() { return fs::path(NED_REPO_ROOT) / "build" / "_deps"; }
-
-std::set<std::string> HandWrittenNodes(const std::string& language, const std::string& kind,
-                                       const std::string& capture) {
-    const fs::path path =
-        fs::path(NED_REPO_ROOT) / "Source" / "Editor" / "TreeSitter" / "queries" / (language + "-" + kind + ".scm");
-    std::ifstream in(path);
-    REQUIRE(in);
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-
-    // Strip comments first -- several of these files are more prose than rule.
-    const std::string text = std::regex_replace(buffer.str(), std::regex(R"(;[^\n]*)"), "");
-
-    // Scanning back from each capture, balancing parens, rather than matching
-    // a regex forward. A regex bounded by [^()]* cannot cross a nested group,
-    // so it silently misses the conditional form -- `(function_body "{")
-    // @fold`, which folds a Kotlin function only when it has a brace body
-    // rather than `= expr`. Kotlin reported 7 hand-written fold nodes that way
-    // when it has 10, which made this gate weaker than it claimed to be.
-    //
-    // Two shapes, and telling them apart is the whole job:
-    //   `(declaration_list) @fold`      -- the capture follows a ')', so the
-    //                                      captured node is the group that ')'
-    //                                      closes.
-    //   `(block "}" @dedent)`           -- the capture follows a token, so the
-    //                                      node is the enclosing group's head.
-    const std::string     needle = "@" + capture;
-    std::set<std::string> nodes;
-
-    const auto headOfGroupAt = [&text](std::size_t open) -> std::string {
-        std::size_t head = open + 1;
-        while (head < text.size() && std::isspace(static_cast<unsigned char>(text[head]))) ++head;
-        std::size_t tail = head;
-        while (tail < text.size() && (std::islower(static_cast<unsigned char>(text[tail])) ||
-                                      std::isdigit(static_cast<unsigned char>(text[tail])) || text[tail] == '_')) {
-            ++tail;
-        }
-        return tail > head ? text.substr(head, tail - head) : std::string{};
-    };
-
-    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) {
-        // A longer capture name that merely starts with this one is a
-        // different capture: @indent.body is not @indent.
-        const std::size_t after = at + needle.size();
-        if (after < text.size() && (std::isalnum(static_cast<unsigned char>(text[after])) || text[after] == '.' ||
-                                    text[after] == '_' || text[after] == '-')) {
-            continue;
-        }
-
-        std::size_t cursor = at;
-        while (cursor > 0 && std::isspace(static_cast<unsigned char>(text[cursor - 1]))) --cursor;
-        if (cursor == 0) continue;
-
-        std::string head;
-        if (text[cursor - 1] == ')') {
-            // Walk back to the '(' this ')' closes.
-            int depth = 0;
-            std::size_t scan = cursor - 1;
-            while (true) {
-                if (text[scan] == ')') ++depth;
-                else if (text[scan] == '(' && --depth == 0) break;
-                if (scan == 0) break;
-                --scan;
-            }
-            if (text[scan] == '(') head = headOfGroupAt(scan);
-        }
-        else {
-            // Walk back to the nearest unmatched '(' -- the enclosing group.
-            int depth = 0;
-            std::size_t scan = cursor;
-            while (scan > 0) {
-                --scan;
-                if (text[scan] == ')') ++depth;
-                else if (text[scan] == '(') {
-                    if (depth == 0) break;
-                    --depth;
-                }
-            }
-            if (text[scan] == '(') head = headOfGroupAt(scan);
-        }
-        if (!head.empty()) nodes.insert(head);
-    }
-
-    return nodes;
-}
 
 } // namespace
 
@@ -334,6 +247,72 @@ TEST_CASE("An opener may be a choice of literals", "[Imprint]") {
     CHECK(InferDelimitedBodies(grammar).count("object_type") == 1);
 }
 
+TEST_CASE("An unnamed alias with a literal value is that literal", "[Imprint]") {
+    // The parser emits an unnamed alias as an anonymous token spelled by its
+    // value, whatever it wraps. Rust's string_literal opens with
+    // alias(/[bc]?"/, '"') and closes with an external, and reading through
+    // the alias to the PATTERN made it "a body with no opener of its own" --
+    // an indentation body, anchored like a Python block, so a single-line
+    // `"{}"` under `println!(` became a two-row fold. YAML spells the
+    // brackets of its flow collections the same way, and had no flow folds
+    // at all.
+    const json unnamedAlias = json{{"type", "ALIAS"},
+                                   {"content", json{{"type", "PATTERN"}, {"value", "[bc]?\""}}},
+                                   {"named", false},
+                                   {"value", "\""}};
+    const json grammar      = Grammar({{"string_literal", Seq({unnamedAlias, Repeat(Sym("content")), Sym("_close")})},
+                                       {"flow_sequence",
+                                        Seq({json{{"type", "ALIAS"}, {"content", Sym("_seq_start")}, {"named", false}, {"value", "["}},
+                                             Repeat(Sym("item")),
+                                             json{{"type", "ALIAS"}, {"content", Sym("_seq_end")}, {"named", false}, {"value", "]"}}})}},
+                                      json::array({Sym("_close"), Sym("_seq_start"), Sym("_seq_end")}));
+    const auto inferred     = InferDelimitedBodies(grammar);
+    REQUIRE(inferred.count("string_literal") == 1);
+    CHECK(inferred.at("string_literal").kind == DelimiterKind::Indent);
+    CHECK(inferred.at("string_literal").openerIsFirst); // the opener is its own
+    REQUIRE(inferred.count("flow_sequence") == 1);
+    CHECK(inferred.at("flow_sequence").kind == DelimiterKind::Bracket);
+}
+
+TEST_CASE("A matched keyword pair around a list is a delimited body; around one thing it is a phrase",
+          "[Imprint]") {
+    // bash: `do ... done`, `if ... fi`; fish: `function ... end`. Measured
+    // across all 23 bundled grammars, the list-like pairs are exactly the
+    // nine bash and fish wrote by hand, and the only non-list-like ones are
+    // bash's `elif <cond> then` and JavaScript's `new . target` -- phrases,
+    // which is why list-likeness is part of the match rather than a policy
+    // applied afterwards.
+    const json grammar = Grammar({
+        {"do_group", Seq({Str("do"), Repeat(Sym("statement")), Str("done")})},
+        {"elif_clause", Seq({Str("elif"), Sym("condition"), Str("then")})},
+        {"meta_property", Seq({Str("new"), Str("."), Str("target")})},
+    });
+    const auto found   = InferDelimitedBodies(grammar);
+    REQUIRE(found.count("do_group") == 1);
+    CHECK(found.at("do_group").kind == DelimiterKind::Keyword);
+    CHECK(found.at("do_group").opener == "do");
+    CHECK(found.at("do_group").closer == "done");
+    CHECK(found.count("elif_clause") == 0);
+    CHECK(found.count("meta_property") == 0);
+}
+
+TEST_CASE("A sigil-prefixed bracket opens a body", "[Imprint]") {
+    // Janet spells its mutable literals as one token -- `@(`, `@[`, `@{` --
+    // and JavaScript its template substitution as `${`. Read as openers,
+    // provided everything before the bracket is punctuation.
+    const json grammar = Grammar({
+        {"sqr_arr_lit", Seq({Str("@["), Repeat(Sym("form")), Str("]")})},
+        {"template_substitution", Seq({Str("${"), Sym("expression"), Str("}")})},
+        {"not_a_body", Seq({Str("a("), Sym("x"), Str(")")})},
+    });
+    const auto found   = InferDelimitedBodies(grammar);
+    REQUIRE(found.count("sqr_arr_lit") == 1);
+    CHECK(found.at("sqr_arr_lit").kind == DelimiterKind::Bracket);
+    CHECK(found.at("sqr_arr_lit").openerIsFirst);
+    CHECK(found.count("template_substitution") == 1);
+    CHECK(found.count("not_a_body") == 0);
+}
+
 TEST_CASE("Angle brackets delimit a body", "[Imprint]") {
     // A template/type parameter list is a real multi-element container that a
     // long declaration wraps across, and a JSX opening element is the same
@@ -458,79 +437,98 @@ TEST_CASE("Every deleted fold query's nodes still fold from the imprint", "[Impr
     CHECK(reproduced == expected);
 }
 
-TEST_CASE("Inference reproduces every hand-written indent node", "[Imprint][Corpus]") {
-    const std::map<std::string, std::string> kGrammars = {
-        {"c", "tree-sitter-c-src/src/grammar.json"},
-        {"cpp", "tree-sitter-cpp-src/src/grammar.json"},
-        {"csharp", "tree-sitter-c-sharp-src/src/grammar.json"},
-        {"go", "tree-sitter-go-src/src/grammar.json"},
-        {"java", "tree-sitter-java-src/src/grammar.json"},
-        {"javascript", "tree-sitter-javascript-src/src/grammar.json"},
-        {"json", "tree-sitter-json-src/src/grammar.json"},
-        {"kotlin", "tree-sitter-kotlin-src/src/grammar.json"},
-        {"python", "tree-sitter-python-src/src/grammar.json"},
-        {"rust", "tree-sitter-rust-src/src/grammar.json"},
-        {"typescript", "tree-sitter-typescript-src-src/typescript/src/grammar.json"},
-        {"clojure", "tree-sitter-clojure-src/src/grammar.json"},
-    };
+// Every `(X) @indent` capture the delimiter imprint replaced, by language --
+// 129 (language, node) pairs across twenty queries, four of which
+// (css, json, php, toml) emptied out and were deleted. Nine are bash and
+// fish's keyword-delimited bodies, which came out once
+// `DelimiterKind::Keyword` existed; three are Janet's `@(`/`@[`/`@{`
+// mutable literals, which came out once a sigil-prefixed bracket was read
+// as an opener. Frozen: a record of
+// what came out, not a live inventory, the same shape kDeletedFoldQueries
+// takes above and for the same reason -- a gate that reads the query files
+// cannot outlive the captures. The indent COLUMNS are held by the oracle.
+const std::map<std::string, std::set<std::string>> kDeletedIndentCaptures = {
+    {"bash", {"array", "case_statement", "compound_statement", "do_group", "if_statement", "subshell"}},
+    {"c", {"compound_statement", "field_declaration_list", "initializer_list"}},
+    {"clojure", {"anon_fn_lit", "map_lit", "set_lit", "vec_lit"}},
+    {"cpp", {"compound_statement", "field_declaration_list", "initializer_list"}},
+    {"csharp",
+     {"accessor_list", "block", "declaration_list", "enum_member_declaration_list", "initializer_expression",
+      "switch_body", "switch_expression"}},
+    {"css", {"block", "keyframe_block_list"}},
+    {"fish",
+     {"begin_statement", "for_statement", "function_definition", "if_statement", "switch_statement",
+      "while_statement"}},
+    {"go",
+     {"block", "expression_switch_statement", "field_declaration_list", "interface_type", "literal_value",
+      "select_statement", "type_switch_statement"}},
+    {"janet", {"par_arr_lit", "sqr_arr_lit", "sqr_tup_lit", "struct_lit", "tbl_lit"}},
+    {"java",
+     {"annotation_type_body", "array_initializer", "block", "class_body", "constructor_body",
+      "element_value_array_initializer", "enum_body", "interface_body", "module_body", "switch_block"}},
+    {"javascript",
+     {"array", "array_pattern", "class_body", "jsx_expression", "jsx_opening_element", "object", "object_pattern",
+      "statement_block", "switch_body"}},
+    {"json", {"array", "object"}},
+    {"kotlin",
+     {"anonymous_initializer", "catch_block", "class_body", "control_structure_body", "enum_class_body",
+      "finally_block", "function_body", "lambda_literal", "secondary_constructor", "when_expression"}},
+    {"php",
+     {"arguments", "array_creation_expression", "compound_statement", "declaration_list", "formal_parameters",
+      "match_block", "switch_block"}},
+    {"python",
+     {"argument_list", "block", "dictionary", "dictionary_comprehension", "list", "list_comprehension",
+      "parameters", "parenthesized_expression", "set", "set_comprehension", "tuple"}},
+    {"rust",
+     {"block", "declaration_list", "enum_variant_list", "field_declaration_list", "field_initializer_list",
+      "match_block"}},
+    {"toml", {"array", "inline_table"}},
+    {"tsx",
+     {"arguments", "array", "array_pattern", "class_body", "enum_body", "formal_parameters", "interface_body",
+      "jsx_expression", "jsx_opening_element", "object", "object_pattern", "object_type", "statement_block",
+      "switch_body", "type_parameters"}},
+    {"typescript",
+     {"arguments", "array", "array_pattern", "class_body", "enum_body", "formal_parameters", "interface_body",
+      "object", "object_pattern", "object_type", "statement_block", "switch_body", "type_parameters"}},
+    {"yaml", {"block_mapping"}},
+};
 
-    if (!fs::exists(DepsDir())) {
-        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
-        return;
-    }
-
-    // The same imprint also covers the hand-written @indent captures, which is
-    // the N x M claim across two drivers rather than one: 96% of every fold
-    // rule was already restated verbatim as an indent rule.
-    std::size_t indentCovered = 0;
-    std::size_t indentTotal   = 0;
-    std::set<std::string> indentMissed;
-    for (const auto& [language, relative] : kGrammars) {
-        const fs::path path = DepsDir() / relative;
-        const fs::path query =
-            fs::path(NED_REPO_ROOT) / "Source" / "Editor" / "TreeSitter" / "queries" / (language + "-indents.scm");
-        if (!fs::exists(path) || !fs::exists(query)) continue;
-        std::ifstream in(path);
-        json          grammar;
-        in >> grammar;
-        const auto inferred = InferDelimitedBodies(grammar);
-        for (const std::string& node : HandWrittenNodes(language, "indents", "indent")) {
-            ++indentTotal;
-            if (inferred.count(node) == 1) ++indentCovered;
-            else indentMissed.insert(language + "/" + node);
+TEST_CASE("Every deleted indent capture's node still indents from the imprint", "[Imprint]") {
+    // The deletable criterion, held against the COMPILED table so it needs no
+    // build/_deps: a bracket body is a container whenever its instance
+    // carries its brackets (Editor/ImprintBracket.h's DelimitersOf, an
+    // instance-level test no table can pre-answer), and an indentation body
+    // is one when it has no introducer of its own -- `openerIsFirst` false --
+    // and a header row above it (Editor/ImprintIndent.h). Python's `block`
+    // and YAML's `block_mapping` are the two indentation bodies here; a
+    // keyword body (`do ... done`) is a container whenever its instance
+    // carries the pair, same as a bracket body.
+    //
+    // What is NOT in the list is as deliberate as what is: the tag pairs in
+    // html/xml/jsx and python's and bash's clause headers stay hand-written,
+    // each for a reason its query's own header states.
+    std::size_t expected = 0;
+    std::size_t covered  = 0;
+    for (const auto& [language, nodes] : kDeletedIndentCaptures) {
+        const auto& table = ned::editor::imprint::TableFor(language);
+        INFO("language: " << language);
+        REQUIRE_FALSE(table.empty());
+        for (const std::string& node : nodes) {
+            ++expected;
+            INFO("deleted @indent node no longer a container: " << language << " / " << node);
+            const auto it = table.find(node);
+            CHECK(it != table.end());
+            if (it == table.end())
+                continue;
+            const bool container = it->second.kind != ned::editor::imprint::DelimiterKind::Indent ||
+                                   !it->second.openerIsFirst;
+            CHECK(container);
+            if (container)
+                ++covered;
         }
     }
-    // The single exception is real and is a defect in the query, not in
-    // inference: tree-sitter-typescript has no `interface_body` rule at all
-    // (its interface body is an `object_type`), so that capture can never
-    // match anything. Recorded rather than worked around.
-    INFO("indent nodes not covered: " << [&] {
-        std::string joined;
-        for (const std::string& node : indentMissed) joined += " " + node;
-        return joined;
-    }());
-    // Every hand-written @indent node is covered. No exceptions, and the last
-    // one to fall is worth remembering: typescript/interface_body was recorded
-    // here as a DEFECT IN THE QUERY -- "tree-sitter-typescript has no such
-    // rule" -- and that was wrong. It is an alias of object_type, a perfectly
-    // real node, invisible only because inference could not see alias() at the
-    // time. The query was right all along.
-    //
-    // Worth the retelling because the failure mode is seductive: a measurement
-    // that cannot see something reports its absence, and absence reads as the
-    // other side's mistake.
-    //
-    // Two exceptions now, named rather than tolerated as a count, and both are
-    // the SAME limit the fold work documented: a JSX element is
-    // delimited by a matched `<li>`/`</li>` tag pair, which is not a bracket
-    // pair, so the imprint has nothing to say about it and says nothing. Note
-    // which JSX captures are NOT here -- `jsx_expression` (`{...}`) and
-    // `jsx_opening_element` (`<...>`) are covered, because those genuinely are
-    // brackets. The line falls exactly where the delimiter fact stops, which is
-    // the useful thing to be able to see.
-    const std::set<std::string> kTagDelimited = {"javascript/jsx_element", "javascript/jsx_self_closing_element"};
-    CHECK(indentMissed == kTagDelimited);
-    CHECK(indentCovered == indentTotal - kTagDelimited.size());
+    CHECK(expected == 129);
+    CHECK(covered == expected);
 }
 
 // ---------------------------------------------------------------------------
@@ -696,6 +694,8 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
             << "    DelimiterKind    kind;\n"
             << "    bool             openerIsFirst;\n"
             << "    bool             listLikeInterior;\n"
+            << "    std::string_view opener; // Keyword bodies only\n"
+            << "    std::string_view closer;\n"
             << "};\n\n";
 
         for (const auto& [language, bodies] : live) {
@@ -704,7 +704,11 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
             for (const auto& [node, body] : bodies) {
                 out << "    {\"" << node << "\", DelimiterKind::" << DelimiterKindName(body.kind) << ", "
                     << (body.openerIsFirst ? "true" : "false") << ", "
-                    << (body.listLikeInterior ? "true" : "false") << "},\n";
+                    << (body.listLikeInterior ? "true" : "false");
+                if (body.kind == DelimiterKind::Keyword) {
+                    out << ", \"" << body.opener << "\", \"" << body.closer << "\"";
+                }
+                out << "},\n";
             }
             out << "};\n\n";
         }
@@ -718,7 +722,8 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
             << "            for (std::size_t i = 0; i < count; ++i) {\n"
             << "                table.emplace(std::string(entries[i].node),\n"
             << "                              DelimitedBody{entries[i].kind, entries[i].openerIsFirst,\n"
-            << "                                            entries[i].listLikeInterior});\n"
+            << "                                            entries[i].listLikeInterior, std::string(entries[i].opener),\n"
+            << "                                            std::string(entries[i].closer)});\n"
             << "            }\n"
             << "        };\n";
         for (const auto& [language, bodies] : live) {
@@ -759,6 +764,8 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
             CHECK(it->second.kind == body.kind);
             CHECK(it->second.openerIsFirst == body.openerIsFirst);
             CHECK(it->second.listLikeInterior == body.listLikeInterior);
+            CHECK(it->second.opener == body.opener);
+            CHECK(it->second.closer == body.closer);
         }
     }
 }
