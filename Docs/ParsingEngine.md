@@ -712,6 +712,52 @@ pushing Tier 1's expressiveness hard rather than reaching for Tier 2.
 Janet-only is the right scope now. Nothing above depends on a second runtime
 ever arriving.
 
+## The Lisp cliff, and what closing it cost
+
+The risk section below named this as the falsification point, so it is worth
+recording what the answer turned out to be.
+
+A Clojure or Janet binding vector alternates name and value -- `[a 1 b 2]` --
+and taking every other child is a **quantifier**, which a tree-sitter pattern
+does not have. The only declarative spelling is one pattern per even index,
+anchored `. (_) . (_)` per preceding pair. Both Lisp queries did exactly that,
+both stopped at eight pairs, and a ninth binding was silently unresolvable:
+`rename-symbol` declined on it, which is a miss the user cannot see.
+
+The fix is a split rather than a bigger query:
+
+- the query keeps the language knowledge -- *which heads bind pairwise*, what
+  a `#_` discard is -- because that is genuinely per-language and genuinely
+  declarative;
+- the counting moves to code, behind one new capture name
+  (`@local.definition.<qualifier>.pairs`) and a second for "this child is not
+  an element" (`@local.skip`).
+
+That is a **Tier 2 escape costing one capture name and about forty lines**, and
+it is smaller than the "real resolution layer" Phase 3 was scoped around. Worth
+saying plainly before that phase is planned: the cliff was a missing
+quantifier, not missing semantics. Whether the *rest* of Phase 3 needs a
+resolution layer is now a separate question, and one this result does not
+answer either way.
+
+### Two things the measurement corrected
+
+**The unrolled form was not merely limited, it was wrong.** A comment between
+two pairs reads as an ordinary child, so every name after it landed on an odd
+index and the *value* there was captured as a definition -- a corrupted rename,
+which is the exact failure the anchoring existed to prevent. The replacement
+counts elements and skips extras, so it is right where its predecessor was
+wrong, not just longer-lived.
+
+**Asking the parser is the right question and not a sufficient one.**
+`Node::IsExtra` reports which children the grammar declared in `extras`, which
+is the language-agnostic form of "this is a comment, not an element" -- and
+`tree-sitter-clojure` declares `extras: []`. No extras at all; comments are
+ordinary rules there. So Janet reaches the rule through the parser and Clojure
+through `(comment) @local.skip`, and both paths carry a test. A generic
+mechanism that a grammar is free not to participate in needs a declarative
+fallback, and that is a general lesson for Tier 0 rather than a Lisp one.
+
 ## The risk worth arguing about before starting
 
 **A universal vocabulary can collapse into lowest-common-denominator mush.**
@@ -723,17 +769,23 @@ and it is where this design either works or quietly degenerates into another
 hand-maintained translation table wearing a better name.
 
 The honest early test is **Lisp**, because it is the case that already broke.
-`queries/clojure-locals.scm` documents the cliff in its own header: a Lisp
-grammar carries no semantic structure at all -- `(let [x 1] ...)`,
+A Lisp grammar carries no semantic structure at all -- `(let [x 1] ...)`,
 `(defn f [a] ...)` and `(println x)` are the same node type, a `list_lit` of
 children, and every binding form is a macro the grammar has never heard of.
-The binding vectors are therefore unrolled by pair index, and *"the unrolling
-stops at eight pairs"*: a ninth binding in one vector is not captured, and a
-use of it is silently unrenameable.
 
-If Tier 1 plus Tier 2 can express `(let [a 1 b c] ...)` correctly and without a
-cliff, the vocabulary is real. If it cannot, that is worth finding out at
-language 3 rather than at language 15.
+**This test has now been run, and it passed** -- see "The Lisp cliff, and what
+closing it cost" above. The vocabulary needed was one capture name for "this
+container's children alternate name and value" and one for "this child is not
+an element", with the counting in code. So Tier 1 did not have to grow to meet
+the hardest case, and Tier 2 turned out to be where the answer lived, which is
+what Tier 2 is for.
+
+That is one language family, and it is evidence rather than proof. But the
+failure mode this section is actually about -- the vocabulary degenerating into
+a hand-maintained translation table -- did not happen here: what stayed in the
+query is the part that is genuinely per-language (which head symbols bind), and
+what moved is a quantifier that was never Lisp-specific at all. That division
+is the thing to keep testing at language 4 and language 15.
 
 ## What this does and does not require
 

@@ -106,69 +106,13 @@
    (sym_lit) @local.definition.var)
  (#any-of? @_each_head "eachp"))
 
-;; Binding-tuple names, one pattern per even index. See clojure-locals.scm's
-;; header for why this is unrolled; the cap is the same eight pairs.
+;; Binding-tuple names, read pairwise in code -- see clojure-locals.scm's own
+;; note on why the quantifier cannot live in the query and what stays here.
 ((par_tup_lit
    .
    (sym_lit) @_bind_head
    .
-   (sqr_tup_lit . (sym_lit) @local.definition.var . (_)))
- (#any-of? @_bind_head
-   "let" "loop" "seq" "generate" "with" "with-syms" "if-let" "when-let"
-   "forv" "for"))
-((par_tup_lit
-   .
-   (sym_lit) @_bind_head
-   .
-   (sqr_tup_lit . (_) . (_) . (sym_lit) @local.definition.var . (_)))
- (#any-of? @_bind_head
-   "let" "loop" "seq" "generate" "with" "with-syms" "if-let" "when-let"
-   "forv" "for"))
-((par_tup_lit
-   .
-   (sym_lit) @_bind_head
-   .
-   (sqr_tup_lit . (_) . (_) . (_) . (_) . (sym_lit) @local.definition.var . (_)))
- (#any-of? @_bind_head
-   "let" "loop" "seq" "generate" "with" "with-syms" "if-let" "when-let"
-   "forv" "for"))
-((par_tup_lit
-   .
-   (sym_lit) @_bind_head
-   .
-   (sqr_tup_lit . (_) . (_) . (_) . (_) . (_) . (_) . (sym_lit) @local.definition.var . (_)))
- (#any-of? @_bind_head
-   "let" "loop" "seq" "generate" "with" "with-syms" "if-let" "when-let"
-   "forv" "for"))
-((par_tup_lit
-   .
-   (sym_lit) @_bind_head
-   .
-   (sqr_tup_lit . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (sym_lit) @local.definition.var . (_)))
- (#any-of? @_bind_head
-   "let" "loop" "seq" "generate" "with" "with-syms" "if-let" "when-let"
-   "forv" "for"))
-((par_tup_lit
-   .
-   (sym_lit) @_bind_head
-   .
-   (sqr_tup_lit . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (sym_lit) @local.definition.var . (_)))
- (#any-of? @_bind_head
-   "let" "loop" "seq" "generate" "with" "with-syms" "if-let" "when-let"
-   "forv" "for"))
-((par_tup_lit
-   .
-   (sym_lit) @_bind_head
-   .
-   (sqr_tup_lit . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (sym_lit) @local.definition.var . (_)))
- (#any-of? @_bind_head
-   "let" "loop" "seq" "generate" "with" "with-syms" "if-let" "when-let"
-   "forv" "for"))
-((par_tup_lit
-   .
-   (sym_lit) @_bind_head
-   .
-   (sqr_tup_lit . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (sym_lit) @local.definition.var . (_)))
+   (sqr_tup_lit) @local.definition.var.pairs)
  (#any-of? @_bind_head
    "let" "loop" "seq" "generate" "with" "with-syms" "if-let" "when-let"
    "forv" "for"))

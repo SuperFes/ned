@@ -37,6 +37,14 @@ bool Node::IsNamed() const {
     return ts_node_is_named(node_);
 }
 
+bool Node::IsExtra() const {
+    return ts_node_is_extra(node_);
+}
+
+Node Node::ChildByFieldName(std::string_view fieldName) const {
+    return Node(ts_node_child_by_field_name(node_, fieldName.data(), static_cast<uint32_t>(fieldName.size())));
+}
+
 Node Node::Parent() const {
     return Node(ts_node_parent(node_));
 }

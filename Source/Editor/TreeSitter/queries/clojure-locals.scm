@@ -8,22 +8,21 @@
 ;; of. So every pattern here dispatches on the HEAD SYMBOL's own text via
 ;; #any-of?, which is the only handle there is.
 ;;
-;; The binding-vector patterns below are unrolled by pair index rather than
-;; written as one "every sym_lit in the vector" pattern, and that is the
-;; load-bearing detail in this file. A binding vector alternates name and
-;; value (`[a 1 b 2]`), and a value is often itself a bare symbol
-;; (`[alias name]`). The naive whole-vector pattern captures that value as a
-;; DEFINITION -- so in `(let [a 1 b c] ...)`, the outer binding `c` would be
-;; shadowed by a binding of itself, and renaming the real `c` would rewrite
-;; only the occurrences outside this let. That is a corrupted rename, not a
-;; miss, which is why the anchored form is worth the repetition: `. (_) . (_)`
-;; per preceding pair pins each capture to an even index, so a value is never
-;; mistaken for a name.
+;; A binding vector alternates name and value (`[a 1 b 2]`), and a value is
+;; often itself a bare symbol (`[alias name]`) -- so the naive whole-vector
+;; pattern captures that value as a DEFINITION, and in `(let [a 1 b c] ...)`
+;; the outer binding `c` ends up shadowed by a binding of itself. Renaming the
+;; real `c` would then rewrite only the occurrences outside this let: a
+;; corrupted rename, not a miss.
 ;;
-;; The unrolling stops at eight pairs. A ninth binding in one vector is not
-;; captured, so a use of it resolves outward and rename-symbol declines or
-;; defers to a language server -- the same degradation every other
-;; uncapturable construct here gets.
+;; Every-other-child is a quantifier, and a query pattern has none. This file
+;; used to answer that by unrolling -- one pattern per even index, anchored
+;; `. (_) . (_)` per preceding pair -- which worked, grew quadratically, and
+;; stopped at eight pairs, after which a binding was silently unresolvable.
+;; The vector is now captured whole as `@local.definition.var.pairs` and read
+;; pairwise in code (Mode.cpp's ExpandPairwiseBindings). The language
+;; knowledge -- which heads bind pairwise -- stays here; only the counting
+;; moved.
 ;;
 ;; Deliberately not captured, all of which degrade the same way: destructuring
 ;; (`[{:keys [x y]} m]`, `[[a b] pair]` -- the names are not direct children
@@ -107,72 +106,47 @@
  (#any-of? @_fn_head "fn" "fn*")
  (#not-eq? @local.definition.parameter "&"))
 
-;; Binding-vector names, one pattern per even index. See this file's header
-;; for why this is unrolled rather than written as one pattern.
+;; Binding-vector names. The vector is captured WHOLE and its names are read
+;; off it pairwise in code (Mode.cpp's ExpandPairwiseBindings) -- a query
+;; pattern has no quantifier, so the only way to write this declaratively is
+;; one pattern per even index, anchored `. (_) . (_)` per preceding pair,
+;; which is what this file used to do and why it stopped at eight pairs. A
+;; ninth binding was silently unresolvable.
+;;
+;; What stays here is the language knowledge: WHICH heads bind pairwise. What
+;; moved is the quantifier, which was never Lisp-specific at all.
+;;
+;; A value that is itself a bare symbol (`[alias name]`) is still never
+;; mistaken for a name -- the expansion counts elements rather than matching
+;; them, so parity does the work the anchors used to. Destructuring is still
+;; declined rather than guessed at (a form with children of its own is not a
+;; name), and a comment between pairs no longer shifts parity, which the
+;; anchored patterns got wrong.
 ((list_lit
    .
    (sym_lit name: (sym_name) @_bind_head)
    .
-   (vec_lit . (sym_lit name: (sym_name) @local.definition.var) . (_)))
+   (vec_lit) @local.definition.var.pairs)
  (#any-of? @_bind_head
    "let" "let*" "loop" "loop*" "when-let" "if-let" "when-some" "if-some"
    "doseq" "for" "with-open" "with-local-vars" "binding"))
-((list_lit
-   .
-   (sym_lit name: (sym_name) @_bind_head)
-   .
-   (vec_lit . (_) . (_) . (sym_lit name: (sym_name) @local.definition.var) . (_)))
- (#any-of? @_bind_head
-   "let" "let*" "loop" "loop*" "when-let" "if-let" "when-some" "if-some"
-   "doseq" "for" "with-open" "with-local-vars" "binding"))
-((list_lit
-   .
-   (sym_lit name: (sym_name) @_bind_head)
-   .
-   (vec_lit . (_) . (_) . (_) . (_) . (sym_lit name: (sym_name) @local.definition.var) . (_)))
- (#any-of? @_bind_head
-   "let" "let*" "loop" "loop*" "when-let" "if-let" "when-some" "if-some"
-   "doseq" "for" "with-open" "with-local-vars" "binding"))
-((list_lit
-   .
-   (sym_lit name: (sym_name) @_bind_head)
-   .
-   (vec_lit . (_) . (_) . (_) . (_) . (_) . (_) . (sym_lit name: (sym_name) @local.definition.var) . (_)))
- (#any-of? @_bind_head
-   "let" "let*" "loop" "loop*" "when-let" "if-let" "when-some" "if-some"
-   "doseq" "for" "with-open" "with-local-vars" "binding"))
-((list_lit
-   .
-   (sym_lit name: (sym_name) @_bind_head)
-   .
-   (vec_lit . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (sym_lit name: (sym_name) @local.definition.var) . (_)))
- (#any-of? @_bind_head
-   "let" "let*" "loop" "loop*" "when-let" "if-let" "when-some" "if-some"
-   "doseq" "for" "with-open" "with-local-vars" "binding"))
-((list_lit
-   .
-   (sym_lit name: (sym_name) @_bind_head)
-   .
-   (vec_lit . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (sym_lit name: (sym_name) @local.definition.var) . (_)))
- (#any-of? @_bind_head
-   "let" "let*" "loop" "loop*" "when-let" "if-let" "when-some" "if-some"
-   "doseq" "for" "with-open" "with-local-vars" "binding"))
-((list_lit
-   .
-   (sym_lit name: (sym_name) @_bind_head)
-   .
-   (vec_lit . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (sym_lit name: (sym_name) @local.definition.var) . (_)))
- (#any-of? @_bind_head
-   "let" "let*" "loop" "loop*" "when-let" "if-let" "when-some" "if-some"
-   "doseq" "for" "with-open" "with-local-vars" "binding"))
-((list_lit
-   .
-   (sym_lit name: (sym_name) @_bind_head)
-   .
-   (vec_lit . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (_) . (sym_lit name: (sym_name) @local.definition.var) . (_)))
- (#any-of? @_bind_head
-   "let" "let*" "loop" "loop*" "when-let" "if-let" "when-some" "if-some"
-   "doseq" "for" "with-open" "with-local-vars" "binding"))
+
+;; Children that are not elements, and so must not shift the pairing.
+;;
+;; `#_form` is the reader's discard -- it reads as an ordinary child and means
+;; "pretend this is not here", which is exactly a parity shift. Nothing in C++
+;; knows what a reader macro is, so the query says it.
+;;
+;; A comment is here for a reason worth recording: the expansion already asks
+;; the PARSER which children are extras (Node::IsExtra), which is the
+;; language-agnostic form of this question and is how Janet's comments are
+;; handled. But tree-sitter-clojure declares `extras: []` -- no extras at all,
+;; comments are ordinary rules in its grammar -- so the generic mechanism has
+;; nothing to report here and the query has to name it. Checked in
+;; grammar.json rather than assumed after a binding after a comment stopped
+;; resolving.
+(dis_expr) @local.skip
+(comment) @local.skip
 
 ;; References. Only the name half of an UNQUALIFIED symbol: `!namespace`
 ;; excludes `clojure.string/upper-case`, whose sym_name is `upper-case` but
