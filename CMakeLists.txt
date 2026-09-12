@@ -380,60 +380,22 @@ ned_add_treesitter_grammar(tree-sitter-json https://github.com/tree-sitter/tree-
 
 ned_add_treesitter_grammar(tree-sitter-c https://github.com/tree-sitter/tree-sitter-c.git v0.24.2)
 
-# import-target-tree-sitter follow-up: shared by CMode and CppMode below --
-# both grammars define preproc_include identically.
-# gutter-symbol-kind follow-up: a repo-local vendored file, not the grammar's
-# own real queries/tags.scm -- upstream's @definition.function pattern
-# matches any function_declarator regardless of context, which is ambiguous
-# with C's "most vexing parse" (a local variable declared with
-# constructor-call-style syntax parses identically to a function
-# prototype/definition); c-tags.scm's own header comment has the full story,
-# confirmed against a real false positive (see BufferViewSymbolGutterTest.cpp).
+# C and C++'s tags are ned's own files (Source/Languages/{c,cpp}/tags.janet),
+# not upstream's -- see their own header comments for the "most vexing
+# parse" ambiguity that forced the vendoring.
 
 ned_add_treesitter_grammar(tree-sitter-cpp https://github.com/tree-sitter/tree-sitter-cpp.git v0.23.4)
 
-# Same vendored-not-upstream reasoning as CTags above -- see cpp-tags.scm's
-# own header comment.
-
 ned_add_treesitter_grammar(tree-sitter-php https://github.com/tree-sitter/tree-sitter-php.git v0.24.2 php)
 
-# gutter-symbol-kind follow-up: the grammar's own real queries/tags.scm
-# (ctags/nvim-treesitter's own "@definition.*"/"@reference.*" convention),
-# consumed unmodified -- same "use the real upstream file directly" approach
-# highlights.scm/folds.scm already establish for grammars without local
-# customization (Source/Editor/TreeSitter/Queries.h). Unlike CTags/CppTags
-# above, PHP's own tags.scm has no "most vexing parse"-style ambiguity to fix
-# -- see c-tags.scm's own header comment for why those two needed vendoring.
-# class-file-sync follow-up: upstream's file is still consumed whole, with
-# ned's own additions (PHP 8.1 enums) appended as a delta rather than
-# vendored as a corrected copy -- see php-tags.scm's own header.
-
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
-
-# gutter-symbol-kind follow-up: see PhpTags' own comment above -- the
-# grammar's real, unmodified queries/tags.scm; no vendoring needed here
-# either.
 
 ned_fetch_treesitter_source(tree-sitter-typescript-src https://github.com/tree-sitter/tree-sitter-typescript.git v0.23.2)
 
 ned_add_treesitter_grammar_target(tree-sitter-typescript "${tree-sitter-typescript-src_SOURCE_DIR}/typescript")
 ned_add_treesitter_grammar_target(tree-sitter-tsx "${tree-sitter-typescript-src_SOURCE_DIR}/tsx")
 
-# import-target-tree-sitter follow-up: shared by TypeScriptMode and TsxMode,
-# same sharing as the highlight/fold queries above.
-# gutter-symbol-kind follow-up: see PhpTags' own comment above; shared by
-# TypeScriptMode and TsxMode, same sharing as the highlight/fold/imports
-# queries above.
-# class-file-sync follow-up: THREE files, and the javascript one is not
-# optional -- tree-sitter-typescript's tags.scm is a delta on javascript's
-# and carries no class_declaration/function_declaration of its own, so
-# embedding it alone (as this did until now) left every TypeScript class and
-# function with no symbol marker at all. See typescript-tags.scm's own header.
-
 ned_add_treesitter_grammar(tree-sitter-html https://github.com/tree-sitter/tree-sitter-html.git v0.23.2)
-
-# embedded-language-injection follow-up: real injections.scm, driving
-# <script>/<style> highlighting through Injection.h's generic engine.
 
 ned_add_treesitter_grammar(tree-sitter-css https://github.com/tree-sitter/tree-sitter-css.git v0.25.0)
 
@@ -450,21 +412,13 @@ ned_add_treesitter_grammar(tree-sitter-janet-simple https://github.com/sogaiu/tr
 
 ned_add_treesitter_grammar(tree-sitter-markdown https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown)
 
-# embedded-language-injection follow-up: real injections.scm, driving fenced
-# code blocks + inline formatting + html_block/frontmatter through
-# Injection.h's generic engine, superseding Mode.cpp's own hand-rolled
-# CollectMarkdownFencedCodeSpans/CollectMarkdownInlineSpans.
-
 ned_add_treesitter_grammar(tree-sitter-markdown-inline https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown-inline)
 
 
 ned_add_treesitter_grammar(tree-sitter-org https://github.com/SuperFes/tree-sitter-ned-org.git 23c476d257db03169831315fdd123fc40278b93c)
 
-# embedded-language-injection follow-up: a real injections.scm, added to
-# Ned's own tree-sitter-ned-org fork itself (the commit pin above) rather
-# than vendored locally, matching how every other bundled grammar's
-# injections.scm is consumed -- drives #+BEGIN_SRC/#+BEGIN_EXPORT block
-# highlighting through Injection.h's generic engine.
+# The fork carries its own queries/injections.scm (the commit pin above) --
+# vendored like every upstream query, see Source/Languages/org/upstream/.
 
 ned_add_treesitter_grammar(tree-sitter-yaml https://github.com/tree-sitter-grammars/tree-sitter-yaml.git v0.7.2)
 
@@ -476,9 +430,9 @@ ned_add_treesitter_grammar(tree-sitter-toml https://github.com/tree-sitter-gramm
 # one grammar serving both ClojureMode and JankMode -- jank is a Clojure
 # dialect with no tree-sitter grammar of its own anywhere (checked the
 # jank-lang GitHub org and a repo search directly, not assumed). The embedded
-# query is a repo-local vendored file, not the grammar's own
-# queries/highlights.scm -- upstream's is 281 bytes (literals/comments only);
-# see Source/Editor/TreeSitter/queries/clojure.scm's header comment.
+# highlight query is ned's own file (Source/Languages/clojure/
+# highlights.janet) -- upstream's is 281 bytes (literals/comments only);
+# see that file's header comment.
 ned_add_treesitter_grammar(tree-sitter-clojure https://github.com/sogaiu/tree-sitter-clojure.git v0.0.13)
 
 
@@ -505,7 +459,7 @@ ned_add_treesitter_grammar(tree-sitter-xml https://github.com/tree-sitter-gramma
 # the tree-sitter org's own official grammar (same provenance bar as c/cpp/
 # python/javascript above) -- ships real queries/highlights.scm and
 # queries/tags.scm, consumed unmodified like PHP/JS/Python's own (no
-# vendoring needed, unlike c-tags.scm/cpp-tags.scm). folds/imports/indents/
+# vendoring needed, unlike C/C++ tags). folds/imports/indents/
 # tests are, as with every other bundled language, hand-written locally --
 # no upstream grammar repo ships those ned-local capture conventions.
 ned_add_treesitter_grammar(tree-sitter-rust https://github.com/tree-sitter/tree-sitter-rust.git v0.24.2)
@@ -515,7 +469,7 @@ ned_add_treesitter_grammar(tree-sitter-rust https://github.com/tree-sitter/tree-
 # tree-sitter-go, the tree-sitter org's own official grammar (same provenance
 # bar as c/cpp/python/javascript/rust above) -- ships real
 # queries/highlights.scm and queries/tags.scm, both consumed unmodified (no
-# c-tags.scm/cpp-tags.scm-style vendoring needed -- checked directly against
+# c/cpp-style tags vendoring needed -- checked directly against
 # both files, no double-tag/ambiguity issue found the way rust-bundled-
 # language's own tags.scm had). folds/indents/tests are, as with every other
 # bundled language, hand-written locally -- no upstream grammar repo ships
@@ -555,9 +509,6 @@ ned_add_treesitter_grammar(tree-sitter-go https://github.com/tree-sitter/tree-si
 # to need.
 ned_add_treesitter_grammar(tree-sitter-c-sharp https://github.com/tree-sitter/tree-sitter-c-sharp.git v0.23.5)
 
-# class-file-sync follow-up: upstream plus ned's delta (enum/struct/record,
-# and the file-scoped namespace form) -- see csharp-tags.scm's own header.
-
 # Java & Kotlin bundled language support (raised 2026-09-03 -- user wants
 # broad, general-purpose Java support with Kotlin alongside it, and Android
 # development not to be painful). A system-installed libtree-sitter-java.so
@@ -572,7 +523,7 @@ ned_add_treesitter_grammar(tree-sitter-c-sharp https://github.com/tree-sitter/tr
 # ships a real queries/highlights.scm and queries/tags.scm, both consumed
 # unmodified (checked directly against both files: class/interface/method
 # declarations are distinct node types with no overlapping @definition match,
-# so no c-tags.scm/cpp-tags.scm-style vendoring is needed). folds/indents/
+# so no C/C++-style tags vendoring is needed). folds/indents/
 # tests are hand-written locally as they are for every bundled language.
 # No java-imports.scm: `import some.package.Class;` names a class within a
 # PACKAGE whose on-disk location depends on the build's own source roots and
@@ -583,7 +534,7 @@ ned_add_treesitter_grammar(tree-sitter-c-sharp https://github.com/tree-sitter/tr
 ned_add_treesitter_grammar(tree-sitter-java https://github.com/tree-sitter/tree-sitter-java.git v0.23.5)
 
 # class-file-sync follow-up: upstream plus ned's delta (enum/record) -- see
-# java-tags.scm's own header.
+# Source/Languages/java/tags.janet's own header.
 
 # Kotlin is the one bundled language with no obvious single upstream, so the
 # choice is recorded rather than left implicit. Two real candidates exist and
@@ -607,9 +558,9 @@ ned_add_treesitter_grammar(tree-sitter-java https://github.com/tree-sitter/tree-
 # unrecognized predicate as inert rather than as a filter, so a surviving
 # #lua-match? would over-match rather than fail loudly.
 #
-# No upstream tags.scm either, so kotlin-tags.scm is repo-local -- the only
+# No upstream tags.scm either, so kotlin/tags.janet is ned-authored -- the only
 # bundled language whose symbol-kind query is hand-written for absence rather
-# than (like c-tags.scm/cpp-tags.scm) to correct an ambiguous upstream one.
+# than (like C/C++'s tags) to correct an ambiguous upstream one.
 ned_add_treesitter_grammar(tree-sitter-kotlin https://github.com/fwcd/tree-sitter-kotlin.git 0.3.8)
 
 #------------------------------------------------------------------------------
@@ -678,6 +629,8 @@ add_library(ned_lib STATIC
         Source/Editor/Mode.cpp
         Source/Editor/LanguageDefinition.cpp
         Source/Editor/LanguageFiles.cpp
+        Source/Editor/JanetData.cpp
+        Source/Editor/LanguageParse.cpp
         Source/Editor/QueryData.cpp
         Source/Editor/BundledLanguages.cpp
         Source/Editor/Languages/CLike.cpp
@@ -1153,6 +1106,7 @@ if (NED_BUILD_TESTS)
             Tests/ModeTest.cpp
             Tests/LanguageDefinitionTest.cpp
             Tests/QueryDataTest.cpp
+            Tests/LanguageParseTest.cpp
             Tests/CodeFoldTest.cpp
             Tests/IndentStyleTest.cpp
             Tests/IndentEngineTest.cpp
