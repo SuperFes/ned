@@ -514,7 +514,28 @@ real; if not, that is worth learning at language 3 rather than language 15.
       depends on point, which moves without the content changing. And it sits **below
       search, above selection** in the brush chain: a bracket match is ambient feedback,
       an isearch match is something the user went looking for.
-- [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
+- [x] **Tested whether Tier 1 is inferable the way Tier 0 was. It is not.** Two
+      hypotheses, both refuted against the 14 nodes `tags.scm` marks
+      `@definition.function` across 9 languages. "Has a parameter list and a body" is
+      structural and far too broad — 11–41 candidates per language against a ground truth
+      of ~2, sweeping in `call_expression`, `for_statement`, `catch_clause`. "Binds a
+      name, via `field("name", ...)`" is much sharper but recalls only **5 of 14 (36%)**,
+      and the misses are structural rather than a tidy-up: C/C++ hide the name behind
+      `declarator:`, Kotlin never uses `field("name")`, and JavaScript's callables are
+      *assignment* shapes because `const f = () => {}` binds a function rather than
+      declaring one.
+      The reason is not incidental. Tier 0 asks *what shape is this*, which a grammar
+      states completely; Tier 1 asks *is this name being introduced or used*, which no
+      production records. The tiers split exactly where grammars stop carrying the answer.
+      **Consequence worth stating plainly: the N x M win is asymmetric.** For Tier 0 it is
+      a real reduction in authoring — 21 languages fold, nine of which had nothing, with
+      no per-language rules. For Tier 1 it is not; a declaration costs about what the
+      `tags.scm` line it replaces costs. The win there is one vocabulary consumed by many
+      drivers rather than one query per driver, which is real but smaller and should not
+      be sold as the same result. Full evidence in `Docs/ParsingEngine.md`.
+- [ ] **Phase 1 remainder — the language-definition format and compiler.** Now with the
+      above in mind: it is a *unification* of vocabulary, not a reduction in authoring, and
+      should be scoped and justified as such. With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over
       `Delimited` (inference reports 211 nodes beyond the 55; the policy excluding
