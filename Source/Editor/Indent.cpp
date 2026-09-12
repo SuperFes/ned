@@ -574,6 +574,25 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
         if (!column) {
             continue;
         }
+        // A line with no content of its own is left alone. Indenting one
+        // writes pure trailing whitespace, and this is a BATCH reformat --
+        // nobody's cursor is sitting there waiting to type.
+        //
+        // Found by the idempotence property test (Tests/FormatterPropertiesTest.cpp)
+        // on its first run, against real Python: indent-buffer gave the final
+        // empty line four spaces, so running it twice differed from running it
+        // once. A formatter that does not converge makes every save churn the
+        // file.
+        //
+        // Only the batch path, deliberately. The live path (newline,
+        // indent-for-tab-command in Commands.cpp) calls SetLineIndent on an
+        // empty line on purpose -- that is the cursor's own line, and putting
+        // the caret at the right column is the entire point. Stripping the
+        // whitespace already there is a different concern again, and belongs
+        // to Editor/TrimOnSave.h rather than here.
+        if (LineIndentEnd(buffer.Content(), lineStart) >= lineEnd) {
+            continue;
+        }
         if (SetLineIndent(buffer, lineStart, *column, style) != 0) {
             ++changed;
         }
