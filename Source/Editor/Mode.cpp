@@ -1,5 +1,6 @@
 #include "Mode.h"
 
+#include "Editor/ImprintBracket.h"
 #include "Editor/ImprintFold.h"
 #include "Editor/ImprintTables.h"
 
@@ -905,6 +906,19 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         };
     }
 
+    MatchingDelimiterFunction matchingDelimiters;
+    if (!imprint::TableFor(languageKey).empty()) {
+        matchingDelimiters = [parser, sharedParse, languageKey](
+                                 std::string_view bufferText,
+                                 std::size_t      point) -> std::optional<imprint::DelimiterPair> {
+            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            if (tree.IsNull()) {
+                return std::nullopt;
+            }
+            return imprint::MatchingDelimitersAt(tree.RootNode(), languageKey, point);
+        };
+    }
+
     if (!imprint::TableFor(languageKey).empty()) {
         FoldFunction fromImprint = [parser, sharedParse,
                                     languageKey](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
@@ -1347,7 +1361,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 .testDiscovery   = std::move(testDiscovery),
                 .indentColumn    = std::move(indentColumn),
                 .lineInspect     = std::move(lineInspect),
-                .localScopes     = std::move(localScopes)};
+                .localScopes     = std::move(localScopes),
+                .matchingDelimiters = std::move(matchingDelimiters)};
 }
 
 Mode TreeSitterMode(std::string name, std::string_view languageName, const TreeSitterQuerySources& queries) {

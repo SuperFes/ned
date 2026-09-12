@@ -495,9 +495,18 @@ real; if not, that is worth learning at language 3 rather than language 15.
       is precision.
       No `Mode` hook: unlike fold and indent this needs *point*, which `Mode`'s capability
       signatures do not carry, and there is no hand-written query to compose with.
-- [ ] Matching-bracket *highlighting* is the obvious follow-up and is a `BufferView` paint
-      change rather than a capability — `MatchingDelimitersAt` already returns both ranges
-      for exactly that.
+- [x] **Verified live, and the live run exposed a design flaw.** A tmux session confirmed
+      the whole stack end to end: YAML shows nested fold affordances at the right depths,
+      folding collapses to `⊞ root: …`, and `goto-matching-bracket` moves L1:C13 → L3:C1
+      and back. But it also made plain that the command owned its own parser and parsed
+      fresh per invocation — tolerable for a keystroke, useless for the highlight it is
+      meant to feed, which recomputes as point moves. Now a `Mode::matchingDelimiters`
+      capability riding the same shared incremental parse the fold and highlight closures
+      already use, with the command routed through it. One path, no second parser.
+- [ ] Matching-bracket *highlighting* — now genuinely a `BufferView` paint change and
+      nothing more, since the capability hands back both ranges and costs a tree walk
+      rather than a parse. Wants a `Theme` field and a per-cell predicate in the
+      `InIsearchMatch`/`InActiveSnippetField` shape.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over

@@ -3532,12 +3532,15 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // reason code-fold-toggle above does -- structural motion depends on
     // the active Mode's own parsed syntax tree (Mode::sexpMotion), not
     // something Buffer/Text can compute on its own.
-    // Bracket matching rides the imprint (Editor/ImprintBracket.h) rather than
-    // a Mode hook: unlike fold or indent it needs point, which Mode's
-    // capability signatures do not carry, and there is no hand-written query to
-    // compose with. Doing it on the parse tree rather than by counting
-    // characters is what makes a brace inside a string or comment simply not a
-    // delimiter, in every language, with nothing said per language.
+    // Through Mode::matchingDelimiters, so this shares the mode's own
+    // incremental parse rather than starting one. The first version owned a
+    // parser and parsed fresh per invocation -- tolerable for a keystroke,
+    // useless for the matching-bracket HIGHLIGHT this is meant to feed, which
+    // recomputes as point moves. One path for both.
+    //
+    // Doing it on the parse tree rather than by counting characters is what
+    // makes a brace inside a string or comment simply not a delimiter, in every
+    // language, with nothing said per language.
     registry.Register(
         "goto-matching-bracket",
         "Jump between a bracket under point and its partner, using the active mode's syntax tree.",
@@ -3545,23 +3548,22 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             if (context.mode == nullptr) {
                 return;
             }
-            const std::string language = imprint::LanguageKeyForMode(context.mode->name);
-            const auto        parsed   = imprint::ParseForBrackets(context.buffer.Text(), language);
-            if (!parsed) {
+            if (!context.mode->matchingDelimiters) {
                 if (context.message) {
                     *context.message = "No bracket matching available in this mode.";
                 }
                 return;
             }
-            const auto target =
-                imprint::MatchingDelimiterOffset(parsed->RootNode(), language, context.buffer.Point());
-            if (!target) {
+            const std::size_t point = context.buffer.Point();
+            const auto        pair  = context.mode->matchingDelimiters(context.buffer.Text(), point);
+            if (!pair) {
                 if (context.message) {
                     *context.message = "Point is not on a bracket.";
                 }
                 return;
             }
-            context.buffer.SetPoint(*target);
+            // On (or just past) the opener -> go to the closer, and back.
+            context.buffer.SetPoint(point <= pair->openEnd ? pair->closeStart : pair->openStart);
         }));
 
     registry.Register(

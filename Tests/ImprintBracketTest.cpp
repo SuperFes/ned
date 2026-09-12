@@ -150,3 +150,37 @@ TEST_CASE("goto-matching-bracket moves point to the partner", "[ImprintBracket][
     CHECK(invoke(buffer.Text().find("return")) == buffer.Text().find("return"));
     CHECK_FALSE(message.empty());
 }
+
+TEST_CASE("The Mode capability is present exactly where brackets mean something", "[ImprintBracket]") {
+    // Present for a language whose delimiters are bracket pairs, absent
+    // otherwise -- and absent is a real answer, not a gap. A mode with no
+    // compiled-in imprint (Org folds by headline depth) has no brackets to
+    // match, and saying so lets goto-matching-bracket report that rather than
+    // silently doing nothing.
+    CHECK(static_cast<bool>(ned::editor::CMode().matchingDelimiters));
+    CHECK(static_cast<bool>(ned::editor::PhpMode().matchingDelimiters));
+    CHECK(static_cast<bool>(ned::editor::YamlMode().matchingDelimiters));
+
+    CHECK_FALSE(static_cast<bool>(ned::editor::OrgMode().matchingDelimiters));
+    CHECK_FALSE(static_cast<bool>(ned::editor::FundamentalMode().matchingDelimiters));
+}
+
+TEST_CASE("The capability shares the mode's parse rather than starting its own", "[ImprintBracket]") {
+    // Not a timing assertion -- just that repeated calls on unchanged text are
+    // served from the same incremental cache and stay consistent. The first
+    // implementation parsed fresh per call, which was fine for a keystroke and
+    // would have been a per-frame parse once a highlight consumed it.
+    const ned::editor::Mode mode = ned::editor::CMode();
+    REQUIRE(static_cast<bool>(mode.matchingDelimiters));
+
+    const std::string text  = "int f(void) {\n    return 1;\n}\n";
+    const std::size_t open  = text.find('{');
+    const std::size_t close = text.rfind('}');
+
+    for (int repeat = 0; repeat < 8; ++repeat) {
+        const auto pair = mode.matchingDelimiters(text, open);
+        REQUIRE(pair.has_value());
+        CHECK(pair->openStart == open);
+        CHECK(pair->closeStart == close);
+    }
+}

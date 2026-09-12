@@ -19,6 +19,7 @@
 #include <utility>
 #include <vector>
 
+#include "Editor/Imprint.h"
 #include "Keymap.h"
 
 namespace ned::editor::treesitter {
@@ -516,6 +517,22 @@ using IndentFunction = std::function<std::optional<int>(std::string_view bufferT
 // grammar-verified compound-expression node types (member access, calls,
 // indexing, ...). Empty function (JanetMode/OrgMode, the two hand-built
 // exceptions) means the same "not configured" signal as everything above.
+// The bracket pair point sits on, or nullopt when it sits on none.
+//
+// A Mode capability rather than a free function over a tree, for one reason
+// that only shows up in the paint path: a matching-bracket HIGHLIGHT has to be
+// recomputed as point moves, and a free function would have to parse to answer.
+// Going through the Mode lets this ride the same shared incremental parse the
+// mode's highlight and fold closures already use, so it costs a tree walk
+// rather than a parse. `goto-matching-bracket` goes through it too -- one path,
+// and the command stops owning a parser of its own.
+//
+// Empty function = this mode does not do brackets, which is the honest answer
+// for one whose delimiters are not bracket pairs at all (HTML's tag elements)
+// or which has no compiled-in imprint (Org, Markdown).
+using MatchingDelimiterFunction =
+    std::function<std::optional<imprint::DelimiterPair>(std::string_view bufferText, std::size_t point)>;
+
 using LineInspectFunction =
     std::function<std::vector<std::pair<std::size_t, std::size_t>>(std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd)>;
 
@@ -598,7 +615,8 @@ struct Mode {
     // mode has no locals.scm, so rename-symbol has no scope-aware answer of
     // its own for it and says so, same "empty means not configured"
     // convention as everything above.
-    LocalScopeFunction localScopes;
+    LocalScopeFunction        localScopes;
+    MatchingDelimiterFunction matchingDelimiters;
     // line-wrap follow-up: this mode's own default for whether BufferView
     // should soft-wrap long lines at word boundaries instead of scrolling
     // horizontally -- false (matching every bundled mode except the two

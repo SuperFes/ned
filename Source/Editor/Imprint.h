@@ -105,6 +105,17 @@ struct DelimitedBody {
 // Note what this does NOT decide: whether a body spans more than one line.
 // That is a property of the text, not the grammar (`Editor/CodeFold.h`
 // enforces it), and no amount of static policy can answer it.
+// The two delimiters of one delimited body, as byte ranges. `openStart` is
+// always < `closeStart`. Lives here rather than beside the lookup that
+// produces it because it is vocabulary, not machinery -- two byte ranges,
+// nothing about a parser.
+struct DelimiterPair {
+    std::size_t openStart  = 0;
+    std::size_t openEnd    = 0;
+    std::size_t closeStart = 0;
+    std::size_t closeEnd   = 0;
+};
+
 struct FoldPolicy {
     bool foldArgumentLists = true;
 };
