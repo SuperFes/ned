@@ -482,6 +482,22 @@ real; if not, that is worth learning at language 3 rather than language 15.
       `_bl` an external written right there. Python's `class_definition` still correctly
       declines to inherit `_suite`'s dedent, because there the inherited member *is* the
       last one.
+- [x] **Bracket matching, which ned did not have.** `Docs/ParsingEngine.md` and
+      `Docs/LanguageCoverage.md` both list brace matching among the things a
+      delimited-body fact gives you for free, and it had never been built — ned had
+      `forward-sexp` motion but nothing answering "where is the partner of the bracket
+      under my cursor". `Editor/ImprintBracket.h` plus `goto-matching-bracket`, across
+      every language with a table.
+      Done on the parse tree rather than by counting characters, which is what makes a
+      brace inside a string or a comment simply not a delimiter — in every language, with
+      nothing said per language. An indentation body reports nothing, because a dedent is
+      not a bracket and saying otherwise would be a lie told to a feature whose whole job
+      is precision.
+      No `Mode` hook: unlike fold and indent this needs *point*, which `Mode`'s capability
+      signatures do not carry, and there is no hand-written query to compose with.
+- [ ] Matching-bracket *highlighting* is the obvious follow-up and is a `BufferView` paint
+      change rather than a capability — `MatchingDelimitersAt` already returns both ranges
+      for exactly that.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over

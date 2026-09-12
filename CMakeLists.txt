@@ -975,6 +975,7 @@ add_library(ned_lib STATIC
         Source/Editor/Imprint.cpp
         Source/Editor/ImprintTables.cpp
         Source/Editor/ImprintFold.cpp
+        Source/Editor/ImprintBracket.cpp
         Source/Editor/TreeSitter/GrammarImprint.cpp
         Source/Editor/TreeSitter/Tree.cpp
         Source/Editor/TreeSitter/Parser.cpp
@@ -1316,6 +1317,7 @@ if (NED_BUILD_TESTS)
             Tests/DocSourcePathsTest.cpp
             Tests/OracleTest.cpp
             Tests/ImprintTest.cpp
+            Tests/ImprintBracketTest.cpp
             Tests/FormatterPropertiesTest.cpp
             Tests/ThemeKeyDocsTest.cpp
             Tests/InitFileThemeWriteTest.cpp
