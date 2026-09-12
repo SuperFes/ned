@@ -182,10 +182,43 @@ Folds, indent, dedent, brace matching, structural selection and sticky-scroll
 containers are therefore derivable **for every grammar, including grammars that
 do not exist yet, with no rules written at all**.
 
-The falsifiable target for this tier: reproduce **53 of the 55** hand-written
-fold nodes above with zero hand-written rules, and close the Folds and Indents
-columns to 29/29 by construction. A grammar for a language invented next year
-should fold correctly the day it is dropped in.
+**Measured 2026-09-11: 55 of 55, with no per-language rules.**
+`Tools/TraitInferenceProbe.py` is the experiment, checked in so the number can
+be re-derived rather than trusted. Three refinements were needed beyond the
+naive "a SEQ that opens and closes with a literal", and each is a real property
+of how grammars are written rather than a fudge:
+
+- **Hidden rules must be inlined.** tree-sitter inlines `_`-prefixed rules
+  rather than making them nodes, so a grammar is free to put a node's real
+  delimiters inside one. Clojure does exactly that -- `list_lit` is
+  `SEQ[REPEAT(_metadata_lit), _bare_list_lit]`, with the parens one level down.
+  Without inlining, all six Clojure fold nodes are invisible.
+- **A closer may be followed by optional members.** JavaScript's
+  `statement_block` is `SEQ['{', REPEAT(statement), '}', <optional>]`, so
+  requiring the closer to be the literal last member misses it.
+- **Indentation languages close with an external token and have no opener.**
+  Python's `block` is `SEQ[REPEAT(_statement), _dedent]`; the `_indent` is
+  consumed by the parent. This is a second delimiter shape, not a special case.
+
+### The correction this measurement forces
+
+The exit criterion was originally written as "reproduce the hand-written fold
+nodes", which conflated two different things. Inference also reports **211 nodes
+beyond** the hand-written 55 -- `parenthesized_expression` (9 languages),
+`argument_list` (6), `parameter_list` (4), `string_literal`, `index_expression`.
+
+Every one of those is genuinely delimited. None is something to fold.
+
+So Tier 0 does not infer `Foldable`; it infers **`Delimited`**, which is the
+honest structural fact. `Foldable` is a *policy* on top of it -- and the useful
+part is what that policy costs: instead of naming 55 node types across 12
+languages, it excludes a handful of shapes, most of them cross-language
+("a parenthesized expression is not a fold"). That is the N x M to N + M
+inversion showing up in the first tier that was actually built, which is better
+evidence for the architecture than the recall number is.
+
+The same split should be expected everywhere below: Tier 0 reports structure
+with high recall and no taste, Tier 1 applies the small amount of taste.
 
 ### Tier 1 -- declared concepts, ~30-40 traits, once per language
 
