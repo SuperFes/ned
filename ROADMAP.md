@@ -932,8 +932,34 @@ real; if not, that is worth learning at language 3 rather than language 15.
             `demo.lua` as `(lua-mode)` with upstream-`.scm` highlighting, zero init.janet
             lines. Full suite + targeted ASan green (the dlopen path included — the lua
             fixture is present on this machine).
-      - [ ] **Step 4 — Janet hooks in `Query.cpp` and the highlight pipeline** (predicate,
-            classifier, span transform), rooting-safe call path proven first.
+      - [x] **Step 4 — Janet hooks in the highlight pipeline, measured down to two.**
+            The planned trio (predicate/classifier/span-transform) shrank against its
+            actual consumers: a per-match Janet predicate has none (Org's TODO check is
+            a classifier; the Lisp `.pairs` quantifier stays C++) and would cost a
+            `dostring` compile per match, and the span transform's useful answers are a
+            small closed set, so it became *data*. What shipped:
+            **capture classifiers** (`Editor/CaptureClassifiers.h`) — a SyntaxClass
+            computed from the captured *text*, per (language, capture name), the escape
+            hatch for what no static predicate can express (headline level is arithmetic
+            over counted stars; TODO-vs-DONE compares against a runtime list). The
+            interface is deliberately BATCH — one call per capture name per repaint, not
+            per capture — because the safe Janet invocation path
+            (`janet_def` + `dostring`, never a held root; `Value.h`'s CAUTION) costs a
+            small compile per call; the `ned/register-capture-classifier` binding keeps
+            the user's fn per-text and `map`s it over the batch internally. A result is
+            classify / suppress-the-span (`false` — Org's non-keyword candidate must
+            contribute nothing, not a Default span that clobbers the headline wash) /
+            fall through (`nil`). Main-thread-guarded: off the Janet thread (ModePrewarm's
+            background pass, whose spans are discarded) every entry is Fallthrough.
+            And **`:capture-spans {"name" :line-end}`** — declarative span widening,
+            applied *after* classification so the classifier reads the capture's own
+            text. Both live in one always-installed post-pass wrapper
+            (`LanguageDefinition.cpp`'s `ApplyCaptureRules`) over whatever highlight
+            actually runs, so a classifier registered from init.janet — which loads
+            after the first modes are built — takes effect on the next repaint with no
+            cache coupling. Rooting proven under fire: 3+ held functions × 150
+            invocations, ASan-clean; off-thread guard tested; verified live (a user
+            init.janet classifier recolors a JSON key end to end).
       - [ ] **Step 5 — Org and Markdown rewritten as language files**; the escapes in
             `Languages/` deleted. The acceptance test for the whole thing.
 - [ ] **Phase 3 — Semantic drivers.** Scopes/bindings/references as a real resolution

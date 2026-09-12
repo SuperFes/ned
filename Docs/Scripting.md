@@ -7,7 +7,7 @@ the `Register<Fn>` call site, not this file.
 Regenerate with `NED_BLESS_COMMAND_DOCS=1 ./build/ned_tests "[CommandDocs]"`.
 Held against the binding table on every build, so it cannot drift.
 
-159 bindings.
+160 bindings.
 
 ## `ned/backward-char`
 
@@ -88,6 +88,10 @@ Return the current point as a byte offset.
 ## `ned/recover-backup`
 
 Restore the current buffer's content from backup snapshot `index` (0 = the autosave if present, else the newest version -- ned/list-backups' order). One undoable step; the buffer is left modified, so save to keep the recovery. Panics on a bad index or unreadable snapshot.
+
+## `ned/register-capture-classifier`
+
+Classify a capture's spans from their TEXT, where a static query cannot say: (language capture fn). fn receives one captured node's text and returns a :syntax-class keyword (the names ned/set-syntax-foreground accepts, e.g. :headline-level1), false to suppress that span entirely (it contributes nothing, rather than a :default span that would clobber an underlying wash), or nil to fall through to the normal capture-name resolution. Consulted by the highlight pipeline for that language's captures of that name -- batched internally, one Janet call per name per repaint, so keep fn pure and fast. This is the escape hatch for classes no query predicate can express: arithmetic over the text (a headline level from counted stars) or comparison against runtime-configured state (Org's TODO keywords). Pair with a definition's :capture-spans {"name" :line-end} to widen the classified span declaratively. Re-registering replaces; a nil fn clears.
 
 ## `ned/register-command`
 

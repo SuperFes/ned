@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -15,6 +17,7 @@
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
 #include "Editor/BlankLineCleanup.h"
+#include "Editor/CaptureClassifiers.h"
 #include "Editor/ClassFileSyncSettings.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
@@ -566,6 +569,85 @@ namespace {
 
     void NedRegisterLanguage(std::string directory) {
         editor::LoadLanguageDirectory(directory);
+    }
+
+    // Wraps a per-text Janet fn as a batch CaptureClassifier
+    // (Editor/CaptureClassifiers.h): the fn is bound into the environment
+    // under a generated name (janet_def -- reachability through the env
+    // table, never a manual root; see Value.h's CAUTION) and invoked as one
+    // (map fn args) per batch through janet_dostring, so a thousand
+    // captures cost one small compile, not a thousand. Janet is
+    // main-thread-only: a call from any other thread (ModePrewarm's
+    // background highlight, whose spans are discarded) answers
+    // all-Fallthrough via the recorded registering thread's id.
+    void NedRegisterCaptureClassifier(std::string languageKey, std::string captureName, Janet fn) {
+        if (!g_env) {
+            throw std::runtime_error("ned: janet environment not installed");
+        }
+        if (janet_checktype(fn, JANET_NIL)) {
+            editor::RegisterCaptureClassifier(languageKey, captureName, {});
+            return;
+        }
+        const std::string internalName = "ned/capture-classifier-" + languageKey + "-" + captureName;
+        janet_def(g_env, internalName.c_str(), fn, "");
+
+        JanetTable*           env         = g_env;
+        const std::thread::id janetThread = std::this_thread::get_id();
+        editor::RegisterCaptureClassifier(
+            languageKey, captureName,
+            [env, internalName, languageKey, captureName, janetThread](std::span<const std::string_view> texts)
+                -> std::vector<editor::CaptureClassification> {
+                std::vector<editor::CaptureClassification> out(texts.size());
+                if (std::this_thread::get_id() != janetThread) {
+                    return out; // off the Janet thread: all-Fallthrough
+                }
+                JanetArray* args = janet_array(static_cast<std::int32_t>(texts.size()));
+                for (const std::string_view text : texts) {
+                    janet_array_push(args, janet_wrap_string(janet_string(
+                                               reinterpret_cast<const std::uint8_t*>(text.data()),
+                                               static_cast<std::int32_t>(text.size()))));
+                }
+                const std::string argName = "ned/capture-classifier-arg";
+                janet_def(env, argName.c_str(), janet_wrap_array(args), "");
+
+                const std::string invokeExpr = "(map " + internalName + " " + argName + ")";
+                Janet             result;
+                std::string       capturedError;
+                const int         signal = DoStringCapturingStacktrace(env, invokeExpr, "ned-capture-classifier", &result,
+                                                                       &capturedError);
+                if (signal != 0) {
+                    throw std::runtime_error("ned: capture classifier \"" + languageKey + "/" + captureName +
+                                             "\": " + capturedError);
+                }
+                // Per element: a :syntax-class keyword classifies, false
+                // suppresses the span outright, nil falls through.
+                if (!janet_checktype(result, JANET_ARRAY) && !janet_checktype(result, JANET_TUPLE)) {
+                    return out;
+                }
+                const Janet* items;
+                std::int32_t count = 0;
+                if (janet_checktype(result, JANET_ARRAY)) {
+                    JanetArray* array = janet_unwrap_array(result);
+                    items             = array->data;
+                    count             = array->count;
+                }
+                else {
+                    const Janet* tuple = janet_unwrap_tuple(result);
+                    items              = tuple;
+                    count              = janet_tuple_length(tuple);
+                }
+                for (std::int32_t i = 0; i < count && i < static_cast<std::int32_t>(out.size()); ++i) {
+                    if (janet_checktype(items[i], JANET_KEYWORD)) {
+                        const std::uint8_t* keyword      = janet_unwrap_keyword(items[i]);
+                        out[static_cast<std::size_t>(i)] = editor::CaptureClassification::Class(
+                            editor::SyntaxClassByName(reinterpret_cast<const char*>(keyword)));
+                    }
+                    else if (janet_checktype(items[i], JANET_BOOLEAN) && !janet_unwrap_boolean(items[i])) {
+                        out[static_cast<std::size_t>(i)] = editor::CaptureClassification::Suppressed();
+                    }
+                }
+                return out;
+            });
     }
 
     void NedSetModeForExtension(std::string extension, std::string modeName) {
@@ -1541,6 +1623,18 @@ void InstallEditorBindings(Environment& env) {
         "on a row the line already occupies, so a diagnostic appearing or clearing never shifts anything else on "
         "screen; \"callout\" is the original block below the line with carets under the flagged span, which points "
         "at exact columns but costs a screen row that comes and goes as you type.");
+    env.Register<&NedRegisterCaptureClassifier>(
+        "ned", "register-capture-classifier",
+        "Classify a capture's spans from their TEXT, where a static query cannot say: (language capture fn). fn "
+        "receives one captured node's text and returns a :syntax-class keyword (the names ned/set-syntax-foreground "
+        "accepts, e.g. :headline-level1), false to suppress that span entirely (it contributes nothing, rather than "
+        "a :default span that would clobber an underlying wash), or nil to fall through to the normal "
+        "capture-name resolution. Consulted by the highlight pipeline for that language's captures of that name -- "
+        "batched internally, one Janet call per name per repaint, so keep fn pure and fast. This is the escape "
+        "hatch for classes no query predicate can express: arithmetic over the text (a headline level from counted "
+        "stars) or comparison against runtime-configured state (Org's TODO keywords). Pair with a definition's "
+        ":capture-spans {\"name\" :line-end} to widen the classified span declaratively. Re-registering replaces; "
+        "a nil fn clears.");
     env.Register<&NedRegisterLanguage>(
         "ned", "register-language",
         "Register a language from a directory holding its language.janet -- the exact layout ned's own bundled "
