@@ -757,6 +757,74 @@ inferable from structure, look for a query that already states it before
 authoring a new one.** The trait vocabulary should expect to *import* facts from
 the highlight layer, not only to replace it.
 
+### Tier 1 is not restated per driver either, which decides the format question
+
+Tier 0's whole case was a duplication number: 96% of every fold rule was the
+same node named again as an indent rule. The "one vocabulary consumed by many
+drivers" argument for a Tier 1 format assumes the same shape one level up --
+that `tags.scm`, `locals.scm`, `tests.scm` and `imports.scm` keep naming the
+same nodes, and a single declaration per node could feed all four. Measured on
+2026-09-12 over the *effective* queries ned compiles (upstream plus ned's
+deltas, 16 languages, the four Tier 1 kinds), it does not hold:
+
+```
+distinct pattern-root node types across the four kinds     221
+named by two or more kinds                                  22   (10%)
+  ... and with the same role in both                         0
+also a Tier 0 delimited body                                16    (7%)
+```
+
+Ten percent against Tier 0's ninety-six, and the ten are not restatements.
+Every one of the 22 overlaps is a *different fact about the same node*:
+`function_definition` is `@definition.function` to tags and `@local.scope` to
+locals; `call_expression` is `@reference.call` to tags, `@test.definition` to
+tests and `@import.statement` to imports; `export_statement` is a constant to
+one and an import to another. Tier 0 duplicated because "delimited body" was
+one fact two drivers each had to say. Tier 1 does not, because "declares a
+name", "opens a scope", "is a test", "names a file" are four facts, and a node
+having one says little about the others.
+
+The one place that looked derivable was scope -- surely a definition with a
+delimited body opens one? Of the 94 node types captured `@local.scope`, 22 are
+also tags definitions, 22 are imprint bodies, and **50 are neither**: `for`
+loops, `catch` clauses, lambdas and closures, Rust's `if`/`while`/`match_arm`,
+Kotlin's `when_entry`, C#'s `using_statement`. Scope is a genuine third fact,
+stated per language because the languages genuinely differ (a C `for` header
+binds into its body; a Bash one does not open anything).
+
+Two further numbers say what kind of facts these are. **Every `tests.scm`
+pattern is predicated** (19 of 19 -- a test is a function whose *name* matches
+`^test`, whose decorator is `@Test`, whose attribute is `#[test]`), and a third
+of the import patterns are; those are per-instance facts on text, Tier 2-shaped
+by nature, and no per-type declaration could carry them. And the vocabulary the
+drivers consume already exists and is already shared: `local.scope` /
+`local.definition.var` / `local.definition.parameter` / `local.reference` in
+all 15 locals files, `definition.class` in 10 of 11 tags files, `test.definition`
++ `test.name` in all 10 tests files, `import.statement` in all 10 imports files.
+The long tail is upstream's own (`reference.send`, `definition.macro`) plus
+underscore-prefixed pattern-local names that are not traits at all.
+
+**Consequence: there is nothing for a Phase 1 compiler to unify.** A Janet
+declaration format would restate 221 facts in a second syntax, reduce none of
+them, and gain the tests column nothing. The Tier 1 format *is* the dotted
+capture convention the corpus already follows -- upstream's `@definition.*` /
+`@reference.*` / `@local.*` plus ned's own `@test.*`, `@import.*`,
+`@local.definition.<q>.pairs`, `@local.skip`, `@indent.suppress`, `@aligned`,
+`@align.barrier`, `@indent.body` -- resolved most-specific-first exactly as the
+next section says. What the design still wants from that convention is that it
+be *checked*: a capture name a driver does not consume should be a warning, not
+silence. One collision already exists and is inert only by accident:
+tree-sitter-cpp's upstream `tags.scm` captures a qualified name's namespace as
+`@local.scope`, the same name `locals.scm` uses for a binding scope; they never
+meet because the two queries are compiled separately, which is precisely what a
+merged artifact would have changed.
+
+Tier 2 stands as designed and is smaller than expected: one quantifier
+(`.pairs`) in about forty lines of C++, and Org's two runtime facts. The Janet
+authoring decision below is unaffected in what it decides -- an escape that
+needs arithmetic or host state still belongs in Janet -- but its scope shrinks
+to exactly those escapes. The declarative tier has no reason to leave `.scm`.
+
 ### Tier 1 must reuse the capture-name model, not invent an enum
 
 `Docs/HighlightCapabilities.md` settled this for highlighting and the same
@@ -859,19 +927,23 @@ do, including from Janet. A driver declares which traits it consumes, so the
 registry can report -- statically, at load time -- which languages can serve it
 and which cannot.
 
-## The authoring format: Janet, not a Scheme dialect
+## The authoring format: Janet for escapes, `.scm` for declarations
 
-**ned's own language definitions are written in Janet** -- both the Tier 1 trait
-declarations and the Tier 2 escapes -- rather than in a tree-sitter-style `.scm`
-query file. Decided; recorded here because the syntax would otherwise look
-inherited rather than chosen.
+As first decided, **ned's own language definitions were to be written in Janet**
+-- both the Tier 1 trait declarations and the Tier 2 escapes -- rather than in
+a tree-sitter-style `.scm` query file. Recorded here because the syntax would
+otherwise look inherited rather than chosen. The measurement in "Tier 1 is not
+restated per driver either" then narrowed it: with no cross-driver duplication
+for a new declarative format to collapse, the declarative tier stays `.scm`,
+and the decision applies to the escapes alone. The reasoning below is kept as
+written, since the escape half of it is unchanged.
 
 Janet is already the extension language, and it is homoiconic, which is what
-makes one file serve both tiers without the split feeling arbitrary:
+would have let one file serve both tiers without the split feeling arbitrary:
 
-- **The declarative tier is plain Janet *data*** -- tuples, keywords, symbols --
-  that nothing evaluates. It reads like an S-expression query because it is
-  one. A pattern file is still just data on disk.
+- **The declarative tier is plain *data*** -- and it turns out to be `.scm`
+  data, which nothing evaluates either. A pattern file is still just data on
+  disk.
 - **The escape tier is Janet *code***, and therefore gets a real language for
   free: arithmetic over captured text (Org's heading level is a count of `*`),
   quantifiers with index parity (the Lisp binding-vector cliff), and access to
@@ -1088,7 +1160,13 @@ validated against it. Cheap, and without it none of the rest is falsifiable.
 **Phase 1 -- Language-definition format and compiler.** Ingest `grammar.json`,
 declare traits alongside, emit one artifact. Implement Tier 0 inference and
 measure it against the existing fold/indent corpus. Exit criterion: 53 of 55
-fold nodes reproduced with zero hand-written rules.
+fold nodes reproduced with zero hand-written rules. *Status:* Tier 0 is the
+compiled-in imprint table (`Editor/ImprintTables.cpp`), held against live
+inference on every run; the gate was met at 60/60. The "declare traits
+alongside, emit one artifact" half was measured rather than built: Tier 1 does
+not restate across drivers (10% node overlap, none with the same role -- see
+"Tier 1 is not restated per driver either"), so there is nothing for a compiler
+to unify and the dotted `.scm` capture convention stands as the format.
 
 **Phase 2 -- Trait-driven structural drivers.** Rewrite fold, indent, dedent,
 structural selection, sticky scroll and brace match against traits. Exit
