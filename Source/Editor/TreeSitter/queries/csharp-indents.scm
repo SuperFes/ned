@@ -1,10 +1,10 @@
 ; smart-indentation follow-up. See c-indents.scm's own header comment for the
 ; general convention -- checked against tree-sitter/tree-sitter-c-sharp's own
 ; src/node-types.json/grammar.js directly, same discipline every other
-; *-indents.scm in this project holds to. Mirrors csharp-folds.scm's own node
-; selection (see that file's header comment for the declaration_list/
+; *-indents.scm in this project holds to. Mirrors the node selection the
+; deleted csharp-folds.scm made (`git log` carries its declaration_list/
 ; switch_body/switch_expression/accessor_list/initializer_expression
-; reasoning). "parameter_list"/"argument_list" (a method's own parameters/a
+; reasoning; folding itself comes from the imprint now). "parameter_list"/"argument_list" (a method's own parameters/a
 ; call's own arguments) and their bracketed siblings "bracketed_parameter_
 ; list"/"bracketed_argument_list" (an indexer's "this[...]" and an element
 ; access's "arr[...]") all get @aligned rather than @indent, same reasoning

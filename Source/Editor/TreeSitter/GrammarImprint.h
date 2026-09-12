@@ -8,9 +8,10 @@
 // split is the Phase 4 seam (Docs/ParsingEngine.md): replacing the engine
 // replaces this file and leaves the vocabulary untouched.
 //
-// Measured against the 55 fold nodes currently hand-written across
-// queries/*-folds.scm: this reproduces 55/55 with nothing authored per
-// language. `Tests/ImprintTest.cpp` enforces the number, so a grammar bump
+// Measured against the 59 fold nodes once hand-written across
+// queries/*-folds.scm: this reproduced 59/59 with nothing authored per
+// language, and those eleven files are now deleted rather than maintained.
+// `Tests/ImprintTest.cpp` keeps their node list as a pin, so a grammar bump
 // that breaks inference fails the build rather than being noticed later.
 //
 // This reads *grain* -- structure legible from a construct's shape. It does

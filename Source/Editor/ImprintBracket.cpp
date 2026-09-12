@@ -1,6 +1,8 @@
 #include "ImprintBracket.h"
 
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "Editor/ImprintTables.h"
 #include "Editor/TreeSitter/Languages.h"
@@ -10,23 +12,27 @@ namespace ned::editor::imprint {
 
 namespace {
 
-// The node's own first and last children, when it is a bracket-delimited body
-// -- which by construction is where its delimiters are.
+    // The four bracket kinds the imprint recognises as delimiters -- the same set
+    // TreeSitter/GrammarImprint.cpp infers from, angle brackets included (template
+    // and type-parameter lists, JSX opening elements).
+    constexpr std::string_view kOpeners = "([{<";
+    constexpr std::string_view kClosers = ")]}>";
+
+    std::optional<char> OpenerFor(std::string_view closer) {
+        if (closer.size() != 1) {
+            return std::nullopt;
+        }
+        const std::size_t at = kClosers.find(closer[0]);
+        return at == std::string_view::npos ? std::nullopt : std::optional<char>(kOpeners[at]);
+    }
+
 std::optional<DelimiterPair> PairFor(const treesitter::Node& node,
                                      const std::map<std::string, DelimitedBody>& table) {
     const auto entry = table.find(std::string(node.Type()));
     if (entry == table.end() || entry->second.kind != DelimiterKind::Bracket) {
         return std::nullopt;
     }
-    if (node.ChildCount() < 2) {
-        return std::nullopt;
-    }
-    const treesitter::Node open  = node.Child(0);
-    const treesitter::Node close = node.Child(node.ChildCount() - 1);
-    if (open.IsNull() || close.IsNull() || open.StartByte() >= close.StartByte()) {
-        return std::nullopt;
-    }
-    return DelimiterPair{open.StartByte(), open.EndByte(), close.StartByte(), close.EndByte()};
+    return DelimitersOf(node);
 }
 
 // Deepest-first, so an inner pair wins over the outer one that contains it.
@@ -59,6 +65,31 @@ void Search(const treesitter::Node& node, const std::map<std::string, DelimitedB
 }
 
 } // namespace
+
+std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node) {
+    if (node.IsNull() || node.ChildCount() < 2) {
+        return std::nullopt;
+    }
+    for (std::size_t i = node.ChildCount(); i-- > 0;) {
+        const treesitter::Node close = node.Child(i);
+        if (close.IsNull() || close.IsNamed()) {
+            continue;
+        }
+        const std::optional<char> opener = OpenerFor(close.Type());
+        if (!opener.has_value()) {
+            continue;
+        }
+        for (std::size_t j = 0; j < i; ++j) {
+            const treesitter::Node open = node.Child(j);
+            if (open.IsNull() || open.IsNamed() || open.Type().size() != 1 || open.Type()[0] != *opener) {
+                continue;
+            }
+            return DelimiterPair{open.StartByte(), open.EndByte(), close.StartByte(), close.EndByte()};
+        }
+        return std::nullopt; // a closer with no opener before it is not a pair
+    }
+    return std::nullopt;
+}
 
 std::optional<DelimiterPair> MatchingDelimitersAt(const treesitter::Node& root, std::string_view language,
                                                   std::size_t point) {

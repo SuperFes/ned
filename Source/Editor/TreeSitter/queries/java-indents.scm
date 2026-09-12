@@ -1,9 +1,9 @@
 ; smart-indentation follow-up. See c-indents.scm's own header comment for the
 ; general convention -- checked against tree-sitter/tree-sitter-java's own
 ; src/node-types.json/grammar.js directly, same discipline every other
-; *-indents.scm in this project holds to. Mirrors java-folds.scm's own node
-; selection (see that file's header comment for the per-construct body-node
-; reasoning). "formal_parameters" (a method's own parameter list),
+; *-indents.scm in this project holds to. Mirrors the node selection the
+; deleted java-folds.scm made (`git log` carries its per-construct body-node
+; reasoning; folding itself comes from the imprint now). "formal_parameters" (a method's own parameter list),
 ; "argument_list" (a call's own arguments) and "annotation_argument_list"
 ; (an annotation's own "(...)") get @aligned rather than @indent, same
 ; reasoning c-indents.scm's own parameter_list/argument_list do.

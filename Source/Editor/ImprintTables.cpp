@@ -226,6 +226,17 @@ constexpr Entry kJanet[] = {
     {"struct_lit", DelimiterKind::Bracket, true, true},
 };
 
+constexpr Entry kJank[] = {
+    {"anon_fn_lit", DelimiterKind::Bracket, false, true},
+    {"list_lit", DelimiterKind::Bracket, false, true},
+    {"map_lit", DelimiterKind::Bracket, false, true},
+    {"ns_map_lit", DelimiterKind::Bracket, false, true},
+    {"read_cond_lit", DelimiterKind::Bracket, false, true},
+    {"set_lit", DelimiterKind::Bracket, false, true},
+    {"splicing_read_cond_lit", DelimiterKind::Bracket, false, true},
+    {"vec_lit", DelimiterKind::Bracket, false, true},
+};
+
 constexpr Entry kJava[] = {
     {"annotation_argument_list", DelimiterKind::Bracket, true, true},
     {"annotation_type_body", DelimiterKind::Bracket, true, true},
@@ -509,6 +520,7 @@ const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
         load("go", kGo, std::size(kGo));
         load("html", kHtml, std::size(kHtml));
         load("janet", kJanet, std::size(kJanet));
+        load("jank", kJank, std::size(kJank));
         load("java", kJava, std::size(kJava));
         load("javascript", kJavascript, std::size(kJavascript));
         load("json", kJson, std::size(kJson));

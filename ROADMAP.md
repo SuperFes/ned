@@ -284,12 +284,13 @@ Two numbers carry the case:
   mechanically `(X close-token @dedent)` for an `X` already in that file's `@indent` list.
   One fact — *this node is a delimited body* — currently gets stated two to three times
   per language, 21 languages over.
-- `Queries.h` holds **105 embedded query constants over 29 languages x 8 driver kinds =
-  232 cells, so 127 gaps (55%)**. Highlights is the only column at 29/29, and only because
+- `Queries.h` holds **95 embedded query constants over 29 languages x 8 driver kinds =
+  232 cells, so 137 gaps (59%)**. Highlights is the only column at 29/29, and only because
   upstream ships `highlights.scm`; every column ned authors itself is 34–72% empty, each
   empty cell a language silently missing a feature — though a gap stopped meaning a
-  missing feature the moment a driver could read the grammar directly (21 languages fold
-  with 11 `folds.scm` between them).
+  missing feature the moment a driver could read the grammar directly. The Folds column is
+  now **0/29 with 21 languages folding**, which is that sentence carried to its end: the
+  gaps went *up* because eleven files went away.
 
 The proposal is to declare structure and meaning in **one artifact per language**, so a
 trait travels with the rule it is attached to and an unsatisfiable trait is a build error
@@ -708,21 +709,49 @@ real; if not, that is worth learning at language 3 rather than language 15.
       `parenthesized_expression`/`argument_list`/`string_literal` is what turns structure
       into a feature). Wiring the inferred facts into `Tests/Oracle` is the natural join
       with Phase 0 — the 55-vs-211 gap should be visible as a diff, not a number in a doc.
+- [x] **The fold column is deleted — Phase 2's restated exit criterion, met.** All eleven
+      remaining `*-folds.scm` are gone, not replaced: the evidence was gathered first, and
+      both halves said the same thing. Statically, every one of the 59 node types those
+      files named is in the compiled table *and* passes `ShouldFold` (being inferred as
+      `Delimited` is not being folded, which is the question the old gate could not ask).
+      Dynamically, over **66 real files** — the grammar repos' own `examples/` plus the
+      oracle corpus — the queries produced **zero** fold ranges the imprint did not, while
+      the imprint produced 663 they did not (argument/parameter/initializer lists, already
+      shipping, since `Mode::fold` has been their union all along). Re-blessing the oracle
+      after the deletion gives a **byte-identical snapshot**, which is the proof rather
+      than the claim. The 59 node names are pinned in `Tests/ImprintTest.cpp` as a frozen
+      tripwire, since a gate that reads the query files cannot outlive them; the fold
+      *ranges* are held by the oracle, a stronger ground truth than a node list.
+      **A union cannot state a negative, and one query had been trying to.** Two
+      pre-existing defects surfaced only once the queries were gone, neither visible while
+      there was a query to credit. `jank-mode` keys its table by mode name and shares
+      Clojure's grammar, so it had no table at all — folding purely off the shared
+      `clojure-folds.scm`, and silently never having had bracket matching, which is gated
+      on the same table. And the table answers for a node *type* while an instance need
+      not be delimited: Kotlin's `function_body` is `{ ... }` **or** `= expr`, so a
+      multi-line expression body was offered as a fold with nothing to collapse — the
+      deleted query guarded exactly this by hand, and that guard had been inert for as
+      long as the two sources composed. The same gap made bracket matching read child 0 as
+      the opener, so `a[0]` matched nothing. `ImprintBracket.h`'s `DelimitersOf` answers
+      it for both drivers, and handles an unclosed brace via the parser's own zero-width
+      MISSING token rather than by special case.
 - [ ] **Phase 2 — Trait-driven structural drivers.** Fold, indent, dedent, structural
       selection, sticky scroll, brace match. **Three of the six run off the imprint today**
       — folding (21 languages, nine of which had no query at all), brace matching (built
       from nothing, it did not exist), and sticky scroll (ten languages that had none) —
-      and one hand-written query has been deleted.
+      and the entire hand-written fold corpus has been deleted.
       The exit criterion as originally written is now known to be **wrong in one half**.
-      "Folds at 29/29 with no adapter authored" is the right shape and nearly reached.
+      "Folds at 29/29 with no adapter authored" is reached, in the stronger sense that
+      there are no fold adapters left to author.
       "Indents at 29/29" is not reachable at all: an indent source contributes a *quantity*
       rather than an assertion, so it cannot compose additively with a query, and three of
       sixteen languages need to say a real container does **not** indent (measured — see
-      `Docs/ParsingEngine.md`). Restate the criterion before resuming: deletable files
-      remains right, symmetric column coverage across drivers does not.
+      `Docs/ParsingEngine.md`). Restated: deletable files was right, symmetric column
+      coverage across drivers was not.
       Left: structural selection (already a generic AST walk — likely gains nothing, worth
-      confirming), and whether the remaining `.scm` corpus can shrink further now that
-      three drivers are inferred.
+      confirming), and whether `indents.scm` can shrink the way `folds.scm` did — which the
+      quantity/assertion split says needs suppression to be expressible first, so it is a
+      Tier 1 format question rather than another deletion.
 - [ ] **Phase 3 — Semantic drivers.** Scopes/bindings/references as a real resolution
       layer rather than query captures. Exit criterion: the Lisp eight-pair cliff is gone,
       or Tier 1 is proven insufficient and the design is revised before any engine work.
