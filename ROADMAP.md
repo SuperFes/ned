@@ -1649,17 +1649,17 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
     alongside the framing, not after it.
 
 - [ ] **One connection class instead of three copies of it** (raised 2026-09-08 —
-      prerequisite for the protocol work above, and worth doing on its own merits).
-      `LspClient`, `DapClient` and `AcpClient` each hand-roll the same machine, and the
-      headers say so outright: *"Threading, lifetime, and member-declaration order all
-      mirror LspClient"* (`Dap/Client.h`), *"mirrors LspClient's own stderrThread_ exactly"*
-      (both), *"see LspClient.h's own comment on writeCv_"* (both). All three carry the
-      identical member set — `readThread_`/`stderrThread_` declared *before* `transport_`
-      so its destructor's fd close unblocks them, then `writeThread_` with
-      `writeMutex_`/`writeCv_`/`writeQueue_`/`drainQueueOnStop_` declared *after* it for
-      the mirror-image reason. That ordering is a load-bearing correctness invariant
-      currently defended by a comment repeated in three files: reorder two members in one
-      of them and you get a hang, not a compile error.
+    prerequisite for the protocol work above, and worth doing on its own merits).
+    `LspClient`, `DapClient` and `AcpClient` each hand-roll the same machine, and the
+    headers say so outright: *"Threading, lifetime, and member-declaration order all
+    mirror LspClient"* (`Dap/Client.h`), *"mirrors LspClient's own stderrThread_ exactly"*
+    (both), *"see LspClient.h's own comment on writeCv_"* (both). All three carry the
+    identical member set — `readThread_`/`stderrThread_` declared *before* `transport_`
+    so its destructor's fd close unblocks them, then `writeThread_` with
+    `writeMutex_`/`writeCv_`/`writeQueue_`/`drainQueueOnStop_` declared *after* it for
+    the mirror-image reason. That ordering is a load-bearing correctness invariant
+    currently defended by a comment repeated in three files: reorder two members in one
+    of them and you get a hang, not a compile error.
 
     **The seam is clean, because only the top of the stack actually differs.** Framing
     differs (LSP and DAP share `Content-Length` via `Lsp/Transport.h`; ACP is
