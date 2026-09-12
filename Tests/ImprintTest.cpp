@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <vector>
 
 #include "Editor/CodeFold.h"
@@ -72,16 +73,78 @@ std::set<std::string> HandWrittenNodes(const std::string& language, const std::s
     buffer << in.rdbuf();
 
     // Strip comments first -- several of these files are more prose than rule.
-    const std::string    text = std::regex_replace(buffer.str(), std::regex(R"(;[^\n]*)"), "");
+    const std::string text = std::regex_replace(buffer.str(), std::regex(R"(;[^\n]*)"), "");
+
+    // Scanning back from each capture, balancing parens, rather than matching
+    // a regex forward. A regex bounded by [^()]* cannot cross a nested group,
+    // so it silently misses the conditional form -- `(function_body "{")
+    // @fold`, which folds a Kotlin function only when it has a brace body
+    // rather than `= expr`. Kotlin reported 7 hand-written fold nodes that way
+    // when it has 10, which made this gate weaker than it claimed to be.
+    //
+    // Two shapes, and telling them apart is the whole job:
+    //   `(declaration_list) @fold`      -- the capture follows a ')', so the
+    //                                      captured node is the group that ')'
+    //                                      closes.
+    //   `(block "}" @dedent)`           -- the capture follows a token, so the
+    //                                      node is the enclosing group's head.
+    const std::string     needle = "@" + capture;
     std::set<std::string> nodes;
-    const std::regex      capture1(R"(\(\s*([a-z_][a-z_0-9]*)\b[^()]*@)" + capture + R"()");
-    for (auto it = std::sregex_iterator(text.begin(), text.end(), capture1); it != std::sregex_iterator(); ++it) {
-        nodes.insert((*it)[1].str());
+
+    const auto headOfGroupAt = [&text](std::size_t open) -> std::string {
+        std::size_t head = open + 1;
+        while (head < text.size() && std::isspace(static_cast<unsigned char>(text[head]))) ++head;
+        std::size_t tail = head;
+        while (tail < text.size() && (std::islower(static_cast<unsigned char>(text[tail])) ||
+                                      std::isdigit(static_cast<unsigned char>(text[tail])) || text[tail] == '_')) {
+            ++tail;
+        }
+        return tail > head ? text.substr(head, tail - head) : std::string{};
+    };
+
+    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) {
+        // A longer capture name that merely starts with this one is a
+        // different capture: @indent.body is not @indent.
+        const std::size_t after = at + needle.size();
+        if (after < text.size() && (std::isalnum(static_cast<unsigned char>(text[after])) || text[after] == '.' ||
+                                    text[after] == '_' || text[after] == '-')) {
+            continue;
+        }
+
+        std::size_t cursor = at;
+        while (cursor > 0 && std::isspace(static_cast<unsigned char>(text[cursor - 1]))) --cursor;
+        if (cursor == 0) continue;
+
+        std::string head;
+        if (text[cursor - 1] == ')') {
+            // Walk back to the '(' this ')' closes.
+            int depth = 0;
+            std::size_t scan = cursor - 1;
+            while (true) {
+                if (text[scan] == ')') ++depth;
+                else if (text[scan] == '(' && --depth == 0) break;
+                if (scan == 0) break;
+                --scan;
+            }
+            if (text[scan] == '(') head = headOfGroupAt(scan);
+        }
+        else {
+            // Walk back to the nearest unmatched '(' -- the enclosing group.
+            int depth = 0;
+            std::size_t scan = cursor;
+            while (scan > 0) {
+                --scan;
+                if (text[scan] == ')') ++depth;
+                else if (text[scan] == '(') {
+                    if (depth == 0) break;
+                    --depth;
+                }
+            }
+            if (text[scan] == '(') head = headOfGroupAt(scan);
+        }
+        if (!head.empty()) nodes.insert(head);
     }
-    const std::regex bare(R"(\(\s*([a-z_][a-z_0-9]*)\s*\)\s*@)" + capture + R"()");
-    for (auto it = std::sregex_iterator(text.begin(), text.end(), bare); it != std::sregex_iterator(); ++it) {
-        nodes.insert((*it)[1].str());
-    }
+
     return nodes;
 }
 
@@ -301,14 +364,24 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
         for (const std::string& node : indentMissed) joined += " " + node;
         return joined;
     }());
+    // One known gap, and it is a defect in the QUERY rather than in inference:
+    // tree-sitter-typescript has no `interface_body` rule at all (its interface
+    // body is an `object_type`), so that capture can never match anything.
+    // Left in place and pinned here rather than quietly deleted, because the
+    // query is upstream-shaped and the next person to read it deserves to find
+    // the reason rather than rediscover it.
     CHECK(indentMissed == std::set<std::string>{"typescript/interface_body"});
     CHECK(indentCovered + 1 == indentTotal);
 
     INFO("reproduced " << reproduced << " of " << expected);
-    // The corpus itself changed if this trips. It has once: cpp-folds.scm
-    // gained (declaration_list) after inference reported a namespace body on
-    // a real file that the hand-written list missed, taking 55 to 56.
-    CHECK(expected == 56);
+    // The corpus itself changed if this trips. Three times so far:
+    // cpp-folds.scm gained (declaration_list) and c-folds.scm gained
+    // (field_declaration_list), both after inference reported them on real
+    // files; and fixing this file's own node extractor to see the conditional
+    // form `(function_body "{") @fold` revealed three more Kotlin nodes the old
+    // regex simply could not read -- which means the number reported as 55/55
+    // and then 56/56 was measured against an incomplete ground truth.
+    CHECK(expected == 60);
     CHECK(reproduced == expected);
 }
 
@@ -331,15 +404,45 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
 
 namespace {
 
+bool IsFoldable(const ned::editor::treesitter::Node&                              node,
+                const std::map<std::string, ned::editor::imprint::DelimitedBody>& bodies,
+                const ned::editor::imprint::FoldPolicy&                           policy) {
+    if (node.IsNull()) return false;
+    const auto it = bodies.find(std::string(node.Type()));
+    return it != bodies.end() && ned::editor::imprint::ShouldFold(it->second, policy);
+}
+
+// Fold the body, not the declaration.
+//
+// C#'s `namespace_declaration` is `namespace X { ... }` and its own direct
+// child `declaration_list` is the `{ ... }`. Both are genuinely delimited and
+// inference is right to report both, but folding the declaration hides the
+// `namespace X` line itself -- the one line you still want while the body is
+// away, exactly as a function's signature is.
+//
+// The test is "has a direct child that is also foldable and ends where I do",
+// and it has to be asked of the TREE. A first attempt compared byte ranges
+// instead -- drop anything sharing an end byte with a later-starting range --
+// and it was wrong in a way worth recording: a Python class body and its own
+// last method's body legitimately share an end byte, so the class body
+// vanished. Containment says nothing; direct parentage does.
+bool HasFoldableBodyChild(const ned::editor::treesitter::Node&                              node,
+                          const std::map<std::string, ned::editor::imprint::DelimitedBody>& bodies,
+                          const ned::editor::imprint::FoldPolicy&                           policy) {
+    for (std::size_t i = 0; i < node.ChildCount(); ++i) {
+        const ned::editor::treesitter::Node child = node.Child(i);
+        if (child.EndByte() == node.EndByte() && IsFoldable(child, bodies, policy)) return true;
+    }
+    return false;
+}
+
 void CollectFoldable(const ned::editor::treesitter::Node&                                 node,
                      const std::map<std::string, ned::editor::imprint::DelimitedBody>&    bodies,
                      const ned::editor::imprint::FoldPolicy&                              policy,
                      std::vector<std::pair<std::size_t, std::size_t>>&                    out) {
     if (node.IsNull()) return;
-    if (const auto it = bodies.find(std::string(node.Type())); it != bodies.end()) {
-        if (ned::editor::imprint::ShouldFold(it->second, policy)) {
-            out.emplace_back(node.StartByte(), node.EndByte());
-        }
+    if (IsFoldable(node, bodies, policy) && !HasFoldableBodyChild(node, bodies, policy)) {
+        out.emplace_back(node.StartByte(), node.EndByte());
     }
     for (std::size_t i = 0; i < node.ChildCount(); ++i) CollectFoldable(node.Child(i), bodies, policy, out);
 }
@@ -367,9 +470,19 @@ TEST_CASE("An imprint reproduces the hand-written fold ranges on real files", "[
     }
 
     std::vector<Case> cases;
+    cases.push_back({"sample.c", "tree-sitter-c-src", ned::editor::CMode(), "c"});
     cases.push_back({"sample.cpp", "tree-sitter-cpp-src", ned::editor::CppMode(), "cpp"});
     cases.push_back({"sample.py", "tree-sitter-python-src", ned::editor::PythonMode(), "python"});
     cases.push_back({"sample.json", "tree-sitter-json-src", ned::editor::JsonMode(), "json"});
+    cases.push_back({"sample.clj", "tree-sitter-clojure-src", ned::editor::ClojureMode(), "clojure"});
+    cases.push_back({"sample.go", "tree-sitter-go-src", ned::editor::GoMode(), "go"});
+    cases.push_back({"sample.rs", "tree-sitter-rust-src", ned::editor::RustMode(), "rust"});
+    cases.push_back({"sample.java", "tree-sitter-java-src", ned::editor::JavaMode(), "java"});
+    cases.push_back({"sample.cs", "tree-sitter-c-sharp-src", ned::editor::CSharpMode(), "csharp"});
+    cases.push_back({"sample.js", "tree-sitter-javascript-src", ned::editor::JavaScriptMode(), "javascript"});
+    cases.push_back(
+        {"sample.ts", "tree-sitter-typescript-src-src/typescript", ned::editor::TypeScriptMode(), "typescript"});
+    cases.push_back({"sample.kt", "tree-sitter-kotlin-src", ned::editor::KotlinMode(), "kotlin"});
 
     for (const Case& testCase : cases) {
         INFO("corpus file: " << testCase.file);
@@ -403,6 +516,22 @@ TEST_CASE("An imprint reproduces the hand-written fold ranges on real files", "[
         KeepMultiLineOnly(handWritten, text);
 
         INFO("inferred " << inferred.size() << " ranges, hand-written " << handWritten.size());
+        if (inferred != handWritten) {
+            for (const auto& range : inferred) {
+                if (std::find(handWritten.begin(), handWritten.end(), range) == handWritten.end()) {
+                    std::string snippet = text.substr(range.first, std::min<std::size_t>(44, range.second - range.first));
+                    for (char& ch : snippet) if (ch == '\n') ch = ' ';
+                    WARN("  ONLY-INFERRED " << range.first << ".." << range.second << "  \"" << snippet << "\"");
+                }
+            }
+            for (const auto& range : handWritten) {
+                if (std::find(inferred.begin(), inferred.end(), range) == inferred.end()) {
+                    std::string snippet = text.substr(range.first, std::min<std::size_t>(44, range.second - range.first));
+                    for (char& ch : snippet) if (ch == '\n') ch = ' ';
+                    WARN("  ONLY-HAND     " << range.first << ".." << range.second << "  \"" << snippet << "\"");
+                }
+            }
+        }
         CHECK(inferred == handWritten);
     }
 }

@@ -9,3 +9,7 @@
 ; yet, matching the "start with a few, extend later" scope this feature
 ; shipped with.
 (compound_statement) @fold
+;; struct/enum/union bodies. The header above said this was deliberately left
+;; for later; imprint inference (Editor/Imprint.h) reported it on a real file
+;; and C++ has folded the identical node type all along, so "later" is now.
+(field_declaration_list) @fold

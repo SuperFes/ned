@@ -216,7 +216,16 @@ Folds, indent, dedent, brace matching, structural selection and sticky-scroll
 containers are therefore derivable **for every grammar, including grammars that
 do not exist yet, with no rules written at all**.
 
-**Measured 2026-09-11: 55 of 55, with no per-language rules.**
+**Measured: 60 of 60, with no per-language rules.**
+
+Reported as 55/55 and then 56/56 for most of a day, and both were wrong. The
+ground truth was extracted from the `.scm` files with a regex bounded by
+`[^()]*`, which cannot cross a nested group and so could not see the
+*conditional* capture form -- `(function_body "{") @fold`, which folds a Kotlin
+function only when it has a brace body rather than `= expr`. Kotlin reported 7
+hand-written fold nodes when it has 10. The extractor now scans back from each
+capture balancing parens; the real corpus is 60, and inference reproduces all
+of it. A measurement is a claim about the thing measuring, too.
 `Tests/ImprintTest.cpp` is the experiment and the enforcement both -- the
 number is re-derived on every build rather than trusted. Three refinements were needed beyond the
 naive "a SEQ that opens and closes with a literal", and each is a real property

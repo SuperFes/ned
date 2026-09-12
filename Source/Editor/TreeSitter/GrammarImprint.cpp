@@ -1,6 +1,7 @@
 #include "GrammarImprint.h"
 
 #include <algorithm>
+#include <optional>
 #include <set>
 #include <string_view>
 #include <vector>
@@ -102,10 +103,59 @@ bool IsSymbolNamed(const json& member, const std::set<std::string>& names) {
 // SEQ[REPEAT(_metadata_lit), _bare_list_lit] with the parens inside
 // _bare_list_lit -- and without inlining all six of its fold nodes are
 // invisible.
+// `indirect` is set when the members came from somewhere other than this
+// rule's own top-level sequence -- through a CHOICE branch or a bare hidden
+// reference. That matters for indentation bodies specifically: an
+// indent-delimited body has no opener, only a closing dedent, so a rule that
+// merely *contains* one would otherwise inherit it. Python's class_definition
+// ends in a hidden `_suite` that bottoms out at `_dedent`, and reporting the
+// whole `class Widget:` header as the body is exactly wrong -- `block`, which
+// owns the dedent directly, is the body. Bracket delimiters are safe to
+// inherit this way (Kotlin's function_body genuinely is its `_block`); a
+// dedent is not.
 bool FlattenSeq(const json& rule, const json& rules, std::vector<const json*>& out, int depth,
-                std::set<std::string>& seen) {
+                std::set<std::string>& seen, bool* indirect = nullptr) {
     const json& inner = Unwrap(rule);
-    if (TypeOf(inner) != "SEQ") return false;
+
+    // A rule may be a CHOICE whose branches include a delimited body: Kotlin's
+    // function_body is CHOICE[_block, SEQ["=", expression]] -- a brace body or
+    // an expression body. The node is delimited when it takes the first
+    // branch, which is exactly why the hand-written query writes
+    // `(function_body "{")` rather than a bare capture. Take the first branch
+    // that flattens to a sequence; a branch that is a bare token cannot be one.
+    if (TypeOf(inner) == "CHOICE" && depth < 4) {
+        const auto members = inner.find("members");
+        if (members == inner.end() || !members->is_array()) return false;
+        for (const json& branch : *members) {
+            std::vector<const json*> branchOut;
+            std::set<std::string>    branchSeen = seen;
+            if (FlattenSeq(branch, rules, branchOut, depth + 1, branchSeen) && branchOut.size() >= 2) {
+                out = std::move(branchOut);
+                if (indirect != nullptr) *indirect = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (TypeOf(inner) != "SEQ") {
+        // A bare reference to a hidden rule: Kotlin's control_structure_body
+        // branch is just `_block`, whose own production carries the braces.
+        if (depth < 4 && TypeOf(inner) == "SYMBOL") {
+            const auto name = inner.find("name");
+            if (name != inner.end() && name->is_string()) {
+                const std::string symbol = name->get<std::string>();
+                if (!symbol.empty() && symbol.front() == '_' && !seen.count(symbol)) {
+                    if (const auto target = rules.find(symbol); target != rules.end()) {
+                        seen.insert(symbol);
+                        if (indirect != nullptr) *indirect = true;
+                        return FlattenSeq(*target, rules, out, depth + 1, seen, indirect);
+                    }
+                }
+            }
+        }
+        return false;
+    }
     const auto members = inner.find("members");
     if (members == inner.end() || !members->is_array()) return false;
 
@@ -120,7 +170,7 @@ bool FlattenSeq(const json& rule, const json& rules, std::vector<const json*>& o
                     if (target != rules.end()) {
                         seen.insert(symbol);
                         std::vector<const json*> nested;
-                        if (FlattenSeq(*target, rules, nested, depth + 1, seen)) {
+                        if (FlattenSeq(*target, rules, nested, depth + 1, seen, indirect)) {
                             out.insert(out.end(), nested.begin(), nested.end());
                             continue;
                         }
@@ -145,6 +195,35 @@ constexpr std::string_view kClosers = "})]>";
 std::string OpenerFor(const std::string& closer) {
     const std::size_t index = kClosers.find(closer);
     return index == std::string_view::npos ? "" : std::string(1, kOpeners[index]);
+}
+
+// The bracket half of the match, shared by the ordinary path and the
+// optional-trailing-body path below it.
+std::optional<imprint::DelimitedBody> MatchBracketed(const std::vector<const json*>& core) {
+    if (core.size() < 2) return std::nullopt;
+
+    std::string closer;
+    for (const std::string& candidate : Literals(*core.back())) {
+        if (kClosers.find(candidate) != std::string_view::npos) {
+            closer = candidate;
+            break;
+        }
+    }
+    if (closer.empty()) return std::nullopt;
+
+    const std::string opener   = OpenerFor(closer);
+    const auto        openerIt = std::find_if(core.begin(), core.end() - 1,
+                                       [&](const json* m) { return Literals(*m).count(opener) > 0; });
+    if (openerIt == core.end() - 1) return std::nullopt;
+
+    imprint::DelimitedBody body;
+    body.kind             = imprint::DelimiterKind::Bracket;
+    body.openerIsFirst    = (openerIt == core.begin());
+    body.listLikeInterior = std::any_of(openerIt + 1, core.end() - 1, [](const json* m) {
+        const std::string type = TypeOf(Unwrap(*m));
+        return type == "REPEAT" || type == "REPEAT1" || type == "CHOICE";
+    });
+    return body;
 }
 
 } // namespace
@@ -172,7 +251,8 @@ std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const nlohman
 
         std::vector<const json*> members;
         std::set<std::string>    seen;
-        if (!FlattenSeq(rule, *rules, members, 0, seen) || members.size() < 2) continue;
+        bool                     indirect = false;
+        if (!FlattenSeq(rule, *rules, members, 0, seen, &indirect) || members.size() < 2) continue;
 
         // Trim trailing optionals to find the real closer, but never trim
         // away the whole production.
@@ -180,33 +260,38 @@ std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const nlohman
         while (core.size() > 1 && IsOptional(*core.back())) core.pop_back();
         if (core.size() < 2) core = members;
 
-        std::string closer;
-        for (const std::string& candidate : Literals(*core.back())) {
-            if (kClosers.find(candidate) != std::string_view::npos) {
-                closer = candidate;
-                break;
-            }
+        if (const auto bracket = MatchBracketed(core); bracket.has_value()) {
+            found.emplace(name, *bracket);
+            continue;
         }
-        if (!closer.empty()) {
-            const std::string opener   = OpenerFor(closer);
-            const auto        openerIt = std::find_if(core.begin(), core.end() - 1, [&](const json* m) {
-                return Literals(*m).count(opener) > 0;
-            });
-            if (openerIt != core.end() - 1) {
-                imprint::DelimitedBody body;
-                body.kind          = imprint::DelimiterKind::Bracket;
-                body.openerIsFirst = (openerIt == core.begin());
-                body.listLikeInterior =
-                    std::any_of(openerIt + 1, core.end() - 1, [](const json* m) {
-                        const std::string type = TypeOf(Unwrap(*m));
-                        return type == "REPEAT" || type == "REPEAT1" || type == "CHOICE";
-                    });
-                found.emplace(name, body);
-                continue;
+
+        // An OPTIONAL trailing body. Kotlin's secondary_constructor is
+        // SEQ[..., CHOICE[_block, BLANK]] -- `constructor(...) { ... }` or
+        // `constructor(...)` with nothing at all -- so the trailing-optional
+        // trim that finds the closer for every other shape removes the very
+        // member that delimits this one. The hand-written query writes
+        // `(secondary_constructor "{")` for exactly this reason.
+        //
+        // Handled rather than declined: the shape is not Kotlin's alone (an
+        // optional brace body is how `= default`, `= delete` and abstract
+        // declarations are spelled elsewhere), and a rule that is right only
+        // for the grammars already looked at is not a rule.
+        if (!members.empty() && IsOptional(*members.back())) {
+            std::vector<const json*> inner;
+            std::set<std::string>    innerSeen;
+            bool                     innerIndirect = false;
+            if (FlattenSeq(*members.back(), *rules, inner, 1, innerSeen, &innerIndirect)) {
+                if (auto bracket = MatchBracketed(inner); bracket.has_value()) {
+                    // The opener cannot be this node's own first member -- the
+                    // header that made the body optional precedes it.
+                    bracket->openerIsFirst = false;
+                    found.emplace(name, *bracket);
+                    continue;
+                }
             }
         }
 
-        if (IsSymbolNamed(*core.back(), externals)) {
+        if (!indirect && IsSymbolNamed(*core.back(), externals)) {
             imprint::DelimitedBody body;
             body.kind = imprint::DelimiterKind::Indent;
             // An indentation body has no opener of its own, and everything
