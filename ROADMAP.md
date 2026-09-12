@@ -428,6 +428,23 @@ real; if not, that is worth learning at language 3 rather than language 15.
       had their *inputs* made multi-line rather than their expectations loosened; two that
       reached past `FoldableBlocks` to `Mode::fold` directly now go through it, since
       `CodeFold.h` says that is the only function meant to touch it.
+- [x] **Nine languages gained folding with nothing authored for them.** php, css, bash,
+      yaml, toml, fish, janet, xml and tsx had no `folds.scm` at all and therefore no
+      folding; they fold now, from the delimiter imprint alone. That is the N x M argument
+      arriving as a feature rather than as a number.
+      Wiring it surfaced one refinement and one honest limit. The refinement: reading a
+      literal must look through `TOKEN` even though a token-wrapped *rule* is a leaf —
+      Bash writes its `compound_statement`'s closing brace as a token with precedence, and
+      refusing to read it lost every Bash fold. Those are different questions and the
+      earlier fix conflated them. The limit: **HTML contributes nothing, and that is
+      correct** — its elements are delimited by matched `start_tag`/`end_tag` pairs rather
+      than bracket literals. Having a source that declines is different from having no
+      source, and `MergeFoldSources` is exactly where HTML's own fold source would slot in
+      later.
+      Three tests had premises invalidated rather than assertions broken, and were
+      rewritten to say what is now true: one asserted php/css/bash/yaml/toml have *no*
+      fold hook, and two picked PhpMode or JanetMode precisely *because* they had none, so
+      the fold gutter stayed out of a width they measure.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over

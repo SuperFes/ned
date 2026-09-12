@@ -479,6 +479,20 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
         {"rust", "tree-sitter-rust-src/src/grammar.json"},
         {"typescript", "tree-sitter-typescript-src-src/typescript/src/grammar.json"},
         {"clojure", "tree-sitter-clojure-src/src/grammar.json"},
+        // Languages with NO hand-written folds.scm at all. They get folding
+        // from the imprint alone -- which is the whole N x M argument arriving:
+        // nine languages gaining a feature because the grammar already said
+        // enough, with nothing authored per language.
+        {"bash", "tree-sitter-bash-src/src/grammar.json"},
+        {"css", "tree-sitter-css-src/src/grammar.json"},
+        {"fish", "tree-sitter-fish-src/src/grammar.json"},
+        {"html", "tree-sitter-html-src/src/grammar.json"},
+        {"janet", "tree-sitter-janet-simple-src/src/grammar.json"},
+        {"php", "tree-sitter-php-src/php/src/grammar.json"},
+        {"toml", "tree-sitter-toml-src/src/grammar.json"},
+        {"xml", "tree-sitter-xml-src/xml/src/grammar.json"},
+        {"yaml", "tree-sitter-yaml-src/src/grammar.json"},
+        {"tsx", "tree-sitter-typescript-src-src/tsx/src/grammar.json"},
     };
 
     if (!fs::exists(DepsDir())) {
@@ -668,4 +682,47 @@ TEST_CASE("An imprint reproduces the hand-written fold ranges on real files", "[
         }
         CHECK(inferred == handWritten);
     }
+}
+
+TEST_CASE("Languages with no folds.scm get folding from the imprint alone", "[Imprint]") {
+    // The N x M argument arriving as a feature rather than a number: none of
+    // these has a hand-written fold query, and every one of them folds now
+    // because the grammar already said enough. Nothing was authored per
+    // language.
+    struct Case {
+        ned::editor::Mode mode;
+        std::string       name;
+        std::string       text;
+        std::size_t       expected;
+    };
+
+    std::vector<Case> cases;
+    cases.push_back({ned::editor::PhpMode(), "php",
+                     "<?php\nclass Widget {\n    public function size() {\n        return 1;\n    }\n}\n", 2});
+    cases.push_back({ned::editor::YamlMode(), "yaml", "root:\n  child:\n    - one\n    - two\n  other: 3\n", 1});
+    cases.push_back({ned::editor::CssMode(), "css", "body {\n    color: red;\n    margin: 0;\n}\n", 1});
+    cases.push_back({ned::editor::BashMode(), "bash", "run() {\n    echo hi\n    echo bye\n}\n", 1});
+    cases.push_back({ned::editor::TomlMode(), "toml", "[table]\nkey = [\n  1,\n  2,\n]\n", 2});
+
+    for (const Case& testCase : cases) {
+        INFO("language: " << testCase.name);
+        const auto blocks = ned::editor::codefold::FoldableBlocks(testCase.mode, testCase.text);
+        CHECK(blocks.size() == testCase.expected);
+    }
+}
+
+TEST_CASE("A language whose delimiters are not brackets contributes nothing, and that is correct",
+          "[Imprint]") {
+    // HTML's element is `start_tag ... end_tag` -- matched tag pairs, not
+    // bracket literals -- so the imprint has nothing to say about it and says
+    // nothing. No special case anywhere expresses that; it falls out of the
+    // table being empty for constructs it cannot read.
+    //
+    // This is the same shape as Org folding by headline depth and Markdown by
+    // section structure. The compose mechanism (MergeFoldSources) exists so a
+    // language like this can supply its own fold source later and have it
+    // simply work alongside whatever else is present.
+    const auto html   = ned::editor::HtmlMode();
+    const auto blocks = ned::editor::codefold::FoldableBlocks(html, "<div>\n  <p>\n    hello\n  </p>\n</div>\n");
+    CHECK(blocks.empty());
 }
