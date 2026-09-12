@@ -648,6 +648,37 @@ real; if not, that is worth learning at language 3 rather than language 15.
       its line (which is the JSX case) and aligns under the first argument when it does
       not (which is `if (a &&`), so one capture serves both. `sample.tsx` joins the oracle
       corpus — the one bundled mode that had its own query and no corpus coverage.
+- [x] **The Lisp eight-pair cliff is gone — Phase 3's acceptance test, answered.**
+      `Docs/ParsingEngine.md` named this as the falsification point: *"if Tiers 1+2 express
+      `(let [a 1 b c] ...)` without a cliff the vocabulary is real; if not, that is worth
+      learning at language 3 rather than language 15."* A ninth binding in one vector was
+      silently unresolvable in Clojure and Janet alike, so `rename-symbol` declined on it.
+      It resolves now, and `Tests/Oracle/corpus/cliff.clj` — added precisely to hold the
+      limit — shows the ninth `Definition.var` appearing as a diff rather than as a claim.
+      **The answer is a split, not a bigger query.** Taking every other child of a binding
+      vector is a *quantifier*, and a tree-sitter pattern has none: the only declarative
+      spelling is one pattern per even index, anchored `. (_) . (_)` per preceding pair,
+      which grows quadratically and has to stop somewhere. So the query keeps the language
+      knowledge — *which heads bind pairwise* — and the counting moves to code
+      (`@local.definition.<qualifier>.pairs`, expanded by `Mode.cpp`'s
+      `ExpandPairwiseBindings`). That is a Tier 2 escape costing one capture name and ~40
+      lines, not the "real resolution layer" Phase 3 was scoped around, which is worth
+      knowing before that phase is planned: the cliff was a missing quantifier, not missing
+      semantics.
+      Two refinements, both measured and both making the result *better* than the queries
+      they replaced. A comment between pairs used to shift every later name onto an odd
+      index, capturing the **value** there as a definition — a corrupted rename, the exact
+      failure the unrolled form existed to avoid, present in it all along. Asking the
+      parser which children are extras (`Node::IsExtra`) fixes that generically — except
+      that **tree-sitter-clojure declares `extras: []`**, no extras at all, so the generic
+      mechanism has nothing to report and `(comment) @local.skip` carries it there. Same
+      capture handles `#_form`, the reader discard, which is a parity shift no grammar
+      calls an extra. Janet and Clojure now reach the same rule by different routes, with
+      a test each so neither rots.
+      Destructuring still declines rather than guessing (a child with named children of
+      its own is not an identifier), which is the pre-existing degradation kept
+      deliberately rather than quietly changed. Verified live: renaming the ninth binding
+      in a real buffer rewrites its definition and its use, and nothing else.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** Now with the
       above in mind: it is a *unification* of vocabulary, not a reduction in authoring, and
       should be scoped and justified as such. With inference

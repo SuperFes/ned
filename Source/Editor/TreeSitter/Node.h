@@ -65,6 +65,24 @@ class Node {
     // expansion step never stops on a lone punctuation token.
     [[nodiscard]] bool IsNamed() const;
 
+    // lisp-binding-pairs follow-up. True for a node the grammar declared in
+    // its `extras` -- a comment, almost always -- which the parser is free to
+    // insert between any two children of anything.
+    //
+    // That freedom is why this is needed rather than a node-type check: a rule
+    // that counts a container's children positionally ("a binding vector
+    // alternates name, value") is wrong the moment a comment sits between two
+    // of them, and `comment` is only what THIS grammar happens to call it.
+    // Asking the parser which children are extras is the language-agnostic
+    // form of the same question.
+    [[nodiscard]] bool IsExtra() const;
+
+    // The child stored under `fieldName` in this node's own production (e.g.
+    // Clojure's `sym_lit` has a `name:` field), or a null Node when there is
+    // none -- which is the ordinary answer for a grammar that does not name
+    // its fields, and the reason every caller must handle it.
+    [[nodiscard]] Node ChildByFieldName(std::string_view fieldName) const;
+
     // The immediate parent, or a null Node (see IsNull()) at the root.
     [[nodiscard]] Node Parent() const;
 

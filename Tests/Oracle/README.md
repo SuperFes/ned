@@ -46,10 +46,17 @@ Most files are ordinary samples. Some are here to pin a place where the current
 engine is known to fall short, so that beating it later shows up as a diff
 rather than as a claim:
 
-- **`cliff.clj`** -- a `let` with nine binding pairs. `clojure-locals.scm`
-  unrolls by pair index and stops at eight, so the snapshot records exactly
-  eight `Definition.var` captures and no `i`. This is the acceptance test for
-  Tier 1 quantifiers: when the ninth appears, the vocabulary is real.
+- **`cliff.clj`** -- a `let` with nine binding pairs. It was added while
+  `clojure-locals.scm` unrolled by pair index and stopped at eight: the
+  snapshot recorded exactly eight `Definition.var` captures and no `i`, and
+  the entry existed so that lifting the limit would show up as a diff rather
+  than as a claim. **The ninth capture is in the snapshot now.** The quantifier
+  moved out of the query into code, which is how a Tier 2 escape earns its
+  place; the entry stays as the regression test it turned into.
+
+  Worth keeping the shape of this in mind when adding an entry: a file that
+  records a limit is not wasted when the limit is closed -- it becomes the
+  only test that would notice the limit coming back.
 
 Add to this list rather than fixing the corpus around a limitation. A limit
 nobody wrote down gets rediscovered instead of closed.
