@@ -233,6 +233,76 @@ do, including from Janet. A driver declares which traits it consumes, so the
 registry can report -- statically, at load time -- which languages can serve it
 and which cannot.
 
+## The authoring format: Janet, not a Scheme dialect
+
+**ned's own language definitions are written in Janet** -- both the Tier 1 trait
+declarations and the Tier 2 escapes -- rather than in a tree-sitter-style `.scm`
+query file. Decided; recorded here because the syntax would otherwise look
+inherited rather than chosen.
+
+Janet is already the extension language, and it is homoiconic, which is what
+makes one file serve both tiers without the split feeling arbitrary:
+
+- **The declarative tier is plain Janet *data*** -- tuples, keywords, symbols --
+  that nothing evaluates. It reads like an S-expression query because it is
+  one. A pattern file is still just data on disk.
+- **The escape tier is Janet *code***, and therefore gets a real language for
+  free: arithmetic over captured text (Org's heading level is a count of `*`),
+  quantifiers with index parity (the Lisp binding-vector cliff), and access to
+  runtime host state (Org's TODO keywords, configured from Janet and therefore
+  invisible to any statically-compiled query). Each of these is a thing
+  tree-sitter's predicate system structurally cannot express, not a thing it
+  merely lacks.
+
+This is the established escape-hatch shape in this codebase rather than a new
+invention: `ned/register-test-parser` wraps a Janet fn that shadows a built-in
+parser, `Janet/JanetVcsProvider.h` implements a C++ interface from Janet
+callbacks, `ned/register-snippet` likewise. Janet over a compiled C++ core is
+how the rest of ned already extends.
+
+### What stays `.scm`, and why
+
+An S-expression *reader* is kept, but only to **consume upstream** -- it is an
+input format, not an authoring one. Measured against `CMakeLists.txt` on
+2026-09-11, ned consumes **32 query files it does not write**: 20
+`highlights.scm`, 9 `tags.scm`, 3 `injections.scm`. Highlighting is the one
+driver column at full coverage precisely because upstream ships it, so dropping
+the ability to read those files means re-authoring highlighting for 29
+languages to buy nothing.
+
+`/usr/bin/tree-sitter` is also installed on this machine, and `tree-sitter
+query` validates a pattern against a real grammar without a ned rebuild --
+worth keeping reachable for the upstream files, since it is the fastest
+authoring loop available.
+
+### Two disciplines that make this hold up
+
+**Keep the declarative tier pure data.** Nothing in a Tier 1 file should need
+evaluating to be *loaded*. That is what keeps the compiled artifact mmap-able
+and runtime-loadable, keeps per-keystroke cost at zero for a language that
+declares no escape, and keeps the whole 29-language corpus independent of which
+scripting runtime ned happens to embed.
+
+**Declare escapes, do not embed them.** A grammar file should *name* a host
+predicate; the host supplies it. The escape then lives in the user's own
+`init.janet`, not in the grammar corpus. Org already works this way and is the
+model: `org::TodoKeywords()` is a process-wide setting with a `ned/set-*`
+binding, and `Editor/Org.h`'s pure parsing functions deliberately do not read
+it.
+
+Together these mean a future scripting-runtime change touches the binding layer
+and a countable handful of host predicates -- never the languages. Relevant
+because `Docs/JankFeasibility.md` is a live Maybelist item: jank is also a Lisp,
+so the declarative tier would carry over as-is, but escapes are *code* and would
+be a rewrite (different standard library, different collections, different
+embedding contract entirely -- see `Janet/Value.h`'s own CAUTION for how
+specific an embedding contract gets). Shared syntax is not shared semantics. The
+fewer escapes exist, the smaller that bill -- which is the real argument for
+pushing Tier 1's expressiveness hard rather than reaching for Tier 2.
+
+Janet-only is the right scope now. Nothing above depends on a second runtime
+ever arriving.
+
 ## The risk worth arguing about before starting
 
 **A universal vocabulary can collapse into lowest-common-denominator mush.**
