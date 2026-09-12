@@ -220,6 +220,37 @@ evidence for the architecture than the recall number is.
 The same split should be expected everywhere below: Tier 0 reports structure
 with high recall and no taste, Tier 1 applies the small amount of taste.
 
+### How much of it turned out to be taste
+
+Measured across 11 bundled grammars once inference carried the structural
+signals rather than just the delimiter kind:
+
+```
+244  delimited bodies inferred
+185  foldable with argument/parameter lists ON   (the default)
+144  foldable with them OFF
+```
+
+So **59 are excluded by structure** -- a body holding exactly one
+subexpression (`parenthesized_expression`, `decltype(x)`, `index_expression`)
+has nothing to collapse, and that is not a preference -- and **41 are governed
+by taste**, all of them the argument/parameter-list family.
+
+That 41 is the honest size of the judgement call, and it is a single flag
+rather than a per-language list. `FoldPolicy::foldArgumentLists` defaults ON:
+a long or overloaded signature is exactly where collapsing parameters helps,
+and the hand-written queries that omit them describe themselves as
+"deliberately minimal" rather than as having ruled them out. The decision is
+deliberately cheap to reverse, and `Tests/TraitInferenceTest.cpp` pins both
+directions so neither can rot.
+
+Two things the policy deliberately does *not* decide. Whether a body spans
+more than one line -- that is a property of the text rather than the grammar,
+and `Editor/CodeFold.h` enforces it. And `cpp`'s `declaration_list`, which
+inference reports and `cpp-folds.scm` omits: that looks like an omission the
+inference just caught rather than a considered exclusion, but it is recorded
+as an open question rather than quietly decided.
+
 ### Tier 1 -- declared concepts, ~30-40 traits, once per language
 
 `Binding`, `Reference`, `Scope`, `Callable`, `TypeDecl`, `Parameter`,
