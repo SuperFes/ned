@@ -287,7 +287,7 @@ constexpr Entry kKotlin[] = {
     {"function_body", DelimiterKind::Bracket, true, true},
     {"function_type_parameters", DelimiterKind::Bracket, true, true},
     {"function_value_parameters", DelimiterKind::Bracket, true, true},
-    {"import_list", DelimiterKind::Indent, true, true},
+    {"import_list", DelimiterKind::Indent, false, true},
     {"indexing_suffix", DelimiterKind::Bracket, true, false},
     {"lambda_literal", DelimiterKind::Bracket, true, true},
     {"multi_variable_declaration", DelimiterKind::Bracket, true, false},
@@ -330,7 +330,7 @@ constexpr Entry kPhp[] = {
 
 constexpr Entry kPython[] = {
     {"argument_list", DelimiterKind::Bracket, true, true},
-    {"block", DelimiterKind::Indent, true, true},
+    {"block", DelimiterKind::Indent, false, true},
     {"class_pattern", DelimiterKind::Bracket, false, true},
     {"decorator", DelimiterKind::Indent, true, true},
     {"dict_pattern", DelimiterKind::Bracket, true, true},
@@ -380,7 +380,7 @@ constexpr Entry kRust[] = {
     {"parenthesized_expression", DelimiterKind::Bracket, true, false},
     {"raw_string_literal", DelimiterKind::Indent, true, true},
     {"slice_pattern", DelimiterKind::Bracket, true, true},
-    {"string_literal", DelimiterKind::Indent, true, true},
+    {"string_literal", DelimiterKind::Indent, false, true},
     {"struct_pattern", DelimiterKind::Bracket, false, true},
     {"token_tree", DelimiterKind::Bracket, true, true},
     {"token_tree_pattern", DelimiterKind::Bracket, true, true},
@@ -400,7 +400,7 @@ constexpr Entry kRust[] = {
 constexpr Entry kToml[] = {
     {"array", DelimiterKind::Bracket, true, true},
     {"inline_table", DelimiterKind::Bracket, true, true},
-    {"pair", DelimiterKind::Indent, true, true},
+    {"pair", DelimiterKind::Indent, false, true},
     {"table", DelimiterKind::Indent, true, true},
     {"table_array_element", DelimiterKind::Indent, true, true},
 };
@@ -475,14 +475,14 @@ constexpr Entry kXml[] = {
 constexpr Entry kYaml[] = {
     {"alias", DelimiterKind::Indent, true, true},
     {"anchor", DelimiterKind::Indent, true, true},
-    {"block_mapping", DelimiterKind::Indent, true, true},
+    {"block_mapping", DelimiterKind::Indent, false, true},
     {"block_node", DelimiterKind::Indent, true, true},
-    {"block_scalar", DelimiterKind::Indent, true, true},
-    {"block_sequence", DelimiterKind::Indent, true, true},
+    {"block_scalar", DelimiterKind::Indent, false, true},
+    {"block_sequence", DelimiterKind::Indent, false, true},
     {"document", DelimiterKind::Indent, true, true},
     {"double_quote_scalar", DelimiterKind::Indent, true, true},
     {"single_quote_scalar", DelimiterKind::Indent, true, true},
-    {"stream", DelimiterKind::Indent, true, true},
+    {"stream", DelimiterKind::Indent, false, true},
     {"tag_directive", DelimiterKind::Indent, true, true},
     {"yaml_directive", DelimiterKind::Indent, true, true},
 };

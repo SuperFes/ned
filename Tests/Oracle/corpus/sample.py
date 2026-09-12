@@ -17,3 +17,13 @@ def total(values: List[int]) -> int:
     for value in values:
         result += value
     return result
+
+
+def usage() -> str:
+    """A multi-line docstring whose interior is the value.
+
+  This line is deliberately under-indented and
+        this one over-indented: a reindent that touches either
+    has edited what the program says.
+    """
+    return usage.__doc__

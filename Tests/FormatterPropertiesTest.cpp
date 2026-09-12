@@ -38,6 +38,17 @@
 //                 which is the failure that matters and the one a byte diff
 //                 cannot see.
 //
+//   Verbatim      the text of every multi-line string is byte-identical
+//                 safety
+//                 The one thing formatting may not move at all. A docstring, a
+//                 C++ raw string literal, a PHP heredoc: the interior IS the
+//                 value, and reindenting it edits what the program says. Its
+//                 own property rather than a case of Safety above, because the
+//                 tree is identical either way -- a reindented docstring is
+//                 still one `string` node -- which is exactly how indent-buffer
+//                 rewrote all three for as long as it existed without either
+//                 property noticing.
+//
 // Deliberately run over the oracle corpus rather than bespoke snippets: those
 // are real files in 14 languages that other tests already depend on, so a rule
 // that breaks one of these properties breaks it on code someone recognises.
@@ -140,6 +151,37 @@ TEST_CASE("Indenting never changes the parse structure", "[FormatterProperties]"
             REQUIRE(before[i] == after[i]);
         }
     }
+}
+
+TEST_CASE("Indenting never edits inside a multi-line string", "[FormatterProperties]") {
+    bool anyVerbatim = false;
+    for (const Case& testCase : Corpus()) {
+        INFO("corpus file: " << testCase.file);
+        const std::string original  = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Oracle" / "corpus" / testCase.file);
+        const std::string formatted = IndentAll(original, testCase.mode);
+
+        // Compared as content, not as offsets: formatting is allowed to move a
+        // string sideways, only not to rewrite what is inside it. Joining the
+        // spans is what makes the two comparable after every byte around them
+        // has shifted.
+        const auto text = [&testCase](const std::string& source) {
+            std::string joined;
+            for (const auto& [start, end] : ned::editor::VerbatimRanges(testCase.mode, source)) {
+                joined += source.substr(start, end - start);
+                joined += '\x1e';
+            }
+            return joined;
+        };
+        CHECK(text(original) == text(formatted));
+        anyVerbatim = anyVerbatim || !text(original).empty();
+    }
+
+    // Guard the guard. Every corpus string used to be a single-line one, so
+    // this property held over all fourteen files while testing nothing at all
+    // -- sample.py, sample.cpp and sample.php carry a ragged multi-line
+    // docstring, raw string literal and heredoc respectively for exactly this
+    // reason, and a corpus edit that removed them would otherwise pass.
+    CHECK(anyVerbatim);
 }
 
 TEST_CASE("The safety property can actually fail", "[FormatterProperties]") {
