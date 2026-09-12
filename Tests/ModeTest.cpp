@@ -601,7 +601,6 @@ TEST_CASE("A mode has a fold hook exactly when some source can speak for it", "[
     REQUIRE(static_cast<bool>(ned::editor::PhpMode().fold));
     REQUIRE(static_cast<bool>(ned::editor::CssMode().fold));
     REQUIRE(static_cast<bool>(ned::editor::BashMode().fold));
-    REQUIRE(static_cast<bool>(ned::editor::YamlMode().fold));
     REQUIRE(static_cast<bool>(ned::editor::TomlMode().fold));
     REQUIRE(static_cast<bool>(ned::editor::HtmlMode().fold));
 
@@ -611,6 +610,11 @@ TEST_CASE("A mode has a fold hook exactly when some source can speak for it", "[
     REQUIRE_FALSE(static_cast<bool>(FundamentalMode().fold));
     REQUIRE_FALSE(static_cast<bool>(OrgMode().fold));
     REQUIRE_FALSE(static_cast<bool>(ned::editor::MarkdownMode().fold));
+    // YAML for a third reason: its foldable structure is not expressed as
+    // grammar rules at all (tree-sitter-yaml carries block structure in an
+    // external scanner), so the only inferable body is the whole document and
+    // it is excluded from the table outright.
+    REQUIRE_FALSE(static_cast<bool>(ned::editor::YamlMode().fold));
 }
 
 TEST_CASE("Only HtmlMode has an embeddedRegions hook installed", "[Mode]") {

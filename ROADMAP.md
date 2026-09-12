@@ -445,6 +445,23 @@ real; if not, that is worth learning at language 3 rather than language 15.
       rewritten to say what is now true: one asserted php/css/bash/yaml/toml have *no*
       fold hook, and two picked PhpMode or JanetMode precisely *because* they had none, so
       the fold gutter stayed out of a width they measure.
+- [x] **The formatter safety properties exist, and found a real bug on their first run.**
+      `Docs/FormattingCapabilities.md` calls idempotence and structural safety "the single
+      highest-value item in Tier C" and says they should exist from the first rule rather
+      than be retrofitted. Ned is past the first rule — structural indentation is live
+      across 21 languages — so `Tests/FormatterPropertiesTest.cpp` now holds
+      `format(format(x)) == format(x)` and "the parse structure is unchanged" over the
+      oracle corpus, and every later rule inherits the harness.
+      **`indent-buffer` was not idempotent**: it wrote four spaces onto a trailing *empty*
+      line, so running it twice differed from running it once and every save would churn
+      the file. Fixed on the batch path only — the live path (`newline`,
+      `indent-for-tab-command`) indents an empty line deliberately, because that is the
+      cursor's own line. Stripping whitespace already present stays `TrimOnSave.h`'s job.
+      Two guard-the-guard cases quietly passed before one worked, and both are recorded in
+      the test rather than tidied away: a C example did not trip because tree-sitter-c's
+      recovery produced identical kinds, and a Python one did not trip until the
+      comparison carried **depth** — without it, re-nesting a statement out of a block is
+      invisible, which is precisely the change that alters meaning.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over

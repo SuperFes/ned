@@ -294,6 +294,62 @@ inference reports and `cpp-folds.scm` omits: that looks like an omission the
 inference just caught rather than a considered exclusion, but it is recorded
 as an open question rather than quietly decided.
 
+### Tier 1 must reuse the capture-name model, not invent an enum
+
+`Docs/HighlightCapabilities.md` settled this for highlighting and the same
+answer applies here, so recording it before Tier 1 is built rather than after.
+
+Ned already resolves a **dotted capture name most-specific-first, one segment
+at a time, per style field** -- `function.method.static.call` falls back through
+`function.method.static`, `function.method`, `function`, with
+`ResolvedCaptureOverride` keeping the first value it finds for each field
+independently. That is JetBrains' "Inherit values from" checkbox, already
+implemented, already per-attribute.
+
+Three consequences from that document carry over to traits unchanged:
+
+1. **A name costs nothing until someone uses it.** An unstyled -- or here,
+   unconsumed -- leaf is byte-for-byte its parent. There is no per-name table
+   to populate.
+2. **The list is the contract, not the implementation.** A grammar declares a
+   name; a driver may or may not have an opinion about it. The two never have
+   to agree.
+3. **Depth is free but not weightless.** Three segments is the working ceiling.
+
+So Tier 1 traits are **dotted names over the existing resolver**, not a closed
+`enum class Trait`. `definition.function.method` and `local.definition.parameter`
+are the shape -- and note both already exist, in `tags.scm` and `locals.scm`
+respectively, so this is adopting a convention the corpus already follows
+rather than imposing a new one. A driver asking for `definition` gets every
+kind of definition; one asking for `definition.function.method` gets exactly
+that; neither needs the other to have been anticipated.
+
+An enum would forfeit all three properties and force every language to be
+enumerated against every trait -- which is the N x M shape this whole design
+exists to escape. Worth being explicit about, because a flat enum is the
+obvious first thing to reach for and is expensive to unwind later.
+
+### The additive-layer principle is shared, and is already load-bearing here
+
+That document also names the one mechanism ned lacks for highlighting: a
+`HighlightSpan` is winner-takes-all per byte range ("later span wins"), so a
+`region.*` marker painted over a function name *replaces* its styling instead
+of tinting it. Supporting `region.disabled`/`region.generated`/`region.injected`
+properly needs **a second, additive span layer** contributing background and
+effects only, never a foreground.
+
+Fold sources already work that way, and deliberately: `MergeFoldSources` takes
+the union because a fold source asserts "this range is foldable" and never the
+negative, so two sources cannot contradict each other, only cover different
+ground. That is what lets the imprint and a hand-written query coexist with no
+precedence rule, and what lets a language the imprint cannot read (HTML's
+tag-pair elements, YAML's scanner-carried block structure) contribute nothing
+without any special case saying so.
+
+The same shape is the answer for `region.*`. Whoever builds that layer should
+build it as additive composition rather than another winner-takes-all pass, and
+can take the fold-source design as the worked precedent.
+
 ### Tier 1 -- declared concepts, ~30-40 traits, once per language
 
 `Binding`, `Reference`, `Scope`, `Callable`, `TypeDecl`, `Parameter`,

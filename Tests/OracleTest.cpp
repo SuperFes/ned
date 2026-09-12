@@ -213,7 +213,9 @@ const std::map<std::string, std::function<ned::editor::Mode()>>& ModeByExtension
         {".java", ned::editor::JavaMode},  {".cs", ned::editor::CSharpMode},
         {".js", ned::editor::JavaScriptMode},
         {".ts", ned::editor::TypeScriptMode},
-        {".kt", ned::editor::KotlinMode},
+        {".kt", ned::editor::KotlinMode},   {".php", ned::editor::PhpMode},
+        {".yaml", ned::editor::YamlMode},  {".css", ned::editor::CssMode},
+        {".sh", ned::editor::BashMode},    {".toml", ned::editor::TomlMode},
     };
     return kModes;
 }
