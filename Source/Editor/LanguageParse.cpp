@@ -172,6 +172,12 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                 }
             }
         }
+        else if (key == "grammar-library") {
+            definition.grammarLibrary = ExpectString(directoryName, value, ":grammar-library");
+        }
+        else if (key == "queries-dir") {
+            definition.queriesDir = ExpectString(directoryName, value, ":queries-dir");
+        }
         else if (key == "queries-from") {
             definition.queriesFrom = ExpectString(directoryName, value, ":queries-from");
         }
