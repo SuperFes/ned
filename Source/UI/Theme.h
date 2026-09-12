@@ -165,6 +165,8 @@ struct Theme {
     // stays visible underneath a selection or a search match.
     Color selectionBackground;
     Color isearchMatchBackground;
+    // The bracket under point and its partner, while both are on screen.
+    Color matchingBracketBackground;
     // snippet-expansion follow-up: the live snippet session's *active*
     // tabstop field (mirrors deliberately unhighlighted in v1) -- same
     // keep-the-glyph-foreground overlay contract as the two above.

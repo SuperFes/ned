@@ -76,6 +76,7 @@ namespace {
         {"current_line_number_foreground", &Theme::currentLineNumberForeground},
         {"selection_background", &Theme::selectionBackground},
         {"isearch_match_background", &Theme::isearchMatchBackground},
+        {"matching_bracket_background", &Theme::matchingBracketBackground},
         {"snippet_field_background", &Theme::snippetFieldBackground},
         {"document_highlight_background", &Theme::documentHighlightBackground},
         {"conflict_ours_background", &Theme::conflictOursBackground},

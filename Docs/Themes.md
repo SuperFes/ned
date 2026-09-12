@@ -101,7 +101,8 @@ cannot linger here after it stops existing.
 
 **Overlays (all composited, so all accept alpha)**
 
-`selection_background` `isearch_match_background` `snippet_field_background` `document_highlight_background`
+`selection_background` `isearch_match_background` `matching_bracket_background`
+`snippet_field_background` `document_highlight_background`
 `conflict_ours_background` `conflict_theirs_background` `conflict_base_background` `execution_line_background`
 `diff_added_background` `diff_removed_background` `trailing_whitespace_background`
 

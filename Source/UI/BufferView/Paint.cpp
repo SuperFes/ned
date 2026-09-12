@@ -1253,6 +1253,11 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
     if (InIsearchMatch(offset)) {
         brush.background = OverlayWashAt("buffer.search", theme_.isearchMatchBackground, c, col, row);
     }
+    // Above selection so the pair stays legible inside one, below search so an
+    // active isearch is never obscured by ambient feedback.
+    else if (InMatchingBracket(offset)) {
+        brush.background = OverlayBackground(theme_, theme_.matchingBracketBackground);
+    }
     else if (InActiveSnippetField(offset)) {
         brush.background = OverlayBackground(theme_, theme_.snippetFieldBackground);
     }
@@ -1681,6 +1686,15 @@ void BufferView::Paint(Canvas paneCanvas) {
     RefreshRecencyGlows();
 
     viewport_.EnsureTopLineValidForActiveBuffer();
+
+    // Once per frame. Skipped entirely for a huge buffer: Mode::matchingDelimiters
+    // walks the whole tree, and every other structural feature already declines
+    // at that size rather than paying it (see HugeStructuralWindow's own note).
+    matchingBracket_.reset();
+    if (mode_.matchingDelimiters && !context_.activeBuffer.Get().Content().IsHuge()) {
+        const text::Buffer& matchBuffer = context_.activeBuffer.Get();
+        matchingBracket_ = mode_.matchingDelimiters(matchBuffer.Text(), matchBuffer.Point());
+    }
     EnsureStatusMessageFreshness();
 
     text::Buffer& buffer = activeBuffer_.Get();
@@ -2889,6 +2903,15 @@ bool BufferView::InConflictBase(std::size_t byteOffset) const {
     return std::any_of(hunks.begin(), hunks.end(), [byteOffset](const text::ConflictHunk& hunk) {
         return hunk.baseRange && InRange(byteOffset, *hunk.baseRange);
     });
+}
+
+bool BufferView::InMatchingBracket(std::size_t byteOffset) const {
+    if (!matchingBracket_) {
+        return false;
+    }
+    const auto& pair = *matchingBracket_;
+    return (byteOffset >= pair.openStart && byteOffset < pair.openEnd) ||
+           (byteOffset >= pair.closeStart && byteOffset < pair.closeEnd);
 }
 
 bool BufferView::InIsearchMatch(std::size_t byteOffset) const {

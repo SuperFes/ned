@@ -66,6 +66,10 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         .currentLineNumberForeground = p.foreground,
         .selectionBackground         = p.selectionBackground,
         .isearchMatchBackground      = p.searchMatchBackground,
+        // Derived rather than given its own palette slot: a cloned theme should
+        // not have to know this field exists to look right (Docs/Themes.md
+        // "derive, do not enumerate").
+        .matchingBracketBackground   = p.selectionBackground,
         .snippetFieldBackground      = p.selectionBackground,
         .documentHighlightBackground = p.selectionBackground,
         // Merge Conflict Resolution Mode: same mostly-background-wash

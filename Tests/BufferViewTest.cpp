@@ -1365,6 +1365,11 @@ TEST_CASE("BufferView renders JsonMode's tree-sitter highlighting for strings, n
     Fixture fixture;
     fixture.mode = ned::editor::JsonMode();
     fixture.buffer.InsertAtPoint(R"({"a": 1, "b": true})");
+    // Point parked away from either brace. InsertAtPoint leaves it just past
+    // the closing "}", which now highlights that brace and its partner --
+    // correct behaviour, and nothing to do with the syntax colouring this test
+    // is about.
+    fixture.buffer.SetPoint(3);
     // Byte layout: {"a": 1, "b": true}
     //               0123456789...
     // '"' at 1, 'a' at 2, '"' at 3 -- "a" is a String span [1,4)
@@ -13938,4 +13943,60 @@ TEST_CASE("The current-line highlight covers every row a wrapped line occupies",
     REQUIRE(highlighted(0));
     REQUIRE(highlighted(1));
     REQUIRE_FALSE(highlighted(2)); // a different buffer line
+}
+
+TEST_CASE("The bracket under point and its partner are both highlighted", "[BufferView][Imprint]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    fixture.buffer.InsertAtPoint("int f(void) {\n    return 1;\n}\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screen = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const std::string& text  = fixture.buffer.Text();
+    const std::size_t  open  = text.find('{');
+    const std::size_t  close = text.rfind('}');
+    const int          gutter = GutterWidth(4, /*foldColumn=*/4, /*symbolColumn=*/1);
+
+    // Point on the opening brace: both it and its partner light up, and the
+    // partner is two rows away -- which is the whole point of the feature.
+    fixture.buffer.SetPoint(open);
+    view.Paint(canvas);
+    const auto highlight = fixture.theme.matchingBracketBackground;
+    CHECK(screen.PixelAt(gutter + static_cast<int>(open), 0).background_color == highlight);
+    CHECK(screen.PixelAt(gutter + 0, 2).background_color == highlight); // the "}" on row 2
+
+    // A character that is not a delimiter is left alone.
+    CHECK_FALSE(screen.PixelAt(gutter + 0, 0).background_color == highlight);
+
+    // Point away from any bracket: nothing is highlighted.
+    fixture.buffer.SetPoint(text.find("return"));
+    view.Paint(canvas);
+    CHECK_FALSE(screen.PixelAt(gutter + static_cast<int>(open), 0).background_color == highlight);
+    CHECK_FALSE(screen.PixelAt(gutter + 0, 2).background_color == highlight);
+}
+
+TEST_CASE("Bracket highlighting stays out of the way of an active search", "[BufferView][Imprint]") {
+    // Ordering matters and is asserted rather than assumed: a bracket match is
+    // ambient feedback, an isearch match is something the user went looking
+    // for, so search wins where they overlap.
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    fixture.buffer.InsertAtPoint("int f(void) {\n    return 1;\n}\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screen = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    fixture.buffer.SetPoint(fixture.buffer.Text().find('{'));
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+    view.OnEvent(ned::ui::test::Character("{"));
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(4, /*foldColumn=*/4, /*symbolColumn=*/1);
+    const int braceColumn = gutter + static_cast<int>(fixture.buffer.Text().find('{'));
+    CHECK(screen.PixelAt(braceColumn, 0).background_color == fixture.theme.isearchMatchBackground);
 }
