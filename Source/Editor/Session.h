@@ -133,9 +133,18 @@ void SaveFilePlaces(bool force = false);
 // line/column (clamped by ByteOffsetForLineAndColumn) and refreshes the
 // entry's lastUsed. A no-op when disabled, when buffer has no path, or
 // while it's still an IsLoading() async placeholder (restoring into empty
-// placeholder content would clamp to 0 and stick -- a documented slice-1
-// gap for >16MiB files, not an oversight). tabWidth is the same explicit
-// pass-through Buffer's own tab-aware calls take.
+// placeholder content would clamp to 0 and stick).
+//
+// That last one means a file past the async-load threshold gets no place
+// restored at all and opens at the top. Decided, not pending: the threshold
+// is the user's own (ned/set-async-load-threshold, and
+// ned/set-huge-file-threshold above it), so anyone who wants save-place on a
+// large file can raise it, and the alternative -- re-running the restore from
+// the load-completion callback -- would move point under someone who has
+// already started reading. Opening at the top is the better default for a
+// file big enough to load in the background.
+//
+// tabWidth is the same explicit pass-through Buffer's own tab-aware calls take.
 void RestoreFilePlace(text::Buffer& buffer, std::size_t tabWidth);
 
 // buffer's stored place, if any (nullopt when disabled or pathless) --
