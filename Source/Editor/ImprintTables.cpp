@@ -137,6 +137,7 @@ constexpr Entry kCsharp[] = {
     {"constructor_constraint", DelimiterKind::Bracket, false, false},
     {"declaration_list", DelimiterKind::Bracket, true, true},
     {"default_expression", DelimiterKind::Bracket, false, false},
+    {"element_binding_expression", DelimiterKind::Bracket, true, true},
     {"enum_member_declaration_list", DelimiterKind::Bracket, true, true},
     {"function_pointer_type", DelimiterKind::Bracket, false, true},
     {"global_attribute", DelimiterKind::Bracket, true, true},
@@ -335,7 +336,10 @@ constexpr Entry kPython[] = {
     {"dict_pattern", DelimiterKind::Bracket, true, true},
     {"dictionary", DelimiterKind::Bracket, true, true},
     {"dictionary_comprehension", DelimiterKind::Bracket, true, true},
+    {"for_statement", DelimiterKind::Indent, true, true},
+    {"format_expression", DelimiterKind::Bracket, true, true},
     {"generator_expression", DelimiterKind::Bracket, true, true},
+    {"if_statement", DelimiterKind::Indent, true, true},
     {"interpolation", DelimiterKind::Bracket, true, true},
     {"keyword_pattern", DelimiterKind::Bracket, false, true},
     {"list", DelimiterKind::Bracket, true, true},
@@ -348,9 +352,11 @@ constexpr Entry kPython[] = {
     {"set_comprehension", DelimiterKind::Bracket, true, true},
     {"string", DelimiterKind::Indent, true, true},
     {"subscript", DelimiterKind::Bracket, false, true},
+    {"try_statement", DelimiterKind::Indent, true, true},
     {"tuple", DelimiterKind::Bracket, true, true},
     {"tuple_pattern", DelimiterKind::Bracket, true, true},
     {"type_parameter", DelimiterKind::Bracket, true, true},
+    {"while_statement", DelimiterKind::Indent, true, true},
 };
 
 constexpr Entry kRust[] = {
@@ -411,6 +417,7 @@ constexpr Entry kTsx[] = {
     {"export_clause", DelimiterKind::Bracket, true, true},
     {"formal_parameters", DelimiterKind::Bracket, true, true},
     {"import_require_clause", DelimiterKind::Bracket, false, false},
+    {"interface_body", DelimiterKind::Bracket, true, true},
     {"jsx_expression", DelimiterKind::Bracket, true, true},
     {"jsx_opening_element", DelimiterKind::Bracket, true, true},
     {"lookup_type", DelimiterKind::Bracket, false, false},
@@ -440,6 +447,7 @@ constexpr Entry kTypescript[] = {
     {"export_clause", DelimiterKind::Bracket, true, true},
     {"formal_parameters", DelimiterKind::Bracket, true, true},
     {"import_require_clause", DelimiterKind::Bracket, false, false},
+    {"interface_body", DelimiterKind::Bracket, true, true},
     {"jsx_expression", DelimiterKind::Bracket, true, true},
     {"jsx_opening_element", DelimiterKind::Bracket, true, true},
     {"lookup_type", DelimiterKind::Bracket, false, false},
@@ -462,6 +470,21 @@ constexpr Entry kXml[] = {
     {"NotationType", DelimiterKind::Bracket, false, true},
     {"STag", DelimiterKind::Bracket, true, true},
     {"children", DelimiterKind::Bracket, true, true},
+};
+
+constexpr Entry kYaml[] = {
+    {"alias", DelimiterKind::Indent, true, true},
+    {"anchor", DelimiterKind::Indent, true, true},
+    {"block_mapping", DelimiterKind::Indent, true, true},
+    {"block_node", DelimiterKind::Indent, true, true},
+    {"block_scalar", DelimiterKind::Indent, true, true},
+    {"block_sequence", DelimiterKind::Indent, true, true},
+    {"document", DelimiterKind::Indent, true, true},
+    {"double_quote_scalar", DelimiterKind::Indent, true, true},
+    {"single_quote_scalar", DelimiterKind::Indent, true, true},
+    {"stream", DelimiterKind::Indent, true, true},
+    {"tag_directive", DelimiterKind::Indent, true, true},
+    {"yaml_directive", DelimiterKind::Indent, true, true},
 };
 
 const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
@@ -497,6 +520,7 @@ const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
         load("tsx", kTsx, std::size(kTsx));
         load("typescript", kTypescript, std::size(kTypescript));
         load("xml", kXml, std::size(kXml));
+        load("yaml", kYaml, std::size(kYaml));
         return built;
     }();
     return kTables;

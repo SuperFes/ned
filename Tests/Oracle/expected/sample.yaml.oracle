@@ -1,5 +1,10 @@
 # sample.yaml  (yaml-mode)
-# 37 facts
+# 42 facts
+fold 0..122  "root:\n  name: ned\n  versions … \n  - second\n"
+fold 8..94  "name: ned\n  versions:\n    -  …  empty: null"
+fold 34..53  "- 0.5.0\n    - 0.6.0"
+fold 68..94  "flag: true\n    empty: null"
+fold 103..122  "- first\n  - second\n"
 highlight 0..4  [property]  "root"
 highlight 4..5  [punctuation]  ":"
 highlight 8..12  [property]  "name"

@@ -368,14 +368,18 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
         for (const std::string& node : indentMissed) joined += " " + node;
         return joined;
     }());
-    // One known gap, and it is a defect in the QUERY rather than in inference:
-    // tree-sitter-typescript has no `interface_body` rule at all (its interface
-    // body is an `object_type`), so that capture can never match anything.
-    // Left in place and pinned here rather than quietly deleted, because the
-    // query is upstream-shaped and the next person to read it deserves to find
-    // the reason rather than rediscover it.
-    CHECK(indentMissed == std::set<std::string>{"typescript/interface_body"});
-    CHECK(indentCovered + 1 == indentTotal);
+    // Every hand-written @indent node is covered. No exceptions, and the last
+    // one to fall is worth remembering: typescript/interface_body was recorded
+    // here as a DEFECT IN THE QUERY -- "tree-sitter-typescript has no such
+    // rule" -- and that was wrong. It is an alias of object_type, a perfectly
+    // real node, invisible only because inference could not see alias() at the
+    // time. The query was right all along.
+    //
+    // Worth the retelling because the failure mode is seductive: a measurement
+    // that cannot see something reports its absence, and absence reads as the
+    // other side's mistake.
+    CHECK(indentMissed.empty());
+    CHECK(indentCovered == indentTotal);
 
     INFO("reproduced " << reproduced << " of " << expected);
     // The corpus itself changed if this trips. Three times so far:
@@ -491,18 +495,7 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
         {"php", "tree-sitter-php-src/php/src/grammar.json"},
         {"toml", "tree-sitter-toml-src/src/grammar.json"},
         {"xml", "tree-sitter-xml-src/xml/src/grammar.json"},
-        // yaml is deliberately absent. Its only inferred body is `stream` --
-        // the whole document -- because tree-sitter-yaml expresses block
-        // structure through a large external scanner rather than through
-        // delimited rules, so the nodes a reader would want to fold
-        // (block_mapping, block_sequence) are not visible rules at all. One
-        // fold that collapses the entire file is worse than none.
-        //
-        // Resisted the tempting general rule "never fold a node spanning the
-        // whole buffer": JSON's root object spans the file too, and folding it
-        // is exactly what a reader wants. The problem is this one grammar's
-        // shape, not a universal property, so it is recorded here rather than
-        // encoded as policy.
+        {"yaml", "tree-sitter-yaml-src/src/grammar.json"},
         {"tsx", "tree-sitter-typescript-src-src/tsx/src/grammar.json"},
     };
 
@@ -736,13 +729,14 @@ TEST_CASE("A language whose delimiters are not brackets contributes nothing, and
     const auto blocks = ned::editor::codefold::FoldableBlocks(html, "<div>\n  <p>\n    hello\n  </p>\n</div>\n");
     CHECK(blocks.empty());
 
-    // YAML for a different reason, and worth telling apart. HTML's delimiters
-    // exist but are not brackets; YAML's foldable structure is not expressed as
-    // rules at all -- tree-sitter-yaml carries block structure in a large
-    // external scanner, so the only body inferable is `stream`, the whole
-    // document. It is excluded from the table outright rather than folded
-    // uselessly; see the note beside the table's own language list.
-    const auto yaml = ned::editor::YamlMode();
-    CHECK(ned::editor::codefold::FoldableBlocks(yaml, "root:\n  child:\n    - one\n    - two\n  other: 3\n")
-              .empty());
+    // YAML used to be the second entry here, on the reasoning that its block
+    // structure "is not expressed as rules at all". That was also wrong: its
+    // rules are simply all hidden and its node names come from alias(), so
+    // block_mapping and block_sequence were invisible rather than absent. It
+    // folds now -- nested, depth-first, exactly like Python -- and is asserted
+    // as such below.
+    const auto yaml   = ned::editor::YamlMode();
+    const auto blocks2 = ned::editor::codefold::FoldableBlocks(
+        yaml, "root:\n  child:\n    - one\n    - two\n  other: 3\n");
+    CHECK(blocks2.size() >= 3); // the root mapping, the child mapping, the sequence
 }

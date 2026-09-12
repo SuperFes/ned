@@ -364,11 +364,13 @@ real; if not, that is worth learning at language 3 rather than language 15.
       than inheriting the brace-language rule.
 - [x] **The same imprint drives indent too — the N x M claim across two drivers.**
       96% of every fold rule was already restated verbatim as an indent rule, so this is
-      where the duplication actually lived. The imprint covers **all but one** of the
-      hand-written `@indent` nodes. The single miss is a defect in the query rather than
-      in inference: tree-sitter-typescript has no `interface_body` rule at all (its
-      interface body is an `object_type`), so that capture can never match anything.
-      Pinned in CI alongside the fold gate.
+      where the duplication actually lived. The imprint covers **every**
+      hand-written `@indent` node. **Correction:** the single miss was reported as a defect in
+      the query — "tree-sitter-typescript has no `interface_body` rule" — and that was
+      wrong. It is an `alias()` of `object_type`, a perfectly real node, invisible only
+      because inference could not read `alias()` at the time. Coverage is now complete
+      with no exceptions. A measurement that cannot see something reports its absence,
+      and absence reads as the other side's mistake.
       Three refinements were needed and each is a real grammar shape: an opener may be a
       **CHOICE of literals** (TypeScript's `object_type` is `{` or `{|`); **angle
       brackets** delimit a body (template/type parameter lists, JSX opening elements — 20
@@ -462,6 +464,24 @@ real; if not, that is worth learning at language 3 rather than language 15.
       recovery produced identical kinds, and a Python one did not trip until the
       comparison carried **depth** — without it, re-nesting a statement out of a block is
       invisible, which is precisely the change that alters meaning.
+- [x] **`alias()` was a systematic blind spot, and YAML folds properly now.** A grammar
+      may name its nodes with `alias()` rather than by rule name, and then every rule can
+      be hidden — tree-sitter-yaml does exactly that, all 202 of them. Inference unwrapped
+      `ALIAS` as if it were a wrapper, seeing through the very thing that creates the node.
+      Same mistake shape as `TOKEN` before it.
+      Two corrections came out of it, both of which I had recorded as *someone else's*
+      defect. YAML was written off as "block structure not expressed as rules at all" —
+      wrong; it folds nested and depth-first exactly like Python. And
+      `typescript/interface_body` was recorded as a dead capture naming a rule that does
+      not exist — also wrong; it is an `alias()` of `object_type`. **A measurement that
+      cannot see something reports its absence, and absence reads as the other side's
+      mistake.** Worth remembering as a failure mode, not just fixing.
+      The enabling fix was narrowing the `indirect` guard to the *closing* member. It had
+      been set by inlining anywhere in a sequence, which disqualified any rule whose closer
+      is its own — YAML's `block_mapping` is `SEQ[_r_blk_map_itm, REPEAT(...), _bl]`, with
+      `_bl` an external written right there. Python's `class_definition` still correctly
+      declines to inherit `_suite`'s dedent, because there the inherited member *is* the
+      last one.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over
