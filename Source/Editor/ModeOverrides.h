@@ -71,7 +71,7 @@ void RegisterMode(const std::string& name, Mode mode);
 
 // Looks up a Mode by name. Checks names registered via RegisterDynamicMode
 // first, then the bundled *Mode() functions' own names ("c-mode",
-// "json-mode", ... see BundledModeFactories in the .cpp) -- dynamic checked
+// "json-mode", ... see BundledLanguages.h) -- dynamic checked
 // first purely as a safe default (a name is only ever ambiguous between the
 // two if some future bundled mode's name happened to also be a valid
 // tree-sitter C symbol suffix; none of the current ones are, since they all

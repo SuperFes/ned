@@ -800,6 +800,11 @@ add_library(ned_lib STATIC
         Source/Editor/MinibufferPrompt.cpp
         Source/Editor/PromptHistory.cpp
         Source/Editor/Mode.cpp
+        Source/Editor/LanguageDefinition.cpp
+        Source/Editor/BundledLanguages.cpp
+        Source/Editor/Languages/CLike.cpp
+        Source/Editor/Languages/Markdown.cpp
+        Source/Editor/Languages/Org.cpp
         Source/Editor/Injection.cpp
         Source/Editor/EmbeddedDocuments.cpp
         Source/Editor/SyntaxTheme.cpp
@@ -1268,6 +1273,7 @@ if (NED_BUILD_TESTS)
             Tests/RegexPatternTest.cpp
             Tests/HugeRegexScanTest.cpp
             Tests/ModeTest.cpp
+            Tests/LanguageDefinitionTest.cpp
             Tests/CodeFoldTest.cpp
             Tests/IndentStyleTest.cpp
             Tests/IndentEngineTest.cpp

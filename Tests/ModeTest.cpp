@@ -796,17 +796,17 @@ TEST_CASE("MarkdownMode and OrgMode default to wrapLines true; every other bundl
     REQUIRE_FALSE(ned::editor::JankMode().wrapLines);
 }
 
-// structural-selection-expansion follow-up: every TreeSitterModeFromLanguage-
-// built mode gets a real expandSelection hook for free; FundamentalMode (no
-// parser at all) and OrgMode (its own separate, non-shared highlight
-// closure -- see Mode.cpp's own comment) are the documented v1 scope cut.
-TEST_CASE("Tree-sitter-backed modes have an expandSelection hook installed; Fundamental/Org don't", "[Mode]") {
+// structural-selection-expansion follow-up: every grammar-backed definition
+// gets a real expandSelection hook for free -- Org included, now that its
+// escapes decorate the generic build rather than replacing it; only a
+// grammarless definition (FundamentalMode) has none.
+TEST_CASE("Tree-sitter-backed modes have an expandSelection hook installed; Fundamental doesn't", "[Mode]") {
     REQUIRE(static_cast<bool>(CMode().expandSelection));
     REQUIRE(static_cast<bool>(JsonMode().expandSelection));
     REQUIRE(static_cast<bool>(ned::editor::PythonMode().expandSelection));
+    REQUIRE(static_cast<bool>(OrgMode().expandSelection));
 
     REQUIRE_FALSE(static_cast<bool>(FundamentalMode().expandSelection));
-    REQUIRE_FALSE(static_cast<bool>(OrgMode().expandSelection));
 }
 
 TEST_CASE("JsonMode's expandSelection grows step by step from a point and terminates at the root", "[Mode]") {
@@ -848,12 +848,12 @@ TEST_CASE("JsonMode's expandSelection grows an existing selection to its next en
 
 // Emacs-keymap-round-2 follow-up (forward-sexp/backward-sexp).
 
-TEST_CASE("Tree-sitter-backed modes have a sexpMotion hook installed; Fundamental/Org don't", "[Mode]") {
+TEST_CASE("Tree-sitter-backed modes have a sexpMotion hook installed; Fundamental doesn't", "[Mode]") {
     REQUIRE(static_cast<bool>(CMode().sexpMotion));
     REQUIRE(static_cast<bool>(JsonMode().sexpMotion));
+    REQUIRE(static_cast<bool>(OrgMode().sexpMotion));
 
     REQUIRE_FALSE(static_cast<bool>(FundamentalMode().sexpMotion));
-    REQUIRE_FALSE(static_cast<bool>(OrgMode().sexpMotion));
 }
 
 TEST_CASE("JsonMode's sexpMotion steps forward/backward over sibling array elements", "[Mode]") {

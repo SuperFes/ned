@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#include "BundledLanguages.h"
+#include "LanguageDefinition.h"
 #include "Text/Buffer.h"
 #include "TreeSitter/DynamicGrammar.h"
 
@@ -25,8 +27,8 @@ namespace {
     // both call into it concurrently -- confirmed via gdb against a real
     // coredump: two threads inside ts_parser_parse on the identical Parser
     // object, corrupting tree-sitter's internal stack. Bundled modes never
-    // had this bug because BundledModeFactories() below calls its factory
-    // function fresh on every lookup, building a brand-new Parser each
+    // had this bug because BundledModeByName() below builds its definition
+    // fresh on every lookup, building a brand-new Parser each
     // time. Storing ingredients instead of a built Mode and rebuilding via
     // TreeSitterModeFromLanguage on every ModeByName call restores that
     // same "fresh Parser per call" contract for the dynamic case too.
@@ -57,40 +59,48 @@ namespace {
     // WindowManager close funnel guarantees that.
     std::unordered_map<const text::Buffer*, Mode> g_modeCache;
 
-    // The bundled *Mode() functions' own names (Mode.cpp), so ModeByName can
-    // resolve one the same way it resolves a dynamically-registered name --
-    // a plain factory-function table, not anything fancier, since the set
-    // is small and fixed at compile time.
-    const std::unordered_map<std::string, std::function<Mode()>>& BundledModeFactories() {
-        static const std::unordered_map<std::string, std::function<Mode()>> table = {
-            {"fundamental-mode", FundamentalMode},
-            {"janet-mode", JanetMode},
-            {"json-mode", JsonMode},
-            {"c-mode", CMode},
-            {"cpp-mode", CppMode},
-            {"php-mode", PhpMode},
-            {"javascript-mode", JavaScriptMode},
-            {"typescript-mode", TypeScriptMode},
-            {"tsx-mode", TsxMode},
-            {"html-mode", HtmlMode},
-            {"css-mode", CssMode},
-            {"python-mode", PythonMode},
-            {"bash-mode", BashMode},
-            {"fish-mode", FishMode},
-            {"xml-mode", XmlMode},
-            {"yaml-mode", YamlMode},
-            {"toml-mode", TomlMode},
-            {"clojure-mode", ClojureMode},
-            {"jank-mode", JankMode},
-            {"markdown-mode", MarkdownMode},
-            {"org-mode", OrgMode},
-            {"rust-mode", RustMode},
-            {"go-mode", GoMode},
-            {"csharp-mode", CSharpMode},
-            {"java-mode", JavaMode},
-            {"kotlin-mode", KotlinMode},
-        };
+    // The bundled definitions' extensions -> mode name, keyed with the
+    // leading dot (std::filesystem::path::extension()'s own form). Derived
+    // from BundledLanguages() so a language claims its files in exactly one
+    // place.
+    const std::unordered_map<std::string, std::string>& BundledExtensionTable() {
+        static const std::unordered_map<std::string, std::string> table = [] {
+            std::unordered_map<std::string, std::string> built;
+            for (const LanguageDefinition& definition : BundledLanguages()) {
+                for (const std::string& extension : definition.extensions) {
+                    built.emplace(extension, ModeNameFor(definition));
+                }
+            }
+            return built;
+        }();
         return table;
+    }
+
+    const std::unordered_map<std::string, std::string>& BundledFilenameTable() {
+        static const std::unordered_map<std::string, std::string> table = [] {
+            std::unordered_map<std::string, std::string> built;
+            for (const LanguageDefinition& definition : BundledLanguages()) {
+                for (const std::string& filename : definition.filenames) {
+                    built.emplace(filename, ModeNameFor(definition));
+                }
+            }
+            return built;
+        }();
+        return table;
+    }
+
+    // A bundled mode is its definition built fresh on every lookup -- a new
+    // Parser each time, which is what keeps two threads (ModePrewarmer's
+    // background build, BufferView::Paint's main-thread highlight) from ever
+    // sharing one non-thread-safe TSParser; see DynamicModeEntry above for
+    // the coredump that rule came from.
+    std::optional<Mode> BundledModeByName(const std::string& modeName) {
+        for (const LanguageDefinition& definition : BundledLanguages()) {
+            if (ModeNameFor(definition) == modeName) {
+                return ModeFromDefinition(definition);
+            }
+        }
+        return std::nullopt;
     }
 
     std::string StripLeadingDot(std::string_view extension) {
@@ -98,72 +108,6 @@ namespace {
             extension.remove_prefix(1);
         }
         return std::string(extension);
-    }
-
-    // per-buffer-mode follow-up. The bundled extension -> mode-name table,
-    // moved here from main.cpp's own local ModeForPath so both startup and
-    // BufferView's per-buffer resync path share one copy. Keyed by
-    // extension with its leading dot (matches std::filesystem::path::
-    // extension()'s own form directly, no StripLeadingDot needed here).
-    const std::unordered_map<std::string, std::string>& BundledExtensionTable() {
-        static const std::unordered_map<std::string, std::string> table = {
-            {".janet", "janet-mode"},
-            {".json", "json-mode"},
-            {".c", "c-mode"},
-            {".h", "c-mode"},
-            {".cpp", "cpp-mode"},
-            {".cc", "cpp-mode"},
-            {".cxx", "cpp-mode"},
-            {".hpp", "cpp-mode"},
-            {".hh", "cpp-mode"},
-            {".php", "php-mode"},
-            {".phtml", "php-mode"},
-            {".js", "javascript-mode"},
-            {".mjs", "javascript-mode"},
-            {".cjs", "javascript-mode"},
-            {".ts", "typescript-mode"},
-            {".mts", "typescript-mode"},
-            {".cts", "typescript-mode"},
-            {".tsx", "tsx-mode"},
-            {".html", "html-mode"},
-            {".htm", "html-mode"},
-            {".css", "css-mode"},
-            {".py", "python-mode"},
-            {".pyw", "python-mode"},
-            {".sh", "bash-mode"},
-            {".bash", "bash-mode"},
-            {".yaml", "yaml-mode"},
-            {".yml", "yaml-mode"},
-            {".toml", "toml-mode"},
-            {".fish", "fish-mode"},
-            {".xml", "xml-mode"},
-            {".xsd", "xml-mode"},
-            {".xsl", "xml-mode"},
-            {".xslt", "xml-mode"},
-            {".svg", "xml-mode"},
-            {".md", "markdown-mode"},
-            {".markdown", "markdown-mode"},
-            {".org", "org-mode"},
-            // .edn is data, not code, but it's read with Clojure's own reader
-            // syntax -- same reasoning as .json -> json-mode. .bb is babashka,
-            // a Clojure dialect like jank but with no extra syntax of its own.
-            {".clj", "clojure-mode"},
-            {".cljs", "clojure-mode"},
-            {".cljc", "clojure-mode"},
-            {".edn", "clojure-mode"},
-            {".bb", "clojure-mode"},
-            {".jank", "jank-mode"},
-            {".rs", "rust-mode"},
-            {".go", "go-mode"},
-            {".cs", "csharp-mode"},
-            {".java", "java-mode"},
-            // .kts is a Kotlin *script* (a Gradle build file, most often) --
-            // the same grammar and the same mode, no separate dialect, same
-            // reasoning .cljc/.bb share clojure-mode above.
-            {".kt", "kotlin-mode"},
-            {".kts", "kotlin-mode"},
-        };
-        return table;
     }
 
     std::string ReadFileOrThrow(const std::filesystem::path& path) {
@@ -247,11 +191,7 @@ std::optional<Mode> ModeByName(const std::string& name) {
                                            .imports    = dynamicEntry->importQuerySource,
                                            .locals     = dynamicEntry->localsQuerySource});
     }
-    const auto& factories = BundledModeFactories();
-    if (const auto it = factories.find(name); it != factories.end()) {
-        return it->second();
-    }
-    return std::nullopt;
+    return BundledModeByName(name);
 }
 
 void SetModeForExtension(const std::string& extension, const std::string& modeName) {
@@ -287,6 +227,12 @@ std::optional<Mode> ModeForFileOverride(const std::filesystem::path& path) {
 Mode ModeForPath(const std::filesystem::path& path) {
     if (auto overrideMode = ModeForFileOverride(path); overrideMode) {
         return std::move(*overrideMode);
+    }
+    const auto& filenames = BundledFilenameTable();
+    if (const auto it = filenames.find(path.filename().string()); it != filenames.end()) {
+        if (auto mode = ModeByName(it->second); mode) {
+            return std::move(*mode);
+        }
     }
     const auto& table = BundledExtensionTable();
     if (const auto it = table.find(path.extension().string()); it != table.end()) {

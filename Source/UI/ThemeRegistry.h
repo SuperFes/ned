@@ -1,7 +1,7 @@
 //
 // The built-in theme name registry (rich-theme-set follow-up, Phase 1) --
 // the same "resolve a name against a compile-time factory table" shape
-// ModeOverrides' BundledModeFactories established for modes, applied to
+// BundledLanguages() established for modes, applied to
 // themes. This is what `ned/set-theme` names resolve against at startup
 // (main.cpp) and what the select-theme picker's candidate list is built
 // from (BufferView). Phase 2/3's palette-derived themes get added to the
