@@ -26,13 +26,14 @@ namespace {
 // block written entirely on one line gets no fold icon" precedent in
 // BufferViewTest.cpp) so mode_.fold never also reserves a column here --
 // this file is about the symbol column in isolation.
-int GutterWidthWithSymbol(std::size_t totalLines, bool symbolActive) {
+int GutterWidthWithSymbol(std::size_t totalLines, bool symbolActive, bool foldActive = false) {
     constexpr int kStatusWidth     = 1;
     constexpr int kDiagnosticWidth = 1;
     constexpr int kLineNumberGap   = 1;
     constexpr int kSymbolWidth     = 1;
+    constexpr int kFoldWidth       = 4; // kMaxFoldDepthColumns
     return kStatusWidth + kDiagnosticWidth + kLineNumberGap + static_cast<int>(std::to_string(totalLines).size()) +
-           kLineNumberGap + (symbolActive ? kSymbolWidth : 0);
+           kLineNumberGap + (symbolActive ? kSymbolWidth : 0) + (foldActive ? kFoldWidth : 0);
 }
 
 struct Fixture {
@@ -125,13 +126,13 @@ TEST_CASE("Symbol gutter column is not reserved for a read-only buffer even with
 
 TEST_CASE("Symbol gutter cache recomputes after an edit that adds a new definition", "[BufferView][Symbol]") {
     Fixture fixture;
-    // PhpMode, not CMode -- PhpMode has no fold query (PhpMode() passes
-    // nullptr for foldQuerySource, see Mode.cpp), so FoldGutterActive()
-    // never contributes its own unconditional (content-independent, unlike
-    // symbol's own data-driven gate) kMaxFoldDepthColumns reservation here.
-    // CMode does have one, which would otherwise widen CursorPosition()'s
-    // total gutter width regardless of this test's own content -- confirmed
-    // live, not assumed, when this test first failed against CMode.
+    // PhpMode was chosen here originally BECAUSE it had no fold query, so the
+    // fold gutter's unconditional kMaxFoldDepthColumns reservation stayed out
+    // of the width this test measures. That premise is gone: PHP folds now,
+    // from the delimiter imprint rather than a folds.scm (Editor/ImprintFold.h),
+    // so the reservation is present and is accounted for below instead of
+    // avoided. The test itself is about the SYMBOL gutter's data-driven gate;
+    // the fold column is incidental to it either way.
     fixture.mode = ned::editor::PhpMode();
     fixture.buffer.InsertAtPoint("<?php\n$x = 1;\n");
 
@@ -144,7 +145,7 @@ TEST_CASE("Symbol gutter cache recomputes after an edit that adds a new definiti
     // A plain assignment isn't a definition site -- PHP's own tags.scm has
     // no pattern matching it, so no column is reserved yet.
     REQUIRE(view.CursorPosition().has_value());
-    REQUIRE(view.CursorPosition()->x == GutterWidthWithSymbol(fixture.buffer.Content().LineCount(), false));
+    REQUIRE(view.CursorPosition()->x == GutterWidthWithSymbol(fixture.buffer.Content().LineCount(), false, /*foldActive=*/true));
 
     fixture.buffer.InsertAtPoint("function add($a, $b) { return $a + $b; }\n");
     view.Paint(canvas);
