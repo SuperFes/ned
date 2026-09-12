@@ -1,5 +1,7 @@
 #include "Commands.h"
 
+#include "Editor/ImprintBracket.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <exception>
@@ -3530,6 +3532,38 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // reason code-fold-toggle above does -- structural motion depends on
     // the active Mode's own parsed syntax tree (Mode::sexpMotion), not
     // something Buffer/Text can compute on its own.
+    // Bracket matching rides the imprint (Editor/ImprintBracket.h) rather than
+    // a Mode hook: unlike fold or indent it needs point, which Mode's
+    // capability signatures do not carry, and there is no hand-written query to
+    // compose with. Doing it on the parse tree rather than by counting
+    // characters is what makes a brace inside a string or comment simply not a
+    // delimiter, in every language, with nothing said per language.
+    registry.Register(
+        "goto-matching-bracket",
+        "Jump between a bracket under point and its partner, using the active mode's syntax tree.",
+        PerCursor([](CommandContext& context) {
+            if (context.mode == nullptr) {
+                return;
+            }
+            const std::string language = imprint::LanguageKeyForMode(context.mode->name);
+            const auto        parsed   = imprint::ParseForBrackets(context.buffer.Text(), language);
+            if (!parsed) {
+                if (context.message) {
+                    *context.message = "No bracket matching available in this mode.";
+                }
+                return;
+            }
+            const auto target =
+                imprint::MatchingDelimiterOffset(parsed->RootNode(), language, context.buffer.Point());
+            if (!target) {
+                if (context.message) {
+                    *context.message = "Point is not on a bracket.";
+                }
+                return;
+            }
+            context.buffer.SetPoint(*target);
+        }));
+
     registry.Register(
         "forward-sexp", "Move point forward over one balanced expression, using the active mode's syntax tree.",
         PerCursor([](CommandContext& context) {
