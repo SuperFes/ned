@@ -7,43 +7,22 @@
 
 #include "BundledLanguages.h"
 #include "LanguageDefinition.h"
-#include "LanguageFiles.h"
+#include "LanguageRegistry.h"
 #include "Text/Buffer.h"
-#include "TreeSitter/DynamicGrammar.h"
 
 namespace ned::editor {
 
 namespace {
 
-    // dynamic-mode-thread-safety fix (found live via a SIGSEGV coredump): a
-    // dynamically-registered mode used to be built *once* here and handed
-    // out by ModeByName as copies of that single
-    // Mode -- but Mode's closures capture their tree-sitter Parser/
-    // IncrementalParseCache by shared_ptr (see TreeSitterModeFromLanguage's
-    // own comment), so every copy aliased the exact same non-thread-safe
-    // TSParser. ModePrewarmer's background thread and BufferView::Paint's
-    // main-thread highlight both resolve the same dynamic mode name and
-    // both call into it concurrently -- confirmed via gdb against a real
-    // coredump: two threads inside ts_parser_parse on the identical Parser
-    // object, corrupting tree-sitter's internal stack. Bundled modes never
-    // had this bug because BundledModeByName() below builds its definition
-    // fresh on every lookup, building a brand-new Parser each
-    // time. Storing ingredients instead of a built Mode and rebuilding via
-    // TreeSitterModeFromLanguage on every ModeByName call restores that
-    // same "fresh Parser per call" contract for the dynamic case too.
-    struct DynamicModeEntry {
-        treesitter::Language language;
-        QueryFiles           files; // absolute paths under the registered queries directory
-    };
-    std::mutex                                        g_mutex;
-    std::unordered_map<std::string, DynamicModeEntry> g_dynamicModes;
-    // RegisterMode's own registry -- a caller there hands over an already-
-    // built, arbitrary Mode (not necessarily tree-sitter-backed at all;
-    // Commands.cpp's "vcs-commit-message-mode" is its only caller today), so
-    // there are no ingredients to rebuild from the way g_dynamicModes now
-    // does. Kept as a separate map (rather than reusing g_dynamicModes'
-    // now-different value type) since the two registration APIs have
-    // genuinely different contracts.
+    std::mutex g_mutex;
+    // RegisterMode's registry -- a caller hands over an already-built,
+    // arbitrary Mode (not necessarily tree-sitter-backed at all;
+    // Commands.cpp's "vcs-commit-message-mode" is its only caller today).
+    // Everything grammar-shaped goes through LanguageRegistry.h instead,
+    // where it stays a DEFINITION and is rebuilt fresh per lookup -- a
+    // cached, pre-built Mode handed out as copies aliased one
+    // non-thread-safe TSParser between ModePrewarmer's background build and
+    // Paint's main-thread highlight, a real coredump-confirmed SIGSEGV.
     std::unordered_map<std::string, Mode>        g_registeredModes;
     std::unordered_map<std::string, std::string> g_extensionOverrides;
     std::unordered_map<std::string, std::string> g_filenameOverrides;
@@ -85,18 +64,50 @@ namespace {
         return table;
     }
 
-    // A bundled mode is its definition built fresh on every lookup -- a new
+    // A definition-backed mode is built fresh on every lookup -- a new
     // Parser each time, which is what keeps two threads (ModePrewarmer's
     // background build, BufferView::Paint's main-thread highlight) from ever
-    // sharing one non-thread-safe TSParser; see DynamicModeEntry above for
-    // the coredump that rule came from.
-    std::optional<Mode> BundledModeByName(const std::string& modeName) {
-        for (const LanguageDefinition& definition : BundledLanguages()) {
-            if (ModeNameFor(definition) == modeName) {
-                return ModeFromDefinition(definition);
+    // sharing one non-thread-safe TSParser (the coredump documented at
+    // g_registeredModes above). Registered languages shadow bundled ones.
+    std::optional<Mode> DefinitionModeByName(const std::string& modeName) {
+        constexpr std::string_view kSuffix = "-mode";
+        if (modeName.size() <= kSuffix.size() || !modeName.ends_with(kSuffix)) {
+            return std::nullopt;
+        }
+        const std::string key = modeName.substr(0, modeName.size() - kSuffix.size());
+        if (std::optional<RegisteredLanguage> registered = FindRegisteredLanguage(key)) {
+            if (registered->language.has_value()) {
+                return ModeFromDefinition(registered->definition, *registered->language);
             }
+            return ModeFromDefinition(registered->definition);
+        }
+        if (const LanguageDefinition* bundled = BundledLanguage(key)) {
+            return ModeFromDefinition(*bundled);
         }
         return std::nullopt;
+    }
+
+    // The registered set's own file claims, checked before the bundled
+    // tables so a user language can take an extension over a bundled one.
+    std::optional<std::string> RegisteredModeNameForPath(const std::filesystem::path& path) {
+        const std::string          filename  = path.filename().string();
+        const std::string          extension = path.extension().string();
+        std::optional<std::string> byExtension;
+        for (const RegisteredLanguage& registered : RegisteredLanguages()) {
+            for (const std::string& candidate : registered.definition.filenames) {
+                if (candidate == filename) {
+                    return ModeNameFor(registered.definition);
+                }
+            }
+            if (!byExtension) {
+                for (const std::string& candidate : registered.definition.extensions) {
+                    if (candidate == extension) {
+                        byExtension = ModeNameFor(registered.definition);
+                    }
+                }
+            }
+        }
+        return byExtension;
     }
 
     std::string StripLeadingDot(std::string_view extension) {
@@ -106,47 +117,10 @@ namespace {
         return std::string(extension);
     }
 
-    // register-language-grammar-directory-scan follow-up: the conventional
-    // basename for a query kind, if the directory has it -- ned's own Janet
-    // spelling first, then tree-sitter's (what a system install under
-    // /usr/share/tree-sitter/queries/<lang>/ ships); both read through
-    // Editor/QueryData.h. An absent file just means that capability is
-    // unavailable for this grammar; a directory that doesn't exist at all
-    // scans every kind as absent rather than throwing.
-    std::vector<std::string> QueryFileIfPresent(const std::filesystem::path& queriesDir, const char* kind) {
-        if (queriesDir.empty()) {
-            return {};
-        }
-        for (const char* extension : {".janet", ".scm"}) {
-            const std::filesystem::path path = queriesDir / (std::string(kind) + extension);
-            if (std::filesystem::exists(path)) {
-                return {std::filesystem::absolute(path).string()};
-            }
-        }
-        return {};
-    }
-
 } // namespace
 
-void RegisterDynamicMode(const std::string& name, const std::filesystem::path& libraryPath,
-                         const std::filesystem::path& queriesDir) {
-    const treesitter::Language language = treesitter::LoadDynamicLanguage(libraryPath, name);
-    QueryFiles                 files{.highlights = QueryFileIfPresent(queriesDir, "highlights"),
-                                     .folds      = QueryFileIfPresent(queriesDir, "folds"),
-                                     .imports    = QueryFileIfPresent(queriesDir, "imports"),
-                                     .tags       = QueryFileIfPresent(queriesDir, "tags"),
-                                     .tests      = QueryFileIfPresent(queriesDir, "tests"),
-                                     .indents    = QueryFileIfPresent(queriesDir, "indents"),
-                                     .locals     = QueryFileIfPresent(queriesDir, "locals"),
-                                     .injections = QueryFileIfPresent(queriesDir, "injections")};
-
+void ClearAllModeCaches() {
     const std::lock_guard lock(g_mutex);
-    g_dynamicModes.insert_or_assign(name, DynamicModeEntry{.language = language, .files = std::move(files)});
-    // A re-registration under a name some already-cached buffer resolved to
-    // would otherwise never take effect for it -- see g_modeCache's own
-    // comment. Registration is rare (init.janet load time, or an
-    // interactive re-eval), so a wholesale flush here is simpler and cheap
-    // enough versus tracking which cached buffers actually used this name.
     g_modeCache.clear();
 }
 
@@ -157,44 +131,16 @@ void RegisterMode(const std::string& name, Mode mode) {
 }
 
 std::optional<Mode> ModeByName(const std::string& name) {
-    // Copied out under g_mutex, then built/returned with it released --
-    // TreeSitterModeFromLanguage compiles tree-sitter queries, real work
-    // that shouldn't happen while holding a mutex every other mode
-    // lookup/registration also takes (the same reason the bundled-factory
-    // branch below already runs outside the lock).
-    std::optional<DynamicModeEntry> dynamicEntry;
     {
         const std::lock_guard lock(g_mutex);
-        // Rebuilt fresh on every lookup -- see DynamicModeEntry's own
-        // comment on why a cached, pre-built Mode isn't safe to hand out as
-        // copies here (a real, coredump-confirmed SIGSEGV: two threads
-        // sharing one non-thread-safe tree-sitter Parser).
-        if (const auto it = g_dynamicModes.find(name); it != g_dynamicModes.end()) {
-            dynamicEntry = it->second;
-        }
-        else if (const auto regIt = g_registeredModes.find(name); regIt != g_registeredModes.end()) {
+        if (const auto regIt = g_registeredModes.find(name); regIt != g_registeredModes.end()) {
             return regIt->second;
         }
     }
-    if (dynamicEntry) {
-        // Kept on the registered name as-is (not "<name>-mode"), which is
-        // what ned/set-mode-for-extension callers already hand back.
-        const QueryFiles& f          = dynamicEntry->files;
-        const QueryText   highlights = CompileQueryFiles(f.highlights), folds = CompileQueryFiles(f.folds),
-                          imports = CompileQueryFiles(f.imports), tags = CompileQueryFiles(f.tags),
-                          tests = CompileQueryFiles(f.tests), indents = CompileQueryFiles(f.indents),
-                          locals = CompileQueryFiles(f.locals), injections = CompileQueryFiles(f.injections);
-        return TreeSitterModeFromLanguage(name, dynamicEntry->language,
-                                          {.highlights = highlights.text,
-                                           .folds      = folds.text,
-                                           .imports    = imports.text,
-                                           .tags       = tags.text,
-                                           .tests      = tests.text,
-                                           .indents    = indents.text,
-                                           .locals     = locals.text,
-                                           .injections = injections.text});
-    }
-    return BundledModeByName(name);
+    // Outside the lock: building a definition-backed mode compiles
+    // tree-sitter queries, real work that shouldn't happen while holding a
+    // mutex every other lookup/registration also takes.
+    return DefinitionModeByName(name);
 }
 
 void SetModeForExtension(const std::string& extension, const std::string& modeName) {
@@ -230,6 +176,11 @@ std::optional<Mode> ModeForFileOverride(const std::filesystem::path& path) {
 Mode ModeForPath(const std::filesystem::path& path) {
     if (auto overrideMode = ModeForFileOverride(path); overrideMode) {
         return std::move(*overrideMode);
+    }
+    if (const std::optional<std::string> registered = RegisteredModeNameForPath(path)) {
+        if (auto mode = ModeByName(*registered); mode) {
+            return std::move(*mode);
+        }
     }
     const auto& filenames = BundledFilenameTable();
     if (const auto it = filenames.find(path.filename().string()); it != filenames.end()) {

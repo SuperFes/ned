@@ -909,8 +909,29 @@ real; if not, that is worth learning at language 3 rather than language 15.
             suite + oracle green, targeted ASan clean, live smoke fine. One real
             transcription catch: janet's import-resolution entry was dropped on the
             first pass and the frozen-set test caught it.
-      - [ ] **Step 3 — one loader** for user/project languages; `RegisterDynamicMode`
-            deleted.
+      - [x] **Step 3 — one loader; `RegisterDynamicMode` deleted.**
+            `Editor/LanguageRegistry.h`: a runtime language is a directory in the bundled
+            layout (`<name>/language.janet` + discovered queries), loaded identically
+            from `$XDG_CONFIG_HOME/ned/languages/` (startup, before init.janet), a
+            project's `.ned/languages/` (each `language.janet` through the same per-file
+            `ProjectTrust` gate as `.ned/init.janet` — a definition may dlopen a
+            `:grammar-library`, which is code; the trusted-file loader dispatches on
+            basename and never evaluates one as Janet), the replacement
+            `ned/register-language <dir>` binding, and — when packaging happens —
+            `/usr/share/ned/languages` as a search-path entry (per the /usr/share-for-
+            data, /usr/libexec-for-helpers install layout). Two registry-only keys:
+            `:grammar-library`, and `:queries-dir` for a foreign tree-sitter-layout
+            directory (`/usr/share/tree-sitter/queries/<lang>`, `<kind>.janet` or
+            `<kind>.scm` per kind — the `.scm` reader's remaining consumer). A registered
+            name shadows a bundled one everywhere (`FindLanguageDefinition`: mode lookup,
+            root markers, import resolution, injection aliases), its
+            `:extensions`/`:filenames` claim files with no `set-mode-for-extension` call
+            (override tables still win), and modes stay rebuilt-fresh-per-lookup per the
+            shared-parser coredump rule. Verified live end to end: an
+            `XDG_CONFIG_HOME` languages dir naming the system lua grammar opens
+            `demo.lua` as `(lua-mode)` with upstream-`.scm` highlighting, zero init.janet
+            lines. Full suite + targeted ASan green (the dlopen path included — the lua
+            fixture is present on this machine).
       - [ ] **Step 4 — Janet hooks in `Query.cpp` and the highlight pipeline** (predicate,
             classifier, span transform), rooting-safe call path proven first.
       - [ ] **Step 5 — Org and Markdown rewritten as language files**; the escapes in

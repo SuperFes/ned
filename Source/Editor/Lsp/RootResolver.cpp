@@ -4,7 +4,7 @@
 #include <system_error>
 #include <unordered_map>
 
-#include "Editor/BundledLanguages.h"
+#include "Editor/LanguageRegistry.h"
 #include "Editor/Project/Root.h"
 
 namespace ned::editor::lsp {
@@ -63,13 +63,14 @@ std::vector<std::string> RootMarkers(const std::string& language) {
     if (const auto it = RootMarkersOverrides().find(language); it != RootMarkersOverrides().end()) {
         return it->second;
     }
-    // The bundled defaults live in each language's own definition
-    // (language.janet's :lsp-root-markers). Most languages declare none --
-    // html/css/json/yaml/markdown/... rarely run a per-subdirectory server
-    // instance -- and an empty list is harmless: the marker tier never
-    // matches and the buffer's root falls through to editor::ProjectRoot().
-    const LanguageDefinition* definition = BundledLanguage(language);
-    return definition != nullptr ? definition->lspRootMarkers : std::vector<std::string>{};
+    // The defaults live in each language's own definition (language.janet's
+    // :lsp-root-markers), registered shadowing bundled. Most languages
+    // declare none -- html/css/json/yaml/markdown/... rarely run a
+    // per-subdirectory server instance -- and an empty list is harmless: the
+    // marker tier never matches and the buffer's root falls through to
+    // editor::ProjectRoot().
+    const std::optional<LanguageDefinition> definition = FindLanguageDefinition(language);
+    return definition.has_value() ? definition->lspRootMarkers : std::vector<std::string>{};
 }
 
 std::filesystem::path ResolveLspRoot(const std::filesystem::path& bufferPath, const std::string& language) {

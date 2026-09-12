@@ -1,6 +1,6 @@
 #include "ImportResolutionConfig.h"
 
-#include "Editor/BundledLanguages.h"
+#include "Editor/LanguageRegistry.h"
 #include "Editor/Project/Settings.h"
 
 namespace ned::editor {
@@ -8,10 +8,11 @@ namespace ned::editor {
 
 ImportResolutionConfig DefaultImportResolutionConfig(const std::string& languageKey) {
     // From the language's own definition (language.janet's
-    // :import-resolution); a language declaring none -- including every one
-    // with no import query at all -- gets the default-constructed config.
-    const LanguageDefinition* definition = BundledLanguage(languageKey);
-    if (definition != nullptr && definition->importResolution.has_value()) {
+    // :import-resolution), registered shadowing bundled; a language
+    // declaring none -- including every one with no import query at all --
+    // gets the default-constructed config.
+    const std::optional<LanguageDefinition> definition = FindLanguageDefinition(languageKey);
+    if (definition.has_value() && definition->importResolution.has_value()) {
         return *definition->importResolution;
     }
     return {};

@@ -96,6 +96,12 @@ struct LanguageDefinition {
     // clojure's, tsx typescript's); explicit `queries` entries still win per
     // kind. See LanguageParse.h.
     std::string queriesFrom;
+    // Runtime-registered languages only (LanguageRegistry.h; both rejected
+    // at load for a bundled definition): a shared library exporting
+    // `tree_sitter_<grammar>` to dlopen, and a foreign tree-sitter-layout
+    // queries directory scanned per kind as `<kind>.janet` or `<kind>.scm`.
+    std::string grammarLibrary;
+    std::string queriesDir;
     // Names in the escape registry, applied in order after the generic
     // build. An unknown name is a build error (ModeFromDefinition throws),
     // never a silent no-op: a definition that names an escape means it.

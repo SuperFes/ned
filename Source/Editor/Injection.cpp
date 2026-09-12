@@ -7,6 +7,7 @@
 
 #include "BundledLanguages.h"
 #include "LanguageDefinition.h"
+#include "LanguageRegistry.h"
 #include "ModeOverrides.h"
 #include "TreeSitter/Languages.h"
 
@@ -34,6 +35,16 @@ namespace {
         }();
         std::string lower(tag);
         std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        // Registered languages first (their alias sets can change at
+        // runtime, so they can't fold into the static map above), then the
+        // bundled map.
+        for (const RegisteredLanguage& registered : RegisteredLanguages()) {
+            for (const std::string& alias : registered.definition.injectionAliases) {
+                if (alias == lower) {
+                    return registered.definition.name;
+                }
+            }
+        }
         const auto it = kAliases.find(lower);
         return it != kAliases.end() ? it->second : lower;
     }

@@ -93,9 +93,9 @@ Restore the current buffer's content from backup snapshot `index` (0 = the autos
 
 Register a Janet function as a named, bindable command.
 
-## `ned/register-language-grammar`
+## `ned/register-language`
 
-Load a tree-sitter grammar at runtime: (name library-path queries-dir). library-path is a shared library exporting tree_sitter_<name>; queries-dir is a directory scanned for every conventional query-kind basename -- highlights, folds, imports, tags, tests, indents, locals and injections, as either <kind>.janet (ned's own spelling: '#' comments, (:eq? ...) predicates) or <kind>.scm (tree-sitter's, what a system install under /usr/share/tree-sitter/queries/<lang>/ ships) -- whichever aren't present are simply skipped (a grammar with only a highlights file is fine), so a file added to queries-dir later (e.g. by a system package update) takes effect on the next registration with no init.janet change needed. Pass "" for queries-dir to register the grammar for its parser alone. Re-registering the same name replaces it. The registered name can then be used as the mode-name argument to ned/set-mode-for-extension or ned/set-mode-for-filename.
+Register a language from a directory holding its language.janet -- the exact layout ned's own bundled languages use (Source/Languages/<name>/), so everything a definition can say works: extensions and filenames (claimed automatically, no separate set-mode-for-extension call needed), comment syntax, keymap, query files discovered beside it as <kind>.janet with an upstream/ subdirectory checked first, escapes, LSP root markers, import resolution, injection aliases, snippets. The directory's basename is the language name and its mode is named <name>-mode; a registered name shadows a bundled one, so redefining a bundled language is expected use, as is re-registering. Two keys exist for exactly this path: :grammar-library names a shared library exporting tree_sitter_<grammar> to dlopen (omit it to use a bundled grammar), and :queries-dir names a foreign tree-sitter-layout directory (e.g. /usr/share/tree-sitter/queries/<lang>) scanned per kind as <kind>.janet or <kind>.scm for whatever discovery didn't find. Throws with a file:line message on a malformed definition. Directories under $XDG_CONFIG_HOME/ned/languages/ and a trusted project's .ned/languages/ load automatically at startup through this same path.
 
 ## `ned/register-snippet`
 
@@ -399,7 +399,7 @@ Set the minimap's width in columns (default 5). Each column packs 2 braille sub-
 
 ## `ned/set-mode-for-extension`
 
-Map a file extension (with or without a leading '.') to a mode name -- either one registered via ned/register-language-grammar, or one of ned's own built-in mode names (e.g. "php-mode", "python-mode"). Checked before ned's own built-in extension table, so this can override a bundled mapping too, not just add a new one.
+Map a file extension (with or without a leading '.') to a mode name -- either a registered language's <name>-mode (ned/register-language), or one of ned's own built-in mode names (e.g. "php-mode", "python-mode"). Checked before ned's own built-in extension table, so this can override a bundled mapping too, not just add a new one.
 
 ## `ned/set-mode-for-filename`
 
