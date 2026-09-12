@@ -114,6 +114,26 @@ struct FoldPolicy {
 // across several policies.
 [[nodiscard]] bool ShouldFold(const DelimitedBody& body, const FoldPolicy& policy = {});
 
+// Whether `nodeEndByte`'s owner should be skipped because one of its DIRECT
+// children is itself a foldable body ending at the same byte.
+//
+// Fold the body, not the declaration. C#'s `namespace_declaration` is
+// `namespace X { ... }` and its own direct child `declaration_list` is the
+// `{ ... }`; both are genuinely delimited, but folding the declaration hides
+// the `namespace X` line -- the one line still worth seeing while the body is
+// away, exactly as a function's signature is.
+//
+// Takes the children's (foldable, endByte) pairs rather than a tree, so this
+// stays free of any parser type. The caller walks; this decides.
+//
+// Recorded because the first attempt was wrong in an instructive way: it
+// compared byte ranges instead, dropping anything that shared an end byte with
+// a later-starting range, and that deleted Python class bodies -- a class body
+// and its own last method's body legitimately share an end byte. Containment
+// says nothing here; direct parentage does.
+[[nodiscard]] bool SupersededByChildBody(std::size_t                                      nodeEndByte,
+                                         const std::vector<std::pair<bool, std::size_t>>& children);
+
 
 } // namespace ned::editor::imprint
 

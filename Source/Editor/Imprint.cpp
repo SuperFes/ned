@@ -28,4 +28,10 @@ bool ShouldFold(const DelimitedBody& body, const FoldPolicy& policy) {
     return true;
 }
 
+bool SupersededByChildBody(std::size_t nodeEndByte, const std::vector<std::pair<bool, std::size_t>>& children) {
+    return std::any_of(children.begin(), children.end(), [nodeEndByte](const std::pair<bool, std::size_t>& child) {
+        return child.first && child.second == nodeEndByte;
+    });
+}
+
 } // namespace ned::editor::imprint

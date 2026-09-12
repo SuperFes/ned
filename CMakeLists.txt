@@ -973,6 +973,8 @@ add_library(ned_lib STATIC
         Source/Editor/Terminal/PtyProcess.cpp
         Source/Editor/TreeSitter/Node.cpp
         Source/Editor/Imprint.cpp
+        Source/Editor/ImprintTables.cpp
+        Source/Editor/ImprintFold.cpp
         Source/Editor/TreeSitter/GrammarImprint.cpp
         Source/Editor/TreeSitter/Tree.cpp
         Source/Editor/TreeSitter/Parser.cpp
