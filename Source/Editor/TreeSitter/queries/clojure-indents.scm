@@ -1,5 +1,6 @@
 ; smart-indentation follow-up. See c-indents.scm's own header comment for the
-; general convention. Shared by ClojureMode and JankMode (same grammar),
+; general convention and for what the delimiter imprint contributes without a
+; capture. Shared by ClojureMode and JankMode (same grammar),
 ; mirroring kClojure's own sharing. Checked against tree-sitter-clojure's own
 ; node-types.json.
 ;
@@ -9,8 +10,9 @@
 ; field access clojure.scm's own highlighting query already established for
 ; reading a symbol's bare name (Clojure's sym_lit carries an optional
 ; namespace/name split, unlike Janet's flat sym_lit). vec_lit/map_lit/
-; set_lit/anon_fn_lit aren't call forms and stay plain bracket-depth
-; "@indent", unchanged.
+; set_lit/anon_fn_lit aren't call forms and stay plain bracket-depth, which
+; the delimiter imprint supplies for them without a capture (see
+; c-indents.scm's header for what the imprint contributes).
 (list_lit
   .
   (sym_lit
@@ -23,13 +25,4 @@
     "try" "catch" "finally" "->" "->>" "as->" "comment")) @indent.body
 
 (list_lit) @aligned
-(vec_lit) @indent
-(map_lit) @indent
-(set_lit) @indent
-(anon_fn_lit) @indent
 
-(list_lit ")" @dedent)
-(vec_lit "]" @dedent)
-(map_lit "}" @dedent)
-(set_lit "}" @dedent)
-(anon_fn_lit ")" @dedent)

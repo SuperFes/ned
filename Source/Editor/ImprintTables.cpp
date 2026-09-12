@@ -15,13 +15,22 @@ struct Entry {
     DelimiterKind    kind;
     bool             openerIsFirst;
     bool             listLikeInterior;
+    std::string_view opener; // Keyword bodies only
+    std::string_view closer;
 };
 
 constexpr Entry kBash[] = {
     {"array", DelimiterKind::Bracket, true, true},
+    {"brace_expression", DelimiterKind::Bracket, true, false},
+    {"case_statement", DelimiterKind::Keyword, true, true, "case", "esac"},
+    {"command_substitution", DelimiterKind::Bracket, true, true},
     {"compound_statement", DelimiterKind::Bracket, true, true},
+    {"do_group", DelimiterKind::Keyword, true, true, "do", "done"},
+    {"expansion", DelimiterKind::Bracket, true, true},
+    {"if_statement", DelimiterKind::Keyword, true, true, "if", "fi"},
     {"last_case_item", DelimiterKind::Bracket, true, true},
     {"parenthesized_expression", DelimiterKind::Bracket, true, false},
+    {"process_substitution", DelimiterKind::Bracket, true, true},
     {"subscript", DelimiterKind::Bracket, false, true},
     {"subshell", DelimiterKind::Bracket, true, true},
 };
@@ -185,9 +194,15 @@ constexpr Entry kCss[] = {
 };
 
 constexpr Entry kFish[] = {
+    {"begin_statement", DelimiterKind::Keyword, true, true, "begin", "end"},
     {"brace_expansion", DelimiterKind::Bracket, true, false},
     {"command_substitution", DelimiterKind::Bracket, false, true},
+    {"for_statement", DelimiterKind::Keyword, true, true, "for", "end"},
+    {"function_definition", DelimiterKind::Keyword, true, true, "function", "end"},
+    {"if_statement", DelimiterKind::Keyword, true, true, "if", "end"},
     {"list_element_access", DelimiterKind::Bracket, true, true},
+    {"switch_statement", DelimiterKind::Keyword, true, true, "switch", "end"},
+    {"while_statement", DelimiterKind::Keyword, true, true, "while", "end"},
 };
 
 constexpr Entry kGo[] = {
@@ -221,9 +236,12 @@ constexpr Entry kHtml[] = {
 };
 
 constexpr Entry kJanet[] = {
+    {"par_arr_lit", DelimiterKind::Bracket, true, true},
     {"par_tup_lit", DelimiterKind::Bracket, true, true},
+    {"sqr_arr_lit", DelimiterKind::Bracket, true, true},
     {"sqr_tup_lit", DelimiterKind::Bracket, true, true},
     {"struct_lit", DelimiterKind::Bracket, true, true},
+    {"tbl_lit", DelimiterKind::Bracket, true, true},
 };
 
 constexpr Entry kJank[] = {
@@ -256,6 +274,7 @@ constexpr Entry kJava[] = {
     {"parenthesized_expression", DelimiterKind::Bracket, true, false},
     {"record_pattern_body", DelimiterKind::Bracket, true, true},
     {"resource_specification", DelimiterKind::Bracket, true, true},
+    {"string_interpolation", DelimiterKind::Bracket, true, false},
     {"switch_block", DelimiterKind::Bracket, true, true},
     {"type_arguments", DelimiterKind::Bracket, true, true},
     {"type_parameters", DelimiterKind::Bracket, true, false},
@@ -278,6 +297,7 @@ constexpr Entry kJavascript[] = {
     {"statement_block", DelimiterKind::Bracket, true, true},
     {"subscript_expression", DelimiterKind::Bracket, false, false},
     {"switch_body", DelimiterKind::Bracket, true, true},
+    {"template_substitution", DelimiterKind::Bracket, true, false},
 };
 
 constexpr Entry kJson[] = {
@@ -301,6 +321,7 @@ constexpr Entry kKotlin[] = {
     {"import_list", DelimiterKind::Indent, false, true},
     {"indexing_suffix", DelimiterKind::Bracket, true, false},
     {"lambda_literal", DelimiterKind::Bracket, true, true},
+    {"line_string_expression", DelimiterKind::Bracket, true, false},
     {"multi_variable_declaration", DelimiterKind::Bracket, true, false},
     {"parameters_with_optional_type", DelimiterKind::Bracket, true, false},
     {"parenthesized_expression", DelimiterKind::Bracket, true, false},
@@ -321,6 +342,7 @@ constexpr Entry kPhp[] = {
     {"anonymous_function_use_clause", DelimiterKind::Bracket, false, true},
     {"arguments", DelimiterKind::Bracket, true, true},
     {"array_creation_expression", DelimiterKind::Bracket, false, true},
+    {"attribute_group", DelimiterKind::Bracket, true, true},
     {"compound_statement", DelimiterKind::Bracket, true, true},
     {"declaration_list", DelimiterKind::Bracket, true, true},
     {"enum_declaration_list", DelimiterKind::Bracket, true, true},
@@ -391,7 +413,7 @@ constexpr Entry kRust[] = {
     {"parenthesized_expression", DelimiterKind::Bracket, true, false},
     {"raw_string_literal", DelimiterKind::Indent, true, true},
     {"slice_pattern", DelimiterKind::Bracket, true, true},
-    {"string_literal", DelimiterKind::Indent, false, true},
+    {"string_literal", DelimiterKind::Indent, true, true},
     {"struct_pattern", DelimiterKind::Bracket, false, true},
     {"token_tree", DelimiterKind::Bracket, true, true},
     {"token_tree_pattern", DelimiterKind::Bracket, true, true},
@@ -441,6 +463,8 @@ constexpr Entry kTsx[] = {
     {"statement_block", DelimiterKind::Bracket, true, true},
     {"subscript_expression", DelimiterKind::Bracket, false, false},
     {"switch_body", DelimiterKind::Bracket, true, true},
+    {"template_substitution", DelimiterKind::Bracket, true, false},
+    {"template_type", DelimiterKind::Bracket, true, true},
     {"tuple_type", DelimiterKind::Bracket, true, true},
     {"type_arguments", DelimiterKind::Bracket, true, true},
     {"type_parameters", DelimiterKind::Bracket, true, true},
@@ -471,6 +495,8 @@ constexpr Entry kTypescript[] = {
     {"statement_block", DelimiterKind::Bracket, true, true},
     {"subscript_expression", DelimiterKind::Bracket, false, false},
     {"switch_body", DelimiterKind::Bracket, true, true},
+    {"template_substitution", DelimiterKind::Bracket, true, false},
+    {"template_type", DelimiterKind::Bracket, true, true},
     {"tuple_type", DelimiterKind::Bracket, true, true},
     {"type_arguments", DelimiterKind::Bracket, true, true},
     {"type_parameters", DelimiterKind::Bracket, true, true},
@@ -488,10 +514,13 @@ constexpr Entry kYaml[] = {
     {"anchor", DelimiterKind::Indent, true, true},
     {"block_mapping", DelimiterKind::Indent, false, true},
     {"block_node", DelimiterKind::Indent, true, true},
-    {"block_scalar", DelimiterKind::Indent, false, true},
+    {"block_scalar", DelimiterKind::Indent, true, true},
     {"block_sequence", DelimiterKind::Indent, false, true},
     {"document", DelimiterKind::Indent, true, true},
     {"double_quote_scalar", DelimiterKind::Indent, true, true},
+    {"flow_mapping", DelimiterKind::Bracket, true, true},
+    {"flow_node", DelimiterKind::Bracket, true, true},
+    {"flow_sequence", DelimiterKind::Bracket, true, true},
     {"single_quote_scalar", DelimiterKind::Indent, true, true},
     {"stream", DelimiterKind::Indent, false, true},
     {"tag_directive", DelimiterKind::Indent, true, true},
@@ -507,7 +536,8 @@ const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
             for (std::size_t i = 0; i < count; ++i) {
                 table.emplace(std::string(entries[i].node),
                               DelimitedBody{entries[i].kind, entries[i].openerIsFirst,
-                                            entries[i].listLikeInterior});
+                                            entries[i].listLikeInterior, std::string(entries[i].opener),
+                                            std::string(entries[i].closer)});
             }
         };
         load("bash", kBash, std::size(kBash));

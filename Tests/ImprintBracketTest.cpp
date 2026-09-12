@@ -223,3 +223,34 @@ TEST_CASE("The capability shares the mode's parse rather than starting its own",
         CHECK(pair->closeStart == close);
     }
 }
+
+TEST_CASE("A keyword pair matches like a bracket pair", "[ImprintBracket]") {
+    // Vim's matchit does `if`<->`fi`; ned gets it from the same table entry
+    // that folds and indents the body, with nothing said per language.
+    const std::string bash = "if true; then\n    echo hi\nfi\n";
+    CHECK(Match("bash", bash, bash.find("if")) == bash.find("fi"));
+    CHECK(Match("bash", bash, bash.find("fi")) == bash.find("if"));
+    // The caret on the second letter of a multi-byte delimiter still counts.
+    CHECK(Match("bash", bash, bash.find("fi") + 1) == bash.find("if"));
+
+    const std::string fish = "function greet\n    echo hi\nend\n";
+    CHECK(Match("fish", fish, fish.find("function")) == fish.find("end"));
+    CHECK(Match("fish", fish, fish.find("end")) == 0);
+
+    // `then` is not a closer, and `elif ... then` is a phrase the imprint
+    // declines -- nothing to pair with.
+    CHECK(Match("bash", bash, bash.find("then")) == std::nullopt);
+}
+
+TEST_CASE("A sigil-prefixed opener pairs with its bracket", "[ImprintBracket]") {
+    // The tree's own token is `@[`, one anonymous child; the closer is `]`.
+    const std::string janet = "(def xs @[\n  1\n  2])\n";
+    CHECK(Match("janet", janet, janet.find("@[")) == janet.find(']'));
+    CHECK(Match("janet", janet, janet.find(']')) == janet.find("@["));
+
+    const std::string bash = "x=$(\n  ls\n)\n";
+    CHECK(Match("bash", bash, bash.find("$(")) == bash.find(')'));
+
+    const std::string js = "`a ${\n  b\n} c`\n";
+    CHECK(Match("javascript", js, js.find("${")) == js.find('}'));
+}

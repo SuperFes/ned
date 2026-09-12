@@ -1,6 +1,7 @@
 #include "Imprint.h"
 
 #include <algorithm>
+#include <cctype>
 
 namespace ned::editor::imprint {
 
@@ -8,8 +9,18 @@ std::string DelimiterKindName(DelimiterKind kind) {
     switch (kind) {
         case DelimiterKind::Bracket: return "Bracket";
         case DelimiterKind::Indent:  return "Indent";
+        case DelimiterKind::Keyword:
+            return "Keyword";
     }
     return "?";
+}
+
+bool OpensWithBracket(std::string_view token, char bracket) {
+    if (token.empty() || token.back() != bracket) {
+        return false;
+    }
+    const std::string_view prefix = token.substr(0, token.size() - 1);
+    return std::all_of(prefix.begin(), prefix.end(), [](unsigned char c) { return std::ispunct(c) != 0; });
 }
 
 bool ShouldFold(const DelimitedBody& body, const FoldPolicy& policy) {
@@ -71,18 +82,24 @@ std::size_t FoldAnchorStart(const DelimitedBody& body, std::size_t startByte, st
         return startByte; // the body begins mid-line; that line is its own
     }
 
-    // The header is the nearest non-blank line above. Blank lines are stepped
-    // over rather than treated as the header, so a body separated from its
-    // `def` by an empty line still folds from the `def`.
-    std::size_t candidate = bodyLineStart;
+    // The header is the nearest line above that is indented LESS than the
+    // body. Blank lines are stepped over, so a body separated from its `def`
+    // by an empty line still folds from the `def`; so are lines at the body's
+    // own indentation or deeper, which between a header and its body can only
+    // be comments -- a `# comment` as the first line under `def f():` is not
+    // the header, and treating it as one left the fold unanchored and the
+    // indent driver (Editor/ImprintIndent.h) counting no container at all.
+    const std::size_t bodyIndent = indentWidth(bodyLineStart);
+    std::size_t       candidate  = bodyLineStart;
     while (candidate > 0) {
         const std::size_t previous = lineStartOf(candidate - 1);
-        if (indentWidth(previous) + previous < candidate - 1) {
-            return indentWidth(previous) < indentWidth(bodyLineStart) ? previous : startByte;
+        const std::size_t indent   = indentWidth(previous);
+        if (indent + previous < candidate - 1 && indent < bodyIndent) {
+            return previous;
         }
         candidate = previous;
     }
-    return startByte; // nothing above it -- a top-level body owns its own line
+    return startByte; // nothing shallower above it -- a root body owns its own line
 }
 
 } // namespace ned::editor::imprint

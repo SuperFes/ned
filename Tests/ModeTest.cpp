@@ -1387,3 +1387,47 @@ TEST_CASE("OrgMode's symbolKind doesn't mistake an indented '* not a headline' l
     REQUIRE(markers.size() == 1);
     REQUIRE(markers[0].startByte == 0);
 }
+
+TEST_CASE("expandSelection offers the inside of a delimited body before the body itself", "[Mode][Imprint]") {
+    // No grammar has a node for what sits between a pair of delimiters; the
+    // delimiter imprint does. Vim's `i(` and expand-region's "inside pairs",
+    // from the same table entry that folds and brace-matches the body.
+    const auto        mode = CMode();
+    const std::string text = "int f(int a, int b) {\n    return a;\n}\n";
+
+    // From inside `a` in the parameter list: the identifier, then the
+    // interior of the parens, then the parens themselves.
+    const std::size_t inA   = text.find("int a") + 4;
+    auto              range = mode.expandSelection(text, inA, inA);
+    REQUIRE(range.has_value());
+    CHECK(text.substr(range->first, range->second - range->first) == "a");
+    range = mode.expandSelection(text, range->first, range->second);
+    REQUIRE(range.has_value());
+    CHECK(text.substr(range->first, range->second - range->first) == "int a");
+    range = mode.expandSelection(text, range->first, range->second);
+    REQUIRE(range.has_value());
+    CHECK(text.substr(range->first, range->second - range->first) == "int a, int b");
+    range = mode.expandSelection(text, range->first, range->second);
+    REQUIRE(range.has_value());
+    CHECK(text.substr(range->first, range->second - range->first) == "(int a, int b)");
+
+    // From the return statement: the statement, the inside of the braces
+    // (whitespace included -- it is what sits between them), then the block.
+    const std::size_t ret = text.find("return");
+    range                 = mode.expandSelection(text, ret, ret + 9); // "return a;"
+    REQUIRE(range.has_value());
+    CHECK(text.substr(range->first, range->second - range->first) == "\n    return a;\n");
+    range = mode.expandSelection(text, range->first, range->second);
+    REQUIRE(range.has_value());
+    CHECK(text.substr(range->first, range->second - range->first) == "{\n    return a;\n}");
+}
+
+TEST_CASE("expandSelection skips the inside step when the interior is the next node anyway", "[Mode][Imprint]") {
+    // `{"a": 1}`: the pair IS the interior, byte for byte, so offering it
+    // twice would be a repeated step -- the existing sequence is unchanged.
+    const auto        mode  = JsonMode();
+    const std::string text  = R"({"a": 1})";
+    auto              range = mode.expandSelection(text, 1, 7); // "a": 1
+    REQUIRE(range.has_value());
+    CHECK(text.substr(range->first, range->second - range->first) == text);
+}

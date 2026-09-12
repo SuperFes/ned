@@ -1,37 +1,12 @@
 ; smart-indentation follow-up. See c-indents.scm's own header comment for the
-; general convention. javascript-indents.scm's own set plus TypeScript-only
-; container node types (interface bodies, object types, enum bodies) --
-; shared by TypeScriptMode and TsxMode, mirroring kTypeScript's own sharing
-; (CMakeLists.txt/Mode.cpp). Checked against tree-sitter-typescript's own
+; general convention and for what the delimiter imprint contributes without a
+; capture. Every TypeScript-only container (interface bodies, object types,
+; enum bodies) is a bracket body the imprint reports -- including
+; interface_body, an alias() of object_type that inference could not see
+; until it learned to read alias(), and which this file was once wrongly
+; blamed for naming. Checked against tree-sitter-typescript's own
 ; node-types.json.
-(statement_block) @indent
-(object) @indent
-(object_pattern) @indent
-(object_type) @indent
-(array) @indent
-(array_pattern) @indent
-(arguments) @indent
-(formal_parameters) @indent
-(type_parameters) @indent
-(class_body) @indent
-(interface_body) @indent
-(enum_body) @indent
-(switch_body) @indent
-
-(statement_block "}" @dedent)
-(object "}" @dedent)
-(object_pattern "}" @dedent)
-(object_type "}" @dedent)
-(array "]" @dedent)
-(array_pattern "]" @dedent)
-(arguments ")" @dedent)
-(formal_parameters ")" @dedent)
-(type_parameters ">" @dedent)
-(class_body "}" @dedent)
-(interface_body "}" @dedent)
-(enum_body "}" @dedent)
-(switch_body "}" @dedent)
-
+;
 ; No JSX rules here, deliberately: the `typescript` dialect's compiled parser
 ; rejects `jsx_element` and friends as unknown node types even though its
 ; grammar.json still declares them (they are shared source with the tsx
@@ -43,4 +18,3 @@
 ; Checked against the compiled node-types.json rather than grammar.json: the
 ; two disagree here, and only one of them is what the parser answers to.
 (parenthesized_expression) @aligned
-(parenthesized_expression ")" @dedent)

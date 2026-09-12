@@ -1,6 +1,7 @@
 #include "GrammarImprint.h"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <optional>
 #include <set>
@@ -87,21 +88,56 @@ const json& UnwrapIncludingTokens(const json& rule) {
     return *current;
 }
 
+// An UNNAMED alias is emitted as an anonymous token spelled `value`, whatever
+// it wraps -- Rust's string_literal opens with alias(/[bc]?"/, '"'), and the
+// tree carries a plain `"` there, indistinguishable from a literal. Unwrap()
+// sees through the alias to the PATTERN and loses that; it has to be asked
+// before unwrapping. (A NAMED alias is a node, which is CollectAliasedNodes'
+// business, not a literal's.)
+std::optional<std::string> UnnamedAliasValue(const json& member) {
+    const json* current = &member;
+    for (int depth = 0; depth < 16; ++depth) {
+        if (TypeOf(*current) == "ALIAS") {
+            const auto named = current->find("named");
+            const auto value = current->find("value");
+            if (named != current->end() && named->is_boolean() && !named->get<bool>() && value != current->end() &&
+                value->is_string()) {
+                return value->get<std::string>();
+            }
+        }
+        if (!IsWrapper(TypeOf(*current)) && !IsSingleToken(*current))
+            break;
+        const auto content = current->find("content");
+        if (content == current->end())
+            break;
+        current = &*content;
+    }
+    return std::nullopt;
+}
+
 std::set<std::string> Literals(const json& member) {
-    const json&           inner = UnwrapIncludingTokens(member);
     std::set<std::string> found;
-    const auto            add = [&found](const json& candidate) {
-        if (TypeOf(candidate) != "STRING") return;
+    const auto            add = [&found](const json& raw) {
+        if (const auto alias = UnnamedAliasValue(raw); alias.has_value()) {
+            found.insert(*alias);
+            return;
+        }
+        const json& candidate = UnwrapIncludingTokens(raw);
+        if (TypeOf(candidate) != "STRING")
+            return;
         const auto value = candidate.find("value");
-        if (value != candidate.end() && value->is_string()) found.insert(value->get<std::string>());
+        if (value != candidate.end() && value->is_string())
+            found.insert(value->get<std::string>());
     };
+    const json& inner = UnwrapIncludingTokens(member);
     if (TypeOf(inner) == "CHOICE") {
         if (const auto members = inner.find("members"); members != inner.end() && members->is_array()) {
-            for (const json& member2 : *members) add(UnwrapIncludingTokens(member2));
+            for (const json& member2 : *members)
+                add(member2);
         }
     }
     else {
-        add(inner);
+        add(member);
     }
     return found;
 }
@@ -210,7 +246,9 @@ bool FlattenSeq(const json& rule, const json& rules, std::vector<const json*>& o
                 }
             }
         }
-        out.push_back(&member);
+        // The raw member, wrappers and all: every reader unwraps for itself,
+        // and Literals needs to see an unnamed ALIAS before it is stripped.
+        out.push_back(&raw);
         // A member written directly in this sequence becomes the tail, so
         // whatever indirection an earlier member involved no longer describes
         // the closer.
@@ -281,6 +319,51 @@ void CollectAliasedNodes(const json& node, const json& rules, std::map<std::stri
     }
 }
 
+// A keyword: letters and underscores only, so `fi`, `done`, `end`, `esac`
+// qualify and `;`, `)`, `=>` do not. What makes a pair is being two DISTINCT
+// keywords at the two ends of one production with a list between them --
+// `do ... done`, `if ... fi`, fish's `function ... end`. Measured across all
+// 23 bundled grammars before shipping; see Docs/ParsingEngine.md for the
+// false-positive audit.
+bool IsKeyword(std::string_view literal) {
+    return !literal.empty() && std::all_of(literal.begin(), literal.end(), [](unsigned char c) {
+        return std::isalpha(c) != 0 || c == '_';
+    });
+}
+
+std::optional<imprint::DelimitedBody> MatchKeywordPair(const std::vector<const json*>& core) {
+    if (core.size() < 3)
+        return std::nullopt; // opener, something, closer -- two keywords alone is a phrase
+    const std::set<std::string> closers = Literals(*core.back());
+    const std::set<std::string> openers = Literals(*core.front());
+    if (closers.size() != 1 || openers.size() != 1)
+        return std::nullopt;
+    const std::string& closer = *closers.begin();
+    const std::string& opener = *openers.begin();
+    if (!IsKeyword(closer) || !IsKeyword(opener) || closer == opener)
+        return std::nullopt;
+
+    // A pair around a single thing is a phrase, not a body: bash's
+    // `elif ... then` (the condition sits between them; the commands come
+    // after) and JavaScript's `new ... target`. Measured: those two are the
+    // only non-list-like pairs in all 23 grammars, and the nine list-like
+    // ones are exactly the nine bash/fish wrote by hand.
+    const bool listLike = std::any_of(core.begin() + 1, core.end() - 1, [](const json* m) {
+        const std::string type = TypeOf(Unwrap(*m));
+        return type == "REPEAT" || type == "REPEAT1" || type == "CHOICE";
+    });
+    if (!listLike)
+        return std::nullopt;
+
+    imprint::DelimitedBody body;
+    body.kind             = imprint::DelimiterKind::Keyword;
+    body.openerIsFirst    = true;
+    body.listLikeInterior = true;
+    body.opener           = opener;
+    body.closer           = closer;
+    return body;
+}
+
 std::optional<imprint::DelimitedBody> MatchBracketed(const std::vector<const json*>& core) {
     if (core.size() < 2) return std::nullopt;
 
@@ -294,8 +377,11 @@ std::optional<imprint::DelimitedBody> MatchBracketed(const std::vector<const jso
     if (closer.empty()) return std::nullopt;
 
     const std::string opener   = OpenerFor(closer);
-    const auto        openerIt = std::find_if(core.begin(), core.end() - 1,
-                                       [&](const json* m) { return Literals(*m).count(opener) > 0; });
+    const auto        openerIt = std::find_if(core.begin(), core.end() - 1, [&](const json* m) {
+        const std::set<std::string> literals = Literals(*m);
+        return std::any_of(literals.begin(), literals.end(),
+                           [&](const std::string& literal) { return imprint::OpensWithBracket(literal, opener[0]); });
+    });
     if (openerIt == core.end() - 1) return std::nullopt;
 
     imprint::DelimitedBody body;
@@ -367,6 +453,10 @@ std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const nlohman
 
         if (const auto bracket = MatchBracketed(core); bracket.has_value()) {
             found.emplace(name, *bracket);
+            continue;
+        }
+        if (const auto keyword = MatchKeywordPair(core); keyword.has_value()) {
+            found.emplace(name, *keyword);
             continue;
         }
 

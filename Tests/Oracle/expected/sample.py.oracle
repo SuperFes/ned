@@ -1,5 +1,5 @@
 # sample.py  (python-mode)
-# 134 facts
+# 148 facts
 fold 36..228  "class Widget:\n    \"\"\"Indenta … name.upper()"
 fold 99..166  "    def __init__(self, name: … .name = name"
 fold 168..228  "    def shout(self) -> str:\n … name.upper()"
@@ -7,6 +7,7 @@ fold 231..349  "def total(values: List[int]) … eturn result"
 fold 283..331  "    for value in values:\n    … ult += value"
 fold 352..612  "def usage() -> str:\n    \"\"\"A … sage.__doc__"
 fold 376..587  "\"\"\"A multi-line docstring wh … ays.\n    \"\"\""
+fold 615..715  "def commented():\n    # A com …     return 1"
 highlight 0..6  [keyword]  "import"
 highlight 7..9  [variable]  "os"
 highlight 10..14  [keyword]  "from"
@@ -63,6 +64,11 @@ highlight 376..587  [string]  "\"\"\"A multi-line docstring wh … ays.\n    \"\
 highlight 592..598  [keyword]  "return"
 highlight 599..604  [variable]  "usage"
 highlight 605..612  [property]  "__doc__"
+highlight 615..618  [keyword]  "def"
+highlight 619..628  [function]  "commented"
+highlight 636..702  [comment]  "# A comment as the body's fi … ill the def."
+highlight 707..713  [keyword]  "return"
+highlight 714..715  [number]  "1"
 import 7..9  [os]  "os"
 import 10..33  [typing]  "from typing import List"
 indent 0..9  [0]  "import os"
@@ -89,7 +95,12 @@ indent 351..351  [0]
 indent 352..371  [0]  "def usage() -> str:"
 indent 372..430  [4]  "    \"\"\"A multi-line docstrin … s the value."
 indent 588..612  [4]  "    return usage.__doc__"
-indent 613..613  [4]
+indent 613..613  [0]
+indent 614..614  [0]
+indent 615..631  [0]  "def commented():"
+indent 632..702  [0]  "    # A comment as the body' … ill the def."
+indent 703..715  [4]  "    return 1"
+indent 716..716  [4]
 local 7..9  [Reference]  "os"
 local 15..21  [Reference]  "typing"
 local 29..33  [Reference]  "List"
@@ -129,8 +140,11 @@ local 352..612  [Scope]  "def usage() -> str:\n    \"\"\"A … sage.__doc__"
 local 356..361  [Reference]  "usage"
 local 367..370  [Reference]  "str"
 local 599..604  [Reference]  "usage"
+local 615..715  [Scope]  "def commented():\n    # A com …     return 1"
+local 619..628  [Reference]  "commented"
 symbol 36..228  [TypeLike Widget]  "class Widget:\n    \"\"\"Indenta … name.upper()"
 symbol 103..166  [Callable __init__]  "def __init__(self, name: str … .name = name"
 symbol 172..228  [Callable shout]  "def shout(self) -> str:\n     … name.upper()"
 symbol 231..349  [Callable total]  "def total(values: List[int]) … eturn result"
 symbol 352..612  [Callable usage]  "def usage() -> str:\n    \"\"\"A … sage.__doc__"
+symbol 615..715  [Callable commented]  "def commented():\n    # A com …     return 1"
