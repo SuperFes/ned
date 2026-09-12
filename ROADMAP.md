@@ -53,12 +53,20 @@ would make the number mean nothing.
       README is 70 lines against **275 registered commands** and **160 `ned/*` Janet
       bindings**. Split developer docs from user docs as separate trees with separate
       audiences, rather than continuing to let one directory serve both.
-- [ ] **Generate the command/binding reference rather than writing it.** The highest-
-      leverage user-doc item, because it cannot drift: a `Tools/` binary linking `ned_lib`
-      walks `CommandRegistry` and the `ned/*` binding table and dumps the doc strings
-      *already being passed to* `Register<Fn>` into Markdown. Spec is in "Documentation &
-      Companion Tooling" below; this promotes it to a 0.6 blocker. An existing, invisible
-      asset becomes the reference page.
+- [x] **The command and scripting references are generated.** `Docs/Commands.md` (302
+      commands) and `Docs/Scripting.md` (159 `ned/*` bindings), both from the live registry
+      and binding table, both held against it on every build so neither can drift and
+      nothing can arrive undocumented. Every entry already existed — written at the
+      registration site and until now visible only through `M-x` or a REPL's `(doc ...)`.
+      Done as a blessed-and-guarded test rather than the `Tools/` binary originally
+      sketched: it needs no new build target, and the guard *is* the feature, since a
+      hand-maintained list of 302 commands is a list that is wrong.
+      `Environment::RegisteredBindings` was added for it, and the distinction it draws is
+      the interesting part: it reports what C++ registered, not what is *in* the shared
+      Janet environment, because other tests define their own `ned/*` and `envtest/*`
+      symbols there. Reading the environment made the generated page depend on test order
+      — caught only by `./build/ned_tests`, which `ctest -j8` cannot see, which is exactly
+      why both are run.
 - [ ] **Ship an install story.** `install(TARGETS ned ...)` exists, but CI produces no
       artifacts and there is no package, so a stranger must build 24 tree-sitter grammars,
       FetchContent nine dependencies, and already have a pkg-config-discoverable Janet. The
