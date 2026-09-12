@@ -34,15 +34,6 @@
 
 namespace ned::editor::imprint {
 
-// The two delimiters of one delimited body, as byte ranges. `openStart` is
-// always < `closeStart`.
-struct DelimiterPair {
-    std::size_t openStart  = 0;
-    std::size_t openEnd    = 0;
-    std::size_t closeStart = 0;
-    std::size_t closeEnd   = 0;
-};
-
 // The pair whose opener or closer point sits on or immediately after, or
 // nullopt when point is not on a delimiter at all.
 //
@@ -68,14 +59,6 @@ struct DelimiterPair {
 // reimplementing the convention.
 [[nodiscard]] std::string LanguageKeyForMode(std::string_view modeName);
 
-// Parses `text` for `language`, or nullopt when there is no compiled-in table
-// for it -- so a caller can tell "no bracket here" apart from "this mode does
-// not do brackets" without parsing first to find out.
-//
-// Owns its own parse rather than sharing a Mode's: this is a one-shot answer
-// to a keystroke, not a per-repaint pipeline, and threading a cache through
-// CommandContext for it would buy nothing measurable.
-[[nodiscard]] std::optional<treesitter::Tree> ParseForBrackets(std::string_view text, std::string_view language);
 
 } // namespace ned::editor::imprint
 
