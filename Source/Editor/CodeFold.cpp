@@ -9,7 +9,25 @@ std::vector<std::pair<std::size_t, std::size_t>> FoldableBlocks(const Mode& mode
     if (!mode.fold) {
         return {};
     }
-    return mode.fold(bufferText);
+    std::vector<std::pair<std::size_t, std::size_t>> blocks = mode.fold(bufferText);
+
+    // A fold must span more than one line, and this is the one place to say
+    // so: every consumer -- the gutter affordance, ToggleFoldAtLine,
+    // FoldedLineRanges -- comes through here, and they had drifted apart
+    // (the gutter refused a single-line block; the toggle did not, and
+    // folding one hid the line below it).
+    //
+    // It is a property of the TEXT rather than of the grammar, which is why
+    // no fold source can answer it: the same node type is foldable or not
+    // depending on how it was written. That makes this the natural home for
+    // it, and it is what lets sources compose freely -- a source may report
+    // an empty `()` parameter list without that becoming a fold affordance.
+    std::erase_if(blocks, [bufferText](const std::pair<std::size_t, std::size_t>& block) {
+        const std::size_t start = std::min(block.first, bufferText.size());
+        const std::size_t end   = std::min(block.second, bufferText.size());
+        return start >= end || bufferText.find('\n', start) >= end;
+    });
+    return blocks;
 }
 
 std::vector<std::pair<std::size_t, std::size_t>>

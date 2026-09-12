@@ -1,10 +1,7 @@
 # sample.py  (python-mode)
-# 114 facts
+# 111 facts
 fold 54..228  "\"\"\"Indentation-based blocks, … name.upper()"
-fold 150..166  "self.name = name"
-fold 204..228  "return self.name.upper()"
 fold 272..349  "result = 0\n    for value in  … eturn result"
-fold 316..331  "result += value"
 highlight 0..6  [keyword]  "import"
 highlight 7..9  [variable]  "os"
 highlight 10..14  [keyword]  "from"

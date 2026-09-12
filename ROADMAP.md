@@ -408,11 +408,26 @@ real; if not, that is worth learning at language 3 rather than language 15.
       build-time codegen binary would make staleness structurally impossible instead, at
       the cost of a tool that must run on the build host — noted in `ImprintTables.h` as
       the upgrade path if this ever outgrows a checked-in artifact.
-- [ ] **Turn it on.** Nothing in `Source/` selects the imprint fold source yet — the
-      capability exists and is proven, the switch is a separate decision. Wants a setting
-      in the `ned/set-*` shape and a think about precedence against a hand-written query
-      that a language may still want (Org and Markdown fold by their own rules, not by
-      delimiters).
+- [x] **It is on, and fold sources compose.** `Mode::fold` for a tree-sitter mode is now
+      the *union* of the hand-written query and the delimiter imprint, both riding the same
+      `sharedParse` so the imprint costs no second parse.
+      Union rather than precedence, and that is the design point: a fold source is
+      **additive** — it asserts "this range is foldable", never the negative — so two
+      sources cannot contradict each other, only cover different ground. Three cases fall
+      out of one mechanism with no special-casing: a delimiter language takes the imprint;
+      a language that folds by its own structure takes only its own function (Org by
+      headline depth, Markdown by sections — neither has a compiled-in table, so the
+      imprint contributes nothing and nothing has to say so); and a language wanting both
+      gets both. `MergeFoldSources` is where a suppressing source would go if one is ever
+      needed, and that would be a real change rather than a tweak.
+- [x] **The multi-line rule moved to `FoldableBlocks`, where it belongs.** Enforcing it at
+      the single entry point every consumer uses is what lets sources compose freely — a
+      source may report an empty `()` parameter list without that becoming an affordance.
+      It also closes the drift found earlier, where the gutter refused single-line blocks
+      and the toggle did not. Tests that asserted counts including single-line constructs
+      had their *inputs* made multi-line rather than their expectations loosened; two that
+      reached past `FoldableBlocks` to `Mode::fold` directly now go through it, since
+      `CodeFold.h` says that is the only function meant to touch it.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over

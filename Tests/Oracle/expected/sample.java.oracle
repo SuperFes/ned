@@ -1,9 +1,8 @@
 # sample.java  (java-mode)
-# 93 facts
+# 92 facts
 fold 16..35  "{\n    int size();\n}"
 fold 49..72  "{\n    RED,\n    GREEN,\n}"
 fold 104..379  "{\n    private final int[] xs …    }\n    }\n}"
-fold 135..146  "{ 1, 2, 3 }"
 fold 162..206  "{\n        System.out.println(\"built\");\n    }"
 fold 230..377  "{\n        switch (xs.length) …      }\n    }"
 fold 259..371  "{\n            case 0:\n       … h;\n        }"
