@@ -29,6 +29,7 @@
 
 #include <cstddef>
 #include <regex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -82,10 +83,27 @@ struct QueryMatch {
     std::unordered_map<std::string, std::string> setDirectives;
 };
 
+// What Query's constructor throws for a malformed source: the byte offset
+// into that source and the kind of error, so a caller that assembled the
+// source from several files (Editor/LanguageFiles.h) can say which one.
+class QueryCompileError : public std::runtime_error {
+  public:
+    QueryCompileError(std::size_t offset, std::string_view kind);
+    [[nodiscard]] std::size_t Offset() const {
+        return offset_;
+    }
+    [[nodiscard]] std::string_view Kind() const {
+        return kind_;
+    }
+
+  private:
+    std::size_t offset_;
+    std::string kind_;
+};
+
 class Query {
   public:
-    // Throws std::runtime_error, with the byte offset into source and a
-    // description of the error kind, if source is malformed (a query source
+    // Throws QueryCompileError if source is malformed (a query source
     // referencing a node/field name the grammar doesn't have is a query
     // error here, same as a syntax error in the query language itself --
     // ts_query_new reports both through the same error_offset/error_type

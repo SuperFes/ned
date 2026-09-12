@@ -665,11 +665,10 @@ struct Mode {
 //
 // Every field is a std::string_view over text this does NOT own. Both
 // builders below read each source during construction and never retain it
-// (Query's constructor compiles the pattern immediately), so a caller
-// passing a compile-time-embedded constant (Source/Editor/TreeSitter/
-// Queries.h -- what every bundled definition does) and one passing a
-// locally-owned std::string it destroys afterwards (ModeOverrides.cpp's
-// dynamic-grammar path) are equally safe.
+// (Query's constructor compiles the pattern immediately), so a caller whose
+// text is a local compiled from query files (LanguageDefinition.cpp,
+// ModeOverrides.cpp's dynamic-grammar path -- Editor/LanguageFiles.h) and
+// destroyed afterwards is safe.
 //
 // An empty field means "this language has no query of that kind," which is
 // the same signal as the corresponding Mode capability being left an empty

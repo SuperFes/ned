@@ -284,7 +284,7 @@ Two numbers carry the case:
   mechanically `(X close-token @dedent)` for an `X` already in that file's `@indent` list.
   One fact — *this node is a delimited body* — currently gets stated two to three times
   per language, 21 languages over.
-- `Queries.h` holds **95 embedded query constants over 29 languages x 8 driver kinds =
+- Queries.h (since deleted) held **95 embedded query constants over 29 languages x 8 driver kinds =
   232 cells, so 137 gaps (59%)**. Highlights is the only column at 29/29, and only because
   upstream ships `highlights.scm`; every column ned authors itself is 34–72% empty, each
   empty cell a language silently missing a feature — though a gap stopped meaning a
@@ -837,7 +837,7 @@ real; if not, that is worth learning at language 3 rather than language 15.
       above closed the *duplication* argument for a language-definition format and opened
       the real one: a bundled language is stated in about nine places (a C++ factory, a
       26-entry factory table, a 55-entry extension table, 91 CMake embed lines plus ~90
-      `Queries.h` externs, `Languages.cpp`'s 25 `if (name == …)` branches, root-marker
+      Queries.h externs (both since deleted), `Languages.cpp`'s 25 `if (name == …)` branches, root-marker
       and import-resolution and injection-alias tables, hand-built keymaps, and `if`s
       inside generic engines), and `RegisterDynamicMode` is a *second* loader knowing four
       of eight query kinds and no imprint. Decided: one `Source/Languages/<name>/
@@ -864,8 +864,28 @@ real; if not, that is worth learning at language 3 rather than language 15.
             `expandSelection`/`sexpMotion` for free because its escapes decorate the
             generic build instead of replacing it. A definition naming an unknown escape or
             grammar throws rather than building less.
-      - [ ] **Step 1 — query DSL + `.scm → .janet` converter**; every query file
-            converted, drift test for grammar bumps, `.scm` leaves the repo.
+      - [x] **Step 1 — query files in Janet syntax; `.scm` leaves the repo.**
+            `Editor/QueryData.h` is the pattern data model with two readers (one
+            grammar of forms, two spellings: Janet's `#`-comments/`(:eq? …)`
+            predicates and tree-sitter's own) and one writer emitting what
+            `ts_query_new` consumes, line-preserving so a tree-sitter error maps
+            back to `path:line` of the real file (`QueryCompileError` carries the
+            offset; `LanguageDefinition.cpp` re-compiles per kind on failure to
+            name the file). `Editor/LanguageFiles.h` reads a query path from the
+            compiled-in `Source/Languages/` table (one CMake glob,
+            `ned_embed_language_files` — the 91 per-query embed lines and ~90
+            `Queries.h` externs are deleted with the header) or from disk, cached
+            per path. All 63 ned-authored files converted in place with comments
+            and layout intact; upstream's 31 vendored as
+            `<name>/upstream/<kind>.janet`, held against their FetchContent
+            sources by `Tests/QueryDataTest.cpp` (`NED_BLESS_QUERIES=1` re-blesses
+            after a grammar bump, `ImprintTables.cpp`'s exact shape).
+            `RegisterDynamicMode` now discovers all eight kinds (it knew four) in
+            either spelling, so a system install's own `.scm` files keep working.
+            markdown-inline became an ordinary definition (no extensions), which
+            deleted `Injection.cpp`'s grammar-only special case. Oracle
+            byte-identical; verified live (cpp + org buffers, fold cycle,
+            headline levels, clangd/harper attach).
       - [ ] **Step 2 — definitions move to `language.janet`**, loader in `Janet/`, every
             remaining C++ per-language table (root markers, import resolution, injection
             aliases, snippets) derived from them.
@@ -997,8 +1017,7 @@ CSS were dropped from that gap rather than filled: both have a binding construct
 CSS custom property is scoped to matching elements *and their descendants*, which is DOM
 containment, so the byte containment `LocalScopes.h` resolves by would produce a rename
 that silently missed every descendant use. The full list of languages with no locals
-query, and why each is on it, is recorded beside the declarations in
-`Source/Editor/TreeSitter/Queries.h`) and `scope-aware-rename` (`rename-symbol` on
+query, and why each is on it, is recorded in `Source/Editor/BundledLanguages.cpp`) and `scope-aware-rename` (`rename-symbol` on
 `C-c C-M-r`, tiered -- a name that resolves to a binding this file wholly owns is renamed
 in-buffer as one undo step with no request sent, and anything else falls through to the
 `prepareRename`/`rename` flow, which `lsp-rename` still reaches directly from `M-x`.

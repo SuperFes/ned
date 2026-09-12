@@ -440,7 +440,7 @@ TEST_CASE("janet-mode reports a module-level def as not local", "[Mode][LocalSco
 }
 
 TEST_CASE("a mode with no locals query leaves the capability unset", "[Mode][LocalScopes]") {
-    // A deliberate list rather than a backlog -- see Queries.h. json/yaml/
+    // A deliberate list rather than a backlog. json/yaml/
     // toml/xml have no binding construct at all; html and css have one whose
     // scoping is DOM containment rather than lexical, which this model
     // cannot express without producing a rename that misses descendant uses.
