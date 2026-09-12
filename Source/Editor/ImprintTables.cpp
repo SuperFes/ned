@@ -17,6 +17,15 @@ struct Entry {
     bool             listLikeInterior;
 };
 
+constexpr Entry kBash[] = {
+    {"array", DelimiterKind::Bracket, true, true},
+    {"compound_statement", DelimiterKind::Bracket, true, true},
+    {"last_case_item", DelimiterKind::Bracket, true, true},
+    {"parenthesized_expression", DelimiterKind::Bracket, true, false},
+    {"subscript", DelimiterKind::Bracket, false, true},
+    {"subshell", DelimiterKind::Bracket, true, true},
+};
+
 constexpr Entry kC[] = {
     {"abstract_array_declarator", DelimiterKind::Bracket, false, true},
     {"abstract_parenthesized_declarator", DelimiterKind::Bracket, true, true},
@@ -44,6 +53,7 @@ constexpr Entry kC[] = {
     {"parenthesized_type_declarator", DelimiterKind::Bracket, true, true},
     {"preproc_argument_list", DelimiterKind::Bracket, true, true},
     {"preproc_defined", DelimiterKind::Bracket, false, false},
+    {"preproc_params", DelimiterKind::Bracket, true, true},
     {"preproc_parenthesized_expression", DelimiterKind::Bracket, true, false},
     {"subscript_designator", DelimiterKind::Bracket, true, false},
     {"subscript_expression", DelimiterKind::Bracket, false, false},
@@ -96,6 +106,7 @@ constexpr Entry kCpp[] = {
     {"parenthesized_type_declarator", DelimiterKind::Bracket, true, true},
     {"preproc_argument_list", DelimiterKind::Bracket, true, true},
     {"preproc_defined", DelimiterKind::Bracket, false, false},
+    {"preproc_params", DelimiterKind::Bracket, true, true},
     {"preproc_parenthesized_expression", DelimiterKind::Bracket, true, false},
     {"requirement_seq", DelimiterKind::Bracket, true, true},
     {"requires_clause", DelimiterKind::Bracket, false, false},
@@ -104,6 +115,8 @@ constexpr Entry kCpp[] = {
     {"subscript_argument_list", DelimiterKind::Bracket, true, true},
     {"subscript_designator", DelimiterKind::Bracket, true, false},
     {"subscript_range_designator", DelimiterKind::Bracket, true, false},
+    {"template_argument_list", DelimiterKind::Bracket, true, true},
+    {"template_parameter_list", DelimiterKind::Bracket, true, true},
 };
 
 constexpr Entry kCsharp[] = {
@@ -154,6 +167,28 @@ constexpr Entry kCsharp[] = {
     {"with_expression", DelimiterKind::Bracket, false, true},
 };
 
+constexpr Entry kCss[] = {
+    {"arguments", DelimiterKind::Bracket, true, true},
+    {"attribute_selector", DelimiterKind::Bracket, false, true},
+    {"block", DelimiterKind::Bracket, true, true},
+    {"feature_query", DelimiterKind::Bracket, true, true},
+    {"grid_value", DelimiterKind::Bracket, true, false},
+    {"keyframe_block_list", DelimiterKind::Bracket, true, true},
+    {"parenthesized_query", DelimiterKind::Bracket, true, false},
+    {"parenthesized_value", DelimiterKind::Bracket, true, false},
+    {"pseudo_class_arguments", DelimiterKind::Bracket, true, true},
+    {"pseudo_class_nth_child_arguments", DelimiterKind::Bracket, true, true},
+    {"pseudo_class_with_selector_arguments", DelimiterKind::Bracket, true, true},
+    {"pseudo_element_arguments", DelimiterKind::Bracket, true, true},
+    {"selector_query", DelimiterKind::Bracket, false, false},
+};
+
+constexpr Entry kFish[] = {
+    {"brace_expansion", DelimiterKind::Bracket, true, false},
+    {"command_substitution", DelimiterKind::Bracket, false, true},
+    {"list_element_access", DelimiterKind::Bracket, true, true},
+};
+
 constexpr Entry kGo[] = {
     {"argument_list", DelimiterKind::Bracket, true, true},
     {"block", DelimiterKind::Bracket, true, true},
@@ -176,6 +211,18 @@ constexpr Entry kGo[] = {
     {"type_parameter_list", DelimiterKind::Bracket, true, true},
     {"type_switch_statement", DelimiterKind::Bracket, false, true},
     {"var_spec_list", DelimiterKind::Bracket, true, true},
+};
+
+constexpr Entry kHtml[] = {
+    {"script_start_tag", DelimiterKind::Bracket, true, true},
+    {"start_tag", DelimiterKind::Bracket, true, true},
+    {"style_start_tag", DelimiterKind::Bracket, true, true},
+};
+
+constexpr Entry kJanet[] = {
+    {"par_tup_lit", DelimiterKind::Bracket, true, true},
+    {"sqr_tup_lit", DelimiterKind::Bracket, true, true},
+    {"struct_lit", DelimiterKind::Bracket, true, true},
 };
 
 constexpr Entry kJava[] = {
@@ -258,6 +305,28 @@ constexpr Entry kKotlin[] = {
     {"when_subject", DelimiterKind::Bracket, true, true},
 };
 
+constexpr Entry kPhp[] = {
+    {"anonymous_function_use_clause", DelimiterKind::Bracket, false, true},
+    {"arguments", DelimiterKind::Bracket, true, true},
+    {"array_creation_expression", DelimiterKind::Bracket, false, true},
+    {"compound_statement", DelimiterKind::Bracket, true, true},
+    {"declaration_list", DelimiterKind::Bracket, true, true},
+    {"enum_declaration_list", DelimiterKind::Bracket, true, true},
+    {"formal_parameters", DelimiterKind::Bracket, true, true},
+    {"heredoc", DelimiterKind::Indent, true, true},
+    {"list_literal", DelimiterKind::Bracket, false, false},
+    {"match_block", DelimiterKind::Bracket, true, true},
+    {"member_access_expression", DelimiterKind::Bracket, false, false},
+    {"namespace_use_group", DelimiterKind::Bracket, true, false},
+    {"nowdoc", DelimiterKind::Indent, true, true},
+    {"nullsafe_member_access_expression", DelimiterKind::Bracket, false, false},
+    {"parenthesized_expression", DelimiterKind::Bracket, true, false},
+    {"property_hook_list", DelimiterKind::Bracket, true, true},
+    {"switch_block", DelimiterKind::Bracket, true, true},
+    {"use_list", DelimiterKind::Bracket, true, true},
+    {"visibility_modifier", DelimiterKind::Bracket, false, false},
+};
+
 constexpr Entry kPython[] = {
     {"argument_list", DelimiterKind::Bracket, true, true},
     {"block", DelimiterKind::Indent, true, true},
@@ -313,11 +382,50 @@ constexpr Entry kRust[] = {
     {"tuple_pattern", DelimiterKind::Bracket, true, true},
     {"tuple_struct_pattern", DelimiterKind::Bracket, false, true},
     {"tuple_type", DelimiterKind::Bracket, true, true},
+    {"type_arguments", DelimiterKind::Bracket, true, true},
     {"type_parameters", DelimiterKind::Bracket, true, true},
     {"unit_expression", DelimiterKind::Bracket, true, false},
     {"unit_type", DelimiterKind::Bracket, true, false},
+    {"use_bounds", DelimiterKind::Bracket, false, true},
     {"use_list", DelimiterKind::Bracket, true, true},
     {"visibility_modifier", DelimiterKind::Bracket, false, true},
+};
+
+constexpr Entry kToml[] = {
+    {"array", DelimiterKind::Bracket, true, true},
+    {"inline_table", DelimiterKind::Bracket, true, true},
+    {"pair", DelimiterKind::Indent, true, true},
+    {"table", DelimiterKind::Indent, true, true},
+    {"table_array_element", DelimiterKind::Indent, true, true},
+};
+
+constexpr Entry kTsx[] = {
+    {"arguments", DelimiterKind::Bracket, true, true},
+    {"array", DelimiterKind::Bracket, true, true},
+    {"array_pattern", DelimiterKind::Bracket, true, true},
+    {"array_type", DelimiterKind::Bracket, false, false},
+    {"class_body", DelimiterKind::Bracket, true, true},
+    {"computed_property_name", DelimiterKind::Bracket, true, false},
+    {"decorator_parenthesized_expression", DelimiterKind::Bracket, true, true},
+    {"enum_body", DelimiterKind::Bracket, true, true},
+    {"export_clause", DelimiterKind::Bracket, true, true},
+    {"formal_parameters", DelimiterKind::Bracket, true, true},
+    {"import_require_clause", DelimiterKind::Bracket, false, false},
+    {"jsx_expression", DelimiterKind::Bracket, true, true},
+    {"jsx_opening_element", DelimiterKind::Bracket, true, true},
+    {"lookup_type", DelimiterKind::Bracket, false, false},
+    {"named_imports", DelimiterKind::Bracket, true, true},
+    {"object", DelimiterKind::Bracket, true, true},
+    {"object_pattern", DelimiterKind::Bracket, true, true},
+    {"object_type", DelimiterKind::Bracket, true, true},
+    {"parenthesized_expression", DelimiterKind::Bracket, true, true},
+    {"parenthesized_type", DelimiterKind::Bracket, true, false},
+    {"statement_block", DelimiterKind::Bracket, true, true},
+    {"subscript_expression", DelimiterKind::Bracket, false, false},
+    {"switch_body", DelimiterKind::Bracket, true, true},
+    {"tuple_type", DelimiterKind::Bracket, true, true},
+    {"type_arguments", DelimiterKind::Bracket, true, true},
+    {"type_parameters", DelimiterKind::Bracket, true, true},
 };
 
 constexpr Entry kTypescript[] = {
@@ -349,6 +457,17 @@ constexpr Entry kTypescript[] = {
     {"type_parameters", DelimiterKind::Bracket, true, true},
 };
 
+constexpr Entry kXml[] = {
+    {"Enumeration", DelimiterKind::Bracket, true, true},
+    {"NotationType", DelimiterKind::Bracket, false, true},
+    {"STag", DelimiterKind::Bracket, true, true},
+    {"children", DelimiterKind::Bracket, true, true},
+};
+
+constexpr Entry kYaml[] = {
+    {"stream", DelimiterKind::Indent, true, true},
+};
+
 const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
     static const std::map<std::string, std::map<std::string, DelimitedBody>> kTables = [] {
         std::map<std::string, std::map<std::string, DelimitedBody>> built;
@@ -361,18 +480,28 @@ const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
                                             entries[i].listLikeInterior});
             }
         };
+        load("bash", kBash, std::size(kBash));
         load("c", kC, std::size(kC));
         load("clojure", kClojure, std::size(kClojure));
         load("cpp", kCpp, std::size(kCpp));
         load("csharp", kCsharp, std::size(kCsharp));
+        load("css", kCss, std::size(kCss));
+        load("fish", kFish, std::size(kFish));
         load("go", kGo, std::size(kGo));
+        load("html", kHtml, std::size(kHtml));
+        load("janet", kJanet, std::size(kJanet));
         load("java", kJava, std::size(kJava));
         load("javascript", kJavascript, std::size(kJavascript));
         load("json", kJson, std::size(kJson));
         load("kotlin", kKotlin, std::size(kKotlin));
+        load("php", kPhp, std::size(kPhp));
         load("python", kPython, std::size(kPython));
         load("rust", kRust, std::size(kRust));
+        load("toml", kToml, std::size(kToml));
+        load("tsx", kTsx, std::size(kTsx));
         load("typescript", kTypescript, std::size(kTypescript));
+        load("xml", kXml, std::size(kXml));
+        load("yaml", kYaml, std::size(kYaml));
         return built;
     }();
     return kTables;

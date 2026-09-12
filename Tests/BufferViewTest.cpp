@@ -1332,7 +1332,10 @@ TEST_CASE("BufferView consults the active Mode's highlightLine hook when paintin
 
     view.Paint(canvas);
 
-    const int gutter = GutterWidth(1);
+    // JanetMode has a fold gutter now: Janet forms are bracket-delimited, so
+    // the imprint speaks for them the same way it does for Clojure. The fold
+    // column shifts content right, which is all this needed to account for.
+    const int gutter = GutterWidth(1, /*foldColumn=*/4);
     // Compares against the theme's own current commentForeground rather
     // than a hardcoded color literal -- this test is about the highlight
     // hook actually being consulted, not about pinning DarkTheme's exact

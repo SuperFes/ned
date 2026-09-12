@@ -69,8 +69,25 @@ bool IsOptional(const json& rule) {
 // Every literal this member could match: a STRING, or a CHOICE of them.
 // TypeScript's `object_type` opens with CHOICE["{", "{|"] -- one node, two
 // spellings -- so treating an opener as a single string misses it.
+// Reading a literal looks through TOKEN as well, which IsSingleToken above
+// deliberately does not. The two are asking different questions: a rule whose
+// WHOLE production is a TOKEN is a leaf node with no interior, while a TOKEN
+// sitting inside a sequence is just a token carrying a precedence -- Bash
+// writes its compound_statement's closing brace that way, and refusing to read
+// it lost every Bash fold.
+const json& UnwrapIncludingTokens(const json& rule) {
+    const json* current = &Unwrap(rule);
+    for (int depth = 0; depth < 16; ++depth) {
+        if (!IsSingleToken(*current)) break;
+        const auto content = current->find("content");
+        if (content == current->end()) break;
+        current = &Unwrap(*content);
+    }
+    return *current;
+}
+
 std::set<std::string> Literals(const json& member) {
-    const json&           inner = Unwrap(member);
+    const json&           inner = UnwrapIncludingTokens(member);
     std::set<std::string> found;
     const auto            add = [&found](const json& candidate) {
         if (TypeOf(candidate) != "STRING") return;
@@ -79,7 +96,7 @@ std::set<std::string> Literals(const json& member) {
     };
     if (TypeOf(inner) == "CHOICE") {
         if (const auto members = inner.find("members"); members != inner.end() && members->is_array()) {
-            for (const json& member2 : *members) add(Unwrap(member2));
+            for (const json& member2 : *members) add(UnwrapIncludingTokens(member2));
         }
     }
     else {

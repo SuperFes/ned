@@ -588,17 +588,29 @@ TEST_CASE("In-scope modes have a fold hook installed", "[Mode]") {
     REQUIRE(static_cast<bool>(ned::editor::JankMode().fold));
 }
 
-TEST_CASE("Out-of-scope and non-tree-sitter modes have no fold hook", "[Mode]") {
+TEST_CASE("A mode has a fold hook exactly when some source can speak for it", "[Mode]") {
+    // This used to assert that php/html/css/bash/yaml/toml had NO fold hook,
+    // which was true while folding meant a hand-written folds.scm and none of
+    // them had one. They do now, from the delimiter imprint alone, with
+    // nothing authored per language -- see Editor/ImprintFold.h.
+    //
+    // HtmlMode is the interesting entry: it HAS a hook, and that hook returns
+    // nothing, because HTML's elements are delimited by matched tag pairs
+    // rather than bracket literals. Having a source that declines is different
+    // from having no source, and the distinction is worth keeping visible.
+    REQUIRE(static_cast<bool>(ned::editor::PhpMode().fold));
+    REQUIRE(static_cast<bool>(ned::editor::CssMode().fold));
+    REQUIRE(static_cast<bool>(ned::editor::BashMode().fold));
+    REQUIRE(static_cast<bool>(ned::editor::YamlMode().fold));
+    REQUIRE(static_cast<bool>(ned::editor::TomlMode().fold));
+    REQUIRE(static_cast<bool>(ned::editor::HtmlMode().fold));
+
+    // Still genuinely sourceless: Fundamental parses nothing at all, and Org
+    // and Markdown fold by their own structure (headline depth, sections)
+    // rather than by delimiters, so neither has a compiled-in table.
     REQUIRE_FALSE(static_cast<bool>(FundamentalMode().fold));
-    REQUIRE_FALSE(static_cast<bool>(JanetMode().fold));
     REQUIRE_FALSE(static_cast<bool>(OrgMode().fold));
-    REQUIRE_FALSE(static_cast<bool>(ned::editor::PhpMode().fold));
-    REQUIRE_FALSE(static_cast<bool>(ned::editor::HtmlMode().fold));
-    REQUIRE_FALSE(static_cast<bool>(ned::editor::CssMode().fold));
-    REQUIRE_FALSE(static_cast<bool>(ned::editor::BashMode().fold));
     REQUIRE_FALSE(static_cast<bool>(ned::editor::MarkdownMode().fold));
-    REQUIRE_FALSE(static_cast<bool>(ned::editor::YamlMode().fold));
-    REQUIRE_FALSE(static_cast<bool>(ned::editor::TomlMode().fold));
 }
 
 TEST_CASE("Only HtmlMode has an embeddedRegions hook installed", "[Mode]") {
