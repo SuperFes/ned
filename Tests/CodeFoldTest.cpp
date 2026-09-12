@@ -18,7 +18,9 @@ using ned::editor::JavaScriptMode;
 using ned::editor::JsonMode;
 using ned::editor::KotlinMode;
 using ned::editor::PythonMode;
+using ned::editor::TomlMode;
 using ned::editor::TypeScriptMode;
+using ned::editor::YamlMode;
 using ned::editor::codefold::FoldableBlocks;
 using ned::editor::codefold::FoldedLineRanges;
 using ned::editor::codefold::FoldRegion;
@@ -323,4 +325,138 @@ TEST_CASE("FoldRegionsWithDepth from a real C++ file exceeds the 4-column displa
         maxDepth = std::max(maxDepth, region.depth);
     }
     REQUIRE(maxDepth == 5); // 6 nested blocks, 0-indexed depth
+}
+
+// ---------------------------------------------------------------------------
+// Indentation languages: where a fold starts, and what collapsing it hides.
+//
+// A brace language gets this for free -- its `{` sits on the row that stays
+// visible. An indentation body begins one row BELOW the line that names it, so
+// every one of these used to fold from its own first statement: the affordance
+// sat on the wrong row and collapsing left that statement on screen.
+// `imprint::FoldAnchorStart` is what moves the start onto the header row; these
+// hold the end-to-end result, which is what a reader actually sees.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A Python body folds from its header line, not from its first statement", "[CodeFold]") {
+    const auto mode = PythonMode();
+    Buffer     buffer("test.py");
+    buffer.InsertAtPoint("def f():\n    x = 1\n    return x\n");
+
+    const auto blocks = FoldableBlocks(mode, buffer.Text());
+    REQUIRE(blocks.size() == 1);
+    CHECK(buffer.Content().ByteOffsetToLine(blocks[0].first) == 0); // the `def f():` row
+
+    REQUIRE(ToggleFoldAtLine(buffer, buffer.Content(), blocks, 0));
+    const auto ranges = FoldedLineRanges(buffer, buffer.Content(), blocks);
+    REQUIRE(ranges.size() == 1);
+    CHECK(ranges[0].first == 1); // the whole body, not all-but-its-first-line
+    CHECK(ranges[0].second == 3);
+}
+
+TEST_CASE("A one-statement Python body folds", "[CodeFold]") {
+    // The body is one line, but the construct is two: the "must span more than
+    // one line" rule is about what a fold can hide, and here there is a line to
+    // hide. Before anchoring, `return 1` was its own start and end and the
+    // function was simply unfoldable.
+    const auto mode = PythonMode();
+    Buffer     buffer("test.py");
+    buffer.InsertAtPoint("def f():\n    return 1\n");
+
+    const auto blocks = FoldableBlocks(mode, buffer.Text());
+    REQUIRE(blocks.size() == 1);
+    CHECK(buffer.Content().ByteOffsetToLine(blocks[0].first) == 0);
+}
+
+TEST_CASE("A Python class folds as a class and as methods", "[CodeFold]") {
+    const auto mode = PythonMode();
+    Buffer     buffer("test.py");
+    buffer.InsertAtPoint("class C:\n"
+                         "    def m(self):\n"
+                         "        return 1\n"
+                         "\n"
+                         "    def n(self):\n"
+                         "        return 2\n");
+
+    const auto               blocks = FoldableBlocks(mode, buffer.Text());
+    std::vector<std::size_t> headerLines;
+    for (const auto& block : blocks)
+        headerLines.push_back(buffer.Content().ByteOffsetToLine(block.first));
+    CHECK(headerLines == std::vector<std::size_t>{0, 1, 4}); // class C:, def m, def n
+}
+
+TEST_CASE("A blank line between a header and its body does not move the fold", "[CodeFold]") {
+    const auto mode = PythonMode();
+    Buffer     buffer("test.py");
+    buffer.InsertAtPoint("def f():\n\n    x = 1\n    return x\n");
+
+    const auto blocks = FoldableBlocks(mode, buffer.Text());
+    REQUIRE(blocks.size() == 1);
+    CHECK(buffer.Content().ByteOffsetToLine(blocks[0].first) == 0);
+}
+
+TEST_CASE("A Python if/else folds its own branch and leaves else standing", "[CodeFold]") {
+    // The if-statement and its suite both begin on the `if x:` row once the
+    // suite is anchored. NormalizeFoldBlocks keeps the tighter one, so folding
+    // collapses the branch rather than the whole statement.
+    const auto mode = PythonMode();
+    Buffer     buffer("test.py");
+    buffer.InsertAtPoint("if x:\n    a = 1\n    b = 2\nelse:\n    c = 3\n    d = 4\n");
+
+    const auto               blocks = FoldableBlocks(mode, buffer.Text());
+    std::vector<std::size_t> headerLines;
+    for (const auto& block : blocks)
+        headerLines.push_back(buffer.Content().ByteOffsetToLine(block.first));
+    CHECK(headerLines == std::vector<std::size_t>{0, 3}); // `if x:` and `else:`
+
+    REQUIRE(ToggleFoldAtLine(buffer, buffer.Content(), blocks, 0));
+    const auto ranges = FoldedLineRanges(buffer, buffer.Content(), blocks);
+    REQUIRE(ranges.size() == 1);
+    CHECK(ranges[0].first == 1);
+    CHECK(ranges[0].second == 3); // `else:` is still on screen
+}
+
+TEST_CASE("A YAML key folds the block it names", "[CodeFold]") {
+    const auto mode = YamlMode();
+    Buffer     buffer("test.yaml");
+    buffer.InsertAtPoint("root:\n  a: 1\n  b:\n    - x\n    - y\nother: 2\n");
+
+    const auto               blocks = FoldableBlocks(mode, buffer.Text());
+    std::vector<std::size_t> headerLines;
+    for (const auto& block : blocks)
+        headerLines.push_back(buffer.Content().ByteOffsetToLine(block.first));
+    CHECK(headerLines == std::vector<std::size_t>{0, 2}); // `root:` and `  b:`
+
+    REQUIRE(ToggleFoldAtLine(buffer, buffer.Content(), blocks, 0));
+    const auto ranges = FoldedLineRanges(buffer, buffer.Content(), blocks);
+    REQUIRE(ranges.size() == 1);
+    CHECK(ranges[0].first == 1);
+    CHECK(ranges[0].second == 5); // `other: 2` is not root's to hide
+}
+
+TEST_CASE("A TOML table does not hide the next table's header", "[CodeFold]") {
+    // `table` runs to wherever the next one starts, so its end byte sits on a
+    // line it does not own. Trimming trailing whitespace is what keeps the
+    // hides-through-the-end-line convention honest.
+    const auto mode = TomlMode();
+    Buffer     buffer("test.toml");
+    buffer.InsertAtPoint("[table]\nkey = 1\nother = 2\n\n[next]\nk = 2\n");
+
+    const auto blocks = FoldableBlocks(mode, buffer.Text());
+    REQUIRE(blocks.size() == 2);
+    CHECK(buffer.Content().ByteOffsetToLine(blocks[0].first) == 0);
+
+    REQUIRE(ToggleFoldAtLine(buffer, buffer.Content(), blocks, 0));
+    const auto ranges = FoldedLineRanges(buffer, buffer.Content(), blocks);
+    REQUIRE(ranges.size() == 1);
+    CHECK(ranges[0].first == 1);
+    CHECK(ranges[0].second == 3); // through `other = 2`, not through `[next]`
+}
+
+TEST_CASE("NormalizeFoldBlocks keeps the innermost block per start byte", "[CodeFold]") {
+    const std::string text = "a\nb\nc\nd\n";
+    const auto        kept = ned::editor::codefold::NormalizeFoldBlocks({{0, 8}, {0, 4}, {2, 6}}, text);
+    REQUIRE(kept.size() == 2);
+    CHECK(kept[0] == std::pair<std::size_t, std::size_t>{0, 3}); // trailing newline trimmed
+    CHECK(kept[1] == std::pair<std::size_t, std::size_t>{2, 5});
 }

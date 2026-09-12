@@ -4,12 +4,20 @@ Design for replacing ned's per-language tree-sitter query corpus with a single
 trait-based language-definition format, and -- later, and separably -- the
 tree-sitter runtime underneath it.
 
-Status: **design sketch, unstarted.** Nothing here is implemented. Every number
-below was measured against this repo's own checkout on 2026-09-11 (24 fetched
-grammar repos under `build/_deps/`, 79 `.scm` files under
-`Source/Editor/TreeSitter/queries/`, 113 embedded query constants in
-`Source/Editor/TreeSitter/Queries.h`) rather than estimated, so that a later
-reader can re-run the same counts and see what drifted.
+Status: **Tier 0 is built and shipping; Tiers 1-2 and the language-definition
+format are still a design sketch.** `Editor/Imprint.h` (the vocabulary),
+`TreeSitter/GrammarImprint.h` (inference over `grammar.json`),
+`Editor/ImprintTables.cpp` (the compiled-in result) and its two drivers --
+`ImprintFold.h` and `ImprintBracket.h` -- are real code, and folding for 21
+languages plus matching-bracket lookup run on them. Everything from
+"Tier 1 -- declared concepts" onward is unbuilt. Every number
+below was measured against this repo's own checkout rather than estimated, so
+that a later reader can re-run the same counts and see what drifted. Re-counted
+2026-09-11 after the fold work below: 24 fetched grammar repos under
+`build/_deps/`, **77** `.scm` files under `Source/Editor/TreeSitter/queries/`
+and **105** embedded query constants in `Source/Editor/TreeSitter/Queries.h`.
+Both numbers were written here as 79 and 113; the corpus counts drift on their
+own, which is the argument for re-running them rather than quoting them.
 
 Ground-truthed against `CMakeLists.txt`'s grammar functions,
 `Source/Editor/TreeSitter/` (the RAII wrapper), `Source/Editor/Mode.h` (the
@@ -97,19 +105,26 @@ three times per language, across 21 languages, each restatement carrying a
 hand-written comment explaining which name this particular grammar chose for
 the concept.
 
-### The N x M matrix, and its 51% hole
+### The N x M matrix, and its hole
 
-`Queries.h` declares 113 embedded query constants across 29 languages and 8
+`Queries.h` declares 105 embedded query constants across 29 languages and 8
 driver kinds:
 
 ```
 29 languages x 8 driver kinds = 232 possible adapter files
-113 written  ->  119 GAPS (51% of the feature matrix)
+105 written  ->  127 GAPS (55% of the feature matrix)
 
 Highlights  29/29      Indents  21/29      Locals  15/29
-Imports     12/29      Folds    12/29      Tags    11/29
+Imports     12/29      Folds    11/29      Tags    11/29
 Tests       10/29      Injections 3/29
 ```
+
+The Folds column reads 11 rather than 12 because `python-folds.scm` is gone
+(see "Where a fold starts" below) -- and the *coverage* it measures went the
+other way, since 21 languages fold from the imprint whether or not a query
+exists for them. A gap in this matrix stopped meaning a missing feature the
+moment a driver could read the grammar directly, which is the whole argument
+in one cell.
 
 Highlights is the only column at 100%, and only because upstream ships
 `highlights.scm` for us. **Every column ned has to author itself is between 34%
@@ -294,6 +309,75 @@ inference reports and `cpp-folds.scm` omits: that looks like an omission the
 inference just caught rather than a considered exclusion, but it is recorded
 as an open question rather than quietly decided.
 
+### Where a fold starts is a different question from what folds
+
+Structure says *which* nodes are foldable. It does not say which row a fold
+begins on, and every consumer in this codebase already assumed an answer:
+
+> A fold block's start byte sits on the row that stays visible when the block
+> collapses.
+
+A bracket body satisfies that for free, because its `{` is written on that row.
+An indentation body does not: Python's `block` is `SEQ[REPEAT(_statement),
+_dedent]` and starts at the *first statement*, one row below the `def f():`
+that names it. Nothing was wrong with the inference -- the node range is
+exactly the body -- and everything downstream was wrong anyway. The gutter
+affordance sat on the body's first line, collapsing left that first statement
+on screen and hid the rest, and a one-statement body was not foldable at all
+because its start and end landed on one row. YAML folded from `  a: 1` instead
+of `root:`; the same three rows off, in a language with a completely different
+grammar.
+
+`Editor/Imprint.h`'s `FoldAnchorStart` restores the invariant rather than
+teaching each consumer a second rule, and what it needs is one grammar fact and
+two text facts:
+
+- **the node has no introducer of its own.** Python's `if_statement` also
+  closes with a dedent, but `if x:` *is* its own header row; anchoring it
+  upward moves its fold onto the enclosing `def` and loses it there. The
+  grammar states this plainly -- `block` begins with a repeat of content,
+  `if_statement` with the literal `if`, Python's `string` with the scanner's
+  own opening quote -- so `openerIsFirst` now answers it for both delimiter
+  kinds instead of being hardcoded `true` for indentation bodies.
+- **it starts its own line**, and
+- **it is indented deeper than the nearest non-blank line above.** TOML's
+  `pair` carries no introducer either, but `key = [` sits at its own
+  indentation and there is nothing above it to borrow.
+
+The split is the same one the tiers are built on: *what shape is this* comes
+from the grammar, *how was this written* comes from the text, and neither can
+answer the other's question.
+
+Three further text-level rules turned up with it, and all three live together
+in `CodeFold.h`'s `NormalizeFoldBlocks` -- the single point every consumer of
+every fold source comes through:
+
+- a fold must span more than one line (already there);
+- a block's end is trimmed back over trailing whitespace, because a node range
+  can run past its own last line -- TOML's `table` ends where the next
+  `[header]` begins, so "hides through the closing line" hid that header;
+- one fold per start byte, the innermost, because a fold marker's key *is* a
+  start byte and two blocks sharing one let the toggle and the hidden range
+  name different blocks.
+
+And one rule that was already there had to learn rows. `SupersededByChildBody`
+("fold the body, not the declaration") dropped a node whose foldable child ends
+where it does -- correct when both fold from the same row, which before
+anchoring they always did. Afterwards a Python `for` suite and the `if` nested
+inside it end at the same byte but fold from *different* rows, so by byte alone
+every level superseded the one above it and a whole function collapsed to its
+innermost statement. A node that introduces itself still hands its fold to that
+child outright; a node whose row was borrowed yields only to a child whose fold
+starts at or above its own. Both halves are load-bearing: the first keeps
+Allman-braced C# folding from its `{` exactly as before, the second removes
+YAML's `block_node` wrapper.
+
+The payoff is that `python-folds.scm` is **deleted**. It said `(block) @fold`,
+which is what the imprint says, with geometry a node range cannot express on
+its own. That makes it the first hand-written query this work removes rather
+than reproduces, and the corpus gate's hand-written total drops 60 -> 59 --
+the direction that number is supposed to move.
+
 ### Tier 1 is not inferable, and that is now measured rather than assumed
 
 Tier 0's result was good enough to raise the obvious question: if delimited
@@ -339,6 +423,51 @@ things to author -- a declaration is about as much work as the `tags.scm` line
 it replaces. The win there is **one vocabulary consumed by many drivers**
 instead of one query per driver, which is real but smaller, and it should not be
 sold as the same result.
+
+### Neither is "this body is verbatim", and that one has a different answer
+
+A second inference question, raised by wiring the imprint into a second driver: if
+Tier 0 knows a node is a delimited body, does it know whether that body's
+interior is *text* rather than *structure*? It matters immediately — an indent
+rule that treats a Python docstring, a C++ raw string literal or a PHP heredoc
+as an indent container rewrites the value of the string.
+
+The hypothesis worth testing, because it is the only structural one available:
+**a body is verbatim when its interior members are raw text** — a PATTERN, a
+TOKEN, or a symbol resolving to one — rather than references to other rules.
+Measured across 17 grammars, it is **refuted in both directions**:
+
+```
+missed  (real verbatim bodies it does not report)
+        rust raw_string_literal, kotlin string_literal, php heredoc + nowdoc,
+        csharp raw_string_literal + interpolation, yaml block_scalar +
+        double_quote_scalar + single_quote_scalar, cpp raw_string_literal
+swept in (ordinary code it reports as verbatim)
+        c/cpp goto_statement + parameter_declaration, go for_statement,
+        java annotation + break_statement, javascript new_expression,
+        php namespace_use_clause, css supports_statement
+```
+
+The misses are the interesting half and they are all one shape: a language whose
+strings need a *scanner* — heredocs matched against their own terminator, raw
+strings against a counted delimiter, YAML block scalars against indentation —
+spells them as external tokens, and an external is an opaque name in
+`grammar.json` with no content to read at all. The very bodies whose interiors
+are most emphatically text are the ones whose text-ness is invisible to the
+grammar.
+
+So this is Tier 0's boundary again, in the same place as callables and types:
+the grammar states *shape*, and "these bytes are data, not code" is not shape.
+
+But unlike Tier 1, this one has an answer already in the tree, in the one column
+of the driver matrix that is full: **`highlights.scm` spans every string in every
+bundled language**, and `SyntaxClass::String` is that fact already extracted.
+`Editor/Indent.h`'s `VerbatimRanges` reads it there, and `RenameReview.h`'s
+`ClassifyHit` had already made the same move for comments and strings a feature
+earlier. Worth stating as a rule rather than a coincidence: **when a fact is not
+inferable from structure, look for a query that already states it before
+authoring a new one.** The trait vocabulary should expect to *import* facts from
+the highlight layer, not only to replace it.
 
 ### Tier 1 must reuse the capture-name model, not invent an enum
 

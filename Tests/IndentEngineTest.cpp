@@ -4,13 +4,17 @@
 #include <optional>
 #include <string>
 
+#include <vector>
+
 #include "Editor/Indent.h"
 #include "Editor/IndentStyle.h"
+#include "Editor/Mode.h"
 #include "Editor/TreeSitter/IncrementalParse.h"
 #include "Editor/TreeSitter/Languages.h"
 #include "Editor/TreeSitter/Parser.h"
 #include "Editor/TreeSitter/Query.h"
 #include "Editor/TreeSitter/Tree.h"
+#include "Text/Buffer.h"
 
 using ned::editor::IndentColumnForLevel;
 using ned::editor::IndentComputation;
@@ -225,4 +229,84 @@ TEST_CASE("IndentColumnForLevel respects IndentStyle::width", "[Indent]") {
     REQUIRE(IndentColumnForLevel(0, IndentStyle{.useTabs = false, .width = 4}) == 0);
     REQUIRE(IndentColumnForLevel(1, IndentStyle{.useTabs = false, .width = 4}) == 4);
     REQUIRE(IndentColumnForLevel(3, IndentStyle{.useTabs = false, .width = 2}) == 6);
+}
+
+// ---------------------------------------------------------------------------
+// Verbatim regions: a multi-line string's interior is its VALUE, and a
+// reindent must not touch it. `indent-buffer` used to rewrite all three of
+// these, in every language that has such a construct, and the parse tree came
+// out identical afterwards -- which is why the structural-safety property
+// could not see it and these are written against the text itself.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::size_t ReindentWhole(ned::text::Buffer& buffer, const ned::editor::Mode& mode) {
+    return ned::editor::IndentRegion(buffer, mode, 0, buffer.Content().LineCount());
+}
+
+} // namespace
+
+TEST_CASE("Reindenting leaves a Python docstring's interior byte-for-byte", "[Indent]") {
+    const std::string source = "def f():\n    s = \"\"\"\n  ragged inside\n        deeper inside\n\"\"\"\n    return s\n";
+    ned::text::Buffer buffer("t.py");
+    buffer.InsertAtPoint(source);
+
+    CHECK(ReindentWhole(buffer, ned::editor::PythonMode()) == 0);
+    CHECK(buffer.Text() == source);
+}
+
+TEST_CASE("Reindenting leaves a C++ raw string literal byte-for-byte", "[Indent]") {
+    // R"(...)" exists precisely so its bytes are what they say they are.
+    const std::string source = "int main() {\n    const char* s = R\"(\n  ragged\n        deeper\n)\";\n    return 0;\n}\n";
+    ned::text::Buffer buffer("t.cpp");
+    buffer.InsertAtPoint(source);
+
+    CHECK(ReindentWhole(buffer, ned::editor::CppMode()) == 0);
+    CHECK(buffer.Text() == source);
+}
+
+TEST_CASE("Reindenting leaves a PHP heredoc byte-for-byte", "[Indent]") {
+    const std::string source =
+        "<?php\nfunction f() {\n    $s = <<<EOT\n  ragged\n        deeper\nEOT;\n    return $s;\n}\n";
+    ned::text::Buffer buffer("t.php");
+    buffer.InsertAtPoint(source);
+
+    CHECK(ReindentWhole(buffer, ned::editor::PhpMode()) == 0);
+    CHECK(buffer.Text() == source);
+}
+
+TEST_CASE("The line a multi-line string opens on is ordinary code and still indents", "[Indent]") {
+    // The rule protects the INTERIOR, not the construct: getting this wrong in
+    // the other direction would quietly stop reindenting any line that happens
+    // to introduce a string.
+    ned::text::Buffer buffer("t.py");
+    buffer.InsertAtPoint("def f():\n        s = \"\"\"\n  body\n\"\"\"\n");
+
+    CHECK(ReindentWhole(buffer, ned::editor::PythonMode()) == 1);
+    CHECK(buffer.Text() == "def f():\n    s = \"\"\"\n  body\n\"\"\"\n");
+}
+
+TEST_CASE("VerbatimRanges reports only strings that cross a line", "[Indent]") {
+    // A single-line string can never contain a line start strictly inside it,
+    // so carrying it would only make the per-line check longer.
+    const auto mode   = ned::editor::PythonMode();
+    const auto ranges = ned::editor::VerbatimRanges(mode, "a = \"one line\"\nb = \"\"\"two\nlines\"\"\"\n");
+    REQUIRE(ranges.size() == 1);
+    CHECK(ranges[0].first == 19);
+}
+
+TEST_CASE("LineIsVerbatim is strictly inside, at both ends", "[Indent]") {
+    const std::vector<std::pair<std::size_t, std::size_t>> ranges = {{10, 20}};
+    CHECK_FALSE(ned::editor::LineIsVerbatim(ranges, 10)); // the opening line is code
+    CHECK(ned::editor::LineIsVerbatim(ranges, 11));
+    CHECK(ned::editor::LineIsVerbatim(ranges, 19)); // the closer's line carries string bytes
+    CHECK_FALSE(ned::editor::LineIsVerbatim(ranges, 20));
+}
+
+TEST_CASE("A mode with no highlighter has no verbatim regions and still indents", "[Indent]") {
+    ned::editor::Mode mode;
+    mode.indentColumn = [](std::string_view, std::size_t, std::size_t) { return std::optional<int>(7); };
+    CHECK(ned::editor::VerbatimRanges(mode, "anything").empty());
+    CHECK(ned::editor::IndentColumnForLine(mode, "anything", 0, 8) == 7);
 }

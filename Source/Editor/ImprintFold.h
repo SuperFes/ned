@@ -42,8 +42,12 @@ namespace ned::editor::imprint {
 //
 // Returns nothing for a language with no compiled-in table, which is the
 // honest answer for one that does not fold by delimiters at all.
+// `text` is the buffer the tree was parsed from: an indentation body's fold
+// starts on the row above its own first line (see `FoldAnchorStart`), and
+// nothing but the text can say where that row begins.
 [[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>>
-CollectFoldBlocks(const treesitter::Node& root, std::string_view language, FoldPolicy policy = {});
+CollectFoldBlocks(const treesitter::Node& root, std::string_view language, std::string_view text,
+                  FoldPolicy policy = {});
 
 // The standalone form, for a caller with no tree of its own -- it owns a
 // parser and an incremental cache. Prefer CollectFoldBlocks wherever a parse

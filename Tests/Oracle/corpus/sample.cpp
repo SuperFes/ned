@@ -17,6 +17,14 @@ class Widget {
     std::string name_;
 };
 
+const char* Usage() {
+    // A raw string literal exists precisely so its bytes are what they say.
+    return R"(usage: demo [options]
+  --verbose        deliberately under-indented
+        --quiet    and deliberately over-indented
+)";
+}
+
 int Total(const std::vector<int>& values) {
     int sum = 0;
     for (int v : values) {

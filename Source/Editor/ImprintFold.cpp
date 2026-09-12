@@ -16,40 +16,49 @@ namespace ned::editor::imprint {
 
 namespace {
 
-void Collect(const treesitter::Node& node, const std::map<std::string, DelimitedBody>& table,
-             const FoldPolicy& policy, std::vector<std::pair<std::size_t, std::size_t>>& out) {
-    if (node.IsNull()) return;
+    void Collect(const treesitter::Node& node, const std::map<std::string, DelimitedBody>& table,
+                 const FoldPolicy& policy, std::string_view text,
+                 std::vector<std::pair<std::size_t, std::size_t>>& out) {
+        if (node.IsNull())
+            return;
 
-    const auto entry     = table.find(std::string(node.Type()));
-    const bool foldable  = entry != table.end() && ShouldFold(entry->second, policy);
-    const std::size_t childCount = node.ChildCount();
+        const auto        entry      = table.find(std::string(node.Type()));
+        const bool        foldable   = entry != table.end() && ShouldFold(entry->second, policy);
+        const std::size_t childCount = node.ChildCount();
 
-    if (foldable) {
-        std::vector<std::pair<bool, std::size_t>> children;
-        children.reserve(childCount);
-        for (std::size_t i = 0; i < childCount; ++i) {
-            const treesitter::Node child = node.Child(i);
-            const auto             found = table.find(std::string(child.Type()));
-            children.emplace_back(found != table.end() && ShouldFold(found->second, policy), child.EndByte());
+        if (foldable) {
+            const std::size_t      start = FoldAnchorStart(entry->second, node.StartByte(), text);
+            std::vector<ChildBody> children;
+            children.reserve(childCount);
+            for (std::size_t i = 0; i < childCount; ++i) {
+                const treesitter::Node child      = node.Child(i);
+                const auto             found      = table.find(std::string(child.Type()));
+                const bool             childFolds = found != table.end() && ShouldFold(found->second, policy);
+                children.push_back(ChildBody{childFolds,
+                                             childFolds ? FoldAnchorStart(found->second, child.StartByte(), text)
+                                                        : child.StartByte(),
+                                             child.EndByte()});
+            }
+            if (!SupersededByChildBody(entry->second, start, node.EndByte(), children, text)) {
+                out.emplace_back(start, node.EndByte());
+            }
         }
-        if (!SupersededByChildBody(node.EndByte(), children)) {
-            out.emplace_back(node.StartByte(), node.EndByte());
-        }
+
+        for (std::size_t i = 0; i < childCount; ++i)
+            Collect(node.Child(i), table, policy, text, out);
     }
-
-    for (std::size_t i = 0; i < childCount; ++i) Collect(node.Child(i), table, policy, out);
-}
 
 } // namespace
 
 std::vector<std::pair<std::size_t, std::size_t>> CollectFoldBlocks(const treesitter::Node& root,
-                                                                   std::string_view language, FoldPolicy policy) {
+                                                                   std::string_view language, std::string_view text,
+                                                                   FoldPolicy policy) {
     const auto& table = TableFor(language);
     if (table.empty() || root.IsNull()) {
         return {};
     }
     std::vector<std::pair<std::size_t, std::size_t>> blocks;
-    Collect(root, table, policy, blocks);
+    Collect(root, table, policy, text, blocks);
     return blocks;
 }
 
@@ -95,7 +104,8 @@ FoldFunction BuildFoldFunction(std::string_view language, FoldPolicy policy) {
     return [parser, cache, &table, policy](std::string_view bufferText) {
         const treesitter::Tree&                         tree = cache->Update(*parser, bufferText);
         std::vector<std::pair<std::size_t, std::size_t>> blocks;
-        if (!tree.IsNull()) Collect(tree.RootNode(), table, policy, blocks);
+        if (!tree.IsNull())
+            Collect(tree.RootNode(), table, policy, bufferText, blocks);
         return blocks;
     };
 }

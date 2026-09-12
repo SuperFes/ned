@@ -71,7 +71,6 @@ extern const char* const kKotlin;
 extern const char* const kCFolds;
 extern const char* const kCppFolds;
 extern const char* const kJsonFolds;
-extern const char* const kPythonFolds;
 extern const char* const kJavaScriptFolds;
 extern const char* const kTypeScriptFolds;
 extern const char* const kClojureFolds; // shared by ClojureMode and JankMode, same as kClojure above

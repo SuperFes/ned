@@ -448,6 +448,51 @@ IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser> parser, s
     };
 }
 
+std::vector<std::pair<std::size_t, std::size_t>> VerbatimRanges(const Mode& mode, std::string_view bufferText) {
+    std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    if (!mode.highlight) {
+        return ranges;
+    }
+    for (const HighlightSpan& span : mode.highlight(bufferText, HighlightWindow{})) {
+        if (span.syntaxClass != SyntaxClass::String || span.startByte >= span.endByte) {
+            continue;
+        }
+        // Only a span that crosses a line boundary can contain a line start
+        // strictly inside it, and a source file is mostly single-line
+        // strings -- keeping the list to the ones that can matter is what
+        // makes the per-line check a scan over a handful of entries.
+        const std::size_t end = std::min(span.endByte, bufferText.size());
+        if (bufferText.substr(span.startByte, end - span.startByte).find('\n') == std::string_view::npos) {
+            continue;
+        }
+        ranges.emplace_back(span.startByte, end);
+    }
+    return ranges;
+}
+
+bool LineIsVerbatim(const std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t lineStart) {
+    return std::any_of(ranges.begin(), ranges.end(), [lineStart](const std::pair<std::size_t, std::size_t>& range) {
+        return range.first < lineStart && lineStart < range.second;
+    });
+}
+
+std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view bufferText, std::size_t lineStart,
+                                       std::size_t                                             lineEnd,
+                                       const std::vector<std::pair<std::size_t, std::size_t>>* ranges) {
+    if (!mode.indentColumn) {
+        return std::nullopt;
+    }
+    if (ranges != nullptr) {
+        if (LineIsVerbatim(*ranges, lineStart)) {
+            return std::nullopt;
+        }
+    }
+    else if (LineIsVerbatim(VerbatimRanges(mode, bufferText), lineStart)) {
+        return std::nullopt;
+    }
+    return mode.indentColumn(bufferText, lineStart, lineEnd);
+}
+
 int IndentColumnForLevel(int level, const IndentStyle& style) {
     return std::max(0, level) * std::max(1, style.width);
 }
@@ -536,6 +581,19 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
         windowEndLineExclusive             = std::min(initialContent.ByteOffsetToLine(rawWindowEndByte) + 1, initialContent.LineCount());
     }
 
+    // One highlight pass for the whole run, not one per line. Valid for
+    // every line the loop still has to visit: it walks BOTTOM-TO-TOP and a
+    // reindent only ever changes its own line's leading whitespace, so every
+    // byte offset at or above the current line is exactly where it was when
+    // these were measured.
+    const std::vector<std::pair<std::size_t, std::size_t>> verbatim =
+        huge ? VerbatimRanges(mode, initialContent.Substring(initialContent.LineToByteOffset(windowStartLine),
+                                                             (windowEndLineExclusive < initialContent.LineCount()
+                                                                  ? initialContent.LineToByteOffset(windowEndLineExclusive)
+                                                                  : initialContent.ByteLength()) -
+                                                                 initialContent.LineToByteOffset(windowStartLine)))
+             : VerbatimRanges(mode, buffer.Text());
+
     buffer.BeginUndoGroup();
     std::size_t changed = 0;
     // Bottom-to-top: reindenting a line's own leading whitespace never
@@ -565,11 +623,12 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
                                                     ? content.LineToByteOffset(windowEndLineExclusive)
                                                     : content.ByteLength();
             const std::string windowText      = content.Substring(windowStartByte, windowEndByte - windowStartByte);
-            column                            = mode.indentColumn(windowText, lineStart - windowStartByte, lineEnd - windowStartByte);
+            column                            = IndentColumnForLine(mode, windowText, lineStart - windowStartByte, lineEnd - windowStartByte,
+                                                                    &verbatim);
         }
         else {
             const std::string text = buffer.Text(); // see this function's own doc comment on this cost
-            column                 = mode.indentColumn(text, lineStart, lineEnd);
+            column                 = IndentColumnForLine(mode, text, lineStart, lineEnd, &verbatim);
         }
         if (!column) {
             continue;

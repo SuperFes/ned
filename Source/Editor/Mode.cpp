@@ -926,7 +926,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             if (tree.IsNull()) {
                 return {};
             }
-            return imprint::CollectFoldBlocks(tree.RootNode(), languageKey);
+            return imprint::CollectFoldBlocks(tree.RootNode(), languageKey, bufferText);
         };
         fold = imprint::MergeFoldSources({std::move(fold), std::move(fromImprint)});
     }
@@ -1503,7 +1503,7 @@ Mode CssMode() {
 }
 
 Mode PythonMode() {
-    Mode mode              = TreeSitterMode("python-mode", "python", {.highlights = treesitter::queries::kPython, .folds = treesitter::queries::kPythonFolds, .imports = treesitter::queries::kPythonImports, .tags = treesitter::queries::kPythonTags, .tests = treesitter::queries::kPythonTests, .indents = treesitter::queries::kPythonIndents, .locals = treesitter::queries::kPythonLocals});
+    Mode mode              = TreeSitterMode("python-mode", "python", {.highlights = treesitter::queries::kPython, .imports = treesitter::queries::kPythonImports, .tags = treesitter::queries::kPythonTags, .tests = treesitter::queries::kPythonTests, .indents = treesitter::queries::kPythonIndents, .locals = treesitter::queries::kPythonLocals});
     mode.lineCommentPrefix = "#";
     return mode;
 }

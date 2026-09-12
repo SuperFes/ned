@@ -284,10 +284,12 @@ Two numbers carry the case:
   mechanically `(X close-token @dedent)` for an `X` already in that file's `@indent` list.
   One fact — *this node is a delimited body* — currently gets stated two to three times
   per language, 21 languages over.
-- `Queries.h` holds **113 embedded query constants over 29 languages x 8 driver kinds =
-  232 cells, so 119 gaps (51%)**. Highlights is the only column at 29/29, and only because
+- `Queries.h` holds **105 embedded query constants over 29 languages x 8 driver kinds =
+  232 cells, so 127 gaps (55%)**. Highlights is the only column at 29/29, and only because
   upstream ships `highlights.scm`; every column ned authors itself is 34–72% empty, each
-  empty cell a language silently missing a feature.
+  empty cell a language silently missing a feature — though a gap stopped meaning a
+  missing feature the moment a driver could read the grammar directly (21 languages fold
+  with 11 `folds.scm` between them).
 
 The proposal is to declare structure and meaning in **one artifact per language**, so a
 trait travels with the rule it is attached to and an unsatisfiable trait is a build error
@@ -364,12 +366,40 @@ real; if not, that is worth learning at language 3 rather than language 15.
       names matching was necessary and not sufficient; this is the Phase 2 claim in
       miniature — the hand-written fold queries are replaceable, not merely
       approximable. `Tests/ImprintTest.cpp`.
-- [ ] Fold semantics for indentation languages need their own pass, surfaced by the
-      above and deliberately not bundled into it: a Python one-statement body is a block
-      whose start and end land on the same line, so the "spans more than one line" rule
-      that is right for C would drop it, and `[startLine + 1, endLine + 1]` does not
-      obviously name the right rows for it either. Needs deciding on its own terms rather
-      than inheriting the brace-language rule.
+- [x] **Fold semantics for indentation languages, which were wrong in every one of
+      them.** Not a refinement of the brace rule but the thing that rule assumes: *a fold
+      block's start byte sits on the row that stays visible when it collapses*. A `{` is
+      written on that row, so C got it free; Python's `block` starts at the first
+      statement of the body, one row BELOW the `def f():` naming it. The affordance sat on
+      the wrong row, collapsing left the first statement on screen and hid the rest, and a
+      one-statement body could not fold at all. YAML folded from `  a: 1` instead of
+      `root:`, and TOML's `[package]` hid `[dependencies]` because a `table` node runs to
+      wherever the next one starts.
+      `Editor/Imprint.h`'s `FoldAnchorStart` moves an indentation body onto its header
+      row; every consumer is unchanged, because the invariant they already assumed is now
+      true for both kinds. Three conditions, each ruling out a case that really occurs: the
+      grammar must say the node has no introducer of its own (`if x:` IS its own header
+      row — anchoring it would move its fold onto the enclosing `def` and lose it there),
+      the body must start its own line, and it must be indented deeper than the nearest
+      non-blank line above (TOML's `key = [` has no header to borrow). The first is a
+      grammar fact and the other two are text facts, which is the Tier 0 / Tier 1 line
+      again: what shape a thing is, versus how it was written.
+      **`python-folds.scm` is deleted — the first query this work removes rather than
+      matches.** It said `(block) @fold`, which the imprint says with better geometry;
+      the corpus gate's hand-written total goes 60 → 59, and a shrinking ground truth is
+      the intended direction.
+      Two further findings, both from the live run rather than from tests. Node ranges
+      spill past their own last line, so "hides through the end line" swallowed the next
+      construct's header — trimming trailing whitespace fixes it for every source at once,
+      and joins the multi-line rule in `NormalizeFoldBlocks` where the text-level rules
+      belong. And `SupersededByChildBody` had to learn rows: it dropped a parent whose body
+      ends where it does, which is right when both fold from the same row, but after
+      anchoring a Python `for` and the `if` inside it fold from *different* rows — by byte
+      alone every level superseded the one above it and a whole function collapsed to its
+      innermost statement. A node that introduces itself still hands its fold to that
+      child outright (C#'s Allman-braced `namespace Demo` keeps folding from its `{`, and
+      the corpus proves it unchanged); a node whose row was *borrowed* yields only to a
+      child whose fold starts at or above its own, which is YAML's `block_node` wrapper.
 - [x] **The same imprint drives indent too — the N x M claim across two drivers.**
       96% of every fold rule was already restated verbatim as an indent rule, so this is
       where the duplication actually lived. The imprint covers **every**
@@ -541,6 +571,41 @@ real; if not, that is worth learning at language 3 rather than language 15.
       `tags.scm` line it replaces costs. The win there is one vocabulary consumed by many
       drivers rather than one query per driver, which is real but smaller and should not
       be sold as the same result. Full evidence in `Docs/ParsingEngine.md`.
+- [x] **A reindent must not touch a multi-line string, and it did from the day it
+      shipped.** Found by
+      measuring the next driver rather than by a report: wiring the imprint into indent
+      means asking which delimited bodies are indent containers, and strings are the ones
+      that must not be. Checking what the *current* engine does first showed
+      `indent-buffer` rewriting the interior of a Python docstring, a C++ raw string
+      literal and a PHP heredoc — editing what the program says, not how it looks, in
+      every language that has such a construct.
+      Two properties already existed and neither could see it. Idempotence holds: the
+      rewrite converges. Structural safety holds *by construction*: a reindented docstring
+      is still one `string` node, so the node-kind sequence is identical. So a third
+      property went in beside them — **the text of every multi-line string is
+      byte-identical** — and it fails in all three languages when the rule is removed,
+      which was checked rather than assumed. Worth generalising: a property comparing
+      *structure* cannot notice a rule rewriting *content* inside a leaf.
+      The rule itself lives in one place, `Editor/Indent.h`'s `IndentColumnForLine`, now
+      the only function permitted to call `Mode::indentColumn` — `CodeFold.h`'s
+      `FoldableBlocks` arrangement, adopted for the same reason (three consumers, one rule,
+      and the batch path had already been the one to get it wrong). Only the interior is
+      protected: the line a string opens on is ordinary code and still indents.
+      **Where the fact comes from is the finding.** Whether a body is verbatim is *not*
+      inferable from a grammar's production shape — measured across 17 grammars and
+      refuted in both directions, because the languages whose strings most need a scanner
+      (heredocs, raw strings, YAML block scalars) spell them as external tokens, which
+      carry no readable content at all. But it is already stated in the one driver column
+      that is full: every bundled `highlights.scm` spans its strings, and
+      `SyntaxClass::String` is that fact extracted. `RenameReview.h`'s `ClassifyHit` had
+      made the same move a feature earlier. So: **when a fact is not inferable from
+      structure, look for a query that already states it before authoring a new one** —
+      the trait vocabulary should expect to import from the highlight layer, not only to
+      replace it. Comments are deliberately not protected: reindenting inside a block
+      comment is conventional and changes no meaning.
+      Three corpus files gained a ragged multi-line docstring / raw string / heredoc,
+      because the property was vacuous over the old corpus — every string in it was
+      single-line — and a guard now fails if that becomes true again.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** Now with the
       above in mind: it is a *unification* of vocabulary, not a reduction in authoring, and
       should be scoped and justified as such. With inference
