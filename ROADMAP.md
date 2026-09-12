@@ -335,10 +335,16 @@ real; if not, that is worth learning at language 3 rather than language 15.
       is meaningless regardless of grammar. So `Foldable` ≈ `Delimited` + list-like
       interior + spans more than one line, with the last term per-instance rather than
       per-language — which still supports N + M, just not purely by static policy.
-      Remaining: decide whether `argument_list`/`parameter_list` are genuinely
-      unwanted (most IDEs fold them, and the hand-written queries call themselves
-      "deliberately minimal"), and whether `cpp`'s missing `declaration_list` is an
-      omission inference just found.
+      **Both answers are now kept reachable rather than chosen permanently.**
+      `InferDelimitedBodies` returns the structural signals (`openerIsFirst`,
+      `listLikeInterior`) instead of pre-judging them, and `ShouldFold`/`FoldPolicy`
+      applies the taste. Measured over 11 grammars: 244 delimited bodies, 185 foldable
+      with argument lists on, 144 with them off — so 59 are excluded by *structure*
+      (a body holding one subexpression has nothing to collapse) and only **41 are
+      actually a matter of taste**, all the argument/parameter-list family, behind one
+      flag rather than a per-language list. Defaulted ON, and both directions are pinned
+      by tests so neither rots. Still open, recorded rather than decided: whether `cpp`'s
+      missing `declaration_list` is an omission inference just caught.
 - [ ] Fold semantics for indentation languages need their own pass, surfaced by the
       above and deliberately not bundled into it: a Python one-statement body is a block
       whose start and end land on the same line, so the "spans more than one line" rule

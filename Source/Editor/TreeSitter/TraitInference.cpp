@@ -116,8 +116,8 @@ std::string OpenerFor(const std::string& closer) {
 
 } // namespace
 
-std::map<std::string, DelimiterKind> InferDelimitedBodies(const nlohmann::json& grammar) {
-    std::map<std::string, DelimiterKind> found;
+std::map<std::string, DelimitedBody> InferDelimitedBodies(const nlohmann::json& grammar) {
+    std::map<std::string, DelimitedBody> found;
 
     const auto rules = grammar.find("rules");
     if (rules == grammar.end() || !rules->is_object()) return found;
@@ -147,21 +147,52 @@ std::map<std::string, DelimiterKind> InferDelimitedBodies(const nlohmann::json& 
 
         const std::string closer = Literal(*core.back());
         if (!closer.empty() && kClosers.find(closer) != std::string_view::npos) {
-            const std::string opener = OpenerFor(closer);
-            const bool        opened = std::any_of(core.begin(), core.end() - 1,
-                                            [&](const json* m) { return Literal(*m) == opener; });
-            if (opened) {
-                found.emplace(name, DelimiterKind::Bracket);
+            const std::string opener      = OpenerFor(closer);
+            const auto        openerIt    = std::find_if(core.begin(), core.end() - 1,
+                                                  [&](const json* m) { return Literal(*m) == opener; });
+            if (openerIt != core.end() - 1) {
+                DelimitedBody body;
+                body.kind          = DelimiterKind::Bracket;
+                body.openerIsFirst = (openerIt == core.begin());
+                body.listLikeInterior =
+                    std::any_of(openerIt + 1, core.end() - 1, [](const json* m) {
+                        const std::string type = TypeOf(Unwrap(*m));
+                        return type == "REPEAT" || type == "REPEAT1" || type == "CHOICE";
+                    });
+                found.emplace(name, body);
                 continue;
             }
         }
 
         if (IsSymbolNamed(*core.back(), externals)) {
-            found.emplace(name, DelimiterKind::Indent);
+            DelimitedBody body;
+            body.kind = DelimiterKind::Indent;
+            // An indentation body has no opener of its own, and everything
+            // before the closing dedent is its content -- which is a
+            // statement list by construction.
+            body.openerIsFirst    = true;
+            body.listLikeInterior = true;
+            found.emplace(name, body);
         }
     }
 
     return found;
+}
+
+bool ShouldFold(const DelimitedBody& body, const FoldPolicy& policy) {
+    // A body holding exactly one subexpression has nothing to collapse:
+    // `parenthesized_expression`, `decltype(x)`, `index_expression`.
+    if (!body.listLikeInterior) {
+        return false;
+    }
+    // An argument/parameter list is the list-like bracketed body that does
+    // not open its own production -- the callee or declarator precedes it.
+    // That is precisely the separable case the policy exists for; every
+    // statement/member block opens with its own brace.
+    if (!body.openerIsFirst && !policy.foldArgumentLists) {
+        return false;
+    }
+    return true;
 }
 
 std::string DelimiterKindName(DelimiterKind kind) {

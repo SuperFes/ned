@@ -22,8 +22,11 @@
 // makes a grammar bump that breaks inference fail the build instead of being
 // discovered much later.
 
+using ned::editor::treesitter::DelimitedBody;
 using ned::editor::treesitter::DelimiterKind;
+using ned::editor::treesitter::FoldPolicy;
 using ned::editor::treesitter::InferDelimitedBodies;
+using ned::editor::treesitter::ShouldFold;
 using nlohmann::json;
 
 namespace {
@@ -77,7 +80,7 @@ TEST_CASE("A bracket-delimited production is inferred", "[TraitInference]") {
     const json grammar = Grammar({{"body", Seq({Str("{"), Repeat(Sym("statement")), Str("}")})}});
     const auto found   = InferDelimitedBodies(grammar);
     REQUIRE(found.count("body") == 1);
-    CHECK(found.at("body") == DelimiterKind::Bracket);
+    CHECK(found.at("body").kind == DelimiterKind::Bracket);
 }
 
 TEST_CASE("A closer may be followed by optional members", "[TraitInference]") {
@@ -111,7 +114,7 @@ TEST_CASE("An external closer with no opener is an indent-delimited body", "[Tra
                                  json::array({Sym("_indent"), Sym("_dedent")}));
     const auto found = InferDelimitedBodies(grammar);
     REQUIRE(found.count("block") == 1);
-    CHECK(found.at("block") == DelimiterKind::Indent);
+    CHECK(found.at("block").kind == DelimiterKind::Indent);
 }
 
 TEST_CASE("Non-delimited and malformed productions are simply not reported", "[TraitInference]") {
@@ -136,6 +139,48 @@ TEST_CASE("A self-referential hidden rule terminates", "[TraitInference]") {
                                 {"_a", Seq({Sym("_b"), Str("{")})},
                                 {"_b", Seq({Sym("_a"), Str("[")})}});
     CHECK_NOTHROW(InferDelimitedBodies(mutual));
+}
+
+TEST_CASE("Structural signals are reported, not pre-judged", "[TraitInference]") {
+    // A statement block opens its own production and holds a list.
+    const json block = Grammar({{"block", Seq({Str("{"), Repeat(Sym("statement")), Str("}")})}});
+    const auto b     = InferDelimitedBodies(block).at("block");
+    CHECK(b.openerIsFirst);
+    CHECK(b.listLikeInterior);
+
+    // An argument list is list-like but does NOT open its own production --
+    // the callee comes first. That is what makes it separable from a block.
+    const json call = Grammar({{"call", Seq({Sym("callee"), Str("("), Optional(Sym("args")), Str(")")})}});
+    const auto c    = InferDelimitedBodies(call).at("call");
+    CHECK_FALSE(c.openerIsFirst);
+    CHECK(c.listLikeInterior);
+
+    // A parenthesized expression holds exactly one thing.
+    const json paren = Grammar({{"paren", Seq({Str("("), Sym("expression"), Str(")")})}});
+    const auto p     = InferDelimitedBodies(paren).at("paren");
+    CHECK(p.openerIsFirst);
+    CHECK_FALSE(p.listLikeInterior);
+}
+
+TEST_CASE("FoldPolicy keeps both answers reachable", "[TraitInference]") {
+    const DelimitedBody block{.kind = DelimiterKind::Bracket, .openerIsFirst = true, .listLikeInterior = true};
+    const DelimitedBody argumentList{.kind = DelimiterKind::Bracket, .openerIsFirst = false, .listLikeInterior = true};
+    const DelimitedBody paren{.kind = DelimiterKind::Bracket, .openerIsFirst = true, .listLikeInterior = false};
+
+    // A single-element body is never a fold, under any policy -- that is
+    // structure, not taste.
+    CHECK_FALSE(ShouldFold(paren, FoldPolicy{.foldArgumentLists = true}));
+    CHECK_FALSE(ShouldFold(paren, FoldPolicy{.foldArgumentLists = false}));
+
+    // A statement block always is, likewise under any policy.
+    CHECK(ShouldFold(block, FoldPolicy{.foldArgumentLists = true}));
+    CHECK(ShouldFold(block, FoldPolicy{.foldArgumentLists = false}));
+
+    // The argument list is the one the policy actually governs, and it
+    // swings cleanly both ways. Default is on.
+    CHECK(ShouldFold(argumentList, FoldPolicy{}));
+    CHECK(ShouldFold(argumentList, FoldPolicy{.foldArgumentLists = true}));
+    CHECK_FALSE(ShouldFold(argumentList, FoldPolicy{.foldArgumentLists = false}));
 }
 
 TEST_CASE("Inference reproduces every hand-written fold node", "[TraitInference][Corpus]") {
