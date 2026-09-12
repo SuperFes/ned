@@ -364,7 +364,7 @@ real; if not, that is worth learning at language 3 rather than language 15.
       than inheriting the brace-language rule.
 - [x] **The same imprint drives indent too — the N x M claim across two drivers.**
       96% of every fold rule was already restated verbatim as an indent rule, so this is
-      where the duplication actually lived. The imprint covers **80 of the 81**
+      where the duplication actually lived. The imprint covers **all but one** of the
       hand-written `@indent` nodes. The single miss is a defect in the query rather than
       in inference: tree-sitter-typescript has no `interface_body` rule at all (its
       interface body is an `object_type`), so that capture can never match anything.
@@ -381,6 +381,18 @@ real; if not, that is worth learning at language 3 rather than language 15.
       *want* a nested `[...]` to inherit the enclosing call's alignment; C++ does not).
       That is the Tier 0 / Tier 1 line falling exactly where the engine already put it —
       structure inferred, alignment declared.
+- [x] **End-to-end across all 12 languages, not 3.** Widening the byte-for-byte check
+      found four things, which is the argument for widening: a **broken measurement** (the
+      ground-truth extractor could not read the conditional capture form
+      `(function_body "{") @fold`, so 55/55 and 56/56 were both measured against an
+      incomplete corpus — the real number is 60); a **regression I had just introduced**
+      (inlining reached through Python's hidden `_suite` to its `_dedent`, so every
+      `class`/`def`/`for` header was reported as a body); a **wrong abstraction** (a
+      range-based "fold the body not the declaration" rule dropped Python class bodies,
+      because a class body and its last method's body legitimately share an end byte —
+      the test is direct parentage in the *tree*, not containment in byte ranges); and
+      **`c-folds.scm`'s documented "extend later"** struct/enum/union omission, now
+      extended.
 - [ ] **Phase 1 remainder — the language-definition format and compiler.** With inference
       in place, the rest: the Janet trait-declaration format, a build-time compiler
       emitting one artifact per language, and `Foldable` as the first Tier 1 policy over

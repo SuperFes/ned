@@ -1,5 +1,7 @@
 #include "Imprint.h"
 
+#include <algorithm>
+
 namespace ned::editor::imprint {
 
 std::string DelimiterKindName(DelimiterKind kind) {
