@@ -14,6 +14,10 @@
 
 #include <memory>
 
+#include "Editor/CaptureClassifiers.h"
+#include "Janet/EditorBindings.h"
+#include "Janet/Plugins.h"
+
 #include <catch2/reporters/catch_reporter_event_listener.hpp>
 #include <catch2/reporters/catch_reporter_registrars.hpp>
 
@@ -27,6 +31,11 @@ ned::janet::Environment& TestEnvironment() {
     return *g_environment;
 }
 
+void RestoreBundledCaptureClassifiers() {
+    ned::editor::ClearCaptureClassifiers();
+    g_environment->DoString(ned::janet::plugins::kLanguages, "languages.janet");
+}
+
 namespace {
 
     class JanetGlobalFixture final : public Catch::EventListenerBase {
@@ -35,6 +44,15 @@ namespace {
 
         void testRunStarting(const Catch::TestRunInfo&) override {
             g_environment = std::make_unique<ned::janet::Environment>();
+            // The bindings plus the bundled language classifiers
+            // (Plugins/languages.janet), unconditionally: Org's headline
+            // level and TODO-vs-DONE live there now, and any test touching
+            // an org-mode highlight -- most of them nowhere near Janet --
+            // needs them registered exactly the way a running ned has them.
+            // Deliberately NOT LoadBundledPlugins: vcs-git registers a live
+            // VCS provider, which the provider-registry tests assume absent.
+            ned::janet::InstallEditorBindings(*g_environment);
+            g_environment->DoString(ned::janet::plugins::kLanguages, "languages.janet");
         }
 
         void testRunEnded(const Catch::TestRunStats&) override {

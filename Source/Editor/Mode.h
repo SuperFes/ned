@@ -751,13 +751,17 @@ struct ModeBuildContext {
 // syntax, keymap, queries, escapes -- is stated in its definition, not here.
 // Two are worth knowing about: JankMode shares Clojure's grammar and queries
 // under its own name (so the mode line reads (jank-mode)), and Markdown/Org
-// carry the only non-empty keymaps and the only escapes -- see
-// Editor/Languages/ for the highlight/indent/symbol closures a plain query
-// cannot express (heading level is arithmetic over `*`/`#` counts,
-// TODO-vs-DONE compares against org::TodoKeywords(), a runtime-configured
-// list). Org's keymap deliberately shadows several global bindings while an
-// Org buffer is active (C-c C-p, C-c C-o, C-c C-s, C-c C-d) -- a mode layer
-// overriding the global layer per buffer is what KeymapStack exists for.
+// carry the only non-empty keymaps and the only escapes -- down to the
+// genuine tree/line walks (hanging list indent, Org's outline markers; see
+// Editor/Languages/). Their highlighting is queries: Markdown's heading
+// levels and checkboxes are plain patterns (the level IS which marker child
+// is present), and Org's star arithmetic and runtime TODO-keyword match are
+// capture classifiers registered by the bundled Plugins/languages.janet
+// (Editor/CaptureClassifiers.h) with the whole-line wash from the
+// definition's :capture-spans. Org's keymap deliberately shadows several
+// global bindings while an Org buffer is active (C-c C-p, C-c C-o, C-c C-s,
+// C-c C-d) -- a mode layer overriding the global layer per buffer is what
+// KeymapStack exists for.
 [[nodiscard]] Mode JanetMode();
 [[nodiscard]] Mode JsonMode();
 [[nodiscard]] Mode CMode();

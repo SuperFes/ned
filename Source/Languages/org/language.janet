@@ -45,8 +45,15 @@
    ["ESC RIGHT" "org-table-move-column-right"]
    ["C-c -" "org-table-insert-hline"]]
 
- # Headline level is arithmetic over counted stars and TODO-vs-DONE
- # compares against org/TodoKeywords, runtime-configured state no query
- # predicate can reach -- see Languages/Org.cpp.
- :escapes ["org.highlight" "org.indent" "org.symbols"]
+ # A headline's wash covers its whole line, not just the stars the query
+ # captures; the level (arithmetic over the star count) and TODO-vs-DONE
+ # (compared against the runtime ned/org-todo-keywords list) are capture
+ # classifiers, registered by the bundled Plugins/languages.janet -- state
+ # and arithmetic no query predicate can reach, in Janet where the
+ # configuration lives.
+ :capture-spans {"org.headline.stars" :line-end}
+
+ # List hang indent and headline outline markers stay tree/line walks in
+ # C++ (Languages/Org.cpp).
+ :escapes ["org.indent" "org.symbols"]
 }

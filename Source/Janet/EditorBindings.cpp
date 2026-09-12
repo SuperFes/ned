@@ -47,6 +47,7 @@
 #include "Editor/MultibufferFoldSettings.h"
 #include "Editor/MultibufferLimits.h"
 #include "Editor/MultibufferSearchSettings.h"
+#include "Editor/Org.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/PageScroll.h"
 #include "Editor/PersistentUndo.h"
@@ -569,6 +570,14 @@ namespace {
 
     void NedRegisterLanguage(std::string directory) {
         editor::LoadLanguageDirectory(directory);
+    }
+
+    void NedSetOrgTodoKeywords(std::vector<std::string> keywords) {
+        editor::org::SetTodoKeywords(keywords.empty() ? editor::org::DefaultTodoKeywords() : std::move(keywords));
+    }
+
+    std::vector<std::string> NedOrgTodoKeywords() {
+        return editor::org::TodoKeywords();
     }
 
     // Wraps a per-text Janet fn as a batch CaptureClassifier
@@ -1623,6 +1632,18 @@ void InstallEditorBindings(Environment& env) {
         "on a row the line already occupies, so a diagnostic appearing or clearing never shifts anything else on "
         "screen; \"callout\" is the original block below the line with carets under the flagged span, which points "
         "at exact columns but costs a screen row that comes and goes as you type.");
+    env.Register<&NedSetOrgTodoKeywords>(
+        "ned", "set-org-todo-keywords",
+        "Set Org's TODO keyword sequence: (keywords), e.g. (ned/set-org-todo-keywords [\"TODO\" \"IN-PROGRESS\" "
+        "\"DONE\"]). The LAST keyword is the done state (the standard single-sequence Org convention) -- what "
+        "org-cycle-todo cycles through and what headline highlighting colors as TodoKeyword vs DoneKeyword (via "
+        "the bundled org.keyword.candidate capture classifier, which a user registration can replace). An empty "
+        "tuple restores the built-in default sequence.");
+    env.Register<&NedOrgTodoKeywords>(
+        "ned", "org-todo-keywords",
+        "Return Org's configured TODO keyword sequence as a tuple, last keyword = the done state -- what the "
+        "bundled headline classifier (Plugins/languages.janet) compares a headline's first word against. See "
+        "ned/set-org-todo-keywords.");
     env.Register<&NedRegisterCaptureClassifier>(
         "ned", "register-capture-classifier",
         "Classify a capture's spans from their TEXT, where a static query cannot say: (language capture fn). fn "

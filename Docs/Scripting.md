@@ -7,7 +7,7 @@ the `Register<Fn>` call site, not this file.
 Regenerate with `NED_BLESS_COMMAND_DOCS=1 ./build/ned_tests "[CommandDocs]"`.
 Held against the binding table on every build, so it cannot drift.
 
-160 bindings.
+162 bindings.
 
 ## `ned/backward-char`
 
@@ -80,6 +80,10 @@ Show a status/echo-area message.
 ## `ned/org-capture-register-template`
 
 Register an org-capture template: (key name target-file template headline), e.g. (ned/org-capture-register-template "t" "Todo" "~/org/todo.org" "* TODO %?\n" ""). key is exactly one character (org-capture, C-c k, reads it to pick this template); template's first "%?" marks where point lands after capture (omit it to land at the end of the inserted text). headline, if non-empty, files the capture as the last child of the exactly-titled headline in target-file; empty files at the end of target-file instead. Re-registering an existing key overwrites it.
+
+## `ned/org-todo-keywords`
+
+Return Org's configured TODO keyword sequence as a tuple, last keyword = the done state -- what the bundled headline classifier (Plugins/languages.janet) compares a headline's first word against. See ned/set-org-todo-keywords.
 
 ## `ned/point`
 
@@ -428,6 +432,10 @@ Hard cap on how many excerpts a multibuffer stitches at all (default 500; 0 = un
 ## `ned/set-multibuffer-scoped-search`
 
 Enable/disable confining isearch and query-replace to a multibuffer's excerpt bodies (default true) -- header paths, rule lines and the blanks between excerpts stop matching, and query-replace stops offering a replacement inside chrome the buffer would then silently refuse. Turn it off to search a review buffer's whole composite text, e.g. to find the excerpt whose header names a particular file. No effect on an ordinary buffer.
+
+## `ned/set-org-todo-keywords`
+
+Set Org's TODO keyword sequence: (keywords), e.g. (ned/set-org-todo-keywords ["TODO" "IN-PROGRESS" "DONE"]). The LAST keyword is the done state (the standard single-sequence Org convention) -- what org-cycle-todo cycles through and what headline highlighting colors as TodoKeyword vs DoneKeyword (via the bundled org.keyword.candidate capture classifier, which a user registration can replace). An empty tuple restores the built-in default sequence.
 
 ## `ned/set-page-scroll-fraction`
 

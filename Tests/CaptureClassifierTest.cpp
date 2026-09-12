@@ -9,10 +9,10 @@
 #include "Editor/LanguageFiles.h"
 #include "Editor/LanguageParse.h"
 #include "Editor/SyntaxTheme.h"
+#include "JanetTestSupport.h"
 
 using ned::editor::BundledLanguage;
 using ned::editor::CaptureClassification;
-using ned::editor::ClearCaptureClassifiers;
 using ned::editor::HighlightSpan;
 using ned::editor::HighlightWindow;
 using ned::editor::LanguageDefinition;
@@ -27,7 +27,7 @@ namespace {
 // Registration is process-wide; every test clears after itself.
 struct ClassifierGuard {
     ~ClassifierGuard() {
-        ClearCaptureClassifiers();
+        ned_tests::RestoreBundledCaptureClassifiers();
     }
 };
 

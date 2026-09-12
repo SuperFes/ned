@@ -331,6 +331,7 @@ endfunction()
 
 ned_embed_janet_plugin("${CMAKE_CURRENT_SOURCE_DIR}/Source/Janet/Plugins/vcs-git.janet" VcsGit)
 ned_embed_janet_plugin("${CMAKE_CURRENT_SOURCE_DIR}/Source/Janet/Plugins/gradients.janet" Gradients)
+ned_embed_janet_plugin("${CMAKE_CURRENT_SOURCE_DIR}/Source/Janet/Plugins/languages.janet" Languages)
 
 # Every file under Source/Languages/ -- a language's query data and, once it
 # exists, its language.janet -- compiled into one path -> content table

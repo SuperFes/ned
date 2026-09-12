@@ -960,8 +960,34 @@ real; if not, that is worth learning at language 3 rather than language 15.
             cache coupling. Rooting proven under fire: 3+ held functions × 150
             invocations, ASan-clean; off-thread guard tested; verified live (a user
             init.janet classifier recolors a JSON key end to end).
-      - [ ] **Step 5 — Org and Markdown rewritten as language files**; the escapes in
-            `Languages/` deleted. The acceptance test for the whole thing.
+      - [x] **Step 5 — Org and Markdown highlighting rewritten as language files.** The
+            honest version of "escapes deleted": the *highlight* escapes are gone, and
+            what stays C++ is what is genuinely a tree/line walk (markdown.indent's
+            hanging column, org.indent, org.symbols). Markdown needed **no Janet at
+            all** — heading levels are plain query patterns (the level IS which marker
+            child is present; six atx + two setext captures mapped through
+            :capture-classes), checkboxes one capture reusing the shared "checkbox"
+            name, and the section breadcrumbs a two-pattern tags.janet over the
+            grammar's own nesting `section` nodes (with an anchor that keeps a loose
+            shallower setext heading from minting duplicate whole-section markers —
+            found on the oracle corpus). Upstream's @text.title is `:suppress`ed (the
+            new third :capture-classes verb) so the title keeps the heading wash. Org is
+            the classifier's first real consumer: `Plugins/languages.janet` registers
+            headline-level (star arithmetic) and TODO-vs-DONE (against
+            `ned/org-todo-keywords`, new binding pair — the Org.h comment saying the
+            binding couldn't exist yet was stale) with `:capture-spans` for the
+            whole-line wash; ~330 lines of hand-built highlight closures deleted, and
+            the 26-case ModeTest/Org/Markdown highlight suites pass byte-for-byte
+            against the new pipeline, runtime keyword changes included.
+            `sample.md`/`sample.org` join the oracle corpus. One deliberate render
+            change: heading `#` markers now read as dimmed MarkupMarker inside the
+            colored line rather than being covered by the wash — MarkupMarker's whole
+            purpose, verified live. Two catches worth the record: the sanitize build's
+            different test order exposed a cleanup guard stripping the bundled
+            classifiers for later tests (guards now restore via
+            `RestoreBundledCaptureClassifiers`, plus randomized-order runs), and the
+            new org corpus surfaced a pre-existing org.indent bug (headline after a
+            list item hangs at the item's column — watch-listed below).
 - [ ] **Phase 3 — Semantic drivers.** Scopes/bindings/references as a real resolution
       layer rather than query captures. Exit criterion: the Lisp eight-pair cliff is gone,
       or Tier 1 is proven insufficient and the design is revised before any engine work.
@@ -1942,6 +1968,18 @@ opportunistically rather than re-discovering from scratch. Add to this list inst
 just fixing-and-forgetting or letting it fade from memory between sessions. Fixed entries
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
+
+- **org.indent hangs a headline that directly follows a list item.** Surfaced by (not
+  introduced by) the Step 5 oracle corpus: in `Tests/Oracle/expected/sample.org.oracle`,
+  `* Second tree` — the line right after `- [ ] unchecked box`, no blank line between —
+  computes indent [2], the list item's hang column, because the grammar's `listitem`
+  node's byte range reaches through the following headline's line and the escape's
+  ancestor walk (`Languages/Org.cpp`) doesn't exclude a line that *starts a headline*.
+  A reindent would shift the star and corrupt the outline. Pre-existing in the escape
+  since smart-indentation; the oracle now pins the (wrong) behavior, so fixing it is a
+  visible one-line diff there. Fix shape: bail from the hang sum when the line's first
+  non-blank char is `*` at column 0 (a headline), mirroring the headline exclusion the
+  highlight side already has.
 
 - **A comment as the first line of a Python body reindents to column 0.** Found by the
   corpus addition for the indent-column work (2026-09-12), pre-existing and unrelated to

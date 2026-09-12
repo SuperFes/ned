@@ -33,12 +33,19 @@
 
  # List markers, thematic breaks, heading and blockquote markers get the
  # dimmed MarkupMarker treatment here; every other grammar's use of the
- # same capture name stays Punctuation.
- :capture-classes {"punctuation.special" :markup-marker}
+ # same capture name stays Punctuation. The ned.headline-* captures are
+ # this language's own whole-heading patterns (highlights.janet), and
+ # upstream's @text.title is suppressed so a heading's title text keeps
+ # the heading's own wash instead of being re-classed out of it.
+ :capture-classes {"punctuation.special" :markup-marker
+                   "ned.headline-level1" :headline-level-1
+                   "ned.headline-level2" :headline-level-2
+                   "ned.headline-level3" :headline-level-3
+                   "text.title" :suppress}
 
- # Heading levels, GFM checkboxes, hanging list indent and section
- # breadcrumbs -- see Languages/Markdown.cpp.
- :escapes ["markdown.highlight" "markdown.indent" "markdown.symbols"]
+ # Hanging list indent is a real tree walk (a bullet's content COLUMN, not
+ # a level) -- the one Markdown fact still in C++ (Languages/Markdown.cpp).
+ :escapes ["markdown.indent"]
  :snippets
  {
    "link"

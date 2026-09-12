@@ -1,0 +1,67 @@
+# sample.md  (markdown-mode)
+# 65 facts
+highlight 0..1  [markup-marker]  "#"
+highlight 0..8  [headline-level-1]  "# Title\n"
+highlight 30..31  [punctuation]  "*"
+highlight 30..38  [strong]  "**bold**"
+highlight 31..32  [punctuation]  "*"
+highlight 36..37  [punctuation]  "*"
+highlight 37..38  [punctuation]  "*"
+highlight 40..41  [punctuation]  "*"
+highlight 40..48  [emphasis]  "*italic*"
+highlight 47..48  [punctuation]  "*"
+highlight 53..54  [punctuation]  "`"
+highlight 53..59  [string]  "`code`"
+highlight 58..59  [punctuation]  "`"
+highlight 62..64  [markup-marker]  "##"
+highlight 62..71  [headline-level-2]  "## Tasks\n"
+highlight 72..74  [markup-marker]  "- "
+highlight 74..77  [checkbox]  "[ ]"
+highlight 88..90  [markup-marker]  "- "
+highlight 90..93  [checkbox]  "[x]"
+highlight 104..106  [markup-marker]  "- "
+highlight 117..119  [markup-marker]  "  "
+highlight 137..137  [markup-marker]
+highlight 138..141  [markup-marker]  "###"
+highlight 138..149  [headline-level-3]  "### Deeper\n"
+highlight 150..172  [headline-level-1]  "Setext One\n==========\n"
+highlight 161..171  [markup-marker]  "=========="
+highlight 173..195  [headline-level-2]  "Setext Two\n----------\n"
+highlight 184..194  [markup-marker]  "----------"
+highlight 196..199  [punctuation]  "```"
+highlight 196..232  [string]  "```python\ndef f():\n    return 1\n```\n"
+highlight 206..206  [markup-marker]
+highlight 206..209  [keyword]  "def"
+highlight 210..211  [function]  "f"
+highlight 215..215  [markup-marker]
+highlight 219..225  [keyword]  "return"
+highlight 226..227  [number]  "1"
+highlight 228..228  [markup-marker]
+highlight 228..231  [punctuation]  "```"
+highlight 233..235  [markup-marker]  "> "
+indent 0..7  [0]  "# Title"
+indent 8..8  [0]
+indent 9..60  [0]  "Intro paragraph with **bold* …  and `code`."
+indent 61..61  [0]
+indent 62..70  [0]  "## Tasks"
+indent 71..71  [0]
+indent 72..87  [0]  "- [ ] open task"
+indent 88..103  [0]  "- [x] done task"
+indent 104..116  [0]  "- plain item"
+indent 117..136  [2]  "  continuation line"
+indent 137..137  [2]
+indent 138..148  [0]  "### Deeper"
+indent 149..149  [0]
+indent 150..160  [0]  "Setext One"
+indent 161..171  [0]  "=========="
+indent 172..172  [0]
+indent 173..183  [0]  "Setext Two"
+indent 184..194  [0]  "----------"
+indent 195..195  [0]
+indent 196..205  [0]  "```python"
+indent 232..232  [0]
+indent 233..242  [0]  "> a quote"
+indent 243..243  [2]
+symbol 0..243  [Namespace Title]  "# Title\n\nIntro paragraph wit … \n\n> a quote\n"
+symbol 62..243  [Namespace Tasks]  "## Tasks\n\n- [ ] open task\n-  … \n\n> a quote\n"
+symbol 138..243  [Namespace Deeper]  "### Deeper\n\nSetext One\n===== … \n\n> a quote\n"

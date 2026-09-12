@@ -164,6 +164,10 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                 if (!capture.IsString() || !cls.IsKeyword()) {
                     Fail(directoryName, capture.line, ":capture-classes maps a \"capture.name\" to a :syntax-class keyword");
                 }
+                if (cls.text == "suppress") {
+                    definition.suppressedCaptures.push_back(capture.text);
+                    continue;
+                }
                 try {
                     definition.captureClasses.emplace_back(capture.text, SyntaxClassByName(cls.text));
                 }

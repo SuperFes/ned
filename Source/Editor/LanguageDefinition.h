@@ -97,6 +97,11 @@ struct LanguageDefinition {
     // "punctuation.special" is a MarkupMarker, everyone else's is
     // Punctuation). User remaps (SyntaxTheme.h) still win over these.
     std::vector<std::pair<std::string, SyntaxClass>> captureClasses;
+    // Captures whose spans this language drops outright (":suppress" in
+    // :capture-classes) -- the one legitimate negative: markdown's upstream
+    // @text.title would re-class a heading's title out of its own
+    // whole-line wash, and "contribute nothing" is not sayable by mapping.
+    std::vector<std::string> suppressedCaptures;
     // Declarative span adjustment per capture name, applied by the generic
     // highlight before the span joins the collection: LineEnd extends the
     // span through its last line's remaining text (Org's headline wash

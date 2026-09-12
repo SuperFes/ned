@@ -12,6 +12,15 @@ namespace ned_tests {
 // Valid only during a test run (constructed in testRunStarting).
 [[nodiscard]] ned::janet::Environment& TestEnvironment();
 
+// Restores the process-wide capture-classifier registry to what
+// testRunStarting installed (the bundled Plugins/languages.janet set) --
+// what a classifier test's cleanup guard calls instead of a bare
+// ClearCaptureClassifiers, which would strip Org's bundled headline/TODO
+// classifiers from every later test in the binary (a real ordering-dependent
+// oracle failure, caught by the sanitize build running tests in a different
+// order).
+void RestoreBundledCaptureClassifiers();
+
 } // namespace ned_tests
 
 #endif // NED_TESTS_JANET_TEST_SUPPORT_H
