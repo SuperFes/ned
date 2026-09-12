@@ -378,6 +378,77 @@ its own. That makes it the first hand-written query this work removes rather
 than reproduces, and the corpus gate's hand-written total drops 60 -> 59 --
 the direction that number is supposed to move.
 
+### Fold sources compose; indent sources do not
+
+The additive-layer principle below ("a source asserts, never denies") is what
+lets a hand-written `folds.scm` and the delimiter imprint coexist with no
+precedence rule. Wiring the same imprint into the *indent* driver as a second
+source, and diffing it against every hand-written query over the corpus, shows
+the principle has a boundary:
+
+```
+12 of 16 languages          agree line for line
+ 3 over-indent              cpp, toml, yaml
+ 1 has no query to compare  (tsx -- it was sharing TypeScript's)
+```
+
+The 12 are the encouraging half: every container the imprint adds and the
+query omits -- argument lists, parameter lists, parenthesized expressions --
+lands on a row the query's own rules already counted, so the answer does not
+move. But the 3 are not noise, and they fail for one reason:
+
+**A fold source contributes an assertion; an indent source contributes a
+quantity.** "This range is foldable" cannot contradict another source. "+1
+level here" changes the answer, and a union has no way to say *minus*.
+
+Each of the three is a place where a language deliberately states that a real
+delimited body does **not** indent:
+
+- C++'s outermost `namespace` body. `cpp-indents.scm` indents a
+  `declaration_list` only when it is nested inside another namespace -- a
+  predicated rule, written that way on purpose.
+- TOML's `table` and `pair`. A TOML file is flat under its `[headers]`.
+- YAML's `stream` and `document`. They span the whole file, so counting them
+  indents column zero.
+
+None of these is a gap in the grammar's structure; all three are conventions
+about layout, which is Tier 1's half of the split. So the Indents column
+**cannot** reach 29/29 by inference the way the Folds column did, and the
+Phase 2 exit criterion should say so rather than assume symmetry between two
+drivers that look alike from the outside. A trait format that wants both needs
+suppression to be expressible -- which is a real design requirement, and one
+worth knowing before the format is written rather than after.
+
+The wiring itself was reverted rather than shipped: with the union unsound and
+every bundled language that has a table already carrying an indent query, it
+had no caller.
+
+### What that measurement found instead: JSX had no indent rules at all
+
+`.tsx` and `.jsx` computed one flat level for a whole tree of elements. JSX
+nests by matched tags, so the delimiter imprint contributes nothing (the HTML
+limit, exactly), and `typescript-indents.scm` -- which TsxMode was sharing --
+contained no `jsx_*` rule of any kind. Fixed by hand, modelled on
+`html-indents.scm`, which had solved the identical shape.
+
+Two things came out of it that generalise:
+
+**`grammar.json` declares node types the compiled parser rejects.** The
+`typescript` dialect lists every `jsx_*` rule; its parser knows none of them.
+A query naming an unknown node type fails to *compile*, which takes the whole
+mode's indentation down rather than just the offending rule -- so the two
+dialects cannot share one query file however similar they look. The file that
+answers to the parser is `node-types.json`, not `grammar.json`; this document
+has now been wrong about that in both directions (see the `alias()` result
+above, where grammar.json was the file that knew more).
+
+**Two of the four JSX captures are covered by the imprint and two are not**,
+and the split is exactly the delimiter fact: `jsx_expression` (`{...}`) and
+`jsx_opening_element` (`<...>`) are bracket pairs, `jsx_element` and
+`jsx_self_closing_element` are tag pairs. `Tests/ImprintTest.cpp` names those
+two as the standing exception to "the imprint covers every hand-written
+`@indent` node" rather than loosening the gate to a count.
+
 ### Tier 1 is not inferable, and that is now measured rather than assumed
 
 Tier 0's result was good enough to raise the obvious question: if delimited

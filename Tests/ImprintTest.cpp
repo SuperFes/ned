@@ -454,8 +454,18 @@ TEST_CASE("Inference reproduces every hand-written fold node", "[Imprint][Corpus
     // Worth the retelling because the failure mode is seductive: a measurement
     // that cannot see something reports its absence, and absence reads as the
     // other side's mistake.
-    CHECK(indentMissed.empty());
-    CHECK(indentCovered == indentTotal);
+    //
+    // Two exceptions now, named rather than tolerated as a count, and both are
+    // the SAME limit the fold side already documents: a JSX element is
+    // delimited by a matched `<li>`/`</li>` tag pair, which is not a bracket
+    // pair, so the imprint has nothing to say about it and says nothing. Note
+    // which JSX captures are NOT here -- `jsx_expression` (`{...}`) and
+    // `jsx_opening_element` (`<...>`) are covered, because those genuinely are
+    // brackets. The line falls exactly where the delimiter fact stops, which is
+    // the useful thing to be able to see.
+    const std::set<std::string> kTagDelimited = {"javascript/jsx_element", "javascript/jsx_self_closing_element"};
+    CHECK(indentMissed == kTagDelimited);
+    CHECK(indentCovered == indentTotal - kTagDelimited.size());
 
     INFO("reproduced " << reproduced << " of " << expected);
     // The corpus itself changed if this trips. Three times so far:
