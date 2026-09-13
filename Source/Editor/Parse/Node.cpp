@@ -359,6 +359,14 @@ bool NodeEq(RedNode self, RedNode other) {
     return self.tree == other.tree && self.id == other.id;
 }
 
+const void* NodeSubtreeIdentity(RedNode self) {
+    if (NodeIsNull(self)) {
+        return nullptr;
+    }
+    const Subtree subtree = NodeSubtree(self);
+    return subtree.data.isInline ? nullptr : static_cast<const void*>(subtree.ptr);
+}
+
 std::uint32_t NodeChildCount(RedNode self) {
     const Subtree tree = NodeSubtree(self);
     return SubtreeChildCount(tree) > 0 ? tree.ptr->visibleChildCount : 0;
