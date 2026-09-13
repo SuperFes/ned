@@ -10,6 +10,7 @@
 #include "HugeStructuralWindow.h"
 #include "ImprintIndent.h"
 #include "TabWidth.h"
+#include "TreeSitter/MatchCache.h"
 #include "TreeSitter/Node.h"
 
 namespace ned::editor {
@@ -113,14 +114,17 @@ namespace {
 
 } // namespace
 
-IndentCaptures IndentCapturesFromQuery(const treesitter::Tree& tree, std::string_view bufferText,
-                                       const treesitter::QueryMatcher& indentQuery) {
-    // Keyed by the captured node's own stable identity (Node::Id()), NOT its
-    // byte range -- a (startByte, endByte) pair can't disambiguate two
-    // DIFFERENT nodes that happen to span the exact same bytes, which is a
-    // real, not hypothetical, case (see Node::Id()'s own doc comment for
-    // tree-sitter-python's "block" node coinciding byte-for-byte with its
-    // own single statement when that statement is the block's only one).
+namespace {
+
+    // indent-cache-by-byte-range follow-up: the actual name-based partition,
+    // shared by IndentCapturesFromQuery (fed by a fresh, unwindowed
+    // indentQuery.Matches() call) and BuildIndentFunction's closure (fed by
+    // MatchCache::Reconcile, whose byte-shifted "kept" entries carry no live
+    // node at all -- only QueryMatchCapture's own startByte/endByte/type).
+    // Keyed by (startByte, endByte, type) -- IndentCaptures::NodeKey -- NOT a
+    // raw Node::Id(), for exactly that reason; see IndentCaptures' own doc
+    // comment for the one real collision case (tree-sitter-python's "block")
+    // that key still resolves.
     //
     // "aligned" (@aligned-paren-column-alignment follow-up): a container
     // captured "aligned" instead of "indent" -- see ResolveAlignedColumn/the
@@ -155,31 +159,42 @@ IndentCaptures IndentCapturesFromQuery(const treesitter::Tree& tree, std::string
     // just whichever one starts the target line -- the end-of-buffer rescue
     // in the walk needs to recognize "the last real byte before this new
     // blank line is itself a closing delimiter" in general.
-    IndentCaptures captures;
-    if (tree.IsNull()) {
+    IndentCaptures IndentCapturesFromMatches(const std::vector<treesitter::QueryMatch>& matches) {
+        IndentCaptures captures;
+        for (const treesitter::QueryMatch& match : matches) {
+            for (const treesitter::QueryMatchCapture& capture : match.captures) {
+                const IndentCaptures::NodeKey key{capture.startByte, capture.endByte, capture.type};
+                if (capture.name == "indent") {
+                    captures.indent.emplace(key, capture.startByte);
+                }
+                else if (capture.name == "aligned") {
+                    captures.aligned.insert(key);
+                }
+                else if (capture.name == "indent.body") {
+                    captures.body.insert(key);
+                }
+                else if (capture.name == "align.barrier") {
+                    captures.barrier.insert(key);
+                }
+                else if (capture.name == "indent.suppress") {
+                    captures.suppressed.insert(key);
+                }
+                else if (capture.name == "dedent") {
+                    captures.dedents.push_back(IndentCaptures::Dedent{capture.startByte, capture.endByte, capture.type});
+                }
+            }
+        }
         return captures;
     }
-    for (const treesitter::QueryCapture& capture : indentQuery.Captures(tree.RootNode(), bufferText)) {
-        if (capture.name == "indent") {
-            captures.indent.emplace(capture.nodeId, capture.startByte);
-        }
-        else if (capture.name == "aligned") {
-            captures.aligned.insert(capture.nodeId);
-        }
-        else if (capture.name == "indent.body") {
-            captures.body.insert(capture.nodeId);
-        }
-        else if (capture.name == "align.barrier") {
-            captures.barrier.insert(capture.nodeId);
-        }
-        else if (capture.name == "indent.suppress") {
-            captures.suppressed.insert(capture.nodeId);
-        }
-        else if (capture.name == "dedent") {
-            captures.dedents.push_back(IndentCaptures::Dedent{capture.startByte, capture.endByte, capture.nodeId});
-        }
+
+} // namespace
+
+IndentCaptures IndentCapturesFromQuery(const treesitter::Tree& tree, std::string_view bufferText,
+                                       const treesitter::QueryMatcher& indentQuery) {
+    if (tree.IsNull()) {
+        return {};
     }
-    return captures;
+    return IndentCapturesFromMatches(indentQuery.Matches(tree.RootNode(), bufferText));
 }
 
 void AddImprintCaptures(IndentCaptures& captures, const treesitter::Tree& tree, std::string_view languageKey,
@@ -190,17 +205,18 @@ void AddImprintCaptures(IndentCaptures& captures, const treesitter::Tree& tree, 
     const imprint::ImprintIndentCaptures fromImprint =
         imprint::CollectIndentCaptures(tree.RootNode(), languageKey, bufferText);
     for (const imprint::ImprintContainer& container : fromImprint.containers) {
-        if (!captures.suppressed.contains(container.nodeId)) {
+        const IndentCaptures::NodeKey key{container.startByte, container.endByte, container.type};
+        if (!captures.suppressed.contains(key)) {
             // emplace, not assignment: a node the query also captured keeps
             // the query's own interior start.
-            captures.indent.emplace(container.nodeId, container.interiorStart);
+            captures.indent.emplace(key, container.interiorStart);
         }
     }
     // A suppressed container's closer still dedents: the `}` of a top-level
     // namespace aligns with the `namespace` line whether or not its body
     // indented, which is what the hand-written query said too.
     for (const imprint::ImprintDedent& dedent : fromImprint.dedents) {
-        captures.dedents.push_back(IndentCaptures::Dedent{dedent.startByte, dedent.endByte, dedent.nodeId});
+        captures.dedents.push_back(IndentCaptures::Dedent{dedent.startByte, dedent.endByte, dedent.type});
     }
 }
 
@@ -230,27 +246,34 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     // content ("1"), not from the trailing closer's own alignment rule.
     const std::size_t contentStart = FirstNonBlankByte(bufferText, lineStart, lineEnd);
 
-    const void*                                      dedentNodeId = nullptr; // set only when a dedent capture starts this line
+    // indent-cache-by-byte-range follow-up: a node's key for every lookup
+    // below -- see IndentCaptures' own doc comment for why (startByte,
+    // endByte, type) replaced a raw Node::Id().
+    const auto keyOf = [](const treesitter::Node& node) {
+        return IndentCaptures::NodeKey{node.StartByte(), node.EndByte(), node.Type()};
+    };
+
+    std::optional<IndentCaptures::NodeKey>           dedentKey; // set only when a dedent capture starts this line
     std::vector<std::pair<std::size_t, std::size_t>> dedentRanges;
     dedentRanges.reserve(captures.dedents.size());
     for (const IndentCaptures::Dedent& dedent : captures.dedents) {
         dedentRanges.emplace_back(dedent.startByte, dedent.endByte);
         if (dedent.startByte == contentStart) {
-            dedentNodeId = dedent.nodeId;
+            dedentKey = IndentCaptures::NodeKey{dedent.startByte, dedent.endByte, dedent.type};
         }
     }
 
-    const auto isIndentCaptured = [&captures](const treesitter::Node& node) { return captures.indent.contains(node.Id()); };
+    const auto isIndentCaptured = [&captures, &keyOf](const treesitter::Node& node) { return captures.indent.contains(keyOf(node)); };
     // Whether `position` sits inside an "indent"-captured node's interior --
     // see IndentCaptures::indent. A node captured only "aligned"/"indent.body"
     // has no entry and its own start is its opener, so the answer is yes.
-    const auto interiorContains = [&captures](const treesitter::Node& node, std::size_t position) {
-        const auto found = captures.indent.find(node.Id());
+    const auto interiorContains = [&captures, &keyOf](const treesitter::Node& node, std::size_t position) {
+        const auto found = captures.indent.find(keyOf(node));
         return found == captures.indent.end() || position >= found->second;
     };
-    const auto isAlignedCaptured    = [&captures](const treesitter::Node& node) { return captures.aligned.contains(node.Id()); };
-    const auto isBodyIndentCaptured = [&captures](const treesitter::Node& node) { return captures.body.contains(node.Id()); };
-    const auto isBarrierCaptured    = [&captures](const treesitter::Node& node) { return captures.barrier.contains(node.Id()); };
+    const auto isAlignedCaptured    = [&captures, &keyOf](const treesitter::Node& node) { return captures.aligned.contains(keyOf(node)); };
+    const auto isBodyIndentCaptured = [&captures, &keyOf](const treesitter::Node& node) { return captures.body.contains(keyOf(node)); };
+    const auto isBarrierCaptured    = [&captures, &keyOf](const treesitter::Node& node) { return captures.barrier.contains(keyOf(node)); };
 
     // Resolves `position` (either a real line's contentStart, or -- for the
     // dedent branch below -- an align target's own StartByte, computing "as
@@ -383,19 +406,19 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     };
 
     std::optional<IndentComputation> result;
-    if (dedentNodeId != nullptr) {
+    if (dedentKey.has_value()) {
         // The dedent-captured node itself may be anonymous (a literal "}")
         // or named (HTML/XML's "end_tag" -- a whole "</div>" node, not a
         // single token) -- DescendantForByteRange (unnamed-inclusive) at
         // contentStart finds whatever is truly SMALLEST at that position,
         // which for a named capture can be one of ITS OWN anonymous
         // children (e.g. end_tag's own leading "</" token) rather than the
-        // captured node itself. Walk up from there by real node identity
-        // (Node::Id(), not a byte-range/IsNamed() guess) until the node
-        // that identity-matches the actual capture is found -- correct
-        // regardless of which shape the query captured.
+        // captured node itself. Walk up from there by identity (keyOf, not
+        // a byte-range/IsNamed() guess alone -- see IndentCaptures' own doc
+        // comment) until the node that identity-matches the actual capture
+        // is found -- correct regardless of which shape the query captured.
         treesitter::Node dedentNode = tree.RootNode().DescendantForByteRange(contentStart, contentStart);
-        while (!dedentNode.IsNull() && dedentNode.Id() != dedentNodeId) {
+        while (!dedentNode.IsNull() && !(keyOf(dedentNode) == *dedentKey)) {
             dedentNode = dedentNode.Parent();
         }
         if (dedentNode.IsNull()) {
@@ -483,12 +506,26 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
 IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser> parser, std::shared_ptr<treesitter::QueryMatcher> indentQuery,
                                    std::shared_ptr<treesitter::IncrementalParseCache> sharedParse, std::string modeName,
                                    std::string languageKey) {
-    return [parser, indentQuery, sharedParse, modeName, languageKey](std::string_view bufferText, std::size_t lineStart,
-                                                                     std::size_t lineEnd) -> std::optional<int> {
-        const treesitter::Tree& tree     = sharedParse->Update(*parser, bufferText);
-        const IndentStyle       style    = EffectiveIndentStyle(modeName);
-        IndentCaptures          captures = indentQuery ? IndentCapturesFromQuery(tree, bufferText, *indentQuery)
-                                                       : IndentCaptures{};
+    // indent-cache-by-byte-range follow-up: only built (and only consulted
+    // below) when there's a real query to reconcile against -- an
+    // imprint-only language (indentQuery null) has nothing for MatchCache to
+    // do. Shares sharedParse->LastEdit() the same way Mode.cpp's symbolKind
+    // closure does, so the diff is computed once per generation regardless
+    // of how many capabilities ask for it.
+    const auto indentMatchCache = indentQuery ? std::make_shared<treesitter::MatchCache>() : nullptr;
+    return [parser, indentQuery, sharedParse, indentMatchCache, modeName,
+            languageKey](std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd) -> std::optional<int> {
+        const treesitter::Tree& tree  = sharedParse->Update(*parser, bufferText);
+        const IndentStyle       style = EffectiveIndentStyle(modeName);
+        // Tree::RootNode()'s own precondition is !IsNull() -- guard here
+        // rather than rely on Reconcile/Matches tolerating a null root,
+        // matching what IndentCapturesFromQuery already checked internally
+        // before this closure started calling MatchCache::Reconcile directly.
+        IndentCaptures captures =
+            (indentQuery && !tree.IsNull())
+                ? IndentCapturesFromMatches(indentMatchCache->Reconcile(*indentQuery, tree.RootNode(), bufferText,
+                                                                        sharedParse->LastEdit()))
+                : IndentCaptures{};
         AddImprintCaptures(captures, tree, languageKey, bufferText);
         const std::optional<IndentComputation> result =
             IndentLevelForLine(tree, bufferText, captures, lineStart, lineEnd, style);

@@ -50,6 +50,7 @@
 #define NED_EDITOR_INDENT_H
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -95,11 +96,40 @@ namespace ned::editor {
 // from a query (IndentCapturesFromQuery), from the imprint (AddImprintCaptures),
 // or both -- the walk cannot tell which, and counts a node once however many
 // sets name it.
+//
+// indent-cache-by-byte-range follow-up: keyed by (startByte, endByte, type)
+// -- NodeKey below -- rather than a raw Node::Id(). A per-subtree fact cache
+// (MatchCache) reconciling this incrementally across keystrokes can hand
+// back a capture that was only byte-shifted, not re-derived from a live
+// node -- no Node::Id() exists for that capture at all. NodeKey is
+// computable either way: from a real current-tree node during
+// IndentLevelForLine's walk (node.StartByte()/EndByte()/Type()), or from a
+// stored/shifted QueryMatchCapture (its own startByte/endByte/type fields).
+// It still disambiguates the one real collision case a bare byte range
+// can't -- Node::Id()'s own doc comment: tree-sitter-python's "block" node
+// has no opener of its own, so a block with a single statement and that
+// statement itself span the exact same bytes -- because the two always have
+// DIFFERENT grammar types (a container production is never its own sole
+// child's production), so `type` alone resolves it.
 struct IndentCaptures {
+    struct NodeKey {
+        std::size_t        startByte = 0;
+        std::size_t        endByte   = 0;
+        std::string_view   type;
+        [[nodiscard]] bool operator==(const NodeKey&) const = default;
+    };
+    struct NodeKeyHash {
+        [[nodiscard]] std::size_t operator()(const NodeKey& key) const noexcept {
+            std::size_t h = std::hash<std::size_t>{}(key.startByte);
+            h             = h * 31 + std::hash<std::size_t>{}(key.endByte);
+            h             = h * 31 + std::hash<std::string_view>{}(key.type);
+            return h;
+        }
+    };
     struct Dedent {
-        std::size_t startByte = 0;
-        std::size_t endByte   = 0;
-        const void* nodeId    = nullptr; // the captured token; its Parent() is the container it closes
+        std::size_t      startByte = 0;
+        std::size_t      endByte   = 0;
+        std::string_view type; // the captured token's own grammar type; NodeKey{startByte, endByte, type} identifies it -- its Parent() is the container it closes
     };
     // "indent": container identity -> the byte its interior begins at. A
     // container contributes a level only to a line that begins inside it. For
@@ -109,12 +139,12 @@ struct IndentCaptures {
     // (`a[i]`, `Foo(x) => ...`) count for its continuation lines and not for
     // the line it opens on. The hand-written queries never captured those
     // node types, and this is why.
-    std::unordered_map<const void*, std::size_t> indent;
-    std::unordered_set<const void*>              aligned;    // "aligned"
-    std::unordered_set<const void*>              body;       // "indent.body"
-    std::unordered_set<const void*>              barrier;    // "align.barrier"
-    std::unordered_set<const void*>              suppressed; // "indent.suppress" -- only ever consulted by AddImprintCaptures
-    std::vector<Dedent>                          dedents;    // "dedent"
+    std::unordered_map<NodeKey, std::size_t, NodeKeyHash> indent;
+    std::unordered_set<NodeKey, NodeKeyHash>              aligned;    // "aligned"
+    std::unordered_set<NodeKey, NodeKeyHash>              body;       // "indent.body"
+    std::unordered_set<NodeKey, NodeKeyHash>              barrier;    // "align.barrier"
+    std::unordered_set<NodeKey, NodeKeyHash>              suppressed; // "indent.suppress" -- only ever consulted by AddImprintCaptures
+    std::vector<Dedent>                                   dedents;    // "dedent"
 };
 
 [[nodiscard]] IndentCaptures IndentCapturesFromQuery(const treesitter::Tree& tree, std::string_view bufferText,

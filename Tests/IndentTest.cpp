@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/Indent.h"
@@ -262,6 +263,44 @@ TEST_CASE("CppMode indentColumn indents a struct member and a nested method body
     const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 8);
+}
+
+// indent-cache-by-byte-range follow-up: the actual property BuildIndentFunction's
+// MatchCache wiring exists for -- calling the SAME Mode instance's indentColumn
+// repeatedly across an evolving sequence of edits (sharing one MatchCache under
+// the hood, reconciled incrementally) must report the exact same thing a
+// completely FRESH Mode would report on that exact text, at every step. Each
+// step queries the blank line just opened by a real Enter press (lineStart ==
+// lineEnd == text.size(), Mode.h's own convention for that), which exercises
+// the walk's own end-of-buffer rescue path too.
+TEST_CASE("CppMode's indentColumn stays correct across a sequence of incremental edits", "[Indent]") {
+    const auto mode = CppMode();
+    REQUIRE(static_cast<bool>(mode.indentColumn));
+
+    const std::vector<std::string> steps = {
+        "class Widget {\npublic:\n    void run() {\n",
+        "class Widget {\npublic:\n    void run() {\n        int x = 1;\n",
+        "class Widget {\npublic:\n    void run() {\n        int x = 1;\n        if (x) {\n",
+        "class Widget {\npublic:\n    void run() {\n        int x = 1;\n        if (x) {\n            x++;\n",
+        "class Widget {\npublic:\n    void run() {\n        int x = 1;\n        if (x) {\n            x++;\n        }\n",
+        "class Widget {\npublic:\n    void run() {\n        int x = 1;\n        if (x) {\n            x++;\n        }\n"
+        "    }\n",
+        "class Widget {\npublic:\n    void run() {\n        int x = 1;\n        if (x) {\n            x++;\n        }\n"
+        "    }\n};\n",
+    };
+
+    bool sawRealValue = false;
+    for (std::size_t i = 0; i < steps.size(); ++i) {
+        const std::string& text      = steps[i];
+        const std::size_t  lineStart = text.size();
+        const std::size_t  lineEnd   = text.size();
+        INFO("step " << i << ": " << text);
+        const auto incremental = mode.indentColumn(text, lineStart, lineEnd);
+        const auto fresh       = CppMode().indentColumn(text, lineStart, lineEnd);
+        REQUIRE(incremental == fresh);
+        sawRealValue = sawRealValue || incremental.has_value();
+    }
+    REQUIRE(sawRealValue); // not vacuously comparing nullopt against nullopt throughout
 }
 
 TEST_CASE("JsonMode indentColumn indents a nested array element and aligns its closing bracket", "[Indent]") {

@@ -54,22 +54,30 @@
 
 namespace ned::editor::imprint {
 
-// One closing delimiter, as the indent walk wants it: the token's own range and
-// its identity, so `Indent.cpp` can find the container it closes by parentage
-// exactly as it does for a query's `(X "}" @dedent)`.
+// One closing delimiter, as the indent walk wants it: the token's own range
+// and grammar type, so `Indent.cpp` can find the container it closes by
+// parentage exactly as it does for a query's `(X "}" @dedent)`.
+//
+// indent-cache-by-byte-range follow-up: `type` replaces what was a raw
+// `Node::Id()` (nodeId) -- IndentCaptures' own maps moved off tree-generation
+// -specific node identity (see that struct's own doc comment) to
+// (startByte, endByte, type), so this token's identity is expressed the same
+// way from the moment it's collected.
 struct ImprintDedent {
-    std::size_t startByte = 0;
-    std::size_t endByte   = 0;
-    const void* nodeId    = nullptr;
+    std::size_t      startByte = 0;
+    std::size_t      endByte   = 0;
+    std::string_view type;
 };
 
-// One container instance: its identity, and the byte its interior begins at
-// -- after the opener for a bracket body, the body's own start for an
-// indentation body. `Indent.cpp` counts a container only for lines beginning
-// inside it.
+// One container instance: its own range, grammar type, and the byte its
+// interior begins at -- after the opener for a bracket body, the body's own
+// start for an indentation body. `Indent.cpp` counts a container only for
+// lines beginning inside it.
 struct ImprintContainer {
-    const void* nodeId        = nullptr;
-    std::size_t interiorStart = 0;
+    std::size_t      startByte = 0;
+    std::size_t      endByte   = 0;
+    std::string_view type;
+    std::size_t      interiorStart = 0;
 };
 
 struct ImprintIndentCaptures {
