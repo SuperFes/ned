@@ -805,11 +805,18 @@ add_library(ned_lib STATIC
         Source/Editor/TreeSitter/Tree.cpp
         Source/Editor/TreeSitter/Parser.cpp
         Source/Editor/TreeSitter/IncrementalParse.cpp
-        Source/Editor/TreeSitter/Query.cpp
         Source/Editor/TreeSitter/QueryPredicates.cpp
         Source/Editor/TreeSitter/QueryMatcher.cpp
         Source/Editor/TreeSitter/Languages.cpp
         Source/Editor/TreeSitter/DynamicGrammar.cpp
+        Source/Editor/Parse/Green.cpp
+        Source/Editor/Parse/Lexer.cpp
+        Source/Editor/Parse/Stack.cpp
+        Source/Editor/Parse/Parser.cpp
+        Source/Editor/Parse/Tree.cpp
+        Source/Editor/Parse/Node.cpp
+        Source/Editor/Parse/Cursor.cpp
+        Source/Editor/Parse/Sexp.cpp
         Source/Janet/Value.cpp
         Source/Janet/Environment.cpp
         Source/Janet/EditorBindings.cpp
@@ -902,7 +909,11 @@ target_link_libraries(ned_lib
         PUBLIC vterm
         PUBLIC utf8proc
         PUBLIC nlohmann_json::nlohmann_json
-        PUBLIC tree-sitter
+        # The tree-sitter RUNTIME is deliberately absent: since the Phase 4b
+        # engine swap ned parses with Source/Editor/Parse/ interpreting the
+        # generated grammar tables below directly. ned_tests still links the
+        # runtime privately as the conformance suite's differential
+        # reference.
         PUBLIC tree-sitter-json
         PUBLIC tree-sitter-c
         PUBLIC tree-sitter-cpp
@@ -1287,6 +1298,7 @@ if (NED_BUILD_TESTS)
             Tests/TerminalEmulatorTest.cpp
             Tests/TerminalPanelTest.cpp
             Tests/TreeSitterTest.cpp
+            Tests/ParseConformanceTest.cpp
             Tests/DynamicGrammarTest.cpp
             Tests/ModeOverridesTest.cpp
             Tests/ModePrewarmTest.cpp
@@ -1331,7 +1343,7 @@ if (NED_BUILD_TESTS)
                 Tests/ProjectSwitchIntegrationTest.cpp)
     endif()
 
-    target_link_libraries(ned_tests PRIVATE ned_lib Catch2::Catch2WithMain)
+    target_link_libraries(ned_tests PRIVATE ned_lib Catch2::Catch2WithMain tree-sitter)
 
     # ThemeKeyDocsTest holds Docs/Themes.md's key reference against the real
     # ui::ThemeKeys() table, so it needs to find the repo from a test binary

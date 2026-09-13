@@ -9,11 +9,11 @@
 // (the same judgment call `Source/UI/` makes about Notcurses' own C++
 // bindings).
 //
-// TSNode itself is a small POD struct (not a pointer), safe to copy freely --
-// but it holds a non-owning pointer back into the TSTree it came from, so a
+// Since the Phase 4b engine swap this wraps ned's own parse::RedNode rather
+// than a TSNode -- same shape (a small POD, safe to copy freely) and the
+// same lifetime contract: the node borrows from the tree it came from, so a
 // Node must not outlive the ned::editor::treesitter::Tree it was obtained
-// from (see Tree.h). This mirrors the C API's own documented contract
-// exactly; nothing here can enforce it at compile time.
+// from (see Tree.h). Nothing here can enforce that at compile time.
 //
 
 #ifndef NED_EDITOR_TREESITTER_NODE_H
@@ -22,13 +22,13 @@
 #include <cstddef>
 #include <string_view>
 
-#include <tree_sitter/api.h>
+#include "Editor/Parse/Node.h"
 
 namespace ned::editor::treesitter {
 
 class Node {
   public:
-    explicit Node(TSNode node) noexcept;
+    explicit Node(parse::RedNode node) noexcept;
 
     // The grammar's node type name (e.g. "string", "identifier") -- a pointer
     // into tree-sitter's own static string table, valid for the process
@@ -112,10 +112,10 @@ class Node {
     // accessor is only meaningful when this is false.
     [[nodiscard]] bool IsNull() const;
 
-    // The raw TSNode, for code in this directory (Query.cpp) that needs to
-    // call further tree-sitter C functions this wrapper doesn't expose yet.
-    // Not for use outside Source/Editor/TreeSitter/.
-    [[nodiscard]] TSNode Raw() const noexcept;
+    // The underlying red node, for code in this directory (QueryMatcher.cpp)
+    // that drives the engine's own node/cursor API directly. Not for use
+    // outside Source/Editor/TreeSitter/.
+    [[nodiscard]] parse::RedNode Raw() const noexcept;
 
     // smart-indentation follow-up: tree-sitter's own stable node identity
     // (TSNode's public `id` field) -- unlike a (startByte, endByte) byte
@@ -128,7 +128,7 @@ class Node {
     [[nodiscard]] const void* Id() const noexcept;
 
   private:
-    TSNode node_;
+    parse::RedNode node_;
 };
 
 } // namespace ned::editor::treesitter

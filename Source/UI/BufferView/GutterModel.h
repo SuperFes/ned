@@ -56,7 +56,7 @@ class GutterModel {
     // generation counter changing. On an ordinary buffer it is the whole thing.
     using StructuralWindowFn = std::function<std::pair<std::size_t, std::size_t>(const text::ITextStorage&)>;
 
-    GutterModel(EditorContext& context, StructuralWindowFn structuralWindow) : context_(context), structuralWindow_(std::move(structuralWindow)) {
+    GutterModel(EditorContext& context, StructuralWindowFn structuralWindow, StructuralWindowFn symbolWindow) : context_(context), structuralWindow_(std::move(structuralWindow)), symbolWindow_(std::move(symbolWindow)) {
     }
 
     // A fixed number of gutter columns are reserved for fold depth, rather than
@@ -175,6 +175,11 @@ class GutterModel {
 
     EditorContext&     context_;
     StructuralWindowFn structuralWindow_;
+    // The symbol query's own window (Viewport::SymbolQueryWindow): bounded
+    // for ordinary buffers too, unlike structuralWindow_, because
+    // Mode::symbolKindInWindow runs range-bound over the full text rather
+    // than over a substring.
+    StructuralWindowFn symbolWindow_;
 
     mutable CacheStamp                                       unsavedChangeStamp_;
     mutable std::vector<std::pair<std::size_t, std::size_t>> unsavedChangeLineRanges_;

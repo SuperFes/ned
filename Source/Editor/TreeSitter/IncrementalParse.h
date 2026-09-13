@@ -6,7 +6,7 @@
 // with no Buffer reference and no edit-delta parameter -- that's what keeps
 // Mode a plain, freely-copyable value type usable from tests with a bare
 // string, not just a real Buffer. That shape has no way to hand Parser::
-// Parse's incremental overload the TSInputEdit it needs. IncrementalParseCache
+// Parse's incremental overload the InputEdit it needs. IncrementalParseCache
 // closes that gap without changing any of those signatures: it remembers the
 // text from its own last call and, when the new text differs, reconstructs a
 // single edit region via common-prefix/common-suffix diffing (cheap relative

@@ -2,74 +2,74 @@
 
 namespace ned::editor::treesitter {
 
-Node::Node(TSNode node) noexcept : node_(node) {
+Node::Node(parse::RedNode node) noexcept : node_(node) {
 }
 
 std::string_view Node::Type() const {
-    return ts_node_type(node_);
+    return parse::NodeType(node_);
 }
 
 std::size_t Node::StartByte() const {
-    return ts_node_start_byte(node_);
+    return parse::NodeStartByte(node_);
 }
 
 std::size_t Node::EndByte() const {
-    return ts_node_end_byte(node_);
+    return parse::NodeEndByte(node_);
 }
 
 std::size_t Node::StartRow() const {
-    return ts_node_start_point(node_).row;
+    return parse::NodeStartPoint(node_).row;
 }
 
 std::size_t Node::StartColumn() const {
-    return ts_node_start_point(node_).column;
+    return parse::NodeStartPoint(node_).column;
 }
 
 std::size_t Node::ChildCount() const {
-    return ts_node_child_count(node_);
+    return parse::NodeChildCount(node_);
 }
 
 Node Node::Child(std::size_t index) const {
-    return Node(ts_node_child(node_, static_cast<uint32_t>(index)));
+    return Node(parse::NodeChild(node_, static_cast<uint32_t>(index)));
 }
 
 bool Node::IsNamed() const {
-    return ts_node_is_named(node_);
+    return parse::NodeIsNamed(node_);
 }
 
 bool Node::IsExtra() const {
-    return ts_node_is_extra(node_);
+    return parse::NodeIsExtra(node_);
 }
 
 Node Node::ChildByFieldName(std::string_view fieldName) const {
-    return Node(ts_node_child_by_field_name(node_, fieldName.data(), static_cast<uint32_t>(fieldName.size())));
+    return Node(parse::NodeChildByFieldName(node_, fieldName.data(), static_cast<uint32_t>(fieldName.size())));
 }
 
 Node Node::Parent() const {
-    return Node(ts_node_parent(node_));
+    return Node(parse::NodeParent(node_));
 }
 
 Node Node::NextNamedSibling() const {
-    return Node(ts_node_next_named_sibling(node_));
+    return Node(parse::NodeNextNamedSibling(node_));
 }
 
 Node Node::PrevNamedSibling() const {
-    return Node(ts_node_prev_named_sibling(node_));
+    return Node(parse::NodePrevNamedSibling(node_));
 }
 
 Node Node::NamedDescendantForByteRange(std::size_t start, std::size_t end) const {
-    return Node(ts_node_named_descendant_for_byte_range(node_, static_cast<uint32_t>(start), static_cast<uint32_t>(end)));
+    return Node(parse::NodeNamedDescendantForByteRange(node_, static_cast<uint32_t>(start), static_cast<uint32_t>(end)));
 }
 
 Node Node::DescendantForByteRange(std::size_t start, std::size_t end) const {
-    return Node(ts_node_descendant_for_byte_range(node_, static_cast<uint32_t>(start), static_cast<uint32_t>(end)));
+    return Node(parse::NodeDescendantForByteRange(node_, static_cast<uint32_t>(start), static_cast<uint32_t>(end)));
 }
 
 bool Node::IsNull() const {
-    return ts_node_is_null(node_);
+    return parse::NodeIsNull(node_);
 }
 
-TSNode Node::Raw() const noexcept {
+parse::RedNode Node::Raw() const noexcept {
     return node_;
 }
 

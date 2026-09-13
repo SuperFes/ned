@@ -1,0 +1,1 @@
+(program (lexical_declaration (variable_declarator name: (identifier) value: (arrow_function parameters: (formal_parameters (identifier)) (ERROR) body: (assignment_expression left: (identifier) right: (number))))))

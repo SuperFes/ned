@@ -8,7 +8,7 @@
 #include "Editor/TreeSitter/IncrementalParse.h"
 #include "Editor/TreeSitter/Languages.h"
 #include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Query.h"
+#include "Editor/TreeSitter/QueryMatcher.h"
 #include "Editor/TreeSitter/Tree.h"
 
 using namespace ned::editor::treesitter;
@@ -123,12 +123,12 @@ TEST_CASE("Node::NextNamedSibling/PrevNamedSibling walk between sibling nodes", 
     REQUIRE(first.PrevNamedSibling().IsNull());
 }
 
-TEST_CASE("Query::Captures finds string and number literals with correct byte ranges", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures finds string and number literals with correct byte ranges", "[TreeSitter]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": 1})";
     Tree              tree = parser.Parse(text);
-    Query             query(language, "(string) @string (number) @number");
+    QueryMatcher      query(language, "(string) @string (number) @number");
 
     const std::vector<QueryCapture> captures = query.Captures(tree.RootNode(), text);
 
@@ -141,12 +141,12 @@ TEST_CASE("Query::Captures finds string and number literals with correct byte ra
     REQUIRE(text.substr(captures[1].startByte, captures[1].endByte - captures[1].startByte) == "1");
 }
 
-TEST_CASE("Query::Captures evaluates #eq? -- only a matching pair passes", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures evaluates #eq? -- only a matching pair passes", "[TreeSitter]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": "a", "b": "c"})";
     Tree              tree = parser.Parse(text);
-    Query             query(language, "(pair key: (string) @key value: (string) @value (#eq? @key @value))");
+    QueryMatcher      query(language, "(pair key: (string) @key value: (string) @value (#eq? @key @value))");
 
     const std::vector<QueryCapture> captures = query.Captures(tree.RootNode(), text);
 
@@ -157,14 +157,14 @@ TEST_CASE("Query::Captures evaluates #eq? -- only a matching pair passes", "[Tre
     REQUIRE(text.substr(captures[1].startByte, captures[1].endByte - captures[1].startByte) == "\"a\"");
 }
 
-TEST_CASE("Query::Captures evaluates #match? against a captured node's own text", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures evaluates #match? against a captured node's own text", "[TreeSitter]") {
     // The exact real-world case nvim-treesitter's own C query uses this
     // predicate for: an ALL-CAPS identifier reads as a constant.
     const Language    language = *LanguageByName("c");
     Parser            parser(language);
     const std::string text = "int MAX_SIZE; int count;";
     Tree              tree = parser.Parse(text);
-    Query             query(language, R"(((identifier) @constant (#match? @constant "^[A-Z_]+$")))");
+    QueryMatcher      query(language, R"(((identifier) @constant (#match? @constant "^[A-Z_]+$")))");
 
     const std::vector<QueryCapture> captures = query.Captures(tree.RootNode(), text);
 
@@ -172,14 +172,14 @@ TEST_CASE("Query::Captures evaluates #match? against a captured node's own text"
     REQUIRE(text.substr(captures[0].startByte, captures[0].endByte - captures[0].startByte) == "MAX_SIZE");
 }
 
-TEST_CASE("Query::Captures translates Lua's %u pattern class for #lua-match?", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures translates Lua's %u pattern class for #lua-match?", "[TreeSitter]") {
     // The exact real-world case in the vendored nvim-treesitter cpp query
     // (constructor-name detection): "^%u" has no ECMAScript meaning as-is.
     const Language    language = *LanguageByName("c");
     Parser            parser(language);
     const std::string text = "int Foo; int bar;";
     Tree              tree = parser.Parse(text);
-    Query             query(language, R"(((identifier) @upper (#lua-match? @upper "^%u")))");
+    QueryMatcher      query(language, R"(((identifier) @upper (#lua-match? @upper "^%u")))");
 
     const std::vector<QueryCapture> captures = query.Captures(tree.RootNode(), text);
 
@@ -187,12 +187,12 @@ TEST_CASE("Query::Captures translates Lua's %u pattern class for #lua-match?", "
     REQUIRE(text.substr(captures[0].startByte, captures[0].endByte - captures[0].startByte) == "Foo");
 }
 
-TEST_CASE("Query::Captures evaluates #any-of? against a literal set", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures evaluates #any-of? against a literal set", "[TreeSitter]") {
     const Language    language = *LanguageByName("c");
     Parser            parser(language);
     const std::string text = "int foo; int bar; int baz;";
     Tree              tree = parser.Parse(text);
-    Query             query(language, R"(((identifier) @kw (#any-of? @kw "foo" "bar")))");
+    QueryMatcher      query(language, R"(((identifier) @kw (#any-of? @kw "foo" "bar")))");
 
     const std::vector<QueryCapture> captures = query.Captures(tree.RootNode(), text);
 
@@ -201,7 +201,7 @@ TEST_CASE("Query::Captures evaluates #any-of? against a literal set", "[TreeSitt
     REQUIRE(text.substr(captures[1].startByte, captures[1].endByte - captures[1].startByte) == "bar");
 }
 
-TEST_CASE("Query::Captures evaluates #has-parent?/#has-ancestor? -- immediate vs. any level",
+TEST_CASE("QueryMatcher::Captures evaluates #has-parent?/#has-ancestor? -- immediate vs. any level",
           "[TreeSitter]") {
     // Both numbers' immediate parent is "array", not "object" -- but
     // "object" is still an ancestor further up (array -> pair -> object).
@@ -212,17 +212,17 @@ TEST_CASE("Query::Captures evaluates #has-parent?/#has-ancestor? -- immediate vs
     const std::string text = R"({"a": [1, 2]})";
     Tree              tree = parser.Parse(text);
 
-    Query hasParentArray(language, "((number) @n (#has-parent? @n array))");
+    QueryMatcher hasParentArray(language, "((number) @n (#has-parent? @n array))");
     REQUIRE(hasParentArray.Captures(tree.RootNode(), text).size() == 2);
 
-    Query hasParentObject(language, "((number) @n (#has-parent? @n object))");
+    QueryMatcher hasParentObject(language, "((number) @n (#has-parent? @n object))");
     REQUIRE(hasParentObject.Captures(tree.RootNode(), text).empty());
 
-    Query hasAncestorObject(language, "((number) @n (#has-ancestor? @n object))");
+    QueryMatcher hasAncestorObject(language, "((number) @n (#has-ancestor? @n object))");
     REQUIRE(hasAncestorObject.Captures(tree.RootNode(), text).size() == 2);
 }
 
-TEST_CASE("Query::Captures never suppresses a match for a predicate it doesn't recognize", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures never suppresses a match for a predicate it doesn't recognize", "[TreeSitter]") {
     // #set! is a real, non-filtering directive query files use for match
     // priority -- and any other unrecognized predicate name gets the same
     // treatment: inert, never suppresses a match. Matches the pre-existing
@@ -232,19 +232,19 @@ TEST_CASE("Query::Captures never suppresses a match for a predicate it doesn't r
     Parser            parser(language);
     const std::string text = R"({"a": 1})";
     Tree              tree = parser.Parse(text);
-    Query             query(language, R"((string) @s (#set! "priority" 100) (#some-made-up-predicate? @s "x"))");
+    QueryMatcher      query(language, R"(((string) @s (#set! "priority" 100) (#some-made-up-predicate? @s "x")))");
 
     const std::vector<QueryCapture> captures = query.Captures(tree.RootNode(), text);
 
     REQUIRE(captures.size() == 1);
 }
 
-TEST_CASE("Query::Matches groups captures from the same match together, not scrambled across matches", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Matches groups captures from the same match together, not scrambled across matches", "[TreeSitter]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": 1, "b": 2})";
     Tree              tree = parser.Parse(text);
-    Query             query(language, "(pair key: (string) @key value: (number) @value)");
+    QueryMatcher      query(language, "(pair key: (string) @key value: (number) @value)");
 
     const std::vector<QueryMatch> matches = query.Matches(tree.RootNode(), text);
 
@@ -259,12 +259,12 @@ TEST_CASE("Query::Matches groups captures from the same match together, not scra
     REQUIRE(text.substr(matches[1].captures[1].startByte, matches[1].captures[1].endByte - matches[1].captures[1].startByte) == "2");
 }
 
-TEST_CASE("Query::Matches resolves a #set! string operand into setDirectives", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Matches resolves a #set! string operand into setDirectives", "[TreeSitter]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": 1})";
     Tree              tree = parser.Parse(text);
-    Query             query(language, R"(((string) @s (#set! injection.language "javascript")))");
+    QueryMatcher      query(language, R"(((string) @s (#set! injection.language "javascript")))");
 
     const std::vector<QueryMatch> matches = query.Matches(tree.RootNode(), text);
 
@@ -272,12 +272,12 @@ TEST_CASE("Query::Matches resolves a #set! string operand into setDirectives", "
     REQUIRE(matches[0].setDirectives.at("injection.language") == "javascript");
 }
 
-TEST_CASE("Query::Matches stores an empty value for a zero-operand #set! directive", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Matches stores an empty value for a zero-operand #set! directive", "[TreeSitter]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": 1})";
     Tree              tree = parser.Parse(text);
-    Query             query(language, R"(((string) @s (#set! injection.combined)))");
+    QueryMatcher      query(language, R"(((string) @s (#set! injection.combined)))");
 
     const std::vector<QueryMatch> matches = query.Matches(tree.RootNode(), text);
 
@@ -286,12 +286,12 @@ TEST_CASE("Query::Matches stores an empty value for a zero-operand #set! directi
     REQUIRE(matches[0].setDirectives.at("injection.combined").empty());
 }
 
-TEST_CASE("Query::Matches still respects predicate filtering, e.g. #eq?", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Matches still respects predicate filtering, e.g. #eq?", "[TreeSitter]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": "a", "b": "c"})";
     Tree              tree = parser.Parse(text);
-    Query             query(language, "(pair key: (string) @key value: (string) @value (#eq? @key @value))");
+    QueryMatcher      query(language, "(pair key: (string) @key value: (string) @value (#eq? @key @value))");
 
     const std::vector<QueryMatch> matches = query.Matches(tree.RootNode(), text);
 
@@ -299,9 +299,9 @@ TEST_CASE("Query::Matches still respects predicate filtering, e.g. #eq?", "[Tree
     REQUIRE(matches.size() == 1);
 }
 
-TEST_CASE("Query constructor throws on a malformed query", "[TreeSitter]") {
+TEST_CASE("QueryMatcher constructor throws on a malformed query", "[TreeSitter]") {
     const Language language = *LanguageByName("json");
-    REQUIRE_THROWS_AS(Query(language, "(not_a_real_node_type) @foo"), std::runtime_error);
+    REQUIRE_THROWS_AS(QueryMatcher(language, "(not_a_real_node_type) @foo"), std::runtime_error);
 }
 
 TEST_CASE("Parser is move-constructible and move-assignable", "[TreeSitter]") {

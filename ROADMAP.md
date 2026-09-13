@@ -128,39 +128,31 @@ them. Compositing design and the measurements behind it: `Docs/Translucency.md`,
 measurement said "fine" while typing felt bad.
 
 - [ ] **Highlighting is still parse-bound for large non-markdown files.** The windowing
-      above bounds the *query*; the incremental re-parse underneath it is untouched, and
-      for C++ that is what dominates -- 2000 lines still measures ~32ms per keystroke while
-      markdown of the same size dropped to ~25ms. `IncrementalParseCache` reconstructs each
-      edit by diffing its own last text, so every keystroke also walks the whole document
-      twice before tree-sitter starts. Worth attacking the same way: give it the edit
-      directly instead of making it rediscover one.
-- [ ] **`mode.symbolKind` is O(document) per keystroke, and cannot simply be windowed.**
-      Keyed on `ContentGeneration` like highlighting was. Re-measured after the windowing
-      landed: ~5.3ms *marginal* (highlight alone 64.7ms whole-document, highlight then
-      symbolKind 70.0ms), so roughly a fifth of the current ~25ms ROADMAP.md frame and the
-      largest single line item left above the parse. Two different shapes behind one
-      `std::function`: `TreeSitterModeFromLanguage`'s closure runs `Query::Matches` over the
-      whole tree, while `MarkdownMode`'s walks the whole block tree in
-      `CollectMarkdownSectionMarkers` -- the latter genuinely shares `sharedParse` as its
-      comment claims, so its cost is the *walk*, not a second parse.
-
-      The `HighlightWindow` trick does **not** transfer, and that is the interesting part.
-      Highlighting only ever needed what is on screen; `symbolKind` has a second consumer,
-      `Editor/StickyScroll.h`, which needs the *enclosing* definitions -- a class opened at
-      line 1 while the viewport sits at line 900. A viewport window silently empties the
-      sticky row. (Huge buffers already accept exactly that degradation via
-      `structuralWindow_`; ordinary ones should not.)
-
-      So split the two consumers rather than windowing the one call:
-      - the **gutter** wants markers intersecting the viewport -- `ts_query_cursor_set_byte_range`,
-        the same bound `Query::CapturesInRange` already added for highlighting;
-      - **sticky scroll** wants an ancestor chain at one offset, which is a walk *up* from
-        `Node::NamedDescendantForByteRange(viewportTopByte, ...)` via `Node::Parent()` --
-        O(tree depth), not O(document), and it never needed the full marker list to begin
-        with.
-
-      `Tests/KeystrokeBench.cpp`'s `highlight then symbolKind` line is the measurement to
-      watch; it exists to separate the query/walk from the parse it shares.
+      above bounds the *query*; the incremental re-parse underneath it is what dominates
+      for C++. The engine is ned's own since Phase 4b, so the re-parse itself is now
+      attackable directly (subtree reuse already ships; per-subtree fact memoization
+      keyed on green identity is the next lever). Measured decision on the old
+      double-walk complaint (2026-09-13): `IncrementalParseCache`'s prefix/suffix diff
+      costs about one more linear text pass per keystroke — noise next to the parse —
+      so the edit-driven API is NOT worth reshaping `Mode`'s capability surface for on
+      its own; it becomes worthwhile only bundled with `(edit) -> fact delta`
+      memoization, and is recorded under the Phase 4b remaining payoffs, not here.
+- [x] **`mode.symbolKind` is O(document) per keystroke — closed by the Phase 4b engine
+      (2026-09-13), and NOT the way this entry predicted.** The split-the-consumers plan
+      below assumed ts_query's range semantics, where a ranged run filters emitted
+      captures and an enclosing definition's own `@name` above the window is lost. Ned's
+      matcher defines the sane contract instead: `QueryMatcher::MatchesInRange` prunes
+      by pattern-ROOT intersection and emits every intersecting match WHOLE — and since
+      an enclosing definition's range contains the viewport, it intersects, so ONE
+      viewport-sized query serves both consumers with no split at all. Shipped as
+      `Mode::symbolKindInWindow` (set beside `symbolKind` for tags-backed modes;
+      `Languages/Org.cpp`'s outline escape clears it when overriding), consumed by
+      `GutterModel::EnsureSymbolMarkers` through `Viewport::SymbolQueryWindow`
+      (viewport ± an 8KB quantized margin over the FULL text — range-bound, never
+      substring-fed, so coordinates stay absolute and none of HugeStructuralWindow's
+      corrections apply; small documents run whole). Sticky scroll reads the same cache:
+      the enclosing chain is a subset of the intersecting set. Whole-document callers
+      (class-file sync, the oracle) keep `symbolKind` unchanged.
 
 - [ ] **Dirty-region flush, and the animation question behind it.** `Screen::Flush` writes
       *every* cell of both planes every frame -- 14,400 `ncplane_putstr_yx` calls at 160x45
@@ -1045,8 +1037,8 @@ real; if not, that is worth learning at language 3 rather than language 15.
             the census still pins what bundled files may use.
       - [x] **M2 — Match.** Continuation-style backtracking enumeration over the tree
             (one shared bindings trail, restored on every return), predicate evaluation
-            through the extracted engine-neutral `QueryPredicates.h` core Query.cpp now
-            also resolves into (the two engines cannot drift), `#set!` extraction, and
+            through the extracted engine-neutral `QueryPredicates.h` core (which the
+            since-deleted ts-backed Query.cpp also resolved into while both existed), `#set!` extraction, and
             the measured range contract: the range prunes candidate roots and filters
             EMITTED captures, never match formation (c's tags emit a spanning
             `@definition.function` while its before-range `@name` is silently consumed).
@@ -1080,15 +1072,63 @@ real; if not, that is worth learning at language 3 rather than language 15.
             convenience constructor parses it via `ParseScm`), because dozens of tests
             author sources as ts-syntax literals and the text interchange costs one
             parse per mode build — `ToQueryText` therefore stays load-bearing as the
-            internal interchange rather than demoted. `TreeSitter/Query.h` (the
-            ts-backed engine) survives only as the differential gate's reference
-            implementation; no production code constructs one.
+            internal interchange rather than demoted. The ts-backed Query wrapper
+            survived as the differential gate's reference implementation until the
+            Phase 4b engine swap deleted it.
       - [x] **M5 — Performance.** The `[Performance]` suite holds on the swapped engine
             (RelWithDebInfo, budgets active). Pattern dispatch is root-symbol-indexed
             (named/anonymous type maps; wildcard/alternation/supertype/group roots try
             everywhere) and the walk range-prunes subtrees.
-- [ ] **Phase 4b — The engine, a separate decision.** Only once the vocabulary is proven
-      against 29 real languages. This is where the remaining tree-sitter complaints live:
+- [x] **Phase 4b — The engine: core shipped (2026-09-13).** Decision taken (pull the
+      plug on the tree-sitter runtime), and the runtime-first half is DONE:
+      `Source/Editor/Parse/` (`ned::editor::parse`) is a faithful C++ port of the
+      tree-sitter runtime — green tree (inline/heap `Subtree` union, refcounted,
+      children-before-header allocation), GLR stack, lexer driving the generated
+      `lex_fn`/`keyword_lex_fn`/external scanners through the TSLexer ABI, cost-based
+      error recovery, incremental reuse (`SubtreeEdit` + reusable-node walk), red layer
+      (`RedNode`/`TreeCursor`, the node.c/tree_cursor.c ports) — interpreting each
+      generated grammar's ABI-13/14/15 tables directly (`Abi.h` is ned's own declaration
+      of the layout contract every grammar's vendored parser.h embeds; janet is 13,
+      about half the set is 14 — `LanguageLexModeForState` carries the lexModes
+      element-type branch). The editor swapped at the existing wrapper seam
+      (`TreeSitter/{Parser,Tree,Node}` keep their public API over `parse::`;
+      QueryMatcher walks `parse::TreeCursor`; the ts-backed Query wrapper is deleted
+      and `QueryMatcher.h` owns the QueryCapture/QueryMatch vocabulary; the tree-sitter
+      runtime library is no longer linked into `ned_lib` — `ned_tests` keeps it
+      privately as the conformance reference). Gates, all green: upstream corpora
+      conformance (`Tests/ParseConformanceTest.cpp` — all 24 grammars' own test suites,
+      ~2,800 cases, identical to the ts runtime including the 8 known markdown-inline
+      extension failures, blessed baseline `Tests/ParseConformance/baseline.txt`);
+      incremental ≡ ts-incremental over ~4,600 scripted edit steps (7 pinned
+      inherited incremental-vs-scratch divergences, ned's trees verified identical to
+      ts's); red-layer differential over ~100k nodes; oracle byte-identical; full
+      suite 4,396/4,396 in both the default and sanitize builds; `[Performance]`
+      holds with the flagship CppMode highlight+indent benchmark FASTER (~100ms vs
+      ~130ms). Payoffs shipped same day: **stable node
+      identity across reparses** (pinned by test — a reused green subtree IS the same
+      object, the slot-address `Id()` contract survives incremental reparses);
+      **`symbolKind` off the O(document) floor** (`QueryMatcher::MatchesInRange` +
+      `Mode::symbolKindInWindow` + `Viewport::SymbolQueryWindow` — see the closed
+      keystroke-performance entry above for why the engine made the one-query shape
+      possible); and the **ned-authored recovery corpus**
+      (`Tests/ParseRecovery/` — 14 realistic mid-edit states across 8 languages,
+      goldens blessed via `NED_BLESS_PARSE_RECOVERY`, six cases already recovering by
+      MISSING-token insertion, plus containment properties: an early error never
+      un-parses the structures after it; upstream pins ~25 recovery cases total, so
+      ned's recovery surface is now strictly better covered than tree-sitter's own).
+      Remaining, each a separate decision with its trigger recorded: recovery-QUALITY
+      improvements beyond ts parity (anchor sets, generalized missing-token scoring —
+      the corpus above is their baseline); per-subtree fact memoization + the
+      edit-driven `(edit) -> fact delta` Mode surface (bundled — see the
+      keystroke-performance section's measured decision); native ranged parsing
+      (deferred with reasoning: a HUGE buffer's text is chunked storage, not a
+      contiguous string_view, so included-range parsing needs chunked lexer input
+      first — the substring window plus its two corrections stays the right shape
+      until then); injections as real subtrees (the highlight side; LSP's virtual
+      documents keep width-preserving padding regardless, since servers want whole
+      documents); and — optional, last — grammar.json table generation so a language
+      becomes one runtime-loadable data artifact.
+      The complaints the engine now owns the fix for:
       stable node identity across a reparse (a red-green tree, so a node handle is
       storable and `Node::Id()`'s byte-range-collision workaround goes away); incremental
       per-subtree facts (today `symbolKind` is O(document) per keystroke and cannot be
@@ -2085,8 +2125,22 @@ for closed-issue history.
   join; or give the registry a test-only reset the fixture calls, the
   JanetTestSupport-restore precedent.
 
+- **Intermittent shutdown hang blocked on the LSP broker socket.** Found 2026-09-13
+  during the Phase 4b live smoke runs: quitting ned a few seconds after opening a C++
+  buffer occasionally leaves "Shutting down..." parked with the MAIN thread in a
+  blocking socket receive (`/proc/<pid>/wchan` = `__skb_wait_for_more_packets` — the
+  broker handoff), one background thread in nanosleep. Roughly 1 hang in 3-4 rapid
+  open-quit cycles; the following run is clean. Ambiguously pre-existing: the pre-swap
+  binary went 4/4 clean in the same harness, but the hang correlates with quitting
+  during cold clangd indexing and with a previous instance having been hard-killed —
+  broker-side state, not the parse engine (the blocked call is the broker socket, and
+  the engine has no sockets or background threads at shutdown). Fix shape: bound the
+  shutdown-side broker handshake read with the same timeout discipline the
+  connect-side already got (see the broker connect-hang fix), and re-run the A/B with
+  the confound controlled (same file, same index state, both binaries).
+
 - **Variadic `has-parent?` predicates are silently inert.** Found by the Phase 4a M0
-  census (2026-09-12): `Query.cpp`'s evaluator handles the has-parent/has-ancestor family
+  census (2026-09-12): `QueryPredicates.cpp`'s evaluator handles the has-parent/has-ancestor family
   only at exactly two operands and treats any other arity as pass-through, so
   `cpp/highlights.janet:370`'s three-operand `(:has-parent? @c … …)` and
   `c/highlights.janet:181`'s four-operand `(:not-has-parent? …)` never filter anything —
@@ -2094,8 +2148,7 @@ for closed-issue history.
   dropped, in ned and possibly in whatever engine those upstream files were written
   against. Not urgent: the failure mode is a slightly over-inclusive highlight match.
   Fix shape: loop operands[1..] in the has-parent branch of `QueryPredicates.cpp`'s
-  `EvaluatePredicateCall` (the shared evaluator both engines resolve into since Phase
-  4a), any-of semantics. Unblocked now that the M3 gate has landed — the change will
+  `EvaluatePredicateCall`, any-of semantics. Unblocked now that the M3 gate has landed — the change will
   show as a deliberate differential/oracle diff rather than an invisible drift.
 
 - **org.indent hangs a headline that directly follows a list item.** Surfaced by (not

@@ -12,7 +12,6 @@
 #include "Editor/TreeSitter/IncrementalParse.h"
 #include "Editor/TreeSitter/Node.h"
 #include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Query.h"
 #include "Editor/TreeSitter/Tree.h"
 
 namespace ned::editor::languages {
@@ -124,7 +123,12 @@ namespace {
     // reduced-signature text (the stars themselves), no separate kind
     // needed to carry it.
     void Symbols(Mode& mode, const LanguageDefinition&, const ModeBuildContext&) {
-        mode.symbolKind = [](std::string_view bufferText) -> std::vector<SymbolMarker> {
+        // Replacing symbolKind wholesale: drop any windowed sibling a tags
+        // query might have installed, so the pair can never disagree about
+        // what a symbol is (org has no tags query today; this is the guard
+        // for the day it grows one).
+        mode.symbolKindInWindow = {};
+        mode.symbolKind         = [](std::string_view bufferText) -> std::vector<SymbolMarker> {
             const std::vector<org::Headline> headlines = org::ParseOutline(bufferText);
             std::vector<SymbolMarker>        markers;
             markers.reserve(headlines.size());

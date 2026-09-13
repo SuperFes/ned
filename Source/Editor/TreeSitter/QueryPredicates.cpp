@@ -6,9 +6,9 @@ namespace ned::editor::treesitter {
 
 namespace {
 
-    bool NodeHasAncestorOfType(TSNode node, std::string_view typeName, bool immediateOnly) {
-        for (TSNode current = ts_node_parent(node); !ts_node_is_null(current); current = ts_node_parent(current)) {
-            if (ts_node_type(current) == typeName) {
+    bool NodeHasAncestorOfType(parse::RedNode node, std::string_view typeName, bool immediateOnly) {
+        for (parse::RedNode current = parse::NodeParent(node); !parse::NodeIsNull(current); current = parse::NodeParent(current)) {
+            if (parse::NodeType(current) == typeName) {
                 return true;
             }
             if (immediateOnly) {
@@ -107,7 +107,7 @@ bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOpera
         if (operands.size() != 2 || !operands[0].isCapture || operands[1].isCapture) {
             return true;
         }
-        if (ts_node_is_null(operands[0].node)) {
+        if (parse::NodeIsNull(operands[0].node)) {
             return true;
         }
         if (!operands[1].text) {

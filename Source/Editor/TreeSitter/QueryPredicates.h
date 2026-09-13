@@ -29,7 +29,7 @@
 #include <string_view>
 #include <unordered_map>
 
-#include <tree_sitter/api.h>
+#include "Editor/Parse/Node.h"
 
 namespace ned::editor::treesitter {
 
@@ -41,7 +41,7 @@ namespace ned::editor::treesitter {
 // the has-ancestor family reads it, the text comparisons never do.
 struct PredicateOperand {
     std::optional<std::string_view> text;
-    TSNode                          node      = TSNode{};
+    parse::RedNode                  node      = parse::NodeNull();
     bool                            isCapture = false;
 };
 

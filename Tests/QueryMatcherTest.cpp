@@ -30,7 +30,6 @@
 #include "Editor/QueryData.h"
 #include "Editor/TreeSitter/Languages.h"
 #include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Query.h"
 #include "Editor/TreeSitter/QueryMatcher.h"
 #include "Editor/TreeSitter/Tree.h"
 
@@ -586,52 +585,6 @@ TEST_CASE("QueryMatcher compiles every bundled language's every query kind", "[Q
         }
     }
     REQUIRE(compiled > 80);
-}
-
-TEST_CASE("QueryMatcher matches identically to the tree-sitter engine over the oracle corpus", "[QueryMatcher]") {
-    for (const LanguageDefinition& definition : BundledLanguages()) {
-        if (definition.grammarless) {
-            continue;
-        }
-        const std::vector<std::filesystem::path> corpus = CorpusFilesFor(definition);
-        if (corpus.empty()) {
-            continue;
-        }
-        const std::string_view grammar =
-            definition.grammar.empty() ? std::string_view(definition.name) : definition.grammar;
-        const auto language = LanguageByName(grammar);
-        REQUIRE(language);
-
-        for (const KindText& kind : QueryTextsFor(definition)) {
-            const Query        tsQuery(*language, kind.text);
-            const QueryMatcher matcher(*language, ParseScm(kind.text));
-
-            for (const std::filesystem::path& file : corpus) {
-                const std::string source = ReadCorpusFile(file);
-                const auto        tree   = ned::editor::treesitter::Parser(*language).Parse(source);
-                const auto        root   = tree.RootNode();
-                const std::string label  = definition.name + "/" + kind.kind + " over " + file.filename().string();
-
-                RequireSameCaptures(label + " [captures]", tsQuery.Captures(root, source),
-                                    matcher.Captures(root, source));
-                RequireSameMatches(label + " [matches]", tsQuery.Matches(root, source), matcher.Matches(root, source));
-
-                // Ranged runs: thirds of the file, and a mid-file window.
-                const std::size_t third      = source.size() / 3;
-                const std::size_t spans[][2] = {
-                    {0, third}, {third, 2 * third}, {2 * third, source.size()}, {third / 2, third / 2 + 512}};
-                for (const auto& span : spans) {
-                    if (span[0] >= span[1]) {
-                        continue;
-                    }
-                    RequireSameCaptures(label + " [range " + std::to_string(span[0]) + ".." + std::to_string(span[1]) +
-                                            "]",
-                                        tsQuery.CapturesInRange(root, source, span[0], span[1]),
-                                        matcher.CapturesInRange(root, source, span[0], span[1]));
-                }
-            }
-        }
-    }
 }
 
 // Ned's own emission order, pinned. The matcher's capture stream reproduces

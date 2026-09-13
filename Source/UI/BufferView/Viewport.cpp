@@ -18,6 +18,37 @@ namespace ned::ui::bufferview {
 
 using namespace detail;
 
+std::pair<std::size_t, std::size_t> Viewport::SymbolQueryWindow(const text::ITextStorage& content) const {
+    const std::size_t byteLength = content.ByteLength();
+    if (content.IsHuge()) {
+        return HugeStructuralWindow(content);
+    }
+
+    // Phase 4b payoff: the symbol query is range-bound to the viewport (the
+    // enclosing chain still arrives -- see Mode::symbolKindInWindow), so a
+    // whole-document run per edit becomes a viewport-sized one. Quantized to
+    // margin-sized blocks so ordinary line scrolling reuses the cache until
+    // a block boundary is crossed; a small document just runs whole, where
+    // the window would buy nothing but cache churn.
+    constexpr std::size_t margin = 8192;
+    if (byteLength <= 4 * margin) {
+        return {0, byteLength};
+    }
+
+    const std::size_t lineCount      = content.LineCount();
+    const std::size_t lastLine       = lineCount > 0 ? lineCount - 1 : 0;
+    const std::size_t topLine        = std::min(topLine_, lastLine);
+    const std::size_t viewportHeight = host_.size().height > 0 ? static_cast<std::size_t>(host_.size().height) : 1;
+    const std::size_t bottomLine     = std::min(topLine + viewportHeight, lastLine);
+
+    const std::size_t viewportStartByte = content.LineToByteOffset(topLine);
+    const std::size_t viewportEndByte   = std::min(content.LineToByteOffset(bottomLine) + 1, byteLength);
+
+    const std::size_t start = viewportStartByte > margin ? ((viewportStartByte - margin) / margin) * margin : 0;
+    const std::size_t end   = std::min(((viewportEndByte + margin + margin - 1) / margin) * margin, byteLength);
+    return {start, end};
+}
+
 std::pair<std::size_t, std::size_t> Viewport::HugeStructuralWindow(const text::ITextStorage& content) const {
     const std::size_t byteLength = content.ByteLength();
     if (!content.IsHuge()) {
@@ -265,7 +296,7 @@ void Viewport::EnsureTopLineValidForActiveBuffer() {
         }
         return;
     }
-    topLineNeedsSizeClamp_ = false;
+    topLineNeedsSizeClamp_  = false;
     topLineValidatedBuffer_ = &buffer;
     host_.dismissHover(); // hover-tooltips follow-up: a tooltip from the previous buffer means nothing here
     // session-persistence slice 1: a stored viewport for this buffer wins

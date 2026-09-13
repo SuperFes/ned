@@ -10,7 +10,7 @@
 #include "Editor/LanguageFiles.h"
 #include "Editor/QueryData.h"
 #include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Query.h"
+#include "Editor/TreeSitter/QueryMatcher.h"
 
 namespace fs = std::filesystem;
 using ned::editor::querydata::ConvertScmToJanet;
@@ -202,7 +202,7 @@ TEST_CASE("Every embedded query file loads, and compiles under its grammar", "[Q
         const auto        language = ned::editor::treesitter::LanguageByName(grammar);
         REQUIRE(language.has_value());
         const ned::editor::QueryText text = ned::editor::CompileQueryFiles({path});
-        REQUIRE_NOTHROW(ned::editor::treesitter::Query(*language, text.text));
+        REQUIRE_NOTHROW(ned::editor::treesitter::QueryMatcher(*language, text.text));
         ++checked;
     }
     REQUIRE(checked >= 90);

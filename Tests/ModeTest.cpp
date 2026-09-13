@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Editor/AutoPair.h"
-#include "Editor/Key.h"
 #include "Editor/CodeFold.h"
+#include "Editor/Key.h"
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
 #include "Editor/SyntaxTheme.h"
@@ -308,7 +308,7 @@ TEST_CASE("CppMode gives an access specifier its own KeywordModifier class, dist
     const auto             mode  = CppMode();
     const std::string_view text  = "class Widget {\npublic:\n    int getValue() const { return value_; }\nprivate:\n"
                                    "    int value_ = 0;\n};\n";
-    const auto spans = mode.highlight(text, ned::editor::HighlightWindow{});
+    const auto             spans = mode.highlight(text, ned::editor::HighlightWindow{});
 
     REQUIRE(HasSpan(spans, 15, 21, SyntaxClass::KeywordModifier)); // "public"
     REQUIRE(HasSpan(spans, 67, 74, SyntaxClass::KeywordModifier)); // "private"
@@ -1430,4 +1430,49 @@ TEST_CASE("expandSelection skips the inside step when the interior is the next n
     auto              range = mode.expandSelection(text, 1, 7); // "a": 1
     REQUIRE(range.has_value());
     CHECK(text.substr(range->first, range->second - range->first) == text);
+}
+
+// Phase 4b payoff: symbolKind's windowed sibling.
+TEST_CASE("symbolKindInWindow returns whole-document markers intersecting the window, enclosing ones included", "[Mode]") {
+    const auto mode = CppMode();
+    REQUIRE(mode.symbolKind);
+    REQUIRE(mode.symbolKindInWindow);
+
+    std::string source = "class Widget {\npublic:\n";
+    for (int i = 0; i < 40; i++) {
+        source += "    int method" + std::to_string(i) + "() const { return " + std::to_string(i) + "; }\n";
+    }
+    source += "};\n";
+
+    const auto whole = mode.symbolKind(source);
+    REQUIRE_FALSE(whole.empty());
+
+    // A window over one late method, deep inside the class.
+    const std::size_t at     = source.find("method37");
+    const auto        window = ned::editor::HighlightWindow{.startByte = at, .endByte = at + 30};
+    const auto        ranged = mode.symbolKindInWindow(source, window);
+
+    std::vector<ned::editor::SymbolMarker> expected;
+    for (const auto& marker : whole) {
+        if (marker.startByte < window.endByte && marker.endByte > window.startByte) {
+            expected.push_back(marker);
+        }
+    }
+    REQUIRE(ranged.size() == expected.size());
+    for (std::size_t i = 0; i < ranged.size(); i++) {
+        CHECK(ranged[i].startByte == expected[i].startByte);
+        CHECK(ranged[i].endByte == expected[i].endByte);
+        CHECK(ranged[i].name == expected[i].name);
+        CHECK(ranged[i].kind == expected[i].kind);
+    }
+
+    // The enclosing class arrived even though its own name sits far above
+    // the window -- the property sticky scroll depends on.
+    const bool hasWidget = std::any_of(ranged.begin(), ranged.end(),
+                                       [](const ned::editor::SymbolMarker& m) { return m.name == "Widget"; });
+    CHECK(hasWidget);
+
+    // And the whole-document form is byte-identical to a whole window.
+    const auto viaWindow = mode.symbolKindInWindow(source, ned::editor::HighlightWindow{});
+    REQUIRE(viaWindow.size() == whole.size());
 }
