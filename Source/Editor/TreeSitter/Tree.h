@@ -49,6 +49,26 @@ class Tree {
     // Source/Editor/TreeSitter/.
     [[nodiscard]] const parse::GreenTree& Green() const noexcept;
 
+    // per-subtree-fact-memoization follow-up: an independent second handle
+    // on the SAME green tree (parse::GreenTree's shared_ptr<TreeData> copy
+    // -- cheap, no reparse, no deep copy of any Subtree). Needed because
+    // Node::SubtreeIdentity's "same heap pointer -> same content" guarantee
+    // only holds for a subtree tree-sitter's reuse machinery actually
+    // decided to SHARE, which depends on nothing else holding it unshared
+    // (Green.h: "immutable once shared (refcount > 1); MakeMut clones on
+    // sharing" -- an unshared subtree along the touched spine of an edit is
+    // freely mutated/recycled at its OLD address instead, since nothing
+    // could have observed the difference). IncrementalParseCache's own
+    // Update() mutates its single held Tree via Edit()+reassignment with no
+    // separate old-generation handle in between, so by itself it gives NO
+    // such guarantee across a call -- a caller that wants to compare node
+    // identity between two generations (a per-subtree fact cache) MUST take
+    // a Clone() of "before" and keep it alive across the Update() call that
+    // produces "after"; only then does reuse-vs-recycle become
+    // distinguishable via identity, because a genuinely shared subtree's
+    // refcount is >1 for the whole call and MakeMut clones instead.
+    [[nodiscard]] Tree Clone() const;
+
   private:
     parse::GreenTree tree_;
 };
