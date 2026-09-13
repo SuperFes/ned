@@ -182,8 +182,9 @@ Secondary to the above, but real:
 
 The one thing that is *not* a problem, and the reason any of this is tractable:
 
-- **Four files** include `tree_sitter/api.h` (`Node.h`, `Parser.h`, `Query.h`,
-  `Tree.h`).
+- At the time of the Phase 4 decision, **four files** included
+  `tree_sitter/api.h` (`Node.h`, `Parser.h`, `Tree.h`, and the since-deleted
+  ts-backed Query wrapper); after the engine swap none do.
 - **Seventeen** source files touch the `TreeSitter/` wrapper at all.
 - `Mode`'s `std::function` capability surface is a genuine firewall -- every
   consumer goes through `highlight`/`fold`/`symbolKind`/`testDiscovery`/

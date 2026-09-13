@@ -1,5 +1,9 @@
 #include "QueryMatcher.h"
 
+#include "Editor/Parse/Cursor.h"
+#include "Editor/Parse/LanguageTables.h"
+#include "Editor/Parse/Node.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -50,19 +54,19 @@ namespace {
             Alternation, // [...] -- children are the branches
             Group,       // ((a) (b) ...) -- children are a sibling run; top-level pattern roots only
         };
-        Kind                         kind = Kind::Named;
-        std::string                  type;           // Named/Anonymous/Supertype (name, for diagnostics)
-        std::vector<TSSymbol>        symbols;        // Named/Anonymous: the symbols whose name is `type` (several
-                                                     // when aliases share it) -- matched instead of the name string
-        std::unordered_set<TSSymbol> subtypeSymbols; // Supertype: the transitive concrete subtype set
-        std::vector<ChildItem>       children;       // Named/AnyNamed children; Alternation branches; Group items
-        std::vector<TSFieldId>       negatedFields;
-        bool                         trailingAnchor = false;
+        Kind                                   kind = Kind::Named;
+        std::string                            type;           // Named/Anonymous/Supertype (name, for diagnostics)
+        std::vector<parse::abi::Symbol>        symbols;        // Named/Anonymous: the symbols whose name is `type` (several
+                                                               // when aliases share it) -- matched instead of the name string
+        std::unordered_set<parse::abi::Symbol> subtypeSymbols; // Supertype: the transitive concrete subtype set
+        std::vector<ChildItem>                 children;       // Named/AnyNamed children; Alternation branches; Group items
+        std::vector<parse::abi::FieldId>       negatedFields;
+        bool                                   trailingAnchor = false;
     };
 
     struct ChildItem {
         PatternNode           node;
-        TSFieldId             field        = 0;
+        parse::abi::FieldId   field        = 0;
         char                  quantifier   = 0; // 0, '*', '?'
         bool                  anchorBefore = false;
         std::vector<uint32_t> captures; // capture ids bound to this item's matched node (one binding per rep for '*')
@@ -88,27 +92,26 @@ namespace {
     };
 
     struct Binding {
-        uint32_t captureId;
-        TSNode   node;
+        uint32_t       captureId;
+        parse::RedNode node;
     };
 
     struct ChildInfo {
-        TSNode    node;
-        TSFieldId field;
-        bool      named;
+        parse::RedNode      node;
+        parse::abi::FieldId field;
+        bool                named;
     };
 
-    void CollectChildren(TSNode parent, std::vector<ChildInfo>& out) {
+    void CollectChildren(parse::RedNode parent, std::vector<ChildInfo>& out) {
         out.clear();
-        TSTreeCursor cursor = ts_tree_cursor_new(parent);
-        if (ts_tree_cursor_goto_first_child(&cursor)) {
+        parse::TreeCursor cursor(parent);
+        if (cursor.GotoFirstChild()) {
             do {
-                const TSNode node = ts_tree_cursor_current_node(&cursor);
-                out.push_back(ChildInfo{node, ts_tree_cursor_current_field_id(&cursor), ts_node_is_named(node)});
+                const parse::RedNode node = cursor.CurrentNode();
+                out.push_back(ChildInfo{node, cursor.CurrentFieldId(), parse::NodeIsNamed(node)});
             }
-            while (ts_tree_cursor_goto_next_sibling(&cursor));
+            while (cursor.GotoNextSibling());
         }
-        ts_tree_cursor_delete(&cursor);
     }
 
     const std::vector<uint32_t> kNoCaptures;
@@ -119,9 +122,9 @@ QueryMatcherError::QueryMatcherError(int line, const std::string& message) : std
 }
 
 struct QueryMatcher::Impl {
-    const TSLanguage*        language = nullptr;
-    std::vector<Pattern>     patterns;
-    std::vector<std::string> captureNames;
+    const parse::abi::LanguageData* language = nullptr;
+    std::vector<Pattern>            patterns;
+    std::vector<std::string>        captureNames;
 
     // Root dispatch, all pruning and no reordering: a node's trial sequence
     // is the indexed bucket then the unindexed patterns, ascending pattern
@@ -132,9 +135,9 @@ struct QueryMatcher::Impl {
     // resolve to concrete symbols gets a per-symbol candidate list; only a
     // genuinely wildcard-ish root (bare `_`, `(_)`, ERROR, group) is still
     // tried at every node.
-    std::unordered_map<TSSymbol, std::vector<std::size_t>> rootIndex;
-    std::unordered_map<TSSymbol, std::vector<std::size_t>> unindexedBySymbol;
-    std::vector<std::size_t>                               unfilteredUnindexed;
+    std::unordered_map<parse::abi::Symbol, std::vector<std::size_t>> rootIndex;
+    std::unordered_map<parse::abi::Symbol, std::vector<std::size_t>> unindexedBySymbol;
+    std::vector<std::size_t>                                         unfilteredUnindexed;
 
     mutable std::unordered_map<std::string, std::regex> regexCache;
     mutable std::string_view                            sourceText; // set per run
@@ -146,7 +149,7 @@ struct QueryMatcher::Impl {
     // them in pre-order is where tree-sitter's state machine COMPLETES the
     // match, which is the second key of capture emission order (see
     // CollectCaptures).
-    mutable std::vector<TSNode> matchedTrail;
+    mutable std::vector<parse::RedNode> matchedTrail;
 
     // ------------------------------------------------------------------
     // Compilation.
@@ -156,45 +159,45 @@ struct QueryMatcher::Impl {
     // share a real rule's name), so matching compares the node's symbol
     // against the full set -- equivalent to the name comparison, minus the
     // per-node strcmp.
-    std::unordered_map<std::string, std::vector<TSSymbol>> namedTypes;
-    std::unordered_map<std::string, std::vector<TSSymbol>> anonymousTypes;
-    std::unordered_map<std::string, TSSymbol>              supertypes;
+    std::unordered_map<std::string, std::vector<parse::abi::Symbol>> namedTypes;
+    std::unordered_map<std::string, std::vector<parse::abi::Symbol>> anonymousTypes;
+    std::unordered_map<std::string, parse::abi::Symbol>              supertypes;
 
     void BuildTypeTables() {
-        const uint32_t count = ts_language_symbol_count(language);
+        const uint32_t count = parse::LanguageSymbolCount(language);
         for (uint32_t s = 0; s < count; ++s) {
-            const char*        name = ts_language_symbol_name(language, static_cast<TSSymbol>(s));
-            const TSSymbolType type = ts_language_symbol_type(language, static_cast<TSSymbol>(s));
-            if (type == TSSymbolTypeRegular) {
-                namedTypes[name].push_back(static_cast<TSSymbol>(s));
+            const char*             name = parse::LanguageSymbolName(language, static_cast<parse::abi::Symbol>(s));
+            const parse::SymbolType type = parse::LanguageSymbolType(language, static_cast<parse::abi::Symbol>(s));
+            if (type == parse::SymbolType::Regular) {
+                namedTypes[name].push_back(static_cast<parse::abi::Symbol>(s));
             }
-            else if (type == TSSymbolTypeAnonymous) {
-                anonymousTypes[name].push_back(static_cast<TSSymbol>(s));
+            else if (type == parse::SymbolType::Anonymous) {
+                anonymousTypes[name].push_back(static_cast<parse::abi::Symbol>(s));
             }
         }
-        uint32_t        supertypeCount = 0;
-        const TSSymbol* list           = ts_language_supertypes(language, &supertypeCount);
+        uint32_t                  supertypeCount = 0;
+        const parse::abi::Symbol* list           = parse::LanguageSupertypes(language, &supertypeCount);
         for (uint32_t i = 0; i < supertypeCount; ++i) {
-            supertypes[ts_language_symbol_name(language, list[i])] = list[i];
+            supertypes[parse::LanguageSymbolName(language, list[i])] = list[i];
         }
     }
 
     // The transitive concrete subtype set of a supertype -- a subtype may
     // itself be a supertype (measured possible, guarded regardless).
-    std::unordered_set<TSSymbol> ExpandSupertype(TSSymbol supertype) const {
-        std::unordered_set<TSSymbol> expanded;
-        std::unordered_set<TSSymbol> visited;
-        std::vector<TSSymbol>        pending{supertype};
+    std::unordered_set<parse::abi::Symbol> ExpandSupertype(parse::abi::Symbol supertype) const {
+        std::unordered_set<parse::abi::Symbol> expanded;
+        std::unordered_set<parse::abi::Symbol> visited;
+        std::vector<parse::abi::Symbol>        pending{supertype};
         while (!pending.empty()) {
-            const TSSymbol current = pending.back();
+            const parse::abi::Symbol current = pending.back();
             pending.pop_back();
             if (!visited.insert(current).second) {
                 continue;
             }
-            uint32_t        count = 0;
-            const TSSymbol* subs  = ts_language_subtypes(language, current, &count);
+            uint32_t                  count = 0;
+            const parse::abi::Symbol* subs  = parse::LanguageSubtypes(language, current, &count);
             for (uint32_t i = 0; i < count; ++i) {
-                if (ts_language_symbol_type(language, subs[i]) == TSSymbolTypeSupertype) {
+                if (parse::LanguageSymbolType(language, subs[i]) == parse::SymbolType::Supertype) {
                     pending.push_back(subs[i]);
                 }
                 else {
@@ -215,8 +218,8 @@ struct QueryMatcher::Impl {
         return static_cast<uint32_t>(captureNames.size() - 1);
     }
 
-    TSFieldId FieldIdOrThrow(std::string_view name, int line) const {
-        const TSFieldId id = ts_language_field_id_for_name(language, name.data(), static_cast<uint32_t>(name.size()));
+    parse::abi::FieldId FieldIdOrThrow(std::string_view name, int line) const {
+        const parse::abi::FieldId id = parse::LanguageFieldIdForName(language, name.data(), static_cast<uint32_t>(name.size()));
         if (id == 0) {
             throw QueryMatcherError(line, "unknown field name '" + std::string(name) + "'");
         }
@@ -344,10 +347,10 @@ struct QueryMatcher::Impl {
     // and rejected.
     void CompileSequence(const std::vector<Form>& forms, PatternNode& parent, Pattern& pattern,
                          SequenceContext context) {
-        const bool isAlternation    = context == SequenceContext::Alternation;
-        bool       pendingAnchor    = false;
-        TSFieldId  pendingField     = 0;
-        int        pendingFieldLine = 0;
+        const bool          isAlternation    = context == SequenceContext::Alternation;
+        bool                pendingAnchor    = false;
+        parse::abi::FieldId pendingField     = 0;
+        int                 pendingFieldLine = 0;
 
         for (const Form& form : forms) {
             if (form.kind == Form::Kind::Comment) {
@@ -528,14 +531,14 @@ struct QueryMatcher::Impl {
         for (std::size_t p = 0; p < patterns.size(); ++p) {
             const PatternNode& root = patterns[p].root.node;
             if (root.kind == PatternNode::Kind::Named || root.kind == PatternNode::Kind::Anonymous) {
-                for (const TSSymbol symbol : root.symbols) {
+                for (const parse::abi::Symbol symbol : root.symbols) {
                     rootIndex[symbol].push_back(p);
                 }
                 continue;
             }
-            std::unordered_set<TSSymbol> filter;
+            std::unordered_set<parse::abi::Symbol> filter;
             if (RootSymbolFilter(root, filter)) {
-                for (const TSSymbol symbol : filter) {
+                for (const parse::abi::Symbol symbol : filter) {
                     unindexedBySymbol[symbol].push_back(p);
                 }
             }
@@ -553,7 +556,7 @@ struct QueryMatcher::Impl {
     // ERROR, group roots). Over-approximation would be fine; under-
     // approximation would silently drop matches, so anything uncertain
     // returns false.
-    static bool RootSymbolFilter(const PatternNode& root, std::unordered_set<TSSymbol>& filter) {
+    static bool RootSymbolFilter(const PatternNode& root, std::unordered_set<parse::abi::Symbol>& filter) {
         switch (root.kind) {
             case PatternNode::Kind::Named:
             case PatternNode::Kind::Anonymous:
@@ -596,9 +599,9 @@ struct QueryMatcher::Impl {
     // plus the namedness check: ts_node_symbol resolves aliases exactly the
     // way ts_node_type does, and named/anonymous symbol sets are disjoint.
     // The list is almost always one entry, so a linear scan beats any set.
-    static bool SymbolMatches(const std::vector<TSSymbol>& symbols, TSNode node) {
-        const TSSymbol symbol = ts_node_symbol(node);
-        for (const TSSymbol candidate : symbols) {
+    static bool SymbolMatches(const std::vector<parse::abi::Symbol>& symbols, parse::RedNode node) {
+        const parse::abi::Symbol symbol = parse::NodeSymbol(node);
+        for (const parse::abi::Symbol candidate : symbols) {
             if (candidate == symbol) {
                 return true;
             }
@@ -606,30 +609,30 @@ struct QueryMatcher::Impl {
         return false;
     }
 
-    void MatchNode(const PatternNode& pattern, const std::vector<uint32_t>& captures, TSNode node,
-                   TSFieldId nodeField, std::vector<Binding>& bindings, const MatchFn& next) const {
+    void MatchNode(const PatternNode& pattern, const std::vector<uint32_t>& captures, parse::RedNode node,
+                   parse::abi::FieldId nodeField, std::vector<Binding>& bindings, const MatchFn& next) const {
         switch (pattern.kind) {
             case PatternNode::Kind::AnyNode:
                 break;
             case PatternNode::Kind::AnyNamed:
-                if (!ts_node_is_named(node)) {
+                if (!parse::NodeIsNamed(node)) {
                     return;
                 }
                 break;
             case PatternNode::Kind::Error:
-                if (!ts_node_is_error(node)) {
+                if (!parse::NodeIsError(node)) {
                     return;
                 }
                 break;
             case PatternNode::Kind::Named:
                 // Symbol membership implies namedness: `symbols` only ever
-                // holds TSSymbolTypeRegular entries (BuildTypeTables).
+                // holds parse::SymbolType::Regular entries (BuildTypeTables).
                 if (!SymbolMatches(pattern.symbols, node)) {
                     return;
                 }
                 break;
             case PatternNode::Kind::Supertype:
-                if (!ts_node_is_named(node) || !pattern.subtypeSymbols.contains(ts_node_symbol(node))) {
+                if (!parse::NodeIsNamed(node) || !pattern.subtypeSymbols.contains(parse::NodeSymbol(node))) {
                     return;
                 }
                 break;
@@ -639,7 +642,7 @@ struct QueryMatcher::Impl {
                 }
                 break;
             case PatternNode::Kind::Alternation: {
-                const TSSymbol nodeSymbol = ts_node_symbol(node);
+                const parse::abi::Symbol nodeSymbol = parse::NodeSymbol(node);
                 for (const ChildItem& branch : pattern.children) {
                     if (branch.field != 0 && branch.field != nodeField) {
                         continue; // a field-prefixed branch constrains this branch alone
@@ -684,8 +687,8 @@ struct QueryMatcher::Impl {
             bindings.push_back(Binding{id, node});
         }
         bool fieldsOk = true;
-        for (const TSFieldId field : pattern.negatedFields) {
-            if (!ts_node_is_null(ts_node_child_by_field_id(node, field))) {
+        for (const parse::abi::FieldId field : pattern.negatedFields) {
+            if (!parse::NodeIsNull(parse::NodeChildByFieldId(node, field))) {
                 fieldsOk = false;
                 break;
             }
@@ -810,7 +813,7 @@ struct QueryMatcher::Impl {
         return ProbeMatches(item.node, before.node, before.field);
     }
 
-    bool ProbeMatches(const PatternNode& pattern, TSNode node, TSFieldId nodeField) const {
+    bool ProbeMatches(const PatternNode& pattern, parse::RedNode node, parse::abi::FieldId nodeField) const {
         bool                 matched = false;
         std::vector<Binding> probe;
         MatchNode(pattern, kNoCaptures, node, nodeField, probe, [&] { matched = true; });
@@ -852,7 +855,7 @@ struct QueryMatcher::Impl {
     // none/unknown) -- it only matters for the rare
     // alternation-with-field-branches root, and the walk reads it off its
     // cursor for free.
-    void TryPattern(std::size_t patternIndex, TSNode node, TSFieldId nodeField, std::vector<Binding>& bindings,
+    void TryPattern(std::size_t patternIndex, parse::RedNode node, parse::abi::FieldId nodeField, std::vector<Binding>& bindings,
                     const MatchFn& next) const {
         const ChildItem& root = patterns[patternIndex].root;
         if (root.node.kind == PatternNode::Kind::Group) {
@@ -867,28 +870,27 @@ struct QueryMatcher::Impl {
         MatchNode(root.node, root.captures, node, nodeField, bindings, next);
     }
 
-    static TSFieldId FieldOfNode(TSNode node) {
-        const TSNode parent = ts_node_parent(node);
-        if (ts_node_is_null(parent)) {
+    static parse::abi::FieldId FieldOfNode(parse::RedNode node) {
+        const parse::RedNode parent = parse::NodeParent(node);
+        if (parse::NodeIsNull(parent)) {
             return 0;
         }
-        TSFieldId    field  = 0;
-        TSTreeCursor cursor = ts_tree_cursor_new(parent);
-        if (ts_tree_cursor_goto_first_child(&cursor)) {
+        parse::abi::FieldId field = 0;
+        parse::TreeCursor   cursor(parent);
+        if (cursor.GotoFirstChild()) {
             do {
-                if (ts_node_eq(ts_tree_cursor_current_node(&cursor), node)) {
-                    field = ts_tree_cursor_current_field_id(&cursor);
+                if (parse::NodeEq(cursor.CurrentNode(), node)) {
+                    field = cursor.CurrentFieldId();
                     break;
                 }
             }
-            while (ts_tree_cursor_goto_next_sibling(&cursor));
+            while (cursor.GotoNextSibling());
         }
-        ts_tree_cursor_delete(&cursor);
         return field;
     }
 
     template <typename Sink>
-    void RunAtNode(TSNode node, TSFieldId nodeField, Sink& sink) const {
+    void RunAtNode(parse::RedNode node, parse::abi::FieldId nodeField, Sink& sink) const {
         std::vector<Binding> bindings;
         const auto           tryOne = [&](std::size_t patternIndex) {
             bindings.clear();
@@ -899,7 +901,7 @@ struct QueryMatcher::Impl {
             });
         };
 
-        const TSSymbol symbol = ts_node_symbol(node);
+        const parse::abi::Symbol symbol = parse::NodeSymbol(node);
         if (const auto it = rootIndex.find(symbol); it != rootIndex.end()) {
             for (const std::size_t p : it->second) {
                 tryOne(p);
@@ -926,9 +928,9 @@ struct QueryMatcher::Impl {
 
     // A zero-width node (a MISSING token) intersects when it sits inside
     // the range; a real node when the spans overlap.
-    static bool InRange(TSNode node, std::size_t startByte, std::size_t endByte) {
-        const std::size_t start = ts_node_start_byte(node);
-        const std::size_t end   = ts_node_end_byte(node);
+    static bool InRange(parse::RedNode node, std::size_t startByte, std::size_t endByte) {
+        const std::size_t start = parse::NodeStartByte(node);
+        const std::size_t end   = parse::NodeEndByte(node);
         if (start == end) {
             return start >= startByte && start < endByte;
         }
@@ -940,12 +942,12 @@ struct QueryMatcher::Impl {
     // (the walk never descends into an unvisited node), matching the old
     // recursive walk's entry check.
     template <typename Sink>
-    bool VisitCurrent(TSTreeCursor& cursor, std::size_t startByte, std::size_t endByte, Sink& sink) const {
-        const TSNode node = ts_tree_cursor_current_node(&cursor);
+    bool VisitCurrent(parse::TreeCursor& cursor, std::size_t startByte, std::size_t endByte, Sink& sink) const {
+        const parse::RedNode node = cursor.CurrentNode();
         if (!InRange(node, startByte, endByte)) {
             return false;
         }
-        RunAtNode(node, ts_tree_cursor_current_field_id(&cursor), sink);
+        RunAtNode(node, cursor.CurrentFieldId(), sink);
         return true;
     }
 
@@ -957,51 +959,50 @@ struct QueryMatcher::Impl {
     // node's field by scanning its parent's children -- the cursor hands
     // both out in O(1) as it goes).
     template <typename Sink>
-    void Walk(TSNode node, std::size_t startByte, std::size_t endByte, Sink& sink) const {
+    void Walk(parse::RedNode node, std::size_t startByte, std::size_t endByte, Sink& sink) const {
         if (!InRange(node, startByte, endByte)) {
             return;
         }
         // The entry node's own field comes from a one-time parent scan --
         // the cursor only knows fields below its construction point.
         RunAtNode(node, FieldOfNode(node), sink);
-        TSTreeCursor cursor     = ts_tree_cursor_new(node);
-        bool         mayDescend = true;
+        parse::TreeCursor cursor(node);
+        bool              mayDescend = true;
         for (;;) {
-            if (mayDescend && ts_tree_cursor_goto_first_child(&cursor)) {
+            if (mayDescend && cursor.GotoFirstChild()) {
                 mayDescend = VisitCurrent(cursor, startByte, endByte, sink);
                 continue;
             }
-            if (ts_tree_cursor_goto_next_sibling(&cursor)) {
+            if (cursor.GotoNextSibling()) {
                 mayDescend = VisitCurrent(cursor, startByte, endByte, sink);
                 continue;
             }
-            if (!ts_tree_cursor_goto_parent(&cursor)) {
+            if (!cursor.GotoParent()) {
                 break; // back at the entry node: done
             }
             mayDescend = false; // the parent's subtree below is exhausted; advance
         }
-        ts_tree_cursor_delete(&cursor);
     }
 
     // ------------------------------------------------------------------
     // Predicates and #set! -- Query.cpp parity via QueryPredicates.h.
     // ------------------------------------------------------------------
 
-    static TSNode FirstBound(const std::vector<Binding>& bindings, uint32_t captureId) {
+    static parse::RedNode FirstBound(const std::vector<Binding>& bindings, uint32_t captureId) {
         for (const Binding& binding : bindings) {
             if (binding.captureId == captureId) {
                 return binding.node;
             }
         }
-        return TSNode{};
+        return parse::NodeNull();
     }
 
-    std::optional<std::string_view> NodeText(TSNode node) const {
-        if (ts_node_is_null(node)) {
+    std::optional<std::string_view> NodeText(parse::RedNode node) const {
+        if (parse::NodeIsNull(node)) {
             return std::nullopt;
         }
-        const uint32_t start = ts_node_start_byte(node);
-        const uint32_t end   = ts_node_end_byte(node);
+        const uint32_t start = parse::NodeStartByte(node);
+        const uint32_t end   = parse::NodeEndByte(node);
         if (start > end || end > sourceText.size()) {
             return std::nullopt; // defensive -- ResolveTextOperand's own rule
         }
@@ -1063,7 +1064,7 @@ struct QueryMatcher::Impl {
     // Public-shape runs.
     // ------------------------------------------------------------------
 
-    std::vector<QueryCapture> CollectCaptures(TSNode root, std::string_view text, std::size_t startByte,
+    std::vector<QueryCapture> CollectCaptures(parse::RedNode root, std::string_view text, std::size_t startByte,
                                               std::size_t endByte) const {
         sourceText = text;
         rangeStart = startByte;
@@ -1099,16 +1100,16 @@ struct QueryMatcher::Impl {
             for (const Binding& binding : bindings) {
                 sim.caps.push_back(QueryCapture{
                     .name      = captureNames[binding.captureId],
-                    .startByte = ts_node_start_byte(binding.node),
-                    .endByte   = ts_node_end_byte(binding.node),
+                    .startByte = parse::NodeStartByte(binding.node),
+                    .endByte   = parse::NodeEndByte(binding.node),
                     .nodeId    = binding.node.id,
                 });
             }
             sim.activate = PreKey{sim.caps.front().startByte, sim.caps.front().endByte};
             // The completion node: the last-visited node the assignment
             // matched, captured or not.
-            for (const TSNode& node : matchedTrail) {
-                const PreKey key{ts_node_start_byte(node), ts_node_end_byte(node)};
+            for (const parse::RedNode& node : matchedTrail) {
+                const PreKey key{parse::NodeStartByte(node), parse::NodeEndByte(node)};
                 if (sim.finish < key) {
                     sim.finish = key;
                 }
@@ -1209,8 +1210,14 @@ struct QueryMatcher::Impl {
         return out;
     }
 
-    std::vector<QueryMatch> CollectMatches(TSNode root, std::string_view text) const {
+    std::vector<QueryMatch> CollectMatches(parse::RedNode root, std::string_view text, std::size_t walkStart,
+                                           std::size_t walkEnd) const {
         sourceText = text;
+        // Unlike CollectCaptures, matches are never capture-filtered by the
+        // range: the walk bound prunes which pattern ROOTS are tried, and a
+        // root that intersects the range emits its whole match -- exactly
+        // what a windowed symbol query needs (an enclosing definition's
+        // @name may sit far above the window).
         rangeStart = 0;
         rangeEnd   = static_cast<std::size_t>(-1);
         std::vector<QueryMatch> matches;
@@ -1220,20 +1227,20 @@ struct QueryMatcher::Impl {
             for (const Binding& binding : bindings) {
                 match.captures.push_back(QueryMatchCapture{
                     .name      = captureNames[binding.captureId],
-                    .startByte = ts_node_start_byte(binding.node),
-                    .endByte   = ts_node_end_byte(binding.node),
+                    .startByte = parse::NodeStartByte(binding.node),
+                    .endByte   = parse::NodeEndByte(binding.node),
                 });
             }
             match.setDirectives = SetDirectives(patternIndex, bindings);
             matches.push_back(std::move(match));
         };
-        Walk(root, 0, static_cast<std::size_t>(-1), sink);
+        Walk(root, walkStart, walkEnd, sink);
         return matches;
     }
 };
 
 QueryMatcher::QueryMatcher(const Language& language, std::span<const querydata::Form> forms) : impl_(std::make_unique<Impl>()) {
-    impl_->language = language.Raw();
+    impl_->language = reinterpret_cast<const parse::abi::LanguageData*>(language.Raw());
     impl_->BuildTypeTables();
     impl_->CompileTopLevel(forms);
 }
@@ -1258,7 +1265,15 @@ std::vector<QueryCapture> QueryMatcher::CapturesInRange(const Node& root, std::s
 }
 
 std::vector<QueryMatch> QueryMatcher::Matches(const Node& root, std::string_view sourceText) const {
-    return impl_->CollectMatches(root.Raw(), sourceText);
+    return impl_->CollectMatches(root.Raw(), sourceText, 0, static_cast<std::size_t>(-1));
+}
+
+std::vector<QueryMatch> QueryMatcher::MatchesInRange(const Node& root, std::string_view sourceText,
+                                                     std::size_t startByte, std::size_t endByte) const {
+    if (startByte >= endByte) {
+        return {};
+    }
+    return impl_->CollectMatches(root.Raw(), sourceText, startByte, endByte);
 }
 
 } // namespace ned::editor::treesitter

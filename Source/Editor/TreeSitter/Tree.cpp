@@ -1,46 +1,41 @@
 #include "Tree.h"
 
-#include <stdexcept>
 #include <utility>
 
 namespace ned::editor::treesitter {
 
-Tree::Tree(TSTree* tree) noexcept : tree_(tree) {
+Tree::Tree(parse::GreenTree tree) noexcept : tree_(std::move(tree)) {
 }
 
-Tree::~Tree() {
-    ts_tree_delete(tree_); // ts_tree_delete(nullptr) is a documented no-op
-}
+Tree::~Tree() = default;
 
-Tree::Tree(Tree&& other) noexcept : tree_(std::exchange(other.tree_, nullptr)) {
+Tree::Tree(Tree&& other) noexcept : tree_(std::move(other.tree_)) {
+    other.tree_ = parse::GreenTree{};
 }
 
 Tree& Tree::operator=(Tree&& other) noexcept {
     if (this != &other) {
-        ts_tree_delete(tree_);
-        tree_ = std::exchange(other.tree_, nullptr);
+        tree_       = std::move(other.tree_);
+        other.tree_ = parse::GreenTree{};
     }
     return *this;
 }
 
 bool Tree::IsNull() const noexcept {
-    return tree_ == nullptr;
+    return tree_.IsNull();
 }
 
 Node Tree::RootNode() const {
-    if (IsNull()) {
-        throw std::runtime_error("ned: Tree::RootNode() called on a null tree");
-    }
-    return Node(ts_tree_root_node(tree_));
+    return Node(tree_.RootNode());
 }
 
-void Tree::Edit(const TSInputEdit& edit) noexcept {
-    if (!IsNull()) {
-        ts_tree_edit(tree_, &edit);
-    }
+void Tree::Edit(const parse::InputEdit& edit) noexcept {
+    if (tree_.IsNull())
+        return;
+    tree_ = tree_.WithEdit(edit);
 }
 
-const TSTree* Tree::Raw() const noexcept {
+const parse::GreenTree& Tree::Green() const noexcept {
     return tree_;
 }
 

@@ -389,6 +389,20 @@ struct SymbolMarker {
 // them rather than guessing.
 using SymbolKindFunction = std::function<std::vector<SymbolMarker>(std::string_view bufferText)>;
 
+// Phase 4b payoff (incremental-facts follow-up): symbolKind's windowed
+// sibling. Returns exactly the markers a whole-document run would produce
+// whose definition RANGE intersects `window` -- which includes every
+// definition merely ENCLOSING the window (a class opened far above the
+// viewport), because its range intersects; this is what lets one
+// viewport-sized query serve both the symbol gutter (markers in view) and
+// sticky scroll (the enclosing chain) without the O(document) whole-run per
+// edit. Coordinates are absolute buffer offsets: the query runs range-bound
+// over the full text, never over a substring. Set exactly when symbolKind
+// is set for a tags-query-backed mode; a walk-based symbolKind (Markdown's
+// section markers) may leave it unset, and consumers then fall back to the
+// whole-document form.
+using SymbolKindWindowFunction = std::function<std::vector<SymbolMarker>(std::string_view bufferText, HighlightWindow window)>;
+
 // Maps a tags.scm capture name (without the leading '@', e.g.
 // "definition.function") onto a SymbolKind -- nullopt for anything that
 // isn't itself a *definition* capture: a nested "@name"/"@doc"/
@@ -597,6 +611,9 @@ struct Mode {
     // importTarget above -- BufferView's symbol-kind gutter column simply
     // never reserves space for a Mode with this unset.
     SymbolKindFunction symbolKind;
+    // symbolKind's windowed sibling (see SymbolKindWindowFunction above);
+    // set alongside symbolKind for tags-query-backed modes, optional.
+    SymbolKindWindowFunction symbolKindInWindow;
     // import-target-tree-sitter follow-up: empty function (the default)
     // means open-link-at-point has no import/include query configured for
     // this mode, same "empty means not configured" convention as
@@ -722,8 +739,8 @@ struct ModeBuildContext {
     std::shared_ptr<const treesitter::Language>        language;
     std::shared_ptr<treesitter::Parser>                parser;
     std::shared_ptr<treesitter::IncrementalParseCache> sharedParse;
-    std::shared_ptr<treesitter::QueryMatcher>                 highlightQuery; // null without a highlights source
-    std::shared_ptr<treesitter::QueryMatcher>                 injectionQuery; // null without an injections source
+    std::shared_ptr<treesitter::QueryMatcher>          highlightQuery; // null without a highlights source
+    std::shared_ptr<treesitter::QueryMatcher>          injectionQuery; // null without an injections source
     std::shared_ptr<EmbeddedLanguageCache>             embeddedLanguageCache;
 };
 

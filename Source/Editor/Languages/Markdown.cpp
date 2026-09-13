@@ -11,7 +11,6 @@
 #include "Editor/TreeSitter/IncrementalParse.h"
 #include "Editor/TreeSitter/Node.h"
 #include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Query.h"
 #include "Editor/TreeSitter/Tree.h"
 
 namespace ned::editor::languages {

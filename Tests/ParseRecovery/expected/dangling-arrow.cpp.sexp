@@ -1,0 +1,1 @@
+(translation_unit (function_definition type: (primitive_type) declarator: (function_declarator declarator: (identifier) parameters: (parameter_list (parameter_declaration type: (type_identifier) declarator: (pointer_declarator declarator: (identifier))))) body: (compound_statement (ERROR (identifier)))))

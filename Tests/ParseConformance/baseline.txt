@@ -1,0 +1,35 @@
+# Parse conformance scorecard: upstream grammar corpora vs the production engine.
+# Regenerate: NED_BLESS_PARSE_CONFORMANCE=1 ./build/ned_tests "[ParseConformance]"
+tree-sitter-bash-src/test/corpus  cases=100 runs=100 passed=100 failed=0 skipped=0
+tree-sitter-c-src/test/corpus  cases=85 runs=85 passed=85 failed=0 skipped=0
+tree-sitter-c-sharp-src/test/corpus  cases=168 runs=168 passed=168 failed=0 skipped=0
+tree-sitter-clojure-src/test/corpus  cases=109 runs=109 passed=109 failed=0 skipped=0
+tree-sitter-cpp-src/test/corpus  cases=179 runs=179 passed=179 failed=0 skipped=0
+tree-sitter-css-src/test/corpus  cases=40 runs=40 passed=40 failed=0 skipped=0
+tree-sitter-fish-src/test/corpus  cases=118 runs=118 passed=118 failed=0 skipped=0
+tree-sitter-go-src/test/corpus  cases=67 runs=67 passed=67 failed=0 skipped=0
+tree-sitter-html-src/test/corpus  cases=20 runs=20 passed=20 failed=0 skipped=0
+tree-sitter-janet-simple-src/test/corpus  cases=86 runs=86 passed=86 failed=0 skipped=0
+tree-sitter-java-src/test/corpus  cases=108 runs=108 passed=108 failed=0 skipped=0
+tree-sitter-javascript-src/test/corpus  cases=116 runs=116 passed=116 failed=0 skipped=0
+tree-sitter-json-src/test/corpus  cases=6 runs=6 passed=6 failed=0 skipped=0
+tree-sitter-kotlin-src/test/corpus  cases=94 runs=94 passed=94 failed=0 skipped=0
+tree-sitter-markdown-src/tree-sitter-markdown/test/corpus  cases=323 runs=322 passed=322 failed=0 skipped=1
+tree-sitter-markdown-src/tree-sitter-markdown-inline/test/corpus  cases=363 runs=345 passed=337 failed=8 skipped=18
+  FAIL extension_wikilink.txt: Basic Wiki-link parsing.
+  FAIL extension_wikilink.txt: Wiki-link to a file
+  FAIL extension_wikilink.txt: Wiki-link to a heading in a note
+  FAIL extension_wikilink.txt: Wiki-link version of Example 556
+  FAIL extension_wikilink.txt: Wiki-link with title
+  FAIL spec.txt: Example 324 - https://github.github.com/gfm/#example-324
+  FAIL spec.txt: Example 638 - https://github.github.com/gfm/#example-638
+  FAIL tags.txt: Tags are working
+tree-sitter-org-src/test/corpus  cases=151 runs=151 passed=151 failed=0 skipped=0
+tree-sitter-php-src/test/corpus  cases=142 runs=140 passed=140 failed=0 skipped=2
+tree-sitter-python-src/test/corpus  cases=117 runs=117 passed=117 failed=0 skipped=0
+tree-sitter-rust-src/test/corpus  cases=151 runs=151 passed=151 failed=0 skipped=0
+tree-sitter-toml-src/test/corpus  cases=17 runs=17 passed=17 failed=0 skipped=0
+tree-sitter-typescript-src-src/test/corpus  cases=112 runs=112 passed=112 failed=0 skipped=0
+tree-sitter-xml-src/test/corpus  cases=22 runs=16 passed=16 failed=0 skipped=6
+tree-sitter-yaml-src/test/corpus  cases=130 runs=130 passed=130 failed=0 skipped=0
+total  cases=2824 runs=2797 passed=2789 failed=8 skipped=27

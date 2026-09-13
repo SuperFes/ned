@@ -940,17 +940,31 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // in Injection.cpp uses to pair "@injection.language" with
     // "@injection.content" from one pattern instance) so SymbolMarker can
     // carry the definition's own full range and name, not just its kind.
-    SymbolKindFunction symbolKind;
+    SymbolKindFunction       symbolKind;
+    SymbolKindWindowFunction symbolKindInWindow;
     if (!queries.tags.empty()) {
         const auto symbolKindQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.tags);
-        symbolKind                 = [parser, symbolKindQuery, sharedParse](std::string_view bufferText) -> std::vector<SymbolMarker> {
+        // Shared by the whole-document closure and the windowed one below:
+        // marker construction plus the two dedupe/nesting collapses. The
+        // windowed run prunes by pattern-ROOT intersection
+        // (QueryMatcher::MatchesInRange), so an enclosing definition
+        // spanning the window still arrives whole -- and because a
+        // suppressing marker always CONTAINS the marker it suppresses, both
+        // are present whenever either is, keeping the collapses' results
+        // identical to a whole-document run filtered to the window.
+        const auto buildMarkers = [parser, symbolKindQuery, sharedParse](std::string_view bufferText,
+                                                                         HighlightWindow window) -> std::vector<SymbolMarker> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
 
             std::vector<SymbolMarker> markers;
-            for (const treesitter::QueryMatch& match : symbolKindQuery->Matches(tree.RootNode(), bufferText)) {
+            const std::vector<treesitter::QueryMatch> matches =
+                window.CoversWholeDocument()
+                    ? symbolKindQuery->Matches(tree.RootNode(), bufferText)
+                    : symbolKindQuery->MatchesInRange(tree.RootNode(), bufferText, window.startByte, window.endByte);
+            for (const treesitter::QueryMatch& match : matches) {
                 std::optional<SymbolKind>                    kind;
                 std::optional<treesitter::QueryMatchCapture> definitionCapture;
                 std::optional<treesitter::QueryMatchCapture> nameCapture;
@@ -1027,6 +1041,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                       [](const SymbolMarker& a, const SymbolMarker& b) { return a.startByte < b.startByte; });
             return markers;
         };
+        symbolKind         = [buildMarkers](std::string_view bufferText) { return buildMarkers(bufferText, HighlightWindow{}); };
+        symbolKindInWindow = buildMarkers;
     }
 
     // structural-selection-expansion follow-up: a third closure sharing the
@@ -1401,6 +1417,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 .sexpMotion         = std::move(sexpMotion),
                 .autoPairs          = DefaultAutoPairs(),
                 .symbolKind         = std::move(symbolKind),
+                .symbolKindInWindow = std::move(symbolKindInWindow),
                 .importTarget       = std::move(importTarget),
                 .importTargets      = std::move(importTargets),
                 .testDiscovery      = std::move(testDiscovery),

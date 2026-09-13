@@ -109,6 +109,13 @@ class Viewport {
     // buffer. GutterModel is given this as its StructuralWindowFn.
     [[nodiscard]] std::pair<std::size_t, std::size_t> HugeStructuralWindow(const text::ITextStorage& content) const;
 
+    // The symbol gutter/sticky-scroll query window (Phase 4b payoff): for a
+    // huge buffer, exactly HugeStructuralWindow; for an ordinary one, the
+    // viewport plus a quantized margin over the FULL text -- the query is
+    // range-bound, never substring-fed, so the coordinates stay absolute.
+    // Small documents return the whole range.
+    [[nodiscard]] std::pair<std::size_t, std::size_t> SymbolQueryWindow(const text::ITextStorage& content) const;
+
     // --- folded-line awareness ----------------------------------------------
     [[nodiscard]] bool IsLineHidden(std::size_t line) const;
     // The first visible line at or after `line`, never past `limit`.

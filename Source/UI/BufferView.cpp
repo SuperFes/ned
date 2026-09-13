@@ -23,21 +23,7 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
                                                                                                             dispatcher_, statusMessage_, mode_, theme_, lspManager_, dapManager_,
                                                                                                             acpManager_, vcsRunner_, taskRunner_, testRunner_, projectUndo_,
                                                                                                             eventLoop_, janetEnv_},
-                                                                                                   gutters_(context_,
-                                                                                                            [this](const text::ITextStorage& content) {
-                                                                                                                return viewport_.HugeStructuralWindow(content);
-                                                                                                            }),
-                                                                                                   viewport_(context_, gutters_,
-                                                                                                             bufferview::Viewport::Host{
-                                                                                                                 [this]() { return size(); },
-                                                                                                                 [this]() { return GutterWidth(); },
-                                                                                                                 [this]() { return stickyRowCount_; },
-                                                                                                                 [this](std::size_t line) { return AnnotationRowsForLine(line); },
-                                                                                                                 [this](std::size_t line) { return LeadingAnnotationRowsForLine(line); },
-                                                                                                                 [this](std::size_t lineStart, std::size_t lineEnd) {
-                                                                                                                     return InlayHintsForLineRange(lineStart, lineEnd);
-                                                                                                                 },
-                                                                                                                 [this]() { DismissHover(); }}) {
+                                                                                                   gutters_(context_, [this](const text::ITextStorage& content) { return viewport_.HugeStructuralWindow(content); }, [this](const text::ITextStorage& content) { return viewport_.SymbolQueryWindow(content); }), viewport_(context_, gutters_, bufferview::Viewport::Host{[this]() { return size(); }, [this]() { return GutterWidth(); }, [this]() { return stickyRowCount_; }, [this](std::size_t line) { return AnnotationRowsForLine(line); }, [this](std::size_t line) { return LeadingAnnotationRowsForLine(line); }, [this](std::size_t lineStart, std::size_t lineEnd) { return InlayHintsForLineRange(lineStart, lineEnd); }, [this]() { DismissHover(); }}) {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
     }
