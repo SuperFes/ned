@@ -1266,13 +1266,27 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // parser/sharedParse. Captures pair a "@test.definition" (the whole
     // definition node) with a "@test.name" nested inside it -- paired here
     // by smallest-enclosing-definition rather than by match grouping, since
-    // Captures() returns a flat, tree-ordered list (and nesting is real:
-    // a describe() block contains its it() blocks, a PHPUnit class its
-    // methods -- each name must land on its own innermost definition).
+    // a flat capture list (nesting is real: a describe() block contains its
+    // it() blocks, a PHPUnit class its methods -- each name must land on its
+    // own innermost definition).
+    //
+    // per-subtree-fact-memoization follow-up: this closure feeds
+    // GutterModel::EnsureTestEntries's own ContentGeneration-gated cache, so
+    // it runs once per keystroke while the test gutter is eligible -- the
+    // same O(document)-per-keystroke shape symbolKind's whole-document path
+    // and IndentCaptures had before their own MatchCache wiring (see this
+    // file's buildMarkers closure above and Indent.cpp's
+    // BuildIndentFunction). The correlation loop below only ever reads
+    // capture.name/startByte/endByte, which QueryMatchCapture carries same as
+    // QueryCapture, so reconciling through a MatchCache needs no change to it
+    // -- just flattening Reconcile()'s match-grouped result back into the
+    // same two flat lists (the Matches()+flatten swap IndentCapturesFromQuery
+    // made, minus even needing a named helper here).
     TestDiscoveryFunction testDiscovery;
     if (!queries.tests.empty()) {
-        const auto testQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.tests);
-        testDiscovery        = [parser, testQuery, sharedParse](std::string_view bufferText) -> std::vector<TestMarker> {
+        const auto testQuery      = std::make_shared<treesitter::QueryMatcher>(language, queries.tests);
+        const auto testMatchCache = std::make_shared<treesitter::MatchCache>();
+        testDiscovery = [parser, testQuery, sharedParse, testMatchCache](std::string_view bufferText) -> std::vector<TestMarker> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
@@ -1284,12 +1298,15 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             };
             std::vector<Definition>                          definitions;
             std::vector<std::pair<std::size_t, std::size_t>> names;
-            for (const treesitter::QueryCapture& capture : testQuery->Captures(tree.RootNode(), bufferText)) {
-                if (capture.name == "test.definition") {
-                    definitions.push_back({capture.startByte, capture.endByte, {}});
-                }
-                else if (capture.name == "test.name") {
-                    names.emplace_back(capture.startByte, capture.endByte);
+            for (const treesitter::QueryMatch& match :
+                 testMatchCache->Reconcile(*testQuery, tree.RootNode(), bufferText, sharedParse->LastEdit())) {
+                for (const treesitter::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "test.definition") {
+                        definitions.push_back({capture.startByte, capture.endByte, {}});
+                    }
+                    else if (capture.name == "test.name") {
+                        names.emplace_back(capture.startByte, capture.endByte);
+                    }
                 }
             }
 
