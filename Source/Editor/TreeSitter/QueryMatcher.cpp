@@ -89,6 +89,17 @@ namespace {
     struct Pattern {
         ChildItem                      root;
         std::vector<CompiledPredicate> predicates;
+        // per-subtree-fact-memoization follow-up: true when any predicate on
+        // this pattern is an actually-evaluated (not the arity-inert
+        // variadic spelling -- see PredicateReadsOutsideSubtree)
+        // (not-)has-ancestor?/(not-)has-parent? call, meaning a match of
+        // this pattern can read structure OUTSIDE the node it's attached
+        // to. Computed once at compile time (CompileTopLevel) and surfaced
+        // per match as QueryMatch::ancestorCrossing -- a per-subtree fact
+        // cache must always fully re-derive such a match rather than reuse
+        // it across a reparse, even when the underlying subtree is
+        // byte-for-byte unchanged, because its ancestry may not be.
+        bool readsOutsideSubtree = false;
     };
 
     struct Binding {
@@ -524,6 +535,15 @@ struct QueryMatcher::Impl {
                         throw QueryMatcherError(operand.line,
                                                 "predicate references unknown capture '@" + operand.text + "'");
                     }
+                }
+            }
+        }
+
+        for (Pattern& pattern : patterns) {
+            for (const CompiledPredicate& predicate : pattern.predicates) {
+                if (PredicateReadsOutsideSubtree(predicate.name, predicate.operands.size())) {
+                    pattern.readsOutsideSubtree = true;
+                    break;
                 }
             }
         }
@@ -1231,7 +1251,8 @@ struct QueryMatcher::Impl {
                     .endByte   = parse::NodeEndByte(binding.node),
                 });
             }
-            match.setDirectives = SetDirectives(patternIndex, bindings);
+            match.setDirectives    = SetDirectives(patternIndex, bindings);
+            match.ancestorCrossing = patterns[patternIndex].readsOutsideSubtree;
             matches.push_back(std::move(match));
         };
         Walk(root, walkStart, walkEnd, sink);
@@ -1274,6 +1295,12 @@ std::vector<QueryMatch> QueryMatcher::MatchesInRange(const Node& root, std::stri
         return {};
     }
     return impl_->CollectMatches(root.Raw(), sourceText, startByte, endByte);
+}
+
+std::size_t QueryMatcher::AncestorCrossingPatternCount() const {
+    return static_cast<std::size_t>(
+        std::count_if(impl_->patterns.begin(), impl_->patterns.end(),
+                      [](const Pattern& pattern) { return pattern.readsOutsideSubtree; }));
 }
 
 } // namespace ned::editor::treesitter

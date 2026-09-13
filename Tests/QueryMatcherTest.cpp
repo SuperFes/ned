@@ -587,6 +587,59 @@ TEST_CASE("QueryMatcher compiles every bundled language's every query kind", "[Q
     REQUIRE(compiled > 80);
 }
 
+// per-subtree-fact-memoization follow-up (census, 2026-09-13): the exact set
+// of bundled patterns whose result can depend on structure OUTSIDE the node
+// they're attached to -- QueryMatch::ancestorCrossing, computed from an
+// actually-evaluated (not-)has-ancestor?/(not-)has-parent? predicate (the
+// variadic 3+-type-operand spelling is arity-inert per QueryPredicates.cpp
+// and correctly does NOT count -- see PredicateReadsOutsideSubtree). A
+// future per-subtree fact cache must always fully re-derive these, never
+// reuse them across a reparse: the same subtree can answer differently once
+// its ancestry changes even when its own bytes haven't. Pinned so a query
+// edit that adds, removes, or changes the arity of one of these predicates
+// is a conscious, named diff rather than a silent cache-correctness
+// regression discovered later (NED_QUERY_CENSUS=1 reprints the breakdown).
+TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind", "[QueryMatcher]") {
+    std::map<std::string, std::size_t> counts;
+    std::size_t                        total = 0;
+    for (const LanguageDefinition& definition : BundledLanguages()) {
+        if (definition.grammarless) {
+            continue;
+        }
+        const std::string_view grammar =
+            definition.grammar.empty() ? std::string_view(definition.name) : definition.grammar;
+        const auto language = LanguageByName(grammar);
+        REQUIRE(language);
+        for (const KindText& kind : QueryTextsFor(definition)) {
+            const QueryMatcher matcher(*language, kind.text);
+            const std::size_t  n = matcher.AncestorCrossingPatternCount();
+            if (n > 0) {
+                counts[std::string(definition.name) + "/" + kind.kind] = n;
+                total += n;
+            }
+        }
+    }
+    if (std::getenv("NED_QUERY_CENSUS") != nullptr) {
+        for (const auto& [key, n] : counts) {
+            WARN(key << ": " << n);
+        }
+        WARN("ancestor-crossing total: " << total);
+    }
+    const std::map<std::string, std::size_t> expected = {
+        {"c/highlights", 2},
+        {"cpp/highlights", 5},
+        {"cpp/indents", 1},
+        {"csharp/locals", 1},
+        {"java/locals", 1},
+        {"kotlin/locals", 1},
+        {"python/locals", 1},
+        {"rust/locals", 1},
+        {"yaml/indents", 2},
+    };
+    CHECK(counts == expected);
+    CHECK(total == 15);
+}
+
 // Ned's own emission order, pinned. The matcher's capture stream reproduces
 // tree-sitter's incremental cursor merge for every case the corpus
 // exercises EXCEPT same-start-byte ties whose scheduling depended on
