@@ -92,6 +92,14 @@ enum class SyntaxClass {
     ReturnType,  // a function/method's own return type, distinct from every other @type usage -- "type.return"
     IncludePath, // a "<system/header>" #include path, distinct from a "\"local/header\"" one -- "string.special.include"
 
+    // diff-grammar follow-up (Release 0.6): a diff buffer's whole point is
+    // red/green, and no general-purpose class above is honestly either
+    // (the "tag.error -> Tag" precedent shows the approximation reads
+    // wrong). Same per-format-class reasoning as the Org block below.
+    DiffAdded,   // an added line / new-file header -- "diff.plus"
+    DiffRemoved, // a removed line / old-file header -- "diff.minus"
+    DiffChanged, // an in-place change (mode changes, renames) -- "diff.delta"
+
     // Org-mode syntax-highlighting follow-up: genuinely Org-specific
     // categories, no cross-language generic capture maps to any of these --
     // the same "real semantic category, not a hue tweak" bar
@@ -803,6 +811,9 @@ struct ModeBuildContext {
 [[nodiscard]] Mode TomlMode();
 [[nodiscard]] Mode ClojureMode();
 [[nodiscard]] Mode JankMode();
+[[nodiscard]] Mode LuaMode();
+[[nodiscard]] Mode CMakeMode();
+[[nodiscard]] Mode DiffMode();
 [[nodiscard]] Mode MarkdownMode();
 [[nodiscard]] Mode OrgMode();
 

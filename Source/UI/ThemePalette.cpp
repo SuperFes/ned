@@ -147,6 +147,9 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         .modeLineFocusedGradientStart = Color::Interpolate(0.6F, p.chromeBackgroundEmphasis, p.accent),
         .modeLineFocusedGradientEnd   = Color::Interpolate(0.6F, p.chromeBackground, p.accent),
         .markupMarkerForeground       = p.subtleForeground,
+        .diffAddedForeground          = p.green,
+        .diffRemovedForeground        = p.red,
+        .diffChangedForeground        = p.yellow,
     };
 }
 

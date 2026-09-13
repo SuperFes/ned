@@ -564,6 +564,13 @@ ned_add_treesitter_grammar(tree-sitter-java https://github.com/tree-sitter/tree-
 # than (like C/C++'s tags) to correct an ambiguous upstream one.
 ned_add_treesitter_grammar(tree-sitter-kotlin https://github.com/fwcd/tree-sitter-kotlin.git 0.3.8)
 
+# Release-0.6 grammar batch (admission policy: org repo over personal fork,
+# pinned by tag; ABI/scanner/corpus facts recorded at admission in
+# Docs/LanguageCoverage.md).
+ned_add_treesitter_grammar(tree-sitter-lua https://github.com/tree-sitter-grammars/tree-sitter-lua.git v0.5.0)
+ned_add_treesitter_grammar(tree-sitter-cmake https://github.com/uyha/tree-sitter-cmake.git v0.7.5)
+ned_add_treesitter_grammar(tree-sitter-diff https://github.com/tree-sitter-grammars/tree-sitter-diff.git v0.2.0)
+
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -939,6 +946,9 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-c-sharp
         PUBLIC tree-sitter-java
         PUBLIC tree-sitter-kotlin
+        PUBLIC tree-sitter-lua
+        PUBLIC tree-sitter-cmake
+        PUBLIC tree-sitter-diff
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public

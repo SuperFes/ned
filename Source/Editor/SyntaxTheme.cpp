@@ -128,6 +128,9 @@ namespace {
             // SyntaxClassName(MarkupMarker/Link) used to throw "internal
             // error", and neither was reachable from ned/set-syntax-*.
             {SyntaxClass::MarkupMarker, "markup-marker"},
+            {SyntaxClass::DiffAdded, "diff-added"},
+            {SyntaxClass::DiffRemoved, "diff-removed"},
+            {SyntaxClass::DiffChanged, "diff-changed"},
             {SyntaxClass::Link, "link"},
         };
         return table;

@@ -73,6 +73,8 @@ const std::vector<UpstreamQuery>& UpstreamQueries() {
         {"tree-sitter-org-src/queries/injections.scm", "org/upstream/injections.janet"},
         {"tree-sitter-yaml-src/queries/highlights.scm", "yaml/upstream/highlights.janet"},
         {"tree-sitter-toml-src/queries/highlights.scm", "toml/upstream/highlights.janet"},
+        {"tree-sitter-lua-src/queries/highlights.scm", "lua/upstream/highlights.janet"},
+        {"tree-sitter-lua-src/queries/tags.scm", "lua/upstream/tags.janet"},
         {"tree-sitter-fish-src/queries/highlights.scm", "fish/upstream/highlights.janet"},
         {"tree-sitter-xml-src/queries/xml/highlights.scm", "xml/upstream/highlights.janet"},
         {"tree-sitter-rust-src/queries/highlights.scm", "rust/upstream/highlights.janet"},

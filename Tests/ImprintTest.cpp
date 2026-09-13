@@ -662,7 +662,10 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
         // bracket matching (gated on the same table) had been silently missing
         // for jank all along.
         {"jank", "tree-sitter-clojure-src/src/grammar.json"},
-    };
+        {"lua", "tree-sitter-lua-src/src/grammar.json"},
+        {"cmake", "tree-sitter-cmake-src/src/grammar.json"},
+        {"diff", "tree-sitter-diff-src/src/grammar.json"},
+};
 
     if (!fs::exists(DepsDir())) {
         SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
@@ -699,6 +702,13 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
             << "};\n\n";
 
         for (const auto& [language, bodies] : live) {
+            if (bodies.empty()) {
+                // A zero-length array is ill-formed; a grammar the imprint
+                // reads NO bodies out of (diff: no bracket structure at all)
+                // just gets no table, which TableFor already treats as empty.
+                out << "// " << language << ": measured, zero delimited bodies.\n\n";
+                continue;
+            }
             out << "constexpr Entry k" << static_cast<char>(std::toupper(language[0])) << language.substr(1)
                 << "[] = {\n";
             for (const auto& [node, body] : bodies) {
@@ -727,6 +737,9 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
             << "            }\n"
             << "        };\n";
         for (const auto& [language, bodies] : live) {
+            if (bodies.empty()) {
+                continue;
+            }
             const std::string symbol =
                 "k" + std::string(1, static_cast<char>(std::toupper(language[0]))) + language.substr(1);
             out << "        load(\"" << language << "\", " << symbol << ", std::size(" << symbol << "));\n";

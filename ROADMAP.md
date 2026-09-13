@@ -90,14 +90,27 @@ would make the number mean nothing.
       for no reason except nobody wrote the table. Pure config — `Lsp/ServerConfig.h`,
       `Dap/Config.h` and `TestRun/Config.h` already take this as data. See
       `Docs/LanguageCoverage.md` for the tier definitions.
-- [ ] **Add Lua and CMake grammars.** Both are Tier A by usage and both are absent; CMake is
-      ned's own build system and Lua is the configuration language of half the tooling
-      world. Sourcing: `tree-sitter-grammars/tree-sitter-lua` (2026-06-19),
-      `uyha/tree-sitter-cmake` (2026-07-08).
-- [ ] **Add diff/unified-diff.** Cheapest high-value grammar in the catalogue: ned owns a
-      VCS side panel, hunk-level staging (`Vcs/DiffPatch.h`) and a merge-conflict mode, all
-      of which currently read diff output as untyped text.
-      `tree-sitter-grammars/tree-sitter-diff` is live (2026-08-14).
+- [x] **Lua, CMake and diff grammars — shipped (2026-09-13).** The first admissions
+      through the post-Phase-4b pipeline, and the engine passed all three upstream
+      corpora (138 cases) untouched. Admission facts: lua
+      `tree-sitter-grammars/tree-sitter-lua` v0.5.0 (ABI 15, scanner 195 LOC, 4 corpus
+      files, upstream highlights+tags vendored — tags gives the symbol gutter and
+      sticky scroll; upstream locals.scm deliberately NOT vendored: it captures a
+      non-`local` assignment as a scoped definition, which is a Lua GLOBAL, so
+      scope-aware rename would over-scope — falls back to LSP/whole-word); cmake
+      `uyha/tree-sitter-cmake` v0.7.5 (ABI 14, scanner 194 LOC, 13 corpus files,
+      `CMakeLists.txt` claimed by filename); diff `tree-sitter-grammars/
+      tree-sitter-diff` v0.2.0 (ABI 15, no scanner, the one grammar the imprint
+      measures ZERO delimited bodies for — recorded in the generated table rather
+      than special-cased). The imprint inferred lua's `function/if/for/while … end`
+      keyword bodies outright (folding + indent from structure, the bash/fish
+      keyword-pair set growing exactly as designed) and cmake's paren bodies. Diff
+      highlighting got three first-class syntax classes — `DiffAdded`/`DiffRemoved`/
+      `DiffChanged` (`diff.plus`/`.minus`/`.delta` captures, `diff_*_foreground`
+      theme keys) — per the Org-classes precedent, since no general-purpose class is
+      honestly red or green. cmake and diff highlights are ned-authored
+      (kotlin-tags precedent): both upstream files use constructs outside
+      QueryMatcher's census scope — see the watch-list entry below.
 - [ ] **Add the tree-sitter query language (`.scm`).** Mostly mooted 2026-09-12 by the
       mechanism unification: ned authors zero `.scm` files now — every query is
       `Source/Languages/<name>/<kind>.janet`, which janet-mode already highlights. The
@@ -2138,6 +2151,18 @@ for closed-issue history.
   shutdown-side broker handshake read with the same timeout discipline the
   connect-side already got (see the broker connect-hang fix), and re-run the A/B with
   the confound controlled (same file, same index state, both binaries).
+
+- **QueryMatcher scope: two upstream constructs the census excludes, now with real
+  files attached.** Found at the 2026-09-13 grammar admissions: a multi-pattern
+  group nested inside a pattern (`tree-sitter-cmake`'s highlights.scm, the
+  set/CACHE/type sequence at its line ~137) and a top-level field-prefixed pattern
+  (`tree-sitter-diff`'s highlights.scm, the `forward:`/`reverse:` binary-hunk
+  tail). Both compile-fail loudly (by design) and both languages ship ned-authored
+  highlights instead, so nothing is broken — but any foreign `:queries-dir` file
+  using either construct hits the same wall. Fix shape: the field-prefix form is
+  small (a root-level field constraint checked against FieldOfNode); the nested
+  group is a sequence-of-siblings child item and needs its own enumeration pins,
+  written against these two files as the test cases.
 
 - **Variadic `has-parent?` predicates are silently inert.** Found by the Phase 4a M0
   census (2026-09-12): `QueryPredicates.cpp`'s evaluator handles the has-parent/has-ancestor family
