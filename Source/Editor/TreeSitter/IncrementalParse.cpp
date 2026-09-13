@@ -29,12 +29,14 @@ namespace {
 
 const Tree& IncrementalParseCache::Update(const Parser& parser, std::string_view bufferText) {
     if (lastTree_.has_value() && lastText_ == bufferText) {
+        lastEdit_ = std::nullopt;
         return *lastTree_;
     }
 
     if (!lastTree_.has_value()) {
         lastTree_ = parser.Parse(bufferText);
         lastText_.assign(bufferText);
+        lastEdit_ = std::nullopt;
         return *lastTree_;
     }
 
@@ -66,6 +68,12 @@ const Tree& IncrementalParseCache::Update(const Parser& parser, std::string_view
 
     lastTree_->Edit(edit);
     lastTree_ = parser.Parse(newText, *lastTree_);
+    lastEdit_ = text::ChangedSpan{
+        .oldStart = startByte,
+        .oldEnd   = oldEndByte,
+        .newStart = startByte,
+        .newEnd   = newEndByte,
+    };
     lastText_.assign(newText);
     return *lastTree_;
 }

@@ -489,6 +489,39 @@ TEST_CASE("IncrementalParseCache handles an edit that inserts newlines", "[TreeS
     RequireNodesMatch(tree.RootNode(), freshTree.RootNode());
 }
 
+// per-subtree-fact-memoization follow-up: LastEdit() lets a capability
+// closure (Mode.cpp's symbolKind, via MatchCache) share this cache's own
+// diff instead of re-diffing text independently.
+TEST_CASE("IncrementalParseCache::LastEdit reports nullopt on a cache hit and on the first call", "[TreeSitter]") {
+    Parser                parser(*LanguageByName("json"));
+    IncrementalParseCache cache;
+
+    REQUIRE_FALSE(cache.LastEdit().has_value()); // nothing diffed yet
+
+    (void)cache.Update(parser, R"({"a": 1})");
+    REQUIRE_FALSE(cache.LastEdit().has_value()); // first call: nothing to diff against
+
+    (void)cache.Update(parser, R"({"a": 1})"); // identical text -- cache hit
+    REQUIRE_FALSE(cache.LastEdit().has_value());
+}
+
+TEST_CASE("IncrementalParseCache::LastEdit reports the exact changed region for a real edit", "[TreeSitter]") {
+    Parser                parser(*LanguageByName("json"));
+    IncrementalParseCache cache;
+
+    (void)cache.Update(parser, R"({"a": 1, "b": 2})");
+    (void)cache.Update(parser, R"({"a": 1, "b": 200})"); // widens "2" to "200"
+
+    const std::optional<ned::text::ChangedSpan> span = cache.LastEdit();
+    REQUIRE(span.has_value());
+    // Matches the prefix/suffix diff computed by hand in
+    // Tests/MatchCacheTest.cpp for this exact case.
+    CHECK(span->oldStart == 15);
+    CHECK(span->oldEnd == 15);
+    CHECK(span->newStart == 15);
+    CHECK(span->newEnd == 17);
+}
+
 TEST_CASE("IncrementalParseCache stays correct across a sequence of edits", "[TreeSitter]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
