@@ -76,6 +76,31 @@
 // @type. No structural flag on the tree currently signals this case the
 // way HasError/HasExternalTokens do; closing it is future work.
 //
+// A candidate structural flag was investigated and DISPROVEN
+// (2026-09-13): Subtree::dynamicPrecedence (Green.h, aggregated up the tree
+// the same way errorCost/hasExternalTokens are, per grammar.js's
+// prec.dynamic(n, rule) declarations -- Go's own grammar.js declares
+// exactly this for $._type_identifier, the symbol "zero" gets reclassified
+// to) looked like a plausible signal: "this node's own reduce was one the
+// grammar declared as ambiguity-prone." Live-verified false by dumping the
+// reparsed tree's per-node dynamicPrecedence (own contribution, i.e. the
+// aggregate minus the sum of direct children's own -- the reverse of
+// Green.cpp's SubtreeSummarizeChildren): the reclassified type_identifier
+// node carries dynamicPrecedence == 0 despite grammar.js's declared -1,
+// because dynamicPrecedence is only ever written into a REDUCE action's
+// table entry when the table GENERATOR found an actual LR conflict to
+// disambiguate at that state -- the var_spec shape choice here ("does a
+// second identifier start a Type or continue an identifier_list") is a
+// perfectly deterministic lookahead decision in the compiled table, not a
+// GLR fork, so no precedence value was ever attached to it. The general
+// class this gap belongs to -- a production's SHAPE changing because the
+// surrounding token stream changed, with the node's own bytes untouched --
+// has no known structural aggregate to detect from the NEW tree alone;
+// closing it for real most likely needs some form of old-tree comparison,
+// which is exactly what this cache's design (see above) deliberately
+// avoids needing. Still future work, now with one fewer plausible shortcut
+// to re-investigate.
+//
 
 #ifndef NED_EDITOR_TREESITTER_MATCHCACHE_H
 #define NED_EDITOR_TREESITTER_MATCHCACHE_H
