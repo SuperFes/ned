@@ -235,6 +235,9 @@ const std::map<std::string, std::function<ned::editor::Mode()>>& ModeByExtension
         {".sh", ned::editor::BashMode},
         {".fish", ned::editor::FishMode},
         {".toml", ned::editor::TomlMode},
+        {".lua", ned::editor::LuaMode},
+        {".cmake", ned::editor::CMakeMode},
+        {".diff", ned::editor::DiffMode},
         // Org/Markdown joined when their hand-built highlight escapes became
         // queries + capture classifiers -- the corpus is what holds that
         // rewrite (and the classifiers, which JanetTestSupport registers for

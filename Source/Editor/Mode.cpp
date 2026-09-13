@@ -97,6 +97,9 @@ namespace {
             {"keyword.conditional.ternary", SyntaxClass::Operator}, // "?"/":" read as operators, not as an if-keyword's color
             {"module.builtin", SyntaxClass::Namespace},
             {"tag.error", SyntaxClass::Tag}, // no Error class exists; per-capture styling can redden it now
+            {"diff.plus", SyntaxClass::DiffAdded},
+            {"diff.minus", SyntaxClass::DiffRemoved},
+            {"diff.delta", SyntaxClass::DiffChanged},
             // string.special.symbol is a Lisp symbol/keyword (:foo in
             // Clojure) -- Constant matches how symbol-like atoms
             // conventionally render (Ruby symbols, Elixir atoms), where
@@ -1519,6 +1522,18 @@ Mode YamlMode() {
 
 Mode TomlMode() {
     return BundledMode("toml");
+}
+
+Mode LuaMode() {
+    return BundledMode("lua");
+}
+
+Mode CMakeMode() {
+    return BundledMode("cmake");
+}
+
+Mode DiffMode() {
+    return BundledMode("diff");
 }
 
 Mode ClojureMode() {
