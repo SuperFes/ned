@@ -916,7 +916,7 @@ struct QueryMatcher::Impl {
             bindings.clear();
             TryPattern(patternIndex, node, nodeField, bindings, [&] {
                 if (EvaluatePatternPredicates(patternIndex, bindings)) {
-                    sink(patternIndex, bindings);
+                    sink(patternIndex, bindings, node);
                 }
             });
         };
@@ -1110,7 +1110,7 @@ struct QueryMatcher::Impl {
             PreKey                    finish;   // completion node's position
         };
         std::vector<SimMatch> sims;
-        auto                  sink = [&](std::size_t patternIndex, const std::vector<Binding>& bindings) {
+        auto                  sink = [&](std::size_t patternIndex, const std::vector<Binding>& bindings, parse::RedNode /*patternRoot*/) {
             if (bindings.empty()) {
                 return;
             }
@@ -1241,7 +1241,7 @@ struct QueryMatcher::Impl {
         rangeStart = 0;
         rangeEnd   = static_cast<std::size_t>(-1);
         std::vector<QueryMatch> matches;
-        auto                    sink = [&](std::size_t patternIndex, const std::vector<Binding>& bindings) {
+        auto                    sink = [&](std::size_t patternIndex, const std::vector<Binding>& bindings, parse::RedNode patternRoot) {
             QueryMatch match;
             match.captures.reserve(bindings.size());
             for (const Binding& binding : bindings) {
@@ -1251,8 +1251,11 @@ struct QueryMatcher::Impl {
                     .endByte   = parse::NodeEndByte(binding.node),
                 });
             }
-            match.setDirectives    = SetDirectives(patternIndex, bindings);
-            match.ancestorCrossing = patterns[patternIndex].readsOutsideSubtree;
+            match.setDirectives       = SetDirectives(patternIndex, bindings);
+            match.ancestorCrossing    = patterns[patternIndex].readsOutsideSubtree;
+            match.rootStartByte       = parse::NodeStartByte(patternRoot);
+            match.rootEndByte         = parse::NodeEndByte(patternRoot);
+            match.rootSubtreeIdentity = parse::NodeSubtreeIdentity(patternRoot);
             matches.push_back(std::move(match));
         };
         Walk(root, walkStart, walkEnd, sink);
