@@ -21,23 +21,60 @@
 // Text/OffsetRemap.h already established for LSP diagnostic relocation:
 // a cached match entirely before the edit is kept as-is, one entirely
 // after is shifted by the edit's length delta, and anything overlapping
-// the edit is dropped and re-derived via MatchesInRange over just that
-// window. No comparison against the prior tree is ever needed, so no prior
-// generation needs to be kept alive.
+// the edit is dropped and re-derived via MatchesInRange over the gap
+// between its own surviving neighbors (see MatchCache.cpp's own comment on
+// why that gap, not a fixed pad, is what makes the redo window sound). No
+// comparison against the prior tree is ever needed, so no prior generation
+// needs to be kept alive.
 //
-// Excluded from this entirely: a query set containing ANY pattern flagged
-// QueryMatch::ancestorCrossing (see QueryPredicates.h's
-// PredicateReadsOutsideSubtree) always takes the full, unwindowed re-derive
-// path regardless of edit -- such a pattern's result can change outside the
-// edited byte range (its ancestry changed, not its own bytes), which no
-// byte-range-scoped reconciliation can detect. This is a whole-query-set
-// decision (QueryMatcher::AncestorCrossingPatternCount(), fixed for the
-// life of a compiled matcher), not a per-match one: MatchesInRange has no
-// way to ask for "only these patterns," so getting incremental benefit for
-// the REST of a query set that contains even one such pattern would need a
-// new QueryMatcher entry point this file doesn't build. Named as a
-// deliberate v1 scope cut, not an oversight -- see MatchCache.cpp's own
-// comment at AlwaysFullWalk.
+// Excluded from this entirely, always falling back to a full unwindowed
+// re-derive:
+//
+//  - A query set containing ANY pattern flagged QueryMatch::ancestorCrossing
+//    (see QueryPredicates.h's PredicateReadsOutsideSubtree) -- such a
+//    pattern's result can change outside the edited byte range (its
+//    ancestry changed, not its own bytes), which no byte-range-scoped
+//    reconciliation can detect. This is a whole-query-set decision
+//    (QueryMatcher::AncestorCrossingPatternCount(), fixed for the life of a
+//    compiled matcher), not a per-match one: MatchesInRange has no way to
+//    ask for "only these patterns," so getting incremental benefit for the
+//    REST of a query set that contains even one such pattern would need a
+//    new QueryMatcher entry point this file doesn't build.
+//
+//  - A tree with a parse ERROR anywhere in it, on either side of the edit.
+//    Measured live (2026-09-13) against real bash corpus text: an edit that
+//    introduces or resolves a syntax error can change how content FAR AWAY
+//    from the edit -- both before and after it -- is interpreted, because
+//    error recovery/ambiguity resolution is a property of the WHOLE parse,
+//    not a local one. A real case: splitting an identifier mid-word broke
+//    one statement, and a completely unrelated "fi" keyword 50 bytes
+//    earlier in the same file switched from @keyword to @function in the
+//    resulting (correct) parse. No local window, however it's computed,
+//    can bound that.
+//
+//  - A tree with EXTERNAL SCANNER involvement anywhere in it
+//    (parse::NodeHasExternalTokens -- aggregated up the tree the same way
+//    error cost is, Green.cpp's SubtreeCombine: a parent's hasExternalTokens
+//    is set if any child's is). Also measured live against real bash corpus
+//    text: heredocs and similar constructs are exactly the class whose true
+//    extent a local byte window cannot bound, for the same reason as parse
+//    errors -- this single gate took a differential run over real corpus
+//    text + a scripted edit sequence from 818 divergences down to 9.
+//
+// Both gates are sticky across the call that resolves the condition too
+// (cachedNeededFullWalk_), not just the cache's own prior generation: an
+// edit that fixes the error/external-token condition still needs one more
+// full walk to reestablish a trustworthy baseline.
+//
+// KNOWN RESIDUAL GAP, not yet closed (see Tests/ParseConformanceTest.cpp's
+// "MatchCache reconciliation..." test, which pins the exact known-failing
+// cases): pure grammar-AMBIGUITY reclassification, with no parse error and
+// no external-scanner involvement, can still occasionally reclassify a
+// match near an edit differently than a full recompute would -- e.g. Go's
+// "Grouped var declarations" corpus case, where a token inserted
+// immediately before a bare identifier can flip it between @variable and
+// @type. No structural flag on the tree currently signals this case the
+// way HasError/HasExternalTokens do; closing it is future work.
 //
 
 #ifndef NED_EDITOR_TREESITTER_MATCHCACHE_H
@@ -75,7 +112,8 @@ class MatchCache {
 
   private:
     std::vector<QueryMatch> cached_;
-    bool                    hasCached_ = false;
+    bool                    hasCached_            = false;
+    bool                    cachedNeededFullWalk_ = false;
 };
 
 } // namespace ned::editor::treesitter

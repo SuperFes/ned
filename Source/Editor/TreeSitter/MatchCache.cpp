@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "Editor/Parse/Node.h"
+
 namespace ned::editor::treesitter {
 
 namespace {
@@ -40,10 +42,24 @@ namespace {
 
 std::vector<QueryMatch> MatchCache::Reconcile(const QueryMatcher& matcher, const Node& root, std::string_view text,
                                               std::optional<text::ChangedSpan> edit) {
-    if (!hasCached_ || !edit.has_value() || AlwaysFullWalk(matcher)) {
+    // See MatchCache.h's header comment for why either of these forces a
+    // full walk instead of an incremental reconciliation: a parse error's
+    // recovery is a whole-parse property (a real bash case flipped an
+    // unrelated keyword's classification 50 bytes from the edit with no
+    // overlap at all), and external-scanner involvement (heredocs and
+    // similar) is exactly the class of construct whose extent a local byte
+    // window cannot bound -- measured live to matter for real bash corpus
+    // text (818 -> 9 divergences on this file's own corpus+edit-script
+    // differential once this gate was added). Sticky across the CURRENT
+    // call too, not just cached_'s own generation: an edit that resolves an
+    // error/external-token condition still needs one more full walk to
+    // reestablish a trustworthy baseline before incremental reuse resumes.
+    const bool needsFullWalk = parse::NodeHasError(root.Raw()) || parse::NodeHasExternalTokens(root.Raw());
+    if (!hasCached_ || !edit.has_value() || AlwaysFullWalk(matcher) || needsFullWalk || cachedNeededFullWalk_) {
         cached_ = matcher.Matches(root, text);
         std::sort(cached_.begin(), cached_.end(), ByRootStartByte);
-        hasCached_ = true;
+        hasCached_            = true;
+        cachedNeededFullWalk_ = needsFullWalk;
         return cached_;
     }
 
@@ -57,41 +73,51 @@ std::vector<QueryMatch> MatchCache::Reconcile(const QueryMatcher& matcher, const
     // here: a cached match merely TOUCHING the edit boundary can still have
     // been re-lexed into something new, so it must be dropped and
     // re-derived, not kept because "the point comparison says before/after."
+    //
+    // The redo window is NOT a fixed pad around the edit -- measured live
+    // (2026-09-13, real bash corpus text) to be insufficient: a statement's
+    // boundary can move because of what follows the whitespace the edit
+    // touches, not because the statement's own bytes changed (inserting a
+    // newline after "file1.txt " in "cmd file1.txt file2.txt" ends the
+    // command right after "file1.txt", one real byte before the edit's own
+    // position -- a fixed small pad keeps missing this by however much
+    // intervening insignificant content there happens to be, which has no
+    // bound). Instead the window is derived from THIS cache's own surviving
+    // neighbors: everything from the end of the nearest kept-before match to
+    // the start of the nearest kept-after match is unaccounted for and must
+    // be re-derived, however wide that turns out to be -- proportional to
+    // local structure, not a guessed constant. A wider enclosing match is
+    // still found via MatchesInRange's own "captures outside the window
+    // still arrive" intersection contract even when this window is narrow.
     const text::ChangedSpan& span = *edit;
     std::vector<QueryMatch>  result;
     result.reserve(cached_.size());
+    std::size_t redoStart = 0;
+    std::size_t redoEnd   = text.size();
     for (QueryMatch& match : cached_) {
         if (match.rootEndByte < span.oldStart) {
+            redoStart = std::max(redoStart, match.rootEndByte);
             result.push_back(std::move(match)); // entirely before, with a real gap -- unaffected
         }
         else if (match.rootStartByte > span.oldEnd) {
             ShiftAfterEdit(match, span);
-            result.push_back(std::move(match)); // entirely after, with a real gap -- shift, don't re-derive
+            redoEnd = std::min(redoEnd, match.rootStartByte); // post-shift
+            result.push_back(std::move(match));               // entirely after, with a real gap -- shift, don't re-derive
         }
         // else: overlaps OR touches the edit -- dropped; MatchesInRange below
         // re-derives it (and anything else whose root now intersects the
         // window).
     }
 
-    // Padded by 1 byte on each side (clamped to the text): the drop test
-    // above is strict (excludes anything merely TOUCHING the edit), so the
-    // complementary redo window must be strictly wider than [newStart,
-    // newEnd) to still catch a touching neighbor -- MatchesInRange's own
-    // InRange test is start < endByte / end > startByte, which a node
-    // ending exactly at newStart (or starting exactly at newEnd) fails
-    // against the unpadded window. This also covers a pure deletion
-    // (newStart == newEnd), where an unpadded window is zero-width and
-    // would match nothing at all.
-    const std::size_t       redoStart = span.newStart > 0 ? span.newStart - 1 : 0;
-    const std::size_t       redoEnd   = std::min(text.size(), span.newEnd + 1);
-    std::vector<QueryMatch> redone    = matcher.MatchesInRange(root, text, redoStart, redoEnd);
+    std::vector<QueryMatch> redone = matcher.MatchesInRange(root, text, redoStart, redoEnd);
     for (QueryMatch& match : redone) {
         result.push_back(std::move(match));
     }
 
     std::sort(result.begin(), result.end(), ByRootStartByte);
-    cached_    = std::move(result);
-    hasCached_ = true;
+    cached_               = std::move(result);
+    hasCached_            = true;
+    cachedNeededFullWalk_ = needsFullWalk; // false in this branch (the gate above already excluded true)
     return cached_;
 }
 

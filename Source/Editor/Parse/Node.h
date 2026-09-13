@@ -33,6 +33,7 @@ bool          NodeIsExtra(RedNode self);
 bool          NodeIsMissing(RedNode self);
 bool          NodeIsError(RedNode self);
 bool          NodeHasError(RedNode self);
+bool          NodeHasExternalTokens(RedNode self);
 bool          NodeEq(RedNode self, RedNode other);
 std::uint32_t NodeChildCount(RedNode self);
 std::uint32_t NodeNamedChildCount(RedNode self);
