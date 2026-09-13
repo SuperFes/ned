@@ -12,7 +12,7 @@
 #include "Editor/TreeSitter/IncrementalParse.h"
 #include "Editor/TreeSitter/Languages.h"
 #include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Query.h"
+#include "Editor/TreeSitter/QueryMatcher.h"
 #include "Editor/TreeSitter/Tree.h"
 #include "Text/Buffer.h"
 
@@ -23,7 +23,7 @@ using ned::editor::IndentStyle;
 using ned::editor::treesitter::IncrementalParseCache;
 using ned::editor::treesitter::LanguageByName;
 using ned::editor::treesitter::Parser;
-using ned::editor::treesitter::Query;
+using Query = ned::editor::treesitter::QueryMatcher;
 using ned::editor::treesitter::Tree;
 
 namespace {

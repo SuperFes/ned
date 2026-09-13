@@ -12,7 +12,7 @@
 #include "Editor/Mode.h"
 #include "Editor/TreeSitter/Languages.h"
 #include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Query.h"
+#include "Editor/TreeSitter/QueryMatcher.h"
 #include "Editor/TreeSitter/Tree.h"
 
 using ned::editor::EffectiveIndentStyle;
@@ -125,7 +125,7 @@ TEST_CASE("@indent.suppress withdraws the imprint's container, and a query captu
     const auto [start, end] = LineRange(text, 1);
 
     const auto levelWith = [&](const char* source) {
-        const ned::editor::treesitter::Query query(*language, source);
+        const ned::editor::treesitter::QueryMatcher query(*language, source);
         ned::editor::IndentCaptures          captures = ned::editor::IndentCapturesFromQuery(tree, text, query);
         ned::editor::AddImprintCaptures(captures, tree, "json", text);
         const auto result = ned::editor::IndentLevelForLine(tree, text, captures, start, end, style);

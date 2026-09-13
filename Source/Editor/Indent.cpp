@@ -114,7 +114,7 @@ namespace {
 } // namespace
 
 IndentCaptures IndentCapturesFromQuery(const treesitter::Tree& tree, std::string_view bufferText,
-                                       const treesitter::Query& indentQuery) {
+                                       const treesitter::QueryMatcher& indentQuery) {
     // Keyed by the captured node's own stable identity (Node::Id()), NOT its
     // byte range -- a (startByte, endByte) pair can't disambiguate two
     // DIFFERENT nodes that happen to span the exact same bytes, which is a
@@ -205,7 +205,7 @@ void AddImprintCaptures(IndentCaptures& captures, const treesitter::Tree& tree, 
 }
 
 std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree, std::string_view bufferText,
-                                                    const treesitter::Query& indentQuery, std::size_t lineStart,
+                                                    const treesitter::QueryMatcher& indentQuery, std::size_t lineStart,
                                                     std::size_t lineEnd, const IndentStyle& style) {
     if (tree.IsNull()) {
         return std::nullopt;
@@ -480,7 +480,7 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     return result;
 }
 
-IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser> parser, std::shared_ptr<treesitter::Query> indentQuery,
+IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser> parser, std::shared_ptr<treesitter::QueryMatcher> indentQuery,
                                    std::shared_ptr<treesitter::IncrementalParseCache> sharedParse, std::string modeName,
                                    std::string languageKey) {
     return [parser, indentQuery, sharedParse, modeName, languageKey](std::string_view bufferText, std::size_t lineStart,

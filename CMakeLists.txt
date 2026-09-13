@@ -806,6 +806,8 @@ add_library(ned_lib STATIC
         Source/Editor/TreeSitter/Parser.cpp
         Source/Editor/TreeSitter/IncrementalParse.cpp
         Source/Editor/TreeSitter/Query.cpp
+        Source/Editor/TreeSitter/QueryPredicates.cpp
+        Source/Editor/TreeSitter/QueryMatcher.cpp
         Source/Editor/TreeSitter/Languages.cpp
         Source/Editor/TreeSitter/DynamicGrammar.cpp
         Source/Janet/Value.cpp
@@ -1109,6 +1111,7 @@ if (NED_BUILD_TESTS)
             Tests/ModeTest.cpp
             Tests/LanguageDefinitionTest.cpp
             Tests/QueryDataTest.cpp
+            Tests/QueryMatcherTest.cpp
             Tests/LanguageParseTest.cpp
             Tests/CaptureClassifierTest.cpp
             Tests/JanetCaptureClassifierTest.cpp

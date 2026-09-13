@@ -12,7 +12,7 @@
 #include "LanguageFiles.h"
 #include "SyntaxTheme.h"
 #include "TreeSitter/Languages.h"
-#include "TreeSitter/Query.h"
+#include "TreeSitter/QueryMatcher.h"
 
 namespace ned::editor {
 
@@ -204,23 +204,39 @@ namespace {
                 .injections = CompileQueryFiles(files.injections)};
     }
 
-    // Which kind tree-sitter rejected, and where in which file: the generic
+    // The byte offset where 1-based `line` starts in `text` -- the matcher's
+    // compile error carries a line into the concatenated query text, and
+    // QueryText::Locate maps byte offsets back to the contributing file.
+    std::size_t OffsetOfLine(std::string_view text, int line) {
+        std::size_t offset = 0;
+        for (int current = 1; current < line; ++current) {
+            const std::size_t next = text.find('\n', offset);
+            if (next == std::string_view::npos) {
+                break;
+            }
+            offset = next + 1;
+        }
+        return offset;
+    }
+
+    // Which kind the matcher rejected, and where in which file: the generic
     // build compiles every kind in one go and its exception carries only a
-    // byte offset, so on failure each kind is compiled again alone -- an
-    // error path only, never paid on success.
+    // line into that kind's concatenated text, so on failure each kind is
+    // compiled again alone -- an error path only, never paid on success.
     [[noreturn]] void RethrowLocated(const LanguageDefinition& definition, const treesitter::Language& language,
-                                     const CompiledQueries& compiled, const treesitter::QueryCompileError& error) {
+                                     const CompiledQueries& compiled, const treesitter::QueryMatcherError& error) {
         for (const QueryText* text : {&compiled.highlights, &compiled.folds, &compiled.imports, &compiled.tags, &compiled.tests,
                                       &compiled.indents, &compiled.locals, &compiled.injections}) {
             if (text->text.empty()) {
                 continue;
             }
             try {
-                treesitter::Query probe(language, text->text);
+                treesitter::QueryMatcher probe(language, text->text);
             }
-            catch (const treesitter::QueryCompileError& kindError) {
-                throw std::runtime_error("language '" + definition.name + "': " + text->Locate(kindError.Offset()) +
-                                         ": tree-sitter query error (" + std::string(kindError.Kind()) + ")");
+            catch (const treesitter::QueryMatcherError& kindError) {
+                throw std::runtime_error("language '" + definition.name + "': " +
+                                         text->Locate(OffsetOfLine(text->text, kindError.Line())) + ": " +
+                                         kindError.what());
             }
         }
         throw std::runtime_error("language '" + definition.name + "': " + error.what());
@@ -235,7 +251,7 @@ Mode ModeFromDefinition(const LanguageDefinition& definition, const treesitter::
         Mode mode = TreeSitterModeFromLanguage(ModeNameFor(definition), language, compiled.Views(), &context);
         return Finish(std::move(mode), definition, context);
     }
-    catch (const treesitter::QueryCompileError& error) {
+    catch (const treesitter::QueryMatcherError& error) {
         RethrowLocated(definition, language, compiled, error);
     }
 }

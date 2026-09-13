@@ -28,7 +28,7 @@
 #include "TreeSitter/IncrementalParse.h"
 #include "TreeSitter/Languages.h"
 #include "TreeSitter/Parser.h"
-#include "TreeSitter/Query.h"
+#include "TreeSitter/QueryMatcher.h"
 #include "TreeSitter/Tree.h"
 
 namespace ned::editor {
@@ -463,7 +463,7 @@ SyntaxClass SyntaxClassForCapture(std::string_view captureName, std::string_view
             std::vector<std::pair<std::size_t, std::size_t>> statements;
         };
 
-        ImportCaptures CollectImportCaptures(const treesitter::Query& query, const treesitter::Node& root,
+        ImportCaptures CollectImportCaptures(const treesitter::QueryMatcher& query, const treesitter::Node& root,
                                              std::string_view bufferText) {
             ImportCaptures captures;
             for (const treesitter::QueryCapture& capture : query.Captures(root, bufferText)) {
@@ -809,16 +809,16 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // content, a fenced code block. The per-language highlighter cache is
     // shared by every call, mirroring sharedParse's own captured-shared_ptr
     // idiom.
-    std::shared_ptr<treesitter::Query>     highlightQuery;
-    std::shared_ptr<treesitter::Query>     injectionQuery;
+    std::shared_ptr<treesitter::QueryMatcher>     highlightQuery;
+    std::shared_ptr<treesitter::QueryMatcher>     injectionQuery;
     std::shared_ptr<EmbeddedLanguageCache> embeddedLanguageCache;
     if (!queries.injections.empty()) {
-        injectionQuery        = std::make_shared<treesitter::Query>(language, queries.injections);
+        injectionQuery        = std::make_shared<treesitter::QueryMatcher>(language, queries.injections);
         embeddedLanguageCache = std::make_shared<EmbeddedLanguageCache>();
     }
     HighlightFunction highlight;
     if (!queries.highlights.empty()) {
-        highlightQuery = std::make_shared<treesitter::Query>(language, queries.highlights);
+        highlightQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.highlights);
         highlight      = [parser, query = highlightQuery, injectionQuery, embeddedLanguageCache, sharedParse, languageKey](
                              std::string_view bufferText, HighlightWindow window) -> std::vector<HighlightSpan> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
@@ -882,7 +882,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // already shipped and had to chase down once.
     FoldFunction fold;
     if (!queries.folds.empty()) {
-        const auto foldQuery = std::make_shared<treesitter::Query>(language, queries.folds);
+        const auto foldQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.folds);
         fold                 = [parser, foldQuery, sharedParse](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
@@ -942,7 +942,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // carry the definition's own full range and name, not just its kind.
     SymbolKindFunction symbolKind;
     if (!queries.tags.empty()) {
-        const auto symbolKindQuery = std::make_shared<treesitter::Query>(language, queries.tags);
+        const auto symbolKindQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.tags);
         symbolKind                 = [parser, symbolKindQuery, sharedParse](std::string_view bufferText) -> std::vector<SymbolMarker> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
@@ -1179,7 +1179,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     ImportTargetFunction  importTarget;
     ImportTargetsFunction importTargets;
     if (!queries.imports.empty()) {
-        const auto importQuery = std::make_shared<treesitter::Query>(language, queries.imports);
+        const auto importQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.imports);
         importTarget           = [parser, importQuery, sharedParse](std::string_view bufferText,
                                                                     std::size_t      point) -> std::optional<ImportTarget> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
@@ -1235,7 +1235,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // methods -- each name must land on its own innermost definition).
     TestDiscoveryFunction testDiscovery;
     if (!queries.tests.empty()) {
-        const auto testQuery = std::make_shared<treesitter::Query>(language, queries.tests);
+        const auto testQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.tests);
         testDiscovery        = [parser, testQuery, sharedParse](std::string_view bufferText) -> std::vector<TestMarker> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
@@ -1306,8 +1306,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     IndentFunction indentColumn;
     if (!queries.indents.empty() || !imprint::TableFor(languageKey).empty()) {
         const auto indentQuery = queries.indents.empty()
-                                     ? std::shared_ptr<treesitter::Query>{}
-                                     : std::make_shared<treesitter::Query>(language, queries.indents);
+                                     ? std::shared_ptr<treesitter::QueryMatcher>{}
+                                     : std::make_shared<treesitter::QueryMatcher>(language, queries.indents);
         indentColumn           = BuildIndentFunction(parser, indentQuery, sharedParse, name, languageKey);
     }
 
@@ -1318,7 +1318,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // free, which is exactly the case an interactive rename is in.
     LocalScopeFunction localScopes;
     if (!queries.locals.empty()) {
-        const auto localsQuery = std::make_shared<treesitter::Query>(language, queries.locals);
+        const auto localsQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.locals);
         localScopes            = [parser, localsQuery, sharedParse](std::string_view bufferText) -> std::vector<LocalCapture> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {

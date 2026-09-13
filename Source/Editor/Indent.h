@@ -65,7 +65,7 @@
 #include "Text/ITextStorage.h"
 #include "TreeSitter/IncrementalParse.h"
 #include "TreeSitter/Parser.h"
-#include "TreeSitter/Query.h"
+#include "TreeSitter/QueryMatcher.h"
 #include "TreeSitter/Tree.h"
 
 namespace ned::editor {
@@ -87,7 +87,7 @@ namespace ned::editor {
 // what it got before the imprint existed; one with a table and no query
 // (indentQuery null) gets the imprint alone.
 [[nodiscard]] IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser>                parser,
-                                                 std::shared_ptr<treesitter::Query>                 indentQuery,
+                                                 std::shared_ptr<treesitter::QueryMatcher>                 indentQuery,
                                                  std::shared_ptr<treesitter::IncrementalParseCache> sharedParse,
                                                  std::string modeName, std::string languageKey);
 
@@ -118,7 +118,7 @@ struct IndentCaptures {
 };
 
 [[nodiscard]] IndentCaptures IndentCapturesFromQuery(const treesitter::Tree& tree, std::string_view bufferText,
-                                                     const treesitter::Query& indentQuery);
+                                                     const treesitter::QueryMatcher& indentQuery);
 
 // Merges the imprint's containers and closers into `captures`. A container the
 // query marked `@indent.suppress` is left out; everything the query asserted
@@ -175,7 +175,7 @@ struct IndentComputation {
 // a pure Level result still is (see BuildIndentFunction).
 [[nodiscard]] std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree&  tree,
                                                                   std::string_view         bufferText,
-                                                                  const treesitter::Query& indentQuery,
+                                                                  const treesitter::QueryMatcher& indentQuery,
                                                                   std::size_t lineStart, std::size_t lineEnd,
                                                                   const IndentStyle& style);
 
