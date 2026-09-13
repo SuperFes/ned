@@ -63,6 +63,9 @@ namespace {
         {"label_foreground", &Theme::labelForeground},
         {"include_path_foreground", &Theme::includePathForeground},
         {"markup_marker_foreground", &Theme::markupMarkerForeground},
+        {"diff_added_foreground", &Theme::diffAddedForeground},
+        {"diff_removed_foreground", &Theme::diffRemovedForeground},
+        {"diff_changed_foreground", &Theme::diffChangedForeground},
         {"mode_line_foreground", &Theme::modeLineForeground},
         // Gradient endpoints accept any color token now, not hex-only as
         // originally documented: theme colours are truecolor or Default,

@@ -92,7 +92,7 @@ cannot linger here after it stops existing.
 `constant_builtin_foreground` `variable_foreground` `variable_builtin_foreground` `parameter_foreground`
 `property_foreground` `operator_foreground` `punctuation_foreground` `tag_foreground`
 `attribute_foreground` `namespace_foreground` `label_foreground` `include_path_foreground`
-`markup_marker_foreground`
+`markup_marker_foreground` `diff_added_foreground` `diff_removed_foreground` `diff_changed_foreground`
 
 **Mode line and gutter**
 

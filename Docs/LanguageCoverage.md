@@ -57,6 +57,11 @@ is here because it is what documentation is written in, including this file.
 **Promote into Tier A:** **Lua** (the configuration language of half the tooling
 world; already named four times in `ROADMAP.md`) and **CMake** (named six times;
 it is *ned's own build system*, and not speaking it is embarrassing).
+*Both admitted 2026-09-13* — lua `tree-sitter-grammars/tree-sitter-lua` v0.5.0
+(ABI 15, scanner 195 LOC, 4 corpus files; upstream highlights+tags vendored,
+locals declined — see the ROADMAP entry for the global-vs-local reasoning),
+cmake `uyha/tree-sitter-cmake` v0.7.5 (ABI 14, scanner 194 LOC, 13 corpus
+files; highlights ned-authored, upstream's uses an out-of-scope construct).
 
 The current LSP root-marker set (`Lsp/RootResolver.h`) covers c/cpp/python/
 javascript/typescript/tsx/php. Closing Tier A means bringing java/kotlin/csharp/
@@ -118,7 +123,10 @@ XML *(in-tree)*, YAML *(in-tree)*, TOML *(in-tree)*, JSON *(in-tree)*
 ned has a VCS side panel, hunk-level staging (`Vcs/DiffPatch.h`) and a merge-
 conflict resolution mode, all of which currently read diff output as plain text.
 `tree-sitter-grammars/tree-sitter-diff` is live (`2026-08-14`). This is the
-cheapest high-value entry in the whole document.
+cheapest high-value entry in the whole document. *Admitted 2026-09-13* — v0.2.0,
+ABI 15, no scanner, 2 corpus files; highlights ned-authored with three new
+first-class syntax classes (DiffAdded/DiffRemoved/DiffChanged); the one grammar
+the imprint measures zero delimited bodies for.
 
 **Injected-into-comments-and-strings:** regex, JSDoc, Doxygen, Luadoc, and
 tree-sitter's own query language (`.scm` -- which ned authors 79 of and

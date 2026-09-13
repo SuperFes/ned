@@ -357,6 +357,10 @@ struct Theme {
     // existing foreground color. Link reuses the existing linkForeground
     // field above (Mode.h's SyntaxClass::Link doc comment explains why).
     Color markupMarkerForeground;
+    // diff-grammar follow-up: unified-diff highlighting's own three classes.
+    Color diffAddedForeground;
+    Color diffRemovedForeground;
+    Color diffChangedForeground;
 
     [[nodiscard]] Brush BrushFor(editor::SyntaxClass cls) const;
 

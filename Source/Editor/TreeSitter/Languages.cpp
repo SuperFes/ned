@@ -35,6 +35,9 @@ const TSLanguage* tree_sitter_go(void);
 const TSLanguage* tree_sitter_c_sharp(void);
 const TSLanguage* tree_sitter_java(void);
 const TSLanguage* tree_sitter_kotlin(void);
+const TSLanguage* tree_sitter_lua(void);
+const TSLanguage* tree_sitter_cmake(void);
+const TSLanguage* tree_sitter_diff(void);
 }
 
 namespace ned::editor::treesitter {
@@ -153,6 +156,15 @@ std::optional<Language> LanguageByName(std::string_view name) {
     // tree-sitter-grammars fork.
     if (name == "kotlin") {
         return Language(tree_sitter_kotlin());
+    }
+    if (name == "lua") {
+        return Language(tree_sitter_lua());
+    }
+    if (name == "cmake") {
+        return Language(tree_sitter_cmake());
+    }
+    if (name == "diff") {
+        return Language(tree_sitter_diff());
     }
     return std::nullopt;
 }

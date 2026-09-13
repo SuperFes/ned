@@ -55,6 +55,10 @@ TEST_CASE("Every bundled definition builds, under its own '-mode' name", "[Langu
         "markdown",
         "markdown-inline",
         "org",
+        // Release-0.6 grammar batch.
+        "lua",
+        "cmake",
+        "diff",
     };
     std::set<std::string> seen;
     for (const LanguageDefinition& definition : BundledLanguages()) {
@@ -102,6 +106,10 @@ TEST_CASE("The bundled definitions claim exactly the extensions the old table di
         {".yaml", "yaml"},
         {".yml", "yaml"},
         {".toml", "toml"},
+        {".lua", "lua"},
+        {".cmake", "cmake"},
+        {".diff", "diff"},
+        {".patch", "diff"},
         {".fish", "fish"},
         {".xml", "xml"},
         {".xsd", "xml"},

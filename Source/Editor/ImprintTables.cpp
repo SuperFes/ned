@@ -80,6 +80,29 @@ constexpr Entry kClojure[] = {
     {"vec_lit", DelimiterKind::Bracket, false, true},
 };
 
+constexpr Entry kCmake[] = {
+    {"block_command", DelimiterKind::Bracket, false, true},
+    {"bracket_argument", DelimiterKind::Indent, true, true},
+    {"bracket_comment", DelimiterKind::Indent, true, true},
+    {"cache_var", DelimiterKind::Bracket, false, false},
+    {"else_command", DelimiterKind::Bracket, false, true},
+    {"elseif_command", DelimiterKind::Bracket, false, false},
+    {"endblock_command", DelimiterKind::Bracket, false, true},
+    {"endforeach_command", DelimiterKind::Bracket, false, true},
+    {"endfunction_command", DelimiterKind::Bracket, false, true},
+    {"endif_command", DelimiterKind::Bracket, false, true},
+    {"endmacro_command", DelimiterKind::Bracket, false, true},
+    {"endwhile_command", DelimiterKind::Bracket, false, true},
+    {"env_var", DelimiterKind::Bracket, false, false},
+    {"foreach_command", DelimiterKind::Bracket, false, false},
+    {"function_command", DelimiterKind::Bracket, false, false},
+    {"if_command", DelimiterKind::Bracket, false, false},
+    {"macro_command", DelimiterKind::Bracket, false, false},
+    {"normal_command", DelimiterKind::Bracket, false, true},
+    {"normal_var", DelimiterKind::Bracket, false, false},
+    {"while_command", DelimiterKind::Bracket, false, false},
+};
+
 constexpr Entry kCpp[] = {
     {"abstract_array_declarator", DelimiterKind::Bracket, false, true},
     {"abstract_parenthesized_declarator", DelimiterKind::Bracket, true, true},
@@ -192,6 +215,8 @@ constexpr Entry kCss[] = {
     {"pseudo_element_arguments", DelimiterKind::Bracket, true, true},
     {"selector_query", DelimiterKind::Bracket, false, false},
 };
+
+// diff: measured, zero delimited bodies.
 
 constexpr Entry kFish[] = {
     {"begin_statement", DelimiterKind::Keyword, true, true, "begin", "end"},
@@ -336,6 +361,22 @@ constexpr Entry kKotlin[] = {
     {"value_arguments", DelimiterKind::Bracket, true, true},
     {"when_expression", DelimiterKind::Bracket, false, true},
     {"when_subject", DelimiterKind::Bracket, true, true},
+};
+
+constexpr Entry kLua[] = {
+    {"arguments", DelimiterKind::Bracket, true, true},
+    {"attribute", DelimiterKind::Bracket, true, false},
+    {"bracket_index_expression", DelimiterKind::Bracket, false, false},
+    {"declaration", DelimiterKind::Keyword, true, true, "local", "end"},
+    {"do_statement", DelimiterKind::Keyword, true, true, "do", "end"},
+    {"for_statement", DelimiterKind::Keyword, true, true, "for", "end"},
+    {"function_declaration", DelimiterKind::Keyword, true, true, "function", "end"},
+    {"function_definition", DelimiterKind::Keyword, true, true, "function", "end"},
+    {"if_statement", DelimiterKind::Keyword, true, true, "if", "end"},
+    {"parameters", DelimiterKind::Bracket, true, true},
+    {"parenthesized_expression", DelimiterKind::Bracket, true, false},
+    {"table_constructor", DelimiterKind::Bracket, true, true},
+    {"while_statement", DelimiterKind::Keyword, true, true, "while", "end"},
 };
 
 constexpr Entry kPhp[] = {
@@ -543,6 +584,7 @@ const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
         load("bash", kBash, std::size(kBash));
         load("c", kC, std::size(kC));
         load("clojure", kClojure, std::size(kClojure));
+        load("cmake", kCmake, std::size(kCmake));
         load("cpp", kCpp, std::size(kCpp));
         load("csharp", kCsharp, std::size(kCsharp));
         load("css", kCss, std::size(kCss));
@@ -555,6 +597,7 @@ const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
         load("javascript", kJavascript, std::size(kJavascript));
         load("json", kJson, std::size(kJson));
         load("kotlin", kKotlin, std::size(kKotlin));
+        load("lua", kLua, std::size(kLua));
         load("php", kPhp, std::size(kPhp));
         load("python", kPython, std::size(kPython));
         load("rust", kRust, std::size(kRust));

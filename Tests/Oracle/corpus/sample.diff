@@ -1,0 +1,20 @@
+diff --git a/src/widget.c b/src/widget.c
+index 3f9a2c1..8b4d7e0 100644
+--- a/src/widget.c
++++ b/src/widget.c
+@@ -10,7 +10,8 @@ int widget_size(const Widget* w) {
+ static int clamp(int value, int low, int high) {
+     if (value < low) return low;
+-    if (value > high) return high;
++    if (value >= high) return high;
++    /* inclusive upper bound */
+     return value;
+ }
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..d1c2e3f
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,2 @@
++# Widget
++A small example.

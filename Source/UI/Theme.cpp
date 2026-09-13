@@ -87,6 +87,12 @@ Brush Theme::BuiltinBrushFor(editor::SyntaxClass cls) const {
             return Brush{.background = background, .foreground = strikethroughForeground, .strikethrough = true};
         case editor::SyntaxClass::MarkupMarker:
             return Brush{.background = background, .foreground = markupMarkerForeground};
+        case editor::SyntaxClass::DiffAdded:
+            return Brush{.background = background, .foreground = diffAddedForeground};
+        case editor::SyntaxClass::DiffRemoved:
+            return Brush{.background = background, .foreground = diffRemovedForeground};
+        case editor::SyntaxClass::DiffChanged:
+            return Brush{.background = background, .foreground = diffChangedForeground};
         case editor::SyntaxClass::Link:
             return Brush{.background = background, .foreground = linkForeground, .underlined = true};
         case editor::SyntaxClass::Default:
@@ -414,6 +420,9 @@ Theme DarkTheme() {
         .modeLineFocusedGradientStart = Color::RGB(0x675ea0),
         .modeLineFocusedGradientEnd   = Color::RGB(0x605799),
         .markupMarkerForeground       = Color::RGB(0x6c7280),
+        .diffAddedForeground          = Color::RGB(0x98c379), // the theme's own green (stringForeground)
+        .diffRemovedForeground        = Color::RGB(0xe06c75), // the diagnosticError/breakpoint red family
+        .diffChangedForeground        = Color::RGB(0xe5c07b),
     };
 }
 
@@ -515,6 +524,9 @@ Theme LightTheme() {
         .modeLineFocusedGradientStart = Color::RGB(0x6568bb),
         .modeLineFocusedGradientEnd   = Color::RGB(0x585cae),
         .markupMarkerForeground       = Color::RGB(0xa8a496),
+        .diffAddedForeground          = Color::RGB(0x2f6f2f), // the light theme's own string green
+        .diffRemovedForeground        = Color::RGB(0xa03030),
+        .diffChangedForeground        = Color::RGB(0x8a6d1a),
     };
 }
 
