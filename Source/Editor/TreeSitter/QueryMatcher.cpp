@@ -52,6 +52,8 @@ namespace {
         };
         Kind                         kind = Kind::Named;
         std::string                  type;           // Named/Anonymous/Supertype (name, for diagnostics)
+        std::vector<TSSymbol>        symbols;        // Named/Anonymous: the symbols whose name is `type` (several
+                                                     // when aliases share it) -- matched instead of the name string
         std::unordered_set<TSSymbol> subtypeSymbols; // Supertype: the transitive concrete subtype set
         std::vector<ChildItem>       children;       // Named/AnyNamed children; Alternation branches; Group items
         std::vector<TSFieldId>       negatedFields;
@@ -121,12 +123,18 @@ struct QueryMatcher::Impl {
     std::vector<Pattern>     patterns;
     std::vector<std::string> captureNames;
 
-    // Root dispatch: patterns whose root is a Named/Anonymous node, indexed
-    // by type text; everything else (wildcard/alternation/group/error
-    // roots) is tried at every node.
-    std::unordered_map<std::string, std::vector<std::size_t>> namedRootIndex;
-    std::unordered_map<std::string, std::vector<std::size_t>> anonRootIndex;
-    std::vector<std::size_t>                                  unindexedPatterns;
+    // Root dispatch, all pruning and no reordering: a node's trial sequence
+    // is the indexed bucket then the unindexed patterns, ascending pattern
+    // index within each -- exactly the old order minus trials whose root
+    // provably cannot match this node's symbol (which contribute nothing,
+    // so skipping them cannot change any output). Named/Anonymous roots
+    // index by symbol; an alternation/supertype root whose branches all
+    // resolve to concrete symbols gets a per-symbol candidate list; only a
+    // genuinely wildcard-ish root (bare `_`, `(_)`, ERROR, group) is still
+    // tried at every node.
+    std::unordered_map<TSSymbol, std::vector<std::size_t>> rootIndex;
+    std::unordered_map<TSSymbol, std::vector<std::size_t>> unindexedBySymbol;
+    std::vector<std::size_t>                               unfilteredUnindexed;
 
     mutable std::unordered_map<std::string, std::regex> regexCache;
     mutable std::string_view                            sourceText; // set per run
@@ -144,9 +152,13 @@ struct QueryMatcher::Impl {
     // Compilation.
     // ------------------------------------------------------------------
 
-    std::unordered_set<std::string>           namedTypes;
-    std::unordered_set<std::string>           anonymousTypes;
-    std::unordered_map<std::string, TSSymbol> supertypes;
+    // Name -> every symbol carrying it: a name is not unique (an alias can
+    // share a real rule's name), so matching compares the node's symbol
+    // against the full set -- equivalent to the name comparison, minus the
+    // per-node strcmp.
+    std::unordered_map<std::string, std::vector<TSSymbol>> namedTypes;
+    std::unordered_map<std::string, std::vector<TSSymbol>> anonymousTypes;
+    std::unordered_map<std::string, TSSymbol>              supertypes;
 
     void BuildTypeTables() {
         const uint32_t count = ts_language_symbol_count(language);
@@ -154,10 +166,10 @@ struct QueryMatcher::Impl {
             const char*        name = ts_language_symbol_name(language, static_cast<TSSymbol>(s));
             const TSSymbolType type = ts_language_symbol_type(language, static_cast<TSSymbol>(s));
             if (type == TSSymbolTypeRegular) {
-                namedTypes.insert(name);
+                namedTypes[name].push_back(static_cast<TSSymbol>(s));
             }
             else if (type == TSSymbolTypeAnonymous) {
-                anonymousTypes.insert(name);
+                anonymousTypes[name].push_back(static_cast<TSSymbol>(s));
             }
         }
         uint32_t        supertypeCount = 0;
@@ -220,12 +232,14 @@ struct QueryMatcher::Impl {
                             bool allowGroup) {
         switch (form.kind) {
             case Form::Kind::String: {
-                if (!anonymousTypes.contains(form.text)) {
+                const auto symbols = anonymousTypes.find(form.text);
+                if (symbols == anonymousTypes.end()) {
                     throw QueryMatcherError(form.line, "unknown anonymous node '" + form.text + "'");
                 }
                 PatternNode node;
-                node.kind = PatternNode::Kind::Anonymous;
-                node.type = form.text;
+                node.kind    = PatternNode::Kind::Anonymous;
+                node.type    = form.text;
+                node.symbols = symbols->second;
                 return node;
             }
             case Form::Kind::Symbol: {
@@ -278,9 +292,10 @@ struct QueryMatcher::Impl {
             else if (head->text == "ERROR") {
                 node.kind = PatternNode::Kind::Error;
             }
-            else if (namedTypes.contains(head->text)) {
-                node.kind = PatternNode::Kind::Named;
-                node.type = head->text;
+            else if (const auto symbols = namedTypes.find(head->text); symbols != namedTypes.end()) {
+                node.kind    = PatternNode::Kind::Named;
+                node.type    = head->text;
+                node.symbols = symbols->second;
             }
             else if (const auto supertype = supertypes.find(head->text); supertype != supertypes.end()) {
                 node.kind           = PatternNode::Kind::Supertype;
@@ -512,16 +527,55 @@ struct QueryMatcher::Impl {
 
         for (std::size_t p = 0; p < patterns.size(); ++p) {
             const PatternNode& root = patterns[p].root.node;
-            if (root.kind == PatternNode::Kind::Named) {
-                namedRootIndex[root.type].push_back(p);
+            if (root.kind == PatternNode::Kind::Named || root.kind == PatternNode::Kind::Anonymous) {
+                for (const TSSymbol symbol : root.symbols) {
+                    rootIndex[symbol].push_back(p);
+                }
+                continue;
             }
-            else if (root.kind == PatternNode::Kind::Anonymous) {
-                anonRootIndex[root.type].push_back(p);
+            std::unordered_set<TSSymbol> filter;
+            if (RootSymbolFilter(root, filter)) {
+                for (const TSSymbol symbol : filter) {
+                    unindexedBySymbol[symbol].push_back(p);
+                }
             }
             else {
-                unindexedPatterns.push_back(p);
+                unfilteredUnindexed.push_back(p);
             }
         }
+        // Every per-symbol list is ascending by construction (the loop
+        // above appends in ascending p), which RunAtNode's order-preserving
+        // merge depends on.
+    }
+
+    // The set of symbols this root could possibly match, or false when it
+    // can match anything concrete symbols can't enumerate (wildcards,
+    // ERROR, group roots). Over-approximation would be fine; under-
+    // approximation would silently drop matches, so anything uncertain
+    // returns false.
+    static bool RootSymbolFilter(const PatternNode& root, std::unordered_set<TSSymbol>& filter) {
+        switch (root.kind) {
+            case PatternNode::Kind::Named:
+            case PatternNode::Kind::Anonymous:
+                filter.insert(root.symbols.begin(), root.symbols.end());
+                return true;
+            case PatternNode::Kind::Supertype:
+                filter.insert(root.subtypeSymbols.begin(), root.subtypeSymbols.end());
+                return true;
+            case PatternNode::Kind::Alternation:
+                for (const ChildItem& branch : root.children) {
+                    if (!RootSymbolFilter(branch.node, filter)) {
+                        return false;
+                    }
+                }
+                return true;
+            case PatternNode::Kind::AnyNode:
+            case PatternNode::Kind::AnyNamed:
+            case PatternNode::Kind::Error:
+            case PatternNode::Kind::Group:
+                break;
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------
@@ -538,6 +592,20 @@ struct QueryMatcher::Impl {
     // its own parent (0 = none/unknown) -- an alternation's field-prefixed
     // branch constrains against it. Binds `captures` plus everything inside,
     // invoking `next` once per complete assignment.
+    // The symbol comparison that replaces `pattern.type != ts_node_type(node)`
+    // plus the namedness check: ts_node_symbol resolves aliases exactly the
+    // way ts_node_type does, and named/anonymous symbol sets are disjoint.
+    // The list is almost always one entry, so a linear scan beats any set.
+    static bool SymbolMatches(const std::vector<TSSymbol>& symbols, TSNode node) {
+        const TSSymbol symbol = ts_node_symbol(node);
+        for (const TSSymbol candidate : symbols) {
+            if (candidate == symbol) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void MatchNode(const PatternNode& pattern, const std::vector<uint32_t>& captures, TSNode node,
                    TSFieldId nodeField, std::vector<Binding>& bindings, const MatchFn& next) const {
         switch (pattern.kind) {
@@ -554,7 +622,9 @@ struct QueryMatcher::Impl {
                 }
                 break;
             case PatternNode::Kind::Named:
-                if (!ts_node_is_named(node) || pattern.type != ts_node_type(node)) {
+                // Symbol membership implies namedness: `symbols` only ever
+                // holds TSSymbolTypeRegular entries (BuildTypeTables).
+                if (!SymbolMatches(pattern.symbols, node)) {
                     return;
                 }
                 break;
@@ -564,14 +634,24 @@ struct QueryMatcher::Impl {
                 }
                 break;
             case PatternNode::Kind::Anonymous:
-                if (ts_node_is_named(node) || pattern.type != ts_node_type(node)) {
+                if (!SymbolMatches(pattern.symbols, node)) {
                     return;
                 }
                 break;
             case PatternNode::Kind::Alternation: {
+                const TSSymbol nodeSymbol = ts_node_symbol(node);
                 for (const ChildItem& branch : pattern.children) {
                     if (branch.field != 0 && branch.field != nodeField) {
                         continue; // a field-prefixed branch constrains this branch alone
+                    }
+                    // Cheap pre-gate: a concrete branch whose symbol set
+                    // excludes this node would be refused by the recursive
+                    // MatchNode anyway -- skip the binding push/pop.
+                    if ((branch.node.kind == PatternNode::Kind::Named ||
+                         branch.node.kind == PatternNode::Kind::Anonymous) &&
+                        std::find(branch.node.symbols.begin(), branch.node.symbols.end(), nodeSymbol) ==
+                            branch.node.symbols.end()) {
+                        continue;
                     }
                     const std::size_t mark    = bindings.size();
                     bool              matched = false;
@@ -768,7 +848,11 @@ struct QueryMatcher::Impl {
     // Per-node pattern trial and the tree walk.
     // ------------------------------------------------------------------
 
-    void TryPattern(std::size_t patternIndex, TSNode node, std::vector<Binding>& bindings,
+    // `nodeField` is the field `node` holds in its own parent (0 =
+    // none/unknown) -- it only matters for the rare
+    // alternation-with-field-branches root, and the walk reads it off its
+    // cursor for free.
+    void TryPattern(std::size_t patternIndex, TSNode node, TSFieldId nodeField, std::vector<Binding>& bindings,
                     const MatchFn& next) const {
         const ChildItem& root = patterns[patternIndex].root;
         if (root.node.kind == PatternNode::Kind::Group) {
@@ -780,15 +864,7 @@ struct QueryMatcher::Impl {
             EnumSequence(root.node, 0, children, 0, -1, false, /*bounded=*/false, bindings, next);
             return;
         }
-        // The field a root candidate holds in its own parent only matters
-        // for the rare alternation-with-field-branches root; computed
-        // lazily via a parent scan then, 0 (never matches such a branch)
-        // costs nothing otherwise.
-        TSFieldId rootField = 0;
-        if (root.node.kind == PatternNode::Kind::Alternation) {
-            rootField = FieldOfNode(node);
-        }
-        MatchNode(root.node, root.captures, node, rootField, bindings, next);
+        MatchNode(root.node, root.captures, node, nodeField, bindings, next);
     }
 
     static TSFieldId FieldOfNode(TSNode node) {
@@ -812,25 +888,39 @@ struct QueryMatcher::Impl {
     }
 
     template <typename Sink>
-    void RunAtNode(TSNode node, Sink& sink) const {
+    void RunAtNode(TSNode node, TSFieldId nodeField, Sink& sink) const {
         std::vector<Binding> bindings;
         const auto           tryOne = [&](std::size_t patternIndex) {
             bindings.clear();
-            TryPattern(patternIndex, node, bindings, [&] {
+            TryPattern(patternIndex, node, nodeField, bindings, [&] {
                 if (EvaluatePatternPredicates(patternIndex, bindings)) {
                     sink(patternIndex, bindings);
                 }
             });
         };
 
-        const auto& index = ts_node_is_named(node) ? namedRootIndex : anonRootIndex;
-        if (const auto it = index.find(ts_node_type(node)); it != index.end()) {
+        const TSSymbol symbol = ts_node_symbol(node);
+        if (const auto it = rootIndex.find(symbol); it != rootIndex.end()) {
             for (const std::size_t p : it->second) {
                 tryOne(p);
             }
         }
-        for (const std::size_t p : unindexedPatterns) {
-            tryOne(p);
+        // The unindexed phase in ascending pattern order: the symbol's own
+        // candidates merged with the try-everywhere set. Patterns pruned
+        // here could not have matched, so the productive trial sequence is
+        // byte-for-byte the old "every unindexed pattern" one.
+        static const std::vector<std::size_t> kNone;
+        const auto                            filteredIt = unindexedBySymbol.find(symbol);
+        const std::vector<std::size_t>&       filtered   = filteredIt != unindexedBySymbol.end() ? filteredIt->second : kNone;
+        std::size_t                           a          = 0;
+        std::size_t                           b          = 0;
+        while (a < filtered.size() || b < unfilteredUnindexed.size()) {
+            if (b == unfilteredUnindexed.size() || (a < filtered.size() && filtered[a] < unfilteredUnindexed[b])) {
+                tryOne(filtered[a++]);
+            }
+            else {
+                tryOne(unfilteredUnindexed[b++]);
+            }
         }
     }
 
@@ -845,16 +935,52 @@ struct QueryMatcher::Impl {
         return start < endByte && end > startByte;
     }
 
+    // Visits the cursor's current node if it intersects the range,
+    // returning whether it did -- an out-of-range node's subtree is pruned
+    // (the walk never descends into an unvisited node), matching the old
+    // recursive walk's entry check.
+    template <typename Sink>
+    bool VisitCurrent(TSTreeCursor& cursor, std::size_t startByte, std::size_t endByte, Sink& sink) const {
+        const TSNode node = ts_tree_cursor_current_node(&cursor);
+        if (!InRange(node, startByte, endByte)) {
+            return false;
+        }
+        RunAtNode(node, ts_tree_cursor_current_field_id(&cursor), sink);
+        return true;
+    }
+
+    // Pre-order over the subtree via one TSTreeCursor. Deliberately not the
+    // obvious ts_node_child(node, i) recursion: ts_node_child restarts its
+    // sibling iteration from the first child on every call, making that
+    // walk quadratic in child count (measured: the dominant cost of a full
+    // highlights run over a large C++ file, alongside re-deriving each
+    // node's field by scanning its parent's children -- the cursor hands
+    // both out in O(1) as it goes).
     template <typename Sink>
     void Walk(TSNode node, std::size_t startByte, std::size_t endByte, Sink& sink) const {
         if (!InRange(node, startByte, endByte)) {
             return;
         }
-        RunAtNode(node, sink);
-        const uint32_t count = ts_node_child_count(node);
-        for (uint32_t i = 0; i < count; ++i) {
-            Walk(ts_node_child(node, i), startByte, endByte, sink);
+        // The entry node's own field comes from a one-time parent scan --
+        // the cursor only knows fields below its construction point.
+        RunAtNode(node, FieldOfNode(node), sink);
+        TSTreeCursor cursor     = ts_tree_cursor_new(node);
+        bool         mayDescend = true;
+        for (;;) {
+            if (mayDescend && ts_tree_cursor_goto_first_child(&cursor)) {
+                mayDescend = VisitCurrent(cursor, startByte, endByte, sink);
+                continue;
+            }
+            if (ts_tree_cursor_goto_next_sibling(&cursor)) {
+                mayDescend = VisitCurrent(cursor, startByte, endByte, sink);
+                continue;
+            }
+            if (!ts_tree_cursor_goto_parent(&cursor)) {
+                break; // back at the entry node: done
+            }
+            mayDescend = false; // the parent's subtree below is exhausted; advance
         }
+        ts_tree_cursor_delete(&cursor);
     }
 
     // ------------------------------------------------------------------

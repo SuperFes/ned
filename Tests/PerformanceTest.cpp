@@ -37,6 +37,7 @@
 
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
+#include "Editor/Indent.h"
 #include "Editor/Mode.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
@@ -418,5 +419,60 @@ TEST_CASE("BufferView::paint stays fast repeatedly switching between two tree-si
     }
     const auto elapsed = steady_clock::now() - start;
 
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
+}
+
+TEST_CASE("CppMode full-buffer highlighting and electric indent stay fast on a large file", "[Performance]") {
+    // querymatcher-walk follow-up: pressing Enter in a C++ buffer runs
+    // Indent.h's IndentColumnForLine synchronously on the key path, which
+    // runs Mode::highlight over the WHOLE buffer (VerbatimRanges' string
+    // check) plus the indents query -- so the newline keystroke costs two
+    // full QueryMatcher runs before it paints. The Phase 4a engine swap
+    // shipped with parity tests but no time bound, and its original walk
+    // (ts_node_child(i) recursion + a per-pattern parent-sibling scan for
+    // the node's field) was quadratic in sibling count: ~2,200ms per
+    // highlight run on a 154KB C++ file where ts_query took ~37ms --
+    // seconds of delay per Enter, reported live. Fixed (one TSTreeCursor
+    // pre-order walk carrying the field, plus symbol-indexed root dispatch
+    // so alternation-rooted keyword patterns aren't trialed at every node),
+    // both halves together measure ~130ms here; the budget catches the
+    // quadratic class, not tuning noise. C++ specifically because its
+    // highlights query is the alternation-heavy shape that triggered the
+    // per-node trial cost, and generated functions inside one namespace
+    // reproduce the long sibling runs the quadratic walk choked on.
+    std::string content = "#include <string>\n\nnamespace perf {\n\n";
+    for (int i = 0; i < 450; ++i) {
+        const std::string n = std::to_string(i);
+        content += "int compute_" + n + "(int value) {\n"
+                                        "    const std::string label = \"entry-" +
+                   n + "\";\n"
+                       "    if (value > 0 && label.size() < 4) {\n"
+                       "        for (int j = 0; j < value; ++j) {\n"
+                       "            value += static_cast<int>(j % 7);\n"
+                       "        }\n"
+                       "    }\n"
+                       "    else {\n"
+                       "        while (value < 0) { value += 2; }\n"
+                       "    }\n"
+                       "    return value;\n"
+                       "}\n\n";
+    }
+    content += "} // namespace perf\n";
+    content += "int trailing(int value) {\n";
+    const std::size_t lineStart = content.size(); // the blank line Enter just opened
+    content += "\n"
+               "    return value;\n"
+               "}\n";
+
+    ned::editor::Mode mode = ned::editor::CppMode();
+
+    const auto start   = steady_clock::now();
+    const auto spans   = mode.highlight(content, ned::editor::HighlightWindow{});
+    const auto column  = ned::editor::IndentColumnForLine(mode, content, lineStart, lineStart);
+    const auto elapsed = steady_clock::now() - start;
+
+    REQUIRE_FALSE(spans.empty());
+    REQUIRE(column.has_value());
+    REQUIRE(*column > 0); // inside trailing()'s body
     REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }
