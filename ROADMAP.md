@@ -98,8 +98,11 @@ would make the number mean nothing.
       VCS side panel, hunk-level staging (`Vcs/DiffPatch.h`) and a merge-conflict mode, all
       of which currently read diff output as untyped text.
       `tree-sitter-grammars/tree-sitter-diff` is live (2026-08-14).
-- [ ] **Add the tree-sitter query language (`.scm`).** ned authors 79 of them and edits them
-      with no highlighting at all.
+- [ ] **Add the tree-sitter query language (`.scm`).** Mostly mooted 2026-09-12 by the
+      mechanism unification: ned authors zero `.scm` files now — every query is
+      `Source/Languages/<name>/<kind>.janet`, which janet-mode already highlights. The
+      residual case is a foreign `:queries-dir` (`/usr/share/tree-sitter/queries/<lang>`),
+      read-only and rarely opened in ned; keep only if that ever itches.
 - [ ] **Stability gate: don't ship a minor bump with a known-red preset.** `sanitize -j8`
       has one reproducible `[Performance]` failure. The fix named in the watch list below is
       to gate the budgets on the build being optimised (`NDEBUG`) rather than loosen them,
@@ -833,7 +836,8 @@ real; if not, that is worth learning at language 3 rather than language 15.
       item: the six drivers all run off the imprint, and what the queries still carry
       is alignment, one suppression, YAML's sequence convention, tag pairs and clause
       headers. The Tier 1 format question is answered above (Phase 1 remainder).
-- [ ] **One language, one file — the mechanism unification.** The Phase 1 measurement
+- [x] **One language, one file — the mechanism unification.** Complete 2026-09-12,
+      Steps 0-5 all landed (each recorded below). The Phase 1 measurement
       above closed the *duplication* argument for a language-definition format and opened
       the real one: a bundled language is stated in about nine places (a C++ factory, a
       26-entry factory table, a 55-entry extension table, 91 CMake embed lines plus ~90
@@ -988,10 +992,102 @@ real; if not, that is worth learning at language 3 rather than language 15.
             `RestoreBundledCaptureClassifiers`, plus randomized-order runs), and the
             new org corpus surfaced a pre-existing org.indent bug (headline after a
             list item hangs at the item's column — watch-listed below).
-- [ ] **Phase 3 — Semantic drivers.** Scopes/bindings/references as a real resolution
+- [x] **Phase 3 — Semantic drivers.** Scopes/bindings/references as a real resolution
       layer rather than query captures. Exit criterion: the Lisp eight-pair cliff is gone,
       or Tier 1 is proven insufficient and the design is revised before any engine work.
-- [ ] **Phase 4 — The engine, a separate decision.** Only once the vocabulary is proven
+      Met 2026-09-12, though not the way the sentence above predicted: the cliff fell to
+      the `.pairs`/`@local.skip` capture conventions (`Mode.cpp`'s
+      `ExpandPairwiseBindings` — a quantifier escape in the query tier), not to a new
+      layer, and the resolution layer that exists — `Editor/LocalScopes.h`, byte-
+      containment scope recovery over flat `locals.scm` captures, driving the scope-aware
+      rename tier — proved sufficient as-is. Tier 1 was not proven insufficient; it was
+      proven adequate with one escape, so no design revision precedes the Phase 4
+      decision.
+- [x] **Phase 4a — The matcher, shipped (2026-09-12).** The half of Phase 4
+      that is option B's stated end state and does not require an engine: ned's own query
+      matcher consuming `QueryData` Forms directly against the tree, deleting the
+      compile-back-to-query-text round trip (`ToQueryText` → `ts_query_new` →
+      `TSQueryCursor`). Payoffs: query errors carry `path:line` natively (Form.line is
+      already there — the whole `QueryText::Locate`/per-kind-recompile error path
+      dissolves), one spelling everywhere, and the tree-sitter query engine stops being
+      load-bearing before any engine decision. Measured surface (2026-09-12): 12
+      predicate forms across 125 files — `:any-of?` 57, `:match?` 43, `:eq?` 29,
+      `:lua-match?` 24, the ancestor/parent family 22, negations, `:is-not?` (inert) —
+      plus fields, anchors, alternations, quantifiers, wildcards, `:set!`. Parity bars,
+      all existing: byte-identical oracle, the 26-case highlight suites, and a new
+      differential gate (both engines from the same Forms over the corpus, ordered
+      captures AND match grouping compared byte-for-byte — capture *order* is semantic,
+      Mode.h's later-spans-win rule reads it). Compile-time validation must survive the
+      swap: unknown node/field throws, because indents documentedly rely on a bad
+      `indents.janet` failing loudly rather than matching nothing.
+      - [x] **M0 — Census.** `Tests/QueryMatcherTest.cpp`: walks every embedded query
+            file's parsed Forms (98 files) and holds every construct against the exact
+            measured enumeration (`NED_QUERY_CENSUS=1` reprints it), so a query edit
+            that starts using a new construct fails as a named diff with a `path:line`
+            first sighting. The measurement moved the scope in both directions: no `+`
+            quantifier exists anywhere and quantifiers touch only lists and bare
+            wildcards, while three nvim capture-text directives
+            (`:strip!`/`:select-adjacent!`/`:set-adjacent!`, inert here), `(ERROR)` as
+            a matchable node, anchors inside paren groups, and two variadic
+            `has-parent?` spellings (silently inert today — watch-listed) are all in
+            real files and were not in the guessed scope.
+      - [x] **M1 — Compile.** `Editor/TreeSitter/QueryMatcher.h/.cpp`: Forms → a
+            compiled pattern model (node/group/alternation/wildcard items, fields,
+            negated fields, anchors, quantifiers, predicates), validated against the
+            `TSLanguage` symbol tables — unknown node/field/predicate-capture throws
+            `QueryMatcherError` carrying the Form's own line. Grammar supertypes are
+            real and needed (c#'s tags name `type`): a supertype pattern matches its
+            transitive concrete subtype symbol set via the ABI-15
+            `ts_language_supertypes`/`subtypes` API, which degrades to empty (a loud
+            unknown-type error, not a crash) on an old-ABI dlopen'd grammar. Support is
+            deliberately WIDER than the census where a foreign `:queries-dir` file
+            legally goes further: '+' and quantifiers on any pattern kind compile, while
+            the census still pins what bundled files may use.
+      - [x] **M2 — Match.** Continuation-style backtracking enumeration over the tree
+            (one shared bindings trail, restored on every return), predicate evaluation
+            through the extracted engine-neutral `QueryPredicates.h` core Query.cpp now
+            also resolves into (the two engines cannot drift), `#set!` extraction, and
+            the measured range contract: the range prunes candidate roots and filters
+            EMITTED captures, never match formation (c's tags emit a spanning
+            `@definition.function` while its before-range `@name` is silently consumed).
+            Semantics pinned by measurement along the way: an optional that can match
+            must (no zero-fork), '*' runs are maximal per start with the zero run always
+            offered, an anchor carried through a zero-matched optional is inert at the
+            sequence end, and a field-prefixed alternation branch constrains that branch
+            alone.
+      - [x] **M3 — Differential gate green**, at SET level by decision: every bundled
+            language × corpus file × kind, whole-document and ranged, compares match
+            multisets and capture multisets byte-for-byte — all equal (826 assertions).
+            Exact capture STREAM order was taken to the end of what an
+            assignment-enumerator can do: tree-sitter's incremental cursor merge was
+            read out of query.c and reproduced (finished matches emit by (byte, pattern
+            index), held while an in-progress state's first pending capture sits at or
+            before them; matches finish at their last needed node's visit) — 564/570
+            comparisons byte-identical — but the residue is scheduled by tree-sitter
+            states that ultimately FAIL (predicates unevaluated in the C library,
+            structural dead ends), which only the real step machine can reproduce.
+            Decided 2026-09-12: ned defines its own deterministic merge instead of
+            porting the machine — 2 tie sites over 570, one render-neutral (a zero-width
+            markdown capture), one changing a tie color (cpp's `std::` return-type
+            prefix reads as the inner capture's class). The order is pinned by its own
+            test; the oracle sorts facts and pins the (identical) span multisets.
+      - [x] **M4 — Swap.** Mode.cpp, Injection, Indent, and LanguageDefinition.cpp
+            consume `QueryMatcher`; `ModeBuildContext` carries matcher handles; compile
+            errors map line→file via `QueryText::Locate` (`OffsetOfLine`). The whole
+            suite — oracle, 26-case highlight suites, `[Performance]` — passes
+            unchanged, 54,689 assertions. One conscious simplification vs. the plan
+            above: `TreeSitterQuerySources` still carries query TEXT (the matcher's
+            convenience constructor parses it via `ParseScm`), because dozens of tests
+            author sources as ts-syntax literals and the text interchange costs one
+            parse per mode build — `ToQueryText` therefore stays load-bearing as the
+            internal interchange rather than demoted. `TreeSitter/Query.h` (the
+            ts-backed engine) survives only as the differential gate's reference
+            implementation; no production code constructs one.
+      - [x] **M5 — Performance.** The `[Performance]` suite holds on the swapped engine
+            (RelWithDebInfo, budgets active). Pattern dispatch is root-symbol-indexed
+            (named/anonymous type maps; wildcard/alternation/supertype/group roots try
+            everywhere) and the walk range-prunes subtrees.
+- [ ] **Phase 4b — The engine, a separate decision.** Only once the vocabulary is proven
       against 29 real languages. This is where the remaining tree-sitter complaints live:
       stable node identity across a reparse (a red-green tree, so a node handle is
       storable and `Node::Id()`'s byte-range-collision workaround goes away); incremental
@@ -1020,7 +1116,12 @@ real; if not, that is worth learning at language 3 rather than language 15.
       *declared* in a query by name and supplied from Janet, so it lives in the user's
       `init.janet` and the grammar corpus stays data — Org's `TodoKeywords` is already
       this shape, and `.pairs` is the one quantifier so far (in C++, since nothing about
-      it is configurable). Full reasoning in `Docs/ParsingEngine.md`.
+      it is configurable). Full reasoning in `Docs/ParsingEngine.md`. Superseded in part
+      2026-09-12 by the mechanism unification above: the declarative tier is Janet *data*
+      after all — not to collapse cross-driver duplication (that reason stayed dead) but
+      because one loader and one spelling beat two, so `.scm` left the repo (Steps 1-5).
+      The narrowing itself stands: escapes are still the only *code* tier, and the
+      declarative bulk is still data.
 - [ ] Recorded as a conscious call rather than a default: **keeping `grammar.json`
       ingestion is a hard constraint**, and it permanently forecloses the resilient-LL
       path (matklad's) that would give better error recovery, because LL means
@@ -1968,6 +2069,34 @@ opportunistically rather than re-discovering from scratch. Add to this list inst
 just fixing-and-forgetting or letting it fade from memory between sessions. Fixed entries
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
+
+- **BackgroundActivity/ModeLine tests leak state under `--order rand` on the sanitize
+  build.** Found 2026-09-12 while gating the Phase 4a swap; reproduced on CLEAN main
+  (`git stash` + seed 1775314295: 1 failure pre-change, 2 on the branch — different
+  shuffles, same family), declaration-order runs fully green both ways, and every
+  failing test passes in isolation. The signatures are unpaired
+  `Begin`/`EndBackgroundActivity` across test boundaries: `ActiveBackgroundActivities
+  returns entries sorted by name` sees 3 entries where it registered 2, a ModeLine
+  spinner test reads a count of `0xffffffffffffffff` (an End without a Begin), and
+  `ChromeSurfaceTest.cpp:592`'s sweep-band test inherits a stray live activity.
+  Sanitizer slowness widens whatever async completion window lets a prior test's
+  activity outlive its case. Fix shape: find the test whose background work
+  (LSP-flavored, most likely) unregisters after its case returns, and make its teardown
+  join; or give the registry a test-only reset the fixture calls, the
+  JanetTestSupport-restore precedent.
+
+- **Variadic `has-parent?` predicates are silently inert.** Found by the Phase 4a M0
+  census (2026-09-12): `Query.cpp`'s evaluator handles the has-parent/has-ancestor family
+  only at exactly two operands and treats any other arity as pass-through, so
+  `cpp/highlights.janet:370`'s three-operand `(:has-parent? @c … …)` and
+  `c/highlights.janet:181`'s four-operand `(:not-has-parent? …)` never filter anything —
+  the query author's intent (nvim's own definition accepts a type list) is silently
+  dropped, in ned and possibly in whatever engine those upstream files were written
+  against. Not urgent: the failure mode is a slightly over-inclusive highlight match.
+  Fix shape: loop operands[1..] in the has-parent branch of `QueryPredicates.cpp`'s
+  `EvaluatePredicateCall` (the shared evaluator both engines resolve into since Phase
+  4a), any-of semantics. Unblocked now that the M3 gate has landed — the change will
+  show as a deliberate differential/oracle diff rather than an invisible drift.
 
 - **org.indent hangs a headline that directly follows a list item.** Surfaced by (not
   introduced by) the Step 5 oracle corpus: in `Tests/Oracle/expected/sample.org.oracle`,

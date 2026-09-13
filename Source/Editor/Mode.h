@@ -28,6 +28,7 @@ namespace ned::editor::treesitter {
 class Language;
 class Parser;
 class Query;
+class QueryMatcher;
 class IncrementalParseCache;
 } // namespace ned::editor::treesitter
 
@@ -721,8 +722,8 @@ struct ModeBuildContext {
     std::shared_ptr<const treesitter::Language>        language;
     std::shared_ptr<treesitter::Parser>                parser;
     std::shared_ptr<treesitter::IncrementalParseCache> sharedParse;
-    std::shared_ptr<treesitter::Query>                 highlightQuery; // null without a highlights source
-    std::shared_ptr<treesitter::Query>                 injectionQuery; // null without an injections source
+    std::shared_ptr<treesitter::QueryMatcher>                 highlightQuery; // null without a highlights source
+    std::shared_ptr<treesitter::QueryMatcher>                 injectionQuery; // null without an injections source
     std::shared_ptr<EmbeddedLanguageCache>             embeddedLanguageCache;
 };
 

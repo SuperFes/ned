@@ -61,7 +61,7 @@ namespace {
     };
 
     std::vector<RawInjectionMatch> CollectRawInjectionMatches(const treesitter::Node& root, std::string_view bufferText,
-                                                              const treesitter::Query& injectionQuery) {
+                                                              const treesitter::QueryMatcher& injectionQuery) {
         std::vector<RawInjectionMatch> matches;
         for (const treesitter::QueryMatch& match : injectionQuery.Matches(root, bufferText)) {
             std::optional<std::string_view>              language;
@@ -106,7 +106,7 @@ const HighlightFunction* ResolveEmbeddedLanguageHighlight(std::string_view tag, 
 }
 
 void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_view bufferText,
-                                   const treesitter::Query& injectionQuery, EmbeddedLanguageCache& cache,
+                                   const treesitter::QueryMatcher& injectionQuery, EmbeddedLanguageCache& cache,
                                    std::vector<HighlightSpan>& spans, HighlightWindow window) {
     for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery)) {
         // Every injected region is its own parse, so skipping the ones with
@@ -136,7 +136,7 @@ void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_vie
 }
 
 std::vector<InjectionRegion> CollectInjectionRegions(const treesitter::Node& root, std::string_view bufferText,
-                                                     const treesitter::Query& injectionQuery) {
+                                                     const treesitter::QueryMatcher& injectionQuery) {
     std::vector<InjectionRegion> regions;
     for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery)) {
         regions.push_back(InjectionRegion{.startByte = match.content.startByte,
