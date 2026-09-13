@@ -84,6 +84,20 @@ struct QueryMatch {
     // this set, never reuse it across a reparse: the subtree it's attached
     // to can be byte-for-byte unchanged while its ancestry differs.
     bool ancestorCrossing = false;
+
+    // per-subtree-fact-memoization follow-up: the byte range and reparse-
+    // stable identity (parse::NodeSubtreeIdentity, nullptr for an inline
+    // leaf -- rare for a pattern root but not impossible) of the node this
+    // match's PATTERN ROOT bound to -- not necessarily any single capture's
+    // own range (a pattern's root may carry no capture of its own, e.g.
+    // `(function_definition (identifier) @name)`). This is the unit a
+    // per-subtree cache reconciles at: a match's identity survives a
+    // reparse exactly when its root subtree does (and, for a cache to
+    // trust that, the prior generation's Tree must still be retained --
+    // see Tree::Clone()'s own doc comment).
+    std::size_t rootStartByte       = 0;
+    std::size_t rootEndByte         = 0;
+    const void* rootSubtreeIdentity = nullptr;
 };
 
 } // namespace ned::editor::treesitter
