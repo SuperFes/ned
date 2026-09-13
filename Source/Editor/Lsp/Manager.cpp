@@ -1469,6 +1469,7 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     inlayHintsRequestedRange_.erase(&buffer);
     inlayHintsRequestCounter_.erase(&buffer);
     inlayHintSpans_.erase(&buffer);
+    inlayHintSpansContent_.erase(&buffer);
     inlayHintSpansGeneration_.erase(&buffer);
     codeLensRequestedGeneration_.erase(&buffer);
     codeLensRequestCounter_.erase(&buffer);
@@ -2000,22 +2001,28 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
         return;
     }
 
-    inlayHintsRequestedRange_[&buffer]    = requestedRange;
-    const std::size_t requestId           = ++inlayHintsRequestCounter_[&buffer];
-    const std::size_t requestedGeneration = buffer.ContentGeneration();
+    inlayHintsRequestedRange_[&buffer] = requestedRange;
+    const std::size_t requestId        = ++inlayHintsRequestCounter_[&buffer];
 
     const text::ITextStorage& content       = buffer.Content();
-    const Position         start         = BytePositionToLsp(content, viewportStartByte);
-    const Position         end           = BytePositionToLsp(content, viewportEndByte);
+    const Position            start         = BytePositionToLsp(content, viewportStartByte);
+    const Position            end           = BytePositionToLsp(content, viewportEndByte);
     text::Buffer* const       bufferPtr     = &buffer;
     const std::string         connectionKey = state->connectionKey; // per-connection latch, see RequestSemanticTokens
-    const Json                params        = {
+    // region-scoped-relocation follow-up: captured so the response handler
+    // can resolve positions against exactly the document the server was
+    // asked about, then RemapInlayHintSpans carries them onto whatever the
+    // buffer has become by the time the response lands -- ContentGeneration()
+    // alone can't do that job, it can only say "something changed", not what.
+    // O(1): ITextStorage::Clone() is structurally shared, never materialized.
+    std::shared_ptr<const text::ITextStorage> requestedContent = buffer.Content().Clone();
+    const Json                                params           = {
         {"textDocument", {{"uri", state->uri}}},
         {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
     };
     client->SendRequest(
         "textDocument/inlayHint", params,
-        [this, bufferPtr, requestId, requestedGeneration, connectionKey](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, connectionKey, requestedContent](std::optional<Json> result, std::optional<Json> error) {
             const auto counterIt = inlayHintsRequestCounter_.find(bufferPtr);
             if (counterIt == inlayHintsRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
@@ -2031,18 +2038,16 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
             if (!result) {
                 return;
             }
-            // stale-position-race follow-up: see RequestSemanticTokens' full/delta branch's
-            // own doc comment on requestedGeneration -- same race, same fix:
-            // a hint position computed against the document as it stood at
-            // request time must not be converted against a since-edited
-            // bufferPtr->Content() below. A real, live-reported symptom: a
-            // parameter-name hint appearing to render one character off from
-            // its real argument right after a keystroke on an earlier line.
-            if (bufferPtr->ContentGeneration() != requestedGeneration) {
-                return;
-            }
+            // region-scoped-relocation follow-up: positions are resolved
+            // against *requestedContent -- exactly the document the server
+            // was asked about -- never against bufferPtr->Content() here,
+            // which may already be a different document by the time this
+            // response lands. RemapInlayHintSpans is what carries the
+            // result forward from there onto whatever the buffer has
+            // become, dropping anything the carry can't trust rather than
+            // guessing.
             const std::vector<InlayHint>   hints   = ExtractInlayHints(*result);
-            const text::ITextStorage&      content = bufferPtr->Content();
+            const text::ITextStorage&      content = *requestedContent;
             std::vector<ResolvedInlayHint> resolved;
             resolved.reserve(hints.size());
             for (const InlayHint& hint : hints) {
@@ -2050,23 +2055,64 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
             }
             std::sort(resolved.begin(), resolved.end(),
                       [](const ResolvedInlayHint& a, const ResolvedInlayHint& b) { return a.byteOffset < b.byteOffset; });
+            RemapInlayHintSpans(resolved, *requestedContent, bufferPtr->Content());
             inlayHintSpans_[bufferPtr]           = std::move(resolved);
-            inlayHintSpansGeneration_[bufferPtr] = requestedGeneration;
+            inlayHintSpansContent_[bufferPtr]    = bufferPtr->Content().Clone();
+            inlayHintSpansGeneration_[bufferPtr] = bufferPtr->ContentGeneration();
         });
+}
+
+// Carries a resolved inlay-hint set from the document it was resolved
+// against onto a newer one -- shared by the receipt path above
+// (request-time document -> live) and by InlayHintSpans' own lazy catch-up
+// (last-known document -> live). Unlike RemapCodeLensSpans, a hint whose
+// offset falls *inside* the changed region is dropped rather than clamped:
+// a lens owns a whole extra row that can sit at the edit point harmlessly,
+// but a hint inserts real columns inline, so clamping it to the edit point
+// would render it inside whatever token now sits there -- the exact
+// "writfd:ten" gargling this whole mechanism exists to prevent. A hint
+// entirely outside the changed region is unaffected content, safe to keep
+// and just reposition.
+void Manager::RemapInlayHintSpans(std::vector<ResolvedInlayHint>& hints, const text::ITextStorage& from,
+                                  const text::ITextStorage& to) {
+    if (hints.empty()) {
+        return;
+    }
+    const std::optional<text::ChangedSpan> span = text::ChangedByteRange(from, to);
+    if (!span) {
+        return; // byte-identical: nothing to carry
+    }
+    std::vector<ResolvedInlayHint> kept;
+    kept.reserve(hints.size());
+    for (ResolvedInlayHint& hint : hints) {
+        if (hint.byteOffset > span->oldStart && hint.byteOffset < span->oldEnd) {
+            continue; // anchored inside the text the edit just rewrote -- can't trust it
+        }
+        hint.byteOffset = text::RemapOffset(hint.byteOffset, *span);
+        kept.push_back(std::move(hint));
+    }
+    hints = std::move(kept);
 }
 
 const std::vector<Manager::ResolvedInlayHint>& Manager::InlayHintSpans(const text::Buffer& buffer) const {
     static const std::vector<ResolvedInlayHint> kEmpty;
-    const auto                                  it = inlayHintSpans_.find(const_cast<text::Buffer*>(&buffer));
+    text::Buffer* const                         key = const_cast<text::Buffer*>(&buffer);
+    const auto                                  it  = inlayHintSpans_.find(key);
     if (it == inlayHintSpans_.end()) {
         return kEmpty;
     }
-    // Applied against a document that has since been edited: the offsets no
-    // longer name the bytes they were computed for. See this method's own
-    // declaration for why that garbles rather than merely misplaces.
-    const auto generationIt = inlayHintSpansGeneration_.find(const_cast<text::Buffer*>(&buffer));
-    if (generationIt == inlayHintSpansGeneration_.end() || generationIt->second != buffer.ContentGeneration()) {
-        return kEmpty;
+
+    // Lazy catch-up, CodeLensSpans' own shape: done here on read, rather
+    // than at each edit, because Manager has no hook into Buffer's own
+    // edits -- and it is cheap, one bounded diff per generation change,
+    // amortized across however many reads that generation sees.
+    const auto generationIt = inlayHintSpansGeneration_.find(key);
+    const auto contentIt    = inlayHintSpansContent_.find(key);
+    if (generationIt != inlayHintSpansGeneration_.end() && contentIt != inlayHintSpansContent_.end() &&
+        contentIt->second != nullptr && generationIt->second != buffer.ContentGeneration()) {
+        RemapInlayHintSpans(it->second, *contentIt->second, buffer.Content());
+        contentIt->second    = buffer.Content().Clone();
+        generationIt->second = buffer.ContentGeneration();
     }
     return it->second;
 }
