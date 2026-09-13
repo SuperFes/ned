@@ -49,4 +49,20 @@ RedNode       NodePrevNamedSibling(RedNode self);
 RedNode       NodeDescendantForByteRange(RedNode self, std::uint32_t start, std::uint32_t end);
 RedNode       NodeNamedDescendantForByteRange(RedNode self, std::uint32_t start, std::uint32_t end);
 
+// per-subtree-fact-memoization follow-up: identity that survives a reparse
+// when this node's subtree is REUSED, unlike `id` above (a slot address in
+// the parent's child array, stable only for one tree's lifetime -- a reused
+// subtree gets a new slot address in the new tree even though it's the same
+// underlying allocation). This is the underlying heap object's own address
+// (Green.h's `SubtreeHeapData*`), retained and re-linked rather than
+// recreated whenever incremental reparse reuses a subtree unchanged.
+// nullptr for an inline leaf (a small token has no heap allocation to be
+// stable at all -- always cheap enough to just re-derive) and for a null
+// node. Two nodes with the same non-null identity, from trees produced by
+// successive calls to the same IncrementalParseCache, are the SAME
+// subtree -- any fact derived from one is valid for the other without
+// re-deriving it, unless the pattern that derived it reads outside the
+// subtree (see QueryPredicates.h's PredicateReadsOutsideSubtree).
+[[nodiscard]] const void* NodeSubtreeIdentity(RedNode self);
+
 } // namespace ned::editor::parse

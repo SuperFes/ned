@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "Editor/Parse/Node.h"
 #include "Editor/TreeSitter/IncrementalParse.h"
 #include "Editor/TreeSitter/Languages.h"
 #include "Editor/TreeSitter/Parser.h"
@@ -374,6 +375,103 @@ TEST_CASE("IncrementalParseCache's incremental reparse matches a fresh full pars
     const Tree freshTree = freshParser.Parse(edited);
 
     RequireNodesMatch(tree.RootNode(), freshTree.RootNode());
+}
+
+// per-subtree-fact-memoization follow-up. Measured live (2026-09-13), not
+// assumed: NodeSubtreeIdentity alone is NOT a safe "same content" signal
+// across a call to IncrementalParseCache::Update -- only a genuinely SHARED
+// subtree (refcount > 1) is guaranteed immutable-and-reused (Green.h:
+// "immutable once shared; MakeMut clones on sharing"). Update()'s own
+// sequence (lastTree_->Edit(edit); lastTree_ = parser.Parse(newText,
+// *lastTree_);) holds exactly ONE Tree/GreenTree alive at a time -- the
+// pre-edit value is destroyed by the reassignment, so by the time the
+// incremental reparse actually runs, everything along the touched spine has
+// refcount 1 and tree-sitter's subtree pool is free (not obligated -- see
+// below) to recycle an edited node's OLD allocation for its NEW content
+// instead of allocating fresh (upstream's own space-saving design, not a
+// bug). Whether that recycling actually happens is an ALLOCATOR ARTIFACT,
+// not part of the algorithm's contract: under the default (RelWithDebInfo)
+// preset the edited node's address is measured to repeat with new content;
+// under the `sanitize` preset ASan's replacement allocator does not hand
+// back a just-freed block immediately, so the same probe measures a
+// DIFFERENT address instead. Both outcomes are consistent with "no
+// guarantee either way" -- which is exactly why this test asserts neither:
+// pinning either specific outcome would be pinning an allocator's mood, not
+// a real contract, and would make this test allocator/build-dependent.
+// What IS deterministic and portable (asserted below, on both presets): an
+// UNCHANGED subtree's identity is always preserved -- genuine reuse, not an
+// artifact. The next test shows the actual fix for the edited case
+// (Tree::Clone(), retaining a second reference across the call).
+TEST_CASE("Node subtree identity for an edited node is not a safe content signal unless the prior generation is "
+          "retained",
+          "[TreeSitter]") {
+    Parser                parser(*LanguageByName("json"));
+    IncrementalParseCache cache;
+
+    const Tree& before = cache.Update(parser, R"({"a": 1, "b": 2})");
+    // Byte 6 is inside "1" (the "a" pair's value); byte 14 is inside "2"
+    // (the "b" pair's value).
+    const Node aPairBefore = before.RootNode().NamedDescendantForByteRange(6, 6).Parent();
+    const Node bPairBefore = before.RootNode().NamedDescendantForByteRange(14, 14).Parent();
+    REQUIRE(aPairBefore.Type() == "pair");
+    REQUIRE(bPairBefore.Type() == "pair");
+    const void* aIdentityBefore = ned::editor::parse::NodeSubtreeIdentity(aPairBefore.Raw());
+    const void* bIdentityBefore = ned::editor::parse::NodeSubtreeIdentity(bPairBefore.Raw());
+    REQUIRE(aIdentityBefore != nullptr);
+    REQUIRE(bIdentityBefore != nullptr);
+
+    // Only "b"'s value widens (2 -> 200); "a"'s pair is untouched, and the
+    // shared prefix up to byte 14 is identical so the same probe point
+    // still lands inside "b"'s value in the edited text. NOTHING retains
+    // `before` across this call -- it's a dangling-after-Update reference
+    // per IncrementalParseCache::Update's own contract, only read before
+    // making the call.
+    const Tree& after      = cache.Update(parser, R"({"a": 1, "b": 200})");
+    const Node  aPairAfter = after.RootNode().NamedDescendantForByteRange(6, 6).Parent();
+    const Node  bPairAfter = after.RootNode().NamedDescendantForByteRange(14, 14).Parent();
+    REQUIRE(aPairAfter.Type() == "pair");
+    REQUIRE(bPairAfter.Type() == "pair");
+    // "b"'s content genuinely changed either way -- that part IS reliable
+    // and is the actual hazard: a cache keyed on identity alone, with no
+    // retained prior generation, cannot tell this apart from true reuse by
+    // address comparison alone. bIdentityBefore/bPairAfter are deliberately
+    // never compared against each other -- see the header comment above.
+    CHECK(ned::editor::parse::NodeSubtreeIdentity(aPairAfter.Raw()) == aIdentityBefore);
+}
+
+// The fix the previous test's finding requires: retaining an explicit
+// Tree::Clone() of the prior generation across the Update() call that
+// produces the next one restores the guarantee -- the retained clone keeps
+// every subtree it references at refcount >= 2 for the whole call, so
+// tree-sitter's own "immutable once shared" rule applies and an edited
+// node's replacement gets a genuinely NEW address instead of recycling the
+// old one. This is the shape a real per-subtree fact cache must use: hold
+// the Tree its facts were derived against until the next reconciliation.
+TEST_CASE("Tree::Clone() retained across Update() makes subtree identity a safe content signal",
+          "[TreeSitter]") {
+    Parser                parser(*LanguageByName("json"));
+    IncrementalParseCache cache;
+
+    const Tree retainedBefore = cache.Update(parser, R"({"a": 1, "b": 2})").Clone();
+    const Node aPairBefore    = retainedBefore.RootNode().NamedDescendantForByteRange(6, 6).Parent();
+    const Node bPairBefore    = retainedBefore.RootNode().NamedDescendantForByteRange(14, 14).Parent();
+    REQUIRE(aPairBefore.Type() == "pair");
+    REQUIRE(bPairBefore.Type() == "pair");
+    const void* aIdentityBefore = ned::editor::parse::NodeSubtreeIdentity(aPairBefore.Raw());
+    const void* bIdentityBefore = ned::editor::parse::NodeSubtreeIdentity(bPairBefore.Raw());
+    REQUIRE(aIdentityBefore != nullptr);
+    REQUIRE(bIdentityBefore != nullptr);
+
+    // retainedBefore is still alive here, spanning this call -- the
+    // difference from the previous test.
+    const Tree& after      = cache.Update(parser, R"({"a": 1, "b": 200})");
+    const Node  aPairAfter = after.RootNode().NamedDescendantForByteRange(6, 6).Parent();
+    const Node  bPairAfter = after.RootNode().NamedDescendantForByteRange(14, 14).Parent();
+    REQUIRE(aPairAfter.Type() == "pair");
+    REQUIRE(bPairAfter.Type() == "pair");
+
+    CHECK(ned::editor::parse::NodeSubtreeIdentity(aPairAfter.Raw()) == aIdentityBefore);
+    CHECK(ned::editor::parse::NodeSubtreeIdentity(bPairAfter.Raw()) != bIdentityBefore);
 }
 
 TEST_CASE("IncrementalParseCache handles an edit that inserts newlines", "[TreeSitter]") {

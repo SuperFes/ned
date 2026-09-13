@@ -39,4 +39,8 @@ const parse::GreenTree& Tree::Green() const noexcept {
     return tree_;
 }
 
+Tree Tree::Clone() const {
+    return Tree(tree_);
+}
+
 } // namespace ned::editor::treesitter
