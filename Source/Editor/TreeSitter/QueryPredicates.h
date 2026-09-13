@@ -57,6 +57,21 @@ struct PredicateOperand {
 [[nodiscard]] bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOperand> operands,
                                          std::unordered_map<std::string, std::regex>& regexCache);
 
+// per-subtree-fact-memoization follow-up: whether a "#name? operand..."
+// call, AS ACTUALLY EVALUATED (i.e. honoring the same arity-inert quirk
+// EvaluatePredicateCall does -- a variadic has-parent?/has-ancestor? spelling
+// with operandCount != 2 is inert, so it does NOT read outside the subtree,
+// whatever it looks like it's asking), can make a pattern's result depend on
+// structure outside the node it's attached to. Only the (not-)has-ancestor?/
+// (not-)has-parent? family with exactly 2 operands qualifies -- every other
+// recognized predicate (#eq?/#match?/#lua-match?/#any-of?) compares captured
+// text, which is a property of the capture's own subtree, never its
+// ancestry. A caller memoizing facts per reused subtree must treat any
+// pattern this returns true for as always-recompute, never cached -- the
+// same subtree can answer an ancestor query differently across reparses
+// even when the subtree itself is byte-for-byte unchanged.
+[[nodiscard]] bool PredicateReadsOutsideSubtree(std::string_view name, std::size_t operandCount);
+
 } // namespace ned::editor::treesitter
 
 #endif // NED_EDITOR_TREESITTER_QUERYPREDICATES_H

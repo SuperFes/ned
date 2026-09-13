@@ -76,6 +76,14 @@ struct QueryMatch {
     // zero-operand #set! is stored with an empty value, so callers can
     // still test for the key's presence.
     std::unordered_map<std::string, std::string> setDirectives;
+    // per-subtree-fact-memoization follow-up: true when this match's
+    // pattern carries an actually-evaluated (not arity-inert)
+    // (not-)has-ancestor?/(not-)has-parent? predicate -- see
+    // QueryPredicates.h's PredicateReadsOutsideSubtree. A caller memoizing
+    // facts per reused subtree must always fully re-derive a match with
+    // this set, never reuse it across a reparse: the subtree it's attached
+    // to can be byte-for-byte unchanged while its ancestry differs.
+    bool ancestorCrossing = false;
 };
 
 } // namespace ned::editor::treesitter
@@ -133,6 +141,13 @@ class QueryMatcher {
     // window even though its @name does not).
     [[nodiscard]] std::vector<QueryMatch> MatchesInRange(const Node& root, std::string_view sourceText,
                                                          std::size_t startByte, std::size_t endByte) const;
+
+    // per-subtree-fact-memoization follow-up: how many compiled patterns
+    // carry an actually-evaluated (not arity-inert) (not-)has-ancestor?/
+    // (not-)has-parent? predicate -- see QueryMatch::ancestorCrossing.
+    // Diagnostic/test-only accessor, pinned by the query census the same
+    // way the rest of the bundled corpus's measured construct surface is.
+    [[nodiscard]] std::size_t AncestorCrossingPatternCount() const;
 
   private:
     struct Impl;
