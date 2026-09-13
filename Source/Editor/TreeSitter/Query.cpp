@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "QueryPredicates.h"
+
 namespace ned::editor::treesitter {
 
 namespace {
@@ -68,165 +70,26 @@ namespace {
         return sourceText.substr(start, end - start);
     }
 
-    // Lua's %-prefixed character classes (%u uppercase, %l lowercase, %d
-    // digit, %a letter, %s whitespace, %w alnum, %p punctuation) have no
-    // ECMAScript equivalent syntax -- translated to the nearest bracket-
-    // expression form here for the handful of real query files (confirmed
-    // in the vendored nvim-treesitter cpp query: "^%u"/"^[%u]", used for
-    // constructor/type-name uppercase-first detection) that actually use
-    // one. Handles both "[%u]" (already inside a bracket expression) and
-    // bare "%u" (needs one added) without double-bracketing -- the
-    // bracketed form is substituted first, so a bare-form pass afterward
-    // can never re-match what it already consumed. Every other Lua pattern
-    // construct (character sets beyond these, anchors within a class,
-    // non-greedy captures, ...) is deliberately not translated -- falls
-    // through to std::regex throwing on whatever's left, caught by the
-    // caller and treated as "don't block on it," same as any other
-    // predicate this doesn't fully understand.
-    std::string TranslateLuaPatternClasses(std::string pattern) {
-        static constexpr std::pair<std::string_view, std::string_view> kClasses[] = {
-            {"%u", "A-Z"},
-            {"%l", "a-z"},
-            {"%d", "0-9"},
-            {"%a", "A-Za-z"},
-            {"%s", " \\t\\n\\r\\f\\v"},
-            {"%w", "A-Za-z0-9"},
-            {"%p", "!-/:-@\\[-`{-~"},
-        };
-        for (const auto& [luaClass, body] : kClasses) {
-            const std::string bracketed        = "[" + std::string(luaClass) + "]";
-            const std::string bracketedReplace = "[" + std::string(body) + "]";
-            for (std::size_t pos = 0; (pos = pattern.find(bracketed, pos)) != std::string::npos;) {
-                pattern.replace(pos, bracketed.size(), bracketedReplace);
-                pos += bracketedReplace.size();
-            }
-            const std::string bareReplace = "[" + std::string(body) + "]";
-            for (std::size_t pos = 0; (pos = pattern.find(luaClass, pos)) != std::string::npos;) {
-                pattern.replace(pos, luaClass.size(), bareReplace);
-                pos += bareReplace.size();
-            }
-        }
-        return pattern;
-    }
-
-    bool NodeHasAncestorOfType(TSNode node, std::string_view typeName, bool immediateOnly) {
-        for (TSNode current = ts_node_parent(node); !ts_node_is_null(current); current = ts_node_parent(current)) {
-            if (ts_node_type(current) == typeName) {
-                return true;
-            }
-            if (immediateOnly) {
-                return false;
-            }
-        }
-        return false;
-    }
-
-    // Evaluates one already-split-out "#name? operand..." predicate call
-    // against a specific match. True both when the predicate genuinely
-    // passes AND when it's a predicate this doesn't recognize (including
-    // #set!, a non-filtering directive real query files use for match
-    // priority) -- an unrecognized predicate must never suppress a match;
-    // see Query.h's own header comment for why that's the only safe
-    // default (Captures() evaluated zero predicates before this existed at
-    // all, so "include it" is the pre-existing behavior for anything not
-    // explicitly handled here, not a new risk).
+    // Resolves one "#name? operand..." call's steps into the engine-neutral
+    // PredicateOperand shape and hands evaluation to QueryPredicates.h --
+    // the semantics (including the deliberate arity/unfired-capture
+    // pass-throughs) live there now, shared with the Form-consuming
+    // QueryMatcher so the two engines can never drift.
     bool EvaluateOnePredicate(const TSQuery* query, const TSQueryMatch& match, std::string_view predicateName,
                               const std::vector<TSQueryPredicateStep>& operands, std::string_view sourceText,
                               std::unordered_map<std::string, std::regex>& regexCache) {
-        if (!predicateName.empty() && predicateName.front() == '#') {
-            predicateName.remove_prefix(1); // tolerate either spelling -- not assumed which one ts_query_string_value_for_id returns
+        std::vector<PredicateOperand> resolved;
+        resolved.reserve(operands.size());
+        for (const TSQueryPredicateStep& step : operands) {
+            PredicateOperand operand;
+            operand.isCapture = step.type == TSQueryPredicateStepTypeCapture;
+            operand.text      = ResolveTextOperand(query, match, step, sourceText);
+            if (operand.isCapture) {
+                operand.node = CapturedNode(match, step.value_id);
+            }
+            resolved.push_back(operand);
         }
-        const bool             negated  = predicateName.starts_with("not-");
-        const std::string_view baseName = negated ? predicateName.substr(4) : predicateName;
-
-        if (baseName == "eq?") {
-            if (operands.size() != 2) {
-                return true;
-            }
-            const auto a = ResolveTextOperand(query, match, operands[0], sourceText);
-            const auto b = ResolveTextOperand(query, match, operands[1], sourceText);
-            if (!a || !b) {
-                return true;
-            }
-            return negated ? (*a != *b) : (*a == *b);
-        }
-
-        if (baseName == "match?" || baseName == "lua-match?") {
-            if (operands.size() != 2) {
-                return true;
-            }
-            const auto text    = ResolveTextOperand(query, match, operands[0], sourceText);
-            const auto pattern = ResolveTextOperand(query, match, operands[1], sourceText);
-            if (!text || !pattern) {
-                return true;
-            }
-            try {
-                // Cached by translated pattern text (cmake-highlighting-perf
-                // follow-up) -- std::regex construction is slow enough that
-                // recompiling the same handful of patterns once per matching
-                // node (hundreds of times over, for a pattern-heavy query
-                // like tree-sitter-cmake's) was a real, measured multi-second
-                // first-paint stall, not a theoretical one. Keyed on the
-                // already-Lua-translated string so a pattern appearing in
-                // more than one predicate (common -- many #match? calls
-                // share the same "^[fF][uU]..." case-insensitive spelling
-                // idiom) only ever gets compiled once, regardless of how
-                // many distinct predicate call sites use it.
-                std::string translated = TranslateLuaPatternClasses(std::string(*pattern));
-                auto        cacheIt    = regexCache.find(translated);
-                if (cacheIt == regexCache.end()) {
-                    // ECMAScript, not a Lua-pattern engine -- matches this
-                    // project's own existing QueryReplace.h precedent; the
-                    // patterns real query files actually use for this
-                    // (anchored character classes like "^[A-Z][A-Z0-9_]*$",
-                    // or Lua's own %u-style classes via
-                    // TranslateLuaPatternClasses) translate directly.
-                    std::regex compiled(translated, std::regex::ECMAScript);
-                    cacheIt = regexCache.emplace(std::move(translated), std::move(compiled)).first;
-                }
-                const bool matched = std::regex_search(text->begin(), text->end(), cacheIt->second);
-                return negated ? !matched : matched;
-            }
-            catch (const std::regex_error&) {
-                return true; // a Lua-only pattern construct std::regex can't parse -- don't block on it
-            }
-        }
-
-        if (baseName == "any-of?") {
-            if (operands.empty()) {
-                return true;
-            }
-            const auto text = ResolveTextOperand(query, match, operands[0], sourceText);
-            if (!text) {
-                return true;
-            }
-            bool found = false;
-            for (std::size_t i = 1; i < operands.size(); ++i) {
-                const auto candidate = ResolveTextOperand(query, match, operands[i], sourceText);
-                if (candidate && *candidate == *text) {
-                    found = true;
-                    break;
-                }
-            }
-            return negated ? !found : found;
-        }
-
-        if (baseName == "has-ancestor?" || baseName == "has-parent?") {
-            if (operands.size() != 2 || operands[0].type != TSQueryPredicateStepTypeCapture ||
-                operands[1].type != TSQueryPredicateStepTypeString) {
-                return true;
-            }
-            const TSNode node = CapturedNode(match, operands[0].value_id);
-            if (ts_node_is_null(node)) {
-                return true;
-            }
-            uint32_t    length   = 0;
-            const char* typeName = ts_query_string_value_for_id(query, operands[1].value_id, &length);
-            const bool  has      = NodeHasAncestorOfType(node, std::string_view(typeName, length), baseName == "has-parent?");
-            return negated ? !has : has;
-        }
-
-        return true; // unrecognized predicate name (e.g. "set!") -- inert
+        return EvaluatePredicateCall(predicateName, resolved, regexCache);
     }
 
     // Splits pattern's flat predicate-step array (Done steps are the

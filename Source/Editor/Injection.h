@@ -23,7 +23,7 @@
 
 #include "Mode.h"
 #include "TreeSitter/Node.h"
-#include "TreeSitter/Query.h"
+#include "TreeSitter/QueryMatcher.h"
 
 namespace ned::editor {
 
@@ -62,7 +62,7 @@ using EmbeddedLanguageCache = std::unordered_map<std::string, std::optional<High
 // inline node). A region merely *intersecting* the window is kept, so one
 // straddling its edge is still highlighted. Defaults to the whole document.
 void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_view bufferText,
-                                   const treesitter::Query& injectionQuery, EmbeddedLanguageCache& cache,
+                                   const treesitter::QueryMatcher& injectionQuery, EmbeddedLanguageCache& cache,
                                    std::vector<HighlightSpan>& spans, HighlightWindow window = {});
 
 // embedded-language-documents follow-up: the same match-walk/resolution
@@ -78,7 +78,7 @@ void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_vie
 // one), so this never fails to report a region just because no bundled Mode
 // exists for its language.
 [[nodiscard]] std::vector<InjectionRegion> CollectInjectionRegions(const treesitter::Node& root, std::string_view bufferText,
-                                                                   const treesitter::Query& injectionQuery);
+                                                                   const treesitter::QueryMatcher& injectionQuery);
 
 } // namespace ned::editor
 

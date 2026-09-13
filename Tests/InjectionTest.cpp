@@ -7,7 +7,7 @@
 #include "Editor/Mode.h"
 #include "Editor/TreeSitter/Languages.h"
 #include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Query.h"
+#include "Editor/TreeSitter/QueryMatcher.h"
 #include "Editor/TreeSitter/Tree.h"
 
 using namespace ned::editor;
@@ -57,7 +57,7 @@ TEST_CASE("CollectInjectedHighlightSpans resolves each match's injected language
     Parser            parser(language);
     const std::string text = R"({"a": "def f(): pass", "b": "x = 1"})";
     Tree              tree = parser.Parse(text);
-    Query             injectionQuery(
+    QueryMatcher      injectionQuery(
         language, R"(((pair value: (string (string_content) @injection.content)) (#set! injection.language "python")))");
 
     EmbeddedLanguageCache      cache;
@@ -84,7 +84,7 @@ TEST_CASE("CollectInjectedHighlightSpans adds nothing for an unresolvable inject
     Parser            parser(language);
     const std::string text = R"({"a": "whatever"})";
     Tree              tree = parser.Parse(text);
-    Query             injectionQuery(language, R"(((pair value: (string (string_content) @injection.content))
+    QueryMatcher      injectionQuery(language, R"(((pair value: (string (string_content) @injection.content))
                                                        (#set! injection.language "notarealthing")))");
 
     EmbeddedLanguageCache      cache;
@@ -104,7 +104,7 @@ TEST_CASE("CollectInjectedHighlightSpans resolves a grammar-only sub-language (m
     Parser            parser(language);
     const std::string text = R"({"a": "**bold**"})";
     Tree              tree = parser.Parse(text);
-    Query             injectionQuery(language, R"(((pair value: (string (string_content) @injection.content))
+    QueryMatcher      injectionQuery(language, R"(((pair value: (string (string_content) @injection.content))
                                                        (#set! injection.language "markdown_inline")))");
 
     EmbeddedLanguageCache      cache;
@@ -122,7 +122,7 @@ TEST_CASE("CollectInjectionRegions returns raw byte ranges with canonicalized la
     Parser            parser(language);
     const std::string text = R"({"a": "def f(): pass", "b": "x = 1"})";
     Tree              tree = parser.Parse(text);
-    Query             injectionQuery(
+    QueryMatcher      injectionQuery(
         language, R"(((pair value: (string (string_content) @injection.content)) (#set! injection.language "py")))");
 
     const std::vector<InjectionRegion> regions = CollectInjectionRegions(tree.RootNode(), text, injectionQuery);
@@ -147,7 +147,7 @@ TEST_CASE("CollectInjectionRegions reports a region even for a language with no 
     Parser            parser(language);
     const std::string text = R"({"a": "whatever"})";
     Tree              tree = parser.Parse(text);
-    Query             injectionQuery(language, R"(((pair value: (string (string_content) @injection.content))
+    QueryMatcher      injectionQuery(language, R"(((pair value: (string (string_content) @injection.content))
                                                        (#set! injection.language "notarealthing")))");
 
     const std::vector<InjectionRegion> regions = CollectInjectionRegions(tree.RootNode(), text, injectionQuery);
