@@ -1560,13 +1560,20 @@ TEST_CASE("An inlay hint inside a selection keeps the selection's background", "
 }
 
 // Live-reported (screencast, 2026-09-10): typing garbled lines far below the
-// edit -- "writfd:ten", "static_casbuf:t" -- because applied inlay hints keep
-// their byte offsets while the text under them shifts. The receipt path
-// already drops a response computed against a superseded generation, but the
-// hints ALREADY applied were never invalidated, so during continuous typing
-// (where every response arrives after the next keystroke and is dropped) the
-// stale set stays on screen and drifts further with each character.
-TEST_CASE("Applied inlay hints stop rendering once the buffer has moved on", "[BufferView]") {
+// edit -- "writfd:ten", "static_casbuf:t" -- because applied inlay hints kept
+// their byte offsets while the text under them shifted. Originally fixed by
+// blanking every hint in the buffer the instant content generation changed
+// at all -- which itself was live-reported (screencast, 2026-09-13) as a
+// second complaint: editing anywhere in a slow-to-analyze file (a real
+// composition-root-sized main.cpp) made every hint disappear and reflow its
+// line on essentially every keystroke, since the fix didn't distinguish "an
+// edit touched this hint's own anchor" from "an edit happened somewhere in
+// this buffer". region-scoped-relocation follow-up: Manager::InlayHintSpans
+// now relocates a hint across an edit that doesn't touch its anchor
+// (Editor/Lsp/Manager.cpp's RemapInlayHintSpans) and only drops the ones an
+// edit actually rewrote -- this test covers the relocate half; the sibling
+// test below covers the drop-not-garble half the original bug was about.
+TEST_CASE("Applied inlay hints relocate, not vanish, across an edit that doesn't touch their anchor", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_inlay_stale_test.txt";
     ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
@@ -1602,14 +1609,66 @@ TEST_CASE("Applied inlay hints stop rendering once the buffer has moved on", "[B
     const int gutter = GutterWidth(1);
     REQUIRE(screen.PixelAt(gutter + 1, 0).character == ":"); // applied, and on the right byte
 
-    // Now type ahead of the hint's anchor. Byte 1 is no longer where ": int"
-    // belongs, and until a fresh response lands nothing here knows where it
-    // does belong -- so it must not be drawn at the offset it used to have.
+    // Type well before the hint's own anchor -- "x" itself is untouched, it
+    // has just moved two bytes to the right, and the hint should move with
+    // it rather than vanish or render at its old (now wrong) offset.
     buffer.SetPoint(0);
     buffer.InsertAtPoint("yy");
     view.Paint(canvas);
 
-    REQUIRE(ContentRowText(screen, 0, 8, 1) == "yyx = 1;");
+    REQUIRE(ContentRowText(screen, 0, 13, 1) == "yyx: int = 1;");
+
+    std::filesystem::remove(path);
+}
+
+// The other half of the live-reported fix above: an edit that DOES rewrite
+// the hint's own anchor can't be trusted to relocate (there's no honest new
+// position for a hint about a token the edit just changed), so it must drop
+// rather than render at a guessed or stale offset -- the original
+// "writfd:ten" garbling this whole mechanism exists to prevent.
+TEST_CASE("Applied inlay hints drop, not garble, across an edit that rewrites their own anchor", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_inlay_drop_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("x = 1;");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    const std::vector<ned::editor::lsp::Json> frames      = ReadLspFrames(server.serverStdinRead, 2);
+    const auto                                inlayHintIt = std::find_if(
+        frames.begin(), frames.end(), [](const ned::editor::lsp::Json& f) { return f["method"] == "textDocument/inlayHint"; });
+    REQUIRE(inlayHintIt != frames.end());
+
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", (*inlayHintIt)["id"]},
+        {"result", ned::editor::lsp::Json::array({{{"position", {{"line", 0}, {"character", 1}}}, {"label", ": int"}}})},
+    }
+                              .dump());
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(1);
+    REQUIRE(screen.PixelAt(gutter + 1, 0).character == ":"); // applied, and on the right byte
+
+    // Delete "x " (bytes [0,2)), which strictly contains byte 1 -- the
+    // hint's own anchor. The token it was annotating is gone.
+    buffer.SetPoint(0);
+    buffer.DeleteRange(0, 2);
+    view.Paint(canvas);
+
+    REQUIRE(ContentRowText(screen, 0, 4, 1) == "= 1;"); // no hint text spliced in anywhere
 
     std::filesystem::remove(path);
 }
