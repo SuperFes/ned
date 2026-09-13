@@ -168,7 +168,7 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
         // The real editor: a BufferView *and* a Minimap painting the same
         // buffer every frame, which is the default configuration.
         {
-            ned::ui::Minimap minimap(mdActive, mdMode, theme);
+            ned::ui::Minimap   minimap(mdActive, mdMode, theme);
             const ned::ui::Box mmBox{.x_min = 150, .x_max = 159, .y_min = 0, .y_max = 44};
             minimap.SetBox_(mmBox);
             mdView.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 149, .y_min = 0, .y_max = 44});
@@ -228,6 +228,17 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
             const std::string text = md.Text();
             const std::size_t h    = mdMode.highlight ? mdMode.highlight(text, ned::editor::HighlightWindow{}).size() : 0U;
             return h + (mdMode.symbolKind ? mdMode.symbolKind(text).size() : 0U);
+        });
+
+        // Phase 4b payoff: what the editor actually pays now -- the symbol
+        // query range-bound to a viewport-sized window (the gutter/sticky
+        // path goes through Mode::symbolKindInWindow when it is set).
+        timeIt("  highlight then symbolKindInWindow(16KB)", [&] {
+            const std::string text = md.Text();
+            const std::size_t h    = mdMode.highlight ? mdMode.highlight(text, ned::editor::HighlightWindow{}).size() : 0U;
+            return h + (mdMode.symbolKindInWindow
+                            ? mdMode.symbolKindInWindow(text, ned::editor::HighlightWindow{.startByte = 0, .endByte = 16384}).size()
+                            : 0U);
         });
     }
 

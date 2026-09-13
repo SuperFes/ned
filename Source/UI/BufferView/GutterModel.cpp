@@ -327,7 +327,8 @@ void GutterModel::EnsureSymbolMarkers() const {
 
     const text::ITextStorage& content   = buffer.Content();
     const bool                huge      = content.IsHuge();
-    const auto [windowStart, windowEnd] = structuralWindow_(content);
+    const bool                windowed  = !huge && static_cast<bool>(context_.mode.symbolKindInWindow);
+    const auto [windowStart, windowEnd] = windowed ? symbolWindow_(content) : structuralWindow_(content);
 
     const CacheStamp stamp =
         CacheStamp::For(&buffer, {buffer.ContentGeneration(), windowStart, windowEnd, ModeKeyFor(context_.mode)});
@@ -341,12 +342,24 @@ void GutterModel::EnsureSymbolMarkers() const {
     // absolute buffer coordinates (+= windowStart) here so every consumer
     // (the gutter below, sticky scroll) can treat this cache's coordinates
     // uniformly regardless of buffer size.
-    symbolMarkers_ =
-        huge ? context_.mode.symbolKind(content.Substring(windowStart, windowEnd - windowStart)) : context_.mode.symbolKind(buffer.Text());
-    if (huge) {
-        for (editor::SymbolMarker& marker : symbolMarkers_) {
-            marker.startByte += windowStart;
-            marker.endByte += windowStart;
+    //
+    // Phase 4b payoff: an ORDINARY buffer whose mode has the windowed
+    // symbol capability runs range-bound over the full text instead --
+    // enclosing definitions still arrive (Mode::symbolKindInWindow's own
+    // contract), coordinates are already absolute, and the whole-document
+    // run per edit becomes a viewport-sized one.
+    if (windowed) {
+        symbolMarkers_ = context_.mode.symbolKindInWindow(
+            buffer.Text(), editor::HighlightWindow{.startByte = windowStart, .endByte = windowEnd});
+    }
+    else {
+        symbolMarkers_ =
+            huge ? context_.mode.symbolKind(content.Substring(windowStart, windowEnd - windowStart)) : context_.mode.symbolKind(buffer.Text());
+        if (huge) {
+            for (editor::SymbolMarker& marker : symbolMarkers_) {
+                marker.startByte += windowStart;
+                marker.endByte += windowStart;
+            }
         }
     }
     symbolMarkersStamp_  = stamp;
@@ -538,8 +551,8 @@ void GutterModel::EnsureCoverageStatuses() const {
         return; // unsaved/scratch buffer -- nothing to match a coverage report's SF: path against
     }
 
-    const editor::coverage::Report report = editor::coverage::CurrentCoverageReport();
-    const editor::coverage::FileCoverage*  file =
+    const editor::coverage::Report        report = editor::coverage::CurrentCoverageReport();
+    const editor::coverage::FileCoverage* file =
         editor::coverage::FindFileCoverage(report, *buffer.Path(), editor::ProjectRoot());
     if (file == nullptr) {
         return;

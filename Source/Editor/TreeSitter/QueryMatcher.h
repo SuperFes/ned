@@ -31,10 +31,54 @@
 #include <string_view>
 #include <vector>
 
+#include <unordered_map>
 #include "../QueryData.h"
 #include "Node.h"
 #include "Parser.h"
-#include "Query.h" // QueryCapture/QueryMatch -- the shared output vocabulary
+
+namespace ned::editor::treesitter {
+
+// One capture from running a query against a tree -- name is the query
+// pattern's capture name (e.g. "comment", "string", without the leading
+// '@'), [startByte, endByte) is the captured node's byte range. nodeId
+// (smart-indentation follow-up) is the captured node's own stable identity
+// (Node::Id()) -- needed by any consumer that must tell apart two DIFFERENT
+// nodes sharing the exact same byte range (real, not hypothetical: see
+// Node::Id()'s own doc comment for tree-sitter-python's "block" node), since
+// [startByte, endByte) alone can't disambiguate that case.
+struct QueryCapture {
+    std::string name;
+    std::size_t startByte;
+    std::size_t endByte;
+    const void* nodeId;
+};
+
+// A capture within a QueryMatch -- same shape as QueryCapture, kept as a
+// separate type since it lives inside QueryMatch::captures rather than a
+// flat top-level vector (Captures() intentionally flattens match-grouping
+// away; Matches() intentionally preserves it).
+struct QueryMatchCapture {
+    std::string name;
+    std::size_t startByte;
+    std::size_t endByte;
+};
+
+// One matched pattern instance, with its captures kept together (unlike
+// Captures()'s flat output) and its #set! directives resolved -- for
+// consumers (language-injection resolution) that need several captures from
+// one pattern instance correlated, e.g. pairing a dynamic
+// "@injection.language" capture with its sibling "@injection.content"
+// capture in the SAME fenced code block, not some other one in the document.
+struct QueryMatch {
+    std::vector<QueryMatchCapture> captures;
+    // Resolved #set! operands for this match's pattern, keyed by the
+    // directive name (e.g. "injection.language" -> "javascript"). A
+    // zero-operand #set! is stored with an empty value, so callers can
+    // still test for the key's presence.
+    std::unordered_map<std::string, std::string> setDirectives;
+};
+
+} // namespace ned::editor::treesitter
 
 namespace ned::editor::treesitter {
 
@@ -79,6 +123,16 @@ class QueryMatcher {
     [[nodiscard]] std::vector<QueryCapture> CapturesInRange(const Node& root, std::string_view sourceText,
                                                             std::size_t startByte, std::size_t endByte) const;
     [[nodiscard]] std::vector<QueryMatch>   Matches(const Node& root, std::string_view sourceText) const;
+
+    // Matches whose pattern ROOT node intersects [startByte, endByte) --
+    // and, unlike CapturesInRange, each such match is emitted WHOLE: no
+    // capture is filtered by the range, so an enclosing node's own captures
+    // outside the window still arrive. The bound prunes tree traversal only.
+    // What lets a viewport-sized symbol query still report the class that
+    // opened hundreds of lines above the viewport (its node intersects the
+    // window even though its @name does not).
+    [[nodiscard]] std::vector<QueryMatch> MatchesInRange(const Node& root, std::string_view sourceText,
+                                                         std::size_t startByte, std::size_t endByte) const;
 
   private:
     struct Impl;

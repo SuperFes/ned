@@ -1,0 +1,1 @@
+(program (if_statement condition: (test_command (unary_expression operator: (test_operator) (string (simple_expansion (variable_name))))) (command name: (command_name (word)) argument: (string (string_content))) (command name: (command_name (word)) argument: (string (string_content))) (MISSING "fi")))
