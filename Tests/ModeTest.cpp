@@ -65,6 +65,23 @@ std::vector<ned::editor::SymbolKind> KindsInOrder(const std::vector<ned::editor:
     return kinds;
 }
 
+// per-subtree-fact-memoization follow-up: a full byte-for-byte description
+// (unlike KindsInOrder above, which only checks kind) for comparing
+// mode.symbolKind's INCREMENTALLY-reconciled result (via the same Mode
+// instance, calls sharing one MatchCache) against a FRESH Mode's own result
+// on the same text -- the actual invariant that matters is that caching
+// never changes what's reported, only how much work it costs to report it.
+std::vector<std::string> DescribeSymbolMarkers(const std::vector<ned::editor::SymbolMarker>& markers) {
+    std::vector<std::string> out;
+    out.reserve(markers.size());
+    for (const ned::editor::SymbolMarker& marker : markers) {
+        out.push_back("[" + std::to_string(marker.startByte) + "," + std::to_string(marker.endByte) + ") kind=" +
+                      std::to_string(static_cast<int>(marker.kind)) + " name=" + marker.name +
+                      " nameStart=" + std::to_string(marker.nameStartByte));
+    }
+    return out;
+}
+
 // Debugging wishlist (line-inspect follow-up): true if some candidate range
 // exactly matches where `substring` actually occurs in `text` -- substring-
 // based rather than hand-computed byte offsets, so a test doesn't have to
@@ -1386,6 +1403,38 @@ TEST_CASE("OrgMode's symbolKind doesn't mistake an indented '* not a headline' l
     const auto        markers = mode.symbolKind(source);
     REQUIRE(markers.size() == 1);
     REQUIRE(markers[0].startByte == 0);
+}
+
+// per-subtree-fact-memoization follow-up: the actual property MatchCache's
+// wiring into Mode::symbolKind (Mode.cpp's buildMarkers closure) exists
+// for -- calling the SAME Mode instance's symbolKind repeatedly across an
+// evolving sequence of edits (sharing one MatchCache under the hood) must
+// report byte-for-byte the same thing a completely FRESH Mode would report
+// on that exact text, at every step, not just the final one.
+TEST_CASE("CppMode's symbolKind stays correct across a sequence of incremental edits", "[Mode]") {
+    const auto mode = CppMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    const std::vector<std::string> steps = {
+        "class Widget {\npublic:\n    int getValue() const { return value_; }\n};\n",
+        "class Widget {\npublic:\n    int getValue() const { return value_; }\n    void setValue(int v) { value_ = v; "
+        "}\n};\n",
+        "class Widget {\npublic:\n    int getValue() const { return value_; }\n    void setValue(int v) { value_ = v; "
+        "}\nprivate:\n    int value_ = 0;\n};\n",
+        "class Widget {\npublic:\n    int getValue() const { return value_; }\n    void setValue(int v) { value_ = v; "
+        "}\nprivate:\n    int value_ = 0;\n};\n\nclass Gadget {\npublic:\n    void run() {}\n};\n",
+        // Renames Widget -> Wodget, a small localized edit deep inside
+        // otherwise-unaffected content on both sides.
+        "class Wodget {\npublic:\n    int getValue() const { return value_; }\n    void setValue(int v) { value_ = v; "
+        "}\nprivate:\n    int value_ = 0;\n};\n\nclass Gadget {\npublic:\n    void run() {}\n};\n",
+    };
+
+    for (std::size_t i = 0; i < steps.size(); ++i) {
+        INFO("step " << i << ": " << steps[i]);
+        const auto incremental = mode.symbolKind(steps[i]);
+        const auto fresh       = CppMode().symbolKind(steps[i]);
+        REQUIRE(DescribeSymbolMarkers(incremental) == DescribeSymbolMarkers(fresh));
+    }
 }
 
 TEST_CASE("expandSelection offers the inside of a delimited body before the body itself", "[Mode][Imprint]") {

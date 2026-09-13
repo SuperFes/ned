@@ -27,6 +27,7 @@
 #include "SyntaxTheme.h"
 #include "TreeSitter/IncrementalParse.h"
 #include "TreeSitter/Languages.h"
+#include "TreeSitter/MatchCache.h"
 #include "TreeSitter/Parser.h"
 #include "TreeSitter/QueryMatcher.h"
 #include "TreeSitter/Tree.h"
@@ -947,6 +948,22 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     SymbolKindWindowFunction symbolKindInWindow;
     if (!queries.tags.empty()) {
         const auto symbolKindQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.tags);
+        // per-subtree-fact-memoization follow-up: only the whole-document
+        // path below reconciles through this -- MatchesInRange already
+        // prunes its OWN walk to the window, so the windowed path (called
+        // far more often, once per viewport-affecting frame) has nothing to
+        // gain from also going through a cache tuned for "reuse across
+        // keystrokes," and folding it in would change what windowing means
+        // there (reconcile-then-filter instead of a genuinely pruned walk --
+        // see the MatchCache.h header comment on why that's not a
+        // value-neutral swap). Sharing sharedParse->LastEdit() with this
+        // cache is what lets it skip re-deriving facts far from an edit
+        // without independently re-diffing text: safe even when some OTHER
+        // closure already advanced sharedParse to the same bufferText first
+        // in the same frame (LastEdit() then reports nullopt, and Reconcile
+        // just falls back to a full walk -- correct, only not maximally
+        // optimal that call).
+        const auto symbolKindMatchCache = std::make_shared<treesitter::MatchCache>();
         // Shared by the whole-document closure and the windowed one below:
         // marker construction plus the two dedupe/nesting collapses. The
         // windowed run prunes by pattern-ROOT intersection
@@ -955,17 +972,17 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         // suppressing marker always CONTAINS the marker it suppresses, both
         // are present whenever either is, keeping the collapses' results
         // identical to a whole-document run filtered to the window.
-        const auto buildMarkers = [parser, symbolKindQuery, sharedParse](std::string_view bufferText,
-                                                                         HighlightWindow window) -> std::vector<SymbolMarker> {
+        const auto buildMarkers = [parser, symbolKindQuery, sharedParse, symbolKindMatchCache](
+                                      std::string_view bufferText, HighlightWindow window) -> std::vector<SymbolMarker> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
 
-            std::vector<SymbolMarker> markers;
+            std::vector<SymbolMarker>                 markers;
             const std::vector<treesitter::QueryMatch> matches =
                 window.CoversWholeDocument()
-                    ? symbolKindQuery->Matches(tree.RootNode(), bufferText)
+                    ? symbolKindMatchCache->Reconcile(*symbolKindQuery, tree.RootNode(), bufferText, sharedParse->LastEdit())
                     : symbolKindQuery->MatchesInRange(tree.RootNode(), bufferText, window.startByte, window.endByte);
             for (const treesitter::QueryMatch& match : matches) {
                 std::optional<SymbolKind>                    kind;
