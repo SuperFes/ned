@@ -355,6 +355,10 @@ bool NodeHasError(RedNode self) {
     return SubtreeErrorCost(NodeSubtree(self)) > 0;
 }
 
+bool NodeHasExternalTokens(RedNode self) {
+    return SubtreeHasExternalTokens(NodeSubtree(self));
+}
+
 bool NodeEq(RedNode self, RedNode other) {
     return self.tree == other.tree && self.id == other.id;
 }
