@@ -60,10 +60,27 @@ namespace {
         treesitter::QueryMatchCapture content;
     };
 
+    // perf/parallel-highlighting-round-1 follow-up: window is threaded
+    // through to MatchesInRange rather than the unwindowed Matches() --
+    // CollectInjectedHighlightSpans's own window only used to bound which
+    // FOUND regions get sub-parsed (the loop below still re-checks that),
+    // leaving the injection query's own tree walk unwindowed regardless of
+    // how small a window the caller actually wanted. Harmless for
+    // BufferView's viewport-sized windows (cheap either way relative to the
+    // sub-parses it gates), but load-bearing for Minimap's chunked sweep
+    // (UI/Minimap.cpp): a small window repeated across many ticks turned an
+    // O(document) "where are the injections" walk into
+    // O(document * tick count), found live via a test using a
+    // pathologically small chunk size that made this call alone dominate.
+    // CollectInjectionRegions (the whole-document consumer, no window
+    // concept of its own) gets the default unbounded window, matching its
+    // existing behavior exactly.
     std::vector<RawInjectionMatch> CollectRawInjectionMatches(const treesitter::Node& root, std::string_view bufferText,
-                                                              const treesitter::QueryMatcher& injectionQuery) {
+                                                              const treesitter::QueryMatcher& injectionQuery,
+                                                              HighlightWindow                 window = {}) {
         std::vector<RawInjectionMatch> matches;
-        for (const treesitter::QueryMatch& match : injectionQuery.Matches(root, bufferText)) {
+        for (const treesitter::QueryMatch& match : injectionQuery.MatchesInRange(root, bufferText, window.startByte,
+                                                                                 std::min(window.endByte, bufferText.size()))) {
             std::optional<std::string_view>              language;
             std::optional<treesitter::QueryMatchCapture> content;
             for (const treesitter::QueryMatchCapture& capture : match.captures) {
@@ -108,13 +125,17 @@ const HighlightFunction* ResolveEmbeddedLanguageHighlight(std::string_view tag, 
 void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_view bufferText,
                                    const treesitter::QueryMatcher& injectionQuery, EmbeddedLanguageCache& cache,
                                    std::vector<HighlightSpan>& spans, HighlightWindow window) {
-    for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery)) {
+    for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery, window)) {
         // Every injected region is its own parse, so skipping the ones with
         // no bytes in the window is where most of the saving is -- markdown
         // injects markdown_inline into *every* inline node, which on a
         // 125 KiB document is thousands of separate parses per keystroke for
         // a screenful of text. Intersection, not containment: a fenced block
-        // straddling the top of the window still has to be highlighted.
+        // straddling the top of the window still has to be highlighted. This
+        // check is now mostly a formality (CollectRawInjectionMatches above
+        // already range-pruned its own tree walk to `window`), kept because
+        // MatchesInRange's own guarantee is pattern-ROOT intersection, not
+        // exact containment of the injection.content capture specifically.
         if (match.content.endByte <= window.startByte || match.content.startByte >= window.endByte) {
             continue;
         }
@@ -124,9 +145,26 @@ void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_vie
         }
         const std::size_t      start    = match.content.startByte;
         const std::string_view codeText = bufferText.substr(start, match.content.endByte - start);
-        // The inner call gets the whole region: it is already only as big as
-        // the injection, and its own offsets are region-relative.
-        for (const HighlightSpan& span : (*highlight)(codeText, HighlightWindow{})) {
+        // Translate the outer window into this region's own relative
+        // coordinates (clamped to its bounds) rather than always asking for
+        // the whole region -- an unbounded outer window (the ordinary
+        // whole-document call) still translates to [0, codeText.size()),
+        // identical to the old behavior, but a bounded one that only
+        // partially covers a large straddling region (a big fenced code
+        // block, or a chunked sweep's own small window landing partway
+        // through one -- UI/Minimap.cpp's AdvanceHighlightSweep) now only
+        // sub-highlights the part actually asked for. Load-bearing for the
+        // sweep specifically: without this, a region straddling a chunk
+        // boundary got re-emitted WHOLE by every chunk that merely
+        // intersected it, breaking that caller's own "each chunk emits only
+        // the spans starting within its own window" invariant -- found by
+        // Tests/ChunkedHighlightTest.cpp at a deliberately small chunk size.
+        const std::size_t subWindowStart = window.startByte > start ? window.startByte - start : 0;
+        const std::size_t subWindowEnd   = window.endByte >= match.content.endByte
+                                               ? codeText.size()
+                                               : (window.endByte > start ? window.endByte - start : 0);
+        for (const HighlightSpan& span :
+             (*highlight)(codeText, HighlightWindow{.startByte = subWindowStart, .endByte = subWindowEnd})) {
             spans.push_back(HighlightSpan{.startByte   = start + span.startByte,
                                           .endByte     = start + span.endByte,
                                           .syntaxClass = span.syntaxClass,

@@ -103,23 +103,61 @@ class Minimap : public Widget {
     // in practice, since WindowManager::SetEventLoop wires this at startup).
     void SetEventLoop(EventLoop* eventLoop);
 
-    // How long the buffer must be quiet before the minimap re-highlights.
+    // How long the buffer must be quiet before the minimap STARTS
+    // re-highlighting -- unchanged burst suppression from before.
     //
     // The minimap colours the *whole document*, so its highlight is the
     // expensive one -- and unlike the buffer's own text it does not have to
     // be right this instant: it is a zoomed-out overview a few pixels wide.
-    // Refreshing it only once typing pauses takes the whole-document cost off
-    // the keystroke path entirely, which is worth far more than the colours
-    // being current mid-burst.
     //
-    // Deliberately a debounce rather than a background thread, which is the
-    // obvious alternative and is not safe here: a Mode's highlight closure
-    // captures a shared Parser and IncrementalParseCache (Mode.cpp), so
-    // running it off-thread races the main thread's own call on that shared
-    // state -- the same shape as the dynamic-mode SIGSEGV this codebase
-    // already hit. A real background highlight would need its own Parser and
-    // Query instances, which is a bigger change than this buys.
+    // What changed (perf/parallel-highlighting-round-1 follow-up): once the
+    // debounce elapses, the whole-document highlight no longer runs as one
+    // synchronous call -- measured at ~20ms/keystroke-burst-end on a 190KiB
+    // injection-heavy markdown file (KEYBENCH), entirely attributable to
+    // this call, since BufferView's own highlight is viewport-windowed and
+    // this one structurally can't be. A background THREAD was the obvious
+    // fix and is still not safe: a Mode's highlight closure captures a
+    // shared Parser and IncrementalParseCache (Mode.cpp), so running it
+    // off-thread races the main thread's own call on that shared state --
+    // the same shape as the dynamic-mode SIGSEGV this codebase already hit.
+    // Instead, AdvanceHighlightSweep() slices the SAME whole-document call
+    // into small, main-thread, byte-windowed chunks (kHighlightSweepChunkBytes
+    // each) spread across several ticks (kHighlightSweepTickInterval apart) --
+    // still one shared Parser, still single-threaded, but no single tick
+    // blocks a frame. mode_.highlight() always parses the whole document
+    // regardless of window (only capture EMISSION is bounded), and
+    // IncrementalParseCache::Update is a cheap text-equality hit for every
+    // tick after the first, so re-windowing the same materialized text
+    // across ticks costs only the windowed query walk each time, not a
+    // repeat parse.
     static constexpr std::chrono::milliseconds kHighlightDebounce{250};
+
+    // Bytes of source text one sweep tick asks mode_.highlight() to cover.
+    //
+    // Measured (KEYBENCH, 190KiB injection-heavy markdown) across
+    // {1024, 2048, 4096, 8192, 16384}: max single-tick time did NOT scale
+    // down cleanly with chunk size the way byte-count chunking implies it
+    // should -- it plateaued around 8.7-9.7ms even at 1024 bytes, because
+    // markdown injects markdown_inline into every inline span, and cost
+    // here is driven by INJECTED-REGION COUNT clustered in a window, not
+    // byte count -- a short-paragraph-heavy stretch can pack many
+    // full sub-parses into even a small window. 4096 was the best of the
+    // measured set on both axes (lowest max tick AND lowest total, the
+    // latter because far fewer ticks means far fewer repeats of the fixed
+    // per-tick cost -- IncrementalParseCache::Update's own text-equality
+    // check is O(document) even on a cache hit). Still a large win over the
+    // one-shot call it replaced (~100ms single call -> ~9ms worst tick), but
+    // not the clean "smaller chunk -> smaller worst case" guarantee a purely
+    // byte-based scheme suggests; a region-count-bounded chunk (process at
+    // most N injected regions per tick) would bound this properly but needs
+    // HighlightFunction's interface to expose region density, which it
+    // currently doesn't -- a real follow-up, not attempted here.
+    static constexpr std::size_t kHighlightSweepChunkBytes = 4096;
+
+    // Delay between sweep ticks when nothing else is already causing a
+    // repaint -- an idle editor otherwise never wakes up to advance it, the
+    // same reason the original debounce-completion callback existed.
+    static constexpr std::chrono::milliseconds kHighlightSweepTickInterval{8};
 
     // Tears down plane_ if present, idempotent. Called from the destructor
     // and from BufferView's toggle-minimap handler the instant
@@ -154,17 +192,48 @@ class Minimap : public Widget {
     bool OnEvent(const Event& event) override;
 
   private:
-    // Debounced whole-document highlighting -- see kHighlightDebounce.
-    // lastSpans_ is what gets painted; pending* tracks a content generation
-    // that has arrived but is not yet quiet enough to be worth re-running.
-    // mutable for the same reason every other cache here is: EnsurePlane is
-    // const and is where the raster (and now the highlight) is rebuilt.
+    // Debounced, chunked whole-document highlighting -- see
+    // kHighlightDebounce/kHighlightSweepChunkBytes and AdvanceHighlightSweep's
+    // own doc comment for the full design. lastSpans_ is what gets painted;
+    // pending* tracks a content generation that has arrived but is not yet
+    // quiet enough to be worth starting a sweep for. mutable for the same
+    // reason every other cache here is: EnsurePlane is const and is where
+    // the raster (and now the highlight) is rebuilt.
     mutable std::shared_ptr<const std::vector<editor::HighlightSpan>> lastSpans_;
     mutable std::size_t                                               lastSpansGeneration_ = 0;
     mutable std::string                                               lastSpansModeName_;
-    mutable std::size_t                                               pendingGeneration_ = 0;
-    mutable std::chrono::steady_clock::time_point                     pendingSince_;
-    mutable DeadlineTimer                                             highlightRefreshTimer_;
+
+    // Bumped every time lastSpans_ is reassigned (a sweep just committed) --
+    // the one EnsurePlane sameCache key (cacheSpansVersion_) that lets a
+    // completed background sweep force one more raster rebuild even when
+    // nothing else about that cache key changed, since a sweep can finish
+    // on a frame no scroll/resize/theme change happens to trigger one.
+    mutable std::size_t spansVersion_ = 0;
+
+    mutable std::size_t                           pendingGeneration_ = 0;
+    mutable std::chrono::steady_clock::time_point pendingSince_;
+    mutable DeadlineTimer                         highlightRefreshTimer_;
+
+    // In-flight sweep state: sweepText_ is materialized ONCE per sweep
+    // (mode_.highlight always wants the whole document regardless of
+    // window, so re-materializing per tick would reintroduce an
+    // O(document) buffer.Text() cost per tick) and re-windowed per tick;
+    // sweepSpans_ accumulates the result. Abandoned wholesale -- no partial
+    // commit -- if the buffer edits again before it finishes; the debounce
+    // above simply starts a fresh sweep once things go quiet again, exactly
+    // like the single-call version this replaced.
+    mutable bool                               sweepActive_     = false;
+    mutable std::size_t                        sweepGeneration_ = 0;
+    mutable std::string                        sweepText_;
+    mutable std::size_t                        sweepCursor_ = 0;
+    mutable std::vector<editor::HighlightSpan> sweepSpans_;
+
+    // (Re)drives the sweep above by one chunk. Called unconditionally at the
+    // top of EnsurePlane(), BEFORE the raster's own sameCache check -- an
+    // in-progress sweep must keep advancing on frames where nothing else
+    // about that cache changed, which sameCache alone would otherwise skip
+    // entirely (see cacheSpansVersion_'s own comment).
+    void AdvanceHighlightSweep(text::Buffer& buffer) const;
 
     // Line/column -> density-map walk: at whatever subRows x subCols
     // resolution the caller asks for, calls visit(subRow, subCol, offset,
@@ -260,6 +329,10 @@ class Minimap : public Widget {
 
     mutable text::Buffer* cacheBuffer_            = nullptr;
     mutable std::size_t   cacheContentGeneration_ = 0;
+    // See spansVersion_'s own comment -- deliberately its own key, distinct
+    // from cacheContentGeneration_, since a sweep can commit several ticks
+    // after the generation that started it was already stamped here.
+    mutable std::size_t   cacheSpansVersion_      = static_cast<std::size_t>(-1);
     mutable int           cacheHeight_            = -1;
     mutable int           cacheWidth_             = -1;
     mutable double        cacheCharsPerDot_       = -1.0;

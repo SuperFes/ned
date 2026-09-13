@@ -1071,17 +1071,23 @@ class Manager {
     // byteOffset -- empty if never requested, not yet answered, or the
     // server has no hints for the last-requested range at all.
     //
-    // Also empty once `buffer` has been edited since these were resolved.
-    // A hint is virtual text that occupies real columns before the byte it
-    // annotates, so a stale offset does not render a hint slightly out of
-    // place -- it renders it *inside* whatever token now sits at that
-    // offset, which is how a keystroke could visibly garble lines far below
-    // the edit (live-reported 2026-09-10: "writfd:ten", "static_casbuf:t").
-    // The receipt path's own generation check cannot cover this: it drops a
-    // response computed against a superseded document, which during
-    // continuous typing is *every* response, leaving the previously applied
-    // set on screen and drifting further with each character. Hints
-    // reappear on the first response that lands against a settled buffer.
+    // perf/parallel-highlighting-round-1 follow-up (region-scoped
+    // relocation): relocated on read across edits, not suppressed
+    // wholesale -- CodeLensSpans' own lazy-catch-up shape, and for the same
+    // reason: blanking every hint in the buffer on every keystroke (the
+    // original fix here) traded one flicker for a louder one, reflowing
+    // every annotated line's visible text on every edit anywhere in the
+    // buffer. A hint is virtual text that occupies real columns before the
+    // byte it annotates, though, which code lenses are not -- a stale
+    // offset does not merely misplace it, it renders *inside* whatever
+    // token now sits there, which is how a keystroke could visibly garble
+    // lines far below the edit (live-reported 2026-09-10: "writfd:ten",
+    // "static_casbuf:t"). So relocation here is asymmetric: a hint whose
+    // byte offset falls outside the single changed region is unaffected
+    // content and safe to carry forward, shifted by the edit's own length
+    // delta (RemapInlayHintSpans); one whose offset falls *inside* it was
+    // anchored to text the edit just rewrote and is dropped outright rather
+    // than clamped, since clamping is exactly the garbling case above.
     [[nodiscard]] const std::vector<ResolvedInlayHint>& InlayHintSpans(const text::Buffer& buffer) const;
 
     // codeLens follow-up. One applied lens, already resolved to byte
@@ -1776,17 +1782,32 @@ class Manager {
     // stop asking" set pullDiagnosticsUnsupported_ already establishes.
     // All four erased together in NotifyBufferClosed (unsupported_ instead
     // cleared in ClientDisconnected, same as the others of its kind).
+    //
+    // region-scoped-relocation follow-up: spans_/spansGeneration_ (plus the
+    // new spansContent_ below) are now mutable and CodeLensSpans-shaped --
+    // spans_ carries a mix of freshly-requested and lazily-relocated
+    // entries rather than being wholesale-replaced or wholesale-blanked.
+    // spansContent_ is the document spans_ is currently valid against (what
+    // the next relocation diffs from); spansGeneration_ stays the cheap
+    // did-it-change gate so a same-generation read is a pure cache hit.
     std::unordered_map<text::Buffer*, std::tuple<std::size_t, std::size_t, std::size_t>> inlayHintsRequestedRange_;
     std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintsRequestCounter_;
-    std::unordered_map<text::Buffer*, std::vector<ResolvedInlayHint>>                    inlayHintSpans_;
-    // The content generation inlayHintSpans_ above was resolved against.
-    // Unlike every other *Generation_ map here (which dedupe *requests*),
-    // this one guards the *reads*: a hint inserts real columns into a line,
-    // so one still carrying a superseded offset does not merely sit a
-    // character off -- it lands mid-token and garbles the text around it.
-    // See InlayHintSpans.
-    std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintSpansGeneration_;
-    std::unordered_set<std::string>                                                      inlayHintsUnsupported_;
+    mutable std::unordered_map<text::Buffer*, std::vector<ResolvedInlayHint>>            inlayHintSpans_;
+    mutable std::unordered_map<text::Buffer*, std::shared_ptr<const text::ITextStorage>> inlayHintSpansContent_;
+    // The content generation inlayHintSpans_ above was resolved against --
+    // see InlayHintSpans and RemapInlayHintSpans for how a mismatch here no
+    // longer means "blank it," just "relocate it first."
+    mutable std::unordered_map<text::Buffer*, std::size_t> inlayHintSpansGeneration_;
+    std::unordered_set<std::string>                        inlayHintsUnsupported_;
+
+    // Carries a resolved inlay-hint set from the document it was resolved
+    // against onto a newer one -- shared by the receipt path (request-time
+    // document -> live) and by InlayHintSpans' own lazy catch-up
+    // (last-known document -> live). See InlayHintSpans' own doc comment
+    // for why this drops a hint inside the changed region instead of
+    // clamping it the way RemapCodeLensSpans does.
+    static void RemapInlayHintSpans(std::vector<ResolvedInlayHint>& hints, const text::ITextStorage& from,
+                                    const text::ITextStorage& to);
 
     // codeLens follow-up. requestedGeneration_ is the same
     // dedup-by-content-generation gate semanticTokensRequestedGeneration_

@@ -4100,6 +4100,123 @@ TEST_CASE("RequestInlayHints sends the viewport range and applies byte-resolved,
     REQUIRE(hints[1].byteOffset == 9);
 }
 
+// region-scoped-relocation follow-up: an edit anywhere in the buffer used
+// to blank every applied inlay hint (a global content-generation gate),
+// which is exactly the "annotations vanish on every keystroke" complaint --
+// InlayHintSpans now relocates a hint outside the edited region instead,
+// the same CodeLensSpans-shaped lazy catch-up on read.
+TEST_CASE("InlayHintSpans relocates hints outside the edited region instead of blanking the whole set", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-relocate-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("ab = 1;\ncd = 2;\n"); // line0 = 8 bytes [0,8), line1 starts at byte 8
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestInlayHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    const auto        response =
+        Json{{"jsonrpc", "2.0"},
+             {"id", RequestIdFromFrame(raw)},
+             {"result", Json::array({{{"position", {{"line", 0}, {"character", 2}}}, {"label", ": int"}},     // after "ab", byte 2
+                                     {{"position", {{"line", 1}, {"character", 2}}}, {"label", ": int"}}})}}; // after "cd", byte 10
+    client->DispatchFrame(response.dump());
+    REQUIRE(manager.InlayHintSpans(buffer).size() == 2);
+
+    // Insert a whole new line between the two hints (at byte 8, the start of
+    // line1) -- touches neither hint's own token. The line0 hint sits before
+    // the insertion point and must not move; the line1 hint sits after it
+    // and must shift by the inserted length, not vanish.
+    buffer.SetPoint(8);
+    buffer.InsertAtPoint("// note\n"); // 8 bytes inserted
+
+    const std::vector<Manager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
+    REQUIRE(hints.size() == 2);
+    REQUIRE(hints[0].byteOffset == 2);  // unmoved: strictly before the insertion point
+    REQUIRE(hints[1].byteOffset == 18); // 10 + 8: shifted by the insert's own length
+}
+
+// The complementary case: a hint anchored INSIDE the edited region can't be
+// trusted to relocate (its own token is what the edit rewrote), so it's
+// dropped -- never clamped to the edit point, which for a hint (unlike a
+// code lens) would render it inside whatever token now sits there.
+TEST_CASE("InlayHintSpans drops a hint anchored inside the edited region instead of clamping it", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-drop-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("ab = 1;\ncd = 2;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    manager.RequestInlayHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    const auto        response =
+        Json{{"jsonrpc", "2.0"},
+             {"id", RequestIdFromFrame(raw)},
+             {"result", Json::array({{{"position", {{"line", 0}, {"character", 2}}}, {"label", ": int"}},     // byte 2
+                                     {{"position", {{"line", 1}, {"character", 2}}}, {"label", ": int"}}})}}; // byte 10
+    client->DispatchFrame(response.dump());
+    REQUIRE(manager.InlayHintSpans(buffer).size() == 2);
+
+    // Delete "ab " (bytes [0,3)) -- strictly contains byte 2, the line0
+    // hint's own anchor.
+    buffer.SetPoint(0);
+    buffer.DeleteRange(0, 3);
+
+    const std::vector<Manager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
+    REQUIRE(hints.size() == 1);        // the line0 hint is gone, not garbled
+    REQUIRE(hints[0].byteOffset == 7); // 10 - 3: the surviving hint still relocates correctly
+}
+
+// The receipt-path half of the same fix: a response can land after the
+// buffer moved on from what was requested (SyncBuffer/RequestInlayHints are
+// not re-invoked here, so the request-id latch alone would let this
+// through) -- it must resolve against the document it was actually
+// requested against, then relocate onto live content, not get discarded or
+// misapplied against the wrong document.
+TEST_CASE("A response landing after the buffer was edited relocates onto live content", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-race-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("ab = 1;\ncd = 2;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    manager.RequestInlayHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead); // request sent against the pre-edit document
+
+    // The buffer moves on before the server answers.
+    buffer.SetPoint(8);
+    buffer.InsertAtPoint("// note\n");
+
+    const auto response =
+        Json{{"jsonrpc", "2.0"},
+             {"id", RequestIdFromFrame(raw)},
+             {"result", Json::array({{{"position", {{"line", 0}, {"character", 2}}}, {"label", ": int"}},     // byte 2 against the OLD document
+                                     {{"position", {{"line", 1}, {"character", 2}}}, {"label", ": int"}}})}}; // byte 10 against the OLD document
+    client->DispatchFrame(response.dump());
+
+    const std::vector<Manager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
+    REQUIRE(hints.size() == 2);
+    REQUIRE(hints[0].byteOffset == 2);  // before the insertion point, unmoved
+    REQUIRE(hints[1].byteOffset == 18); // after it, shifted by the inserted length
+}
+
 TEST_CASE("RequestInlayHints does not resend for the same (content, viewport), but does resend for a different "
           "viewport",
           "[Lsp]") {

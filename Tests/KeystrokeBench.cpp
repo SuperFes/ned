@@ -4,6 +4,7 @@
 #include <sstream>
 #include <string>
 
+#include "Editor/ChunkedHighlight.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/HighlightCache.h"
@@ -240,6 +241,38 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
                             ? mdMode.symbolKindInWindow(text, ned::editor::HighlightWindow{.startByte = 0, .endByte = 16384}).size()
                             : 0U);
         });
+
+        // perf/parallel-highlighting-round-1 follow-up: the whole point of
+        // Minimap's chunked sweep (UI/Minimap.cpp's AdvanceHighlightSweep,
+        // Editor/ChunkedHighlight.h) is that no single tick should cost
+        // anywhere near what the one-shot call above does -- chunking
+        // redistributes the SAME total work across many small calls, it
+        // does not reduce it, so what actually matters is the max single
+        // tick, not the sum. Measured here directly (no EventLoop/real
+        // timer involved -- HighlightSweepChunk is pure) at the real
+        // production chunk size.
+        {
+            const std::string text = md.Text();
+            for (const std::size_t chunkBytes : {1024UL, 2048UL, 4096UL, 8192UL, 16384UL}) {
+                std::vector<ned::editor::HighlightSpan> swept;
+                std::size_t                             cursor = 0;
+                std::size_t                             ticks  = 0;
+                std::chrono::microseconds               maxTick{0};
+                const auto                              sweepBegin = std::chrono::steady_clock::now();
+                while (cursor < text.size()) {
+                    const auto tickBegin = std::chrono::steady_clock::now();
+                    cursor               = ned::editor::HighlightSweepChunk(mdMode.highlight, text, cursor, chunkBytes, swept);
+                    const auto tickUs    = std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - tickBegin);
+                    maxTick = std::max(maxTick, tickUs);
+                    ++ticks;
+                }
+                const auto totalUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - sweepBegin);
+                WARN("  chunked sweep (" << chunkBytes << " B/chunk, " << ticks << " ticks): max tick "
+                                         << maxTick.count() << " us, total " << totalUs.count() << " us");
+            }
+        }
     }
 
     // How the cost scales with document size -- the practical question is

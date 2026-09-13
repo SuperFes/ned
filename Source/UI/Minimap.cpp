@@ -1,6 +1,6 @@
 #include "Minimap.h"
 
-#include "Editor/HighlightCache.h"
+#include "Editor/ChunkedHighlight.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -219,6 +219,81 @@ void Minimap::ForEachDensityDot(
     }
 }
 
+void Minimap::AdvanceHighlightSweep(text::Buffer& buffer) const {
+    if (!mode_.highlight) {
+        return;
+    }
+
+    const std::size_t generation = buffer.ContentGeneration();
+    const bool        firstPaint = !lastSpans_ || lastSpansModeName_ != mode_.name;
+
+    // Already caught up (lastSpans_ reflects this exact generation/mode) and
+    // no first-paint to chase -- nothing to do, the common per-frame case.
+    if (!firstPaint && generation == lastSpansGeneration_) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+
+    // A real content/mode change since lastSpans_ was committed: any
+    // in-flight sweep was targeting a now-stale generation, so abandon it
+    // rather than let it commit a result for text that's already gone.
+    if (firstPaint || sweepGeneration_ != generation) {
+        sweepActive_ = false;
+        sweepSpans_.clear();
+        sweepText_.clear();
+    }
+
+    if (pendingGeneration_ != generation) {
+        pendingGeneration_ = generation;
+        pendingSince_      = now;
+    }
+
+    if (!sweepActive_) {
+        // Nothing painted yet, or a mode switch: no point being stale about
+        // content that has never been shown at all -- start immediately
+        // rather than waiting out the debounce.
+        if (!firstPaint && now - pendingSince_ < kHighlightDebounce) {
+            if (eventLoop_ != nullptr) {
+                // Still quiet-waiting -- come back once the burst is over,
+                // exactly like the single-call version this replaced.
+                highlightRefreshTimer_.Arm(*eventLoop_, kHighlightDebounce, [] {});
+            }
+            return;
+        }
+
+        // Materialize the text ONCE for the whole sweep: mode_.highlight
+        // always parses the full document regardless of window (only
+        // capture emission is bounded), so re-materializing per tick would
+        // reintroduce an O(document) buffer.Text() cost on every tick.
+        sweepActive_     = true;
+        sweepGeneration_ = generation;
+        sweepText_       = buffer.Text();
+        sweepCursor_     = 0;
+        sweepSpans_.clear();
+    }
+
+    // See Editor/ChunkedHighlight.h for what this one call does and why
+    // it's pulled out as its own pure, tested function.
+    sweepCursor_ = editor::HighlightSweepChunk(mode_.highlight, sweepText_, sweepCursor_, kHighlightSweepChunkBytes, sweepSpans_);
+
+    if (sweepCursor_ >= sweepText_.size()) {
+        // Swept to the end with no intervening edit -- commit.
+        lastSpans_           = std::make_shared<const std::vector<editor::HighlightSpan>>(std::move(sweepSpans_));
+        lastSpansGeneration_ = sweepGeneration_;
+        lastSpansModeName_   = mode_.name;
+        ++spansVersion_;
+        sweepActive_ = false;
+        sweepText_.clear();
+    }
+    else if (eventLoop_ != nullptr) {
+        // More chunks remain -- guarantee a wake-up soon even if nothing
+        // else causes a repaint before the next chunk is due (an idle
+        // editor otherwise never wakes up to advance it).
+        highlightRefreshTimer_.Arm(*eventLoop_, kHighlightSweepTickInterval, [] {});
+    }
+}
+
 void Minimap::EnsurePlane() const {
     const int height = size().height;
     const int width  = editor::MinimapWidth();
@@ -245,6 +320,14 @@ void Minimap::EnsurePlane() const {
 
     text::Buffer& buffer = activeBuffer_.Get();
 
+    // Must run before the sameCache check below: a sweep tick can complete
+    // (bumping spansVersion_) on a frame where nothing else about the
+    // raster's own cache key changed at all, and an in-progress sweep needs
+    // a chance to advance on every frame this is called, not just frames
+    // sameCache would already rebuild for. See AdvanceHighlightSweep's own
+    // doc comment (Minimap.h) for the whole design.
+    AdvanceHighlightSweep(buffer);
+
     // huge-file-minimap-sampling follow-up: this used to bail out (blank
     // strip, ReleasePlane) for any huge buffer outright -- a real,
     // live-reproduced ~48-second hang otherwise (ForEachDensityDot walking
@@ -257,6 +340,7 @@ void Minimap::EnsurePlane() const {
 
     const bool sameCache =
         plane_ != nullptr && cacheBuffer_ == &buffer && cacheContentGeneration_ == buffer.ContentGeneration() &&
+        cacheSpansVersion_ == spansVersion_ &&
         cacheHeight_ == height && cacheWidth_ == width && cacheCharsPerDot_ == editor::MinimapCharsPerDot() &&
         cacheScrollableLength_ == scrollable_length && cachePosition_ == position &&
         cacheItemVisualLength_ == item_visual_length && cachedTheme_ == theme_ &&
@@ -275,6 +359,7 @@ void Minimap::EnsurePlane() const {
 
     cacheBuffer_            = &buffer;
     cacheContentGeneration_ = buffer.ContentGeneration();
+    cacheSpansVersion_      = spansVersion_;
     cacheHeight_            = height;
     cacheWidth_             = width;
     cacheCharsPerDot_       = editor::MinimapCharsPerDot();
@@ -446,44 +531,12 @@ void Minimap::EnsurePlane() const {
     }
 
     std::vector<IndexedSpan> sortedSpans;
-    if (mode_.highlight) {
-        // per-buffer-highlight-cache follow-up: this call used to run
-        // unconditionally every time the raster cache above missed --
-        // which includes every scroll tick, not just a buffer switch --
-        // even though its result only actually changes when buffer's
-        // content/mode does. See highlightCacheByBuffer_'s own doc comment
-        // in Minimap.h.
-        // Editor/HighlightCache.h now owns this, shared with BufferView.
-        // Both used to keep their own cache, keyed identically and filled by
-        // the same whole-document mode_.highlight call -- so with the minimap
-        // on (the default) a keystroke paid for it twice. Measured on a
-        // 125 KiB markdown buffer: 67ms once, 134ms twice.
-        // Debounced: the whole-document highlight is the expensive one, and a
-        // zoomed-out overview does not have to be current mid-keystroke. See
-        // kHighlightDebounce in Minimap.h for why this is a debounce and not
-        // a background thread.
-        const std::size_t generation = buffer.ContentGeneration();
-        const auto        now        = std::chrono::steady_clock::now();
-        if (!lastSpans_ || lastSpansGeneration_ != generation || lastSpansModeName_ != mode_.name) {
-            if (pendingGeneration_ != generation) {
-                pendingGeneration_ = generation;
-                pendingSince_      = now;
-            }
-            // Nothing painted yet, or a mode switch: no point being stale
-            // about content that has never been shown at all.
-            const bool firstPaint = !lastSpans_ || lastSpansModeName_ != mode_.name;
-            if (firstPaint || now - pendingSince_ >= kHighlightDebounce) {
-                lastSpans_           = editor::CachedHighlightSpans(buffer, mode_);
-                lastSpansGeneration_ = generation;
-                lastSpansModeName_   = mode_.name;
-            }
-            else if (eventLoop_ != nullptr) {
-                // Come back once the burst is over -- without this the
-                // minimap would stay stale until something else happened to
-                // repaint, since an idle editor does not repaint at all.
-                highlightRefreshTimer_.Arm(*eventLoop_, kHighlightDebounce, [] {});
-            }
-        }
+    if (mode_.highlight && lastSpans_) {
+        // AdvanceHighlightSweep() (called at the top of this function, see
+        // its own doc comment) owns everything about keeping lastSpans_
+        // current -- this just renders whatever it has settled on so far,
+        // which may still be one sweep behind the buffer's true current
+        // generation while a sweep is in flight.
         const std::vector<editor::HighlightSpan>* spans = lastSpans_.get();
         sortedSpans.reserve(spans->size());
         for (std::size_t i = 0; i < spans->size(); ++i) {
