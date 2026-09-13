@@ -1249,6 +1249,7 @@ struct QueryMatcher::Impl {
                     .name      = captureNames[binding.captureId],
                     .startByte = parse::NodeStartByte(binding.node),
                     .endByte   = parse::NodeEndByte(binding.node),
+                    .type      = parse::NodeType(binding.node),
                 });
             }
             match.setDirectives       = SetDirectives(patternIndex, bindings);
