@@ -6,6 +6,21 @@ namespace ned::editor::treesitter {
 
 namespace {
 
+    // Shared by EvaluatePredicateCall and PredicateReadsOutsideSubtree so the
+    // two can never disagree about which call a name/arity pair denotes.
+    struct ParsedPredicateName {
+        std::string_view baseName;
+        bool             negated = false;
+    };
+
+    ParsedPredicateName ParsePredicateName(std::string_view name) {
+        if (!name.empty() && (name.front() == '#' || name.front() == ':')) {
+            name.remove_prefix(1);
+        }
+        const bool negated = name.starts_with("not-");
+        return ParsedPredicateName{.baseName = negated ? name.substr(4) : name, .negated = negated};
+    }
+
     bool NodeHasAncestorOfType(parse::RedNode node, std::string_view typeName, bool immediateOnly) {
         for (parse::RedNode current = parse::NodeParent(node); !parse::NodeIsNull(current); current = parse::NodeParent(current)) {
             if (parse::NodeType(current) == typeName) {
@@ -48,11 +63,7 @@ std::string TranslateLuaPatternClasses(std::string pattern) {
 
 bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOperand> operands,
                            std::unordered_map<std::string, std::regex>& regexCache) {
-    if (!name.empty() && (name.front() == '#' || name.front() == ':')) {
-        name.remove_prefix(1);
-    }
-    const bool             negated  = name.starts_with("not-");
-    const std::string_view baseName = negated ? name.substr(4) : name;
+    const auto [baseName, negated] = ParsePredicateName(name);
 
     if (baseName == "eq?") {
         if (operands.size() != 2) {
@@ -118,6 +129,12 @@ bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOpera
     }
 
     return true; // unrecognized predicate name (e.g. "set!") -- inert
+}
+
+bool PredicateReadsOutsideSubtree(std::string_view name, std::size_t operandCount) {
+    const auto [baseName, negated] = ParsePredicateName(name);
+    (void)negated; // reads-outside-subtree-ness doesn't depend on negation
+    return (baseName == "has-ancestor?" || baseName == "has-parent?") && operandCount == 2;
 }
 
 } // namespace ned::editor::treesitter
