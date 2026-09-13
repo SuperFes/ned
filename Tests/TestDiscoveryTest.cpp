@@ -305,3 +305,62 @@ TEST_CASE("PhpMode testDiscovery names a doubly-matched method exactly once", "[
     const auto        markers = mode.testDiscovery(text);
     CHECK(MarkerNames(markers) == std::vector<std::string>{"DoubleTest", "testBoth"});
 }
+
+namespace {
+
+std::vector<std::string> DescribeTestMarkers(const std::vector<TestMarker>& markers) {
+    std::vector<std::string> out;
+    out.reserve(markers.size());
+    for (const TestMarker& marker : markers) {
+        out.push_back("[" + std::to_string(marker.startByte) + "," + std::to_string(marker.endByte) + ") " + marker.name);
+    }
+    return out;
+}
+
+} // namespace
+
+// per-subtree-fact-memoization follow-up: the property Mode.cpp's testDiscovery
+// closure's own MatchCache wiring exists for -- calling the SAME Mode
+// instance's testDiscovery repeatedly across an evolving sequence of edits
+// (sharing one MatchCache under the hood) must report byte-for-byte the same
+// thing a completely FRESH Mode would report on that exact text, at every
+// step, not just the final one. Uses JS's describe/it nesting so the
+// smallest-enclosing-definition correlation is actually exercised, not just
+// the flat capture collection.
+TEST_CASE("JavaScriptMode testDiscovery stays correct across a sequence of incremental edits", "[TestRun]") {
+    const auto mode = JavaScriptMode();
+    REQUIRE(static_cast<bool>(mode.testDiscovery));
+
+    const std::vector<std::string> steps = {
+        "describe('math', () => {\n"
+        "  it('adds', () => {});\n"
+        "});\n",
+        "describe('math', () => {\n"
+        "  it('adds', () => {});\n"
+        "  it('subtracts', () => {});\n"
+        "});\n",
+        "describe('math', () => {\n"
+        "  it('adds', () => {});\n"
+        "  it('subtracts', () => {});\n"
+        "});\n"
+        "describe('strings', () => {\n"
+        "  it('concatenates', () => {});\n"
+        "});\n",
+        // Renames 'adds' -> 'sums', a small localized edit deep inside
+        // otherwise-unaffected content on both sides.
+        "describe('math', () => {\n"
+        "  it('sums', () => {});\n"
+        "  it('subtracts', () => {});\n"
+        "});\n"
+        "describe('strings', () => {\n"
+        "  it('concatenates', () => {});\n"
+        "});\n",
+    };
+
+    for (std::size_t i = 0; i < steps.size(); ++i) {
+        INFO("step " << i << ": " << steps[i]);
+        const auto incremental = mode.testDiscovery(steps[i]);
+        const auto fresh       = JavaScriptMode().testDiscovery(steps[i]);
+        REQUIRE(DescribeTestMarkers(incremental) == DescribeTestMarkers(fresh));
+    }
+}
