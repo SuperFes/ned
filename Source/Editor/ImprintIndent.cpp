@@ -35,7 +35,7 @@ namespace {
             const treesitter::Node child = node.Child(i);
             if (!child.IsNull() && !child.IsNamed() && child.StartByte() == pair.closeStart &&
                 child.EndByte() == pair.closeEnd) {
-                return ImprintDedent{child.StartByte(), child.EndByte(), child.Id()};
+                return ImprintDedent{child.StartByte(), child.EndByte(), child.Type()};
             }
         }
         return std::nullopt;
@@ -50,14 +50,16 @@ namespace {
             const DelimitedBody& body = entry->second;
             if (body.kind != DelimiterKind::Indent) {
                 if (const std::optional<DelimiterPair> pair = DelimitersOf(node, body)) {
-                    out.containers.push_back(ImprintContainer{node.Id(), pair->openEnd});
+                    out.containers.push_back(
+                        ImprintContainer{node.StartByte(), node.EndByte(), node.Type(), pair->openEnd});
                     if (const std::optional<ImprintDedent> closer = CloserOf(node, *pair)) {
                         out.dedents.push_back(*closer);
                     }
                 }
             }
             else if (!body.openerIsFirst && HasHeader(body, node.StartByte(), text)) {
-                out.containers.push_back(ImprintContainer{node.Id(), node.StartByte()});
+                out.containers.push_back(
+                    ImprintContainer{node.StartByte(), node.EndByte(), node.Type(), node.StartByte()});
             }
         }
         const std::size_t childCount = node.ChildCount();

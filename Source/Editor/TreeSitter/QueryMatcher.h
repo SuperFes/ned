@@ -61,6 +61,19 @@ struct QueryMatchCapture {
     std::string name;
     std::size_t startByte;
     std::size_t endByte;
+    // per-subtree-fact-memoization follow-up (indent-cache-by-byte-range
+    // follow-up): the captured node's own grammar type name (parse::NodeType
+    // -- a pointer into tree-sitter's static string table, valid for the
+    // process lifetime). Unlike QueryCapture::nodeId, this survives being
+    // carried across MatchCache's byte-shifted reuse (no live node behind a
+    // shifted capture at all) while still disambiguating two DIFFERENT nodes
+    // that happen to share one byte range -- the exact case Node::Id()'s own
+    // doc comment names (tree-sitter-python's "block" coinciding with its
+    // sole statement): the two always have different grammar types, so
+    // (startByte, endByte, type) together identify a capture the same way
+    // (startByte, endByte, nodeId) would within one generation, but remain
+    // meaningful across one.
+    std::string_view type;
 };
 
 // One matched pattern instance, with its captures kept together (unlike
