@@ -1659,22 +1659,22 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedRegisterLanguage>(
         "ned", "register-language",
         "Register a language from a directory holding its language.janet -- the exact layout ned's own bundled "
-        "languages use (Source/Languages/<name>/), so everything a definition can say works: extensions and "
+        "languages use (Source/Languages/`<name>`/), so everything a definition can say works: extensions and "
         "filenames (claimed automatically, no separate set-mode-for-extension call needed), comment syntax, "
-        "keymap, query files discovered beside it as <kind>.janet with an upstream/ subdirectory checked first, "
+        "keymap, query files discovered beside it as `<kind>`.janet with an upstream/ subdirectory checked first, "
         "escapes, LSP root markers, import resolution, injection aliases, snippets. The directory's basename is "
-        "the language name and its mode is named <name>-mode; a registered name shadows a bundled one, so "
+        "the language name and its mode is named `<name>`-mode; a registered name shadows a bundled one, so "
         "redefining a bundled language is expected use, as is re-registering. Two keys exist for exactly this "
-        "path: :grammar-library names a shared library exporting tree_sitter_<grammar> to dlopen (omit it to use "
+        "path: :grammar-library names a shared library exporting tree_sitter_`<grammar>` to dlopen (omit it to use "
         "a bundled grammar), and :queries-dir names a foreign tree-sitter-layout directory (e.g. "
-        "/usr/share/tree-sitter/queries/<lang>) scanned per kind as <kind>.janet or <kind>.scm for whatever "
+        "/usr/share/tree-sitter/queries/`<lang>`) scanned per kind as `<kind>`.janet or `<kind>`.scm for whatever "
         "discovery didn't find. Throws with a file:line message on a malformed definition. Directories under "
         "$XDG_CONFIG_HOME/ned/languages/ and a trusted project's .ned/languages/ load automatically at startup "
         "through this same path.");
     env.Register<&NedSetModeForExtension>(
         "ned", "set-mode-for-extension",
         "Map a file extension (with or without a leading '.') to a mode name -- either a registered language's "
-        "<name>-mode (ned/register-language), or one of ned's own built-in mode names (e.g. \"php-mode\", "
+        "`<name>`-mode (ned/register-language), or one of ned's own built-in mode names (e.g. \"php-mode\", "
         "\"python-mode\"). "
         "Checked before ned's own built-in extension table, so this can override a bundled mapping too, not just add "
         "a new one.");
@@ -1709,7 +1709,7 @@ void InstallEditorBindings(Environment& env) {
         "subpackage (its own package.json/pyproject.toml/Cargo.toml/compile_commands.json, ...) get its own "
         "LSP root distinct from the outer repo's single .git. An empty markers list clears the override, "
         "reverting to the compiled-in default (most bundled languages carry one -- see each "
-        "Source/Languages/<name>/language.janet's :lsp-root-markers) rather than to no markers at all.");
+        "Source/Languages/`<name>`/language.janet's :lsp-root-markers) rather than to no markers at all.");
     env.Register<&NedSetDapAdapter>(
         "ned", "set-dap-adapter",
         "Set the command used to launch a language's DAP debug adapter: (language argv), e.g. (ned/set-dap-adapter "
