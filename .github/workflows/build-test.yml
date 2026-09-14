@@ -1,13 +1,16 @@
 name: Build & Test
 
-# Disabled for now -- switched from push/pull_request to manual-only so it
-# doesn't fire automatically. Flip back to the commented-out triggers below
-# to re-enable.
 on:
-  # push:
-  #   branches: [main]
-  # pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
   workflow_dispatch:
+
+env:
+  # Pinned to match Patches/notcurses/README.md -- bump both together, and
+  # run Patches/notcurses/regenerate.sh if the patches themselves change.
+  NOTCURSES_TAG: v3.0.17
 
 jobs:
   build-test:
@@ -26,10 +29,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Everything below is a system package/find_package/pkg-config lookup
+      # (CMake/Dependencies.cmake) rather than FetchContent -- see that
+      # file's own comments for why each one is resolved this way. Janet and
+      # Notcurses are the two exceptions still built from source: Janet
+      # isn't packaged for Ubuntu at all, and Notcurses needs an exact
+      # pinned tag plus ned's own three input-handling patches (see
+      # Patches/notcurses/README.md) that no distro's stock package carries.
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld pkg-config libunistring-dev libdeflate-dev
+          sudo apt-get install -y clang lld pkg-config libunistring-dev libdeflate-dev libncurses-dev \
+            libcli11-dev libre2-dev libpcre2-dev libvterm-dev libutf8proc-dev nlohmann-json3-dev catch2 \
+            libstdc++-14-dev
 
       # CMAKE_LINKER_TYPE (CMakePresets.json's "default" preset) needs CMake
       # >= 3.29; ubuntu-latest's preinstalled cmake isn't reliably that new.
@@ -37,10 +49,10 @@ jobs:
         run: pip install --upgrade "cmake>=3.29"
 
       # Janet is a system dependency (pkg_check_modules(Janet REQUIRED
-      # janet) in CMakeLists.txt), not FetchContent'd -- not packaged in
-      # Ubuntu's own apt repos, and pinned to the exact version this
-      # codebase's own documented Janet-build-specific landmines (see
-      # Source/Janet/Value.h/Environment.h) were verified against.
+      # janet) in CMakeLists.txt), not packaged for Ubuntu -- pinned to the
+      # exact version this codebase's own documented Janet-build-specific
+      # landmines (see Source/Janet/Value.h/Environment.h) were verified
+      # against.
       - name: Build and install Janet
         run: |
           git clone --depth 1 --branch v1.32.1 https://github.com/janet-lang/janet.git /tmp/janet
@@ -48,13 +60,40 @@ jobs:
           sudo make -C /tmp/janet install
           sudo ldconfig
 
-      # Keyed on CMakeLists.txt's own hash -- invalidates automatically
-      # whenever a pinned dependency version actually changes there.
-      - name: Cache FetchContent dependencies
+      # Keyed on the pinned tag plus the patches themselves -- invalidates
+      # automatically on either a version bump or a patch content change.
+      - name: Cache built Notcurses
+        id: notcurses-cache
         uses: actions/cache@v4
         with:
-          path: ${{ matrix.binary_dir }}/_deps
-          key: fetchcontent-${{ matrix.name }}-${{ hashFiles('CMakeLists.txt') }}
+          path: /tmp/notcurses-install
+          key: notcurses-${{ env.NOTCURSES_TAG }}-${{ hashFiles('Patches/notcurses/*.patch') }}
+
+      # System Notcurses per CMake/Dependencies.cmake's own comment: exact
+      # pinned tag (ABI-sensitive -- see that file's ncblitter_e note) with
+      # the three fixes from Patches/notcurses/ applied via git am, built
+      # with the same trim (no multimedia/doctest/pandoc/ffi extras) the
+      # in-tree FetchContent build used to apply. Installed to a throwaway
+      # prefix and copied into / (rather than a plain `make install`) so the
+      # cache step above can capture exactly what got installed.
+      - name: Build and install Notcurses
+        if: steps.notcurses-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone -q --branch "$NOTCURSES_TAG" --depth 50 https://github.com/dankamongmen/notcurses.git /tmp/notcurses
+          cd /tmp/notcurses
+          git config user.email ned-ci@localhost
+          git config user.name "ned CI"
+          for p in "$GITHUB_WORKSPACE"/Patches/notcurses/*.patch; do git am "$p"; done
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DUSE_MULTIMEDIA=none -DUSE_DOCTEST=OFF -DUSE_PANDOC=OFF -DUSE_DOXYGEN=OFF \
+            -DBUILD_EXECUTABLES=OFF -DBUILD_FFI_LIBRARY=OFF -DUSE_POC=OFF -DUSE_QRCODEGEN=OFF \
+            -DUSE_STATIC=OFF
+          cmake --build build -j"$(nproc)"
+          DESTDIR=/tmp/notcurses-install cmake --install build
+      - name: Install cached/built Notcurses
+        run: |
+          sudo cp -a /tmp/notcurses-install/usr/local/. /usr/local/
+          sudo ldconfig
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
