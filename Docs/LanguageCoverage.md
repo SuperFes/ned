@@ -48,7 +48,7 @@ Roughly 15, deliberately, because D2 means someone maintains LSP/DAP/formatter/
 test-runner config and keeps it working.
 
 **Already in-tree:** C, C++, Rust, Go, Python, JavaScript, TypeScript, TSX,
-Java, C#, PHP, Bash, Markdown, Org, Janet.
+Java, C#, PHP, Bash, Markdown, Org, Janet, SQL.
 
 Org and Janet are here for identity rather than popularity -- Janet is ned's
 extension language and Org is a D3 feature ned already owns outright. Markdown
@@ -139,10 +139,34 @@ tree-sitter's own query language (`.scm` -- which ned authors 79 of and
 currently edits without highlighting). All of these ride the existing injection
 engine (`Editor/Injection.h`) rather than needing a mode of their own.
 
-### SQL is its own problem, and the best possible demo
+### SQL: D0 core admitted 2026-09-13, dialect deltas deferred
 
-The user asked specifically about SQL dialects. **ned currently has no SQL at
-all**, and upstream is genuinely fragmented -- verified 2026-09-11:
+The user asked specifically about SQL dialects. **D0 core is admitted** --
+`DerekStride/tree-sitter-sql` v0.3.11 (245★, ABI 15, 188-LOC scanner, 412-case
+corpus across 31 files, 100% conformance clean). Highlighting is upstream's
+own `queries/highlights.scm`, adapted (`Source/Languages/sql/highlights.janet`,
+not vendored under `upstream/` -- one clause dropped: `parameter: [(literal)]?`
+used a quantifier-on-alternation, outside QueryMatcher's census-measured scope,
+same kotlin/cmake/diff precedent; the file says exactly what changed and why).
+Fold/indent come from the Tier 0 delimiter imprint alone (10 delimited bodies
+inferred -- `subquery`, `column_definitions`, `parenthesized_expression`, CTEs'
+`list`, ...), the same as json/css/toml/php: no indent query at all, since
+upstream's `queries/indents.scm` uses nvim-treesitter's `@indent.begin`/
+`@indent.branch`/`@indent.end` convention, not ned's own. No `tags.janet` (D1
+symbol gutter) yet -- upstream ships none, and authoring one is deferred, not
+in scope for this pass.
+
+**Packaging wrinkle worth knowing before ever bumping this grammar's version:**
+`DerekStride/tree-sitter-sql` doesn't commit generated `parser.c`/`grammar.json`
+to `main` or its tags -- only `grammar.js`/`scanner.c`. Generated output ships
+only as a GitHub Release asset or on a `gh-pages` branch. `CMakeLists.txt`
+fetches the release tarball via a URL (`ned_fetch_treesitter_release`, a new
+sibling of `ned_fetch_treesitter_source`) for `src/`, and separately fetches
+the ordinary git tag for `test/corpus` (which the tarball omits) -- two
+FetchContent declarations for one grammar, unlike every other admission here.
+
+**Per-dialect trait deltas remain the deferred half.** Upstream is genuinely
+fragmented here -- verified 2026-09-11:
 
 | Grammar | Last push | Note |
 |---|---|---|
@@ -164,8 +188,24 @@ Snowflake is a **better answer than anything upstream currently offers**, which
 makes SQL the strongest flagship demo of the architecture rather than just
 another line item.
 
-Recommendation: adopt DerekStride as the core, and treat dialects as the first
-real test of rule inheritance in Phase 2.
+DerekStride is now admitted as that core (see above); dialects as the first
+real test of rule inheritance remain a follow-up, not done here.
+
+#### Schema-aware completion (connect-to-the-database intelligence) is a separate question from the grammar
+
+Worth keeping apart from the above, because it sounds like a big bespoke (D3)
+feature and might not be one. Real SQL language servers already exist that
+connect to a live database and complete against its actual schema --
+`lighttiger2505/sqls` and `joe-re/sql-language-server` both do this, config-
+driven (a connection string/credentials file, not a bespoke protocol). If one
+of those proves solid, wiring it up is `ned/set-lsp-command "sql" [...]` plus a
+connection-config doc entry -- ordinary **D2**, the same shape as everything in
+`Docs/LanguageSetup.md`, not a new subsystem. It only becomes a real feature
+(D3-scale: credential storage, a connection-picker UI, per-buffer dialect-to-
+connection mapping) if evaluating those servers finds the LSP-only path
+insufficient. **Recorded as a maybe, unparked by**: someone actually trying one
+of those two servers against a real database and reporting back what's missing
+that only bespoke C++ could fix.
 
 ## Tier D — Maybe later (needs more than a grammar)
 

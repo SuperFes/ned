@@ -363,16 +363,25 @@ about whether a language works at all** — D0 falls out of Tier 0 inference for
 answer to a request for an obscure DSL becomes "yes, next release".
 
 The concrete near-term grammar and config items this implies — Tier A's D2 gap, Lua and
-CMake, diff, `.scm`, and SQL as the acceptance test for Tier 1 rule inheritance — are
-**independent of the engine work** and are tracked under "Release 0.6" at the top of this
-file rather than duplicated here. SQL is the one worth restating, because it is the
-strongest demo of the architecture rather than a line item: ned has none today, and
-upstream is four grammars for one language family precisely because tree-sitter cannot
-express "T-SQL is ANSI SQL plus these deltas", so every dialect forks the whole grammar and
-drifts. `DerekStride/tree-sitter-sql` (2026-09-10, 245★) as the core plus per-dialect trait
-deltas would be better than anything upstream currently offers. Graveyarded en route:
-`dhcmrlchtdj/tree-sitter-sqlite` (archived 2023), `m-novikov/tree-sitter-sql` (stale
-2024-03).
+CMake, diff, `.scm`, and SQL — are **independent of the engine work** and are tracked
+under "Release 0.6" at the top of this file rather than duplicated here.
+
+- [x] **SQL, D0 core — admitted 2026-09-13.** `DerekStride/tree-sitter-sql` v0.3.11
+      (245★, ABI 15, 412-case corpus, 100% conformance-clean); highlighting adapted from
+      upstream (`Source/Languages/sql/highlights.janet`, one clause dropped for
+      QueryMatcher's census scope — see `Docs/LanguageCoverage.md`); fold/indent free from
+      the Tier 0 imprint (10 delimited bodies). Packaging wrinkle recorded there too: this
+      repo doesn't commit generated `parser.c`/`grammar.json` to `main`/tags, only to a
+      release asset — `CMakeLists.txt` gained `ned_fetch_treesitter_release` for it.
+      **Per-dialect trait deltas remain open** — still the strongest demo of the
+      architecture rather than a line item, since upstream is four grammars for one
+      language family precisely because tree-sitter cannot express "T-SQL is ANSI SQL
+      plus these deltas", so every dialect forks the whole grammar and drifts. One core
+      plus per-dialect trait deltas for Postgres/MySQL/SQLite/T-SQL/PL-pgSQL/BigQuery/
+      Snowflake would be better than anything upstream currently offers — deferred by
+      deliberate scope choice, not difficulty. Graveyarded en route:
+      `dhcmrlchtdj/tree-sitter-sqlite` (archived 2023), `m-novikov/tree-sitter-sql` (stale
+      2024-03).
 
 - [ ] Admission policy worth knowing before adding any grammar: **prefer
       `tree-sitter-grammars/*` over the original personal repo, and never use star count as
@@ -1316,7 +1325,11 @@ for closed-issue history.
   using either construct hits the same wall. Fix shape: the field-prefix form is
   small (a root-level field constraint checked against FieldOfNode); the nested
   group is a sequence-of-siblings child item and needs its own enumeration pins,
-  written against these two files as the test cases.
+  written against these two files as the test cases. A third instance landed with
+  SQL's admission (2026-09-13): a quantifier on a single-element alternation
+  (`tree-sitter-sql`'s highlights.scm, `parameter: [(literal)]?` on its cast
+  pattern) — same "compiles-fail loudly, ned-adapts the one clause" resolution,
+  in `Source/Languages/sql/highlights.janet`'s own header comment.
 
 - **Variadic `has-parent?` predicates are silently inert.** Found by the Phase 4a M0
   census (2026-09-12): `QueryPredicates.cpp`'s evaluator handles the has-parent/has-ancestor family

@@ -38,6 +38,7 @@ const TSLanguage* tree_sitter_kotlin(void);
 const TSLanguage* tree_sitter_lua(void);
 const TSLanguage* tree_sitter_cmake(void);
 const TSLanguage* tree_sitter_diff(void);
+const TSLanguage* tree_sitter_sql(void);
 }
 
 namespace ned::editor::treesitter {
@@ -165,6 +166,9 @@ std::optional<Language> LanguageByName(std::string_view name) {
     }
     if (name == "diff") {
         return Language(tree_sitter_diff());
+    }
+    if (name == "sql") {
+        return Language(tree_sitter_sql());
     }
     return std::nullopt;
 }

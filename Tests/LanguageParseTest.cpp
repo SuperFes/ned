@@ -170,7 +170,7 @@ TEST_CASE("The definitions carry the facts the old C++ tables held", "[LanguageP
     REQUIRE(rootMarkers == kRootMarkerLanguages);
     REQUIRE(importResolution == kImportResolutionLanguages);
     REQUIRE(aliases == kAliases);
-    REQUIRE(snippetCount == 93); // release-0.6 batch: +6 lua, +4 cmake
+    REQUIRE(snippetCount == 99); // release-0.6 batch: +6 lua, +4 cmake; +6 sql
 
     REQUIRE(BundledLanguage("csharp")->lspRootMarkers == std::vector<std::string>{"global.json", "*.csproj", "*.sln"});
     REQUIRE(BundledLanguage("rust")->importResolution->indexBasenames == std::vector<std::string>{"mod"});
