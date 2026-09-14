@@ -65,6 +65,19 @@ class TabBar : public Widget {
     // to safely discard a modified buffer's changes on its own.
     void SetOnCloseRequest(std::function<void(text::Buffer&)> handler);
 
+    // tabbar-focus-capture follow-up: called before a left-click's switch or
+    // close-icon action is applied, so a click on the tab bar always both
+    // acts AND moves keyboard focus onto the editor side -- previously a
+    // click here while a dock panel (ProjectSidebar/VcsPanel) held focus
+    // silently no-op'd for a close (WindowManager::RequestCloseBuffer routes
+    // through FocusedPane(), which is null while no pane has focus) and
+    // silently retargeted a switch onto Leaves().front() rather than
+    // whatever pane the user actually meant (FocusedActiveBuffer()'s own
+    // defensive fallback). Unset (the default) means neither is fixed --
+    // every pre-existing construction site and test. main.cpp wires this to
+    // WindowManager::TakeFocus.
+    void SetOnRequestFocus(std::function<void()> handler);
+
     // Tab-reorder follow-up: called with a drag-reordered buffer and the
     // tab index it should move to. Unset (the default) means dragging a tab
     // is a no-op -- TabBar holds the BufferList by const reference and
@@ -129,6 +142,7 @@ class TabBar : public Widget {
     std::function<void(text::Buffer&, std::size_t)> onReorder_;            // see SetOnReorder
     std::function<bool()>                           focusProvider_;        // see SetFocusProvider
     std::function<void(text::Buffer&, Point)>       onContextMenuRequest_; // see SetOnContextMenuRequest
+    std::function<void()>                           onRequestFocus_;       // see SetOnRequestFocus
 };
 
 } // namespace ned::ui
