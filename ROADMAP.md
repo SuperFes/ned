@@ -116,11 +116,13 @@ would make the number mean nothing.
       `Source/Languages/<name>/<kind>.janet`, which janet-mode already highlights. The
       residual case is a foreign `:queries-dir` (`/usr/share/tree-sitter/queries/<lang>`),
       read-only and rarely opened in ned; keep only if that ever itches.
-- [ ] **Stability gate: don't ship a minor bump with a known-red preset.** `sanitize -j8`
-      has one reproducible `[Performance]` failure. The fix named in the watch list below is
-      to gate the budgets on the build being optimised (`NDEBUG`) rather than loosen them,
-      since loosening gives up the regression signal the tests exist for. Close it, or
-      downgrade it to explicitly-deferred with that reasoning recorded.
+- [x] **Stability gate: don't ship a minor bump with a known-red preset.** Fixed
+      2026-09-08 (commit `14f59fa`) — `[Performance]` budgets scale on `NDEBUG` rather
+      than assuming sanitizer overhead. Re-verified 2026-09-13: `default` preset
+      `ctest -j8` 4427/4427 clean; `sanitize -j8` clean except transient perf-budget
+      misses under genuine machine load, which pass individually every time (the
+      accepted "sanitize -j8 under load" class in the watch list below, not a
+      regression).
 
 **1.0, for context, since branching starts near it.** For a scriptable editor 1.0 is a
 promise about the *Janet surface*, not about features: 160 `Register<>` bindings and 275
@@ -2123,20 +2125,29 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
-- **BackgroundActivity/ModeLine tests leak state under `--order rand` on the sanitize
-  build.** Found 2026-09-12 while gating the Phase 4a swap; reproduced on CLEAN main
-  (`git stash` + seed 1775314295: 1 failure pre-change, 2 on the branch — different
-  shuffles, same family), declaration-order runs fully green both ways, and every
-  failing test passes in isolation. The signatures are unpaired
-  `Begin`/`EndBackgroundActivity` across test boundaries: `ActiveBackgroundActivities
-  returns entries sorted by name` sees 3 entries where it registered 2, a ModeLine
-  spinner test reads a count of `0xffffffffffffffff` (an End without a Begin), and
-  `ChromeSurfaceTest.cpp:592`'s sweep-band test inherits a stray live activity.
-  Sanitizer slowness widens whatever async completion window lets a prior test's
-  activity outlive its case. Fix shape: find the test whose background work
-  (LSP-flavored, most likely) unregisters after its case returns, and make its teardown
-  join; or give the registry a test-only reset the fixture calls, the
-  JanetTestSupport-restore precedent.
+- ~~**BackgroundActivity/ModeLine tests leak state under `--order rand`.**~~ —
+  *root-caused and fixed 2026-09-13.* Found 2026-09-12 while gating the Phase 4a swap,
+  reproduced on clean main; declaration-order runs fully green both ways, and every
+  failing test passed in isolation, so it was cross-test global-state poisoning, not a
+  timing race. Confirmed broader than originally scoped: reproduced 3/4 of the time on
+  the plain **`default`** build too, not only `sanitize` (seeds 1775314295/1337/99999
+  all failed a mix of `BackgroundActivityTest.cpp`/`ModeLineTest.cpp`/
+  `ChromeSurfaceTest.cpp` cases), and a fourth surface turned up in
+  `LspClientTest.cpp` (`Client::SendRequest`'s own `BeginBackgroundActivity`). Root
+  cause: `ModeLineTest.cpp` calls `BeginBackgroundActivity`/`EndBackgroundActivity`
+  manually with a `REQUIRE` in between — when that `REQUIRE` throws (Catch2's normal
+  test-abort mechanism), the `End` call never runs, leaving `"LSP"` permanently active
+  in the process-wide registry for every test case that runs after it in the same
+  binary; that stray "LSP" is exactly what made the *next* `REQUIRE` fail too; hence a
+  moving, non-deterministic set of failures depending on run order. Fixed the second
+  way named above — `ResetBackgroundActivitiesForTesting()`
+  (`Source/Editor/BackgroundActivity.h`) plus a global Catch2 `EventListenerBase`
+  (`Tests/BackgroundActivityTest.cpp`'s `BackgroundActivityGlobalFixture`,
+  `JanetGlobalFixture`'s own precedent) that resets the registry after every test
+  case, closing the whole class regardless of which file triggers it rather than
+  requiring a local guard per file. Verified: all previously-failing seeds
+  (1775314295/1337/99999/42/7/12345) now pass `--order rand` cleanly, several times
+  over.
 
 - **Intermittent shutdown hang blocked on the LSP broker socket.** Found 2026-09-13
   during the Phase 4b live smoke runs: quitting ned a few seconds after opening a C++
@@ -2254,6 +2265,23 @@ behavioral limitation:
   here already follows. Five consecutive clean `-j8` runs after, against two failures in
   the six runs before. The general lesson for this list: a test that passes alone and fails
   in parallel is a *shared resource* question first and a timing question second.
+
+- ~~**`BufferHugeFileTest.cpp`'s save-RSS test SIGBUSes under ASan when two `ned_tests`
+  binaries run at once.**~~ — *found and fixed 2026-09-13, same lesson as the entry
+  above.* Hit live while verifying the `--order rand` fix above: ran `build/ned_tests`
+  and `build-sanitize`'s `ctest -j8` concurrently (an unusual but real workflow — two
+  build presets sharing one machine), and "Buffer::FromHugeFile SaveToFile does not
+  materialize the whole document" ASan-aborted with `AddressSanitizer: BUS ... in
+  StreamingSaveWriter::operator()` reading a `PieceTable` chunk mid-`ForEachChunk`.
+  Same root cause as the entry above, one level up: this test built its 220MB huge
+  file at the fixed path `/tmp/ned_buffer_huge_save_rss.txt`, held an `mmap` of it open
+  across several seconds of real I/O, and a second process independently
+  rewriting/truncating the same path underneath that mapping is exactly what turns
+  into a SIGBUS on the next read. Passed standalone and on immediate rerun every
+  time — the same "never reproduces alone" tell. Fixed by PID-qualifying the
+  filename (`ned_buffer_huge_save_rss_<pid>.txt`); re-verified clean, both presets,
+  `ctest -j8` run sequentially (not concurrently, to not reintroduce the exact
+  self-inflicted collision that found this).
 
 One documented behavioral limitation, not a flake:
 
