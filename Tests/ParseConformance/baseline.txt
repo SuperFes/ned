@@ -31,8 +31,9 @@ tree-sitter-org-src/test/corpus  cases=151 runs=151 passed=151 failed=0 skipped=
 tree-sitter-php-src/test/corpus  cases=142 runs=140 passed=140 failed=0 skipped=2
 tree-sitter-python-src/test/corpus  cases=117 runs=117 passed=117 failed=0 skipped=0
 tree-sitter-rust-src/test/corpus  cases=151 runs=151 passed=151 failed=0 skipped=0
+tree-sitter-sql-corpus-src/test/corpus  cases=412 runs=412 passed=412 failed=0 skipped=0
 tree-sitter-toml-src/test/corpus  cases=17 runs=17 passed=17 failed=0 skipped=0
 tree-sitter-typescript-src-src/test/corpus  cases=112 runs=112 passed=112 failed=0 skipped=0
 tree-sitter-xml-src/test/corpus  cases=22 runs=16 passed=16 failed=0 skipped=6
 tree-sitter-yaml-src/test/corpus  cases=130 runs=130 passed=130 failed=0 skipped=0
-total  cases=2962 runs=2935 passed=2927 failed=8 skipped=27
+total  cases=3374 runs=3347 passed=3339 failed=8 skipped=27

@@ -665,6 +665,7 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
         {"lua", "tree-sitter-lua-src/src/grammar.json"},
         {"cmake", "tree-sitter-cmake-src/src/grammar.json"},
         {"diff", "tree-sitter-diff-src/src/grammar.json"},
+        {"sql", "tree-sitter-sql-src/src/grammar.json"},
 };
 
     if (!fs::exists(DepsDir())) {

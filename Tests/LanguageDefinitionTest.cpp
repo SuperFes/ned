@@ -59,6 +59,7 @@ TEST_CASE("Every bundled definition builds, under its own '-mode' name", "[Langu
         "lua",
         "cmake",
         "diff",
+        "sql",
     };
     std::set<std::string> seen;
     for (const LanguageDefinition& definition : BundledLanguages()) {
@@ -131,6 +132,7 @@ TEST_CASE("The bundled definitions claim exactly the extensions the old table di
         {".java", "java"},
         {".kt", "kotlin"},
         {".kts", "kotlin"},
+        {".sql", "sql"},
     };
     std::map<std::string, std::string> claimed;
     for (const LanguageDefinition& definition : BundledLanguages()) {
