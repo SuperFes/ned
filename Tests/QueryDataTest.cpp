@@ -96,6 +96,8 @@ const std::vector<UpstreamQuery>& UpstreamQueries() {
         {"tree-sitter-gitcommit-src/queries/highlights.scm", "gitcommit/upstream/highlights.janet"},
         // gitrebase is ned-authored, not vendored -- see
         // Source/Languages/gitrebase/highlights.janet's own header comment.
+        {"tree-sitter-r-src/queries/highlights.scm", "r/upstream/highlights.janet"},
+        {"tree-sitter-r-src/queries/tags.scm", "r/upstream/tags.janet"},
     };
     return kQueries;
 }

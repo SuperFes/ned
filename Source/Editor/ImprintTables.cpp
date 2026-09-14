@@ -472,6 +472,8 @@ constexpr Entry kPython[] = {
     {"while_statement", DelimiterKind::Indent, true, true},
 };
 
+// r: measured, zero delimited bodies.
+
 constexpr Entry kRuby[] = {
     {"argument_list", DelimiterKind::Bracket, true, true},
     {"array", DelimiterKind::Bracket, true, true},

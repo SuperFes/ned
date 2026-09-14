@@ -821,6 +821,7 @@ struct ModeBuildContext {
 [[nodiscard]] Mode RubyMode();
 [[nodiscard]] Mode GitCommitMode();
 [[nodiscard]] Mode GitRebaseMode();
+[[nodiscard]] Mode RMode();
 [[nodiscard]] Mode MarkdownMode();
 [[nodiscard]] Mode OrgMode();
 

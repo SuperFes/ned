@@ -46,6 +46,7 @@ const TSLanguage* tree_sitter_nix(void);
 const TSLanguage* tree_sitter_ruby(void);
 const TSLanguage* tree_sitter_gitcommit(void);
 const TSLanguage* tree_sitter_git_rebase(void);
+const TSLanguage* tree_sitter_r(void);
 }
 
 namespace ned::editor::treesitter {
@@ -197,6 +198,9 @@ std::optional<Language> LanguageByName(std::string_view name) {
     }
     if (name == "gitrebase") {
         return Language(tree_sitter_git_rebase());
+    }
+    if (name == "r") {
+        return Language(tree_sitter_r());
     }
     return std::nullopt;
 }

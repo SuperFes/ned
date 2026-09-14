@@ -1635,6 +1635,10 @@ Mode GitRebaseMode() {
     return BundledMode("gitrebase");
 }
 
+Mode RMode() {
+    return BundledMode("r");
+}
+
 Mode ClojureMode() {
     return BundledMode("clojure");
 }
