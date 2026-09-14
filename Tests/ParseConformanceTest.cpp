@@ -122,6 +122,15 @@ const std::vector<CorpusSource>& CorpusSources() {
         {"tree-sitter-typescript-src-src/test/corpus", "typescript", {{"typescript", "typescript"}, {"tsx", "tsx"}}},
         {"tree-sitter-xml-src/test/corpus", "xml", {{"xml", "xml"}, {"dtd", ""}}},
         {"tree-sitter-yaml-src/test/corpus", "yaml"},
+        {"tree-sitter-dockerfile-src/test/corpus", "dockerfile"},
+        {"tree-sitter-make-src/test/corpus", "make"},
+        {"tree-sitter-hcl-src/test/corpus", "hcl"},
+        // Non-standard layout: the only grammar in this table whose corpus
+        // lives at the repo root rather than under test/corpus.
+        {"tree-sitter-nix-src/corpus", "nix"},
+        {"tree-sitter-ruby-src/test/corpus", "ruby"},
+        {"tree-sitter-gitcommit-src/test/corpus", "gitcommit"},
+        {"tree-sitter-gitrebase-src/test/corpus", "gitrebase"},
     };
     return sources;
 }
@@ -546,7 +555,10 @@ TEST_CASE("Upstream corpora conformance scorecard matches the blessed baseline",
         const fs::path        corpusDir = DepsDir() / source.directory;
         std::vector<fs::path> files;
         for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
-            if (entry.is_regular_file() && entry.path().extension() == ".txt")
+            if (entry.is_regular_file() &&
+                // tree-sitter-make is the one grammar in this table whose
+                // corpus files end in .mk, not .txt.
+                (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
                 files.push_back(entry.path());
         std::sort(files.begin(), files.end());
 
@@ -685,7 +697,10 @@ TEST_CASE("Ned parse engine matches upstream corpora", "[ParseEngine][Corpus]") 
 
         std::vector<fs::path> files;
         for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
-            if (entry.is_regular_file() && entry.path().extension() == ".txt")
+            if (entry.is_regular_file() &&
+                // tree-sitter-make is the one grammar in this table whose
+                // corpus files end in .mk, not .txt.
+                (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
                 files.push_back(entry.path());
         std::sort(files.begin(), files.end());
 
@@ -846,7 +861,10 @@ TEST_CASE("Ned parse engine incremental reparses match from-scratch and the ts r
 
         std::vector<fs::path> files;
         for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
-            if (entry.is_regular_file() && entry.path().extension() == ".txt")
+            if (entry.is_regular_file() &&
+                // tree-sitter-make is the one grammar in this table whose
+                // corpus files end in .mk, not .txt.
+                (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
                 files.push_back(entry.path());
         std::sort(files.begin(), files.end());
 
@@ -1012,7 +1030,10 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the u
 
         std::vector<fs::path> files;
         for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
-            if (entry.is_regular_file() && entry.path().extension() == ".txt")
+            if (entry.is_regular_file() &&
+                // tree-sitter-make is the one grammar in this table whose
+                // corpus files end in .mk, not .txt.
+                (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
                 files.push_back(entry.path());
         std::sort(files.begin(), files.end());
 
@@ -1167,7 +1188,10 @@ TEST_CASE("Ned red layer matches the ts runtime over upstream corpora", "[ParseE
 
         std::vector<fs::path> files;
         for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
-            if (entry.is_regular_file() && entry.path().extension() == ".txt")
+            if (entry.is_regular_file() &&
+                // tree-sitter-make is the one grammar in this table whose
+                // corpus files end in .mk, not .txt.
+                (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
                 files.push_back(entry.path());
         std::sort(files.begin(), files.end());
 

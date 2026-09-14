@@ -39,6 +39,13 @@ const TSLanguage* tree_sitter_lua(void);
 const TSLanguage* tree_sitter_cmake(void);
 const TSLanguage* tree_sitter_diff(void);
 const TSLanguage* tree_sitter_sql(void);
+const TSLanguage* tree_sitter_dockerfile(void);
+const TSLanguage* tree_sitter_make(void);
+const TSLanguage* tree_sitter_hcl(void);
+const TSLanguage* tree_sitter_nix(void);
+const TSLanguage* tree_sitter_ruby(void);
+const TSLanguage* tree_sitter_gitcommit(void);
+const TSLanguage* tree_sitter_git_rebase(void);
 }
 
 namespace ned::editor::treesitter {
@@ -169,6 +176,27 @@ std::optional<Language> LanguageByName(std::string_view name) {
     }
     if (name == "sql") {
         return Language(tree_sitter_sql());
+    }
+    if (name == "dockerfile") {
+        return Language(tree_sitter_dockerfile());
+    }
+    if (name == "make") {
+        return Language(tree_sitter_make());
+    }
+    if (name == "hcl") {
+        return Language(tree_sitter_hcl());
+    }
+    if (name == "nix") {
+        return Language(tree_sitter_nix());
+    }
+    if (name == "ruby") {
+        return Language(tree_sitter_ruby());
+    }
+    if (name == "gitcommit") {
+        return Language(tree_sitter_gitcommit());
+    }
+    if (name == "gitrebase") {
+        return Language(tree_sitter_git_rebase());
     }
     return std::nullopt;
 }

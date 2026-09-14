@@ -80,16 +80,17 @@ Everything mainstream enough that a user arriving with it should find ned
 already competent. Trait declaration committed; integration config accepted
 gladly but not owned.
 
-**Systems / compiled:** Kotlin, Swift, Zig, Nim, Odin, V, Crystal, D, Objective-C,
-Ada, Fortran, Pascal, Vala, Assembly (x86, ARM)
+**Systems / compiled:** Kotlin, Swift, Zig *(→ Tier D, no admissible grammar
+yet)*, Nim, Odin, V, Crystal, D, Objective-C, Ada, Fortran, Pascal, Vala,
+Assembly (x86, ARM)
 
 **JVM / .NET:** Scala, Groovy, Clojure *(in-tree)*, F#, VB.NET
 
 **Functional:** Haskell, OCaml, Elixir, Erlang, Elm, PureScript, ReScript, Gleam,
 Common Lisp, Scheme, Racket, Fennel
 
-**Dynamic / scripting:** Ruby, Perl, R, Julia, Dart, Tcl, AWK, Zsh, Nushell,
-PowerShell, Fish *(in-tree)*, Elvish
+**Dynamic / scripting:** Ruby *(admitted 2026-09-13 — see below)*, Perl, R,
+Julia, Dart, Tcl, AWK, Zsh, Nushell, PowerShell, Fish *(in-tree)*, Elvish
 
 **Web / frontend:** HTML *(in-tree)*, CSS *(in-tree)*, SCSS/Less, Vue, Svelte,
 Astro
@@ -111,13 +112,15 @@ The category most editors under-serve, and the one where D0-is-free pays
 immediately: a config file is *almost entirely* structure, so Tier 0 inference
 alone makes it genuinely usable.
 
-**Config:** INI/properties, HCL/Terraform, Nix, Dhall, Jsonnet, KDL, HOCON,
-JSON5, RON, Pkl, Nickel, editorconfig, `.desktop`, systemd units, `ssh_config`,
+**Config:** INI/properties, HCL/Terraform *(admitted 2026-09-13 — see below)*,
+Nix *(admitted 2026-09-13 — see below)*, Dhall, Jsonnet, KDL, HOCON, JSON5,
+RON, Pkl, Nickel, editorconfig, `.desktop`, systemd units, `ssh_config`,
 nginx, Caddy, `.env`, `requirements.txt`, Kconfig, udev, muttrc, xresources,
 `.gitconfig` / `.gitignore` / `.gitattributes`
 
-**Build systems:** CMake *(→ Tier A)*, Make, Meson, Ninja, Starlark/Bazel,
-Earthfile, GN, Bitbake, just/Justfile, Dockerfile/Containerfile, Gradle *(rides
+**Build systems:** CMake *(→ Tier A)*, Make *(admitted 2026-09-13 — see
+below)*, Meson, Ninja, Starlark/Bazel, Earthfile, GN, Bitbake, just/Justfile,
+Dockerfile/Containerfile *(admitted 2026-09-13 — see below)*, Gradle *(rides
 Kotlin/Groovy)*, docker-compose and CI pipelines *(ride YAML)*, Helm *(templated
 YAML -- see Tier D)*
 
@@ -125,14 +128,83 @@ YAML -- see Tier D)*
 GraphQL, Protobuf, Thrift, Textproto, Mermaid, PlantUML, HTTP, Hurl, PEM, Po,
 XML *(in-tree)*, YAML *(in-tree)*, TOML *(in-tree)*, JSON *(in-tree)*
 
-**VCS-shaped, and self-serving:** **diff/unified-diff**, gitcommit, gitrebase.
-ned has a VCS side panel, hunk-level staging (`Vcs/DiffPatch.h`) and a merge-
+**VCS-shaped, and self-serving:** **diff/unified-diff**, gitcommit *(admitted
+2026-09-13 — see below)*, gitrebase *(admitted 2026-09-13 — see below)*. ned
+has a VCS side panel, hunk-level staging (`Vcs/DiffPatch.h`) and a merge-
 conflict resolution mode, all of which currently read diff output as plain text.
 `tree-sitter-grammars/tree-sitter-diff` is live (`2026-08-14`). This is the
 cheapest high-value entry in the whole document. *Admitted 2026-09-13* — v0.2.0,
 ABI 15, no scanner, 2 corpus files; highlights ned-authored with three new
 first-class syntax classes (DiffAdded/DiffRemoved/DiffChanged); the one grammar
 the imprint measures zero delimited bodies for.
+
+### 2026-09-13 batch: Dockerfile, Make, HCL, Nix, Ruby, gitcommit, gitrebase
+
+Seven more D0-core admissions in the same pass as SQL, all through the
+post-Phase-4b pipeline; every corpus passes 100% against the production engine
+(conformance, incremental-vs-scratch, MatchCache reconciliation, and the red-
+layer differential against the ts runtime), and every bundled highlight query
+passes the QueryMatcher construct census. Admission facts:
+
+- **dockerfile** `camdencheek/tree-sitter-dockerfile` v0.2.0 (ABI 14, 318-LOC
+  scanner, 113-case corpus; upstream highlights vendored unmodified). No
+  `tree-sitter-grammars` fork exists yet -- this is the de-facto canonical
+  grammar (Helix, nvim-treesitter both use it).
+- **make** `tree-sitter-grammars/tree-sitter-make` v1.1.1 (ABI 14, no scanner,
+  99-case corpus; upstream highlights vendored, one regex clause's
+  unnecessary `\*`/`\?` escapes decoded/re-encoded away by the ordinary
+  `ConvertScmToJanet` string round-trip, not hand-edited). Confirms the
+  ROADMAP's own prediction: supersedes the stale `alemuller/tree-sitter-make`
+  (51★, dead since 2024-01). Packaging wrinkle: its corpus files are `*.mk`,
+  not the `*.txt` every other bundled grammar uses -- `ParseConformanceTest`'s
+  five corpus-discovery call sites now accept both.
+- **hcl** `tree-sitter-grammars/tree-sitter-hcl` v1.2.0 (ABI 15, 421-LOC
+  scanner, 102-case corpus; **no `queries/` directory at all** -- highlights
+  ned-authored directly from `grammar.json`/`node-types.json`, the cmake
+  precedent). Core HCL only, fetched with no `grammar_subdir` -- the repo's
+  separate `dialects/terraform` grammar is not fetched, matching SQL's "one
+  core, dialect deltas deferred" stance. Confirmed HCL wraps nearly every
+  structural token (braces, brackets, `null`, `...`) in its own named grammar
+  rule rather than leaving it as a bare anonymous literal, which is why the
+  highlights match named nodes (`(block_start)`, `(null_lit)`, `(ellipsis)`,
+  ...) rather than literal strings almost throughout.
+- **nix** `nix-community/tree-sitter-nix` v0.3.0 (ABI 13, 238-LOC scanner,
+  54-case corpus; richest upstream query set of the batch -- highlights,
+  injections, locals *and* tags all present). Highlights ned-adapted: one
+  clause (`"?"? @punctuation.delimiter` on a formal parameter's optional
+  default marker) quantifies a bare string token, which QueryMatcher's
+  census-measured scope excludes on purpose (not merely unmeasured -- see the
+  ROADMAP watch-list entry), so that clause alone is dropped. Packaging
+  wrinkle: corpus lives at repo-root `corpus/`, not `test/corpus/` like every
+  other bundled grammar.
+- **ruby** `tree-sitter/tree-sitter-ruby` v0.23.1 (official tree-sitter org,
+  same publisher as c/cpp/python/go already in-tree; ABI 14, largest scanner
+  of the batch at 1107 LOC, 290-case corpus; upstream highlights *and* tags
+  vendored unmodified -- tags gives the symbol gutter and go-to-definition
+  despite the nested alternation-of-multi-field-patterns shape in its
+  `(comment)* @doc . [ (method ...) (singleton_method ...) ]`-style captures,
+  which compiled clean).
+- **gitcommit** `gbprod/tree-sitter-gitcommit` v0.5.0 (ABI 15, 65-LOC scanner,
+  64-case corpus; upstream highlights vendored unmodified). Claims
+  `COMMIT_EDITMSG`/`MERGE_MSG`/`TAG_EDITMSG` by filename.
+  `the-mikedavis/tree-sitter-git-commit` (13★, archived) was graveyarded in
+  favor of this community grammar.
+- **gitrebase** `the-mikedavis/tree-sitter-git-rebase` v1.0.0 (ABI 15, no
+  scanner, 15-case corpus; highlights ned-adapted -- upstream wraps each
+  multi-sibling command/label/message group in an extra layer of parens
+  before attaching its `:match?` predicate, one level deeper than
+  QueryMatcher's "a multi-pattern group is only supported at the top level"
+  scope allows; flattened so the predicate sits inside the same top-level
+  group it constrains, same resolution shape as cmake's own adaptation).
+  Separate maintainer from gitcommit above, despite both being "the git
+  ecosystem" -- they share no source.
+
+**Not admitted: Zig.** Researched alongside the batch above and deliberately
+declined. `tree-sitter-grammars/tree-sitter-zig` (the only actively
+maintained candidate, pushed 2026-09-13) ships **no `test/` directory at
+all**, failing admission policy item 8 outright; the one alternative with
+real history, `maxxnino/tree-sitter-zig` (124★), is **archived**. Revisit
+when either a corpus lands upstream or a maintained fork adds one.
 
 **Injected-into-comments-and-strings:** regex, JSDoc, Doxygen, Luadoc, and
 tree-sitter's own query language (`.scm` -- which ned authors 79 of and
@@ -231,6 +303,16 @@ Parked for a stated reason, each with the condition that would unpark it.
   problem dominates the language problem.
 - **Anything wanting D3.** A bespoke semantic driver is Tier 2 escapes plus real
   C++. Org earned it. The bar should stay that high.
+- **Zig.** Researched at the 2026-09-13 batch admission alongside Dockerfile/
+  Make/HCL/Nix/Ruby/gitcommit/gitrebase and set aside, not rejected on
+  quality. The only actively maintained grammar
+  (`tree-sitter-grammars/tree-sitter-zig`, pushed 2026-09-13) ships no
+  `test/` directory at all, failing admission policy item 8 outright; the one
+  alternative with real history, `maxxnino/tree-sitter-zig` (124★), is
+  **archived**. **Unparks when** either a corpus lands upstream on the
+  maintained grammar, or a maintained fork adds one -- Zig itself is under
+  active, non-experimental development, so this is a tooling gap rather than
+  a moving-target problem like Carbon's.
 
 ## Ahead of the catalogue — languages that do not exist yet
 
@@ -306,6 +388,7 @@ nobody re-litigates them from scratch.
 | `bkegley/tree-sitter-graphql` | Stale since 2024-06 | Check `tree-sitter-grammars` for a fork first |
 | `mitchellh/tree-sitter-proto` | Stale since 2024-06 | Same |
 | `MunifTanjim/tree-sitter-lua` | Personal fork, 1★, superseded | Use `tree-sitter-grammars/tree-sitter-lua` |
+| `the-mikedavis/tree-sitter-git-commit` | Archived (13★) | Superseded by `gbprod/tree-sitter-gitcommit` |
 | nvim-treesitter's unmaintained set | caddy, djot, robot, roc, slint, vento, ziggy, ziggy_schema | Per-grammar, on demand |
 | Long-tail DSLs | ABL, Magik, Hoon, Uxntal, Papyrus, Quakec, Runescript, Sflog, T32, and ~200 similar | **One credible user request.** Not rejected on quality -- parked on audience. Under D0 the cost of honouring such a request is adding one grammar, so the bar is deliberately low. |
 
