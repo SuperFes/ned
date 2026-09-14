@@ -908,6 +908,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     tabBar->SetOnCloseRequest(
         [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->RequestCloseBuffer(buffer); });
 
+    // tabbar-focus-capture follow-up: a tab-bar click always claims keyboard
+    // focus for the editor side too, not just its own action -- see
+    // TabBar::SetOnRequestFocus's own comment for why a close or switch
+    // silently misbehaved without this while a dock panel held focus.
+    tabBar->SetOnRequestFocus([wm = windowManager.get()] { wm->TakeFocus(); });
+
     // Tab-reorder follow-up: dragging a tab reorders the BufferList itself
     // -- Buffers() order is also what SaveProjectSessionNow persists, so a
     // dragged-into-place order survives a restart with no extra state.

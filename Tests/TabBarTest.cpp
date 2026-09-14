@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+#include <vector>
 
 #include "TestEvents.h"
 #include "Text/BufferList.h"
@@ -96,6 +97,31 @@ TEST_CASE("A press on a tab switches the active buffer", "[TabBar]") {
     REQUIRE(&activeBuffer.Get() == &beta);
 }
 
+TEST_CASE("A press on a tab requests focus before switching the active buffer", "[TabBar]") {
+    // tabbar-focus-capture follow-up: a switch must claim keyboard focus for
+    // the editor side too -- previously a click while a dock panel
+    // (ProjectSidebar/VcsPanel) held focus silently retargeted the switch
+    // onto WindowManager::FocusedActiveBuffer()'s own defensive fallback
+    // (Leaves().front()) rather than the pane the user actually meant.
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+    ned::text::Buffer&    beta  = list.CreateBuffer("beta");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    std::vector<std::string> order;
+    tabBar.SetOnRequestFocus([&order] { order.push_back("focus"); });
+
+    // " alpha ×" (cols 0-7), its end cap (8), " beta ×" starts at col 9.
+    tabBar.OnEvent(MousePress(9, 0));
+
+    REQUIRE(order == std::vector<std::string>{"focus"});
+    REQUIRE(&activeBuffer.Get() == &beta);
+}
+
 TEST_CASE("A press outside any tab is a no-op", "[TabBar]") {
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
@@ -170,6 +196,48 @@ TEST_CASE("Clicking a tab's close icon invokes the registered handler with that 
     // Clicking the close icon does not itself switch the active buffer --
     // that decision belongs entirely to the registered handler.
     REQUIRE(&activeBuffer.Get() == &alpha);
+}
+
+TEST_CASE("Clicking a close icon requests focus before requesting the close", "[TabBar]") {
+    // tabbar-focus-capture follow-up: WindowManager::RequestCloseBuffer
+    // routes through whichever pane currently reports Focused(), so the
+    // close request must be preceded by a focus request -- otherwise a
+    // click while a dock panel held focus silently no-op'd (FocusedPane()
+    // returned null).
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    std::vector<std::string> order;
+    tabBar.SetOnRequestFocus([&order] { order.push_back("focus"); });
+    tabBar.SetOnCloseRequest([&order](ned::text::Buffer&) { order.push_back("close"); });
+
+    // " alpha ×" -- × at column 7.
+    tabBar.OnEvent(MousePress(7, 0));
+
+    REQUIRE(order == std::vector<std::string>{"focus", "close"});
+}
+
+TEST_CASE("Clicking a close icon with no focus handler registered is still a safe no-op", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    ned::text::Buffer* closed = nullptr;
+    tabBar.SetOnCloseRequest([&closed](ned::text::Buffer& buffer) { closed = &buffer; });
+
+    // No SetOnRequestFocus call at all -- unset must stay a safe no-op, the
+    // same convention every other TabBar handler follows.
+    REQUIRE_NOTHROW(tabBar.OnEvent(MousePress(7, 0)));
+    REQUIRE(closed == &alpha);
 }
 
 TEST_CASE("Clicking a close icon with no handler registered is a safe no-op", "[TabBar]") {

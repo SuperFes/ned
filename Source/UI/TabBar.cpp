@@ -318,12 +318,23 @@ bool TabBar::OnEvent(const Event& event) {
     const int clickedColumn = mouse->at.x + scrollOffset_;
     for (const TabLayout& tab : ComputeTabLayout()) {
         if (clickedColumn == tab.closeColumn) {
+            // Focus first: RequestCloseBuffer (and the confirm-if-modified
+            // prompt it may raise) routes through whichever pane currently
+            // reports Focused(), so establishing that before the close
+            // request is what makes it land on a real pane instead of
+            // silently no-op'ing -- see SetOnRequestFocus's own comment.
+            if (onRequestFocus_) {
+                onRequestFocus_();
+            }
             if (onCloseRequest_) {
                 onCloseRequest_(*tab.buffer);
             }
             return true;
         }
         if (clickedColumn >= tab.startColumn && clickedColumn < tab.endColumn) {
+            if (onRequestFocus_) {
+                onRequestFocus_();
+            }
             activeBufferProvider_().Set(*tab.buffer);
             dragBuffer_ = tab.buffer;
             return true;
@@ -346,6 +357,10 @@ void TabBar::SetFocusProvider(std::function<bool()> provider) {
 
 void TabBar::SetOnContextMenuRequest(std::function<void(text::Buffer&, Point)> handler) {
     onContextMenuRequest_ = std::move(handler);
+}
+
+void TabBar::SetOnRequestFocus(std::function<void()> handler) {
+    onRequestFocus_ = std::move(handler);
 }
 
 } // namespace ned::ui
