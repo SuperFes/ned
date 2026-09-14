@@ -1,15 +1,12 @@
 # Themes
 
-What's bundled, how a theme is picked at startup, and how to author a new one.
-Ground-truthed against `Source/UI/ThemeRegistry.cpp`, `Source/UI/ThemePalette.h`,
-`Source/UI/DesktopThemeProbe.h`, and `Source/main.cpp`'s startup sequence.
+What's bundled, how a theme is picked at startup, and how to customize one of your own.
 
 ## Bundled themes
 
-Every name below resolves via `ThemeByName` (`Source/UI/ThemeRegistry.cpp`) -- the same
-lookup `ned/set-theme` and the `M-x select-theme` picker both go through.
+Every name below is available to `ned/set-theme` and the `M-x select-theme` picker.
 
-**Hand-built:** `dark`, `light` (the two original themes, `Theme.cpp`). Both are entirely
+**Hand-built:** `dark`, `light` (the two original themes). Both are entirely
 real RGB -- no ANSI colour names, which stopped meaning "whatever this terminal calls blue"
 when the palette fallback went away and would now resolve to xterm's flat defaults.
 
@@ -26,9 +23,9 @@ to real RGB.
 (genuinely grayscale -- role separation comes from luminance steps and Brush bold/italic,
 not hue), `fuchsia` (a dark theme built around one signature hue).
 
-**Cloned themes** (each a transcription of its upstream project's published palette into
-`ThemePalette` slots -- see `ThemeRegistry.cpp`'s own attribution comment on each factory
-function for the exact source and any "no true X, nearest neighbor is Y" hue substitution):
+**Cloned themes** (each a transcription of its upstream project's own published palette,
+with a "no true X, nearest neighbor is Y" hue substitution where the original palette has
+no equivalent slot):
 `solarized-dark`/`solarized-light`, `gruvbox-dark`/`gruvbox-light`, `nord`, `dracula`,
 `monokai`, `one-dark`/`one-light`, `catppuccin-mocha`/`catppuccin-latte`/
 `catppuccin-frappe`/`catppuccin-macchiato`, `tokyo-night`/`tokyo-night-day`/
@@ -45,7 +42,7 @@ universal editor practice.
 
   Names resolve leniently: case-insensitive, with spaces and underscores equal to hyphens,
   so `"Gruvbox Dark"`, `"gruvbox-dark"` and `"GRUVBOX_DARK"` are the same theme. The picker
-  lists the display form; `Theme::name` and every other surface use the hyphenated one.
+  lists the display form; `ned/set-theme` and every other surface use the hyphenated one.
 - **`(ned/theme-set "key" "value")`** -- overrides one field of whichever base theme wins,
   applied last regardless of how the base was chosen. This is how you write your own theme:
   put the calls in `init.janet`, on top of whichever bundled theme `ned/set-theme` picks.
@@ -55,9 +52,9 @@ universal editor practice.
 ## Writing your own theme
 
 There is no theme file format and no generator: a theme is `ned/theme-set` calls in your
-own `init.janet`, over a bundled base. That is deliberate -- with 30 bundled themes and
-`ThemeFromPalette` deriving a full theme from ~15 semantic colours, a theme worth writing
-is a handful of overrides, not a 117-key snapshot.
+own `init.janet`, over a bundled base. That is deliberate -- with 30 bundled themes to
+start from, a theme worth writing is a handful of overrides, not a full snapshot of every
+key.
 
 ```janet
 (ned/set-theme "gruvbox-dark")                        # the base
@@ -73,9 +70,9 @@ readout, and updates as the theme changes.
 
 ## Key reference
 
-Every key `ned/theme-set` accepts. `Tests/ThemeKeyDocsTest.cpp` holds this list against the
-real table in both directions, so a key cannot be added without appearing here and a key
-cannot linger here after it stops existing.
+Every key `ned/theme-set` accepts. This list is held against the real table on every
+build, so it's always current -- a key can't be added without appearing here, and one
+can't linger here after it stops existing.
 
 <!-- theme-keys:begin -->
 
@@ -158,11 +155,11 @@ One rule: **a theme is whatever a config file says.** Nothing else decides it.
 
 1. **`(ned/set-theme "name")`** -- from a project's `<root>/.ned/init.janet` if it has one,
    else your global `init.janet`. The project file loads second, so it wins.
-2. **A live desktop-environment probe** (`Source/UI/DesktopThemeProbe.h`) -- queries the
+2. **A live desktop-environment probe** -- queries the
    running desktop for its light/dark preference and accent colour, cheaply and without
    touching terminal state, so it runs on every launch that reaches this point. If you never
    name a theme, this is what you get.
-3. **`DarkTheme()`**, the fixed final default.
+3. **The built-in `dark` theme**, the fixed final default.
 
 Then every `(ned/theme-set ...)` override applies on top, in call order, so a later call for
 the same key wins and a field you set by hand always sticks.
@@ -251,11 +248,11 @@ known or every option is exhausted:
 
 Every step is independently optional -- a missing tool, an unreadable file, or an
 unparseable reply just leaves that one fact undetermined, never a hard failure. If nothing
-at all could be determined, step 4 is skipped entirely and step 5 (`DarkTheme()`) applies.
-When only polarity or only an accent was found, the other half falls back to `DarkTheme()`'s
-own default (dark, no accent override).
+at all could be determined, step 4 is skipped entirely and step 5 (the built-in dark theme)
+applies. When only polarity or only an accent was found, the other half falls back to the
+built-in dark theme's own default (dark, no accent override).
 
-The derived theme is `DarkTheme()`/`LightTheme()` by polarity, with a found accent color
+The derived theme is the built-in dark or light theme by polarity, with a found accent color
 applied to the same fields a single detected accent has always applied to (the border
 accent, the keyword syntax color, and the focused mode-line gradient blended 60% toward
 it) -- one detected color still produces a coherent-looking theme rather than a literal,
@@ -276,8 +273,8 @@ construct, and widgets reach for those instead of hard-coding a colour:
 | `blame_recent_foreground` / `blame_old_foreground` | the two ends of the blame age ramp | blame gutter |
 | `line_number_foreground` | a quiet gutter affordance | a discovered-but-not-yet-run test |
 
-A theme sets these like any other colour key, and `ThemeFromPalette` derives all of them,
-so a cloned theme gets them without its author writing a line.
+A theme sets these like any other colour key, and every cloned/palette-derived theme
+above gets them automatically, with no extra work.
 
 ## Paints, gradients and surfaces
 
@@ -510,43 +507,3 @@ Patterns: `grain`, `scanlines`, `checker`, `hatch`, `graph`, `stipple`.
 
 A spectrum behind code is unreadable, so the loud ones belong on chrome that owns its own
 row or box -- a mode line, a tab strip, a popup border.
-
-## Authoring a new theme
-
-Nearly every published theme spec (base16, Solarized's own table, Catppuccin's, Gruvbox's,
-...) is a background/foreground pair plus a handful of accent hues -- that's exactly the
-`ThemePalette` struct (`Source/UI/ThemePalette.h`): `background`, `foreground`,
-`subtleForeground` (comments, punctuation, line numbers, anything that should read as
-receded), eight named-by-hue accent slots (`red`/`orange`/`yellow`/`green`/`cyan`/`blue`/
-`purple`/`magenta` -- the *role* each hue plays, e.g. keyword vs. string, is fixed once in
-`ThemeFromPalette` and applies identically to every theme, only the hues differ per
-palette), and a small UI-chrome group (`chromeBackground`/`chromeBackgroundEmphasis`/
-`chromeForeground`/`border`/`accent`/`selectionBackground`/`searchMatchBackground`).
-
-To add a clone of a real published theme:
-
-1. Add a `Theme <Name>Theme() { return ThemeFromPalette("<name>", ThemePalette{...}); }`
-   factory in `Source/UI/ThemeRegistry.cpp`'s anonymous namespace, transcribing the
-   upstream project's own published hex values into the slots above. A palette with no
-   real distinct hue for a slot reuses its nearest neighbor (e.g. Dracula has no true blue,
-   so its `blue` slot reuses `purple`) -- note the substitution in a comment, the same way
-   every existing clone does.
-2. Add a comment above the factory naming the upstream project, its repository URL, and
-   its license (every clone bundled today is MIT or, for classic Monokai, universally
-   redistributed -- color palettes themselves are uncopyrightable facts, but attribution is
-   kept anyway as standard editor practice).
-3. Register the name in `kThemeFactories`.
-4. Add the name to `Tests/BundledThemesTest.cpp`'s clone list (`RequireForegroundContrast`
-   with a floor of 40 is the automated black-on-black guard every bundled theme must
-   clear) and to `Tools/theme-sweep.sh`'s `kThemeNames` (both are hand-kept copies of the
-   registry table, not generated from it).
-5. Run `Tools/theme-sweep.sh` and eyeball the capture for the new theme -- the automated
-   contrast floor catches genuinely broken pairings, not "does this actually look right."
-
-For a theme that isn't a clone of anything published (like `fuchsia`), the same
-`ThemePalette` authoring surface applies -- just choose values directly rather than
-transcribing them from an upstream source.
-
-`DarkTheme()`/`LightTheme()` are hand-built `Theme` literals instead (`Theme.cpp`), not
-palette-derived -- they predate `ThemePalette` and stay as they are; new themes should go
-through `ThemeFromPalette` rather than hand-filling all ~70 `Theme` fields directly.

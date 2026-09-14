@@ -54,7 +54,7 @@ Janet and Notcurses need to be built from source if your distribution doesn't al
 carry them at the right version:
 
 ```sh
-# Janet (exact version — see Source/Janet/Value.h/Environment.h for why)
+# Janet (exact version — don't substitute a different one)
 git clone --depth 1 --branch v1.32.1 https://github.com/janet-lang/janet.git
 make -C janet -j"$(nproc)"
 sudo make -C janet install
