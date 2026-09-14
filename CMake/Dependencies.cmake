@@ -54,7 +54,16 @@ find_package(nlohmann_json REQUIRED)
 # system package: Gentoo's dev-libs/re2 already depends on a prebuilt
 # dev-cpp/abseil-cpp, so find_package costs nothing extra here and hands back
 # the same re2::re2 target the FetchContent build produced.
-find_package(re2 REQUIRED)
+# Not every distro's package ships a CMake config, though -- confirmed live:
+# Ubuntu/Debian's libre2-dev installs only re2.pc, no re2Config.cmake, so
+# find_package alone would fail there even with the library present. Fall
+# back to pkg-config in that case rather than requiring one specific distro's
+# packaging choice.
+find_package(re2 QUIET)
+if (NOT TARGET re2::re2)
+    pkg_check_modules(RE2 REQUIRED IMPORTED_TARGET re2)
+    add_library(re2::re2 ALIAS PkgConfig::RE2)
+endif()
 #------------------------------------------------------------------------------
 
 #--- PCRE2 (in-file-regex follow-up) -------------------------------------------
