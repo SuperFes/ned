@@ -22,8 +22,8 @@
 // unit-testable against crafted grammars as well as real ones.
 //
 
-#ifndef NED_EDITOR_TREESITTER_GRAMMARIMPRINT_H
-#define NED_EDITOR_TREESITTER_GRAMMARIMPRINT_H
+#ifndef NED_EDITOR_GRAMMAR_GRAMMARIMPRINT_H
+#define NED_EDITOR_GRAMMAR_GRAMMARIMPRINT_H
 
 #include <map>
 #include <string>
@@ -32,7 +32,7 @@
 
 #include "Editor/Imprint.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 // Every visible rule in grammar that is a delimited body, mapped to the
 // structural facts about it. Hidden (_-prefixed) rules are never reported:
@@ -44,6 +44,6 @@ namespace ned::editor::treesitter {
 // unparseable grammar is the caller's problem at json::parse time.
 [[nodiscard]] std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const nlohmann::json& grammar);
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-#endif // NED_EDITOR_TREESITTER_GRAMMARIMPRINT_H
+#endif // NED_EDITOR_GRAMMAR_GRAMMARIMPRINT_H

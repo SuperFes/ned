@@ -11,10 +11,10 @@
 
 #include "Editor/Indent.h"
 #include "Editor/Mode.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Node.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Node.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/Tree.h"
 #include "Text/Buffer.h"
 
 // The two properties every formatting rule has to hold, applied to the one
@@ -69,7 +69,7 @@ std::string ReadFile(const fs::path& path) {
 // skipped on purpose: a formatter is allowed to add or remove a brace's
 // surrounding whitespace, and in some grammars that shifts which anonymous
 // tokens appear, without any change to what the code means.
-void CollectKinds(const ned::editor::treesitter::Node& node, int depth, std::vector<std::string>& out) {
+void CollectKinds(const ned::editor::grammar::Node& node, int depth, std::vector<std::string>& out) {
     if (node.IsNull()) return;
     // DEPTH is part of the identity, not decoration. A flat sequence of kinds
     // is preserved under re-nesting -- moving a Python statement out of an
@@ -80,9 +80,9 @@ void CollectKinds(const ned::editor::treesitter::Node& node, int depth, std::vec
     for (std::size_t i = 0; i < node.ChildCount(); ++i) CollectKinds(node.Child(i), depth + 1, out);
 }
 
-std::vector<std::string> NodeKinds(const ned::editor::treesitter::Language& language, const std::string& text) {
-    const ned::editor::treesitter::Parser parser(language);
-    const ned::editor::treesitter::Tree   tree = parser.Parse(text);
+std::vector<std::string> NodeKinds(const ned::editor::grammar::Language& language, const std::string& text) {
+    const ned::editor::grammar::Parser parser(language);
+    const ned::editor::grammar::Tree   tree = parser.Parse(text);
     std::vector<std::string>              kinds;
     CollectKinds(tree.RootNode(), 0, kinds);
     return kinds;
@@ -136,7 +136,7 @@ TEST_CASE("Indenting is idempotent across the corpus", "[FormatterProperties]") 
 TEST_CASE("Indenting never changes the parse structure", "[FormatterProperties]") {
     for (const Case& testCase : Corpus()) {
         INFO("corpus file: " << testCase.file);
-        const auto language = ned::editor::treesitter::LanguageByName(testCase.language);
+        const auto language = ned::editor::grammar::LanguageByName(testCase.language);
         REQUIRE(language.has_value());
 
         const std::string original  = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Oracle" / "corpus" / testCase.file);
@@ -192,7 +192,7 @@ TEST_CASE("The safety property can actually fail", "[FormatterProperties]") {
     // Python, because there whitespace genuinely IS structure -- the clearest
     // case that a formatter can change meaning without changing a single
     // non-whitespace byte, which is exactly the failure this property guards.
-    const auto python = ned::editor::treesitter::LanguageByName("python");
+    const auto python = ned::editor::grammar::LanguageByName("python");
     REQUIRE(python.has_value());
 
     const auto inside  = NodeKinds(*python, "def f():\n    if x:\n        a()\n        b()\n");
@@ -209,7 +209,7 @@ TEST_CASE("The safety property can actually fail", "[FormatterProperties]") {
 
     // Whitespace that does not change meaning must not trip it, or the
     // property would reject every legitimate reformat.
-    const auto c = ned::editor::treesitter::LanguageByName("c");
+    const auto c = ned::editor::grammar::LanguageByName("c");
     REQUIRE(c.has_value());
     const auto tight = NodeKinds(*c, "int f(void) {\nreturn 1;\n}\n");
     const auto loose = NodeKinds(*c, "int f(void) {\n        return 1;\n}\n");

@@ -2,7 +2,7 @@
 
 #include <utility>
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 namespace {
 
@@ -137,4 +137,4 @@ bool PredicateReadsOutsideSubtree(std::string_view name, std::size_t operandCoun
     return (baseName == "has-ancestor?" || baseName == "has-parent?") && operandCount == 2;
 }
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar

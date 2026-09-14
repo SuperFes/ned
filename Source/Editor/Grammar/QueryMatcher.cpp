@@ -14,7 +14,7 @@
 
 #include "QueryPredicates.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 namespace {
 
@@ -1307,4 +1307,4 @@ std::size_t QueryMatcher::AncestorCrossingPatternCount() const {
                       [](const Pattern& pattern) { return pattern.readsOutsideSubtree; }));
 }
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar

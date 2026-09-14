@@ -19,8 +19,8 @@
 // never fired makes the predicate pass rather than false-compare against "".
 //
 
-#ifndef NED_EDITOR_TREESITTER_QUERYPREDICATES_H
-#define NED_EDITOR_TREESITTER_QUERYPREDICATES_H
+#ifndef NED_EDITOR_GRAMMAR_QUERYPREDICATES_H
+#define NED_EDITOR_GRAMMAR_QUERYPREDICATES_H
 
 #include <optional>
 #include <regex>
@@ -31,7 +31,7 @@
 
 #include "Editor/Parse/Node.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 // One resolved predicate operand. `text` is the literal string for a
 // string/token operand, or the captured node's own source text for a
@@ -72,6 +72,6 @@ struct PredicateOperand {
 // even when the subtree itself is byte-for-byte unchanged.
 [[nodiscard]] bool PredicateReadsOutsideSubtree(std::string_view name, std::size_t operandCount);
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-#endif // NED_EDITOR_TREESITTER_QUERYPREDICATES_H
+#endif // NED_EDITOR_GRAMMAR_QUERYPREDICATES_H

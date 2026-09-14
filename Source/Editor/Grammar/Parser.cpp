@@ -1,6 +1,6 @@
 #include "Parser.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 Language::Language(const TSLanguage* language) noexcept : language_(language) {
 }
@@ -26,4 +26,4 @@ Tree Parser::Parse(std::string_view text, const Tree& oldTree) const {
     return Tree(engine_->Parse(text, oldTree.Green()));
 }
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar

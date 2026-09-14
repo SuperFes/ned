@@ -50,7 +50,7 @@
 #include <string_view>
 #include <vector>
 
-#include "Editor/TreeSitter/Node.h"
+#include "Editor/Grammar/Node.h"
 
 namespace ned::editor::imprint {
 
@@ -90,7 +90,7 @@ struct ImprintIndentCaptures {
 // honest answer for a language that does not indent by delimiters at all.
 // `text` is the buffer the tree was parsed from -- an indentation body's
 // "begins its own line" is a fact about the text, not the tree.
-[[nodiscard]] ImprintIndentCaptures CollectIndentCaptures(const treesitter::Node& root, std::string_view language,
+[[nodiscard]] ImprintIndentCaptures CollectIndentCaptures(const grammar::Node& root, std::string_view language,
                                                           std::string_view text);
 
 } // namespace ned::editor::imprint

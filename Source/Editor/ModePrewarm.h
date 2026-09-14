@@ -31,7 +31,7 @@ namespace ned::editor {
 
 // Resolves path's Mode (ModeForPath) and runs one real highlight()/fold()
 // pass against text so the tree-sitter parse both closures share
-// internally (Mode.cpp's TreeSitterModeFromLanguage, its own SharedParse)
+// internally (Mode.cpp's GrammarModeFromLanguage, its own SharedParse)
 // is already cached by the time this returns. Pure and synchronous -- no
 // threading of its own -- so this is what a test exercises directly, the
 // same "the actual logic is a plain function/method a test calls inline;

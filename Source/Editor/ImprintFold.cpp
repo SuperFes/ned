@@ -8,16 +8,16 @@
 
 #include "Editor/ImprintBracket.h"
 #include "Editor/ImprintTables.h"
-#include "Editor/TreeSitter/IncrementalParse.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Node.h"
-#include "Editor/TreeSitter/Parser.h"
+#include "Editor/Grammar/IncrementalParse.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Node.h"
+#include "Editor/Grammar/Parser.h"
 
 namespace ned::editor::imprint {
 
 namespace {
 
-    void Collect(const treesitter::Node& node, const std::map<std::string, DelimitedBody>& table,
+    void Collect(const grammar::Node& node, const std::map<std::string, DelimitedBody>& table,
                  const FoldPolicy& policy, std::string_view text,
                  std::vector<std::pair<std::size_t, std::size_t>>& out) {
         if (node.IsNull())
@@ -40,7 +40,7 @@ namespace {
             const std::size_t      start = FoldAnchorStart(entry->second, node.StartByte(), text);
             std::vector<ChildBody> children;
             children.reserve(node.ChildCount());
-            node.ForEachChild([&](treesitter::Node child) {
+            node.ForEachChild([&](grammar::Node child) {
                 const auto found = table.find(std::string(child.Type()));
                 const bool childFolds =
                     found != table.end() && ShouldFold(found->second, policy) &&
@@ -55,12 +55,12 @@ namespace {
             }
         }
 
-        node.ForEachChild([&](treesitter::Node child) { Collect(child, table, policy, text, out); });
+        node.ForEachChild([&](grammar::Node child) { Collect(child, table, policy, text, out); });
     }
 
 } // namespace
 
-std::vector<std::pair<std::size_t, std::size_t>> CollectFoldBlocks(const treesitter::Node& root,
+std::vector<std::pair<std::size_t, std::size_t>> CollectFoldBlocks(const grammar::Node& root,
                                                                    std::string_view language, std::string_view text,
                                                                    FoldPolicy policy) {
     const auto& table = TableFor(language);
@@ -94,7 +94,7 @@ FoldFunction BuildFoldFunction(std::string_view language, FoldPolicy policy) {
     if (table.empty()) {
         return {};
     }
-    const std::optional<treesitter::Language> resolved = treesitter::LanguageByName(language);
+    const std::optional<grammar::Language> resolved = grammar::LanguageByName(language);
     if (!resolved.has_value()) {
         return {};
     }
@@ -103,8 +103,8 @@ FoldFunction BuildFoldFunction(std::string_view language, FoldPolicy policy) {
     // by value in a shared_ptr -- the same idiom every bundled Mode's own
     // tree-sitter closure uses (see Mode.cpp), and the reason a Mode stays a
     // freely copyable value type.
-    auto parser = std::make_shared<treesitter::Parser>(*resolved);
-    auto cache  = std::make_shared<treesitter::IncrementalParseCache>();
+    auto parser = std::make_shared<grammar::Parser>(*resolved);
+    auto cache  = std::make_shared<grammar::IncrementalParseCache>();
 
     // `table` is captured by reference deliberately and safely: TableFor hands
     // back a reference to a function-local static, so it outlives every
@@ -112,7 +112,7 @@ FoldFunction BuildFoldFunction(std::string_view language, FoldPolicy policy) {
     // entries for every buffer opened.
 
     return [parser, cache, &table, policy](std::string_view bufferText) {
-        const treesitter::Tree&                         tree = cache->Update(*parser, bufferText);
+        const grammar::Tree&                         tree = cache->Update(*parser, bufferText);
         std::vector<std::pair<std::size_t, std::size_t>> blocks;
         if (!tree.IsNull())
             Collect(tree.RootNode(), table, policy, bufferText, blocks);

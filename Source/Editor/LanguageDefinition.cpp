@@ -11,8 +11,8 @@
 #include "Key.h"
 #include "LanguageFiles.h"
 #include "SyntaxTheme.h"
-#include "TreeSitter/Languages.h"
-#include "TreeSitter/QueryMatcher.h"
+#include "Grammar/Languages.h"
+#include "Grammar/QueryMatcher.h"
 
 namespace ned::editor {
 
@@ -166,7 +166,7 @@ Mode ModeFromDefinition(const LanguageDefinition& definition) {
         return Finish(std::move(mode), definition, ModeBuildContext{.languageKey = definition.name});
     }
     const std::string_view grammar  = definition.grammar.empty() ? std::string_view(definition.name) : definition.grammar;
-    const auto             language = treesitter::LanguageByName(grammar);
+    const auto             language = grammar::LanguageByName(grammar);
     if (!language) {
         throw std::runtime_error("language definition '" + definition.name + "' names a grammar that is not bundled: " +
                                  std::string(grammar));
@@ -177,11 +177,11 @@ Mode ModeFromDefinition(const LanguageDefinition& definition) {
 namespace {
 
     // The eight kinds, compiled; kept alive for the duration of the build
-    // (TreeSitterModeFromLanguage retains none of the text).
+    // (GrammarModeFromLanguage retains none of the text).
     struct CompiledQueries {
         QueryText highlights, folds, imports, tags, tests, indents, locals, injections;
 
-        [[nodiscard]] TreeSitterQuerySources Views() const {
+        [[nodiscard]] GrammarQuerySources Views() const {
             return {.highlights = highlights.text,
                     .folds      = folds.text,
                     .imports    = imports.text,
@@ -223,17 +223,17 @@ namespace {
     // build compiles every kind in one go and its exception carries only a
     // line into that kind's concatenated text, so on failure each kind is
     // compiled again alone -- an error path only, never paid on success.
-    [[noreturn]] void RethrowLocated(const LanguageDefinition& definition, const treesitter::Language& language,
-                                     const CompiledQueries& compiled, const treesitter::QueryMatcherError& error) {
+    [[noreturn]] void RethrowLocated(const LanguageDefinition& definition, const grammar::Language& language,
+                                     const CompiledQueries& compiled, const grammar::QueryMatcherError& error) {
         for (const QueryText* text : {&compiled.highlights, &compiled.folds, &compiled.imports, &compiled.tags, &compiled.tests,
                                       &compiled.indents, &compiled.locals, &compiled.injections}) {
             if (text->text.empty()) {
                 continue;
             }
             try {
-                treesitter::QueryMatcher probe(language, text->text);
+                grammar::QueryMatcher probe(language, text->text);
             }
-            catch (const treesitter::QueryMatcherError& kindError) {
+            catch (const grammar::QueryMatcherError& kindError) {
                 throw std::runtime_error("language '" + definition.name + "': " +
                                          text->Locate(OffsetOfLine(text->text, kindError.Line())) + ": " +
                                          kindError.what());
@@ -244,14 +244,14 @@ namespace {
 
 } // namespace
 
-Mode ModeFromDefinition(const LanguageDefinition& definition, const treesitter::Language& language) {
+Mode ModeFromDefinition(const LanguageDefinition& definition, const grammar::Language& language) {
     const CompiledQueries compiled = Compile(definition.queries);
     ModeBuildContext      context;
     try {
-        Mode mode = TreeSitterModeFromLanguage(ModeNameFor(definition), language, compiled.Views(), &context);
+        Mode mode = GrammarModeFromLanguage(ModeNameFor(definition), language, compiled.Views(), &context);
         return Finish(std::move(mode), definition, context);
     }
-    catch (const treesitter::QueryMatcherError& error) {
+    catch (const grammar::QueryMatcherError& error) {
         RethrowLocated(definition, language, compiled, error);
     }
 }

@@ -14,14 +14,14 @@
 #include <string>
 #include <vector>
 
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/MatchCache.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/QueryMatcher.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/MatchCache.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/QueryMatcher.h"
+#include "Editor/Grammar/Tree.h"
 #include "Text/OffsetRemap.h"
 
-using namespace ned::editor::treesitter;
+using namespace ned::editor::grammar;
 using ned::text::ChangedByteRange;
 using ned::text::ChangedSpan;
 

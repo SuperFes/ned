@@ -52,7 +52,7 @@ class SpanCollector {
 // A Mode::lineInspect closure over its own parser (runs only on an explicit
 // dap-line-inspect, never per repaint); `matches` says which named node
 // types count as candidate sub-expressions.
-[[nodiscard]] LineInspectFunction BuildLineInspectFunction(const treesitter::Language&           language,
+[[nodiscard]] LineInspectFunction BuildLineInspectFunction(const grammar::Language&           language,
                                                            std::function<bool(std::string_view)> matches);
 
 } // namespace ned::editor

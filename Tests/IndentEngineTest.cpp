@@ -9,22 +9,22 @@
 #include "Editor/Indent.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/Mode.h"
-#include "Editor/TreeSitter/IncrementalParse.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/QueryMatcher.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/IncrementalParse.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/QueryMatcher.h"
+#include "Editor/Grammar/Tree.h"
 #include "Text/Buffer.h"
 
 using ned::editor::IndentColumnForLevel;
 using ned::editor::IndentComputation;
 using ned::editor::IndentLevelForLine;
 using ned::editor::IndentStyle;
-using ned::editor::treesitter::IncrementalParseCache;
-using ned::editor::treesitter::LanguageByName;
-using ned::editor::treesitter::Parser;
-using Query = ned::editor::treesitter::QueryMatcher;
-using ned::editor::treesitter::Tree;
+using ned::editor::grammar::IncrementalParseCache;
+using ned::editor::grammar::LanguageByName;
+using ned::editor::grammar::Parser;
+using Query = ned::editor::grammar::QueryMatcher;
+using ned::editor::grammar::Tree;
 
 namespace {
 

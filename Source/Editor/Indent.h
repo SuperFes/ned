@@ -25,7 +25,7 @@
 // "[...]" to inherit the enclosing call's alignment, and simply never use
 // the capture.
 //
-// BuildIndentFunction below is what TreeSitterModeFromLanguage (Mode.cpp)
+// BuildIndentFunction below is what GrammarModeFromLanguage (Mode.cpp)
 // calls to construct Mode::indentColumn for most bundled modes, mirroring
 // FoldFunction/testDiscovery's own construction exactly. Not every mode goes
 // through this engine -- Markdown's own indentColumn closure is hand-rolled
@@ -64,15 +64,15 @@
 #include "Mode.h"
 #include "Text/Buffer.h"
 #include "Text/ITextStorage.h"
-#include "TreeSitter/IncrementalParse.h"
-#include "TreeSitter/Parser.h"
-#include "TreeSitter/QueryMatcher.h"
-#include "TreeSitter/Tree.h"
+#include "Grammar/IncrementalParse.h"
+#include "Grammar/Parser.h"
+#include "Grammar/QueryMatcher.h"
+#include "Grammar/Tree.h"
 
 namespace ned::editor {
 
 // Builds an IndentFunction from a compiled indents.scm-shaped query, sharing
-// parser/sharedParse with TreeSitterModeFromLanguage's other closures (Mode.cpp)
+// parser/sharedParse with GrammarModeFromLanguage's other closures (Mode.cpp)
 // -- not meant to be called directly outside that construction path. modeName
 // is the owning Mode's own .name (e.g. "python-mode"), captured by value and
 // used to look up IndentStyle::EffectiveIndentStyle fresh on every call (not
@@ -87,9 +87,9 @@ namespace ned::editor {
 // A language with no compiled-in table gets the query alone, byte for byte
 // what it got before the imprint existed; one with a table and no query
 // (indentQuery null) gets the imprint alone.
-[[nodiscard]] IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser>                parser,
-                                                 std::shared_ptr<treesitter::QueryMatcher>                 indentQuery,
-                                                 std::shared_ptr<treesitter::IncrementalParseCache> sharedParse,
+[[nodiscard]] IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser>                parser,
+                                                 std::shared_ptr<grammar::QueryMatcher>                 indentQuery,
+                                                 std::shared_ptr<grammar::IncrementalParseCache> sharedParse,
                                                  std::string modeName, std::string languageKey);
 
 // The capture sets IndentLevelForLine walks over, partitioned by name. Built
@@ -147,14 +147,14 @@ struct IndentCaptures {
     std::vector<Dedent>                                   dedents;    // "dedent"
 };
 
-[[nodiscard]] IndentCaptures IndentCapturesFromQuery(const treesitter::Tree& tree, std::string_view bufferText,
-                                                     const treesitter::QueryMatcher& indentQuery);
+[[nodiscard]] IndentCaptures IndentCapturesFromQuery(const grammar::Tree& tree, std::string_view bufferText,
+                                                     const grammar::QueryMatcher& indentQuery);
 
 // Merges the imprint's containers and closers into `captures`. A container the
 // query marked `@indent.suppress` is left out; everything the query asserted
 // itself is untouched. Minus is expressible here and nowhere else, because an
 // indent source contributes a quantity -- see Editor/ImprintIndent.h.
-void AddImprintCaptures(IndentCaptures& captures, const treesitter::Tree& tree, std::string_view languageKey,
+void AddImprintCaptures(IndentCaptures& captures, const grammar::Tree& tree, std::string_view languageKey,
                         std::string_view bufferText);
 
 // @aligned-paren-column-alignment follow-up: IndentLevelForLine's result is
@@ -203,16 +203,16 @@ struct IndentComputation {
 // counted strictly inside it (IndentColumnForLevel(level, style)), which is
 // why style is threaded in here rather than applied only afterward the way
 // a pure Level result still is (see BuildIndentFunction).
-[[nodiscard]] std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree&  tree,
+[[nodiscard]] std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree&  tree,
                                                                   std::string_view         bufferText,
-                                                                  const treesitter::QueryMatcher& indentQuery,
+                                                                  const grammar::QueryMatcher& indentQuery,
                                                                   std::size_t lineStart, std::size_t lineEnd,
                                                                   const IndentStyle& style);
 
 // The same walk over an already-partitioned capture set -- what
 // BuildIndentFunction calls after merging the query with the imprint. The
 // query overload above is IndentCapturesFromQuery followed by this.
-[[nodiscard]] std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree,
+[[nodiscard]] std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree,
                                                                   std::string_view        bufferText,
                                                                   const IndentCaptures&   captures,
                                                                   std::size_t lineStart, std::size_t lineEnd,

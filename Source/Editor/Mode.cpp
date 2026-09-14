@@ -25,12 +25,12 @@
 #include "Link.h"
 #include "ModeInternal.h"
 #include "SyntaxTheme.h"
-#include "TreeSitter/IncrementalParse.h"
-#include "TreeSitter/Languages.h"
-#include "TreeSitter/MatchCache.h"
-#include "TreeSitter/Parser.h"
-#include "TreeSitter/QueryMatcher.h"
-#include "TreeSitter/Tree.h"
+#include "Grammar/IncrementalParse.h"
+#include "Grammar/Languages.h"
+#include "Grammar/MatchCache.h"
+#include "Grammar/Parser.h"
+#include "Grammar/QueryMatcher.h"
+#include "Grammar/Tree.h"
 
 namespace ned::editor {
 
@@ -169,7 +169,7 @@ namespace {
             {"namespace", SyntaxClass::Namespace},
 
             // Org-mode syntax-highlighting follow-up -- Source/Editor/
-            // TreeSitter/OrgHighlights.scm's own capture names for
+            // Grammar/OrgHighlights.scm's own capture names for
             // constructs that don't need C++ post-processing (unlike
             // "org.headline.stars"/"org.keyword.candidate", resolved
             // in the org.highlight escape instead (Languages/Org.cpp).
@@ -401,7 +401,7 @@ SyntaxClass SyntaxClassForCapture(std::string_view captureName, std::string_view
         // with its own child, left-to-right across siblings), so no separate
         // sort is needed. Stops recursing (but keeps whatever was already
         // collected) once the cap is hit.
-        void CollectLineInspectCandidates(const treesitter::Node& node, std::size_t lineStart, std::size_t lineEnd,
+        void CollectLineInspectCandidates(const grammar::Node& node, std::size_t lineStart, std::size_t lineEnd,
                                           const std::function<bool(std::string_view)>&      matches,
                                           std::vector<std::pair<std::size_t, std::size_t>>& out) {
             if (out.size() >= kMaxLineInspectExpressions || node.IsNull() || node.EndByte() <= lineStart || node.StartByte() >= lineEnd) {
@@ -424,17 +424,17 @@ SyntaxClass SyntaxClassForCapture(std::string_view captureName, std::string_view
     // cache costs nothing worth avoiding). `matches` decides which named
     // node types count as candidate sub-expressions -- see the Tier 1
     // (identifier-only) and Tier 2 (CMode/CppMode's richer set) call sites.
-    LineInspectFunction BuildLineInspectFunction(const treesitter::Language& language, std::function<bool(std::string_view)> matches) {
-        const auto parser      = std::make_shared<treesitter::Parser>(language);
-        const auto sharedParse = std::make_shared<treesitter::IncrementalParseCache>();
+    LineInspectFunction BuildLineInspectFunction(const grammar::Language& language, std::function<bool(std::string_view)> matches) {
+        const auto parser      = std::make_shared<grammar::Parser>(language);
+        const auto sharedParse = std::make_shared<grammar::IncrementalParseCache>();
         return [parser, sharedParse, matches = std::move(matches)](
                    std::string_view bufferText, std::size_t lineStart,
                    std::size_t lineEnd) -> std::vector<std::pair<std::size_t, std::size_t>> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
-            const treesitter::Node                           entry = tree.RootNode().NamedDescendantForByteRange(lineStart, lineEnd);
+            const grammar::Node                           entry = tree.RootNode().NamedDescendantForByteRange(lineStart, lineEnd);
             std::vector<std::pair<std::size_t, std::size_t>> candidates;
             CollectLineInspectCandidates(entry.IsNull() ? tree.RootNode() : entry, lineStart, lineEnd, matches, candidates);
             return candidates;
@@ -467,10 +467,10 @@ SyntaxClass SyntaxClassForCapture(std::string_view captureName, std::string_view
             std::vector<std::pair<std::size_t, std::size_t>> statements;
         };
 
-        ImportCaptures CollectImportCaptures(const treesitter::QueryMatcher& query, const treesitter::Node& root,
+        ImportCaptures CollectImportCaptures(const grammar::QueryMatcher& query, const grammar::Node& root,
                                              std::string_view bufferText) {
             ImportCaptures captures;
-            for (const treesitter::QueryCapture& capture : query.Captures(root, bufferText)) {
+            for (const grammar::QueryCapture& capture : query.Captures(root, bufferText)) {
                 if (capture.name == "import.statement") {
                     captures.statements.emplace_back(capture.startByte, capture.endByte);
                 }
@@ -722,10 +722,10 @@ std::optional<LocalCaptureKind> LocalCaptureKindFromCaptureName(std::string_view
 //    named children of its own is therefore left alone -- the same "declines
 //    rather than guesses" degradation the queries' own headers already
 //    document for destructuring.
-void ExpandPairwiseBindings(const treesitter::Node& container, const std::string& qualifier,
+void ExpandPairwiseBindings(const grammar::Node& container, const std::string& qualifier,
                             const std::vector<std::pair<std::size_t, std::size_t>>& skipRanges,
                             std::vector<LocalCapture>&                              out) {
-    const auto skipped = [&skipRanges](const treesitter::Node& node) {
+    const auto skipped = [&skipRanges](const grammar::Node& node) {
         return std::any_of(skipRanges.begin(), skipRanges.end(),
                            [&node](const std::pair<std::size_t, std::size_t>& range) {
                                return node.StartByte() >= range.first && node.EndByte() <= range.second;
@@ -734,7 +734,7 @@ void ExpandPairwiseBindings(const treesitter::Node& container, const std::string
 
     std::size_t index = 0;
     for (std::size_t i = 0; i < container.ChildCount(); ++i) {
-        const treesitter::Node child = container.Child(i);
+        const grammar::Node child = container.Child(i);
         if (!child.IsNamed() || child.IsExtra() || skipped(child)) {
             continue;
         }
@@ -747,8 +747,8 @@ void ExpandPairwiseBindings(const treesitter::Node& container, const std::string
         // The identifier's own text, which is what a rename edits: a grammar
         // that gives its symbol a `name` field (Clojure's `sym_lit`) hands it
         // over directly, and one that does not (Janet's) is already the name.
-        const treesitter::Node named  = child.ChildByFieldName("name");
-        const treesitter::Node target = named.IsNull() ? child : named;
+        const grammar::Node named  = child.ChildByFieldName("name");
+        const grammar::Node target = named.IsNull() ? child : named;
         if (named.IsNull()) {
             // No field to descend into: accept only a leaf, so a destructuring
             // form is declined rather than renamed wholesale.
@@ -764,9 +764,9 @@ void ExpandPairwiseBindings(const treesitter::Node& container, const std::string
     }
 }
 
-Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language, const TreeSitterQuerySources& queries,
+Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language, const GrammarQuerySources& queries,
                                 ModeBuildContext* context) {
-    const auto parser = std::make_shared<treesitter::Parser>(language);
+    const auto parser = std::make_shared<grammar::Parser>(language);
 
     // language-scoped-capture-rules follow-up: LanguageKeyForMode's own
     // "-mode"-suffix strip, computed here (rather than after the fact via
@@ -792,7 +792,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // follow-up) rather than full, per IncrementalParseCache's own doc
     // comment -- one cache, reused by every closure below, since they all
     // parse the exact same buffer text on the exact same cycle.
-    const auto sharedParse = std::make_shared<treesitter::IncrementalParseCache>();
+    const auto sharedParse = std::make_shared<grammar::IncrementalParseCache>();
 
     // parser/query/sharedParse are captured by shared_ptr, not by value --
     // Parser/Query/Tree are move-only (own a real tree-sitter handle each),
@@ -813,26 +813,26 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // content, a fenced code block. The per-language highlighter cache is
     // shared by every call, mirroring sharedParse's own captured-shared_ptr
     // idiom.
-    std::shared_ptr<treesitter::QueryMatcher>     highlightQuery;
-    std::shared_ptr<treesitter::QueryMatcher>     injectionQuery;
+    std::shared_ptr<grammar::QueryMatcher>     highlightQuery;
+    std::shared_ptr<grammar::QueryMatcher>     injectionQuery;
     std::shared_ptr<EmbeddedLanguageCache> embeddedLanguageCache;
     if (!queries.injections.empty()) {
-        injectionQuery        = std::make_shared<treesitter::QueryMatcher>(language, queries.injections);
+        injectionQuery        = std::make_shared<grammar::QueryMatcher>(language, queries.injections);
         embeddedLanguageCache = std::make_shared<EmbeddedLanguageCache>();
     }
     HighlightFunction highlight;
     if (!queries.highlights.empty()) {
-        highlightQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.highlights);
+        highlightQuery = std::make_shared<grammar::QueryMatcher>(language, queries.highlights);
         highlight      = [parser, query = highlightQuery, injectionQuery, embeddedLanguageCache, sharedParse, languageKey](
                              std::string_view bufferText, HighlightWindow window) -> std::vector<HighlightSpan> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
 
-            const treesitter::Node root = tree.RootNode();
+            const grammar::Node root = tree.RootNode();
             SpanCollector          collector;
-            for (const treesitter::QueryCapture& capture : query->CapturesInRange(root, bufferText, window.startByte, window.endByte)) {
+            for (const grammar::QueryCapture& capture : query->CapturesInRange(root, bufferText, window.startByte, window.endByte)) {
                 if (!IsHighlightableCapture(capture.name)) {
                     continue;
                 }
@@ -855,7 +855,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     EmbeddedRegionFunction embeddedRegions;
     if (injectionQuery) {
         embeddedRegions = [parser, injectionQuery, sharedParse](std::string_view bufferText) -> std::vector<InjectionRegion> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
@@ -886,7 +886,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // already shipped and had to chase down once.
     FoldFunction fold;
     if (!queries.folds.empty()) {
-        const auto foldQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.folds);
+        const auto foldQuery = std::make_shared<grammar::QueryMatcher>(language, queries.folds);
         // per-subtree-fact-memoization follow-up: no BUNDLED language reaches
         // this branch any more (every one folds from the imprint alone --
         // see this closure's own doc comment above), so in practice this
@@ -897,17 +897,17 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         // ContentGeneration-gated), same cadence as symbolKind's own
         // whole-document path -- wired through for consistency rather than
         // left as the one remaining full walk.
-        const auto foldMatchCache = std::make_shared<treesitter::MatchCache>();
+        const auto foldMatchCache = std::make_shared<grammar::MatchCache>();
         fold                      = [parser, foldQuery, sharedParse, foldMatchCache](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
 
             std::vector<std::pair<std::size_t, std::size_t>> ranges;
-            for (const treesitter::QueryMatch& match :
+            for (const grammar::QueryMatch& match :
                  foldMatchCache->Reconcile(*foldQuery, tree, bufferText, sharedParse->LastEdit())) {
-                for (const treesitter::QueryMatchCapture& capture : match.captures) {
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "fold") {
                         ranges.emplace_back(capture.startByte, capture.endByte);
                     }
@@ -923,7 +923,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         matchingDelimiters = [parser, sharedParse, languageKey](
                                  std::string_view bufferText,
                                  std::size_t      point) -> std::optional<imprint::DelimiterPair> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return std::nullopt;
             }
@@ -934,7 +934,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     if (!imprint::TableFor(languageKey).empty()) {
         FoldFunction fromImprint = [parser, sharedParse,
                                     languageKey](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
@@ -961,7 +961,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     SymbolKindFunction       symbolKind;
     SymbolKindWindowFunction symbolKindInWindow;
     if (!queries.tags.empty()) {
-        const auto symbolKindQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.tags);
+        const auto symbolKindQuery = std::make_shared<grammar::QueryMatcher>(language, queries.tags);
         // per-subtree-fact-memoization follow-up: only the whole-document
         // path below reconciles through this -- MatchesInRange already
         // prunes its OWN walk to the window, so the windowed path (called
@@ -977,7 +977,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         // in the same frame (LastEdit() then reports nullopt, and Reconcile
         // just falls back to a full walk -- correct, only not maximally
         // optimal that call).
-        const auto symbolKindMatchCache = std::make_shared<treesitter::MatchCache>();
+        const auto symbolKindMatchCache = std::make_shared<grammar::MatchCache>();
         // Shared by the whole-document closure and the windowed one below:
         // marker construction plus the two dedupe/nesting collapses. The
         // windowed run prunes by pattern-ROOT intersection
@@ -988,21 +988,21 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         // identical to a whole-document run filtered to the window.
         const auto buildMarkers = [parser, symbolKindQuery, sharedParse, symbolKindMatchCache](
                                       std::string_view bufferText, HighlightWindow window) -> std::vector<SymbolMarker> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
 
             std::vector<SymbolMarker>                 markers;
-            const std::vector<treesitter::QueryMatch> matches =
+            const std::vector<grammar::QueryMatch> matches =
                 window.CoversWholeDocument()
                     ? symbolKindMatchCache->Reconcile(*symbolKindQuery, tree, bufferText, sharedParse->LastEdit())
                     : symbolKindQuery->MatchesInRange(tree.RootNode(), bufferText, window.startByte, window.endByte);
-            for (const treesitter::QueryMatch& match : matches) {
+            for (const grammar::QueryMatch& match : matches) {
                 std::optional<SymbolKind>                    kind;
-                std::optional<treesitter::QueryMatchCapture> definitionCapture;
-                std::optional<treesitter::QueryMatchCapture> nameCapture;
-                for (const treesitter::QueryMatchCapture& capture : match.captures) {
+                std::optional<grammar::QueryMatchCapture> definitionCapture;
+                std::optional<grammar::QueryMatchCapture> nameCapture;
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (!kind) {
                         if (const std::optional<SymbolKind> capturedKind = SymbolKindFromCaptureName(capture.name)) {
                             kind              = capturedKind;
@@ -1101,12 +1101,12 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // something.
     ExpandSelectionFunction expandSelection = [parser, sharedParse, languageKey](std::string_view bufferText, std::size_t startByte,
                                                                                  std::size_t endByte) -> std::optional<std::pair<std::size_t, std::size_t>> {
-        const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+        const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
         if (tree.IsNull()) {
             return std::nullopt;
         }
 
-        treesitter::Node node = tree.RootNode().NamedDescendantForByteRange(startByte, endByte);
+        grammar::Node node = tree.RootNode().NamedDescendantForByteRange(startByte, endByte);
         while (!node.IsNull() && node.StartByte() == startByte && node.EndByte() == endByte) {
             node = node.Parent();
         }
@@ -1148,7 +1148,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // than further out.
     SexpMotionFunction sexpMotion = [parser, sharedParse](std::string_view bufferText, std::size_t point,
                                                           bool forward) -> std::optional<std::size_t> {
-        const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+        const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
         if (tree.IsNull()) {
             return std::nullopt;
         }
@@ -1163,7 +1163,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             if (p >= bufferText.size()) {
                 return std::nullopt;
             }
-            treesitter::Node at = tree.RootNode().NamedDescendantForByteRange(p, p);
+            grammar::Node at = tree.RootNode().NamedDescendantForByteRange(p, p);
             if (at.IsNull()) {
                 return std::nullopt;
             }
@@ -1171,13 +1171,13 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 return at.EndByte();
             }
             for (std::size_t i = 0; i < at.ChildCount(); ++i) {
-                treesitter::Node child = at.Child(i);
+                grammar::Node child = at.Child(i);
                 if (child.IsNamed() && child.StartByte() >= p) {
                     return child.EndByte();
                 }
             }
-            for (treesitter::Node node = at; !node.IsNull(); node = node.Parent()) {
-                treesitter::Node sibling = node.NextNamedSibling();
+            for (grammar::Node node = at; !node.IsNull(); node = node.Parent()) {
+                grammar::Node sibling = node.NextNamedSibling();
                 if (!sibling.IsNull() && sibling.StartByte() >= p) {
                     return sibling.EndByte();
                 }
@@ -1192,7 +1192,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         if (p == 0) {
             return std::nullopt;
         }
-        treesitter::Node at = tree.RootNode().NamedDescendantForByteRange(p - 1, p - 1);
+        grammar::Node at = tree.RootNode().NamedDescendantForByteRange(p - 1, p - 1);
         if (at.IsNull()) {
             return std::nullopt;
         }
@@ -1200,13 +1200,13 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             return at.StartByte();
         }
         for (std::size_t i = at.ChildCount(); i > 0; --i) {
-            treesitter::Node child = at.Child(i - 1);
+            grammar::Node child = at.Child(i - 1);
             if (child.IsNamed() && child.EndByte() <= p) {
                 return child.StartByte();
             }
         }
-        for (treesitter::Node node = at; !node.IsNull(); node = node.Parent()) {
-            treesitter::Node sibling = node.PrevNamedSibling();
+        for (grammar::Node node = at; !node.IsNull(); node = node.Parent()) {
+            grammar::Node sibling = node.PrevNamedSibling();
             if (!sibling.IsNull() && sibling.EndByte() <= p) {
                 return sibling.StartByte();
             }
@@ -1229,10 +1229,10 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     ImportTargetFunction  importTarget;
     ImportTargetsFunction importTargets;
     if (!queries.imports.empty()) {
-        const auto importQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.imports);
+        const auto importQuery = std::make_shared<grammar::QueryMatcher>(language, queries.imports);
         importTarget           = [parser, importQuery, sharedParse](std::string_view bufferText,
                                                                     std::size_t      point) -> std::optional<ImportTarget> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return std::nullopt;
             }
@@ -1261,7 +1261,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         // closure rather than a parameter on the one above, so every
         // existing caller's signature is untouched.
         importTargets = [parser, importQuery, sharedParse](std::string_view bufferText) -> std::vector<ImportTarget> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
@@ -1298,10 +1298,10 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // made, minus even needing a named helper here).
     TestDiscoveryFunction testDiscovery;
     if (!queries.tests.empty()) {
-        const auto testQuery      = std::make_shared<treesitter::QueryMatcher>(language, queries.tests);
-        const auto testMatchCache = std::make_shared<treesitter::MatchCache>();
+        const auto testQuery      = std::make_shared<grammar::QueryMatcher>(language, queries.tests);
+        const auto testMatchCache = std::make_shared<grammar::MatchCache>();
         testDiscovery = [parser, testQuery, sharedParse, testMatchCache](std::string_view bufferText) -> std::vector<TestMarker> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
@@ -1312,9 +1312,9 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             };
             std::vector<Definition>                          definitions;
             std::vector<std::pair<std::size_t, std::size_t>> names;
-            for (const treesitter::QueryMatch& match :
+            for (const grammar::QueryMatch& match :
                  testMatchCache->Reconcile(*testQuery, tree, bufferText, sharedParse->LastEdit())) {
-                for (const treesitter::QueryMatchCapture& capture : match.captures) {
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "test.definition") {
                         definitions.push_back({capture.startByte, capture.endByte, {}});
                     }
@@ -1373,8 +1373,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     IndentFunction indentColumn;
     if (!queries.indents.empty() || !imprint::TableFor(languageKey).empty()) {
         const auto indentQuery = queries.indents.empty()
-                                     ? std::shared_ptr<treesitter::QueryMatcher>{}
-                                     : std::make_shared<treesitter::QueryMatcher>(language, queries.indents);
+                                     ? std::shared_ptr<grammar::QueryMatcher>{}
+                                     : std::make_shared<grammar::QueryMatcher>(language, queries.indents);
         indentColumn           = BuildIndentFunction(parser, indentQuery, sharedParse, name, languageKey);
     }
 
@@ -1385,7 +1385,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // free, which is exactly the case an interactive rename is in.
     LocalScopeFunction localScopes;
     if (!queries.locals.empty()) {
-        const auto localsQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.locals);
+        const auto localsQuery = std::make_shared<grammar::QueryMatcher>(language, queries.locals);
         // per-subtree-fact-memoization follow-up: this closure is one of the
         // ORIGINAL four named in MatchCache.h's own header comment
         // (highlight/symbolKind/locals/indent captures) -- unlike highlight
@@ -1405,9 +1405,9 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         // or the genuine single most-recent edit (when this really is the
         // first capability to observe the new text), never a stale edit
         // silently misapplied to a many-generations-old cached_.
-        const auto localsMatchCache = std::make_shared<treesitter::MatchCache>();
+        const auto localsMatchCache = std::make_shared<grammar::MatchCache>();
         localScopes = [parser, localsQuery, sharedParse, localsMatchCache](std::string_view bufferText) -> std::vector<LocalCapture> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
@@ -1426,9 +1426,9 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             std::vector<PairwiseContainer>                   pairwise;
             std::vector<std::pair<std::size_t, std::size_t>> skipRanges;
 
-            for (const treesitter::QueryMatch& match :
+            for (const grammar::QueryMatch& match :
                  localsMatchCache->Reconcile(*localsQuery, tree, bufferText, sharedParse->LastEdit())) {
-                for (const treesitter::QueryMatchCapture& capture : match.captures) {
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "local.skip") {
                         skipRanges.emplace_back(capture.startByte, capture.endByte);
                         continue;
@@ -1450,7 +1450,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             }
 
             for (const PairwiseContainer& container : pairwise) {
-                treesitter::Node node =
+                grammar::Node node =
                     tree.RootNode().NamedDescendantForByteRange(container.startByte, container.endByte);
                 while (!node.IsNull() && (node.StartByte() != container.startByte || node.EndByte() != container.endByte)) {
                     node = node.Parent();
@@ -1464,7 +1464,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     }
 
     // Debugging wishlist (line-inspect follow-up): Tier 1 -- unconditional,
-    // every TreeSitterModeFromLanguage-built mode gets this generic default
+    // every GrammarModeFromLanguage-built mode gets this generic default
     // (bare identifiers only, no per-language query authoring). Its own
     // independent Parser/IncrementalParseCache pair (BuildLineInspectFunction),
     // not sharedParse above -- this only ever runs on an explicit,
@@ -1475,7 +1475,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
 
     if (context != nullptr) {
         *context = ModeBuildContext{.languageKey           = languageKey,
-                                    .language              = std::make_shared<const treesitter::Language>(language),
+                                    .language              = std::make_shared<const grammar::Language>(language),
                                     .parser                = parser,
                                     .sharedParse           = sharedParse,
                                     .highlightQuery        = highlightQuery,
@@ -1502,13 +1502,13 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 .matchingDelimiters = std::move(matchingDelimiters)};
 }
 
-Mode TreeSitterMode(std::string name, std::string_view languageName, const TreeSitterQuerySources& queries) {
-    const auto language = treesitter::LanguageByName(languageName);
+Mode GrammarMode(std::string name, std::string_view languageName, const GrammarQuerySources& queries) {
+    const auto language = grammar::LanguageByName(languageName);
     // Every languageName this is called with names a grammar Languages.cpp
     // always bundles -- if this ever fires it's a build-time bundling
     // regression (a definition naming a typo'd or no-longer-bundled
     // grammar), not a runtime condition to recover from gracefully.
-    return TreeSitterModeFromLanguage(std::move(name), *language, queries);
+    return GrammarModeFromLanguage(std::move(name), *language, queries);
 }
 
 Mode JanetMode() {

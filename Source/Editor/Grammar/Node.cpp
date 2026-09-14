@@ -2,7 +2,7 @@
 
 #include "Editor/Parse/Cursor.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 Node::Node(parse::RedNode node) noexcept : node_(node) {
 }
@@ -90,4 +90,4 @@ const void* Node::Id() const noexcept {
     return node_.id;
 }
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar

@@ -6,7 +6,7 @@ tree-sitter runtime underneath it.
 
 Status: **Tier 0 is built and shipping; Tiers 1-2 and the language-definition
 format are still a design sketch.** `Editor/Imprint.h` (the vocabulary),
-`TreeSitter/GrammarImprint.h` (inference over `grammar.json`),
+`Grammar/GrammarImprint.h` (inference over `grammar.json`),
 `Editor/ImprintTables.cpp` (the compiled-in result) and its three drivers --
 `ImprintFold.h`, `ImprintBracket.h` and `ImprintIndent.h` -- are real code, and
 folding for 21 languages, matching-bracket lookup and the structural half of
@@ -25,7 +25,7 @@ re-running them rather than quoting them. The direction of that drift is now
 deliberate.
 
 Ground-truthed against `CMakeLists.txt`'s grammar functions,
-`Source/Editor/TreeSitter/` (the RAII wrapper), `Source/Editor/Mode.h` (the
+`Source/Editor/Grammar/` (the RAII wrapper), `Source/Editor/Mode.h` (the
 capability surface every consumer goes through), and the fetched grammars'
 own `src/grammar.json` files.
 
@@ -185,7 +185,7 @@ The one thing that is *not* a problem, and the reason any of this is tractable:
 - At the time of the Phase 4 decision, **four files** included
   `tree_sitter/api.h` (`Node.h`, `Parser.h`, `Tree.h`, and the since-deleted
   ts-backed Query wrapper); after the engine swap none do.
-- **Seventeen** source files touch the `TreeSitter/` wrapper at all.
+- **Seventeen** source files touch the `Grammar/` wrapper at all.
 - `Mode`'s `std::function` capability surface is a genuine firewall -- every
   consumer goes through `highlight`/`fold`/`symbolKind`/`testDiscovery`/
   `importTargets`/`indentColumn`/`localScopes`/`embeddedRegions`, none of which
@@ -224,7 +224,7 @@ and should not be quoted as though it does.
 
 In code the vocabulary is `ned::editor::imprint` — what a language's structure
 leaves behind, read rather than authored. `Editor/Imprint.h` holds it and knows
-nothing about tree-sitter; `TreeSitter/GrammarImprint.h` is the half that reads
+nothing about tree-sitter; `Grammar/GrammarImprint.h` is the half that reads
 an imprint out of a `grammar.json`. That split is the Phase 4 seam: replacing
 the engine replaces the reader and leaves the vocabulary untouched.
 
@@ -1156,7 +1156,7 @@ live, and it stays a separate decision:
   generated goto-DFA, which is what makes `parser.c` 825k lines) and the
   external scanner are code. Emitting the lexer DFA as character-range
   transition *data* is what turns a language into one inspectable, mmap-able,
-  runtime-loadable artifact -- and deletes `TreeSitter/DynamicGrammar.h`'s
+  runtime-loadable artifact -- and deletes `Grammar/DynamicGrammar.h`'s
   `dlopen`/`dlsym("tree_sitter_<name>")` path along with it.
 - **External scanners cannot be avoided**: 19 of 24 grammars carry one, ~10,600
   LOC of hand-written C (markdown ~2,000, yaml ~1,415, bash ~1,217). Three

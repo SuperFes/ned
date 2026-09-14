@@ -71,7 +71,7 @@ struct LanguageDefinition {
     // config key and the imprint table key. The Mode is named "<name>-mode"
     // (ModeNameFor); LanguageKeyForMode is the inverse.
     std::string name;
-    // The bundled grammar (treesitter::LanguageByName). Defaults to `name`
+    // The bundled grammar (grammar::LanguageByName). Defaults to `name`
     // when empty and a grammar exists; jank names "clojure", tsx names "tsx".
     // A definition with no grammar at all sets `grammarless` instead.
     std::string grammar;
@@ -164,8 +164,8 @@ void               RegisterModeEscape(std::string name, ModeEscape escape);
 [[nodiscard]] Mode ModeFromDefinition(const LanguageDefinition& definition);
 
 // The same, for a grammar the caller already resolved -- a runtime-loaded
-// one (TreeSitter/DynamicGrammar.h) that LanguageByName cannot see.
-[[nodiscard]] Mode ModeFromDefinition(const LanguageDefinition& definition, const treesitter::Language& language);
+// one (Grammar/DynamicGrammar.h) that LanguageByName cannot see.
+[[nodiscard]] Mode ModeFromDefinition(const LanguageDefinition& definition, const grammar::Language& language);
 
 } // namespace ned::editor
 

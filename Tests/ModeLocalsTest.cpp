@@ -9,10 +9,10 @@
 #include "Editor/LocalScopes.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Node.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Node.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/Tree.h"
 
 using ned::editor::LocalCapture;
 using ned::editor::Mode;

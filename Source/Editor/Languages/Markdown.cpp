@@ -8,10 +8,10 @@
 #include "Editor/Injection.h"
 #include "Editor/LanguageDefinition.h"
 #include "Editor/ModeInternal.h"
-#include "Editor/TreeSitter/IncrementalParse.h"
-#include "Editor/TreeSitter/Node.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/IncrementalParse.h"
+#include "Editor/Grammar/Node.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/Tree.h"
 
 namespace ned::editor::languages {
 
@@ -20,7 +20,7 @@ namespace {
     void Indent(Mode& mode, const LanguageDefinition&, const ModeBuildContext& context) {
         mode.indentColumn = [blockParser = context.parser, sharedParse = context.sharedParse](
                                 std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd) -> std::optional<int> {
-            const treesitter::Tree& tree = sharedParse->Update(*blockParser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*blockParser, bufferText);
             if (tree.IsNull()) {
                 return std::nullopt;
             }
@@ -33,7 +33,7 @@ namespace {
                 }
             }
 
-            treesitter::Node node = tree.RootNode().NamedDescendantForByteRange(contentStart, contentStart);
+            grammar::Node node = tree.RootNode().NamedDescendantForByteRange(contentStart, contentStart);
             if (node.IsNull()) {
                 return 0;
             }
@@ -47,7 +47,7 @@ namespace {
             // count, not display column (Fill.h's own documented v1 scope cut,
             // same reasoning -- a leading run of plain spaces/tabs essentially
             // never needs real tab-expansion math to reproduce verbatim).
-            for (treesitter::Node ancestor = node; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+            for (grammar::Node ancestor = node; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
                 if (ancestor.Type() != "code_fence_content") {
                     continue;
                 }
@@ -81,12 +81,12 @@ namespace {
             // parse-tree check that caught that engine's own bugs. A lambda,
             // not an inline loop -- smart-blank-line-on-newline follow-up:
             // needs calling twice, see the rescue immediately below.
-            const auto sumHangColumn = [](const treesitter::Node& startNode, std::size_t position) {
+            const auto sumHangColumn = [](const grammar::Node& startNode, std::size_t position) {
                 int result = 0;
-                for (treesitter::Node ancestor = startNode; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+                for (grammar::Node ancestor = startNode; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
                     if (ancestor.Type() == "list_item") {
                         if (ancestor.StartByte() != position && ancestor.ChildCount() > 0) {
-                            const treesitter::Node marker = ancestor.Child(0);
+                            const grammar::Node marker = ancestor.Child(0);
                             result += static_cast<int>(marker.EndByte() - marker.StartByte());
                         }
                     }
@@ -113,7 +113,7 @@ namespace {
             if (lineStart == lineEnd && column == 0 && contentStart == bufferText.size() && contentStart > 0) {
                 const std::size_t rescuePos = bufferText.find_last_not_of(" \t\n\r", contentStart - 1);
                 if (rescuePos != std::string_view::npos) {
-                    const treesitter::Node rescueNode = tree.RootNode().NamedDescendantForByteRange(rescuePos, rescuePos);
+                    const grammar::Node rescueNode = tree.RootNode().NamedDescendantForByteRange(rescuePos, rescuePos);
                     if (!rescueNode.IsNull()) {
                         column = sumHangColumn(rescueNode, rescuePos);
                     }

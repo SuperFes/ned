@@ -268,7 +268,7 @@ add_executable(ned_tests
             JanetTestParserTest.cpp
             TerminalEmulatorTest.cpp
             TerminalPanelTest.cpp
-            TreeSitterTest.cpp
+            GrammarTest.cpp
             ParseConformanceTest.cpp
             DynamicGrammarTest.cpp
             ModeOverridesTest.cpp

@@ -23,7 +23,7 @@
 
 #include "Editor/Imprint.h"
 #include "Editor/Mode.h"
-#include "Editor/TreeSitter/Node.h"
+#include "Editor/Grammar/Node.h"
 
 namespace ned::editor::imprint {
 
@@ -47,7 +47,7 @@ namespace ned::editor::imprint {
 // starts on the row above its own first line (see `FoldAnchorStart`), and
 // nothing but the text can say where that row begins.
 [[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>>
-CollectFoldBlocks(const treesitter::Node& root, std::string_view language, std::string_view text,
+CollectFoldBlocks(const grammar::Node& root, std::string_view language, std::string_view text,
                   FoldPolicy policy = {});
 
 // The standalone form, for a caller with no tree of its own -- it owns a

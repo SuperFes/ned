@@ -26,7 +26,7 @@
 namespace ned::ui {
 
 // std::nullopt for an unknown name, not an error -- mirroring
-// treesitter::LanguageByName/editor::ModeByName's graceful-fallback
+// grammar::LanguageByName/editor::ModeByName's graceful-fallback
 // convention.
 //
 // Matching is normalized rather than exact: case is ignored and spaces and

@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 Language LoadDynamicLanguage(const std::filesystem::path& libraryPath, std::string_view languageName) {
     void* const handle = dlopen(libraryPath.c_str(), RTLD_NOW | RTLD_LOCAL);
@@ -36,4 +36,4 @@ Language LoadDynamicLanguage(const std::filesystem::path& libraryPath, std::stri
     return Language(languageFn());
 }
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar

@@ -12,12 +12,12 @@
 // Since the Phase 4b engine swap this wraps ned's own parse::RedNode rather
 // than a TSNode -- same shape (a small POD, safe to copy freely) and the
 // same lifetime contract: the node borrows from the tree it came from, so a
-// Node must not outlive the ned::editor::treesitter::Tree it was obtained
+// Node must not outlive the ned::editor::grammar::Tree it was obtained
 // from (see Tree.h). Nothing here can enforce that at compile time.
 //
 
-#ifndef NED_EDITOR_TREESITTER_NODE_H
-#define NED_EDITOR_TREESITTER_NODE_H
+#ifndef NED_EDITOR_GRAMMAR_NODE_H
+#define NED_EDITOR_GRAMMAR_NODE_H
 
 #include <cstddef>
 #include <functional>
@@ -25,7 +25,7 @@
 
 #include "Editor/Parse/Node.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 class Node {
   public:
@@ -123,7 +123,7 @@ class Node {
 
     // The underlying red node, for code in this directory (QueryMatcher.cpp)
     // that drives the engine's own node/cursor API directly. Not for use
-    // outside Source/Editor/TreeSitter/.
+    // outside Source/Editor/Grammar/.
     [[nodiscard]] parse::RedNode Raw() const noexcept;
 
     // smart-indentation follow-up: tree-sitter's own stable node identity
@@ -140,6 +140,6 @@ class Node {
     parse::RedNode node_;
 };
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-#endif // NED_EDITOR_TREESITTER_NODE_H
+#endif // NED_EDITOR_GRAMMAR_NODE_H

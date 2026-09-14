@@ -311,7 +311,7 @@ TEST_CASE("An unscoped ned/set-capture-class remap still wins over a language-sc
 }
 
 // generic-tree-sitter-highlighting follow-up: CMode/CppMode now use a real,
-// rich query (Source/Editor/TreeSitter/queries/c.scm, cpp.scm) vendored
+// rich query (Source/Editor/Grammar/queries/c.scm, cpp.scm) vendored
 // from nvim-treesitter -- these cases exercise the specific distinctions
 // that motivated vendoring it (access specifiers, header-vs-quoted
 // includes, return types, parameters, method-vs-free-function calls), not

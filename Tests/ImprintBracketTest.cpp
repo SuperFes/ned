@@ -10,9 +10,9 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/Tree.h"
 
 using ned::editor::imprint::MatchingDelimiterOffset;
 using ned::editor::imprint::MatchingDelimitersAt;
@@ -20,16 +20,16 @@ using ned::editor::imprint::MatchingDelimitersAt;
 namespace {
 
 struct Parsed {
-    ned::editor::treesitter::Parser parser;
-    ned::editor::treesitter::Tree   tree;
+    ned::editor::grammar::Parser parser;
+    ned::editor::grammar::Tree   tree;
 };
 
 // Held by value so the Tree outlives every Node taken from it.
 std::optional<std::size_t> Match(const std::string& language, const std::string& text, std::size_t point) {
-    const auto resolved = ned::editor::treesitter::LanguageByName(language);
+    const auto resolved = ned::editor::grammar::LanguageByName(language);
     REQUIRE(resolved.has_value());
-    const ned::editor::treesitter::Parser parser(*resolved);
-    const ned::editor::treesitter::Tree   tree = parser.Parse(text);
+    const ned::editor::grammar::Parser parser(*resolved);
+    const ned::editor::grammar::Tree   tree = parser.Parse(text);
     return MatchingDelimiterOffset(tree.RootNode(), language, point);
 }
 

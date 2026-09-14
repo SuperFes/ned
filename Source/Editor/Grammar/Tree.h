@@ -8,14 +8,14 @@
 // semantics, and keeping them is what makes the swap invisible.
 //
 
-#ifndef NED_EDITOR_TREESITTER_TREE_H
-#define NED_EDITOR_TREESITTER_TREE_H
+#ifndef NED_EDITOR_GRAMMAR_TREE_H
+#define NED_EDITOR_GRAMMAR_TREE_H
 
 #include "Editor/Parse/Tree.h"
 
 #include "Node.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 class Tree {
   public:
@@ -46,7 +46,7 @@ class Tree {
 
     // The underlying green tree, for Parser::Parse's old-tree incremental
     // overload and code in this directory. Not for use outside
-    // Source/Editor/TreeSitter/.
+    // Source/Editor/Grammar/.
     [[nodiscard]] const parse::GreenTree& Green() const noexcept;
 
     // per-subtree-fact-memoization follow-up: an independent second handle
@@ -73,6 +73,6 @@ class Tree {
     parse::GreenTree tree_;
 };
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-#endif // NED_EDITOR_TREESITTER_TREE_H
+#endif // NED_EDITOR_GRAMMAR_TREE_H

@@ -9,10 +9,10 @@
 #include "Editor/LanguageDefinition.h"
 #include "Editor/ModeInternal.h"
 #include "Editor/Org.h"
-#include "Editor/TreeSitter/IncrementalParse.h"
-#include "Editor/TreeSitter/Node.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/IncrementalParse.h"
+#include "Editor/Grammar/Node.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/Tree.h"
 
 namespace ned::editor::languages {
 
@@ -21,7 +21,7 @@ namespace {
     void Indent(Mode& mode, const LanguageDefinition&, const ModeBuildContext& context) {
         mode.indentColumn = [parser = context.parser, sharedParse = context.sharedParse](
                                 std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd) -> std::optional<int> {
-            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return std::nullopt;
             }
@@ -34,7 +34,7 @@ namespace {
                 }
             }
 
-            const treesitter::Node node = tree.RootNode().NamedDescendantForByteRange(contentStart, contentStart);
+            const grammar::Node node = tree.RootNode().NamedDescendantForByteRange(contentStart, contentStart);
             if (node.IsNull()) {
                 return 0;
             }
@@ -47,16 +47,16 @@ namespace {
             // Indent.h's generic engine needs for a container's own opening
             // line. A lambda, not an inline loop -- smart-blank-line-on-newline
             // follow-up: needs calling twice, see the rescue immediately below.
-            const auto sumHangColumn = [](const treesitter::Node& startNode, std::size_t position) {
+            const auto sumHangColumn = [](const grammar::Node& startNode, std::size_t position) {
                 int result = 0;
-                for (treesitter::Node ancestor = startNode; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+                for (grammar::Node ancestor = startNode; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
                     if (ancestor.Type() != "listitem") {
                         continue;
                     }
                     if (ancestor.StartByte() == position || ancestor.ChildCount() < 2) {
                         continue;
                     }
-                    const treesitter::Node body = ancestor.Child(1);
+                    const grammar::Node body = ancestor.Child(1);
                     result += static_cast<int>(body.StartByte() - ancestor.StartByte());
                 }
                 return result;
@@ -73,7 +73,7 @@ namespace {
             if (lineStart == lineEnd && column == 0 && contentStart == bufferText.size() && contentStart > 0) {
                 const std::size_t rescuePos = bufferText.find_last_not_of(" \t\n\r", contentStart - 1);
                 if (rescuePos != std::string_view::npos) {
-                    const treesitter::Node rescueNode = tree.RootNode().NamedDescendantForByteRange(rescuePos, rescuePos);
+                    const grammar::Node rescueNode = tree.RootNode().NamedDescendantForByteRange(rescuePos, rescuePos);
                     if (!rescueNode.IsNull()) {
                         column = sumHangColumn(rescueNode, rescuePos);
                     }
