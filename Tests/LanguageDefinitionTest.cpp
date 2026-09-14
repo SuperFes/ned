@@ -68,6 +68,7 @@ TEST_CASE("Every bundled definition builds, under its own '-mode' name", "[Langu
         "ruby",
         "gitcommit",
         "gitrebase",
+        "r",
     };
     std::set<std::string> seen;
     for (const LanguageDefinition& definition : BundledLanguages()) {
@@ -151,6 +152,8 @@ TEST_CASE("The bundled definitions claim exactly the extensions the old table di
         {".rb", "ruby"},
         {".rake", "ruby"},
         {".gemspec", "ruby"},
+        {".R", "r"},
+        {".r", "r"},
     };
     std::map<std::string, std::string> claimed;
     for (const LanguageDefinition& definition : BundledLanguages()) {

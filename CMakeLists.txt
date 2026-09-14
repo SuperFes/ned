@@ -622,6 +622,18 @@ ned_add_treesitter_grammar(tree-sitter-ruby https://github.com/tree-sitter/tree-
 ned_add_treesitter_grammar(tree-sitter-gitcommit https://github.com/gbprod/tree-sitter-gitcommit.git v0.5.0)
 ned_add_treesitter_grammar(tree-sitter-gitrebase https://github.com/the-mikedavis/tree-sitter-git-rebase.git v1.0.0)
 
+# R (Tier B, dynamic/scripting -- see Docs/LanguageCoverage.md). r-lib/tree-sitter-r
+# v1.3.0 (the posit/RStudio-maintained official grammar, 155 stars, pushed
+# 2026-06-22), ABI 14, 31KB scanner, 4-file corpus. Unlike SQL/perl this repo commits
+# generated parser.c/node-types.json directly on its tag, so it takes the ordinary
+# ned_add_treesitter_grammar path with no release-tarball fetch. Upstream ships
+# highlights.scm, tags.scm and locals.scm; highlights+tags are vendored for D0
+# highlighting and D1 symbol gutter/go-to-definition, locals.scm deliberately not --
+# scope-aware rename's query set stays a closed, individually-vetted list rather than
+# growing by default whenever an upstream file happens to exist (see LocalScopes.h's
+# own doc comment in CLAUDE.md).
+ned_add_treesitter_grammar(tree-sitter-r https://github.com/r-lib/tree-sitter-r.git v1.3.0)
+
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -1010,6 +1022,7 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-ruby
         PUBLIC tree-sitter-gitcommit
         PUBLIC tree-sitter-gitrebase
+        PUBLIC tree-sitter-r
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public

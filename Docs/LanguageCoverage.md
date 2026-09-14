@@ -89,8 +89,9 @@ Assembly (x86, ARM)
 **Functional:** Haskell, OCaml, Elixir, Erlang, Elm, PureScript, ReScript, Gleam,
 Common Lisp, Scheme, Racket, Fennel
 
-**Dynamic / scripting:** Ruby *(admitted 2026-09-13 — see below)*, Perl, R,
-Julia, Dart, Tcl, AWK, Zsh, Nushell, PowerShell, Fish *(in-tree)*, Elvish
+**Dynamic / scripting:** Ruby *(admitted 2026-09-13 — see below)*, Perl,
+R *(admitted 2026-09-14 — see below)*, Julia, Dart, Tcl, AWK, Zsh, Nushell,
+PowerShell, Fish *(in-tree)*, Elvish
 
 **Web / frontend:** HTML *(in-tree)*, CSS *(in-tree)*, SCSS/Less, Vue, Svelte,
 Astro
@@ -210,6 +211,40 @@ when either a corpus lands upstream or a maintained fork adds one.
 tree-sitter's own query language (`.scm` -- which ned authors 79 of and
 currently edits without highlighting). All of these ride the existing injection
 engine (`Editor/Injection.h`) rather than needing a mode of their own.
+
+### R: D0+D1(tags) admitted 2026-09-14
+
+`r-lib/tree-sitter-r` v1.3.0 (the posit/RStudio-maintained official grammar,
+155★, pushed 2026-06-22), ABI 14, 31KB scanner, 4-file corpus (89 cases),
+100% conformance clean against all four corpus gates (conformance, ned parse
+engine, incremental-vs-scratch, MatchCache reconciliation, red-layer
+differential). Unlike SQL/perl this repo commits generated
+`parser.c`/`node-types.json` directly on its tag, so admission took the
+ordinary `ned_add_treesitter_grammar` path with no release-tarball fetch.
+Highlights and tags are upstream's own, vendored unmodified (the mechanical
+`ConvertScmToJanet` round-trip needed no adaptation -- every construct R's
+queries use sits inside QueryMatcher's census-measured scope). Tags gives the
+symbol gutter/go-to-definition for `<-`/`=`-assigned function definitions
+(both identifier- and string-named) and call references.
+
+**Folding: measured zero, not a bug.** The Tier 0 imprint infers delimited
+bodies from `grammar.json` alone, and for R it measures none at all -- the
+same honest-zero outcome as the `diff` grammar. R's `{`/`}`/`(`/`)` pairs are
+real named productions (`braced_expression`, `parenthesized_expression`,
+`call_arguments`, ...), but their opener/closer tokens are `ALIAS`es of an
+*external scanner* symbol (`_external_open_brace` etc.), not plain string
+literals -- R's context-sensitive brace/newline handling needs a scanner to
+disambiguate them at all, and the imprint's inference only recognizes a
+literal-token opener/closer. No folding or bracket-imprint support follows
+from this, and none is faked; highlighting and the D1 symbol gutter are
+unaffected, since neither depends on the imprint.
+
+Upstream also ships `locals.scm` -- deliberately **not** vendored. Scope-aware
+rename's query set is a closed, individually-vetted list (see
+`LocalScopes.h`'s own doc comment in `CLAUDE.md`), not something that grows by
+default whenever an upstream file happens to exist; R's assignment-based
+scoping (`<-`/`=` bind locally inside a function, `<<-`/`->>`  don't) would
+need the same kind of scrutiny lua's decline got before it's safe to wire in.
 
 ### SQL: D0 core admitted 2026-09-13, dialect deltas deferred
 

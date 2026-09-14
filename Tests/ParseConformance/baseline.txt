@@ -43,4 +43,5 @@ tree-sitter-nix-src/corpus  cases=54 runs=54 passed=54 failed=0 skipped=0
 tree-sitter-ruby-src/test/corpus  cases=290 runs=290 passed=290 failed=0 skipped=0
 tree-sitter-gitcommit-src/test/corpus  cases=64 runs=64 passed=64 failed=0 skipped=0
 tree-sitter-gitrebase-src/test/corpus  cases=15 runs=15 passed=15 failed=0 skipped=0
-total  cases=4111 runs=4084 passed=4076 failed=8 skipped=27
+tree-sitter-r-src/test/corpus  cases=89 runs=89 passed=89 failed=0 skipped=0
+total  cases=4200 runs=4173 passed=4165 failed=8 skipped=27
