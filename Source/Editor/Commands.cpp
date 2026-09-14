@@ -2420,7 +2420,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // detect-terminal/custom-command/replace-in-place activation chain all
     // live in BufferView/Editor/ProjectSwitch.h.
     registry.Register("switch-project",
-                      "Switch to a registered project (Editor/ProjectRegistry.h), narrowed by fuzzy matching as "
+                      "Switch to a registered project, narrowed by fuzzy matching as "
                       "you type.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::SwitchProject;

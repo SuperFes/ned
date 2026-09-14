@@ -1,11 +1,7 @@
 # Scripting reference
 
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
-or a plugin. **Generated** from the live binding table -- edit the docstring at
-the `Register<Fn>` call site, not this file.
-
-Regenerate with `NED_BLESS_COMMAND_DOCS=1 ./build/ned_tests "[CommandDocs]"`.
-Held against the binding table on every build, so it cannot drift.
+or a plugin.
 
 162 bindings.
 
@@ -211,7 +207,7 @@ Enable or disable system-clipboard integration as a whole (default true) -- both
 
 ## `ned/set-clipboard-paste-command`
 
-Set the command yank reads the system clipboard from when it differs from the kill ring's own most recent entry: (argv), e.g. (ned/set-clipboard-paste-command ["wl-paste" "-n"]). Same auto-detection/empty-clears convention as ned/set-clipboard-copy-command, resolved independently of it. There is no OSC 52 read-back fallback for paste -- see Editor/Clipboard.h's own comment for why.
+Set the command yank reads the system clipboard from when it differs from the kill ring's own most recent entry: (argv), e.g. (ned/set-clipboard-paste-command ["wl-paste" "-n"]). Same auto-detection/empty-clears convention as ned/set-clipboard-copy-command, resolved independently of it. There is no OSC 52 read-back fallback for paste -- most terminals don't answer that query at all, so paste always goes through the configured command instead.
 
 ## `ned/set-code-folding-enabled`
 
@@ -367,7 +363,7 @@ Enable or disable requesting diagnostics via textDocument/diagnostic on every co
 
 ## `ned/set-lsp-root-markers`
 
-Override the root-marker filenames ned looks for when resolving which directory to initialize a language's LSP server against: (language markers), e.g. (ned/set-lsp-root-markers "rust" ["Cargo.toml"]). Walks upward from an opened buffer's own directory for the nearest ancestor containing one of these as an immediate child; falls back to editor::ProjectRoot() when none match (or markers is empty and language has no compiled-in default) -- this is what lets a monorepo subpackage (its own package.json/pyproject.toml/Cargo.toml/compile_commands.json, ...) get its own LSP root distinct from the outer repo's single .git. An empty markers list clears the override, reverting to the compiled-in default (most bundled languages carry one -- see each Source/Languages/`<name>`/language.janet's :lsp-root-markers) rather than to no markers at all.
+Override the root-marker filenames ned looks for when resolving which directory to initialize a language's LSP server against: (language markers), e.g. (ned/set-lsp-root-markers "rust" ["Cargo.toml"]). Walks upward from an opened buffer's own directory for the nearest ancestor containing one of these as an immediate child; falls back to the ordinary project root when none match (or markers is empty and the language has no built-in default) -- this is what lets a monorepo subpackage (its own package.json/pyproject.toml/Cargo.toml/compile_commands.json, ...) get its own LSP root distinct from the outer repo's single .git. An empty markers list clears the override, reverting to the language's own built-in default (most bundled languages carry one) rather than to no markers at all.
 
 ## `ned/set-lsp-semantic-highlighting`
 
@@ -487,7 +483,7 @@ Set how long, in milliseconds, a write of an LSP/DAP/ACP frame or message to a s
 
 ## `ned/set-recency-glow`
 
-Enable/disable the recency glow -- a brief accent wash over text that was just edited, fading out over ~200ms (default true). Tints the edited characters rather than washing the line behind them, what keeps it cheap -- see Editor/RecencyGlow.h. Retune its colour with (ned/theme-surface "buffer.recency" "fill" ...).
+Enable/disable the recency glow -- a brief accent wash over text that was just edited, fading out over ~200ms (default true). Tints the edited characters rather than washing the line behind them, which is what keeps it cheap. Retune its colour with (ned/theme-surface "buffer.recency" "fill" ...).
 
 ## `ned/set-relative-line-numbers`
 

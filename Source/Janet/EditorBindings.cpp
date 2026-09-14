@@ -1620,8 +1620,8 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetRecencyGlow>(
         "ned", "set-recency-glow",
         "Enable/disable the recency glow -- a brief accent wash over text that was just edited, fading out over "
-        "~200ms (default true). Tints the edited characters rather than washing the line behind them, "
-        "what keeps it cheap -- see Editor/RecencyGlow.h. Retune its colour with "
+        "~200ms (default true). Tints the edited characters rather than washing the line behind them, which is "
+        "what keeps it cheap. Retune its colour with "
         "(ned/theme-surface \"buffer.recency\" \"fill\" ...).");
     env.Register<&NedSetInlineDiagnostics>(
         "ned", "set-inline-diagnostics",
@@ -1704,12 +1704,12 @@ void InstallEditorBindings(Environment& env) {
         "Override the root-marker filenames ned looks for when resolving which directory to initialize a "
         "language's LSP server against: (language markers), e.g. (ned/set-lsp-root-markers \"rust\" "
         "[\"Cargo.toml\"]). Walks upward from an opened buffer's own directory for the nearest ancestor "
-        "containing one of these as an immediate child; falls back to editor::ProjectRoot() when none match "
-        "(or markers is empty and language has no compiled-in default) -- this is what lets a monorepo "
+        "containing one of these as an immediate child; falls back to the ordinary project root when none match "
+        "(or markers is empty and the language has no built-in default) -- this is what lets a monorepo "
         "subpackage (its own package.json/pyproject.toml/Cargo.toml/compile_commands.json, ...) get its own "
         "LSP root distinct from the outer repo's single .git. An empty markers list clears the override, "
-        "reverting to the compiled-in default (most bundled languages carry one -- see each "
-        "Source/Languages/`<name>`/language.janet's :lsp-root-markers) rather than to no markers at all.");
+        "reverting to the language's own built-in default (most bundled languages carry one) rather than to "
+        "no markers at all.");
     env.Register<&NedSetDapAdapter>(
         "ned", "set-dap-adapter",
         "Set the command used to launch a language's DAP debug adapter: (language argv), e.g. (ned/set-dap-adapter "
@@ -1932,7 +1932,8 @@ void InstallEditorBindings(Environment& env) {
         "Set the command yank reads the system clipboard from when it differs from the kill ring's own most "
         "recent entry: (argv), e.g. (ned/set-clipboard-paste-command [\"wl-paste\" \"-n\"]). Same auto-detection/"
         "empty-clears convention as ned/set-clipboard-copy-command, resolved independently of it. There is no OSC "
-        "52 read-back fallback for paste -- see Editor/Clipboard.h's own comment for why.");
+        "52 read-back fallback for paste -- most terminals don't answer that query at all, so paste always goes "
+        "through the configured command instead.");
     env.Register<&NedSetClipboardEnabled>(
         "ned", "set-clipboard-enabled",
         "Enable or disable system-clipboard integration as a whole (default true) -- both the shelled-out CLI "

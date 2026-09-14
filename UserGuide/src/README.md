@@ -33,10 +33,10 @@ you haven't, that's fine too — this guide doesn't assume it.
 
 Two reference chapters — [Scripting](scripting.md) and the
 [Command Reference](commands.md) — aren't hand-maintained. They're pulled directly from
-ned's own command registry and Janet binding table by a test that fails the build if the
-generated file drifts from what's actually registered (`Tests/CommandReferenceTest.cpp`).
-If a command or binding exists, it's documented; if this guide says a command exists,
-you can trust that it does, today, in the version you're running.
+ned's own command registry and Janet binding table, and the build fails if either one
+drifts from what's actually registered. If a command or binding exists, it's documented;
+if this guide says a command exists, you can trust that it does, today, in the version
+you're running.
 
 ## Getting help inside ned
 

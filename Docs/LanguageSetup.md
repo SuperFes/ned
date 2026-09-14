@@ -1,28 +1,24 @@
-# Language Setup: Closing Tier A's D2 Gap
+# Per-language setup recipes
 
-`java`/`kotlin`/`csharp`/`go`/`rust`/`bash` (plus the newly-promoted `lua`/`cmake`)
-carry a grammar and D0/D1 support but none of D2's integration config — see
-`Docs/LanguageCoverage.md`'s depth ladder and `ROADMAP.md`'s Tier A entry. D2 is
-**config plus docs, not code**: `ned` never bundles or auto-detects an LSP
-server, DAP adapter, or test command (`ned/set-lsp-command`'s own doc comment is
-explicit about this) — this page is the missing "docs" half, one recipe per
-language to paste into `init.janet`. It replaces guesswork, not a compiled-in
-default.
+`java`, `kotlin`, `csharp`, `go`, `rust`, `bash`, `lua`, and `cmake` all get syntax
+highlighting, folding, and indentation with no setup at all (see
+[Language Intelligence](features/language-intelligence.md)). Language
+server, debugger, and test-runner integration is a separate, explicit step: ned never
+bundles or auto-detects any of those, so this page is one recipe per language to paste
+into `init.janet`.
 
-Every recommendation below is the community-standard tool for that ecosystem,
-not a ned-specific choice; verify a binary is actually on your `$PATH` before
-wiring it in (`ned/set-lsp-command`/`set-dap-adapter` resolve against `$PATH`,
-same as a shell would). Where no clean answer exists, that's stated plainly
-rather than papered over with something untested — same convention this
-codebase already follows for genuine integration gaps (see e.g. `ImportFixup.h`
-declining rather than guessing, or the Godot/GDScript LSP-over-TCP blocker in
-`Docs/LanguageCoverage.md`).
+Every recommendation below is the community-standard tool for that ecosystem, not a
+ned-specific choice; verify a binary is actually on your `$PATH` before wiring it in.
+Where no clean answer exists for a language's debugger or test runner, that's stated
+plainly rather than papered over with something untested.
 
 ## Root markers
 
-Root markers for a language are compiled in via that language's own
-`Source/Languages/<name>/language.janet` (`:lsp-root-markers`), not this doc —
-`ned/set-lsp-root-markers` only overrides them. Current state for this batch:
+A root marker is the filename ned looks for when deciding which ancestor directory to
+treat as a language's project root (for a monorepo, that lets a subpackage get its own
+LSP server instead of everything sharing one pinned to the outer repo). Most bundled
+languages already carry sensible defaults; `ned/set-lsp-root-markers` overrides them.
+Current defaults for the languages on this page:
 
 - `java`/`kotlin` — `pom.xml`, `build.gradle`, `build.gradle.kts`,
   `settings.gradle`, `settings.gradle.kts` (already bundled).
@@ -33,8 +29,8 @@ Root markers for a language are compiled in via that language's own
 - `bash`, `cmake` — deliberately none. Bash scripts have no fixed project-marker
   convention to walk for; a CMake marker of `CMakeLists.txt` would match
   trivially at a nested file's own directory instead of finding the real top.
-  Both fall back to `editor::ProjectRoot()`, which is already correct for the
-  common case (a repo's one `CMakeLists.txt`/script tree with a single root).
+  Both fall back to ned's ordinary project root, which is already correct for
+  the common case (a repo with one `CMakeLists.txt`/script tree and a single root).
 
 ## Java
 
@@ -52,9 +48,9 @@ right once rather than debugging a confused server later.
 **DAP:** intentionally not recommended here. `java-debug` is a jdtls *plugin*,
 not a standalone binary `ned/set-dap-adapter` can spawn on its own — wiring it
 up means jdtls bootstrapping the debug server itself via a
-`workspace/executeCommand`, which doesn't fit the "spawn one adapter process"
-model `Dap/Manager.h` assumes. Recording this as a real gap rather than
-shipping an unverified command.
+`workspace/executeCommand`, which doesn't fit ned's "spawn one adapter
+process" debugger model. Recording this as a real gap rather than shipping an
+unverified command.
 
 **Test runner:** Maven/Gradle's own output isn't one of the seven built-in
 formats, and their JUnit XML reports (`target/surefire-reports/`,
@@ -136,7 +132,7 @@ standard, and `go test -json` is a direct, first-class fit for the built-in
 `lldb-vscode`) is recommended over VS Code's bundled `codelldb` here
 specifically because it speaks plain stdio DAP the way `ned/set-dap-adapter`
 expects — `codelldb` is typically driven over a TCP port the VS Code extension
-manages, which is a different transport `Dap/Client.h` doesn't (yet) support.
+manages, and ned doesn't (yet) support that transport.
 Replace `${cargo:program}` with your actual built binary path — that
 substitution is VS Code's own, not ned's. `cargo test` maps directly onto the
 built-in `"cargo"` format.
@@ -192,8 +188,8 @@ one).
 
 ## Formatter: the one process-wide limitation worth knowing
 
-`ned/set-format-command` (`FormatOnSave.h`) is a single, process-wide command —
-not per-language, a deliberate v1 scope cut. It also receives only the
+`ned/set-format-command` is a single, process-wide command — not per-language,
+a deliberate v1 scope cut. It also receives only the
 buffer's text over stdin/stdout, no filename — there's no way for a dispatch
 script to know which language it's formatting. For any of these languages the
 usual per-ecosystem formatter still works fine standalone
