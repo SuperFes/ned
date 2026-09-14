@@ -1,12 +1,7 @@
 # Command reference
 
 Every command reachable from `M-x`, from a keybinding, or from Janet via
-`ned/run-command`. **Generated** from the live `CommandRegistry` -- edit the
-docstring at the registration site, not this file.
-
-Regenerate with `NED_BLESS_COMMAND_DOCS=1 ./build/ned_tests "[CommandDocs]"`.
-`Tests/CommandReferenceTest.cpp` holds this against the registry on every
-build, so it cannot drift and a command cannot arrive undocumented.
+`ned/run-command`.
 
 302 commands.
 
@@ -1024,7 +1019,7 @@ Switch between a C/C++ header and its implementation file.
 
 ## `switch-project`
 
-Switch to a registered project (Editor/ProjectRegistry.h), narrowed by fuzzy matching as you type.
+Switch to a registered project, narrowed by fuzzy matching as you type.
 
 ## `switch-to-buffer`
 

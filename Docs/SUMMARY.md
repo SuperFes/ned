@@ -18,3 +18,7 @@
 
 - [Jank Embedding Feasibility](JankFeasibility.md)
 - [Keybinding Audit](KeybindingAudit.md)
+
+# Contributing
+
+- [Authoring a Bundled Theme](ThemeAuthoring.md)

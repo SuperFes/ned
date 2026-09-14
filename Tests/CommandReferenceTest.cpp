@@ -45,11 +45,7 @@ std::string Render(const ned::editor::CommandRegistry& registry) {
     std::ostringstream out;
     out << "# Command reference\n\n"
         << "Every command reachable from `M-x`, from a keybinding, or from Janet via\n"
-        << "`ned/run-command`. **Generated** from the live `CommandRegistry` -- edit the\n"
-        << "docstring at the registration site, not this file.\n\n"
-        << "Regenerate with `NED_BLESS_COMMAND_DOCS=1 ./build/ned_tests \"[CommandDocs]\"`.\n"
-        << "`Tests/CommandReferenceTest.cpp` holds this against the registry on every\n"
-        << "build, so it cannot drift and a command cannot arrive undocumented.\n\n";
+        << "`ned/run-command`.\n\n";
 
     const std::vector<std::string> names = registry.Names();
     out << names.size() << " commands.\n\n";
@@ -125,10 +121,7 @@ std::string RenderBindings(const std::vector<std::pair<std::string, std::string>
     std::ostringstream out;
     out << "# Scripting reference\n\n"
         << "Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,\n"
-        << "or a plugin. **Generated** from the live binding table -- edit the docstring at\n"
-        << "the `Register<Fn>` call site, not this file.\n\n"
-        << "Regenerate with `NED_BLESS_COMMAND_DOCS=1 ./build/ned_tests \"[CommandDocs]\"`.\n"
-        << "Held against the binding table on every build, so it cannot drift.\n\n"
+        << "or a plugin.\n\n"
         << bindings.size() << " bindings.\n\n";
     for (const auto& [name, doc] : bindings) {
         out << "## `" << name << "`\n\n" << doc << "\n\n";
