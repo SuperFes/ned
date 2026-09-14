@@ -282,6 +282,22 @@ function(ned_fetch_treesitter_source content_name repository tag)
     set(${content_name}_SOURCE_DIR "${${content_name}_SOURCE_DIR}" PARENT_SCOPE)
 endfunction()
 
+# Sibling of ned_fetch_treesitter_source for a grammar that doesn't commit
+# generated parser.c/grammar.json to its default branch or tags at all --
+# tree-sitter-sql only ships them as a GitHub Release asset (or on its
+# gh-pages branch). URL + URL_HASH instead of GIT_REPOSITORY/GIT_TAG; same
+# SOURCE_SUBDIR trick as every other fetch here, since the tarball carries
+# its own root CMakeLists.txt that must not get auto-configured.
+function(ned_fetch_treesitter_release content_name url sha256)
+    FetchContent_Declare(${content_name}
+            URL ${url}
+            URL_HASH SHA256=${sha256}
+            SOURCE_SUBDIR _ned_do_not_configure
+            EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(${content_name})
+    set(${content_name}_SOURCE_DIR "${${content_name}_SOURCE_DIR}" PARENT_SCOPE)
+endfunction()
+
 function(ned_add_treesitter_grammar_target target_name grammar_dir)
     add_library(${target_name} STATIC "${grammar_dir}/src/parser.c")
     if (EXISTS "${grammar_dir}/src/scanner.c")
@@ -570,6 +586,20 @@ ned_add_treesitter_grammar(tree-sitter-kotlin https://github.com/fwcd/tree-sitte
 ned_add_treesitter_grammar(tree-sitter-lua https://github.com/tree-sitter-grammars/tree-sitter-lua.git v0.5.0)
 ned_add_treesitter_grammar(tree-sitter-cmake https://github.com/uyha/tree-sitter-cmake.git v0.7.5)
 ned_add_treesitter_grammar(tree-sitter-diff https://github.com/tree-sitter-grammars/tree-sitter-diff.git v0.2.0)
+
+# SQL (D0 core only -- see ROADMAP's parsing-engine section for the deferred
+# per-dialect trait-delta work). DerekStride/tree-sitter-sql v0.3.11, ABI 15,
+# 188-LOC scanner, 31-file corpus -- but its tags/main don't commit generated
+# parser.c/grammar.json (only grammar.js/scanner.c; generated output lives on
+# a gh-pages branch or, more traceably, as a release asset). Generated
+# sources come from that release tarball directly; a second, ordinary git
+# fetch of the same tag supplies test/corpus for ParseConformanceTest, which
+# the tarball omits.
+ned_fetch_treesitter_release(tree-sitter-sql
+        https://github.com/DerekStride/tree-sitter-sql/releases/download/v0.3.11/tree-sitter-sql-v0.3.11.tar.gz
+        a97a324eae9c81ed68f6e162b9b33f8911fc6442caa2950e57c498e2460d1387)
+ned_add_treesitter_grammar_target(tree-sitter-sql "${tree-sitter-sql_SOURCE_DIR}")
+ned_fetch_treesitter_source(tree-sitter-sql-corpus https://github.com/DerekStride/tree-sitter-sql.git v0.3.11)
 
 #------------------------------------------------------------------------------
 
@@ -951,6 +981,7 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-lua
         PUBLIC tree-sitter-cmake
         PUBLIC tree-sitter-diff
+        PUBLIC tree-sitter-sql
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public

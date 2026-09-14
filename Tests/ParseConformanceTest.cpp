@@ -117,6 +117,7 @@ const std::vector<CorpusSource>& CorpusSources() {
         {"tree-sitter-php-src/test/corpus", "php", {{"php", "php"}, {"php_only", ""}}},
         {"tree-sitter-python-src/test/corpus", "python"},
         {"tree-sitter-rust-src/test/corpus", "rust"},
+        {"tree-sitter-sql-corpus-src/test/corpus", "sql"},
         {"tree-sitter-toml-src/test/corpus", "toml"},
         {"tree-sitter-typescript-src-src/test/corpus", "typescript", {{"typescript", "typescript"}, {"tsx", "tsx"}}},
         {"tree-sitter-xml-src/test/corpus", "xml", {{"xml", "xml"}, {"dtd", ""}}},

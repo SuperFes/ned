@@ -471,6 +471,19 @@ constexpr Entry kRust[] = {
     {"visibility_modifier", DelimiterKind::Bracket, false, true},
 };
 
+constexpr Entry kSql[] = {
+    {"array_size_definition", DelimiterKind::Bracket, false, true},
+    {"column_definitions", DelimiterKind::Bracket, true, true},
+    {"function_arguments", DelimiterKind::Bracket, true, true},
+    {"index_fields", DelimiterKind::Bracket, true, true},
+    {"list", DelimiterKind::Bracket, true, true},
+    {"ordered_columns", DelimiterKind::Bracket, true, false},
+    {"parenthesized_expression", DelimiterKind::Bracket, true, true},
+    {"subquery", DelimiterKind::Bracket, true, true},
+    {"subscript", DelimiterKind::Bracket, false, true},
+    {"window_specification", DelimiterKind::Bracket, true, false},
+};
+
 constexpr Entry kToml[] = {
     {"array", DelimiterKind::Bracket, true, true},
     {"inline_table", DelimiterKind::Bracket, true, true},
@@ -601,6 +614,7 @@ const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
         load("php", kPhp, std::size(kPhp));
         load("python", kPython, std::size(kPython));
         load("rust", kRust, std::size(kRust));
+        load("sql", kSql, std::size(kSql));
         load("toml", kToml, std::size(kToml));
         load("tsx", kTsx, std::size(kTsx));
         load("typescript", kTypescript, std::size(kTypescript));
