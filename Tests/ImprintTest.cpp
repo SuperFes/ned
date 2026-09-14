@@ -62,9 +62,11 @@ json Grammar(const json& rules, const json& externals = json::array()) {
     return json{{"rules", rules}, {"externals", externals}};
 }
 
-// The FetchContent tree the real grammars live in. Absent in a source-only
-// checkout, so the corpus case skips rather than fails there.
-fs::path DepsDir() { return fs::path(NED_REPO_ROOT) / "build" / "_deps"; }
+// The vendored tree the real grammars live in (Tools/vendor-grammars.py),
+// normally always present since it's checked into the repo -- the exists()
+// guard below is defense against a manually pruned/partial checkout, not
+// the normal case it used to be under FetchContent.
+fs::path DepsDir() { return fs::path(NED_REPO_ROOT) / "ThirdParty" / "tree-sitter-grammars"; }
 
 } // namespace
 
@@ -379,22 +381,22 @@ TEST_CASE("Every deleted fold query's nodes still fold from the imprint", "[Impr
     // The Phase 1 gate, outliving the queries it was written against. See
     // Docs/ParsingEngine.md.
     const std::map<std::string, std::string> kGrammars = {
-        {"c", "tree-sitter-c-src/src/grammar.json"},
-        {"cpp", "tree-sitter-cpp-src/src/grammar.json"},
-        {"csharp", "tree-sitter-c-sharp-src/src/grammar.json"},
-        {"go", "tree-sitter-go-src/src/grammar.json"},
-        {"java", "tree-sitter-java-src/src/grammar.json"},
-        {"javascript", "tree-sitter-javascript-src/src/grammar.json"},
-        {"json", "tree-sitter-json-src/src/grammar.json"},
-        {"kotlin", "tree-sitter-kotlin-src/src/grammar.json"},
-        {"python", "tree-sitter-python-src/src/grammar.json"},
-        {"rust", "tree-sitter-rust-src/src/grammar.json"},
-        {"typescript", "tree-sitter-typescript-src-src/typescript/src/grammar.json"},
-        {"clojure", "tree-sitter-clojure-src/src/grammar.json"},
+        {"c", "tree-sitter-c/src/grammar.json"},
+        {"cpp", "tree-sitter-cpp/src/grammar.json"},
+        {"csharp", "tree-sitter-c-sharp/src/grammar.json"},
+        {"go", "tree-sitter-go/src/grammar.json"},
+        {"java", "tree-sitter-java/src/grammar.json"},
+        {"javascript", "tree-sitter-javascript/src/grammar.json"},
+        {"json", "tree-sitter-json/src/grammar.json"},
+        {"kotlin", "tree-sitter-kotlin/src/grammar.json"},
+        {"python", "tree-sitter-python/src/grammar.json"},
+        {"rust", "tree-sitter-rust/src/grammar.json"},
+        {"typescript", "tree-sitter-typescript-src/typescript/src/grammar.json"},
+        {"clojure", "tree-sitter-clojure/src/grammar.json"},
     };
 
     if (!fs::exists(DepsDir())) {
-        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
+        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
         return;
     }
 
@@ -495,7 +497,7 @@ const std::map<std::string, std::set<std::string>> kDeletedIndentCaptures = {
 
 TEST_CASE("Every deleted indent capture's node still indents from the imprint", "[Imprint]") {
     // The deletable criterion, held against the COMPILED table so it needs no
-    // build/_deps: a bracket body is a container whenever its instance
+    // ThirdParty/tree-sitter-grammars: a bracket body is a container whenever its instance
     // carries its brackets (Editor/ImprintBracket.h's DelimitersOf, an
     // instance-level test no table can pre-answer), and an indentation body
     // is one when it has no introducer of its own -- `openerIsFirst` false --
@@ -629,55 +631,55 @@ void Normalize(std::vector<std::pair<std::size_t, std::size_t>>& blocks, const s
 // Regenerate with NED_BLESS_IMPRINT=1 and read the diff.
 TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Corpus]") {
     const std::map<std::string, std::string> kGrammars = {
-        {"c", "tree-sitter-c-src/src/grammar.json"},
-        {"cpp", "tree-sitter-cpp-src/src/grammar.json"},
-        {"csharp", "tree-sitter-c-sharp-src/src/grammar.json"},
-        {"go", "tree-sitter-go-src/src/grammar.json"},
-        {"java", "tree-sitter-java-src/src/grammar.json"},
-        {"javascript", "tree-sitter-javascript-src/src/grammar.json"},
-        {"json", "tree-sitter-json-src/src/grammar.json"},
-        {"kotlin", "tree-sitter-kotlin-src/src/grammar.json"},
-        {"python", "tree-sitter-python-src/src/grammar.json"},
-        {"rust", "tree-sitter-rust-src/src/grammar.json"},
-        {"typescript", "tree-sitter-typescript-src-src/typescript/src/grammar.json"},
-        {"clojure", "tree-sitter-clojure-src/src/grammar.json"},
+        {"c", "tree-sitter-c/src/grammar.json"},
+        {"cpp", "tree-sitter-cpp/src/grammar.json"},
+        {"csharp", "tree-sitter-c-sharp/src/grammar.json"},
+        {"go", "tree-sitter-go/src/grammar.json"},
+        {"java", "tree-sitter-java/src/grammar.json"},
+        {"javascript", "tree-sitter-javascript/src/grammar.json"},
+        {"json", "tree-sitter-json/src/grammar.json"},
+        {"kotlin", "tree-sitter-kotlin/src/grammar.json"},
+        {"python", "tree-sitter-python/src/grammar.json"},
+        {"rust", "tree-sitter-rust/src/grammar.json"},
+        {"typescript", "tree-sitter-typescript-src/typescript/src/grammar.json"},
+        {"clojure", "tree-sitter-clojure/src/grammar.json"},
         // Languages with NO hand-written folds.scm at all. They get folding
         // from the imprint alone -- which is the whole N x M argument arriving:
         // nine languages gaining a feature because the grammar already said
         // enough, with nothing authored per language.
-        {"bash", "tree-sitter-bash-src/src/grammar.json"},
-        {"css", "tree-sitter-css-src/src/grammar.json"},
-        {"fish", "tree-sitter-fish-src/src/grammar.json"},
-        {"html", "tree-sitter-html-src/src/grammar.json"},
-        {"janet", "tree-sitter-janet-simple-src/src/grammar.json"},
-        {"php", "tree-sitter-php-src/php/src/grammar.json"},
-        {"toml", "tree-sitter-toml-src/src/grammar.json"},
-        {"xml", "tree-sitter-xml-src/xml/src/grammar.json"},
-        {"yaml", "tree-sitter-yaml-src/src/grammar.json"},
-        {"tsx", "tree-sitter-typescript-src-src/tsx/src/grammar.json"},
+        {"bash", "tree-sitter-bash/src/grammar.json"},
+        {"css", "tree-sitter-css/src/grammar.json"},
+        {"fish", "tree-sitter-fish/src/grammar.json"},
+        {"html", "tree-sitter-html/src/grammar.json"},
+        {"janet", "tree-sitter-janet-simple/src/grammar.json"},
+        {"php", "tree-sitter-php/php/src/grammar.json"},
+        {"toml", "tree-sitter-toml/src/grammar.json"},
+        {"xml", "tree-sitter-xml/xml/src/grammar.json"},
+        {"yaml", "tree-sitter-yaml/src/grammar.json"},
+        {"tsx", "tree-sitter-typescript-src/tsx/src/grammar.json"},
         // jank shares Clojure's grammar outright, but a table is keyed by the
         // MODE's language key rather than by the grammar, so it needs its own
         // entry -- it had none, and folded only because it also shared
         // clojure-folds.scm. Deleting that query is what surfaced it, and
         // bracket matching (gated on the same table) had been silently missing
         // for jank all along.
-        {"jank", "tree-sitter-clojure-src/src/grammar.json"},
-        {"lua", "tree-sitter-lua-src/src/grammar.json"},
-        {"cmake", "tree-sitter-cmake-src/src/grammar.json"},
-        {"diff", "tree-sitter-diff-src/src/grammar.json"},
-        {"sql", "tree-sitter-sql-src/src/grammar.json"},
-        {"dockerfile", "tree-sitter-dockerfile-src/src/grammar.json"},
-        {"make", "tree-sitter-make-src/src/grammar.json"},
-        {"hcl", "tree-sitter-hcl-src/src/grammar.json"},
-        {"nix", "tree-sitter-nix-src/src/grammar.json"},
-        {"ruby", "tree-sitter-ruby-src/src/grammar.json"},
-        {"gitcommit", "tree-sitter-gitcommit-src/src/grammar.json"},
-        {"gitrebase", "tree-sitter-gitrebase-src/src/grammar.json"},
-        {"r", "tree-sitter-r-src/src/grammar.json"},
+        {"jank", "tree-sitter-clojure/src/grammar.json"},
+        {"lua", "tree-sitter-lua/src/grammar.json"},
+        {"cmake", "tree-sitter-cmake/src/grammar.json"},
+        {"diff", "tree-sitter-diff/src/grammar.json"},
+        {"sql", "tree-sitter-sql/src/grammar.json"},
+        {"dockerfile", "tree-sitter-dockerfile/src/grammar.json"},
+        {"make", "tree-sitter-make/src/grammar.json"},
+        {"hcl", "tree-sitter-hcl/src/grammar.json"},
+        {"nix", "tree-sitter-nix/src/grammar.json"},
+        {"ruby", "tree-sitter-ruby/src/grammar.json"},
+        {"gitcommit", "tree-sitter-gitcommit/src/grammar.json"},
+        {"gitrebase", "tree-sitter-gitrebase/src/grammar.json"},
+        {"r", "tree-sitter-r/src/grammar.json"},
     };
 
     if (!fs::exists(DepsDir())) {
-        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
+        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
         return;
     }
 
@@ -801,24 +803,24 @@ TEST_CASE("The compiled table folds real files exactly as live inference does", 
     };
 
     if (!fs::exists(DepsDir())) {
-        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
+        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
         return;
     }
 
     std::vector<Case> cases;
-    cases.push_back({"sample.c", "tree-sitter-c-src", ned::editor::CMode(), "c"});
-    cases.push_back({"sample.cpp", "tree-sitter-cpp-src", ned::editor::CppMode(), "cpp"});
-    cases.push_back({"sample.py", "tree-sitter-python-src", ned::editor::PythonMode(), "python"});
-    cases.push_back({"sample.json", "tree-sitter-json-src", ned::editor::JsonMode(), "json"});
-    cases.push_back({"sample.clj", "tree-sitter-clojure-src", ned::editor::ClojureMode(), "clojure"});
-    cases.push_back({"sample.go", "tree-sitter-go-src", ned::editor::GoMode(), "go"});
-    cases.push_back({"sample.rs", "tree-sitter-rust-src", ned::editor::RustMode(), "rust"});
-    cases.push_back({"sample.java", "tree-sitter-java-src", ned::editor::JavaMode(), "java"});
-    cases.push_back({"sample.cs", "tree-sitter-c-sharp-src", ned::editor::CSharpMode(), "csharp"});
-    cases.push_back({"sample.js", "tree-sitter-javascript-src", ned::editor::JavaScriptMode(), "javascript"});
+    cases.push_back({"sample.c", "tree-sitter-c", ned::editor::CMode(), "c"});
+    cases.push_back({"sample.cpp", "tree-sitter-cpp", ned::editor::CppMode(), "cpp"});
+    cases.push_back({"sample.py", "tree-sitter-python", ned::editor::PythonMode(), "python"});
+    cases.push_back({"sample.json", "tree-sitter-json", ned::editor::JsonMode(), "json"});
+    cases.push_back({"sample.clj", "tree-sitter-clojure", ned::editor::ClojureMode(), "clojure"});
+    cases.push_back({"sample.go", "tree-sitter-go", ned::editor::GoMode(), "go"});
+    cases.push_back({"sample.rs", "tree-sitter-rust", ned::editor::RustMode(), "rust"});
+    cases.push_back({"sample.java", "tree-sitter-java", ned::editor::JavaMode(), "java"});
+    cases.push_back({"sample.cs", "tree-sitter-c-sharp", ned::editor::CSharpMode(), "csharp"});
+    cases.push_back({"sample.js", "tree-sitter-javascript", ned::editor::JavaScriptMode(), "javascript"});
     cases.push_back(
-        {"sample.ts", "tree-sitter-typescript-src-src/typescript", ned::editor::TypeScriptMode(), "typescript"});
-    cases.push_back({"sample.kt", "tree-sitter-kotlin-src", ned::editor::KotlinMode(), "kotlin"});
+        {"sample.ts", "tree-sitter-typescript-src/typescript", ned::editor::TypeScriptMode(), "typescript"});
+    cases.push_back({"sample.kt", "tree-sitter-kotlin", ned::editor::KotlinMode(), "kotlin"});
 
     for (const Case& testCase : cases) {
         INFO("corpus file: " << testCase.file);

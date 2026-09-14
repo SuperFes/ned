@@ -25,18 +25,17 @@ option(NED_BUILD_TESTS "Build the ned_tests target" ON)
 option(NED_ENABLE_SANITIZERS "Build with AddressSanitizer/UndefinedBehaviorSanitizer" OFF)
 option(NED_TEST_TERMINAL_INTEGRATION "Include PtyProcessTest.cpp, which forkpty's real shells/processes, in ned_tests" OFF)
 
-# Use ccache automatically when it's on PATH -- this project's FetchContent
+# Use ccache automatically when it's on PATH -- this project's bundled
+# tree-sitter grammars include some very large generated parser.c
+# translation units (tree-sitter-cpp's alone is ~17MB of generated tables),
+# and ccache is what keeps a clean rebuild from recompiling them every time.
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
     set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
     set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
 endif()
 
-include(FetchContent)
 include(FindPkgConfig)
-
-set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
-set(FETCHCONTENT_QUIET OFF)
 
 # System Notcurses (Gentoo's dev-cpp/notcurses) rather than FetchContent: it
 # now matches the exact pinned tag (v3.0.17) and its ebuild carries the same
@@ -106,21 +105,22 @@ pkg_check_modules(PCRE2 REQUIRED IMPORTED_TARGET libpcre2-8)
 add_library(pcre2-8-static ALIAS PkgConfig::PCRE2)
 #------------------------------------------------------------------------------
 
-#--- Fetch tree-sitter (core) --------------------------------------------------
-FetchContent_Declare(tree-sitter
-        GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
-        GIT_TAG v0.25.10
-        GIT_SHALLOW TRUE
-        SOURCE_SUBDIR lib
-        EXCLUDE_FROM_ALL)
-
-set(BUILD_SHARED_LIBS_PREV ${BUILD_SHARED_LIBS})
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(tree-sitter)
-set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_PREV} CACHE BOOL "" FORCE)
-unset(BUILD_SHARED_LIBS_PREV)
-
-target_include_directories(tree-sitter PUBLIC ${tree-sitter_SOURCE_DIR}/lib/include)
+#--- tree-sitter (core) ---------------------------------------------------------
+# Only ned_tests links this (see target_link_libraries(ned_tests ...) below) --
+# it is Phase 4b's differential conformance reference for ned's own parsing
+# engine (Source/Editor/Parse/), never linked into ned_lib/ned itself. Used to
+# be FetchContent'd at configure time (v0.25.10 pinned); now vendored under
+# ThirdParty/tree-sitter-grammars/tree-sitter-core/ by Tools/vendor-grammars.py
+# -- see that script's header for why grammar sources moved out of
+# FetchContent entirely. Re-vendor with
+# `Tools/vendor-grammars.py tree-sitter-core` to bump the pinned version.
+set(NED_TREE_SITTER_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/tree-sitter-grammars/tree-sitter-core")
+file(GLOB NED_TREE_SITTER_CORE_SOURCES "${NED_TREE_SITTER_CORE_DIR}/src/*.c")
+add_library(tree-sitter STATIC ${NED_TREE_SITTER_CORE_SOURCES})
+target_include_directories(tree-sitter
+        PUBLIC ${NED_TREE_SITTER_CORE_DIR}/include
+        PRIVATE ${NED_TREE_SITTER_CORE_DIR}/src)
+set_target_properties(tree-sitter PROPERTIES C_STANDARD 11 POSITION_INDEPENDENT_CODE ON)
 #------------------------------------------------------------------------------
 
 #--- System libvterm (terminal-panel follow-up) --------------------------------
@@ -136,35 +136,20 @@ pkg_check_modules(VTERM REQUIRED IMPORTED_TARGET vterm)
 add_library(vterm ALIAS PkgConfig::VTERM)
 #------------------------------------------------------------------------------
 
-#--- Fetch a tree-sitter grammars ---------------------------------------------
-function(ned_fetch_treesitter_source content_name repository tag)
-    FetchContent_Declare(${content_name}
-            GIT_REPOSITORY ${repository}
-            GIT_TAG ${tag}
-            GIT_SHALLOW TRUE
-            SOURCE_SUBDIR _ned_do_not_configure
-            EXCLUDE_FROM_ALL)
-    FetchContent_MakeAvailable(${content_name})
-    set(${content_name}_SOURCE_DIR "${${content_name}_SOURCE_DIR}" PARENT_SCOPE)
-endfunction()
-
-# Sibling of ned_fetch_treesitter_source for a grammar that doesn't commit
-# generated parser.c/grammar.json to its default branch or tags at all --
-# tree-sitter-sql only ships them as a GitHub Release asset (or on its
-# gh-pages branch). URL + URL_HASH instead of GIT_REPOSITORY/GIT_TAG; same
-# SOURCE_SUBDIR trick as every other fetch here, since the tarball carries
-# its own root CMakeLists.txt that must not get auto-configured.
-function(ned_fetch_treesitter_release content_name url sha256)
-    FetchContent_Declare(${content_name}
-            URL ${url}
-            URL_HASH SHA256=${sha256}
-            SOURCE_SUBDIR _ned_do_not_configure
-            EXCLUDE_FROM_ALL)
-    FetchContent_MakeAvailable(${content_name})
-    set(${content_name}_SOURCE_DIR "${${content_name}_SOURCE_DIR}" PARENT_SCOPE)
-endfunction()
-
+#--- Bundled tree-sitter grammars -----------------------------------------------
+# Every grammar's generated parser.c (+ scanner.c, when it has an external
+# scanner) is vendored under ThirdParty/tree-sitter-grammars/ rather than
+# fetched via CMake's FetchContent at configure time -- a normal build touches
+# no network at all. Tools/vendor-grammars.py is the one place that does: run
+# it by hand (its own header has the details) when adding a language or
+# bumping a pinned grammar version, and its MANIFEST table is the new source
+# of truth for which repository/tag/subdir each grammar comes from -- this
+# file only names where the vendored result lives.
 function(ned_add_treesitter_grammar_target target_name grammar_dir)
+    if (NOT EXISTS "${grammar_dir}/src/parser.c")
+        message(FATAL_ERROR "ned_add_treesitter_grammar_target: ${grammar_dir}/src/parser.c not found -- "
+                "run Tools/vendor-grammars.py to populate ThirdParty/tree-sitter-grammars/")
+    endif()
     add_library(${target_name} STATIC "${grammar_dir}/src/parser.c")
     if (EXISTS "${grammar_dir}/src/scanner.c")
         target_sources(${target_name} PRIVATE "${grammar_dir}/src/scanner.c")
@@ -173,16 +158,19 @@ function(ned_add_treesitter_grammar_target target_name grammar_dir)
     set_target_properties(${target_name} PROPERTIES C_STANDARD 11 POSITION_INDEPENDENT_CODE ON)
 endfunction()
 
-function(ned_add_treesitter_grammar name repository tag)
+# Convenience wrapper for the common case: a vendored directory whose name is
+# exactly the CMake target name (optionally with one subdir inside it, for a
+# grammar repo that bundles more than one grammar -- e.g. tree-sitter-php's
+# "php" subdir). typescript/tsx and markdown/markdown-inline share one vendored
+# directory between two *different*-named targets, so those four go straight
+# through ned_add_treesitter_grammar_target instead -- see below.
+function(ned_add_bundled_grammar target_name)
     set(grammar_subdir "${ARGN}") # optional trailing positional arg
-    ned_fetch_treesitter_source(${name} ${repository} ${tag})
+    set(grammar_dir "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/tree-sitter-grammars/${target_name}")
     if (grammar_subdir)
-        ned_add_treesitter_grammar_target(${name} "${${name}_SOURCE_DIR}/${grammar_subdir}")
-    else()
-        ned_add_treesitter_grammar_target(${name} "${${name}_SOURCE_DIR}")
+        set(grammar_dir "${grammar_dir}/${grammar_subdir}")
     endif()
-
-    set(${name}_SOURCE_DIR "${${name}_SOURCE_DIR}" PARENT_SCOPE)
+    ned_add_treesitter_grammar_target(${target_name} "${grammar_dir}")
 endfunction()
 
 
@@ -258,55 +246,53 @@ endfunction()
 
 ned_embed_language_files()
 
-ned_add_treesitter_grammar(tree-sitter-json https://github.com/tree-sitter/tree-sitter-json.git v0.24.8)
+ned_add_bundled_grammar(tree-sitter-json)
 
 
-ned_add_treesitter_grammar(tree-sitter-c https://github.com/tree-sitter/tree-sitter-c.git v0.24.2)
+ned_add_bundled_grammar(tree-sitter-c)
 
 # C and C++'s tags are ned's own files (Source/Languages/{c,cpp}/tags.janet),
 # not upstream's -- see their own header comments for the "most vexing
 # parse" ambiguity that forced the vendoring.
 
-ned_add_treesitter_grammar(tree-sitter-cpp https://github.com/tree-sitter/tree-sitter-cpp.git v0.23.4)
+ned_add_bundled_grammar(tree-sitter-cpp)
 
-ned_add_treesitter_grammar(tree-sitter-php https://github.com/tree-sitter/tree-sitter-php.git v0.24.2 php)
+ned_add_bundled_grammar(tree-sitter-php php)
 
-ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
+ned_add_bundled_grammar(tree-sitter-javascript)
 
-ned_fetch_treesitter_source(tree-sitter-typescript-src https://github.com/tree-sitter/tree-sitter-typescript.git v0.23.2)
+ned_add_treesitter_grammar_target(tree-sitter-typescript "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/tree-sitter-grammars/tree-sitter-typescript-src/typescript")
+ned_add_treesitter_grammar_target(tree-sitter-tsx "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/tree-sitter-grammars/tree-sitter-typescript-src/tsx")
 
-ned_add_treesitter_grammar_target(tree-sitter-typescript "${tree-sitter-typescript-src_SOURCE_DIR}/typescript")
-ned_add_treesitter_grammar_target(tree-sitter-tsx "${tree-sitter-typescript-src_SOURCE_DIR}/tsx")
+ned_add_bundled_grammar(tree-sitter-html)
 
-ned_add_treesitter_grammar(tree-sitter-html https://github.com/tree-sitter/tree-sitter-html.git v0.23.2)
-
-ned_add_treesitter_grammar(tree-sitter-css https://github.com/tree-sitter/tree-sitter-css.git v0.25.0)
+ned_add_bundled_grammar(tree-sitter-css)
 
 
-ned_add_treesitter_grammar(tree-sitter-python https://github.com/tree-sitter/tree-sitter-python.git v0.25.0)
+ned_add_bundled_grammar(tree-sitter-python)
 
 # gutter-symbol-kind follow-up: see PhpTags' own comment above.
 
-ned_add_treesitter_grammar(tree-sitter-bash https://github.com/tree-sitter/tree-sitter-bash.git v0.25.1)
+ned_add_bundled_grammar(tree-sitter-bash)
 
 
-ned_add_treesitter_grammar(tree-sitter-janet-simple https://github.com/sogaiu/tree-sitter-janet-simple.git v0.0.7)
+ned_add_bundled_grammar(tree-sitter-janet-simple)
 
 
-ned_add_treesitter_grammar(tree-sitter-markdown https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown)
+ned_add_treesitter_grammar_target(tree-sitter-markdown "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/tree-sitter-grammars/tree-sitter-markdown/tree-sitter-markdown")
 
-ned_add_treesitter_grammar(tree-sitter-markdown-inline https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown-inline)
+ned_add_treesitter_grammar_target(tree-sitter-markdown-inline "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/tree-sitter-grammars/tree-sitter-markdown/tree-sitter-markdown-inline")
 
 
-ned_add_treesitter_grammar(tree-sitter-org https://github.com/SuperFes/tree-sitter-ned-org.git 23c476d257db03169831315fdd123fc40278b93c)
+ned_add_bundled_grammar(tree-sitter-org)
 
 # The fork carries its own queries/injections.scm (the commit pin above) --
 # vendored like every upstream query, see Source/Languages/org/upstream/.
 
-ned_add_treesitter_grammar(tree-sitter-yaml https://github.com/tree-sitter-grammars/tree-sitter-yaml.git v0.7.2)
+ned_add_bundled_grammar(tree-sitter-yaml)
 
 
-ned_add_treesitter_grammar(tree-sitter-toml https://github.com/tree-sitter-grammars/tree-sitter-toml.git v0.7.0)
+ned_add_bundled_grammar(tree-sitter-toml)
 
 
 # sogaiu/tree-sitter-clojure (same author as tree-sitter-janet-simple above);
@@ -316,13 +302,13 @@ ned_add_treesitter_grammar(tree-sitter-toml https://github.com/tree-sitter-gramm
 # highlight query is ned's own file (Source/Languages/clojure/
 # highlights.janet) -- upstream's is 281 bytes (literals/comments only);
 # see that file's header comment.
-ned_add_treesitter_grammar(tree-sitter-clojure https://github.com/sogaiu/tree-sitter-clojure.git v0.0.13)
+ned_add_bundled_grammar(tree-sitter-clojure)
 
 
 # ram02z/tree-sitter-fish -- the grammar every real consumer (nvim-treesitter)
 # builds on, ships a pre-generated src/parser.c+scanner.c and a real
 # queries/highlights.scm, the same bar every other bundled grammar here meets.
-ned_add_treesitter_grammar(tree-sitter-fish https://github.com/ram02z/tree-sitter-fish.git 3.7.0)
+ned_add_bundled_grammar(tree-sitter-fish)
 
 
 # tree-sitter-grammars/tree-sitter-xml -- the community-maintained XML+DTD
@@ -335,7 +321,7 @@ ned_add_treesitter_grammar(tree-sitter-fish https://github.com/ram02z/tree-sitte
 # multi-grammar-repo shape as tree-sitter-typescript's typescript/tsx split --
 # only the xml/ subdirectory is built, DTD content inside an XML document is
 # parsed by the xml grammar's own embedded DTD rules.
-ned_add_treesitter_grammar(tree-sitter-xml https://github.com/tree-sitter-grammars/tree-sitter-xml.git v0.7.0 xml)
+ned_add_bundled_grammar(tree-sitter-xml xml)
 
 
 # go-to-file-at-point resolver gaps follow-up: tree-sitter/tree-sitter-rust,
@@ -345,7 +331,7 @@ ned_add_treesitter_grammar(tree-sitter-xml https://github.com/tree-sitter-gramma
 # vendoring needed, unlike C/C++ tags). folds/imports/indents/
 # tests are, as with every other bundled language, hand-written locally --
 # no upstream grammar repo ships those ned-local capture conventions.
-ned_add_treesitter_grammar(tree-sitter-rust https://github.com/tree-sitter/tree-sitter-rust.git v0.24.2)
+ned_add_bundled_grammar(tree-sitter-rust)
 
 
 # Go bundled language support (2026-09-06 audit finding): tree-sitter/
@@ -366,16 +352,17 @@ ned_add_treesitter_grammar(tree-sitter-rust https://github.com/tree-sitter/tree-
 # entry, see RootResolver.cpp). Go's own basename-only file:line
 # resolution gap for multi-directory modules is tracked separately under
 # ROADMAP.md's Test-runner gaps.
-ned_add_treesitter_grammar(tree-sitter-go https://github.com/tree-sitter/tree-sitter-go.git v0.25.0)
+ned_add_bundled_grammar(tree-sitter-go)
 
 
 # C# bundled language support (raised 2026-09-06 -- no system tree-sitter-
 # csharp install available; the same fix as Java/Kotlin's own ROADMAP entry
 # applies here too: a system-installed grammar .so never carries queries/*.scm
 # regardless, so a system package wouldn't have saved the real work anyway.
-# Every bundled grammar in this file already comes from FetchContent, never a
-# system package -- this is the existing, already-general policy, not a new
-# one). tree-sitter/tree-sitter-c-sharp, the tree-sitter org's own official
+# Every bundled grammar in this file is vendored under ThirdParty/ (see
+# Tools/vendor-grammars.py), never a system package -- this is the existing,
+# already-general policy, not a new one). tree-sitter/tree-sitter-c-sharp,
+# the tree-sitter org's own official
 # grammar (same provenance bar as c/cpp/python/javascript/rust/go above) --
 # ships real queries/highlights.scm and queries/tags.scm, both consumed
 # unmodified (checked directly: class/interface/method are distinct node
@@ -390,7 +377,7 @@ ned_add_treesitter_grammar(tree-sitter-go https://github.com/tree-sitter/tree-si
 # RootResolver.cpp change -- see MarkerExistsInDirectory's own comment
 # there for the "*.<ext>" glob-marker mechanism this language is the first
 # to need.
-ned_add_treesitter_grammar(tree-sitter-c-sharp https://github.com/tree-sitter/tree-sitter-c-sharp.git v0.23.5)
+ned_add_bundled_grammar(tree-sitter-c-sharp)
 
 # Java & Kotlin bundled language support (raised 2026-09-03 -- user wants
 # broad, general-purpose Java support with Kotlin alongside it, and Android
@@ -398,8 +385,8 @@ ned_add_treesitter_grammar(tree-sitter-c-sharp https://github.com/tree-sitter/tr
 # is present on this machine but is not a shortcut: a compiled grammar .so
 # never carries queries/*.scm, which live as separate text files in the
 # grammar's own repo -- the same reasoning csharp/go's own comments above
-# already record, and the reason every bundled grammar in this file comes
-# from FetchContent rather than a system package.
+# already record, and the reason every bundled grammar in this file is
+# vendored under ThirdParty/ rather than taken from a system package.
 #
 # tree-sitter/tree-sitter-java is the tree-sitter org's own official grammar
 # (same provenance bar as c/cpp/python/javascript/rust/go/c-sharp above) and
@@ -414,7 +401,7 @@ ned_add_treesitter_grammar(tree-sitter-c-sharp https://github.com/tree-sitter/tr
 # a syntax-only query has no way to reconstruct, the same "package path, not
 # a file path" reasoning go-imports.scm's and csharp-imports.scm's own
 # absences document. That is jdtls's textDocument/definition job.
-ned_add_treesitter_grammar(tree-sitter-java https://github.com/tree-sitter/tree-sitter-java.git v0.23.5)
+ned_add_bundled_grammar(tree-sitter-java)
 
 # class-file-sync follow-up: upstream plus ned's delta (enum/record) -- see
 # Source/Languages/java/tags.janet's own header.
@@ -444,28 +431,25 @@ ned_add_treesitter_grammar(tree-sitter-java https://github.com/tree-sitter/tree-
 # No upstream tags.scm either, so kotlin/tags.janet is ned-authored -- the only
 # bundled language whose symbol-kind query is hand-written for absence rather
 # than (like C/C++'s tags) to correct an ambiguous upstream one.
-ned_add_treesitter_grammar(tree-sitter-kotlin https://github.com/fwcd/tree-sitter-kotlin.git 0.3.8)
+ned_add_bundled_grammar(tree-sitter-kotlin)
 
 # Release-0.6 grammar batch (admission policy: org repo over personal fork,
 # pinned by tag; ABI/scanner/corpus facts recorded at admission in
 # Docs/LanguageCoverage.md).
-ned_add_treesitter_grammar(tree-sitter-lua https://github.com/tree-sitter-grammars/tree-sitter-lua.git v0.5.0)
-ned_add_treesitter_grammar(tree-sitter-cmake https://github.com/uyha/tree-sitter-cmake.git v0.7.5)
-ned_add_treesitter_grammar(tree-sitter-diff https://github.com/tree-sitter-grammars/tree-sitter-diff.git v0.2.0)
+ned_add_bundled_grammar(tree-sitter-lua)
+ned_add_bundled_grammar(tree-sitter-cmake)
+ned_add_bundled_grammar(tree-sitter-diff)
 
 # SQL (D0 core only -- see ROADMAP's parsing-engine section for the deferred
 # per-dialect trait-delta work). DerekStride/tree-sitter-sql v0.3.11, ABI 15,
 # 188-LOC scanner, 31-file corpus -- but its tags/main don't commit generated
 # parser.c/grammar.json (only grammar.js/scanner.c; generated output lives on
-# a gh-pages branch or, more traceably, as a release asset). Generated
-# sources come from that release tarball directly; a second, ordinary git
-# fetch of the same tag supplies test/corpus for ParseConformanceTest, which
-# the tarball omits.
-ned_fetch_treesitter_release(tree-sitter-sql
-        https://github.com/DerekStride/tree-sitter-sql/releases/download/v0.3.11/tree-sitter-sql-v0.3.11.tar.gz
-        a97a324eae9c81ed68f6e162b9b33f8911fc6442caa2950e57c498e2460d1387)
-ned_add_treesitter_grammar_target(tree-sitter-sql "${tree-sitter-sql_SOURCE_DIR}")
-ned_fetch_treesitter_source(tree-sitter-sql-corpus https://github.com/DerekStride/tree-sitter-sql.git v0.3.11)
+# a gh-pages branch or, more traceably, as a release asset). Tools/vendor-
+# grammars.py pulls the release tarball for src/ and a second, ordinary tag
+# fetch for test/corpus (vendored separately as tree-sitter-sql-corpus/,
+# read directly by ParseConformanceTest.cpp -- never a CMake build input),
+# since the release tarball omits it.
+ned_add_bundled_grammar(tree-sitter-sql)
 
 # 2026-09-13 batch: Dockerfile, Make, HCL, Nix, Ruby, gitcommit, gitrebase
 # (admission policy: org repo over personal fork where one exists, pinned by
@@ -473,20 +457,20 @@ ned_fetch_treesitter_source(tree-sitter-sql-corpus https://github.com/DerekStrid
 # Docs/LanguageCoverage.md). HCL's upstream repo splits core HCL (root src/)
 # from a separate Terraform-dialect grammar (dialects/terraform); this fetches
 # core only, matching SQL's "one core, dialect deltas deferred" precedent --
-# no grammar_subdir argument, so ned_add_treesitter_grammar_target reads
-# ${tree-sitter-hcl_SOURCE_DIR}/src unmodified. Zig was researched and
+# no subdir argument, so ned_add_bundled_grammar reads
+# ThirdParty/tree-sitter-grammars/tree-sitter-hcl/src unmodified. Zig was researched and
 # deliberately NOT admitted here: its only actively maintained grammar
 # (tree-sitter-grammars/tree-sitter-zig) ships no test/corpus at all, failing
 # admission policy item 8, and the one alternative with real history
 # (maxxnino/tree-sitter-zig) is archived -- see Docs/LanguageCoverage.md's
 # Tier D entry for the revisit trigger.
-ned_add_treesitter_grammar(tree-sitter-dockerfile https://github.com/camdencheek/tree-sitter-dockerfile.git v0.2.0)
-ned_add_treesitter_grammar(tree-sitter-make https://github.com/tree-sitter-grammars/tree-sitter-make.git v1.1.1)
-ned_add_treesitter_grammar(tree-sitter-hcl https://github.com/tree-sitter-grammars/tree-sitter-hcl.git v1.2.0)
-ned_add_treesitter_grammar(tree-sitter-nix https://github.com/nix-community/tree-sitter-nix.git v0.3.0)
-ned_add_treesitter_grammar(tree-sitter-ruby https://github.com/tree-sitter/tree-sitter-ruby.git v0.23.1)
-ned_add_treesitter_grammar(tree-sitter-gitcommit https://github.com/gbprod/tree-sitter-gitcommit.git v0.5.0)
-ned_add_treesitter_grammar(tree-sitter-gitrebase https://github.com/the-mikedavis/tree-sitter-git-rebase.git v1.0.0)
+ned_add_bundled_grammar(tree-sitter-dockerfile)
+ned_add_bundled_grammar(tree-sitter-make)
+ned_add_bundled_grammar(tree-sitter-hcl)
+ned_add_bundled_grammar(tree-sitter-nix)
+ned_add_bundled_grammar(tree-sitter-ruby)
+ned_add_bundled_grammar(tree-sitter-gitcommit)
+ned_add_bundled_grammar(tree-sitter-gitrebase)
 
 # R (Tier B, dynamic/scripting -- see Docs/LanguageCoverage.md). r-lib/tree-sitter-r
 # v1.3.0 (the posit/RStudio-maintained official grammar, 155 stars, pushed
@@ -498,7 +482,7 @@ ned_add_treesitter_grammar(tree-sitter-gitrebase https://github.com/the-mikedavi
 # scope-aware rename's query set stays a closed, individually-vetted list rather than
 # growing by default whenever an upstream file happens to exist (see LocalScopes.h's
 # own doc comment in CLAUDE.md).
-ned_add_treesitter_grammar(tree-sitter-r https://github.com/r-lib/tree-sitter-r.git v1.3.0)
+ned_add_bundled_grammar(tree-sitter-r)
 
 #------------------------------------------------------------------------------
 

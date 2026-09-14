@@ -31,14 +31,18 @@
 
 // Phase 4b M0: the conformance bar for the parsing-engine replacement.
 //
-// Runs every upstream grammar's own test corpus (build/_deps/*/test/corpus)
+// Runs every upstream grammar's own test corpus
+// (ThirdParty/tree-sitter-grammars/*/test/corpus -- vendored by
+// Tools/vendor-grammars.py, see CMakeLists.txt's tree-sitter section)
 // against the production parser and holds the per-corpus scorecard as a
 // golden file. Today the production parser is the tree-sitter runtime, so
 // this pins the baseline the ned engine must meet; at M5 the same harness
 // holds the swapped engine to byte-identical results.
 //
 // The corpus format and comparison rules are a faithful port of upstream's
-// own runner (build/_deps/tree-sitter-src/cli/src/test.rs):
+// own runner (tree-sitter/tree-sitter's cli/src/test.rs -- not itself
+// vendored here, since ned only needs the runtime's lib/ for the Phase 4b
+// conformance reference, not its Rust CLI):
 //  - a header is  ===fence [suffix] / name+marker lines / ===fence [suffix];
 //    the FIRST header's suffix becomes mandatory on every later header and
 //    divider line, which is how corpora whose sources contain `===`/`---`
@@ -66,7 +70,7 @@ using ned::editor::treesitter::Parser;
 using ned::editor::treesitter::Tree;
 
 fs::path DepsDir() {
-    return fs::path(NED_REPO_ROOT) / "build" / "_deps";
+    return fs::path(NED_REPO_ROOT) / "ThirdParty" / "tree-sitter-grammars";
 }
 
 fs::path GoldenPath() {
@@ -94,44 +98,44 @@ struct CorpusSource {
 // same repo, so only one clone's two corpora are listed.
 const std::vector<CorpusSource>& CorpusSources() {
     static const std::vector<CorpusSource> sources = {
-        {"tree-sitter-bash-src/test/corpus", "bash"},
-        {"tree-sitter-c-src/test/corpus", "c"},
-        {"tree-sitter-c-sharp-src/test/corpus", "csharp"},
-        {"tree-sitter-clojure-src/test/corpus", "clojure"},
-        {"tree-sitter-cmake-src/test/corpus", "cmake"},
-        {"tree-sitter-cpp-src/test/corpus", "cpp"},
-        {"tree-sitter-css-src/test/corpus", "css"},
-        {"tree-sitter-diff-src/test/corpus", "diff"},
-        {"tree-sitter-fish-src/test/corpus", "fish"},
-        {"tree-sitter-go-src/test/corpus", "go"},
-        {"tree-sitter-html-src/test/corpus", "html"},
-        {"tree-sitter-janet-simple-src/test/corpus", "janet"},
-        {"tree-sitter-java-src/test/corpus", "java"},
-        {"tree-sitter-javascript-src/test/corpus", "javascript"},
-        {"tree-sitter-json-src/test/corpus", "json"},
-        {"tree-sitter-kotlin-src/test/corpus", "kotlin"},
-        {"tree-sitter-lua-src/test/corpus", "lua"},
-        {"tree-sitter-markdown-src/tree-sitter-markdown/test/corpus", "markdown"},
-        {"tree-sitter-markdown-src/tree-sitter-markdown-inline/test/corpus", "markdown-inline"},
-        {"tree-sitter-org-src/test/corpus", "org"},
-        {"tree-sitter-php-src/test/corpus", "php", {{"php", "php"}, {"php_only", ""}}},
-        {"tree-sitter-python-src/test/corpus", "python"},
-        {"tree-sitter-rust-src/test/corpus", "rust"},
-        {"tree-sitter-sql-corpus-src/test/corpus", "sql"},
-        {"tree-sitter-toml-src/test/corpus", "toml"},
-        {"tree-sitter-typescript-src-src/test/corpus", "typescript", {{"typescript", "typescript"}, {"tsx", "tsx"}}},
-        {"tree-sitter-xml-src/test/corpus", "xml", {{"xml", "xml"}, {"dtd", ""}}},
-        {"tree-sitter-yaml-src/test/corpus", "yaml"},
-        {"tree-sitter-dockerfile-src/test/corpus", "dockerfile"},
-        {"tree-sitter-make-src/test/corpus", "make"},
-        {"tree-sitter-hcl-src/test/corpus", "hcl"},
+        {"tree-sitter-bash/test/corpus", "bash"},
+        {"tree-sitter-c/test/corpus", "c"},
+        {"tree-sitter-c-sharp/test/corpus", "csharp"},
+        {"tree-sitter-clojure/test/corpus", "clojure"},
+        {"tree-sitter-cmake/test/corpus", "cmake"},
+        {"tree-sitter-cpp/test/corpus", "cpp"},
+        {"tree-sitter-css/test/corpus", "css"},
+        {"tree-sitter-diff/test/corpus", "diff"},
+        {"tree-sitter-fish/test/corpus", "fish"},
+        {"tree-sitter-go/test/corpus", "go"},
+        {"tree-sitter-html/test/corpus", "html"},
+        {"tree-sitter-janet-simple/test/corpus", "janet"},
+        {"tree-sitter-java/test/corpus", "java"},
+        {"tree-sitter-javascript/test/corpus", "javascript"},
+        {"tree-sitter-json/test/corpus", "json"},
+        {"tree-sitter-kotlin/test/corpus", "kotlin"},
+        {"tree-sitter-lua/test/corpus", "lua"},
+        {"tree-sitter-markdown/tree-sitter-markdown/test/corpus", "markdown"},
+        {"tree-sitter-markdown/tree-sitter-markdown-inline/test/corpus", "markdown-inline"},
+        {"tree-sitter-org/test/corpus", "org"},
+        {"tree-sitter-php/test/corpus", "php", {{"php", "php"}, {"php_only", ""}}},
+        {"tree-sitter-python/test/corpus", "python"},
+        {"tree-sitter-rust/test/corpus", "rust"},
+        {"tree-sitter-sql-corpus/test/corpus", "sql"},
+        {"tree-sitter-toml/test/corpus", "toml"},
+        {"tree-sitter-typescript-src/test/corpus", "typescript", {{"typescript", "typescript"}, {"tsx", "tsx"}}},
+        {"tree-sitter-xml/test/corpus", "xml", {{"xml", "xml"}, {"dtd", ""}}},
+        {"tree-sitter-yaml/test/corpus", "yaml"},
+        {"tree-sitter-dockerfile/test/corpus", "dockerfile"},
+        {"tree-sitter-make/test/corpus", "make"},
+        {"tree-sitter-hcl/test/corpus", "hcl"},
         // Non-standard layout: the only grammar in this table whose corpus
         // lives at the repo root rather than under test/corpus.
-        {"tree-sitter-nix-src/corpus", "nix"},
-        {"tree-sitter-ruby-src/test/corpus", "ruby"},
-        {"tree-sitter-gitcommit-src/test/corpus", "gitcommit"},
-        {"tree-sitter-gitrebase-src/test/corpus", "gitrebase"},
-        {"tree-sitter-r-src/test/corpus", "r"},
+        {"tree-sitter-nix/corpus", "nix"},
+        {"tree-sitter-ruby/test/corpus", "ruby"},
+        {"tree-sitter-gitcommit/test/corpus", "gitcommit"},
+        {"tree-sitter-gitrebase/test/corpus", "gitrebase"},
+        {"tree-sitter-r/test/corpus", "r"},
     };
     return sources;
 }
@@ -525,7 +529,7 @@ struct CorpusScore {
 
 TEST_CASE("Upstream corpora conformance scorecard matches the blessed baseline", "[ParseConformance][Corpus]") {
     if (!fs::exists(DepsDir())) {
-        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
+        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
         return;
     }
     for (const CorpusSource& source : CorpusSources()) {
@@ -662,7 +666,7 @@ TEST_CASE("Upstream corpora conformance scorecard matches the blessed baseline",
 
 TEST_CASE("Ned parse engine matches upstream corpora", "[ParseEngine][Corpus]") {
     if (!fs::exists(DepsDir())) {
-        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
+        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
         return;
     }
 
@@ -670,7 +674,7 @@ TEST_CASE("Ned parse engine matches upstream corpora", "[ParseEngine][Corpus]") 
     // shipped artifacts weren't generated with; the M0 baseline records the
     // same 8 failures for the tree-sitter runtime.
     const auto isKnownBaselineFailure = [](std::string_view corpus, std::string_view file) {
-        return corpus == "tree-sitter-markdown-src/tree-sitter-markdown-inline/test/corpus" &&
+        return corpus == "tree-sitter-markdown/tree-sitter-markdown-inline/test/corpus" &&
                (file == "extension_wikilink.txt" || file == "tags.txt" || file == "spec.txt");
     };
 
@@ -834,7 +838,7 @@ TSInputEdit MakeTsEdit(std::string_view oldText, std::string_view newText, const
 
 TEST_CASE("Ned parse engine incremental reparses match from-scratch and the ts runtime", "[ParseEngineIncremental][Corpus]") {
     if (!fs::exists(DepsDir())) {
-        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
+        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
         return;
     }
 
@@ -1001,7 +1005,7 @@ std::vector<std::string> DescribeMatchCacheMatches(const std::vector<ned::editor
 TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the upstream corpus's scripted edits",
           "[MatchCache][Corpus]") {
     if (!fs::exists(DepsDir())) {
-        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
+        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
         return;
     }
 
@@ -1166,7 +1170,7 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the u
 
 TEST_CASE("Ned red layer matches the ts runtime over upstream corpora", "[ParseEngineRedLayer][Corpus]") {
     if (!fs::exists(DepsDir())) {
-        SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
+        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
         return;
     }
 

@@ -1,0 +1,206 @@
+================================================================================
+Emphasis.1 - Bold alone on its own line
+================================================================================
+
+*bold*
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body
+    (paragraph
+      (bold
+        (expr)))))
+
+================================================================================
+Emphasis.2 - Bold mid-paragraph, preceded by other content on the same line
+================================================================================
+
+x *bold* y
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body
+    (paragraph
+      (expr)
+      (bold
+        (expr))
+      (expr))))
+
+================================================================================
+Emphasis.3 - All six markers in one sentence
+================================================================================
+
+This is *bold* and /italic/ and _underline_ and =verbatim= and ~code~ and +strike+.
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body
+    (paragraph
+      (expr)
+      (expr)
+      (bold
+        (expr))
+      (expr)
+      (italic
+        (expr))
+      (expr)
+      (underline
+        (expr))
+      (expr)
+      (verbatim
+        (expr))
+      (expr)
+      (code
+        (expr))
+      (expr)
+      (strikethrough
+        (expr))
+      (expr))))
+
+================================================================================
+Emphasis.4 - A marker mid-word never opens (real Org's own "not mid-word" rule)
+================================================================================
+
+2*3 is six
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body
+    (paragraph
+      (expr)
+      (expr)
+      (expr))))
+
+================================================================================
+Emphasis.5 - Nested emphasis (different markers), closing back-to-back
+================================================================================
+
+*bold /italic/*
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body
+    (paragraph
+      (bold
+        (expr)
+        (italic
+          (expr))))))
+
+================================================================================
+Emphasis.6 - Minimal nesting
+================================================================================
+
+*a /b/*
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body
+    (paragraph
+      (bold
+        (expr)
+        (italic
+          (expr))))))
+
+================================================================================
+Emphasis.7 - Verbatim content is literal, no nested markup
+================================================================================
+
+=a /b/ c=
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body
+    (paragraph
+      (verbatim
+        (expr)
+        (expr)
+        (expr)))))
+
+================================================================================
+Emphasis.8 - Multi-word emphasis content
+================================================================================
+
+*bold text*
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body
+    (paragraph
+      (bold
+        (expr)
+        (expr)))))
+
+================================================================================
+Emphasis.9 - Headline stars still win over bold at column 0 with real Org
+headline shape
+================================================================================
+
+* Heading
+body *bold* here
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body)
+  subsection: (section
+    headline: (headline
+      stars: (stars)
+      item: (item
+        (expr)))
+    body: (body
+      (paragraph
+        (expr)
+        (bold
+          (expr))
+        (expr)))))
+
+================================================================================
+Emphasis.10 - List bullet ('-' then '+') still correctly starts a new list,
+not strikethrough (a real regression this project's own change once caused)
+================================================================================
+
+  - a
+  + a
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body
+    (list
+      (listitem
+        bullet: (bullet)
+        contents: (paragraph
+          (expr))))
+    (list
+      (listitem
+        bullet: (bullet)
+        contents: (paragraph
+          (expr))))))
+
+================================================================================
+Emphasis.11 - '+' as a genuine bullet, then strikethrough later in the same item
+================================================================================
+
++ item with +strike+ inside
+
+--------------------------------------------------------------------------------
+
+(document
+  body: (body
+    (list
+      (listitem
+        bullet: (bullet)
+        contents: (paragraph
+          (expr)
+          (expr)
+          (strikethrough
+            (expr))
+          (expr))))))
