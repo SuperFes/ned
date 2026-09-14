@@ -121,7 +121,7 @@ TEST_CASE("@indent.suppress withdraws the imprint's container, and a query captu
     const ned::editor::treesitter::Parser parser(*language);
     const std::string                     text = "{\n\"a\": 1\n}\n";
     const ned::editor::treesitter::Tree   tree = parser.Parse(text);
-    const ned::editor::IndentStyle        style{.width = 4, .useTabs = false};
+    const ned::editor::IndentStyle        style{.useTabs = false, .width = 4};
     const auto [start, end] = LineRange(text, 1);
 
     const auto levelWith = [&](const char* source) {
