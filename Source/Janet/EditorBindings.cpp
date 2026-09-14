@@ -1708,8 +1708,8 @@ void InstallEditorBindings(Environment& env) {
         "(or markers is empty and language has no compiled-in default) -- this is what lets a monorepo "
         "subpackage (its own package.json/pyproject.toml/Cargo.toml/compile_commands.json, ...) get its own "
         "LSP root distinct from the outer repo's single .git. An empty markers list clears the override, "
-        "reverting to the compiled-in default (bundled for c/cpp/python/javascript/typescript/tsx/php) rather "
-        "than to no markers at all.");
+        "reverting to the compiled-in default (most bundled languages carry one -- see each "
+        "Source/Languages/<name>/language.janet's :lsp-root-markers) rather than to no markers at all.");
     env.Register<&NedSetDapAdapter>(
         "ned", "set-dap-adapter",
         "Set the command used to launch a language's DAP debug adapter: (language argv), e.g. (ned/set-dap-adapter "
