@@ -153,6 +153,29 @@ measurement said "fine" while typing felt bad.
       linear text pass per keystroke — noise next to the parse — so the edit-driven API
       was never worth reshaping `Mode`'s capability surface for on its own, and MatchCache
       landed without it (byte-range reconciliation against `Matches()`'s own output).
+      **Still open (2026-09-13 profiling pass):** re-profiling the real, viewport-windowed
+      keystroke path (not the whole-document diagnostic calls elsewhere in this file, which
+      dominate a naive `perf record` of the whole suite and were mistaken for the real cost
+      on a first pass) confirms the dominant cost is genuinely the incremental re-parse plus
+      `Rope::CodepointAt`/`AppendToString` text-copy overhead, not left-over query work — no
+      change here. One adjacent, actually-fixed bug found along the way: `ImprintFold.cpp`/
+      `ImprintIndent.cpp`/`ImprintBracket.cpp`'s own tree walks called `Node::Child(i)` in a
+      loop, the exact "restarts from the first child every call" shape `QueryMatcher.cpp`'s
+      own 60x cursor-walk fix (2026-09-12) already fixed once, just never carried over to
+      the imprint walkers — fixed via a new `Node::ForEachChild` cursor-based helper
+      (`Editor/TreeSitter/Node.h`). Confirmed unsafe to apply the same fix to
+      `Parse/Node.cpp`'s `NodeDescendantForByteRangeImpl`, which looks identical but isn't:
+      `TreeCursor` walks only *visible* nodes (transparently descending through hidden
+      wrapper nodes), while that function needs the raw structural children — visible and
+      hidden — with unfiltered byte positions. Tried it anyway; `ParseConformanceTest`'s red-
+      layer-vs-upstream gate caught 20 real "named descendant mismatch" failures across
+      bash/css/fish before it shipped, which is exactly what that gate is for.
+- [ ] **`ned::text::ParseConflictHunks` runs on every `Paint()`, unconditionally, over the
+      full buffer text** — noticed as measurable self-time in the same profiling pass, on
+      a buffer with no conflict markers at all. Worth gating behind a cheap
+      "does the text contain `<<<<<<<`" check (or a content-generation cache) before ever
+      compiling the regex executor's own state machine; not investigated further since it's
+      orthogonal to the parsing engine.
 - [x] **`mode.symbolKind` is O(document) per keystroke — closed by the Phase 4b engine
       (2026-09-13), and NOT the way this entry predicted.** The split-the-consumers plan
       below assumed ts_query's range semantics, where a ranged run filters emitted

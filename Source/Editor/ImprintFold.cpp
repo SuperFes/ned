@@ -32,33 +32,30 @@ namespace {
         // rules out; a keyword body (`if ... fi`) is checked the same way
         // against the pair the table recorded. An indentation body is
         // exempt: its closer is a dedent, which is not a token at all.
-        const bool        foldable   = entry != table.end() && ShouldFold(entry->second, policy) &&
-                                       (entry->second.kind == DelimiterKind::Indent ||
-                                        DelimitersOf(node, entry->second).has_value());
-        const std::size_t childCount = node.ChildCount();
+        const bool foldable = entry != table.end() && ShouldFold(entry->second, policy) &&
+                              (entry->second.kind == DelimiterKind::Indent ||
+                               DelimitersOf(node, entry->second).has_value());
 
         if (foldable) {
             const std::size_t      start = FoldAnchorStart(entry->second, node.StartByte(), text);
             std::vector<ChildBody> children;
-            children.reserve(childCount);
-            for (std::size_t i = 0; i < childCount; ++i) {
-                const treesitter::Node child = node.Child(i);
-                const auto             found = table.find(std::string(child.Type()));
-                const bool             childFolds =
+            children.reserve(node.ChildCount());
+            node.ForEachChild([&](treesitter::Node child) {
+                const auto found = table.find(std::string(child.Type()));
+                const bool childFolds =
                     found != table.end() && ShouldFold(found->second, policy) &&
                     (found->second.kind == DelimiterKind::Indent || DelimitersOf(child, found->second).has_value());
                 children.push_back(ChildBody{childFolds,
                                              childFolds ? FoldAnchorStart(found->second, child.StartByte(), text)
                                                         : child.StartByte(),
                                              child.EndByte()});
-            }
+            });
             if (!SupersededByChildBody(entry->second, start, node.EndByte(), children, text)) {
                 out.emplace_back(start, node.EndByte());
             }
         }
 
-        for (std::size_t i = 0; i < childCount; ++i)
-            Collect(node.Child(i), table, policy, text, out);
+        node.ForEachChild([&](treesitter::Node child) { Collect(child, table, policy, text, out); });
     }
 
 } // namespace

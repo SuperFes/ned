@@ -62,10 +62,7 @@ namespace {
                     ImprintContainer{node.StartByte(), node.EndByte(), node.Type(), node.StartByte()});
             }
         }
-        const std::size_t childCount = node.ChildCount();
-        for (std::size_t i = 0; i < childCount; ++i) {
-            Collect(node.Child(i), table, text, out);
-        }
+        node.ForEachChild([&](treesitter::Node child) { Collect(child, table, text, out); });
     }
 
 } // namespace
