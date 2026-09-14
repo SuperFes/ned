@@ -383,6 +383,24 @@ under "Release 0.6" at the top of this file rather than duplicated here.
       `dhcmrlchtdj/tree-sitter-sqlite` (archived 2023), `m-novikov/tree-sitter-sql` (stale
       2024-03).
 
+- [x] **Dockerfile, Make, HCL, Nix, Ruby, gitcommit, gitrebase — admitted
+      2026-09-13.** Seven more D0-core admissions in the same pass as SQL; full
+      admission facts (repo/tag/ABI/scanner/corpus per language) and the two
+      adaptations (nix's dropped string-quantifier clause, gitrebase's
+      flattened multi-pattern group) are recorded in `Docs/LanguageCoverage.md`.
+      Every corpus is 100% clean against conformance, incremental-vs-scratch,
+      MatchCache reconciliation and the red-layer differential; every bundled
+      highlight query passes the QueryMatcher construct census.
+      **Zig researched and parked in Tier D** (not graveyarded — a tooling
+      gap, not a rejection): its only maintained grammar
+      (`tree-sitter-grammars/tree-sitter-zig`) ships no `test/` directory at
+      all (admission policy item 8), and the one alternative with real
+      history (`maxxnino/tree-sitter-zig`, 124★) is archived. Revisit trigger
+      recorded in `Docs/LanguageCoverage.md`'s Tier D. One packaging
+      wrinkle worth knowing before touching either table again: `tree-sitter-
+      make`'s corpus files are `*.mk`, not `*.txt` — `ParseConformanceTest`'s
+      five corpus-discovery call sites now accept both extensions.
+
 - [ ] Admission policy worth knowing before adding any grammar: **prefer
       `tree-sitter-grammars/*` over the original personal repo, and never use star count as
       a health signal.** Measured 2026-09-11 — `alemuller/tree-sitter-make` is 51★ and stale

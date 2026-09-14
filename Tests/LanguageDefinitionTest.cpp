@@ -60,6 +60,14 @@ TEST_CASE("Every bundled definition builds, under its own '-mode' name", "[Langu
         "cmake",
         "diff",
         "sql",
+        // 2026-09-13 batch.
+        "dockerfile",
+        "make",
+        "hcl",
+        "nix",
+        "ruby",
+        "gitcommit",
+        "gitrebase",
     };
     std::set<std::string> seen;
     for (const LanguageDefinition& definition : BundledLanguages()) {
@@ -133,6 +141,16 @@ TEST_CASE("The bundled definitions claim exactly the extensions the old table di
         {".kt", "kotlin"},
         {".kts", "kotlin"},
         {".sql", "sql"},
+        {".dockerfile", "dockerfile"},
+        {".mk", "make"},
+        {".mak", "make"},
+        {".hcl", "hcl"},
+        {".tf", "hcl"},
+        {".tfvars", "hcl"},
+        {".nix", "nix"},
+        {".rb", "ruby"},
+        {".rake", "ruby"},
+        {".gemspec", "ruby"},
     };
     std::map<std::string, std::string> claimed;
     for (const LanguageDefinition& definition : BundledLanguages()) {

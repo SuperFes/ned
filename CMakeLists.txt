@@ -601,6 +601,27 @@ ned_fetch_treesitter_release(tree-sitter-sql
 ned_add_treesitter_grammar_target(tree-sitter-sql "${tree-sitter-sql_SOURCE_DIR}")
 ned_fetch_treesitter_source(tree-sitter-sql-corpus https://github.com/DerekStride/tree-sitter-sql.git v0.3.11)
 
+# 2026-09-13 batch: Dockerfile, Make, HCL, Nix, Ruby, gitcommit, gitrebase
+# (admission policy: org repo over personal fork where one exists, pinned by
+# tag; ABI/scanner/corpus facts recorded at admission in
+# Docs/LanguageCoverage.md). HCL's upstream repo splits core HCL (root src/)
+# from a separate Terraform-dialect grammar (dialects/terraform); this fetches
+# core only, matching SQL's "one core, dialect deltas deferred" precedent --
+# no grammar_subdir argument, so ned_add_treesitter_grammar_target reads
+# ${tree-sitter-hcl_SOURCE_DIR}/src unmodified. Zig was researched and
+# deliberately NOT admitted here: its only actively maintained grammar
+# (tree-sitter-grammars/tree-sitter-zig) ships no test/corpus at all, failing
+# admission policy item 8, and the one alternative with real history
+# (maxxnino/tree-sitter-zig) is archived -- see Docs/LanguageCoverage.md's
+# Tier D entry for the revisit trigger.
+ned_add_treesitter_grammar(tree-sitter-dockerfile https://github.com/camdencheek/tree-sitter-dockerfile.git v0.2.0)
+ned_add_treesitter_grammar(tree-sitter-make https://github.com/tree-sitter-grammars/tree-sitter-make.git v1.1.1)
+ned_add_treesitter_grammar(tree-sitter-hcl https://github.com/tree-sitter-grammars/tree-sitter-hcl.git v1.2.0)
+ned_add_treesitter_grammar(tree-sitter-nix https://github.com/nix-community/tree-sitter-nix.git v0.3.0)
+ned_add_treesitter_grammar(tree-sitter-ruby https://github.com/tree-sitter/tree-sitter-ruby.git v0.23.1)
+ned_add_treesitter_grammar(tree-sitter-gitcommit https://github.com/gbprod/tree-sitter-gitcommit.git v0.5.0)
+ned_add_treesitter_grammar(tree-sitter-gitrebase https://github.com/the-mikedavis/tree-sitter-git-rebase.git v1.0.0)
+
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -982,6 +1003,13 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-cmake
         PUBLIC tree-sitter-diff
         PUBLIC tree-sitter-sql
+        PUBLIC tree-sitter-dockerfile
+        PUBLIC tree-sitter-make
+        PUBLIC tree-sitter-hcl
+        PUBLIC tree-sitter-nix
+        PUBLIC tree-sitter-ruby
+        PUBLIC tree-sitter-gitcommit
+        PUBLIC tree-sitter-gitrebase
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public

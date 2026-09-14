@@ -1607,6 +1607,34 @@ Mode DiffMode() {
     return BundledMode("diff");
 }
 
+Mode DockerfileMode() {
+    return BundledMode("dockerfile");
+}
+
+Mode MakeMode() {
+    return BundledMode("make");
+}
+
+Mode HclMode() {
+    return BundledMode("hcl");
+}
+
+Mode NixMode() {
+    return BundledMode("nix");
+}
+
+Mode RubyMode() {
+    return BundledMode("ruby");
+}
+
+Mode GitCommitMode() {
+    return BundledMode("gitcommit");
+}
+
+Mode GitRebaseMode() {
+    return BundledMode("gitrebase");
+}
+
 Mode ClojureMode() {
     return BundledMode("clojure");
 }

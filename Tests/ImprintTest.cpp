@@ -666,7 +666,14 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
         {"cmake", "tree-sitter-cmake-src/src/grammar.json"},
         {"diff", "tree-sitter-diff-src/src/grammar.json"},
         {"sql", "tree-sitter-sql-src/src/grammar.json"},
-};
+        {"dockerfile", "tree-sitter-dockerfile-src/src/grammar.json"},
+        {"make", "tree-sitter-make-src/src/grammar.json"},
+        {"hcl", "tree-sitter-hcl-src/src/grammar.json"},
+        {"nix", "tree-sitter-nix-src/src/grammar.json"},
+        {"ruby", "tree-sitter-ruby-src/src/grammar.json"},
+        {"gitcommit", "tree-sitter-gitcommit-src/src/grammar.json"},
+        {"gitrebase", "tree-sitter-gitrebase-src/src/grammar.json"},
+    };
 
     if (!fs::exists(DepsDir())) {
         SUCCEED("no build/_deps in this checkout -- grammars are FetchContent'd");
