@@ -33,127 +33,63 @@ if(CCACHE_PROGRAM)
 endif()
 
 include(FetchContent)
+include(FindPkgConfig)
 
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 set(FETCHCONTENT_QUIET OFF)
 
-#--- Fetch Notcurses (FTXUI -> Notcurses migration, Phase 0) ------------------
-# Core TUI library only -- everything below trims Notcurses down to just what
-# this project needs (the terminal I/O + plane/rendering library itself), not
-# its bundled test/doc/executable/multimedia tooling, mirroring the same
-# "disable everything we don't need" approach already used for utf8proc/json.
-set(USE_MULTIMEDIA "none" CACHE STRING "" FORCE)
-set(USE_DOCTEST OFF CACHE BOOL "" FORCE)
-set(USE_PANDOC OFF CACHE BOOL "" FORCE)
-set(USE_DOXYGEN OFF CACHE BOOL "" FORCE)
-set(BUILD_EXECUTABLES OFF CACHE BOOL "" FORCE)
-set(BUILD_FFI_LIBRARY OFF CACHE BOOL "" FORCE)
-set(USE_POC OFF CACHE BOOL "" FORCE)
-set(USE_QRCODEGEN OFF CACHE BOOL "" FORCE)
-set(USE_STATIC OFF CACHE BOOL "" FORCE)
-# PATCH_COMMAND: legacy-terminal Ctrl+Space (a raw NUL byte) is otherwise
-# swallowed inside Notcurses itself -- see CMake/PatchNotcursesNulKey.cmake's
-# own header comment for the full story (id 0 collides with notcurses_get's
-# "no input" return value, so no caller-side fix exists). A second, chained
-# patch (horizontal-wheel-scroll follow-up) fixes wheel-right (SGR Cb=67)
-# being swallowed the same way -- see CMake/PatchNotcursesMouseWheel.cmake's
-# own header comment. A third, chained patch (paste-perf-and-drag-drop
-# follow-up) teaches Notcurses' own input automaton to recognize bracketed-
-# paste's \x1b[200~/\x1b[201~ markers as two new NCKEY_* special keys --
-# Notcurses has no native bracketed-paste support at all otherwise -- see
-# CMake/PatchNotcursesBracketedPaste.cmake's own header comment.
-FetchContent_Declare(notcurses
-        GIT_REPOSITORY https://github.com/dankamongmen/notcurses.git
-        GIT_TAG v3.0.17
-        GIT_SHALLOW TRUE
-        PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchNotcursesNulKey.cmake
-        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchNotcursesMouseWheel.cmake
-        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchNotcursesBracketedPaste.cmake
-        EXCLUDE_FROM_ALL)
-FetchContent_MakeAvailable(notcurses)
-# real-pixel-graphics-investigation follow-up: notcurses' own CMakeLists.txt
-# marks notcurses-core's include directory PRIVATE (its own choice, not a
-# mistake on its part -- see that file's target_include_directories(notcurses-core
-# BEFORE PRIVATE include ...) call), so target_link_libraries(... notcurses-core)
-# alone never propagates a header search path to anything linking against it,
-# and EXCLUDE_FROM_ALL above (see that flag's own comment further down this
-# file) means notcurses' own install() rules -- the other normal way a
-# consumer would find its headers -- never run either. Without this line,
-# every #include <notcurses/notcurses.h> in this project silently fell
-# through to the system's own installed notcurses headers (wherever a distro
-# package happens to provide one) instead of the version actually pinned and
-# linked above -- API-compatible enough that everything still compiled clean
-# with zero warnings, but a real, confirmed ABI mismatch: enum member order
-# in notcurses.h's own ncblitter_e changed between the system's notcurses
-# 3.0.8 and the version pinned here, so NCBLIT_PIXEL as this project's own
-# code understood it (compiled against the wrong header) and NCBLIT_PIXEL as
-# the actually-linked library understood it were two different integers --
-# silently asking the real library for a completely different blitter
-# (Braille) every single time, the actual root cause of a long, otherwise
-# inexplicable minimap-pixel-graphics investigation. Declared INTERFACE (not
-# PRIVATE/PUBLIC) since we're adding this to a target this project doesn't
-# itself define -- it must reach every consumer transitively via
-# target_link_libraries(... notcurses-core), not be used to compile
-# notcurses-core a second time.
-target_include_directories(notcurses-core INTERFACE "${notcurses_SOURCE_DIR}/include")
+# System Notcurses (Gentoo's dev-cpp/notcurses) rather than FetchContent: it
+# now matches the exact pinned tag (v3.0.17) and its ebuild carries the same
+# three input-handling patches this project used to apply itself at
+# FetchContent-patch time -- legacy-terminal Ctrl+Space (a raw NUL byte
+# otherwise swallowed, id 0 colliding with notcurses_get's "no input" return),
+# wheel-right (SGR Cb=67, same swallowing), and bracketed-paste marker
+# recognition (\x1b[200~/\x1b[201~ as two new NCKEY_* keys, which Notcurses
+# has no native support for otherwise). CMake/PatchNotcurses*.cmake are kept,
+# unused, as the exact record of what a notcurses upgrade -- system package or
+# otherwise -- needs to keep providing; see each one's own header comment.
+# Pinned to notcurses-core specifically, matching this project's previous
+# from-source USE_MULTIMEDIA=none/USE_DOCTEST=OFF/etc. trim -- notcurses-core.pc
+# already excludes the multimedia/doctest/ffi extras those forced off.
+# real-pixel-graphics-investigation follow-up: this project was once bitten by
+# a real ABI mismatch against a stale system notcurses (enum member order in
+# ncblitter_e changed between 3.0.8 and the version this project pins), which
+# is exactly why the tag match above matters and isn't a formality.
+pkg_check_modules(NOTCURSES REQUIRED IMPORTED_TARGET notcurses-core)
+add_library(notcurses-core ALIAS PkgConfig::NOTCURSES)
 #------------------------------------------------------------------------------
 
-#--- Fetch utf8proc -----------------------------------------------------------
-FetchContent_Declare(utf8proc
-        GIT_REPOSITORY https://github.com/JuliaStrings/utf8proc.git
-        GIT_TAG v2.9.0
-        GIT_SHALLOW TRUE
-        EXCLUDE_FROM_ALL)
-set(UTF8PROC_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-set(UTF8PROC_INSTALL OFF CACHE BOOL "" FORCE)
-
-# utf8proc's own CMakeLists.txt predates CMake's removal of pre-3.5 compatibility (boo).
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-FetchContent_MakeAvailable(utf8proc)
-unset(CMAKE_POLICY_VERSION_MINIMUM)
+#--- System utf8proc -----------------------------------------------------------
+pkg_check_modules(UTF8PROC REQUIRED IMPORTED_TARGET libutf8proc)
+add_library(utf8proc ALIAS PkgConfig::UTF8PROC)
 #------------------------------------------------------------------------------
 
-#--- Fetch CLI11 (command-line parameter handling follow-up) ------------------
-FetchContent_Declare(CLI11
-        GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-        GIT_TAG v2.5.0
-        GIT_SHALLOW TRUE
-        EXCLUDE_FROM_ALL)
-set(CLI11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(CLI11_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(CLI11_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(CLI11)
+#--- CLI11 (command-line parameter handling follow-up) ------------------------
+# System package (Gentoo's dev-cpp/cli11) ships a real CLI11Config.cmake, so
+# find_package hands back the same CLI11::CLI11 target FetchContent used to.
+find_package(CLI11 REQUIRED)
 #------------------------------------------------------------------------------
 
-#--- Fetch nlohmann/json (LSP client follow-up) --------------------------------
-FetchContent_Declare(nlohmann_json
-        GIT_REPOSITORY https://github.com/nlohmann/json.git
-        GIT_TAG v3.12.0
-        GIT_SHALLOW TRUE
-        EXCLUDE_FROM_ALL)
-set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(nlohmann_json)
+#--- nlohmann/json (LSP client follow-up) --------------------------------------
+# Same as CLI11 above: the system package ships nlohmann_jsonConfig.cmake,
+# so find_package hands back the same nlohmann_json::nlohmann_json target.
+find_package(nlohmann_json REQUIRED)
 #------------------------------------------------------------------------------
 
-#--- Fetch RE2 (internal-project-search follow-up) ------------------------------
+#--- RE2 (internal-project-search follow-up) ------------------------------------
 # The regex engine behind the internal, multi-threaded project-search backend
-# that replaces the `rg` shell-out (Editor/ProjectSearch.cpp) -- linear-time,
+# that replaces the `rg` shell-out (Editor/Project/Search.cpp) -- linear-time,
 # no-backtracking matching, the same engine-model philosophy `rg` itself uses.
-# Pinned to the last tag before RE2's CMake build started hard-requiring
-# Abseil (2023-06-01 added `find_package(absl REQUIRED)` with no FetchContent
-# fallback of its own) -- pulling in all of Abseil transitively just for
-# regex matching isn't worth it here; 2022-12-01 still builds standalone
-# against nothing but pthreads.
-FetchContent_Declare(re2
-        GIT_REPOSITORY https://github.com/google/re2.git
-        GIT_TAG 2022-12-01
-        GIT_SHALLOW TRUE
-        EXCLUDE_FROM_ALL)
-set(RE2_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(re2)
+# This used to pin FetchContent to the last tag before RE2's CMake build
+# started hard-requiring Abseil, specifically to avoid pulling all of Abseil
+# in as source just for regex matching. That tradeoff doesn't apply to a
+# system package: Gentoo's dev-libs/re2 already depends on a prebuilt
+# dev-cpp/abseil-cpp, so find_package costs nothing extra here and hands back
+# the same re2::re2 target the FetchContent build produced.
+find_package(re2 REQUIRED)
 #------------------------------------------------------------------------------
 
-#--- Fetch PCRE2 (in-file-regex follow-up) -------------------------------------
+#--- PCRE2 (in-file-regex follow-up) -------------------------------------------
 # The regex engine behind the two user-facing "type your own regex" surfaces
 # that edit buffer/file content: query-replace-regexp (Editor/QueryReplace.cpp)
 # and project-replace's rewrite step (Editor/ProjectReplace.cpp), both through
@@ -162,15 +98,12 @@ FetchContent_MakeAvailable(re2)
 # out across every file) but can't do lookaround or backreferences at all --
 # PCRE2 provides those plus named groups and real Unicode classes, with JIT for
 # speed and a match limit as the backtracking safety net (see RegexPattern.cpp).
-FetchContent_Declare(pcre2
-        GIT_REPOSITORY https://github.com/PCRE2Project/pcre2.git
-        GIT_TAG pcre2-10.45
-        GIT_SHALLOW TRUE
-        EXCLUDE_FROM_ALL)
-set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
-set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(PCRE2_SUPPORT_JIT ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(pcre2)
+# System package (Gentoo's dev-libs/libpcre2) ships no CMake config, only
+# pkg-config; confirmed its libpcre2-8.so still exports the pcre2_jit_* symbols
+# RegexPattern.cpp relies on. Aliased to the same pcre2-8-static name the
+# FetchContent build produced so the link line below needs no change.
+pkg_check_modules(PCRE2 REQUIRED IMPORTED_TARGET libpcre2-8)
+add_library(pcre2-8-static ALIAS PkgConfig::PCRE2)
 #------------------------------------------------------------------------------
 
 #--- Fetch tree-sitter (core) --------------------------------------------------
@@ -190,84 +123,17 @@ unset(BUILD_SHARED_LIBS_PREV)
 target_include_directories(tree-sitter PUBLIC ${tree-sitter_SOURCE_DIR}/lib/include)
 #------------------------------------------------------------------------------
 
-#--- Fetch libvterm (terminal-panel follow-up) --------------------------------
+#--- System libvterm (terminal-panel follow-up) --------------------------------
 # libvterm (the VT100/xterm emulator behind Neovim's :terminal and
-# emacs-vterm) ships a plain Makefile, not CMake, so this is the same
-# fetch-but-don't-configure + hand-built-static-target arrangement the
-# tree-sitter grammars use (see ned_fetch_treesitter_source below for why the
-# bogus SOURCE_SUBDIR is load-bearing).
-FetchContent_Declare(libvterm
-        GIT_REPOSITORY https://github.com/neovim/libvterm.git
-        GIT_TAG v0.3.3
-        GIT_SHALLOW TRUE
-        SOURCE_SUBDIR _ned_do_not_configure
-        EXCLUDE_FROM_ALL)
-FetchContent_MakeAvailable(libvterm)
-
-# Upstream's Makefile generates src/encoding/*.inc from the *.tbl tables via
-# a small Perl script (tbl2inc_c.pl) before compiling encoding.c, which
-# #includes them. Rather than adding a Perl configure-time dependency for a
-# ~30-line mechanical transform, the same transform is done here in CMake
-# (the ned_embed_treesitter_query precedent: generate-with-string-ops beats a
-# new tool dependency). Output goes to the binary dir -- encoding.c's quoted
-# #include "encoding/X.inc" falls back to the -I search path when the file
-# isn't next to it in the source tree, so the fetched tree stays pristine.
-function(ned_generate_vterm_inc tbl_file inc_file)
-    get_filename_component(enc_name ${tbl_file} NAME_WE)
-    # ENCODING UTF-8: file(STRINGS) strips non-ASCII bytes by default, which
-    # would silently mangle uk.tbl's "£" entry before the match below.
-    file(STRINGS ${tbl_file} tbl_lines ENCODING UTF-8)
-    set(body "")
-    foreach(line IN LISTS tbl_lines)
-        string(REGEX REPLACE "[ \t]*#.*" "" line "${line}")
-        if(line MATCHES "^([0-9]+)/([0-9]+) = (.+)$")
-            math(EXPR cell "${CMAKE_MATCH_1} * 16 + ${CMAKE_MATCH_2}" OUTPUT_FORMAT HEXADECIMAL)
-            set(value "${CMAKE_MATCH_3}")
-            if(value MATCHES "^U\\+([0-9A-Fa-f]+)$")
-                set(value "0x${CMAKE_MATCH_1}")
-            elseif(value STREQUAL "\"£\"")
-                # The one quoted-literal entry across both tables (uk.tbl's
-                # POUND SIGN); CMake has no ord(), so known literals are
-                # mapped here explicitly.
-                set(value "0x00a3")
-            else()
-                message(FATAL_ERROR "ned_generate_vterm_inc: unhandled table entry '${value}' in ${tbl_file}")
-            endif()
-            string(APPEND body "    [${cell}] = ${value},\n")
-        endif()
-    endforeach()
-    string(CONCAT content
-        "// Auto-generated by CMake's ned_generate_vterm_inc (see CMakeLists.txt)\n"
-        "static const struct StaticTableEncoding encoding_${enc_name} = {\n"
-        "  { .decode = &decode_table },\n"
-        "  {\n"
-        "${body}"
-        "  }\n"
-        "};\n")
-    file(WRITE ${inc_file} "${content}")
-endfunction()
-
-set(NED_VTERM_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/libvterm-generated)
-file(GLOB NED_VTERM_TBL_FILES ${libvterm_SOURCE_DIR}/src/encoding/*.tbl)
-foreach(tbl ${NED_VTERM_TBL_FILES})
-    get_filename_component(tbl_name ${tbl} NAME_WE)
-    ned_generate_vterm_inc(${tbl} ${NED_VTERM_GEN_DIR}/encoding/${tbl_name}.inc)
-endforeach()
-
-add_library(vterm STATIC
-        ${libvterm_SOURCE_DIR}/src/encoding.c
-        ${libvterm_SOURCE_DIR}/src/keyboard.c
-        ${libvterm_SOURCE_DIR}/src/mouse.c
-        ${libvterm_SOURCE_DIR}/src/parser.c
-        ${libvterm_SOURCE_DIR}/src/pen.c
-        ${libvterm_SOURCE_DIR}/src/screen.c
-        ${libvterm_SOURCE_DIR}/src/state.c
-        ${libvterm_SOURCE_DIR}/src/unicode.c
-        ${libvterm_SOURCE_DIR}/src/vterm.c)
-target_include_directories(vterm
-        PUBLIC ${libvterm_SOURCE_DIR}/include
-        PRIVATE ${NED_VTERM_GEN_DIR})
-set_target_properties(vterm PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+# emacs-vterm) ships a plain Makefile, not CMake, so this used to be a
+# fetch-but-don't-configure + hand-built-static-target arrangement, including
+# hand-generating the src/encoding/*.inc tables upstream's Makefile normally
+# produces via a Perl script. None of that is needed against the system
+# package (Gentoo's dev-libs/libvterm), which ships those tables already
+# compiled into libvterm.so; pkg-config's own module name is "vterm", not
+# "libvterm".
+pkg_check_modules(VTERM REQUIRED IMPORTED_TARGET vterm)
+add_library(vterm ALIAS PkgConfig::VTERM)
 #------------------------------------------------------------------------------
 
 #--- Fetch a tree-sitter grammars ---------------------------------------------
@@ -636,19 +502,15 @@ ned_add_treesitter_grammar(tree-sitter-r https://github.com/r-lib/tree-sitter-r.
 
 #------------------------------------------------------------------------------
 
-#--- Fetch Catch2 --------------------------------------------------------------
+#--- Catch2 ---------------------------------------------------------------------
 if (NED_BUILD_TESTS)
-    FetchContent_Declare(Catch2
-            GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-            GIT_TAG v3.7.1
-            GIT_SHALLOW TRUE
-            EXCLUDE_FROM_ALL)
-    FetchContent_MakeAvailable(Catch2)
-    list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+    # System package (Gentoo's dev-cpp/catch, v3.15.3) ships Catch2Config.cmake,
+    # which appends its own directory to CMAKE_MODULE_PATH itself -- so
+    # include(Catch) below finds its Catch.cmake module with no extra wiring,
+    # the same way FetchContent's own extras/ directory used to be added by hand.
+    find_package(Catch2 3 REQUIRED)
 endif()
 #------------------------------------------------------------------------------
-
-include(FindPkgConfig)
 
 pkg_check_modules(Janet REQUIRED janet)
 
@@ -1049,30 +911,16 @@ target_link_libraries(ned PRIVATE ned_lib CLI11::CLI11)
 # executable, standard GNUInstallDirs layout, no desktop file/icon/man page
 # (see ROADMAP.md's "Documentation framework" entry for those).
 include(GNUInstallDirs)
-# notcurses-core is FetchContent'd with EXCLUDE_FROM_ALL (see its own
-# comment above), which also silently skips notcurses' own install(TARGETS
-# notcurses-core ...) rule even though the shared library itself still gets
-# built (as a dependency of ned_lib) -- confirmed empirically, not assumed:
-# a plain `cmake --install` installed only `ned`, and the resulting binary
-# fell back to whatever notcurses happens to already be on the host system
-# (a real, silent version/ABI mismatch risk, not just a missing-file one --
-# ned is built and tested against a specific pinned notcurses commit/patch,
-# see PatchNotcursesNulKey.cmake, that a system package won't carry).
-# Installed into a private, ned-only subdirectory rather than the shared
-# system libdir -- CMAKE_INSTALL_LIBDIR is also where a system notcurses
-# package installs its own same-SONAME libnotcurses-core.so.3, and two
-# packages both owning that exact path is a real install-time file
-# collision, not just an unlikely edge case (this machine already has one
-# installed). INSTALL_RPATH is what makes the *installed* copy of `ned`
-# look there -- deliberately not touching the build tree's own rpath, so
-# `cmake --build build && ./build/ned` (this project's documented dev
-# workflow) keeps resolving notcurses-core from build/_deps/ exactly as
-# before.
-set_target_properties(ned PROPERTIES
-    INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/ned"
-)
+# notcurses-core used to be a private FetchContent'd copy, which needed its
+# own install(TARGETS ...) plus an INSTALL_RPATH pointing `ned` at a private,
+# ned-only subdirectory rather than the shared system libdir -- avoiding a
+# real install-time collision with a system notcurses package owning that
+# same SONAME path, and pinning the exact version/ABI a system package might
+# not carry (see PatchNotcurses*.cmake above). Now that notcurses-core *is*
+# the system package (see its own comment above), neither concern applies:
+# `ned` links against and finds it exactly the way any other system-library
+# consumer does, with the linker's normal default search path.
 install(TARGETS ned RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-install(TARGETS notcurses-core LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/ned")
 
 # Standalone diagnostic, not part of ned/ned_lib -- see its own header
 # comment (Tools/NotcursesAlphaProbe.cpp) for what it's answering. Links
