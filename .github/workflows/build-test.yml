@@ -23,9 +23,19 @@ jobs:
           - name: default
             preset: default
             binary_dir: build
+            ctest_args: ""
           - name: sanitize
             preset: sanitize
             binary_dir: build-sanitize
+            # [Performance] budgets are calibrated for an optimized NDEBUG
+            # build; under ASan/UBSan plus a shared, contended runner they're
+            # expected timing noise, not a correctness signal (see
+            # ROADMAP.md's test-flakiness watch list) -- default already
+            # covers this label, so exclude it here rather than let known
+            # noise fail the job. Tests/CMakeLists.txt's TEST_SPEC-split
+            # catch_discover_tests calls are what makes -LE Performance a
+            # real CTest label instead of a hand-maintained name list.
+            ctest_args: "-LE Performance"
     steps:
       - uses: actions/checkout@v4
 
@@ -111,6 +121,6 @@ jobs:
       # fix it -- notcurses only needs a valid terminfo lookup at init, not
       # an actual interactive terminal device.
       - name: Test
-        run: ctest --test-dir ${{ matrix.binary_dir }} --output-on-failure
+        run: ctest --test-dir ${{ matrix.binary_dir }} --output-on-failure ${{ matrix.ctest_args }}
         env:
           TERM: xterm-256color

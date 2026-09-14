@@ -330,4 +330,19 @@ target_compile_definitions(ned_tests PRIVATE NED_REPO_ROOT="${CMAKE_SOURCE_DIR}"
 # process still returns non-zero: 0 assertions ran). Without this, any
 # machine other than one with the author's own system grammar installed
 # reports false failures for those tests instead of the intended skip.
-catch_discover_tests(ned_tests PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+# Split into two discovery calls (TEST_SPEC partitions the set, so nothing
+# is registered twice) purely to attach a real CTest LABEL to [Performance]
+# tests -- Catch2 tags aren't otherwise visible to CTest at all, and CI needs
+# a robust `ctest -LE Performance` rather than a hand-maintained test-name
+# list that goes stale the next time someone adds one. See
+# CMake/Dependencies.cmake's sanitize-preset comment / .github/workflows/
+# build-test.yml for why: a [Performance] budget calibrated for an optimized
+# NDEBUG build is expected noise under ASan/UBSan plus a contended runner,
+# not a correctness signal -- the sanitize CI job excludes this label,
+# default runs it.
+catch_discover_tests(ned_tests
+        TEST_SPEC "~[Performance]"
+        PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+catch_discover_tests(ned_tests
+        TEST_SPEC "[Performance]"
+        PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" LABELS "Performance")
