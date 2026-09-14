@@ -53,7 +53,58 @@ std::vector<std::string> OccurrenceTexts(const LocalBinding& binding, std::strin
     return texts;
 }
 
+// per-subtree-fact-memoization follow-up: the same invariant
+// ModeTest.cpp's "symbolKind stays correct across a sequence of incremental
+// edits" pins for symbolKind/testDiscovery/indent captures, for the fourth
+// capability MatchCache.h's own header comment originally named --
+// localScopes is called far more sporadically than those three (rename-
+// symbol only, not once per Paint()), which is exactly the on-demand
+// cadence this test exists to prove safe rather than merely convenient: a
+// byte-for-byte match at every step, not just the final one.
+std::vector<std::string> DescribeLocalCaptures(const std::vector<LocalCapture>& captures) {
+    std::vector<std::string> out;
+    out.reserve(captures.size());
+    for (const LocalCapture& capture : captures) {
+        out.push_back("[" + std::to_string(capture.startByte) + "," + std::to_string(capture.endByte) +
+                      ") kind=" + std::to_string(static_cast<int>(capture.kind)) + " qualifier=" + capture.qualifier);
+    }
+    return out;
+}
+
 } // namespace
+
+TEST_CASE("c-mode's localScopes stays correct across a sequence of incremental edits, called sporadically",
+          "[Mode][LocalScopes]") {
+    const std::optional<Mode> mode = ModeByName("c-mode");
+    REQUIRE(mode.has_value());
+    REQUIRE(mode->localScopes);
+
+    const std::vector<std::string> steps = {
+        "int size;\nvoid f(int size) {\n  size = size + 1;\n}\n",
+        // Adds a second parameter and a new local -- deliberately NOT
+        // calling localScopes on every intermediate text below, unlike
+        // ModeTest.cpp's per-step symbolKind test: this is the shape a real
+        // rename-symbol invocation sees, several edits apart.
+        "int size;\nvoid f(int size, int extra) {\n  int total = size + extra;\n  size = total;\n}\n",
+        // A localized rename deep inside otherwise-unaffected content on
+        // both sides (extra -> extras).
+        "int size;\nvoid f(int size, int extras) {\n  int total = size + extras;\n  size = total;\n}\n",
+    };
+
+    // Deliberately skip step[0] here (only ever observed via `fresh` below)
+    // so the FIRST call this Mode's own localScopes ever sees is for
+    // step[1] -- covering the case that matters: this closure's own
+    // MatchCache reconciling against an edit spanning more than the single
+    // most-recent keystroke, exactly as an on-demand caller does.
+    for (std::size_t i = 1; i < steps.size(); ++i) {
+        INFO("step " << i << ": " << steps[i]);
+        const auto incremental = mode->localScopes(steps[i]);
+        const std::optional<Mode> freshMode = ModeByName("c-mode");
+        REQUIRE(freshMode.has_value());
+        const auto fresh = freshMode->localScopes(steps[i]);
+        REQUIRE(DescribeLocalCaptures(incremental) == DescribeLocalCaptures(fresh));
+    }
+}
 
 TEST_CASE("c-mode resolves a parameter without touching a same-named global", "[Mode][LocalScopes]") {
     const std::string source  = "int size;\n"
