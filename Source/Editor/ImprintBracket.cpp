@@ -41,9 +41,7 @@ void Search(const treesitter::Node& node, const std::map<std::string, DelimitedB
     if (node.IsNull() || point < node.StartByte() || point > node.EndByte()) {
         return;
     }
-    for (std::size_t i = 0; i < node.ChildCount(); ++i) {
-        Search(node.Child(i), table, point, onDelimiter, adjacent);
-    }
+    node.ForEachChild([&](treesitter::Node child) { Search(child, table, point, onDelimiter, adjacent); });
     if (onDelimiter.has_value()) {
         return; // an inner match already won
     }

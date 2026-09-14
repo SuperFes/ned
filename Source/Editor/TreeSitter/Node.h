@@ -20,6 +20,7 @@
 #define NED_EDITOR_TREESITTER_NODE_H
 
 #include <cstddef>
+#include <functional>
 #include <string_view>
 
 #include "Editor/Parse/Node.h"
@@ -57,6 +58,14 @@ class Node {
 
     [[nodiscard]] std::size_t ChildCount() const;
     [[nodiscard]] Node        Child(std::size_t index) const; // precondition: index < ChildCount()
+
+    // Visits Child(0)..Child(ChildCount()-1) in order via one cursor descent.
+    // Prefer this over a `for (i < ChildCount()) visitor(Child(i))` loop:
+    // Child(i) re-derives the i-th child from the first child every call
+    // (upstream tree-sitter's own ts_node_child cost), making such a loop
+    // quadratic in child count -- the same shape QueryMatcher.cpp's Walk
+    // fixed once already (see its comment for the measured cost).
+    void ForEachChild(const std::function<void(Node)>& visitor) const;
 
     // structural-selection-expansion follow-up. True for a real grammar rule
     // (e.g. "binary_expression"), false for an anonymous/punctuation token
