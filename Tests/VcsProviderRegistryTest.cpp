@@ -1,4 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/reporters/catch_reporter_event_listener.hpp>
+#include <catch2/reporters/catch_reporter_registrars.hpp>
 
 #include <memory>
 
@@ -62,6 +64,33 @@ struct RegistryResetGuard {
         ClearRegistry();
     }
 };
+
+// BackgroundActivityTest.cpp's own BackgroundActivityGlobalFixture precedent,
+// same registry-shape bug: a REQUIRE that throws between RegisterProvider and
+// a file's own trailing (plain, not RAII) ClearRegistry() call -- as several
+// of the files that touch this process-wide registry write it
+// (BufferViewDiffGutterTest.cpp, BufferViewVcsCommitTest.cpp,
+// BufferViewVcsStatusTest.cpp, WindowManagerTest.cpp) -- skips that cleanup
+// and leaves the registered provider active for every later test case in the
+// binary. Found live under `--order rand`: McpToolRegistryTest.cpp's two
+// "no VCS provider registered" tests (which have no reset of their own,
+// trusting every other file's cleanup) failed with the callback never firing
+// -- consistent with a leaked provider routing the call down the real
+// (async, unpumped-in-this-fixture) provider path instead of the synchronous
+// no-provider error path. A single global reset after every test case closes
+// the whole class regardless of which test causes it, the same fix already
+// applied to BackgroundActivity's own registry.
+class VcsProviderRegistryGlobalFixture final : public Catch::EventListenerBase {
+  public:
+    using Catch::EventListenerBase::EventListenerBase;
+
+    void testCaseEnded(const Catch::TestCaseStats&) override {
+        ClearRegistry();
+        ClearProviderCache();
+    }
+};
+
+CATCH_REGISTER_LISTENER(VcsProviderRegistryGlobalFixture)
 
 } // namespace
 

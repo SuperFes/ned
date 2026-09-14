@@ -122,7 +122,32 @@ would make the number mean nothing.
       `ctest -j8` 4427/4427 clean; `sanitize -j8` clean except transient perf-budget
       misses under genuine machine load, which pass individually every time (the
       accepted "sanitize -j8 under load" class in the watch list below, not a
-      regression).
+      regression). Re-verified again same day against a fresh `sanitize` build after
+      the parsing-engine imprint fix above: 4427/4427 except one such transient miss
+      (`CppMode full-buffer highlighting and electric indent stay fast on a large
+      file`, 7705ms vs. a 5000ms budget under `-j8` load; passes standalone). A
+      `./build/ned_tests --order rand` sweep (10 seeds) closed a second instance of
+      the exact class `BackgroundActivity`'s own cross-test leak was fixed for
+      (2026-09-13, see git log): seeds 4 and 5 both failed
+      `McpToolRegistryTest.cpp`'s two "no VCS provider registered" tests
+      (`REQUIRE(invoked)` false — the callback never fires, consistent with a
+      leaked provider routing the call down the real async path instead of the
+      synchronous no-provider error path a clean registry takes). Root cause:
+      `ned::editor::vcs::ProviderRegistry` is touched by nine test files, and at
+      least four (`BufferViewDiffGutterTest.cpp`, `BufferViewVcsCommitTest.cpp`,
+      `BufferViewVcsStatusTest.cpp`, `WindowManagerTest.cpp`) call the test-only
+      `ClearRegistry()` as a plain statement at the end of a test body rather than
+      through an RAII guard, so a `REQUIRE` failure earlier in the same test skips
+      it and leaves that test's fake provider registered for the rest of the
+      binary; `McpToolRegistryTest.cpp`'s own "no provider" tests carry no reset of
+      their own, trusting every other file's cleanup unconditionally. Fixed the
+      same way `BackgroundActivity`'s registry was: a global Catch2
+      `EventListenerBase` (`VcsProviderRegistryGlobalFixture` in
+      `Tests/VcsProviderRegistryTest.cpp`) resetting the registry and its
+      resolution cache after every test case, regardless of pass/fail — the
+      individual files' own plain `ClearRegistry()` calls are now redundant but
+      harmless, left as-is. Re-ran seeds 1-10 clean afterward (63345-63371
+      assertions each, 4427/4427 test cases).
 
 **1.0, for context, since branching starts near it.** For a scriptable editor 1.0 is a
 promise about the *Janet surface*, not about features: 160 `Register<>` bindings and 275
