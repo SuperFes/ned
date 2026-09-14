@@ -1,0 +1,19 @@
+[book]
+title = "ned Developer Docs"
+description = "Design records, architecture deep dives, and capability audits for ned's own implementation."
+authors = ["ned contributors"]
+language = "en"
+src = "."
+
+[build]
+build-dir = "book"
+# Everything else in this directory that isn't listed in SUMMARY.md (the
+# generated Commands.md/Scripting.md references, the screenshot, ROADMAP-
+# adjacent working files) is simply not part of the book -- mdBook only
+# renders what SUMMARY.md links to.
+
+[output.html]
+git-repository-url = "https://github.com/SuperFes/ned"
+edit-url-template = "https://github.com/SuperFes/ned/edit/main/{path}"
+default-theme = "navy"
+preferred-dark-theme = "navy"
