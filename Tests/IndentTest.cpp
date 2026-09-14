@@ -303,6 +303,87 @@ TEST_CASE("CppMode's indentColumn stays correct across a sequence of incremental
     REQUIRE(sawRealValue); // not vacuously comparing nullopt against nullopt throughout
 }
 
+// per-subtree-fact-memoization follow-up: a harder variant of "stays correct
+// across a sequence of incremental edits" above -- that test calls
+// indentColumn on EVERY step, which never actually exercises indentMatchCache
+// falling behind sharedParse's own generation. Here indentColumn is called
+// only on even steps; odd steps call ONLY mode.highlight (sharedParse's own
+// per-Paint()-cadence capability), advancing the shared IncrementalParseCache
+// to a text indentMatchCache never reconciled against -- exactly the shape
+// a real "several ordinary keystrokes between two Enter presses" sequence
+// has. Each step also inserts its new line BEFORE the call (not appended
+// after it), so a coordinate-shift bug reconciling a stale cached_ against
+// an edit that doesn't describe its own true baseline-to-current delta would
+// have real byte offsets to get wrong, not a no-op append. It passes because
+// MatchCache's own ambiguity-reclassification structural-widening check
+// (comparing the edit's old-vs-new enclosing named node) detects the
+// resulting nonsense old-frame lookup and widens the redo window to cover
+// the whole affected region, forcing a fresh re-derive rather than trusting
+// a wrongly-shifted stale entry -- confirmed by instrumenting Reconcile()
+// directly during development of this test, not assumed from the source
+// reading alone. Uses JavaScript's lambda-body-alignment @align.barrier
+// (Source/Languages/javascript/indents.janet) as the probed fact: querying
+// the callback body's own statement makes the answer depend on
+// "statement_block" actually being found in the align.barrier set, unlike a
+// plain brace-nesting case where the dedent comes fresh from the delimiter
+// imprint every call regardless of MatchCache's own staleness.
+TEST_CASE("JavaScriptMode's indentColumn stays correct when called sporadically, skipping generations "
+          "highlight alone advanced",
+          "[Indent]") {
+    const auto mode = JavaScriptMode();
+    REQUIRE(static_cast<bool>(mode.indentColumn));
+    REQUIRE(static_cast<bool>(mode.highlight));
+
+    // Each step prepends one more "// padN" line BEFORE the call, shifting
+    // every byte of the call (and its cached aligned/align.barrier captures)
+    // forward -- unlike appending after them, which a single edit's shift
+    // handles correctly regardless of how many generations were skipped.
+    // Query point: the callback body's own statement -- its correct indent
+    // depends on "statement_block" successfully being found in the
+    // align.barrier set (JS's own lambda-body-alignment rule degrading the
+    // OUTER "arguments" @aligned container back to plain level counting);
+    // a coordinate-corrupted/missing align.barrier entry would instead align
+    // this line to the column right after "setTimeout(".
+    std::vector<std::string> steps;
+    {
+        std::string prefix;
+        for (int i = 0; i < 6; ++i) {
+            prefix += "// pad" + std::to_string(i) + "\n";
+            steps.push_back(prefix + "setTimeout(function() {\n  a();\n}, 100);\n");
+        }
+    }
+
+    auto queryPoint = [](const std::string& text) {
+        const std::size_t bodyLine = text.find("  a();");
+        REQUIRE(bodyLine != std::string::npos);
+        return bodyLine;
+    };
+    {
+        const std::size_t q = queryPoint(steps[0]);
+        const auto        c = mode.indentColumn(steps[0], q, q);
+        const auto        f = JavaScriptMode().indentColumn(steps[0], q, q);
+        REQUIRE(c == f);
+    }
+
+    for (std::size_t i = 1; i < steps.size(); ++i) {
+        if (i % 2 == 1) {
+            // Odd steps: simulate ordinary typing -- only highlight observes
+            // this generation, indentColumn does not.
+            (void)mode.highlight(steps[i], ned::editor::HighlightWindow{});
+            continue;
+        }
+        // Even steps: a real Enter/reindent request, skipping the odd
+        // generation indentMatchCache never saw.
+        const std::size_t q = queryPoint(steps[i]);
+        INFO("step " << i);
+        const auto incremental = mode.indentColumn(steps[i], q, q);
+        const auto fresh       = JavaScriptMode().indentColumn(steps[i], q, q);
+        INFO("incremental = " << (incremental ? std::to_string(*incremental) : "nullopt"));
+        INFO("fresh       = " << (fresh ? std::to_string(*fresh) : "nullopt"));
+        REQUIRE(incremental == fresh);
+    }
+}
+
 TEST_CASE("JsonMode indentColumn indents a nested array element and aligns its closing bracket", "[Indent]") {
     const auto mode = JsonMode();
     Buffer     buffer("test.json");

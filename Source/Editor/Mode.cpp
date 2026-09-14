@@ -887,16 +887,30 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     FoldFunction fold;
     if (!queries.folds.empty()) {
         const auto foldQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.folds);
-        fold                 = [parser, foldQuery, sharedParse](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
+        // per-subtree-fact-memoization follow-up: no BUNDLED language reaches
+        // this branch any more (every one folds from the imprint alone --
+        // see this closure's own doc comment above), so in practice this
+        // only benefits a runtime-dlopen'd grammar's own discovered
+        // folds.scm. Still a real "flat set of query matches" capability by
+        // MatchCache.h's own definition, called once per keystroke while the
+        // fold gutter is eligible (GutterModel::EnsureFoldableBlocks,
+        // ContentGeneration-gated), same cadence as symbolKind's own
+        // whole-document path -- wired through for consistency rather than
+        // left as the one remaining full walk.
+        const auto foldMatchCache = std::make_shared<treesitter::MatchCache>();
+        fold                      = [parser, foldQuery, sharedParse, foldMatchCache](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
 
             std::vector<std::pair<std::size_t, std::size_t>> ranges;
-            for (const treesitter::QueryCapture& capture : foldQuery->Captures(tree.RootNode(), bufferText)) {
-                if (capture.name == "fold") {
-                    ranges.emplace_back(capture.startByte, capture.endByte);
+            for (const treesitter::QueryMatch& match :
+                 foldMatchCache->Reconcile(*foldQuery, tree, bufferText, sharedParse->LastEdit())) {
+                for (const treesitter::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "fold") {
+                        ranges.emplace_back(capture.startByte, capture.endByte);
+                    }
                 }
             }
             std::sort(ranges.begin(), ranges.end());
@@ -1372,7 +1386,27 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     LocalScopeFunction localScopes;
     if (!queries.locals.empty()) {
         const auto localsQuery = std::make_shared<treesitter::QueryMatcher>(language, queries.locals);
-        localScopes            = [parser, localsQuery, sharedParse](std::string_view bufferText) -> std::vector<LocalCapture> {
+        // per-subtree-fact-memoization follow-up: this closure is one of the
+        // ORIGINAL four named in MatchCache.h's own header comment
+        // (highlight/symbolKind/locals/indent captures) -- unlike highlight
+        // (permanently excluded, see the symbolKind buildMarkers closure's
+        // own comment on why a windowed capability has nothing to gain),
+        // locals has no windowed variant at all, so it goes through the
+        // same whole-document Reconcile() shape symbolKind/testDiscovery/
+        // indent captures already do. Called far more sporadically than
+        // those three (rename-symbol only, not once per Paint()), which is
+        // safe rather than stale for the same reason BuildIndentFunction's
+        // on-demand indentColumn already relies on: sharedParse->LastEdit()
+        // is nullopt whenever some OTHER capability (highlight, at minimum)
+        // already advanced sharedParse to this exact bufferText first, and
+        // Reconcile() falls back to a full walk on nullopt -- so a call
+        // arriving many keystrokes after this cache's own last one either
+        // gets nullopt (common case, correct, just not maximally optimal)
+        // or the genuine single most-recent edit (when this really is the
+        // first capability to observe the new text), never a stale edit
+        // silently misapplied to a many-generations-old cached_.
+        const auto localsMatchCache = std::make_shared<treesitter::MatchCache>();
+        localScopes = [parser, localsQuery, sharedParse, localsMatchCache](std::string_view bufferText) -> std::vector<LocalCapture> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
@@ -1392,24 +1426,27 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             std::vector<PairwiseContainer>                   pairwise;
             std::vector<std::pair<std::size_t, std::size_t>> skipRanges;
 
-            for (const treesitter::QueryCapture& capture : localsQuery->Captures(tree.RootNode(), bufferText)) {
-                if (capture.name == "local.skip") {
-                    skipRanges.emplace_back(capture.startByte, capture.endByte);
-                    continue;
+            for (const treesitter::QueryMatch& match :
+                 localsMatchCache->Reconcile(*localsQuery, tree, bufferText, sharedParse->LastEdit())) {
+                for (const treesitter::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "local.skip") {
+                        skipRanges.emplace_back(capture.startByte, capture.endByte);
+                        continue;
+                    }
+                    std::string                           qualifier;
+                    const std::optional<LocalCaptureKind> kind = LocalCaptureKindFromCaptureName(capture.name, &qualifier);
+                    if (!kind) {
+                        continue; // an unrelated or "_"-prefixed helper capture -- see LocalCaptureKindFromCaptureName
+                    }
+                    constexpr std::string_view kPairs = ".pairs";
+                    if (*kind == LocalCaptureKind::Definition && qualifier.size() > kPairs.size() &&
+                        std::string_view(qualifier).ends_with(kPairs)) {
+                        pairwise.push_back(PairwiseContainer{capture.startByte, capture.endByte,
+                                                             qualifier.substr(0, qualifier.size() - kPairs.size())});
+                        continue;
+                    }
+                    captures.push_back(LocalCapture{capture.startByte, capture.endByte, *kind, std::move(qualifier)});
                 }
-                std::string                           qualifier;
-                const std::optional<LocalCaptureKind> kind = LocalCaptureKindFromCaptureName(capture.name, &qualifier);
-                if (!kind) {
-                    continue; // an unrelated or "_"-prefixed helper capture -- see LocalCaptureKindFromCaptureName
-                }
-                constexpr std::string_view kPairs = ".pairs";
-                if (*kind == LocalCaptureKind::Definition && qualifier.size() > kPairs.size() &&
-                    std::string_view(qualifier).ends_with(kPairs)) {
-                    pairwise.push_back(PairwiseContainer{capture.startByte, capture.endByte,
-                                                         qualifier.substr(0, qualifier.size() - kPairs.size())});
-                    continue;
-                }
-                captures.push_back(LocalCapture{capture.startByte, capture.endByte, *kind, std::move(qualifier)});
             }
 
             for (const PairwiseContainer& container : pairwise) {
