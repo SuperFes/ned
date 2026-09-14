@@ -1336,6 +1336,24 @@ a PR is a `git am` and a push rather than a re-derivation.
       `EventLoop::Run()`, which already owns the right place for it), so it isn't a
       drop-in match for that sketch if we ever revisit upstreaming this specific gap.
 
+### Vendored Grammar Patches Worth Upstreaming (Watch List)
+
+- [ ] **`tree-sitter-sql`'s external scanner leaks two ways** — found 2026-09-14 the
+      first time CI actually completed a `sanitize` run (LeakSanitizer, via
+      `Tests/ParseConformanceTest.cpp`'s `[Corpus]` tests): `scan()`'s dollar-quoted-
+      string path drops `start_tag` on the early return when it matches the already-open
+      tag, and `deserialize()` unconditionally overwrites `state->start_tag` without
+      freeing whatever a prior `scan()`/`deserialize()` call had already allocated —
+      the latter fires on every lex attempt while the scanner's lex state is active, so a
+      real SQL file leaks repeatedly, not once. Confirmed still present on upstream
+      `DerekStride/tree-sitter-sql` `master` as of this date. Patched directly in
+      `ThirdParty/tree-sitter-grammars/tree-sitter-sql/src/scanner.c` (two `free()`
+      calls, commented `ned local fix`) rather than via a `Patches/` file the way
+      Notcurses' fixes are — there's no re-apply mechanism for vendored grammars yet,
+      so **`Tools/vendor-grammars.py` re-vendoring this grammar for a version bump will
+      silently drop this fix** unless upstream has merged an equivalent by then; check
+      before bumping.
+
 ### Known Test Flakiness / Non-Critical Issues (Watch List)
 
 Real, reproduced, non-urgent — each is safe to leave as-is for now, but worth fixing
@@ -1447,6 +1465,14 @@ behavioral limitation:
   build being optimised rather than to loosen them — that would give up the regression
   signal the tests exist for. Until then, treat a `[Performance]` failure under
   `sanitize -j8` as noise, and confirm any real perf work against the `default` preset.
+
+- **`FileWatchTest.cpp`'s "A burst of rapid writes coalesces into one callback" failed
+  once on a GitHub Actions runner** (2026-09-14, the `default` preset's first-ever
+  completed CI run), one assertion out of two, not reproduced locally. The test debounces
+  a burst of real inotify events on a fixed ~100ms window (`FileWatcher`'s own quiet-
+  period); a shared, contended CI runner is exactly the kind of machine where that window
+  is least reliable. Unconfirmed as a genuine flake vs. a one-off runner hiccup — noted so
+  a second sighting is corroborating evidence rather than a fresh investigation.
 
 One documented behavioral limitation, not a flake:
 
