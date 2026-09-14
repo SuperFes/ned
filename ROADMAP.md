@@ -173,7 +173,7 @@ would make the number mean nothing.
 **1.0, for context, since branching starts near it.** For a scriptable editor 1.0 is a
 promise about the *Janet surface*, not about features: 160 `Register<>` bindings and 275
 command names, and declaring 1.0 makes breaking any of them a major-version event. That
-surface is still moving (`TreeSitterQuerySources` became designated-initializers mid-flight;
+surface is still moving (`GrammarQuerySources` became designated-initializers mid-flight;
 the parsing engine would reshape `Mode` outright), which is the real reason 1.0 is not close
 regardless of how usable ned feels. Candidate criteria, all already present below: Janet API
 frozen · parsing-engine decision made either way · no known data-loss paths · release
@@ -209,7 +209,7 @@ measurement said "fine" while typing felt bad.
       loop, the exact "restarts from the first child every call" shape `QueryMatcher.cpp`'s
       own 60x cursor-walk fix (2026-09-12) already fixed once, just never carried over to
       the imprint walkers — fixed via a new `Node::ForEachChild` cursor-based helper
-      (`Editor/TreeSitter/Node.h`). Confirmed unsafe to apply the same fix to
+      (`Editor/Grammar/Node.h`). Confirmed unsafe to apply the same fix to
       `Parse/Node.cpp`'s `NodeDescendantForByteRangeImpl`, which looks identical but isn't:
       `TreeCursor` walks only *visible* nodes (transparently descending through hidden
       wrapper nodes), while that function needs the raw structural children — visible and
@@ -499,8 +499,8 @@ query, and why each is on it, is recorded in `Source/Editor/BundledLanguages.cpp
 in-buffer as one undo step with no request sent, and anything else falls through to the
 `prepareRename`/`rename` flow, which `lsp-rename` still reaches directly from `M-x`.
 Twelve hand-authored `*-locals.scm` queries, a `Mode::localScopes` capability, and
-`Editor/LocalScopes.h`'s pure resolver; `TreeSitterMode`'s six positional query-source
-parameters became a designated-initializer `TreeSitterQuerySources` on the way past).
+`Editor/LocalScopes.h`'s pure resolver; `GrammarMode`'s six positional query-source
+parameters became a designated-initializer `GrammarQuerySources` on the way past).
 
 - [ ] A Lisp binding vector's names are captured by unrolled per-pair-index patterns
       (`clojure-locals.scm`, `janet-locals.scm`), because the whole-vector form a query
@@ -804,6 +804,89 @@ over ordinary buffer text, so "never a modal trap" fell out for free.
       --continue`, repeat) — the hunk-resolution primitive above is what such a sequence
       would be built on later, but driving the sequence itself needs its own `VcsRunner`
       plumbing (`RequestRebaseContinue`/abort/skip) not touched here.
+
+### Configurable Formatter (New Feature)
+
+Design scoped 2026-09-14, nothing built yet. Full rationale and the nine-rule-kind
+catalogue: `Docs/FormattingCapabilities.md` (JetBrains' code-style panes across ten
+languages, sorted into what Ned can/could/can't do). Kind 1 (indent) is the only one Ned
+covers today. Goal: one native formatter, the same code whether reached from
+`M-x format-buffer`, an automatic on-save convergence pass, or a headless CLI invocation
+— not a clang-format wrapper with extra steps.
+
+Architecture:
+- **Entry points**: `format-buffer` (existing command, currently a thin `RunFormatCommand`
+  shell-out wrapper — grows into the tiered chain below), bound `C-c f f`. A new
+  `ned/set-auto-format-on-save` toggle (default off) gates an *automatic*, scoped variant
+  that runs on every save.
+- **Chain**: External `FormatCommand` → LSP format → Native, falling through on *runtime*
+  failure (a configured tool that's missing or errors), not just when a tier is
+  unconfigured — today's `RunFormatCommand` silently gives up on failure, which this fixes
+  as a side effect.
+- **Two scopes, matching the capabilities doc's "one engine, two entry points" stance**:
+  `format-buffer` is whole-buffer, deliberate. Automatic on-save is scoped to
+  `Buffer::UnsavedChangeRanges()` only, snapped to line boundaries — a file converges
+  gradually as you touch it rather than exploding into a huge diff the first time you save
+  a file you barely touched. Real tension with the existing whole-file, disk-only
+  `TrimTrailingWhitespaceOnSave` (`Editor/TrimOnSave.h`), which should be absorbed into the
+  new formatter's properly-scoped Hygiene pass rather than left running in parallel.
+- **Engine**: pass-table, not a fixed procedure — each pass a `(tree, text, range, config)
+  → edits` function, the shape the capabilities doc explicitly asks for. First two passes:
+  **Indent** (thin wrapper over the existing `IndentRegion`/`IndentBuffer`, plus a new
+  capture-scoped override — `ned/set-indent-rule`, the same dotted-capture-name resolution
+  `SyntaxTheme.h` already uses for style overrides, supporting `{:offset N}` (relative, in
+  columns — a C++ access specifier sitting -2 from its class body) and `{:absolute N}`
+  (ignore nesting depth entirely — a goto label or preprocessor directive root-scoped
+  regardless of surrounding nesting) policies) and **Hygiene** (trailing-whitespace strip
+  with a "never the line the cursor is on" exception, blank-line min/max collapse, final
+  newline). Kinds 2-9 from the capabilities doc (Space/Break/Wrap/Align/Case/Arrange/
+  Rewrite) are deliberately deferred, but the pass-table shape is designed so they slot in
+  later without touching any of the entry points.
+- **Config layering**: per-mode `IndentStyle` as it exists today; a project's
+  `.ned/init.janet` overriding it for free via the existing load-after-personal-init
+  order (no new layering mechanism needed — last-write-wins on the same mutex-guarded
+  setters already covers "company style guide beats personal taste"). Content-detection
+  (tabs vs. spaces majority scan) applies *only* to `FundamentalMode` buffers with no
+  configured style at all (an `/etc/fstab` with no matching language mode) — never
+  silently overriding a real per-mode or per-project setting, which the capabilities doc's
+  own C2 section already argues against ("Indents Detection... the single most
+  complained-about behaviour" in JetBrains).
+- **Huge files**: a whole-buffer native reindent can't safely parse a multi-GB document at
+  once. Design: stream via `ITextStorage::ForEachChunk`, track delimiter depth as a running
+  counter off the `Imprint` delimiter tables (cheap and lexical, no tree needed), only
+  commit a rewritten stretch when depth returns to 0 (an unambiguous top-level boundary),
+  pump verified output to a temp file, atomic rename only on a complete clean sweep — abort
+  and leave the original untouched if depth never resolves. All-or-nothing, not
+  best-effort. Shared between the CLI's `--format --force-huge` and an interactive
+  whole-buffer `format-buffer` on a huge buffer (behind a y/n confirm, mirroring
+  `ConfirmOverwriteSave`'s shape). The *automatic scoped* on-save path needs none of
+  this — it only ever touches locally-edited lines, already within `IndentRegion`'s
+  existing huge-file windowing.
+- **CLI**: headless `--format <paths...>` (plus a `ned-format` argv[0] symlink dispatching
+  the same way) — no Notcurses/EventLoop spun up. External → Native only (no LSP tier; no
+  event loop to round-trip against, headless). Whole-file only — no edit history to scope
+  a fresh headless invocation against.
+- **Mode line**: a new indent-style indicator beside the existing line-ending suffix
+  (`ModeLine.cpp:118`, `LineEndingName(buffer.LineEndingKind())`) — effective configured
+  style for a mode-matched buffer, detected value for `FundamentalMode`, and a `Mixed`
+  state (a real ambiguity for `FundamentalMode`; a passive "this file doesn't match its
+  configured style" flag elsewhere — display-only, never changes what `format-buffer`
+  actually does).
+
+Incidental, done alongside scoping this (unstaged, not yet committed as of this writing):
+`ned::editor::treesitter`/`Source/Editor/TreeSitter/` renamed to `ned::editor::grammar`/
+`Source/Editor/Grammar/`. The wrapper was accurately tree-sitter-named before Phase 4b
+swapped the engine underneath it (`Source/Editor/Parse/`); post-swap it misleadingly
+implied the upstream library still runs there, when only `ned_tests`' conformance suite
+links it now. 70 files touched, pure rename (509/509 diff, no logic changes) — build and
+the full suite (4430 cases, 66,764 assertions) verified clean on the renamed tree.
+
+- [ ] Nothing implemented yet. Suggested build order: the Indent-pass override mechanism
+      plus the Hygiene pass plus the `format-buffer` chain first (single-buffer, testable
+      in isolation, no UI); then the mode-line indicator (cheap, immediately useful
+      diagnostic on its own); then automatic scoped on-save; then the CLI/headless path
+      and the huge-file streaming sweep last (the most novel piece, worth isolating once
+      everything else is solid).
 
 ### Jupyter Notebooks
 
