@@ -1,6 +1,10 @@
 {:name "lua"
  :extensions [".lua"]
  :line-comment "--"
+
+ # lua-language-server's own root convention (nvim-lspconfig's lua_ls
+ # root_dir walks for the same two names).
+ :lsp-root-markers [".luarc.json" ".luarc.jsonc"]
  :snippets
  {
    "fn"
