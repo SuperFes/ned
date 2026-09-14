@@ -129,7 +129,7 @@ TEST_CASE("Query discovery: upstream first, own delta after; explicit entries wi
 // definition losing one silently would only show up feature-by-feature.
 TEST_CASE("The definitions carry the facts the old C++ tables held", "[LanguageParse]") {
     const std::set<std::string>              kRootMarkerLanguages       = {"c", "cpp", "python", "javascript", "typescript", "tsx",
-                                                                           "php", "rust", "go", "csharp", "java", "kotlin"};
+                                                                           "php", "rust", "go", "csharp", "java", "kotlin", "lua"};
     const std::set<std::string>              kImportResolutionLanguages = {"php", "javascript", "typescript", "tsx", "python", "bash",
                                                                            "clojure", "jank", "css", "janet", "rust"};
     const std::map<std::string, std::string> kAliases                   = {

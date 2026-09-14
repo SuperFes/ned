@@ -63,10 +63,16 @@ locals declined — see the ROADMAP entry for the global-vs-local reasoning),
 cmake `uyha/tree-sitter-cmake` v0.7.5 (ABI 14, scanner 194 LOC, 13 corpus
 files; highlights ned-authored, upstream's uses an out-of-scope construct).
 
-The current LSP root-marker set (`Lsp/RootResolver.h`) covers c/cpp/python/
-javascript/typescript/tsx/php. Closing Tier A means bringing java/kotlin/csharp/
-go/rust/bash/lua/cmake up to the same standard -- that is a D2 config gap, not a
-grammar gap, and it can be closed today without any of the engine work.
+**Closed 2026-09-13** -- java/kotlin/csharp/go/rust already carried root markers
+from the Janet migration; lua's `.luarc.json`/`.luarc.jsonc` were added, and
+bash/cmake deliberately have none (no fixed marker convention exists for
+either -- see `Docs/LanguageSetup.md`). Since `Lsp/ServerConfig.h`/`Dap/Config.h`/
+`TestRun/Config.h` never bundle or auto-detect a command by design, the actual
+remaining D2 gap was documentation, not code: `Docs/LanguageSetup.md` now gives
+the recommended LSP/DAP/test-runner recipe per language, including the honest
+gaps (Java's DAP has no standalone adapter to spawn, Maven/Gradle/dotnet's
+multi-file JUnit XML doesn't fit `ned/set-test-results-file`, Bash/Lua have no
+matching built-in test-output format).
 
 ## Tier B — Core (D1 traits, D2 where a server exists)
 

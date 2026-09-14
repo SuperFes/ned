@@ -2,6 +2,13 @@
  :extensions [".cmake"]
  :filenames ["CMakeLists.txt"]
  :line-comment "#"
+
+ # Deliberately no :lsp-root-markers: "CMakeLists.txt" as its own marker
+ # would match trivially at a nested CMakeLists.txt's own directory,
+ # defeating the nearest-ancestor walk instead of finding the real top --
+ # editor::ProjectRoot()'s fallback already lands on the top-level build
+ # root for the common case where it IS the project root (this repo
+ # included).
  :snippets
  {
    "fn"
