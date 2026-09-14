@@ -5,15 +5,15 @@
 #include <string_view>
 
 #include "Editor/ImprintTables.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Parser.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Parser.h"
 
 namespace ned::editor::imprint {
 
 namespace {
 
     // The four bracket kinds the imprint recognises as delimiters -- the same set
-    // TreeSitter/GrammarImprint.cpp infers from, angle brackets included (template
+    // Grammar/GrammarImprint.cpp infers from, angle brackets included (template
     // and type-parameter lists, JSX opening elements).
     constexpr std::string_view kOpeners = "([{<";
     constexpr std::string_view kClosers = ")]}>";
@@ -26,7 +26,7 @@ namespace {
         return at == std::string_view::npos ? std::nullopt : std::optional<char>(kOpeners[at]);
     }
 
-std::optional<DelimiterPair> PairFor(const treesitter::Node& node,
+std::optional<DelimiterPair> PairFor(const grammar::Node& node,
                                      const std::map<std::string, DelimitedBody>& table) {
     const auto entry = table.find(std::string(node.Type()));
     if (entry == table.end()) {
@@ -36,12 +36,12 @@ std::optional<DelimiterPair> PairFor(const treesitter::Node& node,
 }
 
 // Deepest-first, so an inner pair wins over the outer one that contains it.
-void Search(const treesitter::Node& node, const std::map<std::string, DelimitedBody>& table, std::size_t point,
+void Search(const grammar::Node& node, const std::map<std::string, DelimitedBody>& table, std::size_t point,
             std::optional<DelimiterPair>& onDelimiter, std::optional<DelimiterPair>& adjacent) {
     if (node.IsNull() || point < node.StartByte() || point > node.EndByte()) {
         return;
     }
-    node.ForEachChild([&](treesitter::Node child) { Search(child, table, point, onDelimiter, adjacent); });
+    node.ForEachChild([&](grammar::Node child) { Search(child, table, point, onDelimiter, adjacent); });
     if (onDelimiter.has_value()) {
         return; // an inner match already won
     }
@@ -64,12 +64,12 @@ void Search(const treesitter::Node& node, const std::map<std::string, DelimitedB
 
 } // namespace
 
-std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node) {
+std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node) {
     if (node.IsNull() || node.ChildCount() < 2) {
         return std::nullopt;
     }
     for (std::size_t i = node.ChildCount(); i-- > 0;) {
-        const treesitter::Node close = node.Child(i);
+        const grammar::Node close = node.Child(i);
         if (close.IsNull() || close.IsNamed()) {
             continue;
         }
@@ -78,7 +78,7 @@ std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node) {
             continue;
         }
         for (std::size_t j = 0; j < i; ++j) {
-            const treesitter::Node open = node.Child(j);
+            const grammar::Node open = node.Child(j);
             if (open.IsNull() || open.IsNamed() || !OpensWithBracket(open.Type(), *opener)) {
                 continue;
             }
@@ -89,7 +89,7 @@ std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node) {
     return std::nullopt;
 }
 
-std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node, const DelimitedBody& body) {
+std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node, const DelimitedBody& body) {
     switch (body.kind) {
         case DelimiterKind::Bracket:
             return DelimitersOf(node);
@@ -105,12 +105,12 @@ std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node, const De
     // closer, then the first anonymous child before it spelling the opener --
     // so a body whose closer is followed by optional members still pairs.
     for (std::size_t i = node.ChildCount(); i-- > 0;) {
-        const treesitter::Node close = node.Child(i);
+        const grammar::Node close = node.Child(i);
         if (close.IsNull() || close.IsNamed() || close.Type() != body.closer) {
             continue;
         }
         for (std::size_t j = 0; j < i; ++j) {
-            const treesitter::Node open = node.Child(j);
+            const grammar::Node open = node.Child(j);
             if (!open.IsNull() && !open.IsNamed() && open.Type() == body.opener) {
                 return DelimiterPair{open.StartByte(), open.EndByte(), close.StartByte(), close.EndByte()};
             }
@@ -120,7 +120,7 @@ std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node, const De
     return std::nullopt;
 }
 
-std::optional<DelimiterPair> MatchingDelimitersAt(const treesitter::Node& root, std::string_view language,
+std::optional<DelimiterPair> MatchingDelimitersAt(const grammar::Node& root, std::string_view language,
                                                   std::size_t point) {
     const auto& table = TableFor(language);
     if (table.empty() || root.IsNull()) {
@@ -132,7 +132,7 @@ std::optional<DelimiterPair> MatchingDelimitersAt(const treesitter::Node& root, 
     return onDelimiter.has_value() ? onDelimiter : adjacent;
 }
 
-std::optional<std::size_t> MatchingDelimiterOffset(const treesitter::Node& root, std::string_view language,
+std::optional<std::size_t> MatchingDelimiterOffset(const grammar::Node& root, std::string_view language,
                                                    std::size_t point) {
     const std::optional<DelimiterPair> pair = MatchingDelimitersAt(root, language, point);
     if (!pair.has_value()) {

@@ -113,7 +113,7 @@
 //
 // Real tree-sitter-org highlighting shipped as its own follow-up (see
 // Mode.cpp's OrgMode(), built on Ned's own forked "org" grammar in
-// TreeSitter/Languages.cpp) -- it lives there, not here; this file stays
+// Grammar/Languages.cpp) -- it lives there, not here; this file stays
 // parse/edit only.
 //
 

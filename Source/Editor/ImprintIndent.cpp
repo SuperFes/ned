@@ -30,9 +30,9 @@ namespace {
     // The anonymous child carrying the closer DelimitersOf reported -- the walk
     // in Indent.cpp resolves a dedent to its container by climbing from the
     // token to the captured identity, so the token is what gets recorded.
-    std::optional<ImprintDedent> CloserOf(const treesitter::Node& node, const DelimiterPair& pair) {
+    std::optional<ImprintDedent> CloserOf(const grammar::Node& node, const DelimiterPair& pair) {
         for (std::size_t i = node.ChildCount(); i-- > 0;) {
-            const treesitter::Node child = node.Child(i);
+            const grammar::Node child = node.Child(i);
             if (!child.IsNull() && !child.IsNamed() && child.StartByte() == pair.closeStart &&
                 child.EndByte() == pair.closeEnd) {
                 return ImprintDedent{child.StartByte(), child.EndByte(), child.Type()};
@@ -41,7 +41,7 @@ namespace {
         return std::nullopt;
     }
 
-    void Collect(const treesitter::Node& node, const std::map<std::string, DelimitedBody>& table,
+    void Collect(const grammar::Node& node, const std::map<std::string, DelimitedBody>& table,
                  std::string_view text, ImprintIndentCaptures& out) {
         if (node.IsNull()) {
             return;
@@ -62,12 +62,12 @@ namespace {
                     ImprintContainer{node.StartByte(), node.EndByte(), node.Type(), node.StartByte()});
             }
         }
-        node.ForEachChild([&](treesitter::Node child) { Collect(child, table, text, out); });
+        node.ForEachChild([&](grammar::Node child) { Collect(child, table, text, out); });
     }
 
 } // namespace
 
-ImprintIndentCaptures CollectIndentCaptures(const treesitter::Node& root, std::string_view language,
+ImprintIndentCaptures CollectIndentCaptures(const grammar::Node& root, std::string_view language,
                                             std::string_view text) {
     ImprintIndentCaptures captures;
     const auto&           table = TableFor(language);

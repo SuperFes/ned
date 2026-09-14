@@ -4,7 +4,7 @@
 
 #include "Editor/Parse/Node.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 namespace {
 
@@ -184,4 +184,4 @@ std::vector<QueryMatch> MatchCache::Reconcile(const QueryMatcher& matcher, const
     return cached_;
 }
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar

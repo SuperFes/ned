@@ -12,8 +12,8 @@
 // against its own last call.
 //
 
-#ifndef NED_EDITOR_TREESITTER_PARSER_H
-#define NED_EDITOR_TREESITTER_PARSER_H
+#ifndef NED_EDITOR_GRAMMAR_PARSER_H
+#define NED_EDITOR_GRAMMAR_PARSER_H
 
 #include <memory>
 #include <string_view>
@@ -29,7 +29,7 @@
 // directly).
 typedef struct TSLanguage TSLanguage; // NOLINT(modernize-use-using)
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 // A non-owning handle to one of tree-sitter's statically-linked-in grammar
 // languages (e.g. the value returned by tree_sitter_json()) -- the
@@ -77,6 +77,6 @@ class Parser {
     std::unique_ptr<parse::Engine> engine_;
 };
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-#endif // NED_EDITOR_TREESITTER_PARSER_H
+#endif // NED_EDITOR_GRAMMAR_PARSER_H

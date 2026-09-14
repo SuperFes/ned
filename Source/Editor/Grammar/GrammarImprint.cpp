@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 namespace {
 
@@ -509,4 +509,4 @@ std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const nlohman
     return found;
 }
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar

@@ -17,11 +17,11 @@
 #include "Editor/ImprintFold.h"
 #include "Editor/ImprintTables.h"
 #include "Editor/Mode.h"
-#include "Editor/TreeSitter/GrammarImprint.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Node.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/GrammarImprint.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Node.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/Tree.h"
 
 // Two halves, deliberately.
 //
@@ -40,7 +40,7 @@ using ned::editor::imprint::FoldAnchorStart;
 using ned::editor::imprint::FoldPolicy;
 using ned::editor::imprint::ShouldFold;
 using ned::editor::imprint::TableFor;
-using ned::editor::treesitter::InferDelimitedBodies;
+using ned::editor::grammar::InferDelimitedBodies;
 using nlohmann::json;
 
 namespace {
@@ -558,7 +558,7 @@ TEST_CASE("Every deleted indent capture's node still indents from the imprint", 
 
 namespace {
 
-bool IsFoldable(const ned::editor::treesitter::Node&                              node,
+bool IsFoldable(const ned::editor::grammar::Node&                              node,
                 const std::map<std::string, ned::editor::imprint::DelimitedBody>& bodies,
                 const ned::editor::imprint::FoldPolicy&                           policy) {
     if (node.IsNull()) return false;
@@ -580,18 +580,18 @@ bool IsFoldable(const ned::editor::treesitter::Node&                            
 // and it was wrong in a way worth recording: a Python class body and its own
 // last method's body legitimately share an end byte, so the class body
 // vanished. Containment says nothing; direct parentage does.
-bool HasFoldableBodyChild(const ned::editor::treesitter::Node&                              node,
+bool HasFoldableBodyChild(const ned::editor::grammar::Node&                              node,
                           const std::map<std::string, ned::editor::imprint::DelimitedBody>& bodies,
                           const ned::editor::imprint::FoldPolicy&                           policy,
                           std::string_view                                                  text) {
-    const auto anchored = [&](const ned::editor::treesitter::Node& n) {
+    const auto anchored = [&](const ned::editor::grammar::Node& n) {
         const auto it = bodies.find(std::string(n.Type()));
         return it == bodies.end() ? n.StartByte()
                                   : ned::editor::imprint::FoldAnchorStart(it->second, n.StartByte(), text);
     };
     std::vector<ned::editor::imprint::ChildBody> children;
     for (std::size_t i = 0; i < node.ChildCount(); ++i) {
-        const ned::editor::treesitter::Node child = node.Child(i);
+        const ned::editor::grammar::Node child = node.Child(i);
         const bool                          folds = IsFoldable(child, bodies, policy);
         children.push_back(ned::editor::imprint::ChildBody{folds, folds ? anchored(child) : child.StartByte(),
                                                            child.EndByte()});
@@ -601,7 +601,7 @@ bool HasFoldableBodyChild(const ned::editor::treesitter::Node&                  
                                                        children, text);
 }
 
-void CollectFoldable(const ned::editor::treesitter::Node&                              node,
+void CollectFoldable(const ned::editor::grammar::Node&                              node,
                      const std::map<std::string, ned::editor::imprint::DelimitedBody>& bodies,
                      const ned::editor::imprint::FoldPolicy&                           policy,
                      std::string_view                                                  text,
@@ -841,10 +841,10 @@ TEST_CASE("The compiled table folds real files exactly as live inference does", 
         sourceBuffer << sourceIn.rdbuf();
         const std::string text = sourceBuffer.str();
 
-        const auto language = ned::editor::treesitter::LanguageByName(testCase.language);
+        const auto language = ned::editor::grammar::LanguageByName(testCase.language);
         REQUIRE(language.has_value());
-        const ned::editor::treesitter::Parser parser(*language);
-        const ned::editor::treesitter::Tree   tree = parser.Parse(text);
+        const ned::editor::grammar::Parser parser(*language);
+        const ned::editor::grammar::Tree   tree = parser.Parse(text);
 
         std::vector<std::pair<std::size_t, std::size_t>> inferred;
         CollectFoldable(tree.RootNode(), InferDelimitedBodies(grammar), ned::editor::imprint::FoldPolicy{}, text,

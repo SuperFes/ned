@@ -10,8 +10,8 @@
 #include "HugeStructuralWindow.h"
 #include "ImprintIndent.h"
 #include "TabWidth.h"
-#include "TreeSitter/MatchCache.h"
-#include "TreeSitter/Node.h"
+#include "Grammar/MatchCache.h"
+#include "Grammar/Node.h"
 
 namespace ned::editor {
 
@@ -82,7 +82,7 @@ namespace {
     // the delimiter's own source line -- std::nullopt when the delimiter is
     // the last real thing on its line (nothing to align to; the caller falls
     // back to treating the container as a plain @indent instead).
-    std::optional<int> ResolveAlignedColumn(const treesitter::Node& container, std::string_view bufferText, int width) {
+    std::optional<int> ResolveAlignedColumn(const grammar::Node& container, std::string_view bufferText, int width) {
         const std::size_t delimiterEnd = container.StartByte() + 1;
         if (delimiterEnd > bufferText.size()) {
             return std::nullopt;
@@ -107,7 +107,7 @@ namespace {
     // isn't the first thing on its line, e.g. "(foo (let [x 1]" -- the let's
     // body indents relative to let's OWN column, matching real Emacs
     // lisp-indent-function behavior for a special form nested mid-line).
-    int ContainerOwnColumn(const treesitter::Node& container, std::string_view bufferText, int width) {
+    int ContainerOwnColumn(const grammar::Node& container, std::string_view bufferText, int width) {
         return VisualColumnInLine(bufferText, LineStartFor(bufferText, container.StartByte()), container.StartByte(),
                                   width);
     }
@@ -159,10 +159,10 @@ namespace {
     // just whichever one starts the target line -- the end-of-buffer rescue
     // in the walk needs to recognize "the last real byte before this new
     // blank line is itself a closing delimiter" in general.
-    IndentCaptures IndentCapturesFromMatches(const std::vector<treesitter::QueryMatch>& matches) {
+    IndentCaptures IndentCapturesFromMatches(const std::vector<grammar::QueryMatch>& matches) {
         IndentCaptures captures;
-        for (const treesitter::QueryMatch& match : matches) {
-            for (const treesitter::QueryMatchCapture& capture : match.captures) {
+        for (const grammar::QueryMatch& match : matches) {
+            for (const grammar::QueryMatchCapture& capture : match.captures) {
                 const IndentCaptures::NodeKey key{capture.startByte, capture.endByte, capture.type};
                 if (capture.name == "indent") {
                     captures.indent.emplace(key, capture.startByte);
@@ -189,15 +189,15 @@ namespace {
 
 } // namespace
 
-IndentCaptures IndentCapturesFromQuery(const treesitter::Tree& tree, std::string_view bufferText,
-                                       const treesitter::QueryMatcher& indentQuery) {
+IndentCaptures IndentCapturesFromQuery(const grammar::Tree& tree, std::string_view bufferText,
+                                       const grammar::QueryMatcher& indentQuery) {
     if (tree.IsNull()) {
         return {};
     }
     return IndentCapturesFromMatches(indentQuery.Matches(tree.RootNode(), bufferText));
 }
 
-void AddImprintCaptures(IndentCaptures& captures, const treesitter::Tree& tree, std::string_view languageKey,
+void AddImprintCaptures(IndentCaptures& captures, const grammar::Tree& tree, std::string_view languageKey,
                         std::string_view bufferText) {
     if (tree.IsNull()) {
         return;
@@ -220,8 +220,8 @@ void AddImprintCaptures(IndentCaptures& captures, const treesitter::Tree& tree, 
     }
 }
 
-std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree, std::string_view bufferText,
-                                                    const treesitter::QueryMatcher& indentQuery, std::size_t lineStart,
+std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, std::string_view bufferText,
+                                                    const grammar::QueryMatcher& indentQuery, std::size_t lineStart,
                                                     std::size_t lineEnd, const IndentStyle& style) {
     if (tree.IsNull()) {
         return std::nullopt;
@@ -230,7 +230,7 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
                               lineEnd, style);
 }
 
-std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree, std::string_view bufferText,
+std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, std::string_view bufferText,
                                                     const IndentCaptures& captures, std::size_t lineStart,
                                                     std::size_t lineEnd, const IndentStyle& style) {
     if (tree.IsNull()) {
@@ -249,7 +249,7 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     // indent-cache-by-byte-range follow-up: a node's key for every lookup
     // below -- see IndentCaptures' own doc comment for why (startByte,
     // endByte, type) replaced a raw Node::Id().
-    const auto keyOf = [](const treesitter::Node& node) {
+    const auto keyOf = [](const grammar::Node& node) {
         return IndentCaptures::NodeKey{node.StartByte(), node.EndByte(), node.Type()};
     };
 
@@ -263,17 +263,17 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
         }
     }
 
-    const auto isIndentCaptured = [&captures, &keyOf](const treesitter::Node& node) { return captures.indent.contains(keyOf(node)); };
+    const auto isIndentCaptured = [&captures, &keyOf](const grammar::Node& node) { return captures.indent.contains(keyOf(node)); };
     // Whether `position` sits inside an "indent"-captured node's interior --
     // see IndentCaptures::indent. A node captured only "aligned"/"indent.body"
     // has no entry and its own start is its opener, so the answer is yes.
-    const auto interiorContains = [&captures, &keyOf](const treesitter::Node& node, std::size_t position) {
+    const auto interiorContains = [&captures, &keyOf](const grammar::Node& node, std::size_t position) {
         const auto found = captures.indent.find(keyOf(node));
         return found == captures.indent.end() || position >= found->second;
     };
-    const auto isAlignedCaptured    = [&captures, &keyOf](const treesitter::Node& node) { return captures.aligned.contains(keyOf(node)); };
-    const auto isBodyIndentCaptured = [&captures, &keyOf](const treesitter::Node& node) { return captures.body.contains(keyOf(node)); };
-    const auto isBarrierCaptured    = [&captures, &keyOf](const treesitter::Node& node) { return captures.barrier.contains(keyOf(node)); };
+    const auto isAlignedCaptured    = [&captures, &keyOf](const grammar::Node& node) { return captures.aligned.contains(keyOf(node)); };
+    const auto isBodyIndentCaptured = [&captures, &keyOf](const grammar::Node& node) { return captures.body.contains(keyOf(node)); };
+    const auto isBarrierCaptured    = [&captures, &keyOf](const grammar::Node& node) { return captures.barrier.contains(keyOf(node)); };
 
     // Resolves `position` (either a real line's contentStart, or -- for the
     // dedent branch below -- an align target's own StartByte, computing "as
@@ -295,9 +295,9 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     // like every other grammar's anonymous-opener case, without teaching the
     // otherwise-generic walk algorithm itself about any particular language.
     const auto resolveWalkStart = [&](std::size_t position) {
-        treesitter::Node node = tree.RootNode().NamedDescendantForByteRange(position, position);
+        grammar::Node node = tree.RootNode().NamedDescendantForByteRange(position, position);
         if (!node.IsNull() && (node.Type() == "start_tag" || node.Type() == "STag")) {
-            const treesitter::Node parent = node.Parent();
+            const grammar::Node parent = node.Parent();
             if (!parent.IsNull() && parent.StartByte() == position) {
                 node = parent;
             }
@@ -356,7 +356,7 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     // wrongly suppress a captured ancestor as if it were "the same visual
     // line already counted" -- it never was; only walkStart's OWN row ever
     // gets to seed that exclusion.
-    const auto computeForWalkStart = [&](const treesitter::Node& walkStart, std::size_t position) -> IndentComputation {
+    const auto computeForWalkStart = [&](const grammar::Node& walkStart, std::size_t position) -> IndentComputation {
         const bool  selfOpensHere = (isIndentCaptured(walkStart) || isAlignedCaptured(walkStart) ||
                                      isBodyIndentCaptured(walkStart)) &&
                                     walkStart.StartByte() == position;
@@ -375,7 +375,7 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
         // to the enclosing statement's own level rather than the call's
         // alignment column.
         bool crossedBarrier = false;
-        for (treesitter::Node node = walkStart; !node.IsNull(); node = node.Parent()) {
+        for (grammar::Node node = walkStart; !node.IsNull(); node = node.Parent()) {
             const bool opensAtPosition = node.StartByte() == position;
             if (isBodyIndentCaptured(node) && !opensAtPosition) {
                 // Unlike @aligned, a special form's body indent never falls
@@ -417,14 +417,14 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
         // a byte-range/IsNamed() guess alone -- see IndentCaptures' own doc
         // comment) until the node that identity-matches the actual capture
         // is found -- correct regardless of which shape the query captured.
-        treesitter::Node dedentNode = tree.RootNode().DescendantForByteRange(contentStart, contentStart);
+        grammar::Node dedentNode = tree.RootNode().DescendantForByteRange(contentStart, contentStart);
         while (!dedentNode.IsNull() && !(keyOf(dedentNode) == *dedentKey)) {
             dedentNode = dedentNode.Parent();
         }
         if (dedentNode.IsNull()) {
             return std::nullopt;
         }
-        const treesitter::Node alignNode = dedentNode.Parent();
+        const grammar::Node alignNode = dedentNode.Parent();
         if (alignNode.IsNull()) {
             result = IndentComputation{IndentComputation::Kind::Level, 0};
         }
@@ -436,13 +436,13 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
             // Python's if_statement -- elif/else/except/finally's own
             // alignNode -- is not, and still resolves correctly via the
             // same self-exclusion rule rather than assuming captured-ness).
-            const treesitter::Node walkStart = resolveWalkStart(alignNode.StartByte());
+            const grammar::Node walkStart = resolveWalkStart(alignNode.StartByte());
             result                           = walkStart.IsNull() ? std::optional<IndentComputation>(IndentComputation{IndentComputation::Kind::Level, 0})
                                                                   : computeForWalkStart(walkStart, alignNode.StartByte());
         }
     }
     else {
-        const treesitter::Node walkStart = resolveWalkStart(contentStart);
+        const grammar::Node walkStart = resolveWalkStart(contentStart);
         result                           = walkStart.IsNull() ? std::optional<IndentComputation>(IndentComputation{IndentComputation::Kind::Level, 0})
                                                               : computeForWalkStart(walkStart, contentStart);
 
@@ -493,7 +493,7 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
                     return rescuePosition >= range.first && rescuePosition < range.second;
                 });
             if (rescuePosition != std::string_view::npos && !rescuePositionIsDedent) {
-                const treesitter::Node rescueWalkStart = resolveWalkStart(rescuePosition);
+                const grammar::Node rescueWalkStart = resolveWalkStart(rescuePosition);
                 if (!rescueWalkStart.IsNull()) {
                     result = computeForWalkStart(rescueWalkStart, rescuePosition);
                 }
@@ -503,8 +503,8 @@ std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree
     return result;
 }
 
-IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser> parser, std::shared_ptr<treesitter::QueryMatcher> indentQuery,
-                                   std::shared_ptr<treesitter::IncrementalParseCache> sharedParse, std::string modeName,
+IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser> parser, std::shared_ptr<grammar::QueryMatcher> indentQuery,
+                                   std::shared_ptr<grammar::IncrementalParseCache> sharedParse, std::string modeName,
                                    std::string languageKey) {
     // indent-cache-by-byte-range follow-up: only built (and only consulted
     // below) when there's a real query to reconcile against -- an
@@ -512,10 +512,10 @@ IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser> parser, s
     // do. Shares sharedParse->LastEdit() the same way Mode.cpp's symbolKind
     // closure does, so the diff is computed once per generation regardless
     // of how many capabilities ask for it.
-    const auto indentMatchCache = indentQuery ? std::make_shared<treesitter::MatchCache>() : nullptr;
+    const auto indentMatchCache = indentQuery ? std::make_shared<grammar::MatchCache>() : nullptr;
     return [parser, indentQuery, sharedParse, indentMatchCache, modeName,
             languageKey](std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd) -> std::optional<int> {
-        const treesitter::Tree& tree  = sharedParse->Update(*parser, bufferText);
+        const grammar::Tree& tree  = sharedParse->Update(*parser, bufferText);
         const IndentStyle       style = EffectiveIndentStyle(modeName);
         // Tree::RootNode()'s own precondition is !IsNull() -- guard here
         // rather than rely on Reconcile/Matches tolerating a null root,

@@ -5,13 +5,13 @@
 
 #include "Editor/Injection.h"
 #include "Editor/Mode.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/QueryMatcher.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/QueryMatcher.h"
+#include "Editor/Grammar/Tree.h"
 
 using namespace ned::editor;
-using namespace ned::editor::treesitter;
+using namespace ned::editor::grammar;
 
 namespace {
 
@@ -98,7 +98,7 @@ TEST_CASE("CollectInjectedHighlightSpans resolves a grammar-only sub-language (m
           "[Injection]") {
     // "markdown_inline" (upstream's own underscore spelling, per real
     // injections.scm files) exercises the alias table; markdown-inline has
-    // no ModeByName entry at all (TreeSitter/Languages.cpp), so this also
+    // no ModeByName entry at all (Grammar/Languages.cpp), so this also
     // exercises ResolveEmbeddedLanguageHighlight's tier-2 fallback.
     const Language    language = *LanguageByName("json");
     Parser            parser(language);

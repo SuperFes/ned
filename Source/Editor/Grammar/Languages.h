@@ -23,15 +23,15 @@
 // upstream grammar doesn't have at all.
 //
 
-#ifndef NED_EDITOR_TREESITTER_LANGUAGES_H
-#define NED_EDITOR_TREESITTER_LANGUAGES_H
+#ifndef NED_EDITOR_GRAMMAR_LANGUAGES_H
+#define NED_EDITOR_GRAMMAR_LANGUAGES_H
 
 #include <optional>
 #include <string_view>
 
 #include "Parser.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 // Looks up a bundled grammar by its lowercase name (e.g. "json"). Returns
 // std::nullopt if name isn't a bundled grammar -- not an error, since a
@@ -40,6 +40,6 @@ namespace ned::editor::treesitter {
 // FundamentalMode already means "no highlighting" today.
 [[nodiscard]] std::optional<Language> LanguageByName(std::string_view name);
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-#endif // NED_EDITOR_TREESITTER_LANGUAGES_H
+#endif // NED_EDITOR_GRAMMAR_LANGUAGES_H

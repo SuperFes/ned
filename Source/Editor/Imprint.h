@@ -10,7 +10,7 @@
 // language x driver matrix is empty. This is the vocabulary those queries
 // were approximating by hand.
 //
-// Nothing here knows tree-sitter exists. `TreeSitter/GrammarImprint.h` reads
+// Nothing here knows tree-sitter exists. `Grammar/GrammarImprint.h` reads
 // an imprint out of a grammar.json; these types are what it produces and what
 // every consumer speaks. That split is the Phase 4 seam: if the engine is
 // ever replaced, this file does not change.
@@ -73,7 +73,7 @@ enum class DelimiterKind {
 // (template substitution), Bash's `$(` / `${` / `<(`, PHP's `#[`. The token
 // ends in the bracket and everything before it is punctuation; `a(` would not
 // qualify, and no grammar spells one. Shared by inference over grammar.json
-// (`TreeSitter/GrammarImprint.h`) and the lookup over a parse tree's own
+// (`Grammar/GrammarImprint.h`) and the lookup over a parse tree's own
 // tokens (`ImprintBracket.h`), so the two cannot disagree about what an
 // opener looks like.
 [[nodiscard]] bool OpensWithBracket(std::string_view token, char bracket);

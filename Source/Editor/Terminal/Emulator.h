@@ -1,7 +1,7 @@
 //
 // RAII wrapper around a libvterm VTerm/VTermScreen pair (terminal-panel
 // follow-up) -- the same "wrap the C library behind an idiomatic C++ layer"
-// approach Source/Editor/TreeSitter/ and Source/Janet/ already established.
+// approach Source/Editor/Grammar/ and Source/Janet/ already established.
 // This is the pure emulation state: bytes from a pty go in via Feed(), a
 // queryable cell grid (plus scrollback ring) comes out, and keyboard input
 // goes in via SendKey() with the encoded pty-bound reply drained via

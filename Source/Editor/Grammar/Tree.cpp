@@ -2,7 +2,7 @@
 
 #include <utility>
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 Tree::Tree(parse::GreenTree tree) noexcept : tree_(std::move(tree)) {
 }
@@ -43,4 +43,4 @@ Tree Tree::Clone() const {
     return Tree(tree_);
 }
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar

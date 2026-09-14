@@ -21,8 +21,8 @@
 // against the gate rather than guessed and scattered.
 //
 
-#ifndef NED_EDITOR_TREESITTER_QUERYMATCHER_H
-#define NED_EDITOR_TREESITTER_QUERYMATCHER_H
+#ifndef NED_EDITOR_GRAMMAR_QUERYMATCHER_H
+#define NED_EDITOR_GRAMMAR_QUERYMATCHER_H
 
 #include <memory>
 #include <span>
@@ -36,7 +36,7 @@
 #include "Node.h"
 #include "Parser.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 // One capture from running a query against a tree -- name is the query
 // pattern's capture name (e.g. "comment", "string", without the leading
@@ -113,9 +113,9 @@ struct QueryMatch {
     const void* rootSubtreeIdentity = nullptr;
 };
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 // Compile-time rejection: the 1-based source line of the offending Form
 // (querydata keeps it through parsing), and a message naming what was
@@ -141,7 +141,7 @@ class QueryMatcher {
     // supported (census-measured) set.
     QueryMatcher(const Language& language, std::span<const querydata::Form> forms);
 
-    // Convenience for the current text-shaped seam (TreeSitterQuerySources
+    // Convenience for the current text-shaped seam (GrammarQuerySources
     // carries compiled query text): parses `source` as tree-sitter syntax
     // (querydata::ParseScm) and compiles the forms. QueryMatcherError lines
     // index into `source`.
@@ -181,6 +181,6 @@ class QueryMatcher {
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-#endif // NED_EDITOR_TREESITTER_QUERYMATCHER_H
+#endif // NED_EDITOR_GRAMMAR_QUERYMATCHER_H

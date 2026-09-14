@@ -49,7 +49,7 @@ const TSLanguage* tree_sitter_git_rebase(void);
 const TSLanguage* tree_sitter_r(void);
 }
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 std::optional<Language> LanguageByName(std::string_view name) {
     if (name == "json") {
@@ -205,4 +205,4 @@ std::optional<Language> LanguageByName(std::string_view name) {
     return std::nullopt;
 }
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar

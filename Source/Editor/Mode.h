@@ -24,13 +24,13 @@
 #include "Editor/Imprint.h"
 #include "Keymap.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 class Language;
 class Parser;
 class Query;
 class QueryMatcher;
 class IncrementalParseCache;
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
 namespace ned::editor {
 
@@ -78,7 +78,7 @@ enum class SyntaxClass {
     Namespace, // a module/namespace/package name -- "module"/"namespace"
 
     // generic-tree-sitter-highlighting follow-up: split out of the coarser
-    // classes above once a real, richer query (Source/Editor/TreeSitter/
+    // classes above once a real, richer query (Source/Editor/Grammar/
     // queries/c.scm, cpp.scm) actually reached them -- each still maps to a
     // real, standard tree-sitter/Neovim capture name, not invented (checked
     // against the vendored nvim-treesitter query files themselves).
@@ -416,7 +416,7 @@ using SymbolKindWindowFunction = std::function<std::vector<SymbolMarker>(std::st
 // isn't itself a *definition* capture: a nested "@name"/"@doc"/
 // "@local.scope" capture from the same pattern match, or a "@reference.*"
 // one (a *use*, not a definition -- tags.scm files mix both in the same
-// query). Shared by every TreeSitterModeFromLanguage-built symbolKind
+// query). Shared by every GrammarModeFromLanguage-built symbolKind
 // closure (Mode.cpp) rather than duplicated per language, since this naming
 // vocabulary is the same ctags convention across every grammar that ships a
 // tags.scm, not something each language's query invents independently.
@@ -535,7 +535,7 @@ using EmbeddedRegionFunction = std::function<std::vector<InjectionRegion>(std::s
 // the whole buffer at once. Two implementation shapes share this one type
 // (see Editor/Indent.h's own doc comment): most modes get one built by the
 // generic "@indent"/"@dedent" tree-walk engine off a per-language
-// indents.scm (TreeSitterModeFromLanguage, mirroring FoldFunction/
+// indents.scm (GrammarModeFromLanguage, mirroring FoldFunction/
 // importTarget/testDiscovery's own construction); Markdown's own closure is
 // hand-rolled directly in MarkdownMode(), mirroring how that Mode's
 // .highlight already bypasses the generic query path for logic a flat
@@ -548,7 +548,7 @@ using IndentFunction = std::function<std::optional<int>(std::string_view bufferT
 // on [lineStart, lineEnd) worth evaluating in a stopped debug session
 // (dap-line-inspect), in source order. Two implementation tiers share this
 // one type (see Mode.cpp's shared tree-walk helper): every
-// TreeSitterModeFromLanguage-built mode gets a generic, universal default
+// GrammarModeFromLanguage-built mode gets a generic, universal default
 // (bare identifiers only -- "identifier" is a near-universal tree-sitter
 // node-type name, needing no per-language query authoring at all); CMode/
 // CppMode override it with a richer version additionally matching real,
@@ -700,7 +700,7 @@ struct Mode {
 // the same signal as the corresponding Mode capability being left an empty
 // std::function -- see each capability's own doc comment above. That
 // includes `highlights`: some real grammars ship no highlights.scm at all.
-struct TreeSitterQuerySources {
+struct GrammarQuerySources {
     // queries/highlights.scm -> Mode::highlight
     std::string_view highlights;
     // a "@fold"-capture query -> Mode::fold (generic-code-folding follow-up)
@@ -735,7 +735,7 @@ struct TreeSitterQuerySources {
 // writer. nullopt is a memoized "no highlighter for this tag".
 using EmbeddedLanguageCache = std::unordered_map<std::string, std::optional<HighlightFunction>>;
 
-// What TreeSitterModeFromLanguage built a Mode from, handed out so an escape
+// What GrammarModeFromLanguage built a Mode from, handed out so an escape
 // (Editor/LanguageDefinition.h) can install a closure that rides the SAME
 // parser and IncrementalParseCache as the generic capabilities rather than
 // starting a second parse per keystroke -- the regression a per-mode second
@@ -744,31 +744,31 @@ using EmbeddedLanguageCache = std::unordered_map<std::string, std::optional<High
 // move-only, and Mode must stay a plain copyable value.
 struct ModeBuildContext {
     std::string                                        languageKey; // "cpp" -- the grammar's key, what SyntaxClassForCapture and the imprint want
-    std::shared_ptr<const treesitter::Language>        language;
-    std::shared_ptr<treesitter::Parser>                parser;
-    std::shared_ptr<treesitter::IncrementalParseCache> sharedParse;
-    std::shared_ptr<treesitter::QueryMatcher>          highlightQuery; // null without a highlights source
-    std::shared_ptr<treesitter::QueryMatcher>          injectionQuery; // null without an injections source
+    std::shared_ptr<const grammar::Language>        language;
+    std::shared_ptr<grammar::Parser>                parser;
+    std::shared_ptr<grammar::IncrementalParseCache> sharedParse;
+    std::shared_ptr<grammar::QueryMatcher>          highlightQuery; // null without a highlights source
+    std::shared_ptr<grammar::QueryMatcher>          injectionQuery; // null without an injections source
     std::shared_ptr<EmbeddedLanguageCache>             embeddedLanguageCache;
 };
 
 // Builds a Mode backed by a bundled tree-sitter grammar and the given query
-// sources. `languageName` is the name treesitter::LanguageByName expects
+// sources. `languageName` is the name grammar::LanguageByName expects
 // (e.g. "python"). ModeFromDefinition (LanguageDefinition.h) is what the
 // bundled modes go through; this is the generic build underneath it.
-[[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const TreeSitterQuerySources& queries);
+[[nodiscard]] Mode GrammarMode(std::string name, std::string_view languageName, const GrammarQuerySources& queries);
 
-// The shared construction logic TreeSitterMode above delegates to, split out
+// The shared construction logic GrammarMode above delegates to, split out
 // (dynamic-grammar-loading follow-up) so a caller that already has a
 // resolved Language -- a dynamically dlopen'd grammar (see
-// TreeSitter/DynamicGrammar.h), which by definition isn't in the bundled
-// registry TreeSitterMode's own languageName lookup searches -- doesn't need
+// Grammar/DynamicGrammar.h), which by definition isn't in the bundled
+// registry GrammarMode's own languageName lookup searches -- doesn't need
 // to hand-duplicate the Parser/Query/HighlightFunction-construction logic a
 // second time.
 // `context`, when given, receives the shared parser/cache/queries the returned
 // Mode's closures were built over -- see ModeBuildContext.
-[[nodiscard]] Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language,
-                                              const TreeSitterQuerySources& queries = {}, ModeBuildContext* context = nullptr);
+[[nodiscard]] Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language,
+                                              const GrammarQuerySources& queries = {}, ModeBuildContext* context = nullptr);
 
 // The bundled modes, each its LanguageDefinition (Editor/BundledLanguages.h)
 // built through ModeFromDefinition -- a named function per language so a

@@ -10,7 +10,7 @@
 #include "BundledLanguages.h"
 #include "LanguageParse.h"
 #include "ModeOverrides.h"
-#include "TreeSitter/DynamicGrammar.h"
+#include "Grammar/DynamicGrammar.h"
 
 namespace ned::editor {
 
@@ -81,8 +81,8 @@ void LoadLanguageDirectory(const std::filesystem::path& directory) {
             registered.definition.grammar.empty() ? registered.definition.name : registered.definition.grammar;
         // Throws with a path-qualified message on a missing library/symbol;
         // the handle stays resident for the process lifetime
-        // (TreeSitter/DynamicGrammar.h's own scope cut).
-        registered.language = treesitter::LoadDynamicLanguage(registered.definition.grammarLibrary, symbolName);
+        // (Grammar/DynamicGrammar.h's own scope cut).
+        registered.language = grammar::LoadDynamicLanguage(registered.definition.grammarLibrary, symbolName);
     }
     RegisterLanguage(std::move(registered));
 }

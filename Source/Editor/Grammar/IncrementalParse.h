@@ -30,8 +30,8 @@
 // against yet), matching Update()'s own two early-return branches exactly.
 //
 
-#ifndef NED_EDITOR_TREESITTER_INCREMENTALPARSE_H
-#define NED_EDITOR_TREESITTER_INCREMENTALPARSE_H
+#ifndef NED_EDITOR_GRAMMAR_INCREMENTALPARSE_H
+#define NED_EDITOR_GRAMMAR_INCREMENTALPARSE_H
 
 #include <optional>
 #include <string>
@@ -41,7 +41,7 @@
 #include "Text/OffsetRemap.h"
 #include "Tree.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 class IncrementalParseCache {
   public:
@@ -66,6 +66,6 @@ class IncrementalParseCache {
     std::optional<text::ChangedSpan> lastEdit_;
 };
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-#endif // NED_EDITOR_TREESITTER_INCREMENTALPARSE_H
+#endif // NED_EDITOR_GRAMMAR_INCREMENTALPARSE_H

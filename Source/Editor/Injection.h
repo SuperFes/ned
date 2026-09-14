@@ -22,8 +22,8 @@
 #include <vector>
 
 #include "Mode.h"
-#include "TreeSitter/Node.h"
-#include "TreeSitter/QueryMatcher.h"
+#include "Grammar/Node.h"
+#include "Grammar/QueryMatcher.h"
 
 namespace ned::editor {
 
@@ -39,9 +39,9 @@ using EmbeddedLanguageCache = std::unordered_map<std::string, std::optional<High
 // mapping wholesale rather than a second {language -> query} table.
 // Two-tier: (1) a real bundled buffer Mode via ModeByName(name + "-mode");
 // (2) for a highlighting-only sub-grammar with no real Mode of its own
-// (currently just "markdown-inline" -- see TreeSitter/Languages.cpp's own
+// (currently just "markdown-inline" -- see Grammar/Languages.cpp's own
 // comment on why it has no ModeByName entry), a small fixed table building a
-// raw TreeSitterModeFromLanguage(...) highlight instead of ModeByName's
+// raw GrammarModeFromLanguage(...) highlight instead of ModeByName's
 // lookup. Caches std::nullopt on an unresolvable tag too, so repeated misses
 // don't retry resolution every call.
 [[nodiscard]] const HighlightFunction* ResolveEmbeddedLanguageHighlight(std::string_view       tag,
@@ -61,8 +61,8 @@ using EmbeddedLanguageCache = std::unordered_map<std::string, std::optional<High
 // where most of the cost lives (markdown injects markdown_inline into every
 // inline node). A region merely *intersecting* the window is kept, so one
 // straddling its edge is still highlighted. Defaults to the whole document.
-void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_view bufferText,
-                                   const treesitter::QueryMatcher& injectionQuery, EmbeddedLanguageCache& cache,
+void CollectInjectedHighlightSpans(const grammar::Node& root, std::string_view bufferText,
+                                   const grammar::QueryMatcher& injectionQuery, EmbeddedLanguageCache& cache,
                                    std::vector<HighlightSpan>& spans, HighlightWindow window = {});
 
 // embedded-language-documents follow-up: the same match-walk/resolution
@@ -77,8 +77,8 @@ void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_vie
 // EmbeddedLanguageCache is a highlighting-only concept, not a language-identity
 // one), so this never fails to report a region just because no bundled Mode
 // exists for its language.
-[[nodiscard]] std::vector<InjectionRegion> CollectInjectionRegions(const treesitter::Node& root, std::string_view bufferText,
-                                                                   const treesitter::QueryMatcher& injectionQuery);
+[[nodiscard]] std::vector<InjectionRegion> CollectInjectionRegions(const grammar::Node& root, std::string_view bufferText,
+                                                                   const grammar::QueryMatcher& injectionQuery);
 
 } // namespace ned::editor
 

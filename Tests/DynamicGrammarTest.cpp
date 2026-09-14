@@ -3,11 +3,11 @@
 #include <filesystem>
 #include <stdexcept>
 
-#include "Editor/TreeSitter/DynamicGrammar.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/DynamicGrammar.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/Tree.h"
 
-using namespace ned::editor::treesitter;
+using namespace ned::editor::grammar;
 
 namespace {
 
@@ -24,19 +24,19 @@ const std::filesystem::path kLuaLibrary = "/usr/lib64/libtree-sitter-lua.so";
 
 } // namespace
 
-TEST_CASE("LoadDynamicLanguage throws for a library path that doesn't exist", "[TreeSitter][Dynamic]") {
+TEST_CASE("LoadDynamicLanguage throws for a library path that doesn't exist", "[Grammar][Dynamic]") {
     REQUIRE_THROWS_AS(LoadDynamicLanguage("/not/a/real/path/libtree-sitter-nonsense.so", "nonsense"),
                       std::runtime_error);
 }
 
-TEST_CASE("LoadDynamicLanguage throws for a real library missing the requested symbol", "[TreeSitter][Dynamic]") {
+TEST_CASE("LoadDynamicLanguage throws for a real library missing the requested symbol", "[Grammar][Dynamic]") {
     if (!std::filesystem::exists(kLuaLibrary)) {
         SKIP("system-wide libtree-sitter-lua.so not found on this machine");
     }
     REQUIRE_THROWS_AS(LoadDynamicLanguage(kLuaLibrary, "not_a_real_symbol_suffix"), std::runtime_error);
 }
 
-TEST_CASE("LoadDynamicLanguage loads a real system grammar and it parses", "[TreeSitter][Dynamic]") {
+TEST_CASE("LoadDynamicLanguage loads a real system grammar and it parses", "[Grammar][Dynamic]") {
     if (!std::filesystem::exists(kLuaLibrary)) {
         SKIP("system-wide libtree-sitter-lua.so not found on this machine");
     }

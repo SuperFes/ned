@@ -10,10 +10,10 @@
 #include "Editor/Indent.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/Mode.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/QueryMatcher.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/QueryMatcher.h"
+#include "Editor/Grammar/Tree.h"
 
 using ned::editor::EffectiveIndentStyle;
 using ned::editor::Mode;
@@ -116,16 +116,16 @@ TEST_CASE("A comment between a header and its body does not hide the header", "[
 
 TEST_CASE("@indent.suppress withdraws the imprint's container, and a query capture re-asserts it",
           "[Indent][Imprint]") {
-    const auto language = ned::editor::treesitter::LanguageByName("json");
+    const auto language = ned::editor::grammar::LanguageByName("json");
     REQUIRE(language.has_value());
-    const ned::editor::treesitter::Parser parser(*language);
+    const ned::editor::grammar::Parser parser(*language);
     const std::string                     text = "{\n\"a\": 1\n}\n";
-    const ned::editor::treesitter::Tree   tree = parser.Parse(text);
+    const ned::editor::grammar::Tree   tree = parser.Parse(text);
     const ned::editor::IndentStyle        style{.useTabs = false, .width = 4};
     const auto [start, end] = LineRange(text, 1);
 
     const auto levelWith = [&](const char* source) {
-        const ned::editor::treesitter::QueryMatcher query(*language, source);
+        const ned::editor::grammar::QueryMatcher query(*language, source);
         ned::editor::IndentCaptures          captures = ned::editor::IndentCapturesFromQuery(tree, text, query);
         ned::editor::AddImprintCaptures(captures, tree, "json", text);
         const auto result = ned::editor::IndentLevelForLine(tree, text, captures, start, end, style);

@@ -17,7 +17,7 @@ Mode BuildWarmModeForPath(const std::filesystem::path& path, std::string_view te
         if (mode.fold) {
             // Shares the same tree-sitter parse highlight() above just
             // cached (Mode.cpp's SharedParse) -- see
-            // TreeSitterModeFromLanguage's own comment on why highlight/
+            // GrammarModeFromLanguage's own comment on why highlight/
             // fold/expandSelection all key off the same cached tree.
             mode.fold(text);
         }
