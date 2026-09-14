@@ -1,5 +1,7 @@
 #include "Node.h"
 
+#include "Editor/Parse/Cursor.h"
+
 namespace ned::editor::treesitter {
 
 Node::Node(parse::RedNode node) noexcept : node_(node) {
@@ -31,6 +33,17 @@ std::size_t Node::ChildCount() const {
 
 Node Node::Child(std::size_t index) const {
     return Node(parse::NodeChild(node_, static_cast<uint32_t>(index)));
+}
+
+void Node::ForEachChild(const std::function<void(Node)>& visitor) const {
+    parse::TreeCursor cursor(node_);
+    if (!cursor.GotoFirstChild()) {
+        return;
+    }
+    do {
+        visitor(Node(cursor.CurrentNode()));
+    }
+    while (cursor.GotoNextSibling());
 }
 
 bool Node::IsNamed() const {
