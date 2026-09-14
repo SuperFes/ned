@@ -1,0 +1,89 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Docs/**'
+      - 'UserGuide/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deployment at a time; a push mid-deploy cancels the older run
+# rather than racing it.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  MDBOOK_VERSION: 0.5.4
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Prebuilt release binary rather than `cargo install` -- mdBook is a
+      # docs tool, not part of ned's own build, so there's no reason to
+      # compile it from source here.
+      - name: Install mdBook
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSL "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Two independent books published as sibling paths under one Pages
+      # site (Docs/ is the developer book, UserGuide/ the user guide -- see
+      # Docs/README.md and UserGuide/src/README.md for why they're kept as
+      # separate top-level source trees rather than one book serving both
+      # audiences, and why UserGuide/ deliberately isn't nested under Docs/:
+      # Docs/book.toml points `src` at the whole Docs/ directory so its
+      # existing design-doc files need no moving, and mdBook copies
+      # everything under a book's `src` into its output verbatim -- nesting
+      # UserGuide/ inside Docs/ would ship a full copy of the user book's
+      # own source tree inside the developer book's output.
+      #
+      # --dest-dir is resolved relative to the *working directory*, not the
+      # book's own root, so each build passes its output path in full.
+      - name: Build developer book
+        run: mdbook build Docs --dest-dir Docs/book
+
+      - name: Build user book
+        run: mdbook build UserGuide --dest-dir UserGuide/book
+
+      - name: Assemble Pages site
+        run: |
+          site=_site
+          mkdir -p "$site/dev" "$site/user"
+          cp -r Docs/book/. "$site/dev/"
+          cp -r UserGuide/book/. "$site/user/"
+          cat > "$site/index.html" <<'EOF'
+          <!doctype html><meta charset="utf-8">
+          <title>ned Docs</title>
+          <meta http-equiv="refresh" content="0; url=user/">
+          <p>Redirecting to the <a href="user/">User Guide</a> —
+          or see the <a href="dev/">Developer Docs</a>.</p>
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
