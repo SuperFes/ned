@@ -523,7 +523,7 @@ IndentFunction BuildIndentFunction(std::shared_ptr<treesitter::Parser> parser, s
         // before this closure started calling MatchCache::Reconcile directly.
         IndentCaptures captures =
             (indentQuery && !tree.IsNull())
-                ? IndentCapturesFromMatches(indentMatchCache->Reconcile(*indentQuery, tree.RootNode(), bufferText,
+                ? IndentCapturesFromMatches(indentMatchCache->Reconcile(*indentQuery, tree, bufferText,
                                                                         sharedParse->LastEdit()))
                 : IndentCaptures{};
         AddImprintCaptures(captures, tree, languageKey, bufferText);

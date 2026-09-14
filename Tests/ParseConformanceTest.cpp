@@ -1029,7 +1029,7 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the u
                 Parser parser(*language);
                 {
                     const Tree tree = parser.Parse(text);
-                    (void) cache.Reconcile(matcher, tree.RootNode(), text, std::nullopt);
+                    (void) cache.Reconcile(matcher, tree, text, std::nullopt);
                 }
 
                 const std::vector<ScriptedEdit> edits = {
@@ -1060,7 +1060,7 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the u
                     };
 
                     const Tree newTree    = parser.Parse(newText);
-                    const auto reconciled = cache.Reconcile(matcher, newTree.RootNode(), newText, span);
+                    const auto reconciled = cache.Reconcile(matcher, newTree, newText, span);
                     const auto fresh      = matcher.Matches(newTree.RootNode(), newText);
 
                     ++totalSteps;
@@ -1113,23 +1113,25 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the u
     // classification 50 bytes from the edit) or when any node has external
     // scanner involvement (bash/heredoc-adjacent constructs specifically;
     // took the failure count from 818 to 9 on this exact corpus+edit-script
-    // run). The residual 9 are a real, understood, NOT-yet-closed gap: pure
-    // grammar-AMBIGUITY reclassification (no error, no external token) near
-    // an adversarial scripted edit -- e.g. Go's "Grouped var declarations"
-    // flips a bare identifier between @variable and @type depending on
-    // whether a token inserted immediately before it reads as a type name,
-    // which no structural flag on the tree currently signals. Pinned rather
-    // than silently accepted or blocking indefinitely, same precedent as
-    // this file's own scratchDivergences==7 above -- a NEW divergence beyond
-    // this exact count is a regression; closing these specific ones is
-    // future work (NED_MATCHCACHE_DEBUG=<case name> reproduces one in
-    // isolation). Known failing cases as of 2026-09-13: bash/statements.txt
-    // "Command substution with $ and backticks"; clojure/char_lit.txt
-    // "Simple Char"; clojure/map_lit.txt "Simple Map"; go/declarations.txt
-    // "Grouped const declarations" and "Grouped var declarations" (x3, a
-    // corpus name repeated across 3 distinct cases); go/literals.txt
-    // "Int literals"; go/types.txt "Function types".
-    CHECK(failures.size() == 9);
+    // run). A third, narrower mechanism (ambiguity-reclassification
+    // follow-up) closed the residual 9: pure grammar-AMBIGUITY reclassification
+    // (no error, no external token) near an adversarial scripted edit -- e.g.
+    // Go's "Grouped var declarations" flips a bare identifier between
+    // @variable and @type depending on whether a token inserted immediately
+    // before it reads as a type name. No single structural FLAG on the tree
+    // signals this the way HasError/HasExternalTokens do (a candidate,
+    // Subtree::dynamicPrecedence, was investigated and disproven -- see
+    // MatchCache.h's own header comment), but a direct OLD-vs-NEW comparison
+    // does: MatchCache now retains a Tree::Clone() of the tree its previous
+    // generation reconciled against (cheap -- see Tree::Clone()'s own doc
+    // comment) purely to compare the smallest named node enclosing the
+    // edit's old span against the one enclosing its new span, widening the
+    // redo window to their union on any type/range mismatch. This can only
+    // widen what gets re-derived, never narrow it, so it cannot regress an
+    // already-passing case -- confirmed here (0 divergences on this exact
+    // corpus+edit-script run, down from 9) and by every other MatchCache/
+    // Mode-level incremental-differential test in the suite staying green.
+    CHECK(failures.size() == 0);
 }
 
 // --- M5 prerequisite: the red layer (Node/Cursor) against the ts runtime ----

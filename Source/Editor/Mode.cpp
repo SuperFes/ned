@@ -982,7 +982,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             std::vector<SymbolMarker>                 markers;
             const std::vector<treesitter::QueryMatch> matches =
                 window.CoversWholeDocument()
-                    ? symbolKindMatchCache->Reconcile(*symbolKindQuery, tree.RootNode(), bufferText, sharedParse->LastEdit())
+                    ? symbolKindMatchCache->Reconcile(*symbolKindQuery, tree, bufferText, sharedParse->LastEdit())
                     : symbolKindQuery->MatchesInRange(tree.RootNode(), bufferText, window.startByte, window.endByte);
             for (const treesitter::QueryMatch& match : matches) {
                 std::optional<SymbolKind>                    kind;
@@ -1299,7 +1299,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             std::vector<Definition>                          definitions;
             std::vector<std::pair<std::size_t, std::size_t>> names;
             for (const treesitter::QueryMatch& match :
-                 testMatchCache->Reconcile(*testQuery, tree.RootNode(), bufferText, sharedParse->LastEdit())) {
+                 testMatchCache->Reconcile(*testQuery, tree, bufferText, sharedParse->LastEdit())) {
                 for (const treesitter::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "test.definition") {
                         definitions.push_back({capture.startByte, capture.endByte, {}});
