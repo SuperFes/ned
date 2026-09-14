@@ -1,5 +1,12 @@
 {:name "bash"
- :extensions [".sh" ".bash"]
+ # .ebuild/.eclass are Gentoo Portage's build-script format -- both are
+ # genuinely bash (sourced by portage's own bash-based build system: EAPI,
+ # inherit, src_prepare()/src_configure()/... function definitions, [[ ]]
+ # tests, arrays), so the bundled bash grammar parses them correctly with no
+ # dedicated grammar of its own. make.conf (Portage's system-wide build
+ # config, plain VAR="value" assignments) is the same story.
+ :extensions [".sh" ".bash" ".ebuild" ".eclass"]
+ :filenames ["make.conf"]
  :line-comment "#"
  :import-resolution {:extensions ["sh"]}
  :injection-aliases ["sh" "shell" "zsh"]
