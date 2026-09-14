@@ -673,6 +673,7 @@ TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Cor
         {"ruby", "tree-sitter-ruby-src/src/grammar.json"},
         {"gitcommit", "tree-sitter-gitcommit-src/src/grammar.json"},
         {"gitrebase", "tree-sitter-gitrebase-src/src/grammar.json"},
+        {"r", "tree-sitter-r-src/src/grammar.json"},
     };
 
     if (!fs::exists(DepsDir())) {

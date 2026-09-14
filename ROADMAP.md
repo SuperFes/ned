@@ -83,13 +83,11 @@ would make the number mean nothing.
       existing private-libdir install rule exists precisely because ned is built against a
       specific patched Notcurses a stock system package does not carry; a system-library
       path has to make that requirement explicit rather than silently falling back.
-- [ ] **Tier A language parity (D2).** `c`/`cpp`/`python`/`javascript`/`typescript`/`tsx`/
-      `php` have LSP root markers, formatter and test-runner config;
-      `java`/`kotlin`/`csharp`/`go`/`rust`/`bash` have the grammars and none of it. Someone
-      arriving with a Go project gets a visibly worse editor than someone arriving with C++,
-      for no reason except nobody wrote the table. Pure config — `Lsp/ServerConfig.h`,
-      `Dap/Config.h` and `TestRun/Config.h` already take this as data. See
-      `Docs/LanguageCoverage.md` for the tier definitions.
+- [x] **Tier A language parity (D2) — closed 2026-09-13.** java/kotlin/csharp/go/rust
+      already carried root markers from the Janet migration; bash/cmake deliberately have
+      none (no fixed marker convention exists for either). The actual remaining gap was
+      documentation, not code — `Docs/LanguageSetup.md` now gives the recommended
+      LSP/DAP/test-runner recipe per language. See `Docs/LanguageCoverage.md`.
 - [x] **Lua, CMake and diff grammars — shipped (2026-09-13).** The first admissions
       through the post-Phase-4b pipeline, and the engine passed all three upstream
       corpora (138 cases) untouched. Admission facts: lua
@@ -400,6 +398,19 @@ under "Release 0.6" at the top of this file rather than duplicated here.
       wrinkle worth knowing before touching either table again: `tree-sitter-
       make`'s corpus files are `*.mk`, not `*.txt` — `ParseConformanceTest`'s
       five corpus-discovery call sites now accept both extensions.
+
+- [x] **R, D0+D1(tags) — admitted 2026-09-14.** `r-lib/tree-sitter-r` v1.3.0
+      (the posit/RStudio-maintained official grammar, 155★, ABI 14, 4-file/89-case
+      corpus), 100% clean against all four corpus gates. Highlights and tags vendored
+      from upstream unmodified — no QueryMatcher census adaptation needed this time.
+      Upstream's `locals.scm` deliberately not vendored (scope-aware rename's query set
+      stays a closed, individually-vetted list). **Notable: the imprint measures ZERO
+      delimited bodies for R** — the second grammar after `diff` to do so, and for a
+      different reason — R's `{`/`(`/`[` openers/closers are `ALIAS`es of an *external
+      scanner* symbol rather than plain string literals (needed for R's
+      context-sensitive brace/newline handling), which the imprint's inference doesn't
+      recognize as a bracket. No folding follows; highlighting and the symbol gutter are
+      unaffected. Full facts in `Docs/LanguageCoverage.md`.
 
 - [ ] Admission policy worth knowing before adding any grammar: **prefer
       `tree-sitter-grammars/*` over the original personal repo, and never use star count as

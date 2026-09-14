@@ -131,6 +131,7 @@ const std::vector<CorpusSource>& CorpusSources() {
         {"tree-sitter-ruby-src/test/corpus", "ruby"},
         {"tree-sitter-gitcommit-src/test/corpus", "gitcommit"},
         {"tree-sitter-gitrebase-src/test/corpus", "gitrebase"},
+        {"tree-sitter-r-src/test/corpus", "r"},
     };
     return sources;
 }

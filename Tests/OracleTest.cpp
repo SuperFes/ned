@@ -242,6 +242,7 @@ const std::map<std::string, std::function<ned::editor::Mode()>>& ModeByExtension
         {".hcl", ned::editor::HclMode},
         {".nix", ned::editor::NixMode},
         {".rb", ned::editor::RubyMode},
+        {".r", ned::editor::RMode},
         // make/gitcommit/gitrebase are filename-claimed (Makefile,
         // COMMIT_EDITMSG, git-rebase-todo) with no extension of their own, so
         // they have no natural key in this extension-keyed map -- skipped
