@@ -70,13 +70,19 @@ std::vector<std::string> DescribeAll(const std::vector<QueryMatch>& matches) {
     return out;
 }
 
-void RequireMatchesFreshRecompute(const QueryMatcher& matcher, const std::string& text,
+void RequireMatchesFreshRecompute(const Language& language, const QueryMatcher& matcher, const std::string& text,
                                   const std::vector<QueryMatch>& reconciled) {
-    Parser     parser(*LanguageByName("json"));
+    Parser     parser(language);
     const Tree fresh = parser.Parse(text);
     const auto want  = DescribeAll(matcher.Matches(fresh.RootNode(), text));
     const auto got   = DescribeAll(reconciled);
     REQUIRE(got == want);
+}
+
+// Convenience for every existing JSON-based test below.
+void RequireMatchesFreshRecompute(const QueryMatcher& matcher, const std::string& text,
+                                  const std::vector<QueryMatch>& reconciled) {
+    RequireMatchesFreshRecompute(*LanguageByName("json"), matcher, text, reconciled);
 }
 
 } // namespace
@@ -89,7 +95,7 @@ TEST_CASE("MatchCache's first Reconcile (no edit) is a full derive, matching Mat
     const Tree        tree = parser.Parse(text);
 
     MatchCache cache;
-    const auto reconciled = cache.Reconcile(matcher, tree.RootNode(), text, std::nullopt);
+    const auto reconciled = cache.Reconcile(matcher, tree, text, std::nullopt);
 
     RequireMatchesFreshRecompute(matcher, text, reconciled);
     REQUIRE(reconciled.size() == 2);
@@ -104,14 +110,14 @@ TEST_CASE("MatchCache reconciles a localized edit to match a fresh full recomput
     const Tree        treeBefore = parser.Parse(before);
 
     MatchCache cache;
-    (void)cache.Reconcile(matcher, treeBefore.RootNode(), before, std::nullopt);
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
 
     // Widen "b"'s value only; "a" and "c" pairs are untouched.
     const std::string after     = R"({"a": 1, "b": 200, "c": 3})";
     const ChangedSpan span      = DiffSpan(before, after);
     const Tree        treeAfter = parser.Parse(after);
 
-    const auto reconciled = cache.Reconcile(matcher, treeAfter.RootNode(), after, span);
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, span);
     RequireMatchesFreshRecompute(matcher, after, reconciled);
     REQUIRE(reconciled.size() == 3);
 }
@@ -136,8 +142,8 @@ TEST_CASE("MatchCache stays correct across a sequence of incremental edits (typi
     for (std::size_t i = 0; i < steps.size(); ++i) {
         const Tree tree = parser.Parse(steps[i]);
         const auto reconciled =
-            i == 0 ? cache.Reconcile(matcher, tree.RootNode(), steps[i], std::nullopt)
-                   : cache.Reconcile(matcher, tree.RootNode(), steps[i], DiffSpan(previous, steps[i]));
+            i == 0 ? cache.Reconcile(matcher, tree, steps[i], std::nullopt)
+                   : cache.Reconcile(matcher, tree, steps[i], DiffSpan(previous, steps[i]));
         INFO("step " << i << ": " << steps[i]);
         RequireMatchesFreshRecompute(matcher, steps[i], reconciled);
         previous = steps[i];
@@ -160,14 +166,14 @@ TEST_CASE("MatchCache handles a deletion that merges two previously-separate mat
     const std::string before     = "[12, 34]";
     const Tree        treeBefore = parser.Parse(before);
     MatchCache        cache;
-    (void)cache.Reconcile(matcher, treeBefore.RootNode(), before, std::nullopt);
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
 
     const std::string after = "[1234]";
     const ChangedSpan span  = DiffSpan(before, after);
     REQUIRE(span.newStart == span.newEnd); // confirms this is the zero-width-window case
     const Tree treeAfter = parser.Parse(after);
 
-    const auto reconciled = cache.Reconcile(matcher, treeAfter.RootNode(), after, span);
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, span);
     RequireMatchesFreshRecompute(matcher, after, reconciled);
     REQUIRE(reconciled.size() == 1); // "12" and "34" merged into one "1234"
 }
@@ -184,16 +190,76 @@ TEST_CASE("MatchCache handles an insertion that extends an existing token right 
     const std::string before     = "[1, 2, 3]";
     const Tree        treeBefore = parser.Parse(before);
     MatchCache        cache;
-    (void)cache.Reconcile(matcher, treeBefore.RootNode(), before, std::nullopt);
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
 
     const std::string after = "[1, 200, 3]";
     const ChangedSpan span  = DiffSpan(before, after);
     REQUIRE(span.oldStart == span.oldEnd); // confirms this is the touching-boundary case
     const Tree treeAfter = parser.Parse(after);
 
-    const auto reconciled = cache.Reconcile(matcher, treeAfter.RootNode(), after, span);
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, span);
     RequireMatchesFreshRecompute(matcher, after, reconciled);
     REQUIRE(reconciled.size() == 3);
+}
+
+TEST_CASE("MatchCache reclassifies an identifier across a var_spec shape change (Go grouped var declarations)",
+          "[MatchCache]") {
+    // The real-world case the structural-widening mechanism (MatchCache.h's
+    // "RESIDUAL GAP -- CLOSED" note) exists for: inserting "x " before
+    // "zero" turns "var (\n  zero = 0\n  ...)" into "var (\n x zero = 0\n
+    // ...)", reclassifying "zero" from an identifier in a var_spec's
+    // identifier_list to that SAME var_spec's own Type field -- @variable ->
+    // @type -- with "zero"'s own bytes merely SHIFTED, never touched, by the
+    // edit. Byte-range arithmetic alone sees a match with a real gap from
+    // the edit and would wrongly keep it as @variable.
+    const auto   language = *LanguageByName("go");
+    QueryMatcher matcher(language, "(identifier) @variable (type_identifier) @type");
+    Parser       parser(language);
+
+    const std::string before     = "package main\n\nvar (\n  zero = 0\n  one = 1\n)\n";
+    const Tree        treeBefore = parser.Parse(before);
+    MatchCache        cache;
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
+
+    const std::string after     = "package main\n\nvar (\n x zero = 0\n  one = 1\n)\n";
+    const ChangedSpan span      = DiffSpan(before, after);
+    const Tree        treeAfter = parser.Parse(after);
+
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, span);
+    RequireMatchesFreshRecompute(language, matcher, after, reconciled);
+
+    const std::size_t zeroStart = after.find("zero");
+    REQUIRE(zeroStart != std::string::npos);
+    const auto zeroMatch = std::find_if(reconciled.begin(), reconciled.end(),
+                                        [&](const QueryMatch& m) { return m.rootStartByte == zeroStart; });
+    REQUIRE(zeroMatch != reconciled.end());
+    REQUIRE(zeroMatch->captures.size() == 1);
+    REQUIRE(zeroMatch->captures[0].name == "type"); // not "variable" -- the reclassification this test pins
+}
+
+TEST_CASE("MatchCache reclassifies a char literal into a symbol after its backslash prefix is deleted (Clojure)",
+          "[MatchCache]") {
+    // The other real-world case the same mechanism closes: deleting the
+    // leading "\" of a Clojure char literal removes the token that made the
+    // following letter a char literal at all -- the enclosing node's SHAPE
+    // changes (char_lit -> sym_lit) even though the letter's own bytes just
+    // shift, never touched, by the edit.
+    const auto   language = *LanguageByName("clojure");
+    QueryMatcher matcher(language, "(char_lit) @char");
+    Parser       parser(language);
+
+    const std::string before     = "\\a\n";
+    const Tree        treeBefore = parser.Parse(before);
+    MatchCache        cache;
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
+
+    const std::string after     = "a\n";
+    const ChangedSpan span      = DiffSpan(before, after);
+    const Tree        treeAfter = parser.Parse(after);
+
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, span);
+    RequireMatchesFreshRecompute(language, matcher, after, reconciled);
+    REQUIRE(reconciled.empty()); // "a" alone is a symbol, not a char literal
 }
 
 TEST_CASE("MatchCache always fully re-derives a query set containing an ancestor-crossing pattern", "[MatchCache]") {
@@ -208,11 +274,11 @@ TEST_CASE("MatchCache always fully re-derives a query set containing an ancestor
     const std::string before     = R"({"a": 1, "b": 2})";
     const Tree        treeBefore = parser.Parse(before);
     MatchCache        cache;
-    (void)cache.Reconcile(matcher, treeBefore.RootNode(), before, std::nullopt);
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
 
     const std::string after      = R"({"a": 1, "b": 200})";
     const Tree        treeAfter  = parser.Parse(after);
-    const auto        reconciled = cache.Reconcile(matcher, treeAfter.RootNode(), after, DiffSpan(before, after));
+    const auto        reconciled = cache.Reconcile(matcher, treeAfter, after, DiffSpan(before, after));
 
     RequireMatchesFreshRecompute(matcher, after, reconciled);
     REQUIRE(reconciled.size() == 2);

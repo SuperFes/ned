@@ -38,10 +38,43 @@ namespace {
         return matcher.AncestorCrossingPatternCount() > 0;
     }
 
+    // ambiguity-reclassification follow-up. Compares the smallest named node
+    // containing the edit's OLD span (in the retained prior tree) against the
+    // smallest named node containing its NEW span (in the current tree): a
+    // type or (shifted) range mismatch means the enclosing structure changed
+    // SHAPE, not just bytes -- MatchCache.h's header comment on why this is
+    // needed and MatchCache.h's own KNOWN RESIDUAL GAP note on the case it
+    // targets (Go's "Grouped var declarations": inserting a token before a
+    // bare identifier reclassifies it from @variable to @type with its own
+    // bytes untouched, so byte-range arithmetic alone can never see it).
+    // Returns nullopt when neither node exists or nothing structural changed
+    // -- the ordinary case, costing one pair of O(depth) tree walks.
+    std::optional<std::pair<std::size_t, std::size_t>> StructuralWidening(const Node& priorRoot, const Node& newRoot,
+                                                                          const text::ChangedSpan& span) {
+        const Node oldNode = priorRoot.NamedDescendantForByteRange(span.oldStart, span.oldEnd);
+        const Node newNode = newRoot.NamedDescendantForByteRange(span.newStart, span.newEnd);
+        if (oldNode.IsNull() || newNode.IsNull()) {
+            return std::nullopt;
+        }
+        // oldNode contains [oldStart, oldEnd] by construction, so its start is
+        // always <= oldStart (unaffected by the edit) and its end is always
+        // >= oldEnd (shifted by the edit's own length delta) -- exactly the
+        // two RemapOffset branches this reuses rather than reimplements.
+        const std::size_t oldNodeNewStart = text::RemapOffset(oldNode.StartByte(), span);
+        const std::size_t oldNodeNewEnd   = text::RemapOffset(oldNode.EndByte(), span);
+        if (oldNode.Type() == newNode.Type() && oldNodeNewStart == newNode.StartByte() &&
+            oldNodeNewEnd == newNode.EndByte()) {
+            return std::nullopt; // same shape, just carried across the edit -- nothing to widen for
+        }
+        return std::make_pair(std::min(oldNodeNewStart, newNode.StartByte()), std::max(oldNodeNewEnd, newNode.EndByte()));
+    }
+
 } // namespace
 
-std::vector<QueryMatch> MatchCache::Reconcile(const QueryMatcher& matcher, const Node& root, std::string_view text,
+std::vector<QueryMatch> MatchCache::Reconcile(const QueryMatcher& matcher, const Tree& tree, std::string_view text,
                                               std::optional<text::ChangedSpan> edit) {
+    const Node root = tree.RootNode();
+
     // See MatchCache.h's header comment for why either of these forces a
     // full walk instead of an incremental reconciliation: a parse error's
     // recovery is a whole-parse property (a real bash case flipped an
@@ -60,6 +93,7 @@ std::vector<QueryMatch> MatchCache::Reconcile(const QueryMatcher& matcher, const
         std::sort(cached_.begin(), cached_.end(), ByRootStartByte);
         hasCached_            = true;
         cachedNeededFullWalk_ = needsFullWalk;
+        priorTree_            = tree.Clone();
         return cached_;
     }
 
@@ -89,6 +123,24 @@ std::vector<QueryMatch> MatchCache::Reconcile(const QueryMatcher& matcher, const
     // local structure, not a guessed constant. A wider enclosing match is
     // still found via MatchesInRange's own "captures outside the window
     // still arrive" intersection contract even when this window is narrow.
+    // ambiguity-reclassification follow-up: widen the two byte thresholds
+    // below (in NEW-text coordinates, matching what redoStart/redoEnd
+    // already track) when the structural check finds the edit's enclosing
+    // node changed shape. Defaults to exactly the edit's own new span --
+    // i.e. no widening beyond what the byte-gap logic below would already
+    // require -- when there's no prior generation to compare against (can't
+    // happen once hasCached_ is true and this branch was reached, since the
+    // full-walk branch above always sets priorTree_, but kept explicit
+    // rather than assumed) or nothing structural changed.
+    std::size_t widenStart = edit->newStart;
+    std::size_t widenEnd   = edit->newEnd;
+    if (priorTree_.has_value()) {
+        if (const auto widened = StructuralWidening(priorTree_->RootNode(), root, *edit)) {
+            widenStart = std::min(widenStart, widened->first);
+            widenEnd   = std::max(widenEnd, widened->second);
+        }
+    }
+
     const text::ChangedSpan& span = *edit;
     std::vector<QueryMatch>  result;
     result.reserve(cached_.size());
@@ -96,17 +148,27 @@ std::vector<QueryMatch> MatchCache::Reconcile(const QueryMatcher& matcher, const
     std::size_t redoEnd   = text.size();
     for (QueryMatch& match : cached_) {
         if (match.rootEndByte < span.oldStart) {
-            redoStart = std::max(redoStart, match.rootEndByte);
-            result.push_back(std::move(match)); // entirely before, with a real gap -- unaffected
+            if (match.rootEndByte <= widenStart) {
+                redoStart = std::max(redoStart, match.rootEndByte);
+                result.push_back(std::move(match)); // entirely before, with a real gap -- unaffected
+                continue;
+            }
+            // else: within the structurally-widened region -- drop below.
         }
         else if (match.rootStartByte > span.oldEnd) {
             ShiftAfterEdit(match, span);
-            redoEnd = std::min(redoEnd, match.rootStartByte); // post-shift
-            result.push_back(std::move(match));               // entirely after, with a real gap -- shift, don't re-derive
+            if (match.rootStartByte >= widenEnd) {
+                redoEnd = std::min(redoEnd, match.rootStartByte); // post-shift
+                result.push_back(std::move(match)); // entirely after, with a real gap -- shift, don't re-derive
+                continue;
+            }
+            // else: within the structurally-widened region -- drop below.
         }
-        // else: overlaps OR touches the edit -- dropped; MatchesInRange below
-        // re-derives it (and anything else whose root now intersects the
-        // window).
+        // else: overlaps/touches the edit, or (having fallen through one of
+        // the two widened-region checks above) sits in a region the
+        // structural check says may have reclassified despite a byte gap --
+        // dropped; MatchesInRange below re-derives it (and anything else
+        // whose root now intersects the window).
     }
 
     std::vector<QueryMatch> redone = matcher.MatchesInRange(root, text, redoStart, redoEnd);
@@ -118,6 +180,7 @@ std::vector<QueryMatch> MatchCache::Reconcile(const QueryMatcher& matcher, const
     cached_               = std::move(result);
     hasCached_            = true;
     cachedNeededFullWalk_ = needsFullWalk; // false in this branch (the gate above already excluded true)
+    priorTree_            = tree.Clone();
     return cached_;
 }
 
