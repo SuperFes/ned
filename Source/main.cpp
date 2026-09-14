@@ -1074,6 +1074,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     for (const auto& openBuffer : bufferList.Buffers()) {
         modePrewarmer.Prewarm(*openBuffer);
     }
+
     bufferList.SetOnFileOpened([&modePrewarmer](ned::text::Buffer& opened) -> void {
         ned::editor::RestoreFilePlace(opened, static_cast<std::size_t>(ned::editor::TabWidth()));
         ned::editor::TryRestoreUndoHistory(opened);
