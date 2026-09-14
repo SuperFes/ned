@@ -47,12 +47,26 @@ are scoped against. Deliberately **not** in 0.6: the parsing engine and Theme v2
 1.0-scale and reshape foundations (`Mode`, the whole theme surface); folding either in
 would make the number mean nothing.
 
-- [ ] **Split the docs.** `Docs/` is entirely developer-facing today — design records
-      (`ParsingEngine.md`, `Translucency.md`, `BufferViewDecomposition.md`), capability
-      audits, and key references. There is no user-side documentation at all, and the
-      README is 70 lines against **275 registered commands** and **160 `ned/*` Janet
-      bindings**. Split developer docs from user docs as separate trees with separate
-      audiences, rather than continuing to let one directory serve both.
+- [x] **Split the docs — shipped 2026-09-14.** `Docs/` stays the developer book (design
+      records, capability audits — its own `book.toml`/`SUMMARY.md`, `src` pointed at the
+      directory as-is so none of its existing files had to move or have their many
+      cross-references across `CLAUDE.md`/other docs rewritten); a new top-level
+      `UserGuide/` is the user-facing book (installation, getting started, configuration,
+      key concepts, one chapter per major feature, and per-language setup recipes) —
+      deliberately *not* nested under `Docs/`, since mdBook copies a book's entire `src`
+      tree verbatim into its output and nesting one book's source inside the other's
+      would ship a full copy of it. The generated `Docs/Commands.md`/`Docs/Scripting.md`
+      (and the already-user-facing `LanguageSetup.md`/`Themes.md`) are pulled into the
+      user book via mdBook's `{{#include}}` rather than copied, so the drift guard on the
+      generated pair stays meaningful — there's no second copy to go stale.
+      `.github/workflows/docs.yml` builds both with a pinned mdBook release binary and
+      deploys them as sibling `/user/`/`/dev/` paths on GitHub Pages via the native
+      `actions/deploy-pages` flow, triggered on every push touching either tree. One
+      docstring fix came out of building this for real: `ned/register-language`'s prose
+      used bare `<name>`/`<kind>`/`<grammar>`/`<lang>` placeholders, which a browser's
+      HTML parser (mdBook's stricter Markdown handling, not GitHub's) reads as unclosed
+      tags and silently drops — wrapped in backticks at the `Register<Fn>` call site and
+      re-blessed.
 - [x] **The command and scripting references are generated.** `Docs/Commands.md` (302
       commands) and `Docs/Scripting.md` (159 `ned/*` bindings), both from the live registry
       and binding table, both held against it on every build so neither can drift and
