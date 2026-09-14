@@ -36,4 +36,11 @@ tree-sitter-toml-src/test/corpus  cases=17 runs=17 passed=17 failed=0 skipped=0
 tree-sitter-typescript-src-src/test/corpus  cases=112 runs=112 passed=112 failed=0 skipped=0
 tree-sitter-xml-src/test/corpus  cases=22 runs=16 passed=16 failed=0 skipped=6
 tree-sitter-yaml-src/test/corpus  cases=130 runs=130 passed=130 failed=0 skipped=0
-total  cases=3374 runs=3347 passed=3339 failed=8 skipped=27
+tree-sitter-dockerfile-src/test/corpus  cases=113 runs=113 passed=113 failed=0 skipped=0
+tree-sitter-make-src/test/corpus  cases=99 runs=99 passed=99 failed=0 skipped=0
+tree-sitter-hcl-src/test/corpus  cases=102 runs=102 passed=102 failed=0 skipped=0
+tree-sitter-nix-src/corpus  cases=54 runs=54 passed=54 failed=0 skipped=0
+tree-sitter-ruby-src/test/corpus  cases=290 runs=290 passed=290 failed=0 skipped=0
+tree-sitter-gitcommit-src/test/corpus  cases=64 runs=64 passed=64 failed=0 skipped=0
+tree-sitter-gitrebase-src/test/corpus  cases=15 runs=15 passed=15 failed=0 skipped=0
+total  cases=4111 runs=4084 passed=4076 failed=8 skipped=27

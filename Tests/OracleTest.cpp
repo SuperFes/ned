@@ -238,6 +238,14 @@ const std::map<std::string, std::function<ned::editor::Mode()>>& ModeByExtension
         {".lua", ned::editor::LuaMode},
         {".cmake", ned::editor::CMakeMode},
         {".diff", ned::editor::DiffMode},
+        {".dockerfile", ned::editor::DockerfileMode},
+        {".hcl", ned::editor::HclMode},
+        {".nix", ned::editor::NixMode},
+        {".rb", ned::editor::RubyMode},
+        // make/gitcommit/gitrebase are filename-claimed (Makefile,
+        // COMMIT_EDITMSG, git-rebase-todo) with no extension of their own, so
+        // they have no natural key in this extension-keyed map -- skipped
+        // here, still covered by ParseConformance/Imprint/LanguageDefinition.
         // Org/Markdown joined when their hand-built highlight escapes became
         // queries + capture classifiers -- the corpus is what holds that
         // rewrite (and the classifiers, which JanetTestSupport registers for

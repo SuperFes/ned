@@ -86,6 +86,16 @@ const std::vector<UpstreamQuery>& UpstreamQueries() {
         {"tree-sitter-java-src/queries/highlights.scm", "java/upstream/highlights.janet"},
         {"tree-sitter-java-src/queries/tags.scm", "java/upstream/tags.janet"},
         {"tree-sitter-kotlin-src/queries/highlights.scm", "kotlin/upstream/highlights.janet"},
+        {"tree-sitter-dockerfile-src/queries/highlights.scm", "dockerfile/upstream/highlights.janet"},
+        {"tree-sitter-make-src/queries/highlights.scm", "make/upstream/highlights.janet"},
+        // nix highlights is ned-adapted, not vendored -- see
+        // Source/Languages/nix/highlights.janet's own header comment.
+        {"tree-sitter-nix-src/queries/tags.scm", "nix/upstream/tags.janet"},
+        {"tree-sitter-ruby-src/queries/highlights.scm", "ruby/upstream/highlights.janet"},
+        {"tree-sitter-ruby-src/queries/tags.scm", "ruby/upstream/tags.janet"},
+        {"tree-sitter-gitcommit-src/queries/highlights.scm", "gitcommit/upstream/highlights.janet"},
+        // gitrebase is ned-authored, not vendored -- see
+        // Source/Languages/gitrebase/highlights.janet's own header comment.
     };
     return kQueries;
 }

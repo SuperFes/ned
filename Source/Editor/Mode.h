@@ -814,6 +814,13 @@ struct ModeBuildContext {
 [[nodiscard]] Mode LuaMode();
 [[nodiscard]] Mode CMakeMode();
 [[nodiscard]] Mode DiffMode();
+[[nodiscard]] Mode DockerfileMode();
+[[nodiscard]] Mode MakeMode();
+[[nodiscard]] Mode HclMode();
+[[nodiscard]] Mode NixMode();
+[[nodiscard]] Mode RubyMode();
+[[nodiscard]] Mode GitCommitMode();
+[[nodiscard]] Mode GitRebaseMode();
 [[nodiscard]] Mode MarkdownMode();
 [[nodiscard]] Mode OrgMode();
 

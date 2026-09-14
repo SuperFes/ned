@@ -218,6 +218,12 @@ constexpr Entry kCss[] = {
 
 // diff: measured, zero delimited bodies.
 
+constexpr Entry kDockerfile[] = {
+    {"expansion", DelimiterKind::Bracket, false, false},
+    {"heredoc_block", DelimiterKind::Indent, true, true},
+    {"json_string_array", DelimiterKind::Bracket, true, true},
+};
+
 constexpr Entry kFish[] = {
     {"begin_statement", DelimiterKind::Keyword, true, true, "begin", "end"},
     {"brace_expansion", DelimiterKind::Bracket, true, false},
@@ -229,6 +235,10 @@ constexpr Entry kFish[] = {
     {"switch_statement", DelimiterKind::Keyword, true, true, "switch", "end"},
     {"while_statement", DelimiterKind::Keyword, true, true, "while", "end"},
 };
+
+// gitcommit: measured, zero delimited bodies.
+
+// gitrebase: measured, zero delimited bodies.
 
 constexpr Entry kGo[] = {
     {"argument_list", DelimiterKind::Bracket, true, true},
@@ -252,6 +262,19 @@ constexpr Entry kGo[] = {
     {"type_parameter_list", DelimiterKind::Bracket, true, true},
     {"type_switch_statement", DelimiterKind::Bracket, false, true},
     {"var_spec_list", DelimiterKind::Bracket, true, true},
+};
+
+constexpr Entry kHcl[] = {
+    {"heredoc_template", DelimiterKind::Indent, false, true},
+    {"new_index", DelimiterKind::Bracket, true, false},
+    {"quoted_template", DelimiterKind::Indent, true, true},
+    {"string_lit", DelimiterKind::Indent, true, true},
+    {"template_else_intro", DelimiterKind::Indent, true, true},
+    {"template_for_end", DelimiterKind::Indent, true, true},
+    {"template_for_start", DelimiterKind::Indent, true, true},
+    {"template_if_end", DelimiterKind::Indent, true, true},
+    {"template_if_intro", DelimiterKind::Indent, true, true},
+    {"template_interpolation", DelimiterKind::Indent, true, true},
 };
 
 constexpr Entry kHtml[] = {
@@ -379,6 +402,22 @@ constexpr Entry kLua[] = {
     {"while_statement", DelimiterKind::Keyword, true, true, "while", "end"},
 };
 
+constexpr Entry kMake[] = {
+    {"archive", DelimiterKind::Bracket, false, false},
+    {"function_call", DelimiterKind::Bracket, false, true},
+    {"shell_function", DelimiterKind::Bracket, false, true},
+};
+
+constexpr Entry kNix[] = {
+    {"attrset_expression", DelimiterKind::Bracket, true, true},
+    {"formals", DelimiterKind::Bracket, true, false},
+    {"interpolation", DelimiterKind::Bracket, true, false},
+    {"let_attrset_expression", DelimiterKind::Bracket, false, true},
+    {"list_expression", DelimiterKind::Bracket, true, true},
+    {"parenthesized_expression", DelimiterKind::Bracket, true, false},
+    {"rec_attrset_expression", DelimiterKind::Bracket, false, true},
+};
+
 constexpr Entry kPhp[] = {
     {"anonymous_function_use_clause", DelimiterKind::Bracket, false, true},
     {"arguments", DelimiterKind::Bracket, true, true},
@@ -431,6 +470,45 @@ constexpr Entry kPython[] = {
     {"tuple_pattern", DelimiterKind::Bracket, true, true},
     {"type_parameter", DelimiterKind::Bracket, true, true},
     {"while_statement", DelimiterKind::Indent, true, true},
+};
+
+constexpr Entry kRuby[] = {
+    {"argument_list", DelimiterKind::Bracket, true, true},
+    {"array", DelimiterKind::Bracket, true, true},
+    {"array_pattern", DelimiterKind::Bracket, true, true},
+    {"begin", DelimiterKind::Keyword, true, true, "begin", "end"},
+    {"begin_block", DelimiterKind::Bracket, false, true},
+    {"block", DelimiterKind::Bracket, true, true},
+    {"case", DelimiterKind::Keyword, true, true, "case", "end"},
+    {"case_match", DelimiterKind::Keyword, true, true, "case", "end"},
+    {"class", DelimiterKind::Keyword, true, true, "class", "end"},
+    {"delimited_symbol", DelimiterKind::Indent, true, true},
+    {"destructured_left_assignment", DelimiterKind::Bracket, true, true},
+    {"destructured_parameter", DelimiterKind::Bracket, true, true},
+    {"do", DelimiterKind::Keyword, true, true, "do", "end"},
+    {"do_block", DelimiterKind::Keyword, true, true, "do", "end"},
+    {"element_reference", DelimiterKind::Bracket, false, true},
+    {"end_block", DelimiterKind::Bracket, false, true},
+    {"expression_reference_pattern", DelimiterKind::Bracket, false, true},
+    {"find_pattern", DelimiterKind::Bracket, true, true},
+    {"hash", DelimiterKind::Bracket, true, true},
+    {"hash_pattern", DelimiterKind::Bracket, true, true},
+    {"heredoc_body", DelimiterKind::Indent, true, true},
+    {"if", DelimiterKind::Keyword, true, true, "if", "end"},
+    {"interpolation", DelimiterKind::Bracket, true, true},
+    {"lambda_parameters", DelimiterKind::Bracket, true, true},
+    {"method_parameters", DelimiterKind::Bracket, true, true},
+    {"module", DelimiterKind::Keyword, true, true, "module", "end"},
+    {"parameters", DelimiterKind::Bracket, true, true},
+    {"parenthesized_pattern", DelimiterKind::Bracket, true, false},
+    {"parenthesized_statements", DelimiterKind::Bracket, true, true},
+    {"regex", DelimiterKind::Indent, true, true},
+    {"singleton_class", DelimiterKind::Keyword, true, true, "class", "end"},
+    {"string", DelimiterKind::Indent, true, true},
+    {"string_array", DelimiterKind::Indent, true, true},
+    {"subshell", DelimiterKind::Indent, true, true},
+    {"symbol_array", DelimiterKind::Indent, true, true},
+    {"unless", DelimiterKind::Keyword, true, true, "unless", "end"},
 };
 
 constexpr Entry kRust[] = {
@@ -601,8 +679,10 @@ const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
         load("cpp", kCpp, std::size(kCpp));
         load("csharp", kCsharp, std::size(kCsharp));
         load("css", kCss, std::size(kCss));
+        load("dockerfile", kDockerfile, std::size(kDockerfile));
         load("fish", kFish, std::size(kFish));
         load("go", kGo, std::size(kGo));
+        load("hcl", kHcl, std::size(kHcl));
         load("html", kHtml, std::size(kHtml));
         load("janet", kJanet, std::size(kJanet));
         load("jank", kJank, std::size(kJank));
@@ -611,8 +691,11 @@ const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {
         load("json", kJson, std::size(kJson));
         load("kotlin", kKotlin, std::size(kKotlin));
         load("lua", kLua, std::size(kLua));
+        load("make", kMake, std::size(kMake));
+        load("nix", kNix, std::size(kNix));
         load("php", kPhp, std::size(kPhp));
         load("python", kPython, std::size(kPython));
+        load("ruby", kRuby, std::size(kRuby));
         load("rust", kRust, std::size(kRust));
         load("sql", kSql, std::size(kSql));
         load("toml", kToml, std::size(kToml));
