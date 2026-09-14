@@ -81,22 +81,29 @@ would make the number mean nothing.
       symbols there. Reading the environment made the generated page depend on test order
       — caught only by `./build/ned_tests`, which `ctest -j8` cannot see, which is exactly
       why both are run.
-- [ ] **Ship an install story.** `install(TARGETS ned ...)` exists, but CI produces no
-      artifacts and there is no package, so a stranger must build 24 tree-sitter grammars,
-      FetchContent nine dependencies, and already have a pkg-config-discoverable Janet. The
-      `v0.5.0` tag is the trigger a release workflow hangs off. *In flight:* a Gentoo ebuild
-      (author-side), and the Notcurses patches are now extractable — see below.
-- [ ] **Notcurses as a system library.** `Patches/notcurses/` now carries the three fixes
-      as real `git am`/`patch -p1` files generated from the `CMake/PatchNotcurses*.cmake`
-      scripts that remain the source of truth, plus `regenerate.sh` (byte-stable output,
-      dated from each script's own last commit) so they cannot silently go stale on a
-      Notcurses bump. Verified against pristine v3.0.17: all three apply in order and the
-      result is byte-identical to the tree the CMake scripts produce. What remains is the
-      build-side option — letting `CMakeLists.txt` consume a system Notcurses that already
-      carries these, instead of always FetchContent-ing and patching its own copy. Note the
-      existing private-libdir install rule exists precisely because ned is built against a
-      specific patched Notcurses a stock system package does not carry; a system-library
-      path has to make that requirement explicit rather than silently falling back.
+- [x] **Ship an install story — from-source bar cleared for 0.6, packaged
+      artifacts deliberately deferred.** The 0.6 bar this item is scoped against is "a
+      stranger can install it," not "a stranger gets a prebuilt binary" — the former now
+      has a real, CI-proven answer: `CMakeLists.txt` resolves every dependency but Janet
+      and Notcurses from system packages (`b3d3949`), every tree-sitter grammar is
+      vendored and checked in (`d308040`, no network beyond the initial clone),
+      `.github/workflows/build-test.yml` actually builds and runs the test suite green on
+      a stock Ubuntu runner (2026-09-14, the first time this repo's CI has ever completed
+      a run), and `UserGuide/installation.md` gives the exact recipe per distro. What's
+      still genuinely missing — a packaged binary, a release workflow producing
+      downloadable artifacts — is real scope, just not *this* item's scope; it's the
+      Gentoo ebuild (drafted, author-side, targets the `v0.6.0` tag this release cuts —
+      still unverified against real release bits until that tag exists) and any future
+      binary-release workflow, tracked as its own follow-up rather than blocking 0.6.
+- [x] **Notcurses as a system library — shipped in `b3d3949`.** `CMakeLists.txt` now
+      resolves `notcurses-core` via `pkg_check_modules` like every other system
+      dependency (`CMake/Dependencies.cmake`) instead of FetchContent-ing and patching a
+      private copy; the old private-libdir install rule is gone with it
+      (`Source/CMakeLists.txt`'s own comment on the `install()` call explains why neither
+      concern applies anymore). `Patches/notcurses/`'s three `git am`-able files are what
+      a system package (or, until one exists carrying them, a hand-built one — see
+      `UserGuide/installation.md`) needs to apply against the pinned v3.0.17 tag; kept
+      as the source of truth for exactly that, not for an in-tree patch step anymore.
 - [x] **Tier A language parity (D2) — closed 2026-09-13.** java/kotlin/csharp/go/rust
       already carried root markers from the Janet migration; bash/cmake deliberately have
       none (no fixed marker convention exists for either). The actual remaining gap was
@@ -123,11 +130,13 @@ would make the number mean nothing.
       honestly red or green. cmake and diff highlights are ned-authored
       (kotlin-tags precedent): both upstream files use constructs outside
       QueryMatcher's census scope — see the watch-list entry below.
-- [ ] **Add the tree-sitter query language (`.scm`).** Mostly mooted 2026-09-12 by the
-      mechanism unification: ned authors zero `.scm` files now — every query is
-      `Source/Languages/<name>/<kind>.janet`, which janet-mode already highlights. The
-      residual case is a foreign `:queries-dir` (`/usr/share/tree-sitter/queries/<lang>`),
-      read-only and rarely opened in ned; keep only if that ever itches.
+- [x] **Add the tree-sitter query language (`.scm`) — closed, won't do.** Mooted
+      2026-09-12 by the mechanism unification: ned authors zero `.scm` files now — every
+      query is `Source/Languages/<name>/<kind>.janet`, which janet-mode already
+      highlights. The one residual case (a foreign `:queries-dir`,
+      `/usr/share/tree-sitter/queries/<lang>`) is read-only and rarely opened in ned —
+      deliberately not worth a highlighting mode of its own; revisit only if that
+      specific gap is ever reported as an actual itch.
 - [x] **Stability gate: don't ship a minor bump with a known-red preset.** Fixed
       2026-09-08 (commit `14f59fa`) — `[Performance]` budgets scale on `NDEBUG` rather
       than assuming sanitizer overhead. Re-verified 2026-09-13: `default` preset
