@@ -2,8 +2,9 @@
 // The registry of tree-sitter grammars statically linked into this binary
 // (tree-sitter foundation follow-up) -- distinct from, and a prerequisite
 // for, the dynamic-grammar-loading follow-up's runtime-loaded ones. Each
-// bundled grammar is a separate FetchContent'd repo in CMakeLists.txt
-// exposing exactly one C entry point, `tree_sitter_<name>()`, per
+// bundled grammar is vendored source under ThirdParty/tree-sitter-grammars/
+// (Tools/vendor-grammars.py), compiled by CMakeLists.txt, exposing exactly
+// one C entry point, `tree_sitter_<name>()`, per
 // tree-sitter's own convention -- this file is the one place those get
 // forward-declared and named.
 //
