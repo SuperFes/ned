@@ -322,4 +322,12 @@ target_link_libraries(ned_tests PRIVATE ned_lib Catch2::Catch2WithMain tree-sitt
 # ned_lib or the ned binary may depend on where the source happens to be.
 target_compile_definitions(ned_tests PRIVATE NED_REPO_ROOT="${CMAKE_SOURCE_DIR}")
 
-catch_discover_tests(ned_tests)
+# SKIP_REGULAR_EXPRESSION: Catch2's SKIP() (e.g. DynamicGrammarTest.cpp/
+# ModeOverridesTest.cpp's real-system-grammar tests, which SKIP rather than
+# fail when a machine has no system-wide tree-sitter grammar .so installed)
+# prints "SKIPPED:" but CTest has no built-in notion of a Catch2 skip -- left
+# unset, ctest classifies a fully-skipped test case as a plain failure (the
+# process still returns non-zero: 0 assertions ran). Without this, any
+# machine other than one with the author's own system grammar installed
+# reports false failures for those tests instead of the intended skip.
+catch_discover_tests(ned_tests PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
