@@ -123,8 +123,8 @@
 // regressing (the mechanism can only widen a redo window, never narrow one).
 //
 
-#ifndef NED_EDITOR_TREESITTER_MATCHCACHE_H
-#define NED_EDITOR_TREESITTER_MATCHCACHE_H
+#ifndef NED_EDITOR_GRAMMAR_MATCHCACHE_H
+#define NED_EDITOR_GRAMMAR_MATCHCACHE_H
 
 #include <optional>
 #include <string_view>
@@ -134,7 +134,7 @@
 #include "Text/OffsetRemap.h"
 #include "Tree.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 class MatchCache {
   public:
@@ -174,6 +174,6 @@ class MatchCache {
     std::optional<Tree> priorTree_;
 };
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-#endif // NED_EDITOR_TREESITTER_MATCHCACHE_H
+#endif // NED_EDITOR_GRAMMAR_MATCHCACHE_H

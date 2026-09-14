@@ -9,7 +9,7 @@
 #include "LanguageDefinition.h"
 #include "LanguageRegistry.h"
 #include "ModeOverrides.h"
-#include "TreeSitter/Languages.h"
+#include "Grammar/Languages.h"
 
 namespace ned::editor {
 
@@ -17,7 +17,7 @@ namespace {
 
     // Common shorthand tags people actually type (a Markdown fence tag, an
     // HTML/injections.scm #set! value, ...), mapped to Ned's canonical
-    // treesitter::LanguageByName/ModeByName spelling -- each language's own
+    // grammar::LanguageByName/ModeByName spelling -- each language's own
     // definition declares the tags that mean it (language.janet's
     // :injection-aliases: "js" on javascript, "yml" on yaml,
     // "markdown_inline" on markdown-inline). A tag no definition claims
@@ -57,7 +57,7 @@ namespace {
     // document.
     struct RawInjectionMatch {
         std::string                   languageTag; // as written in the query/#set!, not yet canonicalized
-        treesitter::QueryMatchCapture content;
+        grammar::QueryMatchCapture content;
     };
 
     // perf/parallel-highlighting-round-1 follow-up: window is threaded
@@ -75,15 +75,15 @@ namespace {
     // CollectInjectionRegions (the whole-document consumer, no window
     // concept of its own) gets the default unbounded window, matching its
     // existing behavior exactly.
-    std::vector<RawInjectionMatch> CollectRawInjectionMatches(const treesitter::Node& root, std::string_view bufferText,
-                                                              const treesitter::QueryMatcher& injectionQuery,
+    std::vector<RawInjectionMatch> CollectRawInjectionMatches(const grammar::Node& root, std::string_view bufferText,
+                                                              const grammar::QueryMatcher& injectionQuery,
                                                               HighlightWindow                 window = {}) {
         std::vector<RawInjectionMatch> matches;
-        for (const treesitter::QueryMatch& match : injectionQuery.MatchesInRange(root, bufferText, window.startByte,
+        for (const grammar::QueryMatch& match : injectionQuery.MatchesInRange(root, bufferText, window.startByte,
                                                                                  std::min(window.endByte, bufferText.size()))) {
             std::optional<std::string_view>              language;
-            std::optional<treesitter::QueryMatchCapture> content;
-            for (const treesitter::QueryMatchCapture& capture : match.captures) {
+            std::optional<grammar::QueryMatchCapture> content;
+            for (const grammar::QueryMatchCapture& capture : match.captures) {
                 if (!language && capture.name == "injection.language") {
                     language = bufferText.substr(capture.startByte, capture.endByte - capture.startByte);
                 }
@@ -122,8 +122,8 @@ const HighlightFunction* ResolveEmbeddedLanguageHighlight(std::string_view tag, 
     return it->second ? &*it->second : nullptr;
 }
 
-void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_view bufferText,
-                                   const treesitter::QueryMatcher& injectionQuery, EmbeddedLanguageCache& cache,
+void CollectInjectedHighlightSpans(const grammar::Node& root, std::string_view bufferText,
+                                   const grammar::QueryMatcher& injectionQuery, EmbeddedLanguageCache& cache,
                                    std::vector<HighlightSpan>& spans, HighlightWindow window) {
     for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery, window)) {
         // Every injected region is its own parse, so skipping the ones with
@@ -173,8 +173,8 @@ void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_vie
     }
 }
 
-std::vector<InjectionRegion> CollectInjectionRegions(const treesitter::Node& root, std::string_view bufferText,
-                                                     const treesitter::QueryMatcher& injectionQuery) {
+std::vector<InjectionRegion> CollectInjectionRegions(const grammar::Node& root, std::string_view bufferText,
+                                                     const grammar::QueryMatcher& injectionQuery) {
     std::vector<InjectionRegion> regions;
     for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery)) {
         regions.push_back(InjectionRegion{.startByte = match.content.startByte,

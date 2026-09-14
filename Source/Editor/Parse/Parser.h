@@ -13,7 +13,7 @@
 // Ned's parser runtime — the port of tree-sitter's parser.c, driving a
 // generated grammar's ABI-15 tables, lex functions and external scanner
 // against ned's own green tree and GLR stack. `Engine` is deliberately
-// distinct from the editor-facing `treesitter::Parser` wrapper, which will
+// distinct from the editor-facing `grammar::Parser` wrapper, which will
 // sit on top of this at the M5 swap.
 
 namespace ned::editor::parse {

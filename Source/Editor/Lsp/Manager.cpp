@@ -1118,7 +1118,7 @@ void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKe
     if (TextDocumentSyncKindFor(state.connectionKey) == TextDocumentSyncKind::Incremental) {
         // incremental-sync follow-up: common-prefix/common-suffix byte diff,
         // the same shape as IncrementalParseCache::Update's own diff
-        // (Editor/TreeSitter/IncrementalParse.cpp) -- "correct, if not
+        // (Editor/Grammar/IncrementalParse.cpp) -- "correct, if not
         // always maximally minimal" is enough here too: a multi-cursor edit
         // or a large external revert just widens to one outer span, which
         // is spec-legal for a single contentChanges[0] entry. oldText may

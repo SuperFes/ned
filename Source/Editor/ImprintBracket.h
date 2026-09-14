@@ -29,8 +29,8 @@
 #include "Editor/Imprint.h"
 #include <string>
 
-#include "Editor/TreeSitter/Node.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/Node.h"
+#include "Editor/Grammar/Tree.h"
 
 namespace ned::editor::imprint {
 
@@ -60,14 +60,14 @@ namespace ned::editor::imprint {
 //
 // Table-free on purpose: whether this node is a delimited body at all is the
 // caller's question, already answered by `Editor/ImprintTables.h`.
-[[nodiscard]] std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node);
+[[nodiscard]] std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node);
 
 // The same question with the table's answer in hand. A bracket body reads its
 // pair off its children as above; a keyword body (`if ... fi`) needs the pair
 // the imprint recorded, because `fi` does not name `if` the way `}` names
 // `{`; an indentation body has no pair at all. Every driver that has the
 // entry should ask this form.
-[[nodiscard]] std::optional<DelimiterPair> DelimitersOf(const treesitter::Node& node, const DelimitedBody& body);
+[[nodiscard]] std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node, const DelimitedBody& body);
 
 // The pair whose opener or closer point sits on or immediately after, or
 // nullopt when point is not on a delimiter at all.
@@ -80,13 +80,13 @@ namespace ned::editor::imprint {
 // Only bracket-delimited bodies answer. An indentation body (Python's `block`)
 // has no opener to match, and reporting its dedent as a "bracket" would be a
 // lie told to a feature whose whole job is precision.
-[[nodiscard]] std::optional<DelimiterPair> MatchingDelimitersAt(const treesitter::Node& root,
+[[nodiscard]] std::optional<DelimiterPair> MatchingDelimitersAt(const grammar::Node& root,
                                                                 std::string_view language, std::size_t point);
 
 // The partner offset to jump to for a caret at `point`: the closer's start
 // when point is on the opener, the opener's start when point is on the closer.
 // nullopt when point is not on a delimiter.
-[[nodiscard]] std::optional<std::size_t> MatchingDelimiterOffset(const treesitter::Node& root,
+[[nodiscard]] std::optional<std::size_t> MatchingDelimiterOffset(const grammar::Node& root,
                                                                  std::string_view language, std::size_t point);
 
 // "cpp-mode" -> "cpp". The same suffix strip Mode.cpp does when deriving its

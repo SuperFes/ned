@@ -13,7 +13,7 @@
 // files discovered by the same convention (LanguageParse.h). Two extra
 // definition keys only make sense here and are parsed for every definition:
 // `:grammar-library` (a shared library exporting `tree_sitter_<grammar>`,
-// dlopen'd at registration -- TreeSitter/DynamicGrammar.h) and
+// dlopen'd at registration -- Grammar/DynamicGrammar.h) and
 // `:queries-dir` (a foreign tree-sitter-layout directory, e.g.
 // /usr/share/tree-sitter/queries/<lang>, scanned for `<kind>.janet` or
 // `<kind>.scm` per kind -- what lets a system grammar's own queries work
@@ -37,7 +37,7 @@
 #include <vector>
 
 #include "LanguageDefinition.h"
-#include "TreeSitter/Parser.h"
+#include "Grammar/Parser.h"
 
 namespace ned::editor {
 
@@ -45,7 +45,7 @@ struct RegisteredLanguage {
     LanguageDefinition definition;
     // Set when the definition named a :grammar-library; absent means the
     // grammar resolves through the bundled registry (or is :none).
-    std::optional<treesitter::Language> language;
+    std::optional<grammar::Language> language;
 };
 
 // Loads `<directory>/language.janet` (the directory's basename is the

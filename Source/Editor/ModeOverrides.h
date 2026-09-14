@@ -1,7 +1,7 @@
 //
 // A user-configurable override table pointing a filename or file extension
 // at a Mode -- either one of the bundled *Mode() functions (Mode.h) or a
-// grammar loaded at runtime (TreeSitter/DynamicGrammar.h).
+// grammar loaded at runtime (Grammar/DynamicGrammar.h).
 //
 // Originally built dynamic-registrations-only (dynamic-grammar-loading
 // follow-up, as DynamicMode.h); widened and renamed (this follow-up) once
@@ -52,7 +52,7 @@ void ClearAllModeCaches();
 // first, then "<key>-mode" against the language registry (registered
 // shadows bundled -- see LanguageRegistry.h), each definition-backed mode
 // rebuilt fresh per lookup. std::nullopt if name matches nothing -- not an
-// error, mirroring treesitter::LanguageByName's own "caller falls back
+// error, mirroring grammar::LanguageByName's own "caller falls back
 // gracefully" convention.
 [[nodiscard]] std::optional<Mode> ModeByName(const std::string& name);
 
@@ -99,8 +99,8 @@ void SetModeForFilename(const std::string& filename, const std::string& modeName
 
 // per-buffer-mode-cache follow-up: memoized ModeForBuffer, keyed by buffer
 // identity. A Mode's highlight/fold/expandSelection/sexpMotion closures
-// each carry a shared_ptr<treesitter::Parser>/Query/parsed-tree cache
-// (Mode.cpp's TreeSitterModeFromLanguage) -- ModeForBuffer rebuilds all of
+// each carry a shared_ptr<grammar::Parser>/Query/parsed-tree cache
+// (Mode.cpp's GrammarModeFromLanguage) -- ModeForBuffer rebuilds all of
 // that from scratch on every call, so calling it fresh on every buffer
 // switch (as WindowManager used to) silently discarded an already-parsed
 // tree the moment the user looked at a different buffer, forcing a full

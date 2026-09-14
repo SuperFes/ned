@@ -6,10 +6,10 @@
 
 #include "Editor/LanguageDefinition.h"
 #include "Editor/ModeInternal.h"
-#include "Editor/TreeSitter/IncrementalParse.h"
-#include "Editor/TreeSitter/Node.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/IncrementalParse.h"
+#include "Editor/Grammar/Node.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/Tree.h"
 
 namespace ned::editor::languages {
 
@@ -55,15 +55,15 @@ namespace {
         mode.testDiscovery = [inner = std::move(mode.testDiscovery), parser = context.parser,
                               sharedParse = context.sharedParse](std::string_view bufferText) -> std::vector<TestMarker> {
             std::vector<TestMarker> markers = inner(bufferText);
-            const treesitter::Tree& tree    = sharedParse->Update(*parser, bufferText);
+            const grammar::Tree& tree    = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return markers;
             }
             for (TestMarker& marker : markers) {
-                treesitter::Node node = tree.RootNode().NamedDescendantForByteRange(
+                grammar::Node node = tree.RootNode().NamedDescendantForByteRange(
                     marker.startByte, marker.endByte > marker.startByte ? marker.endByte - 1 : marker.startByte);
                 while (!node.IsNull() && node.StartByte() >= marker.startByte) {
-                    const treesitter::Node sibling = node.NextNamedSibling();
+                    const grammar::Node sibling = node.NextNamedSibling();
                     if (!sibling.IsNull()) {
                         if (sibling.Type() == "compound_statement" && sibling.StartByte() >= marker.endByte &&
                             sibling.StartByte() <= marker.endByte + 2) {

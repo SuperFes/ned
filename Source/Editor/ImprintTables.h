@@ -2,7 +2,7 @@
 // The delimited-body imprint for each bundled language, as a compiled-in
 // table rather than something read from a grammar.json at runtime.
 //
-// `TreeSitter/GrammarImprint.h` derives an imprint by parsing a
+// `Grammar/GrammarImprint.h` derives an imprint by parsing a
 // grammar.json. That file only exists in the vendored ThirdParty/
 // tree-sitter-grammars/ tree (Tools/vendor-grammars.py) -- it is not
 // installed, and an installed `ned` has no access to it -- so the table has

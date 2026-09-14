@@ -6,32 +6,32 @@
 #include <vector>
 
 #include "Editor/Parse/Node.h"
-#include "Editor/TreeSitter/IncrementalParse.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/QueryMatcher.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/IncrementalParse.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/QueryMatcher.h"
+#include "Editor/Grammar/Tree.h"
 
-using namespace ned::editor::treesitter;
+using namespace ned::editor::grammar;
 
-TEST_CASE("LanguageByName finds a bundled grammar", "[TreeSitter]") {
+TEST_CASE("LanguageByName finds a bundled grammar", "[Grammar]") {
     const std::optional<Language> language = LanguageByName("json");
     REQUIRE(language.has_value());
     REQUIRE(language->Raw() != nullptr);
 }
 
-TEST_CASE("LanguageByName returns nullopt for an unbundled name", "[TreeSitter]") {
+TEST_CASE("LanguageByName returns nullopt for an unbundled name", "[Grammar]") {
     REQUIRE_FALSE(LanguageByName("not-a-real-language").has_value());
 }
 
-TEST_CASE("Parser::Parse produces a non-null tree for valid JSON", "[TreeSitter]") {
+TEST_CASE("Parser::Parse produces a non-null tree for valid JSON", "[Grammar]") {
     Parser parser(*LanguageByName("json"));
     Tree   tree = parser.Parse(R"({"a": 1})");
 
     REQUIRE_FALSE(tree.IsNull());
 }
 
-TEST_CASE("Tree::RootNode returns the grammar's document node spanning the whole input", "[TreeSitter]") {
+TEST_CASE("Tree::RootNode returns the grammar's document node spanning the whole input", "[Grammar]") {
     Parser            parser(*LanguageByName("json"));
     const std::string text = R"({"a": 1})";
     Tree              tree = parser.Parse(text);
@@ -43,7 +43,7 @@ TEST_CASE("Tree::RootNode returns the grammar's document node spanning the whole
     REQUIRE(root.EndByte() == text.size());
 }
 
-TEST_CASE("Node::Child navigates into the parse tree", "[TreeSitter]") {
+TEST_CASE("Node::Child navigates into the parse tree", "[Grammar]") {
     Parser parser(*LanguageByName("json"));
     Tree   tree = parser.Parse(R"({"a": 1})");
 
@@ -54,7 +54,7 @@ TEST_CASE("Node::Child navigates into the parse tree", "[TreeSitter]") {
     REQUIRE(object.Type() == "object");
 }
 
-TEST_CASE("Node::Parent walks up to the enclosing node, and to a null Node at the root", "[TreeSitter]") {
+TEST_CASE("Node::Parent walks up to the enclosing node, and to a null Node at the root", "[Grammar]") {
     Parser            parser(*LanguageByName("json"));
     const std::string text = R"({"a": 1})";
     Tree              tree = parser.Parse(text);
@@ -70,7 +70,7 @@ TEST_CASE("Node::Parent walks up to the enclosing node, and to a null Node at th
     REQUIRE(root.Parent().IsNull());
 }
 
-TEST_CASE("Node::IsNamed distinguishes a grammar rule from an anonymous punctuation token", "[TreeSitter]") {
+TEST_CASE("Node::IsNamed distinguishes a grammar rule from an anonymous punctuation token", "[Grammar]") {
     Parser            parser(*LanguageByName("json"));
     const std::string text = R"({"a": 1})";
     Tree              tree = parser.Parse(text);
@@ -83,7 +83,7 @@ TEST_CASE("Node::IsNamed distinguishes a grammar rule from an anonymous punctuat
     REQUIRE_FALSE(object.Child(0).IsNamed());
 }
 
-TEST_CASE("Node::NamedDescendantForByteRange finds the smallest named node containing a byte range", "[TreeSitter]") {
+TEST_CASE("Node::NamedDescendantForByteRange finds the smallest named node containing a byte range", "[Grammar]") {
     Parser            parser(*LanguageByName("json"));
     const std::string text = R"({"a": 1})";
     Tree              tree = parser.Parse(text);
@@ -100,7 +100,7 @@ TEST_CASE("Node::NamedDescendantForByteRange finds the smallest named node conta
 }
 
 // Emacs-keymap-round-2 follow-up (forward-sexp/backward-sexp).
-TEST_CASE("Node::NextNamedSibling/PrevNamedSibling walk between sibling nodes", "[TreeSitter]") {
+TEST_CASE("Node::NextNamedSibling/PrevNamedSibling walk between sibling nodes", "[Grammar]") {
     Parser            parser(*LanguageByName("json"));
     const std::string text = "[1, 2, 3]";
     Tree              tree = parser.Parse(text);
@@ -124,7 +124,7 @@ TEST_CASE("Node::NextNamedSibling/PrevNamedSibling walk between sibling nodes", 
     REQUIRE(first.PrevNamedSibling().IsNull());
 }
 
-TEST_CASE("QueryMatcher::Captures finds string and number literals with correct byte ranges", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures finds string and number literals with correct byte ranges", "[Grammar]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": 1})";
@@ -142,7 +142,7 @@ TEST_CASE("QueryMatcher::Captures finds string and number literals with correct 
     REQUIRE(text.substr(captures[1].startByte, captures[1].endByte - captures[1].startByte) == "1");
 }
 
-TEST_CASE("QueryMatcher::Captures evaluates #eq? -- only a matching pair passes", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures evaluates #eq? -- only a matching pair passes", "[Grammar]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": "a", "b": "c"})";
@@ -158,7 +158,7 @@ TEST_CASE("QueryMatcher::Captures evaluates #eq? -- only a matching pair passes"
     REQUIRE(text.substr(captures[1].startByte, captures[1].endByte - captures[1].startByte) == "\"a\"");
 }
 
-TEST_CASE("QueryMatcher::Captures evaluates #match? against a captured node's own text", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures evaluates #match? against a captured node's own text", "[Grammar]") {
     // The exact real-world case nvim-treesitter's own C query uses this
     // predicate for: an ALL-CAPS identifier reads as a constant.
     const Language    language = *LanguageByName("c");
@@ -173,7 +173,7 @@ TEST_CASE("QueryMatcher::Captures evaluates #match? against a captured node's ow
     REQUIRE(text.substr(captures[0].startByte, captures[0].endByte - captures[0].startByte) == "MAX_SIZE");
 }
 
-TEST_CASE("QueryMatcher::Captures translates Lua's %u pattern class for #lua-match?", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures translates Lua's %u pattern class for #lua-match?", "[Grammar]") {
     // The exact real-world case in the vendored nvim-treesitter cpp query
     // (constructor-name detection): "^%u" has no ECMAScript meaning as-is.
     const Language    language = *LanguageByName("c");
@@ -188,7 +188,7 @@ TEST_CASE("QueryMatcher::Captures translates Lua's %u pattern class for #lua-mat
     REQUIRE(text.substr(captures[0].startByte, captures[0].endByte - captures[0].startByte) == "Foo");
 }
 
-TEST_CASE("QueryMatcher::Captures evaluates #any-of? against a literal set", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures evaluates #any-of? against a literal set", "[Grammar]") {
     const Language    language = *LanguageByName("c");
     Parser            parser(language);
     const std::string text = "int foo; int bar; int baz;";
@@ -203,7 +203,7 @@ TEST_CASE("QueryMatcher::Captures evaluates #any-of? against a literal set", "[T
 }
 
 TEST_CASE("QueryMatcher::Captures evaluates #has-parent?/#has-ancestor? -- immediate vs. any level",
-          "[TreeSitter]") {
+          "[Grammar]") {
     // Both numbers' immediate parent is "array", not "object" -- but
     // "object" is still an ancestor further up (array -> pair -> object).
     // This is exactly the distinction #has-parent? (immediate only) vs.
@@ -223,7 +223,7 @@ TEST_CASE("QueryMatcher::Captures evaluates #has-parent?/#has-ancestor? -- immed
     REQUIRE(hasAncestorObject.Captures(tree.RootNode(), text).size() == 2);
 }
 
-TEST_CASE("QueryMatcher::Captures never suppresses a match for a predicate it doesn't recognize", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Captures never suppresses a match for a predicate it doesn't recognize", "[Grammar]") {
     // #set! is a real, non-filtering directive query files use for match
     // priority -- and any other unrecognized predicate name gets the same
     // treatment: inert, never suppresses a match. Matches the pre-existing
@@ -240,7 +240,7 @@ TEST_CASE("QueryMatcher::Captures never suppresses a match for a predicate it do
     REQUIRE(captures.size() == 1);
 }
 
-TEST_CASE("QueryMatcher::Matches groups captures from the same match together, not scrambled across matches", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Matches groups captures from the same match together, not scrambled across matches", "[Grammar]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": 1, "b": 2})";
@@ -260,7 +260,7 @@ TEST_CASE("QueryMatcher::Matches groups captures from the same match together, n
     REQUIRE(text.substr(matches[1].captures[1].startByte, matches[1].captures[1].endByte - matches[1].captures[1].startByte) == "2");
 }
 
-TEST_CASE("QueryMatcher::Matches resolves a #set! string operand into setDirectives", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Matches resolves a #set! string operand into setDirectives", "[Grammar]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": 1})";
@@ -273,7 +273,7 @@ TEST_CASE("QueryMatcher::Matches resolves a #set! string operand into setDirecti
     REQUIRE(matches[0].setDirectives.at("injection.language") == "javascript");
 }
 
-TEST_CASE("QueryMatcher::Matches stores an empty value for a zero-operand #set! directive", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Matches stores an empty value for a zero-operand #set! directive", "[Grammar]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": 1})";
@@ -287,7 +287,7 @@ TEST_CASE("QueryMatcher::Matches stores an empty value for a zero-operand #set! 
     REQUIRE(matches[0].setDirectives.at("injection.combined").empty());
 }
 
-TEST_CASE("QueryMatcher::Matches still respects predicate filtering, e.g. #eq?", "[TreeSitter]") {
+TEST_CASE("QueryMatcher::Matches still respects predicate filtering, e.g. #eq?", "[Grammar]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
     const std::string text = R"({"a": "a", "b": "c"})";
@@ -300,12 +300,12 @@ TEST_CASE("QueryMatcher::Matches still respects predicate filtering, e.g. #eq?",
     REQUIRE(matches.size() == 1);
 }
 
-TEST_CASE("QueryMatcher constructor throws on a malformed query", "[TreeSitter]") {
+TEST_CASE("QueryMatcher constructor throws on a malformed query", "[Grammar]") {
     const Language language = *LanguageByName("json");
     REQUIRE_THROWS_AS(QueryMatcher(language, "(not_a_real_node_type) @foo"), std::runtime_error);
 }
 
-TEST_CASE("Parser is move-constructible and move-assignable", "[TreeSitter]") {
+TEST_CASE("Parser is move-constructible and move-assignable", "[Grammar]") {
     Parser parser(*LanguageByName("json"));
     Parser moved(std::move(parser));
 
@@ -318,7 +318,7 @@ TEST_CASE("Parser is move-constructible and move-assignable", "[TreeSitter]") {
     REQUIRE_FALSE(secondTree.IsNull());
 }
 
-TEST_CASE("Tree is move-constructible and move-assignable", "[TreeSitter]") {
+TEST_CASE("Tree is move-constructible and move-assignable", "[Grammar]") {
     Parser parser(*LanguageByName("json"));
     Tree   tree(parser.Parse(R"({"a": 1})"));
     Tree   moved(std::move(tree));
@@ -351,7 +351,7 @@ void RequireNodesMatch(const Node& a, const Node& b) {
 
 } // namespace
 
-TEST_CASE("IncrementalParseCache returns the cached tree unchanged when text is identical", "[TreeSitter]") {
+TEST_CASE("IncrementalParseCache returns the cached tree unchanged when text is identical", "[Grammar]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
     const std::string     text = R"({"a": 1})";
@@ -362,7 +362,7 @@ TEST_CASE("IncrementalParseCache returns the cached tree unchanged when text is 
     REQUIRE(&first == &second);
 }
 
-TEST_CASE("IncrementalParseCache's incremental reparse matches a fresh full parse after a single edit", "[TreeSitter]") {
+TEST_CASE("IncrementalParseCache's incremental reparse matches a fresh full parse after a single edit", "[Grammar]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
 
@@ -404,7 +404,7 @@ TEST_CASE("IncrementalParseCache's incremental reparse matches a fresh full pars
 // (Tree::Clone(), retaining a second reference across the call).
 TEST_CASE("Node subtree identity for an edited node is not a safe content signal unless the prior generation is "
           "retained",
-          "[TreeSitter]") {
+          "[Grammar]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
 
@@ -448,7 +448,7 @@ TEST_CASE("Node subtree identity for an edited node is not a safe content signal
 // old one. This is the shape a real per-subtree fact cache must use: hold
 // the Tree its facts were derived against until the next reconciliation.
 TEST_CASE("Tree::Clone() retained across Update() makes subtree identity a safe content signal",
-          "[TreeSitter]") {
+          "[Grammar]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
 
@@ -474,7 +474,7 @@ TEST_CASE("Tree::Clone() retained across Update() makes subtree identity a safe 
     CHECK(ned::editor::parse::NodeSubtreeIdentity(bPairAfter.Raw()) != bIdentityBefore);
 }
 
-TEST_CASE("IncrementalParseCache handles an edit that inserts newlines", "[TreeSitter]") {
+TEST_CASE("IncrementalParseCache handles an edit that inserts newlines", "[Grammar]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
 
@@ -492,7 +492,7 @@ TEST_CASE("IncrementalParseCache handles an edit that inserts newlines", "[TreeS
 // per-subtree-fact-memoization follow-up: LastEdit() lets a capability
 // closure (Mode.cpp's symbolKind, via MatchCache) share this cache's own
 // diff instead of re-diffing text independently.
-TEST_CASE("IncrementalParseCache::LastEdit reports nullopt on a cache hit and on the first call", "[TreeSitter]") {
+TEST_CASE("IncrementalParseCache::LastEdit reports nullopt on a cache hit and on the first call", "[Grammar]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
 
@@ -505,7 +505,7 @@ TEST_CASE("IncrementalParseCache::LastEdit reports nullopt on a cache hit and on
     REQUIRE_FALSE(cache.LastEdit().has_value());
 }
 
-TEST_CASE("IncrementalParseCache::LastEdit reports the exact changed region for a real edit", "[TreeSitter]") {
+TEST_CASE("IncrementalParseCache::LastEdit reports the exact changed region for a real edit", "[Grammar]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
 
@@ -522,7 +522,7 @@ TEST_CASE("IncrementalParseCache::LastEdit reports the exact changed region for 
     CHECK(span->newEnd == 17);
 }
 
-TEST_CASE("IncrementalParseCache stays correct across a sequence of edits", "[TreeSitter]") {
+TEST_CASE("IncrementalParseCache stays correct across a sequence of edits", "[Grammar]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
 

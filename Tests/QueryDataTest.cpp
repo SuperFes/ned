@@ -9,8 +9,8 @@
 
 #include "Editor/LanguageFiles.h"
 #include "Editor/QueryData.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/QueryMatcher.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/QueryMatcher.h"
 
 namespace fs = std::filesystem;
 using ned::editor::querydata::ConvertScmToJanet;
@@ -214,10 +214,10 @@ TEST_CASE("Every embedded query file loads, and compiles under its grammar", "[Q
         REQUIRE_FALSE(forms.empty());
         // <name>/... -> the grammar it targets; jank has no files of its own.
         const std::string grammar  = path.substr(0, path.find('/'));
-        const auto        language = ned::editor::treesitter::LanguageByName(grammar);
+        const auto        language = ned::editor::grammar::LanguageByName(grammar);
         REQUIRE(language.has_value());
         const ned::editor::QueryText text = ned::editor::CompileQueryFiles({path});
-        REQUIRE_NOTHROW(ned::editor::treesitter::QueryMatcher(*language, text.text));
+        REQUIRE_NOTHROW(ned::editor::grammar::QueryMatcher(*language, text.text));
         ++checked;
     }
     REQUIRE(checked >= 90);

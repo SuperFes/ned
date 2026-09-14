@@ -22,11 +22,11 @@
 #include "Editor/Parse/Node.h"
 #include "Editor/Parse/Parser.h"
 #include "Editor/Parse/Sexp.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/MatchCache.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/QueryMatcher.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/MatchCache.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/QueryMatcher.h"
+#include "Editor/Grammar/Tree.h"
 #include "Text/OffsetRemap.h"
 
 // Phase 4b M0: the conformance bar for the parsing-engine replacement.
@@ -64,10 +64,10 @@
 namespace {
 
 namespace fs = std::filesystem;
-using ned::editor::treesitter::Language;
-using ned::editor::treesitter::LanguageByName;
-using ned::editor::treesitter::Parser;
-using ned::editor::treesitter::Tree;
+using ned::editor::grammar::Language;
+using ned::editor::grammar::LanguageByName;
+using ned::editor::grammar::Parser;
+using ned::editor::grammar::Tree;
 
 fs::path DepsDir() {
     return fs::path(NED_REPO_ROOT) / "ThirdParty" / "tree-sitter-grammars";
@@ -980,7 +980,7 @@ std::optional<std::string> HighlightsQueryTextFor(std::string_view grammarName) 
     return std::nullopt;
 }
 
-std::string DescribeMatchCacheMatch(const ned::editor::treesitter::QueryMatch& match) {
+std::string DescribeMatchCacheMatch(const ned::editor::grammar::QueryMatch& match) {
     std::string out = "{root[" + std::to_string(match.rootStartByte) + "," + std::to_string(match.rootEndByte) + ")";
     for (const auto& capture : match.captures) {
         out += " @" + capture.name + "[" + std::to_string(capture.startByte) + "," + std::to_string(capture.endByte) +
@@ -990,7 +990,7 @@ std::string DescribeMatchCacheMatch(const ned::editor::treesitter::QueryMatch& m
     return out;
 }
 
-std::vector<std::string> DescribeMatchCacheMatches(const std::vector<ned::editor::treesitter::QueryMatch>& matches) {
+std::vector<std::string> DescribeMatchCacheMatches(const std::vector<ned::editor::grammar::QueryMatch>& matches) {
     std::vector<std::string> out;
     out.reserve(matches.size());
     for (const auto& match : matches) {
@@ -1031,7 +1031,7 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the u
         if (!highlightsText.has_value()) {
             continue; // no bundled highlights for this grammar -- nothing to reconcile
         }
-        const ned::editor::treesitter::QueryMatcher matcher(*language, *highlightsText);
+        const ned::editor::grammar::QueryMatcher matcher(*language, *highlightsText);
 
         std::vector<fs::path> files;
         for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
@@ -1052,7 +1052,7 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the u
                     continue;
 
                 std::string                          text = item.input;
-                ned::editor::treesitter::MatchCache  cache;
+                ned::editor::grammar::MatchCache  cache;
                 Parser parser(*language);
                 {
                     const Tree tree = parser.Parse(text);

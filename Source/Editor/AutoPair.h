@@ -29,7 +29,7 @@
 
 namespace ned::editor {
 
-// The pair table every TreeSitterModeFromLanguage-built Mode starts from:
+// The pair table every GrammarModeFromLanguage-built Mode starts from:
 // (), [], {}, "", ''. Exposed here rather than only living inline inside
 // Mode.cpp's factories, so Commands.cpp and this file's own tests share one
 // definition instead of two copies drifting apart. auto-pair-round-2

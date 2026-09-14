@@ -28,10 +28,10 @@
 #include "Editor/BundledLanguages.h"
 #include "Editor/LanguageFiles.h"
 #include "Editor/QueryData.h"
-#include "Editor/TreeSitter/Languages.h"
-#include "Editor/TreeSitter/Parser.h"
-#include "Editor/TreeSitter/QueryMatcher.h"
-#include "Editor/TreeSitter/Tree.h"
+#include "Editor/Grammar/Languages.h"
+#include "Editor/Grammar/Parser.h"
+#include "Editor/Grammar/QueryMatcher.h"
+#include "Editor/Grammar/Tree.h"
 
 using ned::editor::BundledLanguages;
 using ned::editor::CompileQueryFiles;
@@ -41,11 +41,11 @@ using ned::editor::QueryFiles;
 using ned::editor::querydata::Form;
 using ned::editor::querydata::ParseJanet;
 using ned::editor::querydata::ParseScm;
-using ned::editor::treesitter::LanguageByName;
-using ned::editor::treesitter::Query;
-using ned::editor::treesitter::QueryCapture;
-using ned::editor::treesitter::QueryMatch;
-using ned::editor::treesitter::QueryMatcher;
+using ned::editor::grammar::LanguageByName;
+using ned::editor::grammar::Query;
+using ned::editor::grammar::QueryCapture;
+using ned::editor::grammar::QueryMatch;
+using ned::editor::grammar::QueryMatcher;
 
 namespace {
 
@@ -662,7 +662,7 @@ TEST_CASE("QueryMatcher emission order: a same-byte tie orders by finish positio
     const QueryMatcher matcher(*language,
                                "(declaration type: (_) @a declarator: (identifier))\n(primitive_type) @b\n");
     const std::string  source = "int f;";
-    const auto         tree   = ned::editor::treesitter::Parser(*language).Parse(source);
+    const auto         tree   = ned::editor::grammar::Parser(*language).Parse(source);
 
     const std::vector<QueryCapture> captures = matcher.Captures(tree.RootNode(), source);
     REQUIRE(captures.size() == 2);
@@ -682,7 +682,7 @@ TEST_CASE("QueryMatcher supports '+' for foreign queries: one maximal run, no em
     REQUIRE(language);
     const QueryMatcher matcher(*language, "(translation_unit (declaration)+ @d)\n");
     const std::string  source = "int a;\nint b;\n";
-    const auto         tree   = ned::editor::treesitter::Parser(*language).Parse(source);
+    const auto         tree   = ned::editor::grammar::Parser(*language).Parse(source);
 
     const std::vector<QueryMatch> matches = matcher.Matches(tree.RootNode(), source);
     REQUIRE(matches.size() == 1);

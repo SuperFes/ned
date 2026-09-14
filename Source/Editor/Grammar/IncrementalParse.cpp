@@ -2,14 +2,14 @@
 
 #include <algorithm>
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 namespace {
 
     // Row/column of byte offset `offset` within `text` (0-indexed row,
     // byte-indexed column within that row --
     // matching the codepoint-agnostic byte offsets this project's own
-    // TreeSitter layer already uses throughout). A plain linear scan, not
+    // Grammar layer already uses throughout). A plain linear scan, not
     // reused/cached across calls -- IncrementalParseCache calls this at most
     // three times per edit, each bounded by the edit's own offset into text
     // that's already fully resident, cheap next to the parse it precedes.
@@ -78,4 +78,4 @@ const Tree& IncrementalParseCache::Update(const Parser& parser, std::string_view
     return *lastTree_;
 }
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar

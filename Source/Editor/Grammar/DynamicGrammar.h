@@ -7,15 +7,15 @@
 // rely on, just resolved at runtime instead of link time.
 //
 
-#ifndef NED_EDITOR_TREESITTER_DYNAMICGRAMMAR_H
-#define NED_EDITOR_TREESITTER_DYNAMICGRAMMAR_H
+#ifndef NED_EDITOR_GRAMMAR_DYNAMICGRAMMAR_H
+#define NED_EDITOR_GRAMMAR_DYNAMICGRAMMAR_H
 
 #include <filesystem>
 #include <string_view>
 
 #include "Parser.h"
 
-namespace ned::editor::treesitter {
+namespace ned::editor::grammar {
 
 // Loads languageName's grammar from libraryPath (dlopen + dlsym
 // "tree_sitter_<languageName>"), returning a Language wrapping the result.
@@ -31,6 +31,6 @@ namespace ned::editor::treesitter {
 // yet" scope cut already established for janet::Environment.
 [[nodiscard]] Language LoadDynamicLanguage(const std::filesystem::path& libraryPath, std::string_view languageName);
 
-} // namespace ned::editor::treesitter
+} // namespace ned::editor::grammar
 
-#endif // NED_EDITOR_TREESITTER_DYNAMICGRAMMAR_H
+#endif // NED_EDITOR_GRAMMAR_DYNAMICGRAMMAR_H

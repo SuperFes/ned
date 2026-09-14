@@ -219,21 +219,21 @@ add_library(ned_lib STATIC
         Editor/Terminal/Config.cpp
         Editor/Terminal/Emulator.cpp
         Editor/Terminal/PtyProcess.cpp
-        Editor/TreeSitter/Node.cpp
+        Editor/Grammar/Node.cpp
         Editor/Imprint.cpp
         Editor/ImprintTables.cpp
         Editor/ImprintFold.cpp
         Editor/ImprintBracket.cpp
         Editor/ImprintIndent.cpp
-        Editor/TreeSitter/GrammarImprint.cpp
-        Editor/TreeSitter/Tree.cpp
-        Editor/TreeSitter/Parser.cpp
-        Editor/TreeSitter/IncrementalParse.cpp
-        Editor/TreeSitter/QueryPredicates.cpp
-        Editor/TreeSitter/QueryMatcher.cpp
-        Editor/TreeSitter/MatchCache.cpp
-        Editor/TreeSitter/Languages.cpp
-        Editor/TreeSitter/DynamicGrammar.cpp
+        Editor/Grammar/GrammarImprint.cpp
+        Editor/Grammar/Tree.cpp
+        Editor/Grammar/Parser.cpp
+        Editor/Grammar/IncrementalParse.cpp
+        Editor/Grammar/QueryPredicates.cpp
+        Editor/Grammar/QueryMatcher.cpp
+        Editor/Grammar/MatchCache.cpp
+        Editor/Grammar/Languages.cpp
+        Editor/Grammar/DynamicGrammar.cpp
         Editor/Parse/Green.cpp
         Editor/Parse/Lexer.cpp
         Editor/Parse/Stack.cpp
