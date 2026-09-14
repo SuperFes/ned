@@ -1,0 +1,22 @@
+[book]
+title = "ned User Guide"
+description = "Installing, configuring, and using ned -- an Emacs-class terminal editor scriptable throughout in Janet."
+authors = ["ned contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/SuperFes/ned"
+edit-url-template = "https://github.com/SuperFes/ned/edit/main/UserGuide/src/{path}"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+
+# Commands.md/Scripting.md/LanguageSetup.md/Themes.md are transcluded from
+# ../.. (Docs/) via {{#include}} rather than copied, so the generated,
+# drift-guarded references (see Tests/CommandReferenceTest.cpp and
+# Tests/ThemeKeyDocsTest.cpp) stay single-sourced -- this book has no copy
+# of its own to go stale.
+[preprocessor.links]

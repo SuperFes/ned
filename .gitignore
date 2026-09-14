@@ -9,3 +9,8 @@ cmake-build-debug/
 .harper-dictionary.txt
 __pycache__/
 *.pyc
+
+# mdBook build output (Docs/ and UserGuide/ books) -- CI builds these fresh
+# and deploys them to GitHub Pages, never committed.
+/Docs/book/
+/UserGuide/book/
