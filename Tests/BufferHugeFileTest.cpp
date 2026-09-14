@@ -5,6 +5,8 @@
 #include <fstream>
 #include <string>
 
+#include <unistd.h>
+
 #include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -256,7 +258,14 @@ TEST_CASE("Buffer::FromHugeFile SaveToFile does not materialize the whole docume
     }
     chunk.back() = '\n';
 
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_huge_save_rss.txt";
+    // PID-qualified, not just test-unique: this holds an mmap open across a
+    // real ~220MB write for several seconds, and BufferViewHugeStructuralGutterTest's
+    // own fixed-filename cross-process collision (root-caused 2026-09-10) showed
+    // that's exactly the kind of window two ned_tests binaries sharing /tmp can
+    // land in at once (confirmed live -- an ASan SIGBUS here from running this
+    // suite alongside another `ned_tests` invocation against the same path).
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / ("ned_buffer_huge_save_rss_" + std::to_string(::getpid()) + ".txt");
     {
         std::ofstream file(path, std::ios::binary);
         for (std::size_t written = 0; written < kFileSize; written += chunk.size()) {

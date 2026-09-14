@@ -51,6 +51,16 @@ void SetBackgroundActivityDetail(const std::string& name, std::string detail);
 // check both read this.
 [[nodiscard]] std::vector<BackgroundActivity> ActiveBackgroundActivities();
 
+// Test-only: unconditionally empties the registry, bypassing every begin/end
+// count. Real code must never call this -- an owner that wants to stop
+// reporting activity calls EndBackgroundActivity the matching number of
+// times instead. Exists so a test fixture can guarantee this process-wide
+// registry starts and ends each TEST_CASE empty even when an assertion
+// between a Begin and its End throws and skips the End -- the
+// RecentFiles.h/Bookmark.h precedent for this mutex-guarded-static registry
+// pattern.
+void ResetBackgroundActivitiesForTesting();
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_BACKGROUNDACTIVITY_H
