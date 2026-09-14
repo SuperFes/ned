@@ -103,7 +103,7 @@ Register a Janet function as a named, bindable command.
 
 ## `ned/register-language`
 
-Register a language from a directory holding its language.janet -- the exact layout ned's own bundled languages use (Source/Languages/<name>/), so everything a definition can say works: extensions and filenames (claimed automatically, no separate set-mode-for-extension call needed), comment syntax, keymap, query files discovered beside it as <kind>.janet with an upstream/ subdirectory checked first, escapes, LSP root markers, import resolution, injection aliases, snippets. The directory's basename is the language name and its mode is named <name>-mode; a registered name shadows a bundled one, so redefining a bundled language is expected use, as is re-registering. Two keys exist for exactly this path: :grammar-library names a shared library exporting tree_sitter_<grammar> to dlopen (omit it to use a bundled grammar), and :queries-dir names a foreign tree-sitter-layout directory (e.g. /usr/share/tree-sitter/queries/<lang>) scanned per kind as <kind>.janet or <kind>.scm for whatever discovery didn't find. Throws with a file:line message on a malformed definition. Directories under $XDG_CONFIG_HOME/ned/languages/ and a trusted project's .ned/languages/ load automatically at startup through this same path.
+Register a language from a directory holding its language.janet -- the exact layout ned's own bundled languages use (Source/Languages/`<name>`/), so everything a definition can say works: extensions and filenames (claimed automatically, no separate set-mode-for-extension call needed), comment syntax, keymap, query files discovered beside it as `<kind>`.janet with an upstream/ subdirectory checked first, escapes, LSP root markers, import resolution, injection aliases, snippets. The directory's basename is the language name and its mode is named `<name>`-mode; a registered name shadows a bundled one, so redefining a bundled language is expected use, as is re-registering. Two keys exist for exactly this path: :grammar-library names a shared library exporting tree_sitter_`<grammar>` to dlopen (omit it to use a bundled grammar), and :queries-dir names a foreign tree-sitter-layout directory (e.g. /usr/share/tree-sitter/queries/`<lang>`) scanned per kind as `<kind>`.janet or `<kind>`.scm for whatever discovery didn't find. Throws with a file:line message on a malformed definition. Directories under $XDG_CONFIG_HOME/ned/languages/ and a trusted project's .ned/languages/ load automatically at startup through this same path.
 
 ## `ned/register-snippet`
 
@@ -367,7 +367,7 @@ Enable or disable requesting diagnostics via textDocument/diagnostic on every co
 
 ## `ned/set-lsp-root-markers`
 
-Override the root-marker filenames ned looks for when resolving which directory to initialize a language's LSP server against: (language markers), e.g. (ned/set-lsp-root-markers "rust" ["Cargo.toml"]). Walks upward from an opened buffer's own directory for the nearest ancestor containing one of these as an immediate child; falls back to editor::ProjectRoot() when none match (or markers is empty and language has no compiled-in default) -- this is what lets a monorepo subpackage (its own package.json/pyproject.toml/Cargo.toml/compile_commands.json, ...) get its own LSP root distinct from the outer repo's single .git. An empty markers list clears the override, reverting to the compiled-in default (most bundled languages carry one -- see each Source/Languages/<name>/language.janet's :lsp-root-markers) rather than to no markers at all.
+Override the root-marker filenames ned looks for when resolving which directory to initialize a language's LSP server against: (language markers), e.g. (ned/set-lsp-root-markers "rust" ["Cargo.toml"]). Walks upward from an opened buffer's own directory for the nearest ancestor containing one of these as an immediate child; falls back to editor::ProjectRoot() when none match (or markers is empty and language has no compiled-in default) -- this is what lets a monorepo subpackage (its own package.json/pyproject.toml/Cargo.toml/compile_commands.json, ...) get its own LSP root distinct from the outer repo's single .git. An empty markers list clears the override, reverting to the compiled-in default (most bundled languages carry one -- see each Source/Languages/`<name>`/language.janet's :lsp-root-markers) rather than to no markers at all.
 
 ## `ned/set-lsp-semantic-highlighting`
 
@@ -407,7 +407,7 @@ Set the minimap's width in columns (default 5). Each column packs 2 braille sub-
 
 ## `ned/set-mode-for-extension`
 
-Map a file extension (with or without a leading '.') to a mode name -- either a registered language's <name>-mode (ned/register-language), or one of ned's own built-in mode names (e.g. "php-mode", "python-mode"). Checked before ned's own built-in extension table, so this can override a bundled mapping too, not just add a new one.
+Map a file extension (with or without a leading '.') to a mode name -- either a registered language's `<name>`-mode (ned/register-language), or one of ned's own built-in mode names (e.g. "php-mode", "python-mode"). Checked before ned's own built-in extension table, so this can override a bundled mapping too, not just add a new one.
 
 ## `ned/set-mode-for-filename`
 
