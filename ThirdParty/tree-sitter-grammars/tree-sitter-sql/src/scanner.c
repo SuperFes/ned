@@ -124,7 +124,11 @@ bool tree_sitter_sql_external_scanner_scan(void *payload, TSLexer *lexer, const 
       return false;
     }
 
+    // ned local fix (unreported upstream as of 2026-09-14): start_tag leaks
+    // on this early return -- confirmed still present on upstream master,
+    // caught by LeakSanitizer via Tests/ParseConformanceTest.cpp.
     if (state->start_tag != NULL && strcmp(state->start_tag, start_tag) == 0) {
+      free(start_tag);
       return false;
     }
 
@@ -179,6 +183,14 @@ unsigned tree_sitter_sql_external_scanner_serialize(void *payload, char *buffer)
 
 void tree_sitter_sql_external_scanner_deserialize(void *payload, const char *buffer, unsigned length) {
   LexerState *state = (LexerState *)payload;
+  // ned local fix (unreported upstream as of 2026-09-14): overwriting
+  // start_tag here without freeing it first leaks whatever a prior
+  // scan()/deserialize() call left allocated -- deserialize runs on every
+  // lex attempt while in this scanner's lex state, so a real parse leaks
+  // once per such attempt. Confirmed still present on upstream master.
+  if (state->start_tag != NULL) {
+    free(state->start_tag);
+  }
   state->start_tag = NULL;
   // A length of 1 can't exists.
   if (length > 1) {
