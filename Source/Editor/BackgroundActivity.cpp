@@ -61,4 +61,9 @@ std::vector<BackgroundActivity> ActiveBackgroundActivities() {
     return result;
 }
 
+void ResetBackgroundActivitiesForTesting() {
+    const std::lock_guard<std::mutex> lock(activityMutex);
+    Activities().clear();
+}
+
 } // namespace ned::editor
