@@ -198,9 +198,9 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Twelve languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, C#,
-TypeScript, TSX, Kotlin, and C**
-(`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp,kotlin,c}/format.janet`
+**Thirteen languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, C#,
+TypeScript, TSX, Kotlin, C, and Bash**
+(`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp,kotlin,c,bash}/format.janet`
 -- the same capture NAMES throughout, over each grammar's own different node types: cpp's
 `compound_statement`/`condition_clause`, JavaScript's
 `statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`,
@@ -209,8 +209,10 @@ Go's `block`/`parenthesized_expression`, PHP's
 `block`/`parenthesized_expression`, C#'s `block`/paired anonymous parens tokens, Kotlin's
 `function_body`+a text predicate/paired anonymous parens tokens, C's
 `compound_statement`/`parenthesized_expression` (a DIFFERENT node type from cpp's own
-`condition_clause`, despite the grammars' close relationship); TypeScript and TSX have no
-`format.janet` files of their own at all, see below), all wired into `format-buffer`'s and
+`condition_clause`, despite the grammars' close relationship), Bash's `function_definition`/
+`compound_statement` (the only brace-delimited construct in the whole grammar); TypeScript
+and TSX have no `format.janet` files of their own at all, see below), all wired into
+`format-buffer`'s and
 `--format`'s Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and
 all shipping no built-in default -- neither does anything until you configure a rule:
 
@@ -766,6 +768,36 @@ capture in the first place.
 Live-verified via `ned --format` on a real project `.ned/format.janet` combining all three
 rule kinds, output re-checked with `gcc -Wall -Wextra` -- 0 errors, 0 warnings. Full suite:
 4645 cases.
+
+## Bash: the first genuinely PARTIAL language, not a full brace-carrying one
+
+Bash is the thirteenth language, and the first one this rollout has added where the
+brace-carrying template only partly applies -- verified live that `function_definition`
+(covering all three real syntaxes: `f() { }`, `function g { }`, `function h() { }`, which
+all produce the identical node) is the **only** brace-delimited construct in the whole
+grammar. `if`/`while`/`for`/`case` all use keyword delimiters instead (`then`/`fi`,
+`do`/`done`, `in`/`esac`), never braces, and a subshell uses `(...)` parens, not braces
+either -- so `bash/format.janet` names only `brace.function` and `def.toplevel`. There is
+no `brace.control`, `brace.class`, `control.parens`, or `def.method` in this file at all --
+a real language absence for each, not a scope cut, the same kind `go/format.janet`'s own
+missing `def.method` and `c/format.janet`'s own missing `def.method` already document, just
+covering more of the vocabulary at once this time.
+
+A nested function definition (`f() { g() { ... } }`, which Bash genuinely allows) still
+gets its own `brace.function` capture -- brace PLACEMENT applies to any function's braces
+regardless of nesting -- but is deliberately NOT a separate `def.toplevel`: only a direct
+child of `program` counts, the same "direct child of the container" rule every prior
+language's `def.toplevel` already follows, and Bash has no type/class concept for a nested
+function to be a "method" of anyway.
+
+A leading shebang line (`#!/usr/bin/env bash`) is a real preceding sibling in the parse
+tree, so `isFirst` is correctly `false` even for the very first function in an ordinary
+script -- the same lesson Python's own leading `import os`, Go's `package` clause, and
+PHP's `<?php` tag already taught, reconfirmed live rather than assumed to carry over.
+
+Live-verified via `ned --format` on a real project `.ned/format.janet` combining
+`:break`/`:blank`, output re-checked with `bash -n` (syntax check) -- exit 0. Full suite:
+4653 cases.
 
 ## The `--format` CLI
 

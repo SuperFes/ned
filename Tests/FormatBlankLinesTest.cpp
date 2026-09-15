@@ -12,6 +12,7 @@
 
 using ned::editor::ApplyFormatTextEdits;
 using ned::editor::ComputeBlankLineEdits;
+using ned::editor::BashMode;
 using ned::editor::CMode;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
@@ -712,4 +713,45 @@ TEST_CASE("End to end: blank lines applied to a real c-mode buffer", "[FormatBla
     ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "c", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "int f(void) {\n    return 1;\n}\n\nint g(void) {\n    return 2;\n}\n");
+}
+
+TEST_CASE("bash-mode's format.janet names def.toplevel over top-level functions only, not a "
+          "nested one, with correct .first markers",
+          "[FormatBlankLines]") {
+    const Mode mode = BashMode();
+
+    const std::string source = "f() {\n"
+                               "    g() {\n"
+                               "        echo inner\n"
+                               "    }\n"
+                               "}\n"
+                               "h() {\n"
+                               "    echo hi\n"
+                               "}\n";
+    const auto toplevel = CapturesNamed(mode.formatCaptures(source), "def.toplevel");
+    REQUIRE(toplevel.size() == 2); // f() and h() -- the nested g() is not its own def.toplevel
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+}
+
+TEST_CASE("bash-mode's format.janet treats a leading shebang as a real preceding sibling",
+          "[FormatBlankLines]") {
+    // Same lesson python's own leading "import os"/go's "package main"
+    // already taught -- not a bug.
+    const Mode        mode   = BashMode();
+    const std::string source = "#!/usr/bin/env bash\nf() {\n    echo hi\n}\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(source), "def.toplevel")[0].isFirst);
+}
+
+TEST_CASE("End to end: blank lines applied to a real bash-mode buffer", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 1);
+
+    const Mode mode = BashMode();
+    Buffer     buffer("test.sh");
+    buffer.InsertAtPoint("f() {\n    echo hi\n}\ng() {\n    echo bye\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "bash", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "f() {\n    echo hi\n}\n\ng() {\n    echo bye\n}\n");
 }
