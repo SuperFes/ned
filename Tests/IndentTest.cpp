@@ -38,6 +38,7 @@ using ned::editor::OrgMode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::RigidShiftRegion;
+using ned::editor::RubyMode;
 using ned::editor::RustMode;
 using ned::editor::SetIndentStyleForMode;
 using ned::editor::TomlMode;
@@ -682,6 +683,127 @@ TEST_CASE("FishMode indentColumn indents an if-body and aligns end with its own 
     REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // fish's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "end"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
+}
+
+// indent-engine follow-up (ROADMAP.md's own watch-list entry): method/
+// singleton_method/while/until bodies were never reindented at all --
+// Editor/Grammar/GrammarImprint.cpp's static inference can't find any of
+// the four (method/singleton_method's own closer sits inside a
+// mid-sequence CHOICE the flattener doesn't descend into; while/until's
+// own "do" wrapper node is already in the imprint table, but its literal
+// "do" child is grammatically OPTIONAL and elided entirely in the far
+// more common `while x\n...end` style, which ImprintBracket.cpp's
+// DelimitersOf requires to be physically present). Fixed via a
+// hand-authored Source/Languages/ruby/indents.janet -- the same
+// "the imprint can't read it, write a query" precedent every other
+// bundled language's own indents.janet already follows.
+TEST_CASE("RubyMode indentColumn indents a method's own body regardless of parameter "
+          "style, and aligns end with its own def",
+          "[Indent]") {
+    const auto mode = RubyMode();
+
+    Buffer buffer("test.rb");
+    buffer.InsertAtPoint("def foo(a, b)\n1\nend\n");
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 1);             // "1"
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // ruby's own built-in default is width 2 (IndentDefaults.h)
+    const auto [closeStart, closeEnd] = LineRange(buffer, 2);           // "end"
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
+
+    Buffer bareBuffer("test2.rb");
+    bareBuffer.InsertAtPoint("def foo a, b\n1\nend\n");
+    const auto [bareStart, bareEnd] = LineRange(bareBuffer, 1); // "1"
+    REQUIRE(mode.indentColumn(bareBuffer.Text(), bareStart, bareEnd) == 2);
+
+    Buffer noParenBuffer("test3.rb");
+    noParenBuffer.InsertAtPoint("def foo\n1\nend\n");
+    const auto [noParenStart, noParenEnd] = LineRange(noParenBuffer, 1); // "1"
+    REQUIRE(mode.indentColumn(noParenBuffer.Text(), noParenStart, noParenEnd) == 2);
+
+    Buffer singletonBuffer("test4.rb");
+    singletonBuffer.InsertAtPoint("def self.foo\n1\nend\n");
+    const auto [singletonStart, singletonEnd] = LineRange(singletonBuffer, 1); // "1"
+    REQUIRE(mode.indentColumn(singletonBuffer.Text(), singletonStart, singletonEnd) == 2);
+}
+
+// The far more common style -- no literal "do" written at all -- is the
+// one the imprint's own pre-existing table entry can't reach at all
+// (confirmed live via `tree-sitter parse`: the "do"-typed wrapper node
+// has no anonymous "do" child in this form). The explicit-"do" form is
+// checked too, confirming the new query-based capture doesn't regress
+// what the imprint already handled.
+TEST_CASE("RubyMode indentColumn indents a while/until body in BOTH the idiomatic "
+          "keyword-less style and the explicit \"do\" style, aligning end either way",
+          "[Indent]") {
+    const auto mode = RubyMode();
+
+    Buffer buffer("test.rb");
+    buffer.InsertAtPoint("while x\n1\nend\n");
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "1"
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2);
+    const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "end"
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
+
+    Buffer untilBuffer("test2.rb");
+    untilBuffer.InsertAtPoint("until x\n1\nend\n");
+    const auto [untilStart, untilEnd] = LineRange(untilBuffer, 1); // "1"
+    REQUIRE(mode.indentColumn(untilBuffer.Text(), untilStart, untilEnd) == 2);
+
+    Buffer doBuffer("test3.rb");
+    doBuffer.InsertAtPoint("while x do\n1\nend\n");
+    const auto [doStart, doEnd] = LineRange(doBuffer, 1); // "1"
+    REQUIRE(mode.indentColumn(doBuffer.Text(), doStart, doEnd) == 2);
+}
+
+// The real corruption hazard this fix had to avoid: Ruby's own "endless
+// method" (`def f = 1`) has no "end" token at all, so an unconditional
+// "(method) @indent" would open a container nothing ever dedents,
+// over-indenting every subsequent line in the file. Both @indent and
+// @dedent in indents.janet require "end" as a structural (unnamed)
+// child of the SAME pattern, so neither ever fires without the other.
+TEST_CASE("RubyMode indentColumn does not over-indent past an endless method (no \"end\" "
+          "at all, correctly excluded from the indent container)",
+          "[Indent]") {
+    const auto mode = RubyMode();
+    Buffer     buffer("test.rb");
+    buffer.InsertAtPoint("def endless = 1\ndef after\n1\nend\n");
+
+    const auto [afterBodyStart, afterBodyEnd] = LineRange(buffer, 2); // "1"
+    REQUIRE(mode.indentColumn(buffer.Text(), afterBodyStart, afterBodyEnd) == 2);
+    const auto [afterEndStart, afterEndEnd] = LineRange(buffer, 3); // "end"
+    REQUIRE(mode.indentColumn(buffer.Text(), afterEndStart, afterEndEnd) == 0);
+}
+
+// End to end: a real IndentBuffer pass over nested class/method/if/while
+// bodies, applied to a full Buffer and checked as a whole -- not just the
+// computed column list -- per this project's own standing discipline.
+TEST_CASE("End to end: IndentBuffer correctly nests class/method/if/while bodies in a "
+          "real ruby-mode buffer",
+          "[Indent]") {
+    const auto mode = RubyMode();
+    Buffer     buffer("test.rb");
+    buffer.InsertAtPoint("class Greeter\n"
+                         "def greet(name)\n"
+                         "if name\n"
+                         "puts name\n"
+                         "end\n"
+                         "end\n"
+                         "end\n"
+                         "while x\n"
+                         "1\n"
+                         "end\n");
+
+    IndentBuffer(buffer, mode);
+
+    REQUIRE(buffer.Text() == "class Greeter\n"
+                             "  def greet(name)\n"
+                             "    if name\n"
+                             "      puts name\n"
+                             "    end\n"
+                             "  end\n"
+                             "end\n"
+                             "while x\n"
+                             "  1\n"
+                             "end\n");
 }
 
 TEST_CASE("JanetMode indentColumn aligns an ordinary call's continuation right after the opener, and its own "
