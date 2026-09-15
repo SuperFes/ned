@@ -45,6 +45,7 @@
 #include "Editor/FormatBracePlacement.h"
 #include "Editor/FormatConfigParse.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/FormatSpacing.h"
 #include "Editor/Indent.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/BrokerMain.h"
@@ -345,14 +346,19 @@ int RunFormatFiles(const std::vector<std::string>& paths) {
                     ned::editor::IndentBuffer(buffer, mode);
                 }
                 // configurable-formatter-rules follow-up: same pilot Break-kind
-                // (brace placement) step format-buffer's own Native chain runs --
-                // see that command's own comment in Commands.cpp.
+                // (brace placement) and Space-kind steps format-buffer's own Native
+                // chain runs -- see that command's own comment in Commands.cpp.
                 if (mode.formatCaptures) {
                     const std::string languageKey = ned::editor::LanguageKeyForMode(mode);
                     const std::vector<ned::editor::FormatTextEdit> braceEdits =
                         ned::editor::ComputeBracePlacementEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
                     if (!braceEdits.empty()) {
                         ned::editor::ApplyFormatTextEdits(buffer, braceEdits);
+                    }
+                    const std::vector<ned::editor::FormatTextEdit> spaceEdits =
+                        ned::editor::ComputeSpaceEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
+                    if (!spaceEdits.empty()) {
+                        ned::editor::ApplyFormatTextEdits(buffer, spaceEdits);
                     }
                 }
                 ned::editor::ApplyHygienePass(buffer);

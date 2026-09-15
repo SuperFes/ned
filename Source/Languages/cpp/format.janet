@@ -14,3 +14,14 @@
 # unset placement. Configure one to see it do anything:
 #   (ned/set-format-brace-placement "brace.function" "next-line")
 (function_definition body: (compound_statement) @brace.function)
+
+# Space-kind (kind 2) pilot capture, Editor/FormatSpacing.h: an if/while
+# statement's own condition_clause -- its span is exactly the "(...)"
+# (condition_clause's own first/last byte are the parens themselves per
+# tree-sitter-cpp's node-types.json), which is what lets one capture name
+# serve :before/:after/:within uniformly. Shared with any future language
+# whose own format.janet names the same "control.parens" capture for its
+# own if/while equivalent -- one rule, several grammars, per
+# Docs/FormattingCapabilities.md's own "collapse across languages" stance.
+(if_statement condition: (condition_clause) @control.parens)
+(while_statement condition: (condition_clause) @control.parens)
