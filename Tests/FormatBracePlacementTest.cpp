@@ -21,6 +21,7 @@ using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
+using ned::editor::RustMode;
 using ned::editor::SetBraceCollapseEmpty;
 using ned::editor::SetBraceCollapseSimple;
 using ned::editor::SetBracePlacement;
@@ -839,5 +840,112 @@ TEST_CASE("End to end: php-mode's formatCaptures drives real edits across all th
     REQUIRE(buffer.Text() == "<?php\n"
                              "function f($x) {\n"
                              "    if ($x) { return; }\n"
+                             "}\n");
+}
+
+// rust-mode: the seventh language. No new structural hazard -- Rust's
+// grammar carries neither Go's ASI nor PHP's per-construct body ambiguity
+// -- but two real judgment calls: struct/enum/impl all fold into
+// brace.class (a JetBrains-style "type body" grouping), and a for-loop's
+// own iterable is deliberately NOT eligible for control.parens even
+// though the grammar allows wrapping it (see format.janet's own comment).
+TEST_CASE("rust-mode's format.janet names the full capture set over a real file", "[FormatBracePlacement]") {
+    const Mode mode = RustMode();
+    REQUIRE(mode.formatCaptures);
+
+    const std::string source = "trait T {\n"
+                               "    fn shared(&self) {\n"
+                               "        return;\n"
+                               "    }\n"
+                               "}\n"
+                               "struct S {\n"
+                               "    x: i32,\n"
+                               "}\n"
+                               "impl S {\n"
+                               "    fn f(&self, x: i32) {\n"
+                               "        if x > 0 {\n"
+                               "            return;\n"
+                               "        }\n"
+                               "        match x {\n"
+                               "            1 => {}\n"
+                               "            _ => {}\n"
+                               "        }\n"
+                               "    }\n"
+                               "}\n";
+    const auto captures = mode.formatCaptures(source);
+
+    REQUIRE(CapturesNamed(captures, "brace.function").size() == 2); // shared() and f()
+    // Only 2, not 4: match's OWN braces are captured, but a match_arm's own
+    // "{}" value is an ordinary block-typed expression, not one of this
+    // file's captured parent shapes -- verified live, a deliberate scope
+    // cut (an arm body is the "value:" side of a match_arm, matched by
+    // nothing here) rather than a hidden gap.
+    REQUIRE(CapturesNamed(captures, "brace.control").size() == 2); // if's body, match's own outer braces
+    REQUIRE(CapturesNamed(captures, "brace.class").size() == 2);   // struct S and impl S
+    REQUIRE(CapturesNamed(captures, "brace.interface").size() == 1);
+}
+
+TEST_CASE("rust-mode's format.janet names brace.namespace over a mod's own body", "[FormatBracePlacement]") {
+    const Mode mode = RustMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("mod m {\n    struct X;\n}\n"), "brace.namespace").size() == 1);
+    // A bodyless "mod foo;" file-per-module declaration has no `body` field at all.
+    REQUIRE(CapturesNamed(mode.formatCaptures("mod m;\n"), "brace.namespace").empty());
+}
+
+TEST_CASE("rust-mode's format.janet does not capture a unit or tuple struct, only a real braced body",
+          "[FormatBracePlacement]") {
+    const Mode mode = RustMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("struct Unit;\n"), "brace.class").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("struct Tup(i32, i32);\n"), "brace.class").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("struct Empty {}\n"), "brace.class").size() == 1);
+}
+
+TEST_CASE("rust-mode's format.janet does not name a distinct capture for an else/else-if branch",
+          "[FormatBracePlacement]") {
+    // Matches cpp/javascript/java's own scope cut, not PHP's colon hazard --
+    // an else-if's own body is captured because it's itself a nested
+    // if_expression's "consequence" (recursion, not a dedicated pattern),
+    // but the trailing bare "else { ... }" is not captured at all.
+    const Mode        mode   = RustMode();
+    const std::string source = "fn f() {\n"
+                               "    if x {\n"
+                               "        a();\n"
+                               "    } else if y {\n"
+                               "        b();\n"
+                               "    } else {\n"
+                               "        c();\n"
+                               "    }\n"
+                               "}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.control").size() == 2); // if's body, else-if's body
+}
+
+TEST_CASE("rust-mode's format.janet marks a single-statement body isSimple too", "[FormatBracePlacement]") {
+    const Mode        mode   = RustMode();
+    const std::string simple = "fn f() {\n    return;\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(simple), "brace.function")[0].isSimple);
+
+    const std::string multi = "fn f() {\n    g();\n    return;\n}\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(multi), "brace.function")[0].isSimple);
+}
+
+TEST_CASE("End to end: rust-mode's formatCaptures drives real edits across all three features",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+    SetBraceCollapseSimple("brace.control", true);
+
+    const Mode mode = RustMode();
+    Buffer     buffer("test.rs");
+    buffer.InsertAtPoint("fn f(x: i32) {\n"
+                         "    if x > 0\n"
+                         "    {\n"
+                         "        return;\n"
+                         "    }\n"
+                         "}\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "rust", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "fn f(x: i32) {\n"
+                             "    if x > 0 { return; }\n"
                              "}\n");
 }

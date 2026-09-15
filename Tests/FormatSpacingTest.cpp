@@ -20,6 +20,7 @@ using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
+using ned::editor::RustMode;
 using ned::editor::SetSpaceAfter;
 using ned::editor::SetSpaceBefore;
 using ned::editor::SetSpaceWithin;
@@ -474,4 +475,45 @@ TEST_CASE("End to end: php-mode's formatCaptures drives a real space edit", "[Fo
     ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "php", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "<?php\nif ($x) {\n    return;\n}\n");
+}
+
+// rust-mode: the seventh language. Like go/python, idiomatic Rust omits
+// parens on if/while/match entirely, but the grammar still allows them
+// (parenthesized_expression is one of `_expression`'s own subtypes), so
+// this is the same narrow lever -- only fires when parens are actually
+// present, verified live.
+TEST_CASE("rust-mode's format.janet only captures a condition already wrapped in parens", "[FormatSpacing]") {
+    const Mode mode = RustMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("fn f() {\n    if x {\n    }\n}\n"), "control.parens").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("fn f() {\n    if (x) {\n    }\n}\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("fn f() {\n    match x {\n    }\n}\n"), "control.parens").empty());
+    REQUIRE(
+        CapturesNamed(mode.formatCaptures("fn f() {\n    match (x) {\n    }\n}\n"), "control.parens").size() == 1);
+}
+
+TEST_CASE("rust-mode's format.janet names no control.parens for a for-loop's own iterable",
+          "[FormatSpacing]") {
+    // Unlike match's own "value:", a for-loop's iterable is deliberately
+    // declined -- not a grammar limitation (wrapping it in parens parses
+    // fine, verified live), a scope choice: it's not a scrutinee/condition
+    // the way if/while/match's own value is. See format.janet's own
+    // comment.
+    const Mode mode = RustMode();
+    REQUIRE(
+        CapturesNamed(mode.formatCaptures("fn f() {\n    for x in (0..3) {\n    }\n}\n"), "control.parens")
+            .empty());
+}
+
+TEST_CASE("End to end: rust-mode's formatCaptures drives a real space edit", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceBefore("control.parens", true);
+
+    const Mode mode = RustMode();
+    Buffer     buffer("test.rs");
+    buffer.InsertAtPoint("fn f() {\n    if(x) {\n    }\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "rust", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "fn f() {\n    if (x) {\n    }\n}\n");
 }
