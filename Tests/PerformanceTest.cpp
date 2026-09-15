@@ -476,3 +476,57 @@ TEST_CASE("CppMode full-buffer highlighting and electric indent stay fast on a l
     REQUIRE(*column > 0); // inside trailing()'s body
     REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
 }
+
+TEST_CASE("IndentBuffer stays fast on a large real-shaped C++ file", "[Performance]") {
+    // indent-region-batch-perf follow-up: IndentRegion/IndentBuffer call
+    // Mode::indentColumn once per line, bottom-to-top. Two compounding
+    // O(document size)-per-call costs turned that into O(n * linesInRange):
+    // buffer.Text() re-materialized every iteration (fixed by freezing it
+    // once, see IndentRegion's own doc comment), and BuildIndentFunction's
+    // closure re-derived the FULL merged (query + imprint) captures set from
+    // scratch on every call, since only the query half had any incremental
+    // reconciliation (MatchCache) -- the imprint half (AddImprintCaptures)
+    // had none at all. Measured live at 104s on this project's own
+    // ~3000-line main.cpp via format-buffer's new Native fallback, reported
+    // as "format-buffer hangs on a large file"; a `perf record` pinned ~90%
+    // of cycles inside ned::editor::parse's tree-walk, called from
+    // AddImprintCaptures via CollectIndentCaptures's own Node::ForEachChild
+    // recursion. Fixed (both halves), this same file drops to well under a
+    // second -- the budget catches the quadratic class returning, not tuning
+    // noise. Reuses the 450-generated-function shape "CppMode full-buffer
+    // highlighting and electric indent stay fast on a large file" above
+    // already established and measured, scaled up further (900) since this
+    // test needs the BATCH path (many lines in one call), not one line.
+    std::string content = "#include <string>\n\nnamespace perf {\n\n";
+    for (int i = 0; i < 900; ++i) {
+        const std::string n = std::to_string(i);
+        content += "int compute_" + n + "(int value) {\n"
+                                        "    const std::string label = \"entry-" +
+                   n + "\";\n"
+                       "    if (value > 0 && label.size() < 4) {\n"
+                       "        for (int j = 0; j < value; ++j) {\n"
+                       "            value += static_cast<int>(j % 7);\n"
+                       "        }\n"
+                       "    }\n"
+                       "    else {\n"
+                       "        while (value < 0) { value += 2; }\n"
+                       "    }\n"
+                       "    return value;\n"
+                       "}\n\n";
+    }
+    content += "} // namespace perf\n";
+
+    ned::editor::Mode mode = ned::editor::CppMode();
+    ned::text::Buffer buffer("perf.cpp");
+    buffer.InsertAtPoint(content);
+
+    const auto start   = steady_clock::now();
+    const std::size_t changed = ned::editor::IndentBuffer(buffer, mode);
+    const auto elapsed = steady_clock::now() - start;
+
+    // Already correctly indented -- IndentBuffer is expected to be a
+    // content no-op, same as this project's own real main.cpp was. The
+    // point of this test is the TIME, not that it found anything to fix.
+    REQUIRE(changed == 0);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
+}
