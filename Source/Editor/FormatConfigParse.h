@@ -44,6 +44,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace ned::editor {
 
@@ -89,6 +90,17 @@ void LoadFormatConfigFile(const std::filesystem::path& path);
 // projectRoot / ".ned" / "format.janet" -- the project-tier file's own path,
 // named here purely so every caller spells it the same way.
 [[nodiscard]] std::filesystem::path ProjectFormatConfigPath(const std::filesystem::path& projectRoot);
+
+// Every top-level format.janet key, sorted -- the docs-parity counterpart of
+// UI/ThemeFile.h's ThemeKeys(): Docs/FormattingRules.md's fenced key
+// reference is held against this list in both directions
+// (Tests/FormatKeyDocsTest.cpp), so an undocumented key and a stale doc
+// entry both fail the build.
+[[nodiscard]] std::vector<std::string> FormatConfigKeys();
+
+// Every field name inside one :indent language entry (":python {...}"),
+// sorted -- the same parity role, one level down.
+[[nodiscard]] std::vector<std::string> FormatConfigIndentEntryKeys();
 
 } // namespace ned::editor
 

@@ -36,11 +36,14 @@
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
 #include "Editor/Bookmark.h"
+#include "Editor/BufferSave.h"
 #include "Editor/BundledSnippets.h"
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/FormatConfigParse.h"
+#include "Editor/FormatOnSave.h"
+#include "Editor/Indent.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/BrokerMain.h"
 #include "Editor/Lsp/BrokerSocketPath.h"
@@ -84,6 +87,7 @@
 #include "Janet/PluginLoader.h"
 
 #include "Text/BinaryDetect.h"
+#include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 
@@ -247,6 +251,105 @@ int RunMcpStdioRelay(const std::string& socketPathStr) {
     stdinToSocket.join();
     ::close(fd);
     return 0;
+}
+
+// configurable-formatter follow-up: `ned --format <paths...>` -- headless,
+// dispatched here strictly before any Environment/EventLoop/Notcurses
+// construction, the exact same placement rule --lsp-broker's own dispatch
+// above follows. Deliberately a smaller chain than format-buffer's own:
+// External (RunFormatCommand, unchanged) -> Native (a per-language-default
+// reindent via IndentBuffer -- no Hygiene pass, no capture-scoped
+// indent-rule override yet, both later work) -- and no LSP tier at all,
+// since there's no event loop here to round-trip a request against. Reads
+// format.janet (personal, then project -- FormatConfigParse.h's own
+// cascade) but never init.janet: no Janet Environment is constructed here,
+// mirroring RunLspBrokerDaemon's own "no VM needed for a headless mode"
+// precedent, so this stays fast and dependency-free for a
+// pre-commit-hook-style invocation. Known consequence, not a bug: since
+// FormatCommand() is configured exclusively via the Janet binding
+// ned/set-format-command (FormatOnSave.h), and init.janet never loads here,
+// External can never actually be non-empty in THIS entry point today -- the
+// check stays (a) so the chain reads honestly as "External, then Native"
+// rather than silently only ever being Native, and (b) so a later
+// format.janet schema field for an external command (which would need its
+// own Trust.h allowlist entry first, being a shell command -- see
+// FormatConfigParse.h's tripwire note) lights this path up for free. Until
+// then, headless External configuration simply isn't supported. Whole-file
+// only, same reasoning
+// ROADMAP.md gives for the CLI generally: a fresh headless process has no
+// edit history to scope a smaller pass against.
+int RunFormatFiles(const std::vector<std::string>& paths) {
+    if (paths.empty()) {
+        std::cerr << "ned: --format: no files given\n";
+        return 1;
+    }
+
+    // Project-root detection only matters here for resolving the
+    // project-tier format.janet below -- mirrors RunInteractiveEditor's own
+    // "first path argument decides the root" rule (DetectProjectRoot), not
+    // re-derived per file.
+    const std::filesystem::path projectRoot = ned::editor::DetectProjectRoot(paths.front());
+    ned::editor::SetProjectRoot(projectRoot);
+
+    try {
+        ned::editor::LoadFormatConfigFile(ned::editor::PersonalFormatConfigPath());
+        ned::editor::LoadFormatConfigFile(ned::editor::ProjectFormatConfigPath(projectRoot));
+    }
+    catch (const std::exception& e) {
+        std::cerr << "ned: --format: " << e.what() << '\n';
+        return 1;
+    }
+
+    int exitCode = 0;
+    for (const std::string& pathStr : paths) {
+        const std::filesystem::path path = pathStr;
+        std::error_code             isDirEc;
+        if (std::filesystem::is_directory(path, isDirEc)) {
+            std::cerr << "ned: --format: " << pathStr << " is a directory, skipping\n";
+            exitCode = 1;
+            continue;
+        }
+        // Checked explicitly rather than left to Buffer::FromFile's own
+        // LooksBinary pre-check: an unreadable path (LooksBinary's own doc
+        // comment: "unreadable -- not worth treating as text either")
+        // reports as BinaryFileError there, which would misleadingly read
+        // as "this file looks binary" for the much more common case of a
+        // typo'd path.
+        std::error_code existsEc;
+        if (!std::filesystem::exists(path, existsEc)) {
+            std::cerr << "ned: --format: " << pathStr << ": no such file\n";
+            exitCode = 1;
+            continue;
+        }
+        try {
+            ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+            const ned::editor::Mode mode = ned::editor::ModeForPath(path);
+
+            // Same fall-through-on-failure rule format-buffer's own chain
+            // documents: only unset if External genuinely isn't configured
+            // OR ran and failed, never left unset just because it wasn't
+            // tried.
+            std::optional<std::string> formatted;
+            if (ned::editor::FormatCommand()) {
+                formatted = ned::editor::RunFormatCommand(buffer.Text());
+            }
+            if (formatted) {
+                buffer.DeleteRange(0, buffer.Size());
+                buffer.InsertAt(0, *formatted);
+            }
+            else if (mode.indentColumn) {
+                ned::editor::IndentBuffer(buffer, mode);
+            }
+
+            ned::editor::WriteBufferToDisk(buffer);
+            std::cout << "Formatted " << pathStr << '\n';
+        }
+        catch (const std::exception& e) {
+            std::cerr << "ned: --format: " << pathStr << ": " << e.what() << '\n';
+            exitCode = 1;
+        }
+    }
+    return exitCode;
 }
 
 // acp-panel-minimap-overlap follow-up: how many columns a full-width,
@@ -2868,6 +2971,7 @@ auto main(int argc, char** argv) -> int {
 
     bool                     lspBroker     = false;
     bool                     lspBrokerStop = false;
+    bool                     format        = false;
     bool                     forceBinary   = false;
     bool                     noRestore     = false;
     std::string              mcpStdioRelaySocketPath;
@@ -2881,6 +2985,11 @@ auto main(int argc, char** argv) -> int {
         ->group("Startup modes");
     app.add_option("--mcp-stdio-relay", mcpStdioRelaySocketPath,
                    "Relay stdio to a running ned process's ACP MCP bridge socket, then exit (spawned by an ACP agent, not meant to be run by hand)")
+        ->excludes(lspBrokerOpt)
+        ->group("Startup modes");
+    app.add_flag("--format", format,
+                 "Format the given files headlessly and exit (External formatter, falling back to a native "
+                 "per-language reindent -- no LSP tier, no init.janet; format.janet only)")
         ->excludes(lspBrokerOpt)
         ->group("Startup modes");
     app.add_flag("--force-binary", forceBinary,
@@ -2912,6 +3021,10 @@ auto main(int argc, char** argv) -> int {
 
     if (!mcpStdioRelaySocketPath.empty()) {
         return RunMcpStdioRelay(mcpStdioRelaySocketPath);
+    }
+
+    if (format) {
+        return RunFormatFiles(paths);
     }
 
     const int exitCode = RunInteractiveEditor(forceBinary, noRestore, paths);
