@@ -1487,6 +1487,22 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
     // Editor/FormatSpacing.h/FormatBracePlacement.h need no changes at all
     // for this. Any capture in a match that isn't part of such a pair
     // passes through unchanged.
+    //
+    // collapse-simple follow-up: a THIRD suffix, "<name>.simple", is a
+    // structural marker rather than half of a pair -- a language names the
+    // exact same node a second time, in a second pattern anchored to
+    // "exactly one named child" ("(function_definition body:
+    // (compound_statement . (_) .) @brace.function.simple)"), verified
+    // live to answer "does the FUNCTION's own body have exactly one
+    // top-level statement" correctly regardless of what that one statement
+    // itself contains (a nested block, an if with its own block, ...).
+    // Unlike the open/close pair, the marker and the base capture it
+    // describes come from two DIFFERENT pattern matches over the SAME
+    // node, so they can't be correlated within one match's own capture
+    // list the way open/close are -- collected across every match instead,
+    // then applied as a byte-range-keyed post-pass over the finished
+    // capture list. The marker itself is never emitted as a capture in its
+    // own right.
     FormatCaptureFunction formatCaptures;
     if (!queries.format.empty()) {
         const auto formatQuery = std::make_shared<grammar::QueryMatcher>(language, queries.format);
@@ -1496,20 +1512,28 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 return {};
             }
             std::vector<FormatCapture> captures;
+            // (base name, startByte, endByte) for every "<name>.simple" marker seen.
+            std::vector<std::tuple<std::string, std::size_t, std::size_t>> simpleMarkers;
             for (const grammar::QueryMatch& match : formatQuery->Matches(tree.RootNode(), bufferText)) {
                 std::optional<std::size_t> openStart;
                 std::optional<std::size_t> closeEnd;
                 std::string                pairedName;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
-                    constexpr std::string_view kOpenSuffix  = ".open";
-                    constexpr std::string_view kCloseSuffix = ".close";
-                    if (std::string_view(capture.name).ends_with(kOpenSuffix)) {
+                    constexpr std::string_view kOpenSuffix   = ".open";
+                    constexpr std::string_view kCloseSuffix  = ".close";
+                    constexpr std::string_view kSimpleSuffix = ".simple";
+                    const std::string_view     name(capture.name);
+                    if (name.ends_with(kOpenSuffix)) {
                         openStart  = capture.startByte;
                         pairedName = capture.name.substr(0, capture.name.size() - kOpenSuffix.size());
                     }
-                    else if (std::string_view(capture.name).ends_with(kCloseSuffix)) {
+                    else if (name.ends_with(kCloseSuffix)) {
                         closeEnd   = capture.endByte;
                         pairedName = capture.name.substr(0, capture.name.size() - kCloseSuffix.size());
+                    }
+                    else if (name.ends_with(kSimpleSuffix)) {
+                        simpleMarkers.emplace_back(capture.name.substr(0, capture.name.size() - kSimpleSuffix.size()),
+                                                   capture.startByte, capture.endByte);
                     }
                     else {
                         captures.push_back(FormatCapture{capture.name, capture.startByte, capture.endByte});
@@ -1517,6 +1541,14 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 }
                 if (openStart && closeEnd) {
                     captures.push_back(FormatCapture{pairedName, *openStart, *closeEnd});
+                }
+            }
+            for (FormatCapture& capture : captures) {
+                for (const auto& [name, start, end] : simpleMarkers) {
+                    if (capture.name == name && capture.startByte == start && capture.endByte == end) {
+                        capture.isSimple = true;
+                        break;
+                    }
                 }
             }
             return captures;

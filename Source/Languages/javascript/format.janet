@@ -44,3 +44,15 @@
 # shipped.
 (for_statement "(" @control.parens.open ")" @control.parens.close)
 (catch_clause "(" @control.parens.open ")" @control.parens.close)
+
+# collapse-simple follow-up: same names and mechanism as cpp's own widened
+# set (see that file's own comment), JavaScript's node types underneath --
+# switch's own body is "switch_body", not "statement_block", but the
+# "exactly one named child" anchor idiom applies identically (one
+# switch_case/switch_default clause).
+(function_declaration body: (statement_block . (_) .) @brace.function.simple)
+(if_statement consequence: (statement_block . (_) .) @brace.control.simple)
+(while_statement body: (statement_block . (_) .) @brace.control.simple)
+(for_statement body: (statement_block . (_) .) @brace.control.simple)
+(switch_statement body: (switch_body . (_) .) @brace.control.simple)
+(catch_clause body: (statement_block . (_) .) @brace.control.simple)
