@@ -31,6 +31,16 @@ struct FormatTextEdit {
 // convention (Editor/Format.h).
 void ApplyFormatTextEdits(text::Buffer& buffer, std::vector<FormatTextEdit> edits);
 
+// keyword-delimiter-captures follow-up: whether gluing two bytes directly
+// together would fuse them into one word -- true for any ASCII letter/
+// digit/underscore. A brace/paren is never a word byte, so this is always
+// false for a single-character delimiter (every capture before Lua's own).
+// Shared between FormatBracePlacement.h's collapse-empty glue (Lua's
+// "do"+"end" must not become "doend") and FormatSpacing.h's :within=false
+// removal (fish's "begin"+"echo" must not become "beginecho") -- the same
+// underlying hazard, reached from two different rule kinds.
+bool IsWordByte(char c);
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_FORMATEDIT_H
