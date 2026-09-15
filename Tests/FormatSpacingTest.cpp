@@ -26,6 +26,7 @@ using ned::editor::LuaMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
+using ned::editor::RubyMode;
 using ned::editor::RustMode;
 using ned::editor::SetSpaceAfter;
 using ned::editor::SetSpaceBefore;
@@ -871,4 +872,38 @@ TEST_CASE("kotlin-mode's format.janet names control.parens over do-while's own c
           "[FormatSpacing]") {
     const Mode mode = KotlinMode();
     REQUIRE(CapturesNamed(mode.formatCaptures("fun f() { do { g() } while (x) }"), "control.parens").size() == 1);
+}
+
+// ruby-mode: control.parens is the same narrow "already parenthesized"
+// lever Python/Go/Lua's own files use -- Ruby's if/unless/while/until's
+// condition and case/case_match's own value are ordinary expressions
+// with no required parens at all, confirmed live via `tree-sitter parse`
+// that writing them anyway produces a real `parenthesized_statements`
+// node, matched only when actually present.
+TEST_CASE("ruby-mode's format.janet names control.parens over if/unless/while/until/case's "
+          "own optional parenthesized condition/value, and does nothing when they're absent",
+          "[FormatSpacing]") {
+    const Mode mode = RubyMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("if x\n  1\nend\n"), "control.parens").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("if (x)\n  1\nend\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("unless (x)\n  1\nend\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("while (x)\n  1\nend\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("until (x)\n  1\nend\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("case (x)\nwhen 1\n  a\nend\n"), "control.parens").size() == 1);
+}
+
+TEST_CASE("End to end: a real ruby Mode's formatCaptures drives a real :within edit on "
+          "control.parens, applied to a full Buffer",
+          "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceWithin("control.parens", true);
+
+    const Mode mode = RubyMode();
+    Buffer     buffer("test.rb");
+    buffer.InsertAtPoint("if(x)\n  1\nend\n");
+
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "ruby", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "if( x )\n  1\nend\n");
 }
