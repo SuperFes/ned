@@ -41,6 +41,7 @@
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
+#include "Editor/Format.h"
 #include "Editor/FormatConfigParse.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/Indent.h"
@@ -258,8 +259,9 @@ int RunMcpStdioRelay(const std::string& socketPathStr) {
 // construction, the exact same placement rule --lsp-broker's own dispatch
 // above follows. Deliberately a smaller chain than format-buffer's own:
 // External (RunFormatCommand, unchanged) -> Native (a per-language-default
-// reindent via IndentBuffer -- no Hygiene pass, no capture-scoped
-// indent-rule override yet, both later work) -- and no LSP tier at all,
+// reindent via IndentBuffer, plus the Hygiene pass, Editor/Format.h -- no
+// capture-scoped indent-rule override yet, that's later work) -- and no LSP
+// tier at all,
 // since there's no event loop here to round-trip a request against. Reads
 // format.janet (personal, then project -- FormatConfigParse.h's own
 // cascade) but never init.janet: no Janet Environment is constructed here,
@@ -337,8 +339,11 @@ int RunFormatFiles(const std::vector<std::string>& paths) {
                 buffer.DeleteRange(0, buffer.Size());
                 buffer.InsertAt(0, *formatted);
             }
-            else if (mode.indentColumn) {
-                ned::editor::IndentBuffer(buffer, mode);
+            else {
+                if (mode.indentColumn) {
+                    ned::editor::IndentBuffer(buffer, mode);
+                }
+                ned::editor::ApplyHygienePass(buffer);
             }
 
             ned::editor::WriteBufferToDisk(buffer);

@@ -359,7 +359,7 @@ Move keyboard focus into the VCS status panel (Up/Down to move, Space to mark, E
 
 ## `format-buffer`
 
-Run the configured format command over the whole buffer, without saving.
+Format the whole buffer: your configured external formatter if one's set, falling back to ned's own per-language reindent and hygiene cleanup.
 
 ## `forward-char`
 

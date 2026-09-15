@@ -1043,7 +1043,8 @@ TEST_CASE("format-buffer formats without saving", "[Commands]") {
     std::filesystem::remove(path);
 }
 
-TEST_CASE("format-buffer reports failure and leaves the buffer untouched when the formatter fails", "[Commands]") {
+TEST_CASE("format-buffer falls through to the Native Hygiene pass when the external formatter fails",
+          "[Commands]") {
     const FormatCommandGuard guard;
     SetFormatCommand(std::string("false"));
 
@@ -1051,18 +1052,23 @@ TEST_CASE("format-buffer reports failure and leaves the buffer untouched when th
     RegisterBuiltinCommands(registry);
 
     Fixture        fixture;
-    CommandContext context = fixture.Context();
+    CommandContext context = fixture.Context(); // context.mode stays nullptr -- Native's Indent step is a no-op
     std::string    message;
     context.message = &message;
 
     fixture.buffer.InsertAtPoint("hello");
     registry.Invoke("format-buffer", context);
 
-    REQUIRE(fixture.buffer.Text() == "hello");
-    REQUIRE(message.find("failed") != std::string::npos);
+    // External configured but fails -> falls through to Native, matching
+    // ROADMAP.md's "fall through on runtime failure, not just when
+    // unconfigured" chain. With no mode set here, only the Hygiene pass
+    // applies -- EnsureFinalNewline's own default-on final newline.
+    REQUIRE(fixture.buffer.Text() == "hello\n");
+    REQUIRE(message.find("Formatted") != std::string::npos);
 }
 
-TEST_CASE("format-buffer reports explicitly when no format command is configured", "[Commands]") {
+TEST_CASE("format-buffer falls through to the Native Hygiene pass when no format command is configured",
+          "[Commands]") {
     const FormatCommandGuard guard;
 
     CommandRegistry registry;
@@ -1076,8 +1082,94 @@ TEST_CASE("format-buffer reports explicitly when no format command is configured
     fixture.buffer.InsertAtPoint("hello");
     registry.Invoke("format-buffer", context);
 
-    REQUIRE(fixture.buffer.Text() == "hello");
-    REQUIRE(message.find("No format command configured") != std::string::npos);
+    REQUIRE(fixture.buffer.Text() == "hello\n");
+    REQUIRE(message.find("Formatted") != std::string::npos);
+}
+
+TEST_CASE("format-buffer's Native fallback reindents per the active mode", "[Commands]") {
+    const FormatCommandGuard guard;
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode pyMode = PythonMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode           = &pyMode;
+    std::string message;
+    context.message        = &message;
+
+    fixture.buffer.InsertAtPoint("if True:\n        x = 1\n");
+    registry.Invoke("format-buffer", context);
+
+    // Python's own built-in default is 4 spaces (IndentDefaults.h) -- the
+    // over-indented "x = 1" comes back down to one level.
+    REQUIRE(fixture.buffer.Text() == "if True:\n    x = 1\n");
+    REQUIRE(message.find("Formatted") != std::string::npos);
+}
+
+TEST_CASE("format-buffer's Native fallback reports explicitly when the buffer is already formatted",
+          "[Commands]") {
+    const FormatCommandGuard guard;
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode pyMode = PythonMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode           = &pyMode;
+    std::string message;
+    context.message        = &message;
+
+    fixture.buffer.InsertAtPoint("if True:\n    x = 1\n"); // already correctly indented, already clean
+    registry.Invoke("format-buffer", context);
+
+    REQUIRE(fixture.buffer.Text() == "if True:\n    x = 1\n"); // unchanged
+    REQUIRE(message.find("already formatted") != std::string::npos);
+
+    // No phantom undo entry from an empty pass: one Undo() reverts all the
+    // way back past the initial InsertAtPoint above, not to some
+    // intermediate "format-buffer ran but changed nothing" step.
+    fixture.buffer.Undo();
+    REQUIRE(fixture.buffer.Text().empty());
+}
+
+TEST_CASE("save-buffer's own chain is unaffected by format-buffer's Native fallback", "[Commands]") {
+    const FormatCommandGuard guard;
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode pyMode = PythonMode();
+
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_commands_test_save_buffer_no_native_fallback.py";
+    std::filesystem::remove(path);
+
+    ned::text::Buffer buffer("scratch", ned::text::Rope("if True:\n        x = 1\n"));
+    buffer.SaveToFile(path); // establishes the associated path without writing via the command
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+    context.mode = &pyMode;
+
+    registry.Invoke("save-buffer", context);
+
+    // save-buffer must never reindent -- that's format-buffer's own Native
+    // fallback alone. The over-indented "x = 1" survives a save byte for
+    // byte, exactly as it did before format-buffer gained this fallback.
+    REQUIRE(buffer.Text() == "if True:\n        x = 1\n");
+
+    std::ifstream file(path);
+    std::string   written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    REQUIRE(written == "if True:\n        x = 1\n");
+
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("convert-line-endings-to-crlf overrides the buffer's tracked ending without touching live content",

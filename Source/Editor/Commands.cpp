@@ -21,6 +21,7 @@
 #include "EmbeddedDocuments.h"
 #include "Fill.h"
 #include "FillColumn.h"
+#include "Format.h"
 #include "FormatConfigParse.h"
 #include "FormatOnSave.h"
 #include "Indent.h"
@@ -1819,15 +1820,30 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       });
 
     // format-buffer follow-up: save-buffer's own formatting step, exposed
-    // standalone so it can run without also saving -- reuses the exact
-    // same FormatCommand()/RunFormatCommand()/whole-buffer-replace shape,
-    // just without the Save() call at the end. Unlike save-buffer (silent
-    // when nothing's configured, since formatting there is a side effect
-    // of a save the user wanted regardless), this reports "no format
-    // command configured" explicitly: a user invoking format-buffer
-    // directly is asking specifically for formatting, so silence would
-    // read as "did nothing happened," not "nothing to do."
-    registry.Register("format-buffer", "Run the configured format command over the whole buffer, without saving.",
+    // standalone so it can run without also saving -- without the Save()
+    // call at the end.
+    //
+    // configurable-formatter follow-up: gained a real Native fallback --
+    // External (FormatCommand()/RunFormatCommand(), unchanged), falling
+    // through to Native (a per-language reindent via IndentBuffer, using
+    // IndentDefaults.h's built-in table/any per-mode override, plus the
+    // Hygiene pass, Editor/Format.h) whenever External is either
+    // unconfigured OR configured-and-fails at runtime -- matching
+    // ROADMAP.md's stated "fall through on runtime failure, not just when
+    // unconfigured" chain. Deliberately an interim 2-tier chain: LSP
+    // folding into this same chain is a named follow-up, meant to mirror
+    // save-buffer's own shouldDeferToLspFormat/RequestLspFormatThenSaveBuffer
+    // async pattern once it lands (that mechanism can't be reused directly
+    // here -- this command has no async/request-response machinery of its
+    // own, unlike BufferView's save path).
+    //
+    // This Native fallback is scoped to format-buffer alone -- save-buffer
+    // is untouched, still exactly its own independent
+    // FormatCommand()/RunFormatCommand() check with no Native step (see
+    // "save-buffer's Native-fallback non-contamination" regression test).
+    registry.Register("format-buffer",
+                      "Format the whole buffer: your configured external formatter if one's set, falling back to "
+                      "ned's own per-language reindent and hygiene cleanup.",
                       [](CommandContext& context) {
                           // progressive-huge-file-load follow-up: same reasoning as
                           // save-buffer's own guard -- checked first since the whole-buffer
@@ -1841,18 +1857,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               }
                               return;
                           }
-                          if (!FormatCommand()) {
-                              if (context.message) {
-                                  *context.message = "No format command configured.";
-                              }
-                              return;
-                          }
                           // binary-safety-guardrails follow-up: refuses an explicit
                           // invocation too, not just the automatic format-on-save side
                           // effect (see save-buffer's own guard) -- a formatter is just
                           // as capable of corrupting binary content whether it runs as
                           // a save side effect or because the user asked for it
-                          // directly. toggle-binary-safeguards is the escape hatch.
+                          // directly (External or Native alike). toggle-binary-safeguards
+                          // is the escape hatch.
                           if (context.buffer.BinarySafeguardsActive()) {
                               if (context.message) {
                                   *context.message = "\"" + context.buffer.Name() +
@@ -1861,15 +1872,31 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               }
                               return;
                           }
-                          if (const std::optional<std::string> formatted = RunFormatCommand(context.buffer.Text())) {
+
+                          std::optional<std::string> formatted;
+                          if (FormatCommand()) {
+                              formatted = RunFormatCommand(context.buffer.Text());
+                          }
+                          if (formatted) {
                               context.buffer.DeleteRange(0, context.buffer.Size());
                               context.buffer.InsertAt(0, *formatted);
                               if (context.message) {
                                   *context.message = "Formatted " + context.buffer.Name();
                               }
+                              return;
                           }
-                          else if (context.message) {
-                              *context.message = "Format command failed.";
+
+                          context.buffer.BeginUndoGroup();
+                          bool changed = false;
+                          if (context.mode != nullptr && context.mode->indentColumn) {
+                              changed = IndentBuffer(context.buffer, *context.mode) > 0;
+                          }
+                          changed = ApplyHygienePass(context.buffer) || changed;
+                          context.buffer.EndUndoGroup();
+
+                          if (context.message) {
+                              *context.message = changed ? "Formatted " + context.buffer.Name()
+                                                         : "\"" + context.buffer.Name() + "\" is already formatted.";
                           }
                       });
 
