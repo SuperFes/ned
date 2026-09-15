@@ -47,6 +47,7 @@
 #define NED_EDITOR_IMPRINTINDENT_H
 
 #include <cstddef>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -78,6 +79,13 @@ struct ImprintContainer {
     std::size_t      endByte   = 0;
     std::string_view type;
     std::size_t      interiorStart = 0;
+    // for-loop-header-imprint follow-up: set only when the closer is
+    // followed by a real, unrelated trailing field (a for-loop's own body
+    // statement) -- nullopt in the overwhelmingly common case where the
+    // closer already sits at endByte. See Indent.h's IndentCaptures::interiorEnd
+    // for why this travels as a separate, optional field rather than
+    // narrowing endByte itself.
+    std::optional<std::size_t> interiorEnd;
 };
 
 struct ImprintIndentCaptures {

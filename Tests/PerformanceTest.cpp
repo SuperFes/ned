@@ -59,6 +59,23 @@ constexpr long kBudgetMs = 500;
 constexpr long kBudgetMs = 5000;
 #endif
 
+// indent-region-batch-perf follow-up: IndentBuffer's own regression test
+// does meaningfully more real work than everything else in this file (a
+// full IndentRegion walk over ~13,500 generated lines, not one highlight
+// pass or one single-line calculation), so it earns its own, wider budget
+// rather than sharing kBudgetMs above -- measured at 19.3s under Debug +
+// ASan/UBSan (this file's own header comment already notes that
+// combination runs meaningfully slower than plain Debug for an unrelated
+// reason: -O0, not the sanitizers themselves). Still orders of magnitude
+// below what the O(n * linesInRange) regression this test guards against
+// would cost (104s measured on a THIRD the line count, in a plain release
+// build with no sanitizer overhead at all).
+#ifdef NDEBUG
+constexpr long kIndentBufferBudgetMs = 5000;
+#else
+constexpr long kIndentBufferBudgetMs = 60000;
+#endif
+
 std::string MakeMultiLineContent(std::size_t approxByteSize) {
     std::string content;
     content.reserve(approxByteSize + 128);
@@ -528,5 +545,5 @@ TEST_CASE("IndentBuffer stays fast on a large real-shaped C++ file", "[Performan
     // content no-op, same as this project's own real main.cpp was. The
     // point of this test is the TIME, not that it found anything to fix.
     REQUIRE(changed == 0);
-    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < kIndentBufferBudgetMs);
 }

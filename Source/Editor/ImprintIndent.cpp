@@ -50,8 +50,30 @@ namespace {
             const DelimitedBody& body = entry->second;
             if (body.kind != DelimiterKind::Indent) {
                 if (const std::optional<DelimiterPair> pair = DelimitersOf(node, body)) {
-                    out.containers.push_back(
-                        ImprintContainer{node.StartByte(), node.EndByte(), node.Type(), pair->openEnd});
+                    // for-loop-header-imprint follow-up: endByte stays
+                    // node.EndByte() -- the live tree node's own true span,
+                    // which every lookup (Indent.cpp's keyOf()) recomputes
+                    // fresh and must match exactly, so narrowing it here
+                    // would make the container unfindable, not narrower (an
+                    // earlier version of this fix did exactly that). A node
+                    // whose grammar production trails its closer with a
+                    // required FIELD the classifier now recognizes (a
+                    // for-loop's own `body` statement, GrammarImprint.cpp's
+                    // MatchBracketed) instead gets an interiorEnd CAP,
+                    // consulted only by the walk's own containment check
+                    // (Indent.cpp's interiorContains) -- without it, a line
+                    // genuinely inside the for-loop's own {...} body
+                    // (already its own, separate compound_statement
+                    // container) got double-counted: once for its real
+                    // enclosing block, once more for this container wrongly
+                    // reaching past its own closing ')'. Reported live: a
+                    // for-loop's body gained one extra, unwanted indent
+                    // level end to end, including its own closing brace.
+                    ImprintContainer container{node.StartByte(), node.EndByte(), node.Type(), pair->openEnd};
+                    if (pair->closeEnd != node.EndByte()) {
+                        container.interiorEnd = pair->closeEnd;
+                    }
+                    out.containers.push_back(container);
                     if (const std::optional<ImprintDedent> closer = CloserOf(node, *pair)) {
                         out.dedents.push_back(*closer);
                     }
