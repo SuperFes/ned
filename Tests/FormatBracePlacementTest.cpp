@@ -19,6 +19,7 @@ using ned::editor::GoMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
+using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::SetBraceCollapseEmpty;
 using ned::editor::SetBraceCollapseSimple;
@@ -711,4 +712,132 @@ TEST_CASE("End to end: a language-scoped go/ override is unaffected by the ASI g
     REQUIRE(buffer.Text() == "package main\nfunc f() {\n\treturn\n}\n");
 
     SetBracePlacement("go/brace.function", std::nullopt);
+}
+
+// php-mode: the sixth language, and the first with a genuine THREE-way
+// body ambiguity per construct (brace / colon-alternate / bare unbraced
+// statement) rather than the two-way ones every prior language had.
+// Requiring `(compound_statement)` as the field's own TYPE is what
+// discriminates live, verified for every shape before this shipped.
+TEST_CASE("php-mode's format.janet only captures the brace-bodied shape of if/while/for",
+          "[FormatBracePlacement]") {
+    const Mode mode = PhpMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php\nif ($x) {\n    return;\n}\n"), "brace.control").size() == 1);
+    REQUIRE(
+        CapturesNamed(mode.formatCaptures("<?php\nif ($x):\n    return;\nendif;\n"), "brace.control").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php\nif ($x) return;\n"), "brace.control").empty());
+}
+
+// elseif/else follow-up: else_if_clause/else_clause carry the EXACT same
+// three-way body shape if_statement itself has -- so a FULL colon-syntax
+// chain ("if (x): ... elseif (y): ... else: ... endif;") must produce
+// ZERO brace.control matches across every clause, not just the leading
+// "if", while the equivalent all-brace chain produces one PER clause.
+TEST_CASE("php-mode's format.janet captures elseif/else bodies too, declining the full colon-alternate chain",
+          "[FormatBracePlacement]") {
+    const Mode mode = PhpMode();
+
+    const std::string braceChain = "<?php\nif ($x) {\n    a();\n} elseif ($y) {\n    b();\n} else {\n    c();\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(braceChain), "brace.control").size() == 3);
+
+    const std::string colonChain =
+        "<?php\nif ($x):\n    a();\nelseif ($y):\n    b();\nelse:\n    c();\nendif;\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(colonChain), "brace.control").empty());
+}
+
+TEST_CASE("php-mode's format.janet marks an elseif/else body isSimple too", "[FormatBracePlacement]") {
+    const Mode mode = PhpMode();
+
+    const std::string simple = "<?php\nif ($x) {\n} elseif ($y) {\n    return 1;\n} else {\n    return 2;\n}\n";
+    const auto        control = CapturesNamed(mode.formatCaptures(simple), "brace.control");
+    REQUIRE(control.size() == 3);
+    REQUIRE_FALSE(control[0].isSimple); // if's own body is empty, not "simple" (isEmpty/isSimple are exclusive)
+    REQUIRE(control[1].isSimple);       // elseif's body
+    REQUIRE(control[2].isSimple);       // else's body
+}
+
+// switch_block is ONE node type in PHP's grammar representing BOTH its
+// brace form and its own colon-alternate form ("switch (x): ... endswitch;")
+// -- there is no second node type to discriminate by the way if/while's
+// own colon_block vs. compound_statement split allows. Confirmed live
+// this is a real hazard: capturing the bare node would sometimes hand
+// ComputeBracePlacementEdits a capture whose first byte is ':' instead of
+// '{'. The paired "{"/"}" token capture sidesteps it structurally --
+// verified live the colon form produces zero matches, not a false one.
+TEST_CASE("php-mode's format.janet only captures switch's brace form, never its colon-alternate form",
+          "[FormatBracePlacement]") {
+    const Mode mode = PhpMode();
+
+    const auto braceForm =
+        CapturesNamed(mode.formatCaptures("<?php\nswitch ($x) {\ncase 1:\n    break;\n}\n"), "brace.control");
+    REQUIRE(braceForm.size() == 1);
+
+    const auto colonForm = CapturesNamed(
+        mode.formatCaptures("<?php\nswitch ($x):\ncase 1:\n    break;\nendswitch;\n"), "brace.control");
+    REQUIRE(colonForm.empty());
+}
+
+TEST_CASE("php-mode's format.janet names the full capture set over a real file", "[FormatBracePlacement]") {
+    const Mode mode = PhpMode();
+    REQUIRE(mode.formatCaptures);
+
+    const std::string source = "<?php\n"
+                               "interface I {\n"
+                               "    public function m();\n"
+                               "}\n"
+                               "trait T {\n"
+                               "    public function shared() {\n"
+                               "        return 1;\n"
+                               "    }\n"
+                               "}\n"
+                               "class C {\n"
+                               "    public function f($x) {\n"
+                               "        if ($x) {\n"
+                               "            return;\n"
+                               "        }\n"
+                               "        try {\n"
+                               "        } catch (Exception $e) {\n"
+                               "            log($e);\n"
+                               "        }\n"
+                               "    }\n"
+                               "}\n";
+    const auto captures = mode.formatCaptures(source);
+
+    REQUIRE(CapturesNamed(captures, "brace.function").size() == 2); // shared() and f()
+    REQUIRE(CapturesNamed(captures, "brace.control").size() == 2);  // the if's body and the catch's body
+    REQUIRE(CapturesNamed(captures, "brace.class").size() == 2);    // class C and trait T
+    REQUIRE(CapturesNamed(captures, "brace.interface").size() == 1);
+}
+
+TEST_CASE("php-mode's format.janet marks a single-statement body isSimple too", "[FormatBracePlacement]") {
+    const Mode        mode   = PhpMode();
+    const std::string simple = "<?php\nfunction f() {\n    return 1;\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(simple), "brace.function")[0].isSimple);
+
+    const std::string multi = "<?php\nfunction f() {\n    g();\n    return 1;\n}\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(multi), "brace.function")[0].isSimple);
+}
+
+TEST_CASE("End to end: php-mode's formatCaptures drives real edits across all three features",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+    SetBraceCollapseSimple("brace.control", true);
+
+    const Mode mode = PhpMode();
+    Buffer     buffer("test.php");
+    buffer.InsertAtPoint("<?php\n"
+                         "function f($x) {\n"
+                         "    if ($x)\n"
+                         "    {\n"
+                         "        return;\n"
+                         "    }\n"
+                         "}\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "php", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "<?php\n"
+                             "function f($x) {\n"
+                             "    if ($x) { return; }\n"
+                             "}\n");
 }

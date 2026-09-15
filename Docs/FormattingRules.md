@@ -198,14 +198,15 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Five languages exist today: cpp, JavaScript, Java, Python, and Go**
-(`Source/Languages/{cpp,javascript,java,python,go}/format.janet` -- the same capture NAMES
-throughout, over each grammar's own different node types: cpp's
+**Six languages exist today: cpp, JavaScript, Java, Python, Go, and PHP**
+(`Source/Languages/{cpp,javascript,java,python,go,php}/format.janet` -- the same capture
+NAMES throughout, over each grammar's own different node types: cpp's
 `compound_statement`/`condition_clause`, JavaScript's
 `statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`,
-Go's `block`/`parenthesized_expression`), all wired into `format-buffer`'s and `--format`'s
-Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and all shipping
-no built-in default -- neither does anything until you configure a rule:
+Go's `block`/`parenthesized_expression`, PHP's
+`compound_statement`/`parenthesized_expression`), all wired into `format-buffer`'s and
+`--format`'s Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and
+all shipping no built-in default -- neither does anything until you configure a rule:
 
 - **Break-kind captures** (`Editor/FormatBracePlacement.h`'s `ComputeBracePlacementEdits`,
   reading every `:break` field): `brace.function` (a function definition's own body),
@@ -442,6 +443,47 @@ regardless of how many statements are inside it. Fixed by anchoring one level de
 against `statement_list`'s own children, while still capturing the outer `block` (so the
 marker's byte range matches the base capture's) -- `(function_declaration body: (block
 (statement_list . (_) .)) @brace.function.simple)`.
+
+## PHP: a per-construct three-way ambiguity, and one node shared by two syntaxes
+
+PHP is the sixth language, and the first where a SINGLE construct's own body field
+accepts three different shapes rather than the two-way ones (brace vs. none) every prior
+language had: `{ ... }` (`compound_statement`, what `brace.control`/`brace.function`
+capture), PHP's own colon-alternate syntax (`colon_block` -- `if (x): ... elseif (y): ...
+else: ... endif;`, with NO braces anywhere in the whole chain), or a single bare unbraced
+statement (`if (x) return;`, C's own shape). This applies to `if`/`elseif`/`else`/`while`/
+`for`/`foreach` alike -- `else_if_clause`/`else_clause` carry the exact same three-way
+`body` field `if_statement` itself has, so a full colon-syntax `if:...elseif:...else:...
+endif:` chain produces **zero** `brace.control` matches across every clause, not just the
+leading `if`, verified live before this shipped. Requiring the field's own node TYPE to be
+`compound_statement` in the query (`(if_statement body: (compound_statement)
+@brace.control)`) is what discriminates all three shapes -- a colon-syntax or
+bare-statement body simply produces no match, not a false or corrupted one, the same
+"decline rather than approximate" precedent every prior language's own unreachable shapes
+already set.
+
+**`switch` needed a second, different trick.** PHP's grammar uses a SINGLE node type
+(`switch_block`) to represent BOTH its brace form (`{ case ... }`) and its own colon
+form (`: case ... endswitch;`) -- there is no second node type here the way
+`compound_statement`/`colon_block` split for if/while, so a bare `(switch_block)
+@brace.control` capture would sometimes hand `ComputeBracePlacementEdits` a node whose
+first byte is `{` and sometimes one whose first byte is `:`, which that pass hardcodes as
+a literal brace character to reposition or splice. A real hazard, confirmed live, not a
+hypothetical. Fixed with the same paired-delimiter mechanism a for-loop's own clause
+already uses: `(switch_block "{" @brace.control.open "}" @brace.control.close)` only ever
+matches when the literal `{`/`}` tokens actually exist, so the colon form contributes
+nothing -- verified live it produces zero matches, not a false one.
+
+Otherwise the template applies unchanged: `brace.class` covers both `class_declaration`
+and `trait_declaration` (a PHP trait is structurally and stylistically a reusable class
+body, the same "close enough to fold together" call cpp's own `brace.class` already makes
+for structs and classes), `brace.interface` is its own name (the same precedent Go's own
+`brace.interface` set), `control.parens` fires on ordinary code rather than a rare
+redundant-parens edge case (if/while/switch/elseif's own condition is a REQUIRED
+`parenthesized_expression` here, matching cpp/JavaScript/Java's own mandatory-parens
+shape, not Python/Go's optional one), and a for-loop's own clause and a catch clause's own
+parameter both need the paired mechanism, the same reasons cpp/JavaScript/Java's own files
+already document.
 
 ## The `--format` CLI
 

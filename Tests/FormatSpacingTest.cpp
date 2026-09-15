@@ -18,6 +18,7 @@ using ned::editor::GoMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
+using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::SetSpaceAfter;
 using ned::editor::SetSpaceBefore;
@@ -431,4 +432,46 @@ TEST_CASE("End to end: go-mode's formatCaptures drives a real space edit", "[For
     ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "go", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "package main\nfunc f() {\n\tif (x) {\n\t}\n}\n");
+}
+
+// php-mode: the sixth language. Unlike Python/Go's own narrow,
+// rarely-matched control.parens lever, PHP's if/while/switch condition is
+// a REQUIRED parenthesized_expression -- ordinary parens, not a redundant
+// edge case, matching cpp/javascript/java's own shape.
+TEST_CASE("php-mode's format.janet names control.parens over if/while/switch", "[FormatSpacing]") {
+    const Mode mode = PhpMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php\nif ($x) {\n}\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php\nwhile ($x) {\n}\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php\nswitch ($x) {\n}\n"), "control.parens").size() == 1);
+}
+
+TEST_CASE("php-mode's format.janet names control.parens over elseif's own condition too", "[FormatSpacing]") {
+    const Mode        mode   = PhpMode();
+    const std::string source = "<?php\nif ($x) {\n} elseif ($y) {\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "control.parens").size() == 2);
+}
+
+TEST_CASE("php-mode's format.janet captures a for-loop's outer parens as a matched pair", "[FormatSpacing]") {
+    const Mode        mode   = PhpMode();
+    const std::string source = "<?php\nfor ($i = 0; $i < 10; $i++) {\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "control.parens").size() == 1);
+}
+
+TEST_CASE("php-mode's format.janet captures a catch clause's parens as a matched pair", "[FormatSpacing]") {
+    const Mode        mode   = PhpMode();
+    const std::string source = "<?php\ntry {\n} catch (Exception $e) {\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "control.parens").size() == 1);
+}
+
+TEST_CASE("End to end: php-mode's formatCaptures drives a real space edit", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceBefore("control.parens", true);
+
+    const Mode mode = PhpMode();
+    Buffer     buffer("test.php");
+    buffer.InsertAtPoint("<?php\nif($x) {\n    return;\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "php", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "<?php\nif ($x) {\n    return;\n}\n");
 }
