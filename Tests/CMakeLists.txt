@@ -99,6 +99,7 @@ add_executable(ned_tests
             CodeFoldTest.cpp
             IndentStyleTest.cpp
             IndentDefaultsTest.cpp
+            FormatConfigParseTest.cpp
             IndentEngineTest.cpp
             IndentTest.cpp
             StickyScrollTest.cpp

@@ -101,6 +101,7 @@ add_library(ned_lib STATIC
         Editor/TrimOnSave.cpp
         Editor/LineEndingPolicy.cpp
         Editor/FormatOnSave.cpp
+        Editor/FormatConfigParse.cpp
         Editor/Clipboard.cpp
         Editor/TabWidth.cpp
         Editor/IndentStyle.cpp
