@@ -160,8 +160,64 @@ TEST_CASE("NextLineIndented adds one indent level past the header's own indent",
     const std::vector<FormatCapture> captures = {{"brace.function", text.find('{'), text.rfind('}') + 1}};
 
     const std::vector<FormatTextEdit> edits = ComputeBracePlacementEdits(text, "cpp", captures);
-    REQUIRE(edits.size() == 1);
+    REQUIRE(edits.size() == 2); // the opening brace's own gap, AND the closing brace's realignment
     REQUIRE(edits[0].text == "\n    "); // no header indent (column 0) + one 4-space level
+}
+
+// Regression: found live 2026-09-15 when the user asked whether anything
+// else had been "declared" rather than verified. NextLineIndented is the
+// one placement whose closing delimiter does NOT align with the header's
+// own indent (GNU/Whitesmiths aligns it with the OPENING delimiter's own,
+// deeper column instead) -- the original implementation only ever moved
+// the opening delimiter, leaving a mismatched brace pair. These apply the
+// edits to a REAL buffer and check the WHOLE result, specifically because
+// the original bug was invisible to a test that only inspected the
+// computed edit list (exactly what "NextLineIndented adds one indent
+// level..." above did, and still does for the opening half).
+TEST_CASE("NextLineIndented keeps the brace pair aligned with each other, top-level", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::NextLineIndented);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("int f() {\n    return 1;\n}\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "int f()\n    {\n    return 1;\n    }\n");
+
+    // Idempotent: re-running against the result finds nothing left to do.
+    REQUIRE(ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())).empty());
+}
+
+TEST_CASE("NextLineIndented keeps the brace pair aligned with each other, nested inside a class", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::NextLineIndented);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("class C {\n    void run() {\n        return;\n    }\n};\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    // Both halves of run()'s own brace pair land at column 8 (run()'s own
+    // 4-space indent + one more level) -- not column 4, which is what the
+    // pre-fix bug left the closing brace at.
+    REQUIRE(buffer.Text() == "class C {\n    void run()\n        {\n        return;\n        }\n};\n");
+}
+
+TEST_CASE("NextLineIndented leaves a collapsed one-line body alone", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::NextLineIndented);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("int f() { return 1; }\n"); // closer shares its line with real content
+
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    // The opening brace still moves; the closer -- not alone on its own
+    // line -- is left untouched rather than guessed at (collapse-empty/
+    // collapse-simple's territory, not this one).
+    REQUIRE(buffer.Text() == "int f()\n    { return 1; }\n");
 }
 
 TEST_CASE("A language-scoped rule wins over the shared one", "[FormatBracePlacement]") {

@@ -74,8 +74,16 @@ std::vector<FormatTextEdit> ComputeSpaceEdits(std::string_view text, std::string
             EmitIfChanged(edits, text, HorizontalGapAfter(text, capture.endByte), *rule.after);
         }
         if (rule.within && capture.endByte - capture.startByte >= 2) {
-            EmitIfChanged(edits, text, HorizontalGapAfter(text, capture.startByte + 1), *rule.within);
-            EmitIfChanged(edits, text, HorizontalGapBefore(text, capture.endByte - 1), *rule.within);
+            const Gap openGap  = HorizontalGapAfter(text, capture.startByte + 1);
+            const Gap closeGap = HorizontalGapBefore(text, capture.endByte - 1);
+            EmitIfChanged(edits, text, openGap, *rule.within);
+            // A genuinely empty pair ("()", nothing between the delimiters)
+            // has openGap and closeGap sitting at the exact same position --
+            // emitting both would double-insert ("(  )" instead of "( )").
+            // Emit the second only when it's a real, distinct gap.
+            if (openGap.start != closeGap.start || openGap.end != closeGap.end) {
+                EmitIfChanged(edits, text, closeGap, *rule.within);
+            }
         }
     }
 
