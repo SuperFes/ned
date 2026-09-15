@@ -18,6 +18,10 @@ namespace {
                a.collapseEmpty == b.collapseEmpty && a.collapseSimple == b.collapseSimple;
     }
 
+    bool operator==(const BlankRuleValue& a, const BlankRuleValue& b) {
+        return a.minBefore == b.minBefore && a.maxBefore == b.maxBefore;
+    }
+
     std::mutex& RulesMutex() {
         static std::mutex mutex;
         return mutex;
@@ -30,6 +34,11 @@ namespace {
 
     std::unordered_map<std::string, BreakRuleValue>& BreakRules() {
         static std::unordered_map<std::string, BreakRuleValue> rules;
+        return rules;
+    }
+
+    std::unordered_map<std::string, BlankRuleValue>& BlankRules() {
+        static std::unordered_map<std::string, BlankRuleValue> rules;
         return rules;
     }
 
@@ -67,6 +76,15 @@ namespace {
         ValidateCaptureName(name);
         const std::lock_guard<std::mutex> lock(RulesMutex());
         auto&                             entry = BreakRules()[name];
+        entry.*field                            = std::move(value);
+        ++Generation();
+    }
+
+    template <typename T, typename Field>
+    void SetBlankField(const std::string& name, std::optional<T> value, Field BlankRuleValue::* field) {
+        ValidateCaptureName(name);
+        const std::lock_guard<std::mutex> lock(RulesMutex());
+        auto&                             entry = BlankRules()[name];
         entry.*field                            = std::move(value);
         ++Generation();
     }
@@ -145,6 +163,23 @@ BreakRuleValue BreakRuleFor(std::string_view name) {
 
 BreakRuleValue BreakRuleFor(std::string_view name, std::string_view language) {
     return ScopedRuleFor<BreakRuleValue>(name, language, [](std::string_view n) { return BreakRuleFor(n); });
+}
+
+void SetBlankMinBefore(const std::string& name, std::optional<int> value) {
+    SetBlankField(name, value, &BlankRuleValue::minBefore);
+}
+
+void SetBlankMaxBefore(const std::string& name, std::optional<int> value) {
+    SetBlankField(name, value, &BlankRuleValue::maxBefore);
+}
+
+BlankRuleValue BlankRuleFor(std::string_view name) {
+    const std::lock_guard<std::mutex> lock(RulesMutex());
+    return RuleFor(BlankRules(), name);
+}
+
+BlankRuleValue BlankRuleFor(std::string_view name, std::string_view language) {
+    return ScopedRuleFor<BlankRuleValue>(name, language, [](std::string_view n) { return BlankRuleFor(n); });
 }
 
 std::size_t FormatRuleGeneration() {

@@ -22,6 +22,7 @@
 #include "Fill.h"
 #include "FillColumn.h"
 #include "Format.h"
+#include "FormatBlankLines.h"
 #include "FormatBracePlacement.h"
 #include "FormatConfigParse.h"
 #include "FormatOnSave.h"
@@ -1893,19 +1894,32 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           if (context.mode != nullptr && context.mode->indentColumn) {
                               changed = IndentBuffer(context.buffer, *context.mode) > 0;
                           }
-                          // configurable-formatter-rules follow-up: the pilot Break-kind
-                          // (brace placement) and Space-kind passes -- both a no-op for
-                          // every mode but cpp's own pilot captures until a rule is
-                          // actually configured (see Docs/FormattingRules.md). Run after
-                          // the structural reindent (whose body indentation neither
-                          // touches) and before Hygiene (which cleans up whatever
-                          // whitespace either step left behind). Space reads a FRESH
-                          // capture list re-read from context.buffer.Text() rather than
-                          // reusing Break's -- Break may have already shifted every byte
-                          // offset after its own edits, so reusing its list would be
-                          // reading stale offsets.
+                          // configurable-formatter-rules follow-up: the pilot Blank-,
+                          // Break- (brace placement), and Space-kind passes -- all a
+                          // no-op for every mode but their own pilot captures until a
+                          // rule is actually configured (see Docs/FormattingRules.md).
+                          // Run after the structural reindent (whose body indentation
+                          // none of them touch) and before Hygiene (which cleans up
+                          // whatever whitespace any of them left behind). Blank runs
+                          // FIRST: its own edit region always ends at a capture's own
+                          // startByte and sits strictly ABOVE that capture's line, never
+                          // overlapping a Break/Space capture's region (those sit AT OR
+                          // AFTER a construct's header) for any capture this codebase
+                          // names today, so running it first avoids the other two
+                          // passes ever having to account for shifted blank-line
+                          // whitespace above them. Every pass after the first reads a
+                          // FRESH capture list re-read from context.buffer.Text() rather
+                          // than reusing an earlier one -- an earlier pass may have
+                          // already shifted every byte offset after its own edits, so
+                          // reusing its list would be reading stale offsets.
                           if (context.mode != nullptr && context.mode->formatCaptures) {
                               const std::string languageKey = LanguageKeyForMode(*context.mode);
+                              const std::vector<FormatTextEdit> blankEdits = ComputeBlankLineEdits(
+                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
+                              if (!blankEdits.empty()) {
+                                  ApplyFormatTextEdits(context.buffer, blankEdits);
+                                  changed = true;
+                              }
                               const std::vector<FormatTextEdit> braceEdits = ComputeBracePlacementEdits(
                                   context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
                               if (!braceEdits.empty()) {

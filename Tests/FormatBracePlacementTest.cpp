@@ -559,7 +559,10 @@ TEST_CASE("End to end: java-mode's formatCaptures drives real edits across all t
 // marks the extent. python/format.janet therefore names no brace.*/
 // collapse-* captures whatsoever, so this whole pass is a structural no-op
 // for Python regardless of what placement/collapse rules a project
-// configures -- there is simply nothing here for it to act on.
+// configures -- there is simply nothing here for it to act on. (Python's
+// format.janet does name def.toplevel/def.method -- the blank-lines-kind
+// pilot captures, Editor/FormatBlankLines.h's own territory, not this
+// pass' -- so the list as a whole is no longer expected to be empty.)
 TEST_CASE("python-mode's format.janet names no brace-shaped captures at all", "[FormatBracePlacement]") {
     const Mode        mode   = PythonMode();
     const std::string source = "def f(x):\n"
@@ -568,7 +571,9 @@ TEST_CASE("python-mode's format.janet names no brace-shaped captures at all", "[
                                 "class C:\n"
                                 "    def m(self):\n"
                                 "        pass\n";
-    REQUIRE(mode.formatCaptures(source).empty());
+    for (const char* name : {"brace.function", "brace.control", "brace.class"}) {
+        REQUIRE(CapturesNamed(mode.formatCaptures(source), name).empty());
+    }
 }
 
 TEST_CASE("End to end: brace-placement rules are a no-op on python-mode even when configured",
