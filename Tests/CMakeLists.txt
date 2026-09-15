@@ -104,6 +104,7 @@ add_executable(ned_tests
             FormatConfigParseTest.cpp
             FormatRulesTest.cpp
             FormatBracePlacementTest.cpp
+            FormatSpacingTest.cpp
             FormatTest.cpp
             FormatKeyDocsTest.cpp
             IndentEngineTest.cpp
