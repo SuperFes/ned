@@ -1196,21 +1196,33 @@ too coarse here:
   span is byte-identical to the direct capture it replaces, so the `.simple` marker (still
   capturing the whole node) correlates against it unchanged.
 - **Collapse-empty gluing an identifier onto `"end"`, caught by an applied Buffer test**:
-  `method`/`class`/`module`/`singleton_class`'s own NAME/VALUE-anchored open is the FIRST
-  capture in this whole rollout where `.open` is arbitrary identifier text rather than a
-  fixed keyword/punctuation delimiter. Collapsing `def foo\nend` to `def foo end` is NOT the
-  word-fusion problem `IsWordByte` already guards (a separating space IS inserted) --
-  confirmed live via `tree-sitter parse` that shape still MISPARSES (`"end"` swallowed as a
-  bare parameter, a genuine `MISSING "end"` node), purely from the grammar's own
-  params-continuation ambiguity at that lexical position, independent of whitespace. The
-  same misparse hits `class Foo end`/`module M end`/`def self.foo end`. Fixed with a new
-  `CollapseEmptyUnsafeForLanguage(languageKey, openText)` guard keyed on the open TOKEN'S
-  OWN TEXT (mirroring `FormatSpacing.h`'s own `WithinRemovalUnsafe` precedent for bash's
-  `[`-vs-`((` distinction) rather than the capture name, since Ruby's own `brace.function`/
-  `brace.class` each mix a safe shape (`block`/`do_block`'s real delimiter) with an unsafe
-  one (`method`/`class`'s own name-anchored open) under ONE name -- declined for any
+  `method`/`singleton_method`/`class`/`module`/`singleton_class`'s own NAME/VALUE-anchored
+  open is the FIRST capture in this whole rollout where `.open` is arbitrary identifier text
+  rather than a fixed keyword/punctuation delimiter. Collapsing `def foo\nend` to `def foo
+  end` is NOT the word-fusion problem `IsWordByte` already guards (a separating space IS
+  inserted) -- confirmed with a real `ruby -c` (installed partway through this rollout;
+  everything above this point was structural-only via `tree-sitter parse`) that shape still
+  fails ("expected a delimiter to close the parameters"), purely from the grammar's own
+  params-continuation ambiguity at that lexical position, independent of whitespace; same
+  for `singleton_class`'s own `"class << self end"` ("unexpected 'end'; expected a newline or
+  a ';' after the singleton class"). Fixed with a new `CollapseEmptyUnsafeForLanguage
+  (languageKey, openText)` guard keyed on the open TOKEN'S OWN TEXT (mirroring
+  `FormatSpacing.h`'s own `WithinRemovalUnsafe` precedent for bash's `[`-vs-`((` distinction)
+  rather than the capture name, since Ruby's own `brace.function`/`brace.class` each mix a
+  safe shape (`block`/`do_block`'s real delimiter) with an unsafe one (`method`/
+  `singleton_class`'s own name/value-anchored open) under ONE name -- declined for any
   word-shaped open text that isn't one of Ruby's own fixed keyword opens (`do`/`then`/
-  `begin`, confirmed live that gluing any of those three onto `"end"` parses clean).
+  `begin`, confirmed gluing any of those three onto `"end"` passes clean).
+  **A real `ruby -c` also caught an over-broad claim in this decline's own first draft, once
+  the interpreter was actually available**: plain `class`/`module` are NOT ambiguous the way
+  `method`/`singleton_class` are -- `"class Foo end"`/`"module M end"` both pass clean, since
+  a class/module's own NAME field is a grammar-guaranteed CONSTANT, never param-like. Left
+  declined anyway rather than narrowed: `singleton_class` shares `"brace.class"` with plain
+  `class`, and its own VALUE field can be any expression, including a constant (`"class <<
+  SomeConstant end"` is ALSO confirmed unsafe, and textually indistinguishable from a real
+  class name) -- there's no text-only signal that reliably tells the two apart, and
+  collapse-empty on a handful of empty Ruby classes/modules isn't worth risking that
+  distinction being wrong on a construct that IS a real corruption.
 - A related, smaller finding of the SAME shape: `"begin"` is a bare, standalone statement
   with the same "glues onto whatever precedes it" hazard bash/fish's own `do`/`then`/
   `begin_statement` have (confirmed live: `"foo begin...end"` gets swallowed as an argument
@@ -1231,23 +1243,52 @@ a closing token of their own. `control.parens` is the same narrow "already paren
 lever Python/Go/Lua's own files use, reaching if/unless/while/until's own condition and
 case/case_match's own value alike.
 
-**One pre-existing, unrelated bug found and logged, not fixed in-session**: a baseline `ned
---format` pass with no format.janet rules configured revealed `method`/`singleton_method`/
-`while`/`until` bodies are never reindented at all -- `Editor/ImprintTables.cpp`'s Ruby
-table has entries for `if`/`class`/`module`/`begin`/`do`/`case` but none for these four,
-for the identical underlying reason format captures needed extra care for them (no single,
-always-present open token directly beside the body). Logged to `ROADMAP.md`'s watch list; a
-real fix needs the same design work this rollout did for the format side, not a mechanical
-table entry.
+**A pre-existing, unrelated bug found and logged during this rollout, fixed as its own
+follow-up once a real Ruby toolchain was installed**: a baseline `ned --format` pass with no
+format.janet rules configured revealed `method`/`singleton_method`/`while`/`until` bodies
+are never reindented at all -- `Editor/ImprintTables.cpp`'s Ruby table has entries for
+`if`/`class`/`module`/`begin`/`do`/`case` but none for these four, for the identical
+underlying reason format captures needed extra care for them (no single, always-present
+open token directly beside the body). `Editor/Grammar/GrammarImprint.cpp`'s static
+inference can't be taught either shape without risk: `method`/`singleton_method`'s own
+closer sits inside a mid-sequence `CHOICE` the flattener deliberately doesn't descend into
+(a change there would touch every bundled grammar's own inference, not just Ruby's), and
+`while`/`until`'s own `"do"` wrapper node is already correctly inferred, but its literal
+`"do"` child is grammatically optional and elided entirely in the far more common `while
+x\n...end` style -- `Editor/ImprintBracket.cpp`'s `DelimitersOf` requires that child to be
+physically present, a runtime limitation no amount of static-inference work can close.
+Fixed with a hand-authored `Source/Languages/ruby/indents.janet` instead -- the same
+"the imprint can't read it, write a query" precedent bash/fish/Python's own indents.janet
+already follow for their own gaps -- capturing the whole node (`(method "end") @indent` /
+`(method "end" @dedent)`, same shape for `singleton_method`/`do`) rather than anchoring on
+any specific token, which covers the elided-`"do"` case for free. The `"end"`-present
+condition on BOTH patterns is load-bearing, not decorative: Ruby's own "endless method"
+(`def f = 1`) has no `"end"` at all, and an unconditional `@indent` would open a container
+nothing ever dedents, over-indenting everything after it in the file -- confirmed live this
+does NOT happen (a real `IndentBuffer` pass over a file with an endless method followed by
+an ordinary one indents the ordinary one's own body correctly, not progressively deeper).
 
-No real Ruby toolchain (`ruby`/`irb`) is installed in this environment -- the one language
-in this whole rollout without one. Verified instead via `tree-sitter parse`/`tree-sitter
-query` against the real vendored grammar directly (`-p <grammar-dir>`, sidestepping the
-0.27 CLI's own need for a `tree-sitter.json` config) for every structural claim, and by
-re-parsing `ned --format`'s own output with ned's own parse engine for zero `ERROR`/
-`MISSING` nodes -- the same honest, disclosed structural-only substitute Kotlin used before
-`kotlinc` was installed. Full suite: 4709+ cases (17 new test cases across all three
-format-kind test files), confirmed clean.
+Ruby is also the one language in this whole rollout where a real toolchain (`ruby -c`, and
+running the actual interpreter) wasn't installed until partway through -- everything above
+this point in the writeup was verified structurally only, via `tree-sitter parse`/`tree-sitter
+query` against the real vendored grammar directly (`-p <grammar-dir>`, sidestepping the 0.27
+CLI's own need for a `tree-sitter.json` config) and by re-parsing `ned --format`'s own output
+with ned's own parse engine for zero `ERROR`/`MISSING` nodes -- the same honest, disclosed
+structural-only substitute Kotlin used before `kotlinc` was installed. Once `ruby` was
+available, re-running every hazard claim above through the real interpreter confirmed all of
+them, with ONE correction: the collapse-empty decline's own first-draft claim that `"class Foo
+end"`/`"module M end"` misparse was WRONG -- both pass a real `ruby -c` clean, since a
+class/module's own NAME field is a grammar-guaranteed constant, never param-like the way a
+bare method name is. Left declined anyway (see `CollapseEmptyUnsafeForLanguage`'s own updated
+comment above) rather than narrowed, since `singleton_class` shares `"brace.class"` with plain
+`class` and its own VALUE field can be any expression -- including a constant, which is
+textually indistinguishable from a real class name -- and `"class << SomeConstant end"` is
+ALSO confirmed unsafe. This is the kind of correction the "verify a claim before writing it
+into a comment" discipline elsewhere in this rollout exists for: the ORIGINAL decline was
+still safe (just wider than strictly necessary), but the REASONING behind it was wrong until
+a real interpreter could check it. Full suite: 4709+ cases (17 new format-kind test cases
+across all three format-kind test files, plus 4 more in `Tests/IndentTest.cpp` for the
+indent-engine follow-up), confirmed clean.
 
 ## The `--format` CLI
 
