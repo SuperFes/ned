@@ -8,6 +8,7 @@
 #include "FinalNewline.h"
 #include "IndentStyle.h"
 #include "JanetData.h"
+#include "MaxConsecutiveBlankLines.h"
 #include "TrimOnSave.h"
 
 namespace ned::editor {
@@ -114,6 +115,9 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
         else if (key == "ensure-final-newline") {
             config.ensureFinalNewline = ExpectBool(path, value, ":ensure-final-newline");
         }
+        else if (key == "max-consecutive-blank-lines") {
+            config.maxConsecutiveBlankLines = ExpectInt(path, value, ":max-consecutive-blank-lines");
+        }
         else {
             Fail(path, keyValue.line, "unknown format config key :" + key);
         }
@@ -140,6 +144,9 @@ void ApplyFormatConfig(const FormatConfig& config) {
     if (config.ensureFinalNewline) {
         SetEnsureFinalNewline(*config.ensureFinalNewline);
     }
+    if (config.maxConsecutiveBlankLines) {
+        SetMaxConsecutiveBlankLines(*config.maxConsecutiveBlankLines);
+    }
 }
 
 std::filesystem::path PersonalFormatConfigPath() {
@@ -157,7 +164,7 @@ std::filesystem::path ProjectFormatConfigPath(const std::filesystem::path& proje
 }
 
 std::vector<std::string> FormatConfigKeys() {
-    return {"ensure-final-newline", "indent", "trim-trailing-whitespace"};
+    return {"ensure-final-newline", "indent", "max-consecutive-blank-lines", "trim-trailing-whitespace"};
 }
 
 std::vector<std::string> FormatConfigIndentEntryKeys() {

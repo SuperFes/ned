@@ -46,6 +46,7 @@ add_executable(ned_tests
             BufferHugeFileTest.cpp
             DiskSpaceTest.cpp
             BufferSaveEquivalenceTest.cpp
+            WhitespaceHygieneTest.cpp
             MultiCursorTest.cpp
             BufferListTest.cpp
             FilePreservationTest.cpp
@@ -99,7 +100,9 @@ add_executable(ned_tests
             CodeFoldTest.cpp
             IndentStyleTest.cpp
             IndentDefaultsTest.cpp
+            MaxConsecutiveBlankLinesTest.cpp
             FormatConfigParseTest.cpp
+            FormatTest.cpp
             FormatKeyDocsTest.cpp
             IndentEngineTest.cpp
             IndentTest.cpp

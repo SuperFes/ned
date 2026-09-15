@@ -74,6 +74,7 @@
 #include "Editor/TestRun/TestOutputParser.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/ToolchainIncludePaths.h"
+#include "Editor/MaxConsecutiveBlankLines.h"
 #include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vim/Settings.h"
@@ -478,6 +479,13 @@ namespace {
 
     void NedSetTrimTrailingWhitespaceOnSave(bool enabled) {
         editor::SetTrimTrailingWhitespaceOnSave(enabled);
+    }
+
+    // configurable-formatter Hygiene-pass follow-up: a negative value means
+    // "no limit" (MaxConsecutiveBlankLines.h's own nullopt sentinel) --
+    // simpler for a Janet caller than a separate enabled/disabled argument.
+    void NedSetMaxConsecutiveBlankLines(std::int64_t max) {
+        editor::SetMaxConsecutiveBlankLines(static_cast<int>(max));
     }
 
     void NedSetCleanBlankLineOnNewline(bool enabled) {
@@ -1525,6 +1533,11 @@ void InstallEditorBindings(Environment& env) {
         "Enable/disable stripping trailing spaces/tabs from every line and collapsing trailing blank lines at "
         "end-of-file, applied to a file's written content on save (default true). Disk-only, same as "
         "set-ensure-final-newline -- the buffer's own live content is never touched.");
+    env.Register<&NedSetMaxConsecutiveBlankLines>(
+        "ned", "set-max-consecutive-blank-lines",
+        "Set the longest run of consecutive blank lines the Hygiene pass (format-buffer's native fallback) leaves "
+        "in place -- a longer run is collapsed down to exactly this many (default 2). A negative value disables "
+        "the rule entirely (no limit).");
     env.Register<&NedSetCleanBlankLineOnNewline>(
         "ned", "set-clean-blank-line-on-newline",
         "Enable/disable clearing a whitespace-only line's own leading run before splitting it when the newline "
