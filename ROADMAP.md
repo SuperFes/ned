@@ -1553,6 +1553,26 @@ for closed-issue history.
   `Indent.cpp`'s walk. Not urgent (cosmetic, one extra tab, `case` lines still land in
   the right relative order) but real and reproducible.
 
+- **PHP's colon-alternate `if:`/`elseif:`/`else:`/`endif:` body is not indented at
+  all.** Found 2026-09-14 during the formatter's PHP pilot rollout (unrelated to that
+  work -- reproduces with NO `format.janet` at all, plain `indent-buffer`/`ned --format`
+  on ordinary PHP source): `if ($x):\n    return 1;\nendif;` reindents to
+  `if ($x):\nreturn 1;\nendif;` -- the body line loses its indent relative to `if`
+  entirely rather than gaining one, though the result stays syntactically valid PHP
+  (`php -l` clean). Root cause, confirmed rather than guessed:
+  `Source/Languages/php/` has no `indents.janet` at all (PHP is one of the four bundled
+  languages -- json/css/toml/php -- that indent from the delimiter imprint alone, per
+  this file's own "Query files in Janet" note), and `colon_block` (the alternate-syntax
+  body node, grammar.json's own `": " ... "endif"` production) has no bracket pair or
+  recognized keyword-delimiter shape at all for `Editor/Grammar/GrammarImprint.h`'s
+  inference to key off, unlike the brace form's own `compound_statement`. Not urgent
+  (colon syntax is uncommon in modern PHP, and the failure is a missing indent rather
+  than a wrong or corrupting one). Fix shape: either extend the imprint's
+  `DelimiterKind` vocabulary to recognize a colon-opened, keyword-closed body with no
+  bracket at all (a new kind, not `DelimiterKind::Keyword`'s existing bracket-plus-
+  keyword shape), or hand-write a `php/indents.janet` `@indent`/`@dedent` pair naming
+  `colon_block` directly the way JSX's own rules are hand-written by necessity.
+
 - **org.indent hangs a headline that directly follows a list item.** Surfaced by (not
   introduced by) the Step 5 oracle corpus: in `Tests/Oracle/expected/sample.org.oracle`,
   `* Second tree` — the line right after `- [ ] unchecked box`, no blank line between —
