@@ -197,13 +197,13 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Two pilots exist today, cpp and JavaScript** (`Source/Languages/cpp/format.janet`,
-`Source/Languages/javascript/format.janet` -- the same two capture NAMES, over each
-grammar's own different node types: cpp's `compound_statement`/`condition_clause` vs.
-JavaScript's `statement_block`/`parenthesized_expression`), both wired into
-`format-buffer`'s and `--format`'s Native chain (reindent, then Break, then Space, then
-Hygiene) and both shipping no built-in default -- neither does anything until you
-configure a rule:
+**Three languages exist today: cpp, JavaScript, and Java** (`Source/Languages/{cpp,
+javascript,java}/format.janet` -- the same capture NAMES throughout, over each grammar's
+own different node types: cpp's `compound_statement`/`condition_clause`, JavaScript's
+`statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`),
+all wired into `format-buffer`'s and `--format`'s Native chain (reindent, then Break, then
+Space, then Hygiene) and all shipping no built-in default -- neither does anything until
+you configure a rule:
 
 - **Break-kind captures** (`Editor/FormatBracePlacement.h`'s `ComputeBracePlacementEdits`,
   reading every `:break` field): `brace.function` (a function definition's own body),
@@ -220,7 +220,7 @@ configure a rule:
   three `:space` fields; deliberately never touches a whitespace run that crosses a
   newline -- a Space rule never second-guesses wherever a line break already is):
   `control.parens`, covering `if`/`while`/`switch`/`for`'s own condition and a `catch`
-  clause's own parameter parens, in both languages.
+  clause's own parameter parens, in all three languages.
   ```janet
   (ned/set-format-space-before "control.parens" true)
   (ned/set-format-space-after "control.parens" true)
@@ -287,9 +287,11 @@ so a capture only ever takes one path):
 No other bundled language has a `format.janet` yet, and no capture yet reads `:within` on
 an empty pair. This is the proof that the full chain (query -> `Mode::formatCaptures` ->
 `FormatRules` resolution -> a computed edit -> applied to a live buffer) works end to end
-for both rule kinds AND across two real languages sharing one rule set with one exception,
-ahead of rolling the remaining rule kinds/languages out (see
-`Docs/FormattingCapabilities.md`'s Tier B1).
+for both rule kinds AND across three real languages sharing one rule set with per-language
+exceptions, ahead of rolling the remaining rule kinds/languages out (see
+`Docs/FormattingCapabilities.md`'s Tier B1). Java's own for-loop allows several
+comma-separated init/update expressions, unlike cpp/JavaScript's single ones -- verified
+live that the paired `"("`/`")"` capture still finds the outer pair regardless.
 
 The same rules are settable live from `init.janet`, per-field, mirroring
 `ned/set-capture-*`'s own shape:
