@@ -11,23 +11,24 @@
 
 using ned::editor::ApplyFormatTextEdits;
 using ned::editor::CMode;
+using ned::editor::ComputeSpaceEdits;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
-using ned::editor::ComputeSpaceEdits;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
 using ned::editor::GoMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::KotlinMode;
+using ned::editor::LuaMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::RustMode;
-using ned::editor::TypeScriptMode;
 using ned::editor::SetSpaceAfter;
 using ned::editor::SetSpaceBefore;
 using ned::editor::SetSpaceWithin;
+using ned::editor::TypeScriptMode;
 using ned::text::Buffer;
 
 namespace {
@@ -665,4 +666,67 @@ TEST_CASE("End to end: c-mode's formatCaptures drives a real space edit", "[Form
     ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "c", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "int f(int x) {\n    if (x) {\n    }\n    return 0;\n}\n");
+}
+
+// lua-mode: control.parens is the same narrow "already parenthesized"
+// lever python/go's own files use (verified live, same as those two --
+// "if x then" produces zero matches, "if (x) then" produces exactly one).
+// Unlike python (which has no brace-shaped captures at all), lua DOES
+// carry brace.function/brace.control -- both synthesized from a paired
+// "<name>.open"/"<name>.close" match on a multi-byte keyword token
+// (Editor/FormatBracePlacement.h's own "first genuinely keyword-delimited
+// language" follow-up), which is what exercises ComputeSpaceEdits'
+// :within handling past a single-byte "(" for the first time: :within
+// reads capture.openLength/closeLength rather than hardcoding +1/-1, so
+// this needed no new C++ once that generalization existed.
+TEST_CASE("lua-mode's format.janet control.parens only captures an already-parenthesized "
+          "condition",
+          "[FormatSpacing]") {
+    const Mode mode = LuaMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("if x then\nend\n"), "control.parens").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("if (x) then\nend\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("while x do\nend\n"), "control.parens").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("while (x) do\nend\n"), "control.parens").size() == 1);
+}
+
+TEST_CASE("End to end: lua-mode's formatCaptures drives a real space edit only when parens "
+          "are present",
+          "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceWithin("control.parens", false);
+
+    const Mode mode = LuaMode();
+
+    Buffer withParens("t.lua");
+    withParens.InsertAtPoint("if ( x ) then\nend\n");
+    ApplyFormatTextEdits(withParens,
+                         ComputeSpaceEdits(withParens.Text(), "lua", mode.formatCaptures(withParens.Text())));
+    REQUIRE(withParens.Text() == "if (x) then\nend\n");
+
+    Buffer withoutParens("t2.lua");
+    withoutParens.InsertAtPoint("if x then\nend\n");
+    ApplyFormatTextEdits(
+        withoutParens, ComputeSpaceEdits(withoutParens.Text(), "lua", mode.formatCaptures(withoutParens.Text())));
+    REQUIRE(withoutParens.Text() == "if x then\nend\n"); // nothing to touch, no crash either
+}
+
+TEST_CASE("End to end: lua-mode's :within reads a keyword delimiter's real length, never the "
+          "hardcoded single byte a brace/paren capture defaults to",
+          "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceWithin("lua/brace.control", true);
+
+    const Mode mode = LuaMode();
+    Buffer     buffer("t.lua");
+    // No space between "y()" and "end" -- :within=true asks for exactly
+    // one just inside each delimiter. A capture using
+    // capture.startByte+1/endByte-1 (the pre-generalization code) would
+    // corrupt this: capture.endByte-1 lands INSIDE "end" itself (between
+    // 'n' and 'd'), not before it.
+    buffer.InsertAtPoint("local x = 1\ndo y()end\n");
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "lua", mode.formatCaptures(buffer.Text())));
+    REQUIRE(buffer.Text() == "local x = 1\ndo y() end\n");
+
+    SetSpaceWithin("lua/brace.control", std::nullopt);
 }

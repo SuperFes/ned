@@ -11,9 +11,9 @@
 #include "Text/Buffer.h"
 
 using ned::editor::ApplyFormatTextEdits;
-using ned::editor::ComputeBlankLineEdits;
 using ned::editor::BashMode;
 using ned::editor::CMode;
+using ned::editor::ComputeBlankLineEdits;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
 using ned::editor::FormatCapture;
@@ -22,13 +22,14 @@ using ned::editor::GoMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::KotlinMode;
+using ned::editor::LuaMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::RustMode;
-using ned::editor::TypeScriptMode;
 using ned::editor::SetBlankMaxBefore;
 using ned::editor::SetBlankMinBefore;
+using ned::editor::TypeScriptMode;
 using ned::text::Buffer;
 
 namespace {
@@ -754,4 +755,62 @@ TEST_CASE("End to end: blank lines applied to a real bash-mode buffer", "[Format
     ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "bash", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "f() {\n    echo hi\n}\n\ng() {\n    echo bye\n}\n");
+}
+
+// lua-mode: def.toplevel covers every declaration shape (free functions,
+// `local function`, dot/colon "method" syntax -- all the same
+// function_declaration node, see Editor/FormatBracePlacement.h's own
+// follow-up) but never a nested one, and never the anonymous
+// function_definition EXPRESSION form. No def.method at all -- a real
+// language difference (a "method" here is structurally identical to and
+// interleaved with ordinary functions, never nested inside a distinct
+// class-body container), matching go-mode's own precedent.
+TEST_CASE("lua-mode's format.janet names def.toplevel over every declaration shape, not a "
+          "nested or anonymous one, with correct .first markers",
+          "[FormatBlankLines]") {
+    const Mode mode = LuaMode();
+
+    const std::string source   = "function f()\n"
+                                 "    do\n"
+                                 "        function nested()\n"
+                                 "        end\n"
+                                 "    end\n"
+                                 "end\n"
+                                 "local function g()\n"
+                                 "end\n"
+                                 "function M.h()\n"
+                                 "end\n"
+                                 "local i = function()\n"
+                                 "end\n";
+    const auto        toplevel = CapturesNamed(mode.formatCaptures(source), "def.toplevel");
+    REQUIRE(toplevel.size() == 3); // f(), g(), M.h() -- nested()/the anonymous one are excluded
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+    REQUIRE_FALSE(toplevel[2].isFirst);
+
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "def.method").empty());
+}
+
+TEST_CASE("lua-mode's format.janet treats a real preceding statement as a real preceding "
+          "sibling",
+          "[FormatBlankLines]") {
+    // Same lesson every prior language's own leading-construct case
+    // already taught (python's "import os", go's "package main", bash's
+    // shebang, ...) -- not a bug.
+    const Mode        mode   = LuaMode();
+    const std::string source = "local x = 1\nfunction f()\nend\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(source), "def.toplevel")[0].isFirst);
+}
+
+TEST_CASE("End to end: blank lines applied to a real lua-mode buffer", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 1);
+
+    const Mode mode = LuaMode();
+    Buffer     buffer("test.lua");
+    buffer.InsertAtPoint("function f()\n    return 1\nend\nfunction g()\n    return 2\nend\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "lua", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "function f()\n    return 1\nend\n\nfunction g()\n    return 2\nend\n");
 }

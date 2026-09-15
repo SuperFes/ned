@@ -13,24 +13,25 @@ using ned::editor::ApplyFormatTextEdits;
 using ned::editor::BashMode;
 using ned::editor::BracePlacement;
 using ned::editor::CMode;
+using ned::editor::ComputeBracePlacementEdits;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
-using ned::editor::ComputeBracePlacementEdits;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
 using ned::editor::GoMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::KotlinMode;
+using ned::editor::LuaMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::RustMode;
-using ned::editor::TsxMode;
-using ned::editor::TypeScriptMode;
 using ned::editor::SetBraceCollapseEmpty;
 using ned::editor::SetBraceCollapseSimple;
 using ned::editor::SetBracePlacement;
+using ned::editor::TsxMode;
+using ned::editor::TypeScriptMode;
 using ned::text::Buffer;
 
 namespace {
@@ -1330,4 +1331,220 @@ TEST_CASE("End to end: bash-mode's formatCaptures drives a real brace-placement 
                          ComputeBracePlacementEdits(buffer.Text(), "bash", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "f() {\n    echo hi\n}\n");
+}
+
+// lua-mode: the fourteenth language, and the first whose delimiters are
+// KEYWORD tokens rather than single characters -- FormatCapture::
+// openLength/closeLength (Mode.h) and every place FormatBracePlacement.cpp
+// touched a delimiter byte were generalized past a hardcoded single byte
+// before this file was written, verified live against ned_tests's own
+// suite (4653 cases, unchanged) before any of these tests were added.
+TEST_CASE("lua-mode's format.janet reports the real multi-byte delimiter lengths", "[FormatBracePlacement]") {
+    const Mode mode = LuaMode();
+
+    const auto fn = CapturesNamed(mode.formatCaptures("function f()\n    return 1\nend\n"), "brace.function");
+    REQUIRE(fn.size() == 1);
+    REQUIRE(fn[0].openLength == 1);  // ")"
+    REQUIRE(fn[0].closeLength == 3); // "end"
+
+    const auto doEnd = CapturesNamed(mode.formatCaptures("while x do\n    y()\nend\n"), "brace.control");
+    REQUIRE(doEnd.size() == 1);
+    REQUIRE(doEnd[0].openLength == 2);  // "do"
+    REQUIRE(doEnd[0].closeLength == 3); // "end"
+
+    const auto thenEnd = CapturesNamed(mode.formatCaptures("if x then\n    y()\nend\n"), "brace.control");
+    REQUIRE(thenEnd.size() == 1);
+    REQUIRE(thenEnd[0].openLength == 4);  // "then"
+    REQUIRE(thenEnd[0].closeLength == 3); // "end"
+}
+
+TEST_CASE("lua-mode's format.janet names brace.function over every function-declaration shape",
+          "[FormatBracePlacement]") {
+    const Mode mode = LuaMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("function f()\n    return 1\nend\n"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("local function f()\n    return 1\nend\n"), "brace.function").size() ==
+            1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("function M.f()\n    return 1\nend\n"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("function M:f()\n    return 1\nend\n"), "brace.function").size() == 1);
+    // an empty parameter list is still exactly one capture -- the closing
+    // ")" is always present even with zero parameters.
+    REQUIRE(CapturesNamed(mode.formatCaptures("function f()\nend\n"), "brace.function").size() == 1);
+    // a bare function EXPRESSION (never a statement-level definition) is
+    // deliberately left uncaptured for brace.function, matching every
+    // other language's own "declarations, not expressions" scope -- Lua's
+    // function_definition has the identical parameters/end shape and
+    // WOULD match if captured (an earlier draft of format.janet did
+    // capture it, caught by this very assertion before it shipped), so
+    // this is a real, checked scope cut, not an oversight.
+    REQUIRE(CapturesNamed(mode.formatCaptures("local f = function()\n    return 1\nend\n"), "brace.function")
+                .empty());
+}
+
+TEST_CASE("lua-mode's format.janet names brace.control over while/for/do/if, one capture "
+          "per construct even through an elseif/else chain",
+          "[FormatBracePlacement]") {
+    const Mode mode = LuaMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("while x do\n    y()\nend\n"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("for i = 1, 10 do\n    y()\nend\n"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("for k, v in pairs(t) do\n    y()\nend\n"), "brace.control").size() ==
+            1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("do\n    local z = 1\nend\n"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("if x then\n    y()\nend\n"), "brace.control").size() == 1);
+
+    // elseif/else: still exactly ONE brace.control, spanning "then" all
+    // the way to the chain's own final "end" -- verified live this is
+    // structurally sound (the outer if_statement owns the only literal
+    // "end" token regardless of how many elseif branches sit inside it),
+    // not merely that it doesn't crash.
+    const std::string chained         = "if x then\n    a()\nelseif y then\n    b()\nelse\n    c()\nend\n";
+    const auto        chainedCaptures = CapturesNamed(mode.formatCaptures(chained), "brace.control");
+    REQUIRE(chainedCaptures.size() == 1);
+    REQUIRE(chainedCaptures[0].startByte == chained.find("then"));
+    REQUIRE(chainedCaptures[0].endByte == chained.rfind("end") + 3);
+}
+
+TEST_CASE("lua-mode's format.janet control.parens only fires when the condition is actually "
+          "parenthesized",
+          "[FormatBracePlacement]") {
+    const Mode mode = LuaMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("if x then\nend\n"), "control.parens").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("if (x) then\nend\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("while x do\nend\n"), "control.parens").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("while (x) do\nend\n"), "control.parens").size() == 1);
+}
+
+TEST_CASE("lua-mode's format.janet has no brace.class/brace.interface/def.method/.simple "
+          "at all -- real language absences",
+          "[FormatBracePlacement]") {
+    const Mode mode = LuaMode();
+
+    // a plausible-looking "class" written as a table plus dot-methods --
+    // Lua has no dedicated class syntax the grammar could ever name.
+    const std::string source = "local M = {}\n"
+                               "function M.new()\n    return setmetatable({}, M)\nend\n"
+                               "function M:method()\n    return 1\nend\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.class").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.interface").empty());
+    // no def.method: a "method" here is a def.toplevel like any other
+    // function, never nested inside a distinct class-body container.
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "def.method").empty());
+    // no .simple marker anywhere -- every capture in this file is
+    // synthesized from a paired open/close match with no single node to
+    // anchor a second ".simple" pattern against.
+    for (const auto& capture : mode.formatCaptures(source)) {
+        REQUIRE_FALSE(capture.isSimple);
+    }
+}
+
+TEST_CASE("lua-mode's format.janet def.toplevel covers every declaration shape but not an "
+          "anonymous function expression",
+          "[FormatBracePlacement]") {
+    const Mode mode = LuaMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("function f()\nend\n"), "def.toplevel").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("local function f()\nend\n"), "def.toplevel").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("function M.f()\nend\n"), "def.toplevel").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("local f = function()\nend\n"), "def.toplevel").empty());
+}
+
+TEST_CASE("lua-mode's format.janet .first marker fires for the chunk's own first "
+          "declaration, wired at exactly the level def.toplevel itself uses",
+          "[FormatBracePlacement]") {
+    const Mode mode = LuaMode();
+
+    // A single top-level function with nothing before it in the chunk.
+    const auto solo = CapturesNamed(mode.formatCaptures("function f()\nend\n"), "def.toplevel");
+    REQUIRE(solo.size() == 1);
+    REQUIRE(solo[0].isFirst);
+
+    // A real preceding statement disqualifies isFirst -- the same lesson
+    // every prior language's own leading-construct case already taught
+    // (Go's "package main", cpp's leading #include, Bash's shebang, ...).
+    const std::string withPreamble = "local x = 1\nfunction f()\nend\nfunction g()\nend\n";
+    const auto        defs         = CapturesNamed(mode.formatCaptures(withPreamble), "def.toplevel");
+    REQUIRE(defs.size() == 2);
+    REQUIRE_FALSE(defs[0].isFirst);
+    REQUIRE_FALSE(defs[1].isFirst);
+
+    // A function nested inside an arbitrary block (do/if/while/a function
+    // body) is NOT itself def.toplevel-scoped for ".first" purposes --
+    // wired only at chunk level, the same level def.toplevel's own
+    // primary capture uses, matching every other language's own .first
+    // convention (python/go/js all wire it at the identical module/
+    // class-body level their def.toplevel/def.method itself uses, never
+    // at a generic nested block) -- verified live an earlier draft got
+    // this wrong.
+    const std::string nested = "do\n    function f()\n    end\nend\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(nested), "def.toplevel").empty());
+}
+
+TEST_CASE("End to end: lua-mode's formatCaptures drives a real brace-placement edit on the "
+          "keyword pair",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("lua/brace.control", BracePlacement::NextLineIndented);
+
+    const Mode mode = LuaMode();
+    Buffer     buffer("t.lua");
+    buffer.InsertAtPoint("while x do\nprint(1)\nend\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "lua", mode.formatCaptures(buffer.Text())));
+
+    // "do" moves to its own indented line; "end" (a genuinely 3-byte
+    // token, not the single byte every prior language's own equivalent
+    // test exercised) is repositioned to the SAME indent -- the real
+    // regression test for the whole multi-byte-delimiter generalization.
+    // Body content is untouched (brace placement never reindents a body).
+    REQUIRE(buffer.Text() == "while x\n  do\nprint(1)\n  end\n");
+
+    SetBracePlacement("lua/brace.control", std::nullopt);
+}
+
+TEST_CASE("End to end: lua-mode's collapse-empty glues a keyword pair with a real separating "
+          "space, never fusing the two tokens into one word",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseEmpty("lua/brace.control", true);
+
+    const Mode mode = LuaMode();
+    Buffer     buffer("t.lua");
+    // a real preceding statement -- ComputeBracePlacementEdits declines a
+    // capture starting at byte 0 outright ("nothing could precede a
+    // capture at offset 0"), the same guard every other language's own
+    // end-to-end test already has to route around.
+    buffer.InsertAtPoint("local x = 1\ndo\nend\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "lua", mode.formatCaptures(buffer.Text())));
+
+    // "do"+"end" glued with NO separator would read back as the single
+    // identifier "doend" -- a real correctness hazard unique to keyword
+    // delimiters that a brace/paren language's own "{}"/"()" glue never
+    // faces. IsWordByte's boundary check in FormatBracePlacement.cpp
+    // inserts the space that keeps this two tokens, not one.
+    REQUIRE(buffer.Text() == "local x = 1\ndo end\n");
+
+    SetBraceCollapseEmpty("lua/brace.control", std::nullopt);
+}
+
+TEST_CASE("End to end: lua-mode's collapse-empty on brace.function glues \")\" directly onto "
+          "\"end\" with no inserted space",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseEmpty("lua/brace.function", true);
+
+    const Mode mode = LuaMode();
+    Buffer     buffer("t.lua");
+    buffer.InsertAtPoint("function f()\nend\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "lua", mode.formatCaptures(buffer.Text())));
+
+    // ")" is not a word byte, so no space is inserted -- matching every
+    // brace language's own "{}" glue convention (no cosmetic space,
+    // only what correctness requires).
+    REQUIRE(buffer.Text() == "function f()end\n");
+
+    SetBraceCollapseEmpty("lua/brace.function", std::nullopt);
 }
