@@ -52,6 +52,27 @@ namespace {
         }
     }
 
+    // bash-format-revisit follow-up: control.parens covers THREE delimiter
+    // shapes in bash -- "["/"]", "[["/"]]", and a C-style for-loop's own
+    // "(("/"))" -- and only the arithmetic "(("/"))" form is safe to
+    // compact. "["/"[[" are both ordinary bash WORDS (a command name, a
+    // reserved word) needing whitespace separation from their own first/
+    // last argument -- confirmed live with a real bash RUN, not just
+    // `bash -n`: "[ -n $x]"/"[[-f x]]" both parse (the single-bracket
+    // close-side case even passes `bash -n` outright, since `[`'s own
+    // argument scanning happens inside the builtin at runtime, not the
+    // shell's own parser) but fail when actually run ("[: missing ']'" /
+    // "[-f: command not found"). `:within=true` (insert) is always safe --
+    // it can only ever ADD separation -- so only the `:within=false`
+    // (remove) direction is declined here, and only for this one gap,
+    // not the whole rule: unlike `FormatBracePlacement.h`'s own
+    // `PlacementUnsafeForLanguage` (which resets an entire placement
+    // value), `:before`/`:after` and a SEPARATE capture's own `:within`
+    // stay completely unaffected.
+    bool WithinRemovalUnsafe(std::string_view languageKey, std::string_view openText) {
+        return languageKey == "bash" && openText != "((";
+    }
+
 } // namespace
 
 std::vector<FormatTextEdit> ComputeSpaceEdits(std::string_view text, std::string_view languageKey,
@@ -77,7 +98,12 @@ std::vector<FormatTextEdit> ComputeSpaceEdits(std::string_view text, std::string
         // closeLength generalize past a single-byte "(" "{" -- default 1
         // for every capture before Lua's own, so this is a no-op change
         // for them.
-        if (rule.within && capture.endByte - capture.startByte >= capture.openLength + capture.closeLength) {
+        const bool withinLongEnough =
+            rule.within && capture.endByte - capture.startByte >= capture.openLength + capture.closeLength;
+        const bool withinRemovalDeclined =
+            withinLongEnough && !*rule.within &&
+            WithinRemovalUnsafe(languageKey, text.substr(capture.startByte, capture.openLength));
+        if (withinLongEnough && !withinRemovalDeclined) {
             const Gap openGap  = HorizontalGapAfter(text, capture.startByte + capture.openLength);
             const Gap closeGap = HorizontalGapBefore(text, capture.endByte - capture.closeLength);
             EmitIfChanged(edits, text, openGap, *rule.within);

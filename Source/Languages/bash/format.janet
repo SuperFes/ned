@@ -149,32 +149,29 @@
 # no wrapping needed at all -- both still route through the SAME paired
 # mechanism since `[[` isn't 1 byte).
 #
-# **A real, verified :within=false hazard, unique to `[[`/`]]` among
-# every :within lever this whole template has shipped**: `[[` and `]]`
-# are bash RESERVED WORDS requiring whitespace separation from their own
-# content, unlike single `[`/`]` (an ordinary command name/argument, no
-# such requirement) or a C-style for-loop's own `((`/`))` (unambiguous
-# against adjacent non-identifier bytes either way, confirmed live it
-# needs no separating space at all). Confirmed live with a real `bash`
-# run, not assumed: `[[-f x]]` fails as `[[-f: command not found` (the
-# WHOLE "[[-f" reads as one word), and `[[ -f x]]` (space missing on the
-# CLOSE side only) fails to parse at all. So a project configuring
-# `:within false` for `bash/control.parens` -- a reasonable-sounding
-# "no space just inside the delimiter" style choice, the same one a
-# project might make for ordinary parens -- would silently corrupt every
-# `[[ ... ]]` test in the file, while leaving `[ ... ]`/`(( ... ))` fine.
-# Deliberately left unguarded in C++ (unlike Go's own ASI hazard,
-# `FormatBracePlacement.cpp`'s `PlacementUnsafeForLanguage`) -- Go's
-# danger fires from the MOST common brace-placement styles applied
-# uniformly with no escape valve; this one requires a specific, far less
-# common "compact test brackets" preference most shell style guides
-# actively advise against, and unlike Go's single language+placement
-# check, discriminating it would need inspecting each capture's own
-# TEXT (`[[` vs `[`/`((`), not just its language and rule -- judged not
-# worth the added complexity in a shared, generic function until a real
-# project hits it. Documented here instead, the same "verify and record,
-# don't silently smooth over" standard C#'s own catch_declaration finding
-# and PHP's own colon-syntax indent gap already set.
+# **A real, verified :within=false hazard, now GUARDED in C++ (`Editor/
+# FormatSpacing.h`'s own `WithinRemovalUnsafe`), a correction of this
+# file's own earlier draft**: an initial pass here claimed `[[`/`]]`
+# alone were the risk and single `[`/`]` was fine -- WRONG, caught by
+# re-verifying with a real bash RUN rather than trusting the earlier
+# `bash -n` check alone. Both bracket forms need whitespace separation
+# from their own content -- `[`/`[[` are both ordinary bash WORDS (a
+# command name, a reserved word), and gluing either to its own first/last
+# argument reads as ONE token: `[-n x` fails as `[-n: command not found`
+# (a shell-parser-level failure, caught even by `bash -n`), and `[ -n
+# x]`/`[[ -n x]]` (space missing on the CLOSE side only) fail at RUNTIME
+# instead (`[: missing ']'` -- `[`'s own argument scanning happens inside
+# the builtin, not the shell's parser, so `bash -n` alone missed this
+# one). A C-style for-loop's own `((`/`))` has neither problem
+# (arithmetic context, confirmed live removing its own interior space
+# still runs correctly) and stays unaffected by the guard.
+# `WithinRemovalUnsafe(languageKey, openText)` declines only the
+# `:within=false` (remove) direction, and only for THIS one gap --
+# `:within=true`/`:before`/`:after` on the very same capture are
+# untouched, a narrower shape than `PlacementUnsafeForLanguage`'s own
+# "reset the whole rule" (that one can't tell open/close apart from a
+# safe pair by placement alone; this one only needs the capture's own
+# delimiter TEXT, which `ComputeSpaceEdits` already has in hand).
 #
 # A C-style for-loop's own "((;;))"
 # clause is captured the same way every C-family language's own for-loop
