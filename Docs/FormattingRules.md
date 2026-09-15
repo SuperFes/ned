@@ -8,15 +8,42 @@ role, for the formatter.
 
 ## What's here today
 
-One native pass: structural indentation, per language, via a compiled-in safe default plus
-your own overrides. `format-buffer` (`C-c f f`) runs it (or your configured external
-formatter, if one's set -- `ned/set-format-command`) over the whole buffer; `ned --format
-<files...>` runs the same chain headlessly, for a pre-commit hook or a script, with no editor
-UI and no `init.janet`.
+Structural indentation, per language, via a compiled-in safe default plus your own
+overrides, and a Hygiene pass (trailing-whitespace strip, blank-line-run collapse, final
+newline). `format-buffer` (`C-c f f`) runs your configured external formatter if one's set
+(`ned/set-format-command`), over the whole buffer; `ned --format <files...>` runs the same
+chain headlessly, for a pre-commit hook or a script, with no editor UI and no `init.janet`.
 
-Trailing-whitespace cleanup, blank-line collapsing, and a capture-scoped
-per-construct indent override (`ned/set-indent-rule`) are planned but not built yet -- see
-`Docs/FormattingCapabilities.md` and `ROADMAP.md`.
+A capture-scoped per-construct indent override (`ned/set-indent-rule`) is planned but not
+built yet -- see `Docs/FormattingCapabilities.md` and `ROADMAP.md`.
+
+## The Hygiene pass
+
+Three rules, each independently configurable and each already the default for an ordinary
+`save-buffer` (that's `TrimOnSave.h`/`FinalNewline.h` -- disk-only, unrelated to this
+section except for sharing the same underlying text transforms):
+
+- **Trailing whitespace** -- strips spaces/tabs from the end of every line, and collapses
+  any run of blank lines at the very end of the document to nothing.
+  `ned/set-trim-trailing-whitespace-on-save` (default on).
+- **Blank-line runs** -- collapses a run of more than N consecutive blank lines anywhere in
+  the document down to exactly N. `ned/set-max-consecutive-blank-lines` (default 2; a
+  negative value disables the rule). A deliberately coarse, global rule -- the full
+  per-construct-anchored version (different limits around a class vs. inside a function
+  body) needs a `format.scm` per language and is out of scope for now, see
+  `Docs/FormattingCapabilities.md`.
+- **Final newline** -- ensures the document ends with exactly one `\n`.
+  `ned/set-ensure-final-newline` (default on).
+
+Unlike the save-time defaults, this pass edits the live buffer directly, as one undo step --
+so `format-buffer` will show you the cleaned-up result immediately, without needing a save
+first. **Not yet wired into `format-buffer`/`--format` themselves** -- today it's a standalone
+function (`Editor::ApplyHygienePass`); hooking it (and the per-language indent reindent)
+into both commands' actual External/Native chain is tracked separately. Until then,
+`ned/set-trim-trailing-whitespace-on-save`/`ned/set-ensure-final-newline` keep doing exactly
+what they always did (governing an ordinary `save-buffer`'s disk-only cleanup), while
+`ned/set-max-consecutive-blank-lines` has no effect anywhere yet -- its only consumer is
+this not-yet-wired-in pass.
 
 ## Per-language indent defaults
 
@@ -75,10 +102,11 @@ read by both the interactive editor and the headless `--format` CLI:
 
 ```janet
 # .ned/format.janet -- committed to the repo, applies to everyone on this project
-{:indent {:python {:width 2}}   # this team writes 2-space Python, not PEP 8's 4
-          :go     {:width 8}}   # display width only -- gofmt's own tabs are unaffected
+{:indent {:python {:width 2}     # this team writes 2-space Python, not PEP 8's 4
+          :go     {:width 8}}    # display width only -- gofmt's own tabs are unaffected
  :trim-trailing-whitespace true
- :ensure-final-newline true}
+ :ensure-final-newline true
+ :max-consecutive-blank-lines 1} # stricter than the built-in default of 2
 ```
 
 Run `reload-format-config` (`M-x`) to re-read both files without restarting ned -- the
@@ -121,7 +149,8 @@ This list is held against the real schema on every build:
 
 <!-- format-keys:begin -->
 
-`indent` `trim-trailing-whitespace` `ensure-final-newline` `tabs` `width`
+`indent` `trim-trailing-whitespace` `ensure-final-newline` `max-consecutive-blank-lines`
+`tabs` `width`
 
 <!-- format-keys:end -->
 

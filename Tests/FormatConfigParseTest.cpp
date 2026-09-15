@@ -8,6 +8,7 @@
 
 #include "Editor/FormatConfigParse.h"
 #include "Editor/IndentStyle.h"
+#include "Editor/MaxConsecutiveBlankLines.h"
 #include "Editor/TrimOnSave.h"
 #include "Editor/FinalNewline.h"
 
@@ -17,12 +18,14 @@ using ned::editor::EnsureFinalNewline;
 using ned::editor::FormatConfig;
 using ned::editor::IndentStyle;
 using ned::editor::LoadFormatConfigFile;
+using ned::editor::MaxConsecutiveBlankLines;
 using ned::editor::ParseFormatConfig;
 using ned::editor::PersonalFormatConfigPath;
 using ned::editor::ProjectFormatConfigPath;
 using ned::editor::SetEnsureFinalNewline;
 using ned::editor::SetIndentStyle;
 using ned::editor::SetIndentStyleForMode;
+using ned::editor::SetMaxConsecutiveBlankLines;
 using ned::editor::SetTrimTrailingWhitespaceOnSave;
 using ned::editor::TrimTrailingWhitespaceOnSave;
 
@@ -90,7 +93,8 @@ TEST_CASE("ParseFormatConfig reads every field", "[FormatConfigParse]") {
         "{:indent {:python {:tabs false :width 4}\n"
         "          :go     {:tabs true}}\n"
         " :trim-trailing-whitespace true\n"
-        " :ensure-final-newline false}",
+        " :ensure-final-newline false\n"
+        " :max-consecutive-blank-lines 3}",
         "test.janet");
 
     REQUIRE(config.indent.size() == 2);
@@ -100,6 +104,13 @@ TEST_CASE("ParseFormatConfig reads every field", "[FormatConfigParse]") {
     REQUIRE_FALSE(config.indent.at("go").width.has_value());
     REQUIRE(config.trimTrailingWhitespaceOnSave == true);
     REQUIRE(config.ensureFinalNewline == false);
+    REQUIRE(config.maxConsecutiveBlankLines == 3);
+}
+
+TEST_CASE("ParseFormatConfig accepts a negative :max-consecutive-blank-lines (the disabled sentinel)",
+          "[FormatConfigParse]") {
+    const FormatConfig config = ParseFormatConfig("{:max-consecutive-blank-lines -1}", "test.janet");
+    REQUIRE(config.maxConsecutiveBlankLines == -1);
 }
 
 TEST_CASE("ParseFormatConfig leaves every field unset for an empty struct", "[FormatConfigParse]") {
@@ -119,6 +130,7 @@ TEST_CASE("ParseFormatConfig rejects what it does not know or a wrong-typed valu
     REQUIRE_THROWS_AS(ParseFormatConfig("{:indent {:python {:width true}}}", "test.janet"), std::runtime_error); // :width wants an int
     REQUIRE_THROWS_AS(ParseFormatConfig("{:indent {:python {:width 4.5}}}", "test.janet"), std::runtime_error); // no fractional widths
     REQUIRE_THROWS_AS(ParseFormatConfig("{:trim-trailing-whitespace \"yes\"}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:max-consecutive-blank-lines true}", "test.janet"), std::runtime_error);
 }
 
 TEST_CASE("ParseFormatConfig error messages carry the path and line", "[FormatConfigParse]") {
@@ -145,6 +157,19 @@ TEST_CASE("ApplyFormatConfig sets only the fields a config touches", "[FormatCon
 
     REQUIRE_FALSE(TrimTrailingWhitespaceOnSave());
     REQUIRE(EnsureFinalNewline()); // untouched -- still the known starting value
+}
+
+TEST_CASE("ApplyFormatConfig applies :max-consecutive-blank-lines", "[FormatConfigParse]") {
+    struct Guard {
+        ~Guard() {
+            SetMaxConsecutiveBlankLines(2);
+        }
+    } guard;
+
+    FormatConfig config;
+    config.maxConsecutiveBlankLines = 5;
+    ApplyFormatConfig(config);
+    REQUIRE(MaxConsecutiveBlankLines() == 5);
 }
 
 TEST_CASE("ApplyFormatConfig cascades per field: a later config overrides only what it sets", "[FormatConfigParse]") {

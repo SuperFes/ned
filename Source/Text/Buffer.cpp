@@ -18,6 +18,7 @@
 #include "OffsetRemap.h"
 #include "PieceTable.h"
 #include "PieceTableStorage.h"
+#include "WhitespaceHygiene.h"
 #include "RopeStorage.h"
 #include "ThreeWayMerge.h"
 
@@ -206,40 +207,25 @@ namespace {
         }
 
         std::string content = storage.ToString();
-        // trim-on-save follow-up: strips trailing spaces/tabs from every
-        // line, then collapses any run of trailing blank lines down to
-        // nothing -- ensureFinalNewline below is what puts exactly one '\n'
-        // back if the caller still wants one. Disk-only, same reasoning as
-        // ensureFinalNewline itself: only this local copy is touched, never
-        // Storage_ (see Editor/TrimOnSave.h).
-        if (trimTrailingWhitespace && !content.empty()) {
-            std::string trimmed;
-            trimmed.reserve(content.size());
-            std::size_t lineStart = 0;
-            for (std::size_t i = 0; i <= content.size(); ++i) {
-                if (i == content.size() || content[i] == '\n') {
-                    std::size_t lineEnd = i;
-                    while (lineEnd > lineStart && (content[lineEnd - 1] == ' ' || content[lineEnd - 1] == '\t')) {
-                        --lineEnd;
-                    }
-                    trimmed.append(content, lineStart, lineEnd - lineStart);
-                    if (i < content.size()) {
-                        trimmed.push_back('\n');
-                    }
-                    lineStart = i + 1;
-                }
-            }
-            while (!trimmed.empty() && trimmed.back() == '\n') {
-                trimmed.pop_back();
-            }
-            content = std::move(trimmed);
+        // trim-on-save follow-up (configurable-formatter follow-up: the
+        // actual algorithm moved to Text/WhitespaceHygiene.h, shared with
+        // Editor::ApplyHygienePass -- see that header's own doc comment for
+        // why the HUGE-file streaming path just above stays a separate
+        // reimplementation rather than a caller of this). Strips trailing
+        // spaces/tabs from every line, then collapses any run of trailing
+        // blank lines down to nothing -- ensureFinalNewline below is what
+        // puts exactly one '\n' back if the caller still wants one.
+        // Disk-only, same reasoning as ensureFinalNewline itself: only this
+        // local copy is touched, never Storage_ (see Editor/TrimOnSave.h).
+        if (trimTrailingWhitespace) {
+            content = TrimTrailingWhitespaceAndBlankLines(std::move(content));
         }
         // An empty buffer stays empty (not turned into a bare "\n") -- and
         // Storage_ itself is never touched, only this local copy that's about
         // to be written; see the ensureFinalNewline doc comment on the
         // header for why that's deliberate.
-        if (ensureFinalNewline && !content.empty() && content.back() != '\n') {
-            content.push_back('\n');
+        if (ensureFinalNewline) {
+            content = EnsureTrailingNewline(std::move(content));
         }
 
         // crlf-handling follow-up: re-expand LF back to whichever ending
