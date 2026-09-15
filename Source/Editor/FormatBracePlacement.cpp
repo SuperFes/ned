@@ -80,14 +80,44 @@ namespace {
     // Both begin_statement's own forms ("begin"/"end" and "{"/"}") share
     // this one capture name, so the decline is the same capture-name-wide
     // shape bash's own guard already uses.
+    // coverage-audit follow-up: fish's brace.function (function_definition's
+    // own "function"/"end" pair) has the IDENTICAL hazard, for the same
+    // reason (a bare, standalone statement) -- confirmed live. bash's own
+    // brace.function is UNAFFECTED (real braces, no terminator needed at
+    // all), so the two languages' own capture-name sets genuinely differ
+    // here, not merely for lack of checking.
     bool PlacementUnsafeForLanguage(BracePlacement placement, std::string_view languageKey, std::string_view captureName) {
         if (languageKey == "go") {
             return placement != BracePlacement::SameLine;
         }
-        if ((languageKey == "bash" || languageKey == "fish") && captureName == "brace.control") {
+        if (languageKey == "bash" && captureName == "brace.control") {
+            return placement == BracePlacement::SameLine;
+        }
+        if (languageKey == "fish" && (captureName == "brace.control" || captureName == "brace.function")) {
             return placement == BracePlacement::SameLine;
         }
         return false;
+    }
+
+    // coverage-audit follow-up: a real corruption hazard found live, not
+    // by inspection -- collapse-simple's own interior computation
+    // (capture.startByte + capture.openLength through capture.endByte -
+    // capture.closeLength) assumes the OPEN token sits directly beside
+    // the real body, true for every paired capture in this codebase
+    // EXCEPT fish's own brace.function: function_definition's mandatory
+    // "name:" field (and optional "option:" fields) sit BETWEEN "function"
+    // and the real body. Confirmed live: force-expanding
+    // "function greet; echo hello; end" produced "function\n    greet;
+    // echo hello;\nend" -- "function" alone on its own line with the name
+    // pushed onto the body's own line, a hard `fish -n` syntax error
+    // ("Expected a string, but found end of the statement"). The join
+    // direction is equally wrong in kind (it would fold the name into the
+    // reconstructed "body" text), just not always visibly different from
+    // the source. collapse-empty needs no equivalent guard -- its own
+    // isEmpty check can never be true here (the name is never whitespace),
+    // so it's already, if incidentally, inert rather than merely declined.
+    bool CollapseSimpleUnsafeForLanguage(std::string_view languageKey, std::string_view captureName) {
+        return languageKey == "fish" && captureName == "brace.function";
     }
 
     // Where this construct's closing delimiter belongs, for a given
@@ -125,6 +155,9 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
         BreakRuleValue rule = BreakRuleFor(capture.name, languageKey);
         if (rule.placement && PlacementUnsafeForLanguage(*rule.placement, languageKey, capture.name)) {
             rule.placement.reset(); // see PlacementUnsafeForLanguage's own comment
+        }
+        if (rule.collapseSimple && CollapseSimpleUnsafeForLanguage(languageKey, capture.name)) {
+            rule.collapseSimple.reset(); // see CollapseSimpleUnsafeForLanguage's own comment
         }
         if (!rule.placement && !rule.collapseEmpty && !rule.collapseSimple) {
             continue; // unconfigured -- no built-in default, nothing forced

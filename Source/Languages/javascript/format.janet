@@ -87,3 +87,54 @@
 (program . [(function_declaration) (generator_function_declaration) (class_declaration) (export_statement)]
   @def.toplevel.first)
 (class_body . (method_definition) @def.method.first)
+
+# coverage-audit follow-up: constructs skipped because they weren't the
+# day's focus, not because the grammar lacks them -- each verified
+# against node-types.json before landing here.
+#
+# method_definition's own body is a REQUIRED statement_block
+# (node-types.json) -- covers class methods, object-literal methods, and
+# constructors alike (one node type for all of them in this grammar).
+# This had ZERO placement capture before this pass -- only def.method
+# (blank-lines) existed for it, the single highest-impact gap this whole
+# audit found across every language.
+(method_definition body: (statement_block) @brace.function)
+(method_definition body: (statement_block . (_) .) @brace.function.simple)
+
+# do_statement's own body field is typed "statement" (the same abstract
+# supertype if/while's own consequence/body fields already narrow to
+# statement_block); its own condition is a required parenthesized_
+# expression, the same shape if/while's own condition field is.
+(do_statement body: (statement_block) @brace.control)
+(do_statement body: (statement_block . (_) .) @brace.control.simple)
+(do_statement condition: (parenthesized_expression) @control.parens)
+
+# try_statement's OWN body (the try block itself, not catch/finally) and
+# finally_clause's own body are both REQUIRED statement_block fields --
+# unlike bash/java/c#'s own fieldless finally_clause, javascript's names
+# it directly.
+(try_statement body: (statement_block) @brace.control)
+(try_statement body: (statement_block . (_) .) @brace.control.simple)
+(finally_clause body: (statement_block) @brace.control)
+(finally_clause body: (statement_block . (_) .) @brace.control.simple)
+
+# class_static_block (ES2022 `static { }`) has a required body field, the
+# same shape a class's own body field does.
+(class_static_block body: (statement_block) @brace.control)
+(class_static_block body: (statement_block . (_) .) @brace.control.simple)
+
+# anon-function-policy-reversal follow-up (see project memory): arrow/
+# function-expression bodies now get brace.function everywhere, matching
+# declared functions' own placement. arrow_function's own body field is
+# typed EITHER "expression" OR "statement_block" (node-types.json) -- two
+# structurally DISTINCT node types in the same field slot, so a type-
+# qualified capture already discriminates with no :match? predicate
+# needed (unlike Kotlin's function_body, where both shapes share one node
+# type). function_expression/generator_function's own body is always a
+# required statement_block, no ambiguity at all.
+(arrow_function body: (statement_block) @brace.function)
+(arrow_function body: (statement_block . (_) .) @brace.function.simple)
+(function_expression body: (statement_block) @brace.function)
+(function_expression body: (statement_block . (_) .) @brace.function.simple)
+(generator_function body: (statement_block) @brace.function)
+(generator_function body: (statement_block . (_) .) @brace.function.simple)

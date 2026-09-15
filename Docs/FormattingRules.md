@@ -221,11 +221,15 @@ and TSX have no `format.janet` files of their own at all, see below), all wired 
 all shipping no built-in default -- neither does anything until you configure a rule:
 
 - **Break-kind captures** (`Editor/FormatBracePlacement.h`'s `ComputeBracePlacementEdits`,
-  reading every `:break` field): `brace.function` (a function definition's own body),
-  `brace.control` (an `if`/`while`/`for`/`switch`/`catch` statement's own body -- one
-  shared name, matching JetBrains' own "Other statements and blocks" grouping),
-  `brace.class` (a class/struct/enum/impl body), `brace.interface` (Go/PHP/Rust's own
-  interface/trait body), and `brace.namespace` (cpp's own namespace, Rust's own module).
+  reading every `:break` field): `brace.function` (a function/method/constructor's own
+  body, AND -- since the 2026-09-15 coverage audit's policy reversal, see below -- any
+  anonymous function/lambda/closure body too), `brace.control` (an `if`/`while`/`for`/
+  `switch`/`do`-`while`/`try`/`catch`/`finally` statement's own body, plus each language's
+  own extra shapes -- static/instance initializer blocks, `using`/`lock`/`unsafe` blocks,
+  `switch`/`match` expressions -- one shared name, matching JetBrains' own "Other
+  statements and blocks" grouping), `brace.class` (a class/struct/enum/impl/anonymous-class
+  body), `brace.interface` (Go/PHP/Rust's own interface/trait body), and `brace.namespace`
+  (cpp's own namespace/`extern "C"` block, Rust's own module).
   ```janet
   (ned/set-format-brace-placement "brace.function" "next-line")
   (ned/set-format-brace-placement "brace.control" "same-line")
@@ -1061,6 +1065,91 @@ confirmed live) -- the same "direct child of the container" rule every prior lan
 Live-verified via `ned --format` on a real project config combining `:break`/`:blank`,
 output re-checked with `fish -n` (syntax check) and a real `fish` run. Full suite: 4693
 cases.
+
+## Coverage audit: closing the gaps this rollout's own day-by-day focus left behind
+
+A dedicated audit pass (2026-09-15) went back over every language above looking for
+constructs skipped not because a grammar genuinely lacks them, but because they weren't
+the specific thing being worked on that day -- five parallel investigations (one per
+language group), each cross-checking the shipped captures against the real grammar's full
+node-type list. The pattern held everywhere: every language's *declaration-position*
+bodies (a named function, an `if`/`while`/`for`) were captured; the *parallel* shapes --
+`do`-`while`, a `try` block's own body (as opposed to `catch`/`finally`), static/instance
+initializer blocks, `switch`/`match` expressions, anonymous classes -- were not, simply
+because no prior pass had reason to look for them.
+
+**A deliberate policy reversal, not a bug fix.** Anonymous function/lambda/closure bodies
+(JavaScript's arrow functions, Go's `func` literals, PHP's closures, Rust's closures, C#/
+Java's lambdas, Kotlin's lambda literals) were excluded from `brace.function` by an
+explicit early call (the Lua rollout, "declarations, not expressions") -- correctly
+consistent everywhere it was applied, but the audit found it was a real, systemic scope
+line, not a one-off. Asked directly, the call was reversed: anonymous bodies now get
+`brace.function` too, matching whatever placement rule the language's declared functions
+already use. This mattered practically as well as philosophically -- Go's `func` literals
+(`go func() { ... }()`), PHP's closures, and Rust's closures had literally never been
+captured under EITHER policy, since no prior pass had reason to add them regardless of the
+scope question.
+
+**The two highest-impact finds were pure gaps, not policy questions.** JavaScript's own
+`method_definition` -- covering every class method, object-literal method, and
+constructor -- had **zero** placement capture of any kind before this pass; only
+`def.method` (blank-lines) existed for it. C#'s `constructor_declaration`/
+`destructor_declaration` were similarly invisible to `brace.function`; only
+`method_declaration` was ever captured. Both are now `brace.function` like everything
+else.
+
+**No new C++ mechanism was needed for any of it** -- every addition reuses machinery
+already proven earlier in this rollout: the paired `.open`/`.close` tokens (C#'s
+`switch_expression`, Kotlin's `init { }`/secondary constructors, Lua's `repeat`/`until`),
+the `:match?` text predicate (Kotlin's `do`-`while`, Rust's closures -- though Rust's
+turned out not to need it after all, see below), and type-qualified field captures for
+anything with two genuinely distinct node types in one field slot (C#/JavaScript's own
+lambda/arrow-function bodies, needing no predicate at all since `block` and `expression`
+are different node TYPES there, unlike Kotlin's `function_body` which is the SAME type
+either way and can only be told apart by its own leading byte).
+
+**Two real corruption hazards were found and guarded, both live, both by the same
+apply-and-check-the-whole-result discipline this rollout has used throughout:**
+
+- Fish's own earlier writeup had wrongly lumped `function_definition` in with `if`/
+  `while`/`for`/`switch`'s genuine structural absence -- it doesn't share their reason at
+  all (it has a real, literal `"function"`/`"end"` pair, simply never captured). Fixed,
+  and it needed the identical SameLine placement guard `begin_statement` already has
+  (`PlacementUnsafeForLanguage` extended to cover `"fish"`/`"brace.function"`).
+- **A new hazard, unique to fish's own function, found by force-expanding a real
+  single-line function**: `:collapse-simple`'s own interior computation assumes the open
+  TOKEN sits directly beside the real body -- true for every other paired capture in this
+  codebase, false for fish's `function_definition`, whose mandatory `name:` field (and any
+  `option:` fields) sit between `"function"` and the body. Force-expanding
+  `function greet; echo hello; end` produced `function\n    greet; echo hello;\nend` --
+  confirmed with a real `fish -n` this is a hard syntax error (`"function"` alone names no
+  function at all). Guarded with a new, narrowly-scoped
+  `CollapseSimpleUnsafeForLanguage(languageKey, captureName)`
+  (`Editor/FormatBracePlacement.cpp`), declining both collapse-simple directions for
+  `"fish"`/`"brace.function"` specifically -- `:placement` and `:within` are both
+  unaffected, since neither reads "interior" the same name-inclusive way.
+
+**One correction to an over-eager first guess, caught by checking rather than assuming**:
+Rust's `closure_expression` body was first assumed to need the same `:match?` predicate
+Kotlin's `function_body` needs, since its own field type list includes a generic `_`
+wildcard alongside `_expression`. Checking `node-types.json` directly showed `block` is
+itself one of `_expression`'s own concrete variants (a block IS a valid Rust expression),
+so a plain type-qualified `body: (block)` capture already discriminates correctly with no
+predicate at all -- the same shape C#/JavaScript's own lambda bodies turned out to have.
+
+**One pre-existing, unrelated bug found and logged, not fixed in-session**: testing Lua's
+new `repeat`/`until` capture live surfaced that its own body is never reindented at all
+(`Editor/ImprintTables.cpp`'s Lua table has entries for `do`/`if`/`while` but none for
+`repeat_statement`) -- a real gap in the separate structural-indent engine, unrelated to
+this formatter work, logged to `ROADMAP.md`'s watch list.
+
+Every language's `format.janet` file carries the specific per-construct grammar facts
+inline, in the same style as every entry above; this section is the cross-cutting summary,
+not a replacement for reading them. Full suite: 4709 cases, confirmed clean across multiple
+`--order rand` reruns, output for every touched language re-verified with that language's
+own real toolchain (`g++`, `javac`, `dotnet run`, `node`, `go run`, `rustc`, `php`,
+`kotlinc`, `fish`, `lua`) wherever the audit changed generated output, not merely
+re-parsed.
 
 ## The `--format` CLI
 

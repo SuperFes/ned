@@ -56,3 +56,9 @@
 (translation_unit [(function_definition) (struct_specifier) (union_specifier) (enum_specifier)] @def.toplevel)
 (translation_unit . [(function_definition) (struct_specifier) (union_specifier) (enum_specifier)]
   @def.toplevel.first)
+
+# coverage-audit follow-up: do-while's own body field is typed "statement"
+# (grammar.json, the same abstract supertype every other construct here
+# already narrows to compound_statement) -- simply never added.
+(do_statement body: (compound_statement) @brace.control)
+(do_statement body: (compound_statement . (_) .) @brace.control.simple)
