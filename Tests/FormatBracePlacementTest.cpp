@@ -19,6 +19,7 @@ using ned::editor::FormatTextEdit;
 using ned::editor::GoMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
+using ned::editor::KotlinMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
@@ -1116,4 +1117,84 @@ TEST_CASE("tsx-mode inherits the same typescript+javascript capture set (via :qu
     REQUIRE(CapturesNamed(captures, "brace.interface").size() == 1);
     REQUIRE(CapturesNamed(captures, "brace.function").size() == 1);
     REQUIRE(CapturesNamed(captures, "brace.control").size() == 1);
+}
+
+// kotlin-mode: the eleventh language, and a real outlier -- tree-sitter-
+// kotlin declares ZERO fields anywhere in the grammar (confirmed live),
+// so every capture here is a bare node-type match. A genuinely new
+// hazard for this rollout: function_body/control_structure_body are each
+// the SAME node type for a real "{ ... }" block AND Kotlin's own
+// brace-less single-expression form ("fun f() = x + 1",
+// "if (x) 1 else 2") -- fixed with this codebase's ":match?" text
+// predicate (checking the captured span starts with "{"), the first
+// format capture in this whole rollout needing one rather than pure
+// structure.
+TEST_CASE("kotlin-mode's format.janet does not capture an expression-bodied function at all",
+          "[FormatBracePlacement]") {
+    const Mode mode = KotlinMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("fun f(x: Int) = x + 1\n"), "brace.function").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("fun f() {}\n"), "brace.function").size() == 1);
+}
+
+TEST_CASE("kotlin-mode's format.janet does not capture a brace-less if/else branch, but captures a "
+          "braced one -- and captures BOTH branches uniformly (no field to distinguish them)",
+          "[FormatBracePlacement]") {
+    const Mode mode = KotlinMode();
+    REQUIRE(
+        CapturesNamed(mode.formatCaptures("fun f() {\n    if (x) 1 else 2\n}\n"), "brace.control").empty());
+
+    const std::string braced = "fun f() {\n    if (x) {\n        a()\n    } else {\n        b()\n    }\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(braced), "brace.control").size() == 2);
+}
+
+TEST_CASE("kotlin-mode's format.janet names brace.class over class/interface/object bodies alike -- "
+          "there is no separate interface_declaration node type in this grammar at all",
+          "[FormatBracePlacement]") {
+    const Mode mode = KotlinMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C {\n}\n"), "brace.class").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("interface I {\n    fun m(): Unit\n}\n"), "brace.class").size()
+            == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("object O {\n}\n"), "brace.class").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("interface I {\n}\n"), "brace.interface").empty());
+}
+
+TEST_CASE("kotlin-mode's format.janet captures a catch clause's own braces via the paired mechanism, "
+          "over a construct with no distinct body-wrapper node at all",
+          "[FormatBracePlacement]") {
+    const Mode        mode   = KotlinMode();
+    const std::string source = "fun f() {\n    try {\n    } catch (e: Exception) {\n        log(e)\n    }\n}\n";
+    const auto         caps   = CapturesNamed(mode.formatCaptures(source), "brace.control");
+    REQUIRE(caps.size() == 1); // try's own body is deliberately not captured, matching every prior language
+    REQUIRE(source.substr(caps[0].startByte, 1) == "{");
+}
+
+TEST_CASE("kotlin-mode's format.janet marks a single-statement body isSimple too", "[FormatBracePlacement]") {
+    const Mode        mode   = KotlinMode();
+    const std::string simple = "fun f() {\n    a()\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(simple), "brace.function")[0].isSimple);
+
+    const std::string multi = "fun f() {\n    a()\n    b()\n}\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(multi), "brace.function")[0].isSimple);
+}
+
+TEST_CASE("End to end: kotlin-mode's formatCaptures drives real edits across all three features",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+    SetBraceCollapseSimple("brace.control", true);
+
+    const Mode mode = KotlinMode();
+    Buffer     buffer("test.kt");
+    buffer.InsertAtPoint("fun f(x: Int) {\n"
+                         "    if (x > 0)\n"
+                         "    {\n"
+                         "        println(x)\n"
+                         "    }\n"
+                         "}\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "kotlin", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "fun f(x: Int) {\n"
+                             "    if (x > 0) { println(x) }\n"
+                             "}\n");
 }

@@ -19,6 +19,7 @@ using ned::editor::FormatTextEdit;
 using ned::editor::GoMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
+using ned::editor::KotlinMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
@@ -618,4 +619,61 @@ TEST_CASE("End to end: blank lines applied to a real typescript-mode buffer, com
                              "}\n"
                              "\n"
                              "function f(): void {}\n");
+}
+
+TEST_CASE("kotlin-mode's format.janet names def.toplevel/def.method with correct .first markers",
+          "[FormatBlankLines]") {
+    const Mode mode = KotlinMode();
+
+    const std::string source = "class C {\n"
+                               "    fun m(): Unit {}\n"
+                               "    fun n(): Unit {}\n"
+                               "}\n"
+                               "object O {\n"
+                               "    fun m(): Unit {}\n"
+                               "}\n";
+    const auto captures = mode.formatCaptures(source);
+
+    const auto toplevel = CapturesNamed(captures, "def.toplevel");
+    REQUIRE(toplevel.size() == 2);
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+
+    const auto methods = CapturesNamed(captures, "def.method");
+    REQUIRE(methods.size() == 3); // C's m()/n(), O's own m()
+    REQUIRE(methods[0].isFirst);
+    REQUIRE_FALSE(methods[1].isFirst);
+    REQUIRE(methods[2].isFirst); // object O's own method list starts fresh
+}
+
+TEST_CASE("kotlin-mode's format.janet names def.method for a companion object's own methods too",
+          "[FormatBlankLines]") {
+    const Mode        mode   = KotlinMode();
+    const std::string source = "class C {\n"
+                               "    companion object {\n"
+                               "        fun m(): Unit {}\n"
+                               "        fun n(): Unit {}\n"
+                               "    }\n"
+                               "}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "def.method").size() == 2);
+}
+
+TEST_CASE("End to end: blank lines applied to a real kotlin-mode buffer", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.method", 1);
+
+    const Mode mode = KotlinMode();
+    Buffer     buffer("test.kt");
+    buffer.InsertAtPoint("class C {\n"
+                         "    fun m(): Unit {}\n"
+                         "    fun n(): Unit {}\n"
+                         "}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "kotlin", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "class C {\n"
+                             "    fun m(): Unit {}\n"
+                             "\n"
+                             "    fun n(): Unit {}\n"
+                             "}\n");
 }
