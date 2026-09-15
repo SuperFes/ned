@@ -12,6 +12,7 @@
 
 using ned::editor::ApplyFormatTextEdits;
 using ned::editor::BashMode;
+using ned::editor::ClojureMode;
 using ned::editor::CMode;
 using ned::editor::ComputeBlankLineEdits;
 using ned::editor::CppMode;
@@ -20,6 +21,8 @@ using ned::editor::FishMode;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
 using ned::editor::GoMode;
+using ned::editor::JanetMode;
+using ned::editor::JankMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::KotlinMode;
@@ -906,4 +909,149 @@ TEST_CASE("End to end: blank lines applied to a real ruby-mode buffer", "[Format
     ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "ruby", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "def a\n  1\nend\n\ndef b\n  1\nend\n");
+}
+
+// clojure-format-rollout: Lisp-family, a genuinely different template --
+// see clojure/format.janet's own header comment for the full reasoning.
+// Every construct (def/defn/ns/an ordinary call) is the SAME node type
+// (list_lit), discriminated only by the head symbol's own TEXT, matched
+// via ":match?"/"eq?" rather than any field or node type -- this
+// rollout's first use of a text predicate for a Blank-kind capture.
+TEST_CASE("clojure-mode's format.janet names def.toplevel via a head-symbol text match "
+          "(\"^def\" and \"ns\"), with no false positives on an ordinary call or a nested "
+          "let binding",
+          "[FormatBlankLines]") {
+    const Mode mode = ClojureMode();
+
+    // "^def" and "ns" are two SEPARATE patterns, so formatCaptures's own
+    // return order is pattern order, not source order (confirmed live) --
+    // sorted here by position before indexing, the same thing
+    // ComputeBlankLineEdits's own edit-emission step already does
+    // internally for exactly this reason.
+    const std::string source   = "(ns my.ns)\n\n(defn foo [x]\n  (+ x 1))\n(defn bar [x]\n  (- x 1))\n";
+    auto              toplevel = CapturesNamed(mode.formatCaptures(source), "def.toplevel");
+    std::sort(toplevel.begin(), toplevel.end(),
+              [](const FormatCapture& a, const FormatCapture& b) { return a.startByte < b.startByte; });
+    REQUIRE(toplevel.size() == 3); // ns, foo, bar
+    REQUIRE(toplevel[0].isFirst);  // the ns form
+    REQUIRE_FALSE(toplevel[1].isFirst);
+    REQUIRE_FALSE(toplevel[2].isFirst);
+
+    // No def.method: defprotocol/defrecord's own nested method signatures
+    // are ordinary list_lit children with ARBITRARY head symbols (the
+    // method's own name), no vocabulary-based signal to anchor on.
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "def.method").empty());
+
+    // False-positive check: neither a plain function call nor a nested
+    // `let` binding form (both real list_lit nodes) should ever match.
+    const std::string noDefSource = "(let [x 1 y 2]\n  (+ x y))\n(println \"hi\")\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(noDefSource), "def.toplevel").empty());
+}
+
+// Confirmed live via `QueryMatcher.cpp` (grepped for any extras-aware
+// logic -- none exists) that a comment counts as a REAL preceding
+// sibling for isFirst purposes, the SAME as every other language's own
+// "import os"/"package"/shebang precedent -- Clojure's own grammar
+// doesn't even declare `comment` as `extras` in the first place
+// (confirmed via grammar.json), so this isn't a borderline case here.
+TEST_CASE("clojure-mode's format.janet treats a leading comment as a real preceding "
+          "sibling, matching every prior language's own precedent",
+          "[FormatBlankLines]") {
+    const Mode        mode   = ClojureMode();
+    const std::string source = ";; a leading comment\n(defn foo [] 1)\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(source), "def.toplevel")[0].isFirst);
+}
+
+TEST_CASE("End to end: blank lines applied to a real clojure-mode buffer", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 1);
+
+    const Mode mode = ClojureMode();
+    Buffer     buffer("test.clj");
+    buffer.InsertAtPoint("(defn foo [] 1)\n(defn bar [] 2)\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "clojure", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "(defn foo [] 1)\n\n(defn bar [] 2)\n");
+}
+
+// jank is a Clojure dialect with no grammar of its own (`:queries-from
+// "clojure"` in jank/language.janet) -- confirms clojure/format.janet is
+// picked up automatically with zero extra configuration, the same
+// TypeScript/JavaScript delta precedent, just with no delta file needed
+// at all here since jank's own grammar IS clojure's byte-for-byte.
+TEST_CASE("jank-mode reuses clojure's own format.janet with no extra configuration",
+          "[FormatBlankLines]") {
+    const Mode        mode     = JankMode();
+    const std::string source   = "(defn foo [] 1)\n(defn bar [] 2)\n";
+    const auto        toplevel = CapturesNamed(mode.formatCaptures(source), "def.toplevel");
+    REQUIRE(toplevel.size() == 2);
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+}
+
+// janet-format-rollout: the SAME Lisp-family reasoning, over an even
+// more minimal grammar -- every node type here has an EMPTY fields list
+// (confirmed via node-types.json), so the head symbol is matched
+// directly off `sym_lit`'s own leaf span rather than through a
+// `name:`-field child the way Clojure's own file still has one. `var`/
+// `var-` (Janet's own top-level mutable binding form) get their own
+// check alongside "^def", since they don't start with "def" but are a
+// real, common top-level definition shape in Janet specifically.
+TEST_CASE("janet-mode's format.janet names def.toplevel via a head-symbol text match "
+          "(\"^def\" and \"^var\"), with no false positives on an ordinary call or a "
+          "nested let binding",
+          "[FormatBlankLines]") {
+    const Mode mode = JanetMode();
+
+    // "^def" and "^var" are two SEPARATE patterns, so formatCaptures's
+    // own return order is pattern order, not source order -- see
+    // clojure's own analogous test above for the same fact confirmed
+    // live there first.
+    const std::string source   = "(def CONST 42)\n\n(defn foo [x]\n  (+ x 1))\n(var counter 0)\n";
+    auto              toplevel = CapturesNamed(mode.formatCaptures(source), "def.toplevel");
+    std::sort(toplevel.begin(), toplevel.end(),
+              [](const FormatCapture& a, const FormatCapture& b) { return a.startByte < b.startByte; });
+    REQUIRE(toplevel.size() == 3); // def, defn, var
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+    REQUIRE_FALSE(toplevel[2].isFirst);
+
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "def.method").empty());
+
+    const std::string noDefSource = "(let [x 1 y 2]\n  (+ x y))\n(print \"hi\")\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(noDefSource), "def.toplevel").empty());
+}
+
+// A real, per-language divergence from Clojure's own precedent above,
+// confirmed live rather than assumed to transfer: Janet's grammar DOES
+// declare `comment` as `extras` (confirmed via grammar.json, unlike
+// Clojure's empty extras list) -- but `QueryMatcher.cpp` has no
+// extras-aware logic anywhere (confirmed by reading it, not guessed), so
+// a comment is STILL a real tree sibling and STILL disqualifies isFirst
+// here too, matching Clojure's own outcome despite the different grammar
+// declaration. See this file's own project-memory follow-up for the
+// broader correction this finding prompted (a prior claim that Python's
+// own extras-declared comment is anchor-transparent does not hold up
+// against a live re-check either).
+TEST_CASE("janet-mode's format.janet treats a leading comment as a real preceding "
+          "sibling too, DESPITE the grammar declaring it as extras -- extras declarations "
+          "don't make a node transparent to this engine's own \".\" anchor",
+          "[FormatBlankLines]") {
+    const Mode        mode   = JanetMode();
+    const std::string source = "# a leading comment\n(defn foo [] 1)\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(source), "def.toplevel")[0].isFirst);
+}
+
+TEST_CASE("End to end: blank lines applied to a real janet-mode buffer", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 1);
+
+    const Mode mode = JanetMode();
+    Buffer     buffer("test.janet");
+    buffer.InsertAtPoint("(defn foo [] 1)\n(defn bar [] 2)\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "janet", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "(defn foo [] 1)\n\n(defn bar [] 2)\n");
 }
