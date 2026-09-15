@@ -210,6 +210,9 @@ void AddImprintCaptures(IndentCaptures& captures, const grammar::Tree& tree, std
             // emplace, not assignment: a node the query also captured keeps
             // the query's own interior start.
             captures.indent.emplace(key, container.interiorStart);
+            if (container.interiorEnd) {
+                captures.interiorEnd.emplace(key, *container.interiorEnd);
+            }
         }
     }
     // A suppressed container's closer still dedents: the `}` of a top-level
@@ -267,9 +270,21 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
     // Whether `position` sits inside an "indent"-captured node's interior --
     // see IndentCaptures::indent. A node captured only "aligned"/"indent.body"
     // has no entry and its own start is its opener, so the answer is yes.
+    // for-loop-header-imprint follow-up: also rejects a position at or past
+    // IndentCaptures::interiorEnd's own cap, when one is set -- see that
+    // field's own doc comment for why a for-loop's trailing body needs this
+    // and almost nothing else does.
     const auto interiorContains = [&captures, &keyOf](const grammar::Node& node, std::size_t position) {
-        const auto found = captures.indent.find(keyOf(node));
-        return found == captures.indent.end() || position >= found->second;
+        const IndentCaptures::NodeKey key = keyOf(node);
+        const auto                    found = captures.indent.find(key);
+        if (found != captures.indent.end() && position < found->second) {
+            return false;
+        }
+        const auto cappedEnd = captures.interiorEnd.find(key);
+        if (cappedEnd != captures.interiorEnd.end() && position >= cappedEnd->second) {
+            return false;
+        }
+        return true;
     };
     const auto isAlignedCaptured    = [&captures, &keyOf](const grammar::Node& node) { return captures.aligned.contains(keyOf(node)); };
     const auto isBodyIndentCaptured = [&captures, &keyOf](const grammar::Node& node) { return captures.body.contains(keyOf(node)); };
