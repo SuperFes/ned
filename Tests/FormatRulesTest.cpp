@@ -20,8 +20,15 @@ using ned::editor::SetBreakBefore;
 using ned::editor::SetSpaceAfter;
 using ned::editor::SetSpaceBefore;
 using ned::editor::SetSpaceWithin;
+using ned::editor::SetWrapForceTrailingComma;
+using ned::editor::SetWrapPolicy;
 using ned::editor::SpaceRuleFor;
 using ned::editor::SpaceRuleValue;
+using ned::editor::WrapPolicy;
+using ned::editor::WrapPolicyByName;
+using ned::editor::WrapPolicyName;
+using ned::editor::WrapRuleFor;
+using ned::editor::WrapRuleValue;
 
 namespace {
 
@@ -40,6 +47,9 @@ struct FormatRulesGuard {
         SetBraceCollapseEmpty("format-rules-test.capture", std::nullopt);
         SetBraceCollapseSimple("format-rules-test.capture", std::nullopt);
         SetBracePlacement("cpp/format-rules-test.capture", std::nullopt);
+        SetWrapPolicy("format-rules-test.capture", std::nullopt);
+        SetWrapForceTrailingComma("format-rules-test.capture", std::nullopt);
+        SetWrapPolicy("cpp/format-rules-test.capture", std::nullopt);
     }
 };
 
@@ -116,6 +126,56 @@ TEST_CASE("BracePlacementByName/BracePlacementName round-trip for every value", 
 
 TEST_CASE("BracePlacementByName throws for an unrecognized name", "[FormatRules]") {
     REQUIRE_THROWS_AS(BracePlacementByName("not-a-real-placement"), std::runtime_error);
+}
+
+TEST_CASE("A capture with no wrap override has every field unset", "[FormatRules]") {
+    REQUIRE_FALSE(WrapRuleFor("format-rules-test.unconfigured").policy.has_value());
+    REQUIRE_FALSE(WrapRuleFor("format-rules-test.unconfigured").forceTrailingComma.has_value());
+}
+
+TEST_CASE("Setting and clearing a wrap rule round-trips and bumps the generation", "[FormatRules]") {
+    FormatRulesGuard guard;
+
+    const std::size_t before = FormatRuleGeneration();
+    SetWrapPolicy("format-rules-test.capture", WrapPolicy::Always);
+    REQUIRE(WrapRuleFor("format-rules-test.capture").policy == WrapPolicy::Always);
+    REQUIRE(FormatRuleGeneration() > before);
+
+    SetWrapPolicy("format-rules-test.capture", std::nullopt);
+    REQUIRE_FALSE(WrapRuleFor("format-rules-test.capture").policy.has_value());
+}
+
+TEST_CASE("Wrap rule fields are independent", "[FormatRules]") {
+    FormatRulesGuard guard;
+
+    SetWrapPolicy("format-rules-test.capture", WrapPolicy::Never);
+    SetWrapForceTrailingComma("format-rules-test.capture", true);
+
+    const WrapRuleValue value = WrapRuleFor("format-rules-test.capture");
+    REQUIRE(value.policy == WrapPolicy::Never);
+    REQUIRE(value.forceTrailingComma == true);
+}
+
+TEST_CASE("WrapRuleFor(name, language) tries the language-scoped key first", "[FormatRules]") {
+    FormatRulesGuard guard;
+
+    SetWrapPolicy("format-rules-test.capture", WrapPolicy::Always);    // shared rule
+    SetWrapPolicy("cpp/format-rules-test.capture", WrapPolicy::Never); // cpp's own override
+
+    REQUIRE(WrapRuleFor("format-rules-test.capture", "cpp").policy == WrapPolicy::Never);
+    REQUIRE(WrapRuleFor("format-rules-test.capture", "python").policy == WrapPolicy::Always); // falls through
+    REQUIRE(WrapRuleFor("format-rules-test.capture", "").policy == WrapPolicy::Always);       // empty == unscoped
+    REQUIRE(WrapRuleFor("format-rules-test.capture").policy == WrapPolicy::Always);           // unscoped, unaffected
+}
+
+TEST_CASE("WrapPolicyByName/WrapPolicyName round-trip for every value", "[FormatRules]") {
+    for (const WrapPolicy policy : {WrapPolicy::Never, WrapPolicy::Always}) {
+        REQUIRE(WrapPolicyByName(WrapPolicyName(policy)) == policy);
+    }
+}
+
+TEST_CASE("WrapPolicyByName throws for an unrecognized name", "[FormatRules]") {
+    REQUIRE_THROWS_AS(WrapPolicyByName("not-a-real-policy"), std::runtime_error);
 }
 
 TEST_CASE("An invalid capture name throws for both rule kinds", "[FormatRules]") {

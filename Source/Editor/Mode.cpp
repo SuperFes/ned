@@ -1524,11 +1524,19 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 std::optional<std::size_t> closeStart;
                 std::optional<std::size_t> closeEnd;
                 std::string                pairedName;
+                // wrap-kind follow-up: collected in match (i.e. source)
+                // order -- QueryMatchCapture's own iteration order within
+                // one match follows the pattern's own textual layout, the
+                // same guarantee the open/close pair already relies on.
+                std::vector<std::pair<std::size_t, std::size_t>> itemSpans;
+                std::vector<std::pair<std::size_t, std::size_t>> separatorSpans;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
-                    constexpr std::string_view kOpenSuffix   = ".open";
-                    constexpr std::string_view kCloseSuffix  = ".close";
-                    constexpr std::string_view kSimpleSuffix = ".simple";
-                    constexpr std::string_view kFirstSuffix  = ".first";
+                    constexpr std::string_view kOpenSuffix      = ".open";
+                    constexpr std::string_view kCloseSuffix     = ".close";
+                    constexpr std::string_view kSimpleSuffix    = ".simple";
+                    constexpr std::string_view kFirstSuffix     = ".first";
+                    constexpr std::string_view kItemSuffix      = ".item";
+                    constexpr std::string_view kSeparatorSuffix = ".separator";
                     const std::string_view     name(capture.name);
                     if (name.ends_with(kOpenSuffix)) {
                         openStart  = capture.startByte;
@@ -1548,6 +1556,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         firstMarkers.emplace_back(capture.name.substr(0, capture.name.size() - kFirstSuffix.size()),
                                                   capture.startByte, capture.endByte);
                     }
+                    else if (name.ends_with(kItemSuffix)) {
+                        itemSpans.emplace_back(capture.startByte, capture.endByte);
+                    }
+                    else if (name.ends_with(kSeparatorSuffix)) {
+                        separatorSpans.emplace_back(capture.startByte, capture.endByte);
+                    }
                     else {
                         captures.push_back(FormatCapture{capture.name, capture.startByte, capture.endByte});
                     }
@@ -1561,6 +1575,15 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     // field's own comment on Mode.h's FormatCapture.
                     merged.openLength  = *openEnd - *openStart;
                     merged.closeLength = *closeEnd - *closeStart;
+                    // wrap-kind follow-up: items/separators only attach to
+                    // an open/close-synthesized base capture -- a list's
+                    // own delimiter pair is what makes "before the first
+                    // item" and "after the last item" well-defined edit
+                    // points, so requiring the pairing here (rather than
+                    // also supporting a plain whole-node base capture) is
+                    // deliberate, not an oversight.
+                    merged.items      = std::move(itemSpans);
+                    merged.separators = std::move(separatorSpans);
                     captures.push_back(std::move(merged));
                 }
             }
@@ -1577,6 +1600,56 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         break;
                     }
                 }
+            }
+            // wrap-kind follow-up: a "<name>.item"/"<name>.separator"
+            // capture uses a single-node quantifier ("(_)* @wrap.args.item"
+            // -- a bare literal token quantifier like "," * has no proven
+            // syntax in this engine and was declined rather than guessed
+            // at, see cpp/format.janet's own comment on this pattern), and
+            // QueryMatcher's own quantifier semantics report EVERY
+            // repetition count as its own separate match (0 items, 1 item,
+            // ... up to the real count), not just the maximal one --
+            // confirmed live via a scratch probe before writing this: a
+            // real 3-argument call produced two "wrap.args" entries at the
+            // IDENTICAL byte range, one with 0 items and one with 3. Every
+            // OTHER capture kind in this closure is naturally free of this
+            // (open/close/plain captures never repeat within one match),
+            // so this is scoped to exactly the shape that can produce it --
+            // multiple captures sharing one (name, startByte, endByte) key
+            // -- and keeps only the one with the most items, the
+            // unambiguously "real" parse (the tree has exactly one true
+            // child count; the others are the quantifier's own vacuous
+            // backtracking alternatives, not competing valid
+            // interpretations). A no-op for every capture with no
+            // duplicate key, which is everything except this new shape.
+            {
+                std::unordered_map<std::string, std::size_t> bestIndexByKey;
+                std::vector<bool>                            keep(captures.size(), true);
+                for (std::size_t i = 0; i < captures.size(); ++i) {
+                    const FormatCapture& capture = captures[i];
+                    const std::string    key     = capture.name + '\x1f' + std::to_string(capture.startByte) + '\x1f' +
+                                                   std::to_string(capture.endByte);
+                    const auto [it, inserted]    = bestIndexByKey.try_emplace(key, i);
+                    if (inserted) {
+                        continue;
+                    }
+                    const std::size_t bestIndex = it->second;
+                    if (captures[i].items.size() > captures[bestIndex].items.size()) {
+                        keep[bestIndex] = false;
+                        it->second      = i;
+                    }
+                    else {
+                        keep[i] = false;
+                    }
+                }
+                std::vector<FormatCapture> deduped;
+                deduped.reserve(captures.size());
+                for (std::size_t i = 0; i < captures.size(); ++i) {
+                    if (keep[i]) {
+                        deduped.push_back(std::move(captures[i]));
+                    }
+                }
+                captures = std::move(deduped);
             }
             return captures;
         };

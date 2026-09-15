@@ -1319,6 +1319,26 @@ namespace {
         return editor::BreakRuleFor(captureName).collapseSimple;
     }
 
+    // Empty string clears, same convention NedSetFormatBracePlacement uses
+    // for its own enum-valued field.
+    void NedSetFormatWrapPolicy(std::string captureName, std::string policy) {
+        editor::SetWrapPolicy(captureName,
+                              policy.empty() ? std::nullopt : std::optional(editor::WrapPolicyByName(policy)));
+    }
+
+    void NedSetFormatWrapForceTrailingComma(std::string captureName, Janet value) {
+        editor::SetWrapForceTrailingComma(captureName, JanetToOptionalBool(value));
+    }
+
+    std::optional<std::string> NedFormatWrapPolicy(std::string captureName) {
+        const auto policy = editor::WrapRuleFor(captureName).policy;
+        return policy ? std::optional(editor::WrapPolicyName(*policy)) : std::nullopt;
+    }
+
+    std::optional<bool> NedFormatWrapForceTrailingComma(std::string captureName) {
+        return editor::WrapRuleFor(captureName).forceTrailingComma;
+    }
+
     void NedSetFormatBlankMinBefore(std::string captureName, Janet value) {
         editor::SetBlankMinBefore(captureName, JanetToOptionalInt(value));
     }
@@ -1429,6 +1449,19 @@ void InstallEditorBindings(Environment& env) {
         "ned", "format-brace-collapse-empty", "The capture name's own overridden collapse-empty rule, or nil if unset.");
     env.Register<&NedFormatBraceCollapseSimple>(
         "ned", "format-brace-collapse-simple", "The capture name's own overridden collapse-simple rule, or nil if unset.");
+    env.Register<&NedSetFormatWrapPolicy>(
+        "ned", "set-format-wrap-policy",
+        "Override the wrap policy for a delimited-list capture name: \"never\" (always collapse to one line) or "
+        "\"always\" (always one item per line); empty string clears.");
+    env.Register<&NedSetFormatWrapForceTrailingComma>(
+        "ned", "set-format-wrap-force-trailing-comma",
+        "Override whether a wrapped (multi-line) list gets a trailing separator after its last item -- true/false, "
+        "nil clears.");
+    env.Register<&NedFormatWrapPolicy>(
+        "ned", "format-wrap-policy", "The capture name's own overridden wrap-policy name, or nil if unset.");
+    env.Register<&NedFormatWrapForceTrailingComma>(
+        "ned", "format-wrap-force-trailing-comma",
+        "The capture name's own overridden wrap-force-trailing-comma rule, or nil if unset.");
     env.Register<&NedSetFormatBlankMinBefore>(
         "ned", "set-format-blank-min-before",
         "Override the minimum blank lines required immediately before the given capture name -- an integer, nil "

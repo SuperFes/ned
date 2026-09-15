@@ -22,6 +22,10 @@ namespace {
         return a.minBefore == b.minBefore && a.maxBefore == b.maxBefore;
     }
 
+    bool operator==(const WrapRuleValue& a, const WrapRuleValue& b) {
+        return a.policy == b.policy && a.forceTrailingComma == b.forceTrailingComma;
+    }
+
     std::mutex& RulesMutex() {
         static std::mutex mutex;
         return mutex;
@@ -39,6 +43,11 @@ namespace {
 
     std::unordered_map<std::string, BlankRuleValue>& BlankRules() {
         static std::unordered_map<std::string, BlankRuleValue> rules;
+        return rules;
+    }
+
+    std::unordered_map<std::string, WrapRuleValue>& WrapRules() {
+        static std::unordered_map<std::string, WrapRuleValue> rules;
         return rules;
     }
 
@@ -76,6 +85,15 @@ namespace {
         ValidateCaptureName(name);
         const std::lock_guard<std::mutex> lock(RulesMutex());
         auto&                             entry = BreakRules()[name];
+        entry.*field                            = std::move(value);
+        ++Generation();
+    }
+
+    template <typename T, typename Field>
+    void SetWrapField(const std::string& name, std::optional<T> value, Field WrapRuleValue::* field) {
+        ValidateCaptureName(name);
+        const std::lock_guard<std::mutex> lock(RulesMutex());
+        auto&                             entry = WrapRules()[name];
         entry.*field                            = std::move(value);
         ++Generation();
     }
@@ -165,6 +183,23 @@ BreakRuleValue BreakRuleFor(std::string_view name, std::string_view language) {
     return ScopedRuleFor<BreakRuleValue>(name, language, [](std::string_view n) { return BreakRuleFor(n); });
 }
 
+void SetWrapPolicy(const std::string& name, std::optional<WrapPolicy> value) {
+    SetWrapField(name, value, &WrapRuleValue::policy);
+}
+
+void SetWrapForceTrailingComma(const std::string& name, std::optional<bool> value) {
+    SetWrapField(name, value, &WrapRuleValue::forceTrailingComma);
+}
+
+WrapRuleValue WrapRuleFor(std::string_view name) {
+    const std::lock_guard<std::mutex> lock(RulesMutex());
+    return RuleFor(WrapRules(), name);
+}
+
+WrapRuleValue WrapRuleFor(std::string_view name, std::string_view language) {
+    return ScopedRuleFor<WrapRuleValue>(name, language, [](std::string_view n) { return WrapRuleFor(n); });
+}
+
 void SetBlankMinBefore(const std::string& name, std::optional<int> value) {
     SetBlankField(name, value, &BlankRuleValue::minBefore);
 }
@@ -211,6 +246,26 @@ std::string BracePlacementName(BracePlacement placement) {
             return "next-line-indented";
     }
     throw std::runtime_error("ned: internal error: unhandled BracePlacement");
+}
+
+WrapPolicy WrapPolicyByName(const std::string& name) {
+    if (name == "never") {
+        return WrapPolicy::Never;
+    }
+    if (name == "always") {
+        return WrapPolicy::Always;
+    }
+    throw std::runtime_error("ned: invalid wrap policy \"" + name + "\" -- expected \"never\" or \"always\"");
+}
+
+std::string WrapPolicyName(WrapPolicy policy) {
+    switch (policy) {
+        case WrapPolicy::Never:
+            return "never";
+        case WrapPolicy::Always:
+            return "always";
+    }
+    throw std::runtime_error("ned: internal error: unhandled WrapPolicy");
 }
 
 } // namespace ned::editor

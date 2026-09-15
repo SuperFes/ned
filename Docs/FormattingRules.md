@@ -151,16 +151,16 @@ oversight, and is worth knowing if you `cd` into an unfamiliar repo.
 
 ### Schema
 
-Top-level keys, and the fields inside each `:indent`/`:space`/`:break`/`:blank` entry.
-`:indent` is keyed by a language key (`python`, `cpp`, the same key the defaults table
-above and `ned/set-lsp-command` both use). This list is held against the real schema on
-every build:
+Top-level keys, and the fields inside each `:indent`/`:space`/`:break`/`:blank`/`:wrap`
+entry. `:indent` is keyed by a language key (`python`, `cpp`, the same key the defaults
+table above and `ned/set-lsp-command` both use). This list is held against the real schema
+on every build:
 
 <!-- format-keys:begin -->
 
-`indent` `space` `break` `blank` `trim-trailing-whitespace` `ensure-final-newline`
+`indent` `space` `break` `blank` `wrap` `trim-trailing-whitespace` `ensure-final-newline`
 `max-consecutive-blank-lines` `tabs` `width` `before` `after` `within` `placement`
-`collapse-empty` `collapse-simple` `min-before` `max-before`
+`collapse-empty` `collapse-simple` `min-before` `max-before` `policy` `force-trailing-comma`
 
 <!-- format-keys:end -->
 
@@ -217,7 +217,9 @@ see below), Fish's `begin_statement` alone, in two forms (`"begin"`/`"end"` or `
 -- no delimiter of any kind for if/while/for/switch/function, see below); TypeScript
 and TSX have no `format.janet` files of their own at all, see below), all wired into
 `format-buffer`'s and
-`--format`'s Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and
+`--format`'s Native chain (reindent, then Blank, then Wrap, then Break, then Space, then
+Hygiene -- Wrap slotted in after this section was first written, see its own section
+below for why it runs where it does) and
 all shipping no built-in default -- neither does anything until you configure a rule:
 
 - **Break-kind captures** (`Editor/FormatBracePlacement.h`'s `ComputeBracePlacementEdits`,
@@ -1377,6 +1379,84 @@ rules, output re-checked by re-parsing with the real vendored grammars for zero
 `ERROR`/`MISSING` nodes (no Clojure/Janet toolchain available in this environment, the
 same honest structural-only substitute used elsewhere in this rollout when a real
 interpreter isn't installed). Full suite: 4733 cases (7 new test cases).
+
+## Wrap, and overriding it per language
+
+`:wrap` (kind 4 of `Docs/FormattingCapabilities.md`'s nine-rule-kind catalogue) is a
+policy over a delimited LIST -- a call's own arguments, an array literal's own elements --
+rather than a single point the way Space/Break are. Only the two margin-INDEPENDENT
+policy values are implemented so far: `:never` (always collapse the list onto its header's
+own line) and `:always` (always one item per line, "chop-down", regardless of length).
+`:wrap-if-long`/`:chop-down-if-long` are a deliberately separate follow-up -- they need a
+real per-language wrap margin this rollout hasn't built yet (`Editor/FillColumn.h` is
+process-wide and prose-oriented, a different number in practice from a code line-length
+policy). An unconfigured capture is a total no-op, the same "nothing forced by default"
+rule every other rule kind here already follows -- which is what makes JetBrains' own
+load-bearing "keep existing line breaks" default fall out for free: nothing touches a
+list's own line layout unless a policy is explicitly configured for it.
+
+```janet
+{:wrap {"wrap.args" {:policy :always :force-trailing-comma true}}}
+```
+
+`:policy` (`:never`/`:always`) and `:force-trailing-comma` (true/false -- add a trailing
+separator after the last item when the list is multi-line; only meaningful together with
+`:always`, since a `:never`-collapsed list never gets one, matching ordinary call-site
+style) are the two fields. `Editor/FormatRules.h`'s `WrapRuleValue`/`WrapRuleFor` follow
+the identical storage/resolution shape (flat, `"<language>/<capture>"`-scoped) every other
+rule kind uses.
+
+**A genuinely new capture-file convention this kind needed: `"<name>.item"`.** Every rule
+kind before Wrap correlates at most a fixed, small number of captures per construct
+instance (a scalar `.open`/`.close` pair, a same-span `.simple`/`.first` marker). Wrap
+needs to know each SIBLING item of a list, an unbounded count -- `Mode.cpp`'s
+`formatCaptures` closure gained a fourth suffix, collecting every `"<name>.item"` capture
+within the SAME match (a single-node quantifier repeated in the same pattern as the paired
+delimiter, e.g. `(argument_list "(" @wrap.args.open (_)* @wrap.args.item ")"
+@wrap.args.close)`) into `FormatCapture::items`, in source order. A companion
+`"<name>.separator"` convention was drafted but found to have no proven syntax in this
+codebase's own query engine (a bare literal-token quantifier like `"," *` either errors
+outright -- "a multi-pattern group is only supported at the top level" -- or, written as
+two independently-quantified patterns, produces one match PER repetition count rather than
+one combined match, an NFA backtracking artifact) -- `Editor/FormatWrap.cpp` derives comma
+placement purely from item count instead, needing no query-level separator concept at all.
+The quantifier-produced duplicate-match artifact itself needed a small, general dedup step
+in `Mode.cpp` (keep only the entry with the most items among captures sharing one exact
+byte range) -- confirmed live via a scratch probe this affects nothing but this new shape
+(every other capture kind is naturally free of it, since none of them repeat within one
+match).
+
+**A real corruption hazard found live, not by inspection**: cpp's own pilot capture
+(`wrap.args`, a call's argument list) hard-crashes the C++ compiler when
+`:force-trailing-comma` is applied to it -- a trailing comma after a function CALL's own
+last argument is a syntax error (confirmed with a real `g++` compile: "expected
+primary-expression before ')' token"), unlike a brace-init-list, where JetBrains' own
+feature is squarely aimed (`{1, 2, 3,}` compiles fine, also confirmed live). This is a
+genuinely per-language, per-construct fact, not a universal C-family rule -- ES2017+
+JavaScript, for one, legally allows a trailing comma in a call's own argument list -- so
+it's declined via a new, narrowly-scoped guard (`FormatWrap.cpp`'s
+`TrailingCommaUnsafeForLanguage(languageKey, captureName)`, scoped to exactly
+`("cpp", "wrap.args")`) rather than a blanket "wrap.args never gets one" rule that would be
+wrong the moment a second language's own `wrap.args` is added. The chop-down LAYOUT itself
+(one argument per line, no trailing comma) is unaffected and confirmed live it compiles
+clean.
+
+**Only cpp, and only its own call-argument list, has a `:wrap` capture today** -- the same
+"one pilot construct, full chain end to end" discipline every other rule kind's own first
+capture in this codebase followed (`Source/Languages/cpp/format.janet`'s own header
+comment on `wrap.args` has the full story). More constructs (declaration parameter lists,
+array/object literals) and more languages are open follow-ups, same as every rule kind's
+own rollout before it.
+
+Wrap runs in the Native chain right after Blank, before Break/Space: a wrap decision
+rewrites a list's own interior line layout wholesale, which is exactly the kind of
+structural change Break's own brace-placement logic and Space's own token-adjacency checks
+need to see the RESULT of -- a chopped list's own closing delimiter, for instance, now
+sits on a fresh line at the header's indent, and Break's own placement logic for whatever
+capture immediately follows it should react to that, not to wherever the delimiter used to
+be. Live-verified end to end via `ned --format` with a real project `.ned/format.janet`,
+output re-checked with a real `g++` compile (the trailing-comma hazard above was caught
+exactly this way, not by inspection). Full suite: 4751 cases (9 new).
 
 ## The `--format` CLI
 
