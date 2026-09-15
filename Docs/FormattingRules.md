@@ -1151,6 +1151,104 @@ own real toolchain (`g++`, `javac`, `dotnet run`, `node`, `go run`, `rustc`, `ph
 `kotlinc`, `fish`, `lua`) wherever the audit changed generated output, not merely
 re-parsed.
 
+## Ruby: every opening keyword is optional, and two real hazards the paired mechanism
+had never hit before
+
+Ruby is the seventeenth language, and the `def...end` keyword-delimited path it was flagged
+as a proven candidate for back when Lua/bash/fish's own paired `.open`/`.close` mechanism
+was built. The one genuinely new wrinkle: **every construct's opening keyword is optional
+in Ruby's own grammar**, unlike Lua/bash/fish where a real opening keyword (`function`/`do`/
+`then`/`begin`) is always present. `if`/`unless`'s own body wrapper (`then`) only carries a
+literal `"then"` token when the user actually writes one (`if x then`); the far more common
+`if x\n ... end` has no separate opening token at all between the condition and the body,
+confirmed via `grammar.json`'s own `CHOICE` rule, not assumed. `while`/`until`'s own `do`
+wrapper has the identical optionality. Confirmed live with `tree-sitter query` (0 matches
+without the keyword, 1 with it): `brace.control` for these four is real, but only ever
+fires for the keyword-having form -- a genuine structural absence for the dominant style,
+not a scope cut.
+
+`method`/`singleton_method` are anchored on their own NAME field rather than the parameter
+list's own closing paren (Lua's own precedent), because Ruby's parameter list has THREE
+mutually-ambiguous shapes (parenthesized, bare, or absent entirely) sharing one aliased
+node type with no structural way to tell a bare list from an absent one apart -- anchoring
+on the closing paren would need a second pattern for the other two shapes, and that second
+pattern would ALSO match the parenthesized case, producing two overlapping candidate opens
+for the same method. One uniform NAME anchor covers all three parameter styles with no
+double-match risk, at a minor, documented cost: a parenthesized method's own interior
+computation sees the parameter list as part of the "interior," so `def f()\nend` doesn't
+collapse-empty even though its body is genuinely empty -- the common bare/no-arg case is
+fully precise. Ruby's own "endless method" (`def f = 1`, a real expression-bodied form, not
+a rare edge) needs no `:match?` discriminator at all, unlike Kotlin's identically-shaped
+ambiguity: requiring a literal `"end"` token as the node's own child is already a real
+structural fact an endless method's own node simply doesn't have.
+
+Two real corruption hazards, both caught live by this rollout's own apply-and-check
+discipline, not by inspection -- and both required a genuinely NEW guard shape, since every
+prior guard in this file keyed on `(language, captureName)` alone, which turns out to be
+too coarse here:
+
+- **`do_block`'s own multi-byte delimiter, caught by a scratch capture dump**: a bare
+  `(do_block) @brace.function` direct capture (the same shape `block`'s own `"{"`/`"}"` uses)
+  would silently default `openLength`/`closeLength` to 1, matching only the FIRST byte of
+  `"do"`/`"end"` -- confirmed via a live dump showing `open=1 close=1` where `2`/`3` were
+  expected. Fixed by pairing `"do"`/`"end"` explicitly the same way `begin`/`while`'s own
+  keywords already are; since both are `do_block`'s own first/last children, the synthesized
+  span is byte-identical to the direct capture it replaces, so the `.simple` marker (still
+  capturing the whole node) correlates against it unchanged.
+- **Collapse-empty gluing an identifier onto `"end"`, caught by an applied Buffer test**:
+  `method`/`class`/`module`/`singleton_class`'s own NAME/VALUE-anchored open is the FIRST
+  capture in this whole rollout where `.open` is arbitrary identifier text rather than a
+  fixed keyword/punctuation delimiter. Collapsing `def foo\nend` to `def foo end` is NOT the
+  word-fusion problem `IsWordByte` already guards (a separating space IS inserted) --
+  confirmed live via `tree-sitter parse` that shape still MISPARSES (`"end"` swallowed as a
+  bare parameter, a genuine `MISSING "end"` node), purely from the grammar's own
+  params-continuation ambiguity at that lexical position, independent of whitespace. The
+  same misparse hits `class Foo end`/`module M end`/`def self.foo end`. Fixed with a new
+  `CollapseEmptyUnsafeForLanguage(languageKey, openText)` guard keyed on the open TOKEN'S
+  OWN TEXT (mirroring `FormatSpacing.h`'s own `WithinRemovalUnsafe` precedent for bash's
+  `[`-vs-`((` distinction) rather than the capture name, since Ruby's own `brace.function`/
+  `brace.class` each mix a safe shape (`block`/`do_block`'s real delimiter) with an unsafe
+  one (`method`/`class`'s own name-anchored open) under ONE name -- declined for any
+  word-shaped open text that isn't one of Ruby's own fixed keyword opens (`do`/`then`/
+  `begin`, confirmed live that gluing any of those three onto `"end"` parses clean).
+- A related, smaller finding of the SAME shape: `"begin"` is a bare, standalone statement
+  with the same "glues onto whatever precedes it" hazard bash/fish's own `do`/`then`/
+  `begin_statement` have (confirmed live: `"foo begin...end"` gets swallowed as an argument
+  to `"foo"` rather than starting a fresh block) -- while if/unless/while/until's own
+  `"then"`/`"do"` are always nested inside their OWN statement's header and confirmed safe
+  by construction. `PlacementUnsafeForLanguage` gained an `openText` parameter for the same
+  reason, discriminating `"begin"` from `"then"`/`"do"` under the shared `brace.control`
+  name rather than blanket-declining the whole capture name the way bash/fish's own guards
+  do (their own hazard is real for every instance sharing the name, so a capture-name-wide
+  decline was the correct answer for them, not merely the convenient one -- Ruby's own split
+  is genuine, and the signal was already available from the collapse-empty fix above).
+
+`case`/`case_match` are declined from `brace.control` entirely -- confirmed via
+`grammar.json` there's no opening keyword analogous to bash's own `"case ... in"` (`"when"`/
+`"in"` belong to each clause, not the case statement as a whole), and (like `case`/`when`)
+`rescue`/`ensure` clauses inside `begin` share the ONE enclosing `"end"` rather than owning
+a closing token of their own. `control.parens` is the same narrow "already parenthesized"
+lever Python/Go/Lua's own files use, reaching if/unless/while/until's own condition and
+case/case_match's own value alike.
+
+**One pre-existing, unrelated bug found and logged, not fixed in-session**: a baseline `ned
+--format` pass with no format.janet rules configured revealed `method`/`singleton_method`/
+`while`/`until` bodies are never reindented at all -- `Editor/ImprintTables.cpp`'s Ruby
+table has entries for `if`/`class`/`module`/`begin`/`do`/`case` but none for these four,
+for the identical underlying reason format captures needed extra care for them (no single,
+always-present open token directly beside the body). Logged to `ROADMAP.md`'s watch list; a
+real fix needs the same design work this rollout did for the format side, not a mechanical
+table entry.
+
+No real Ruby toolchain (`ruby`/`irb`) is installed in this environment -- the one language
+in this whole rollout without one. Verified instead via `tree-sitter parse`/`tree-sitter
+query` against the real vendored grammar directly (`-p <grammar-dir>`, sidestepping the
+0.27 CLI's own need for a `tree-sitter.json` config) for every structural claim, and by
+re-parsing `ned --format`'s own output with ned's own parse engine for zero `ERROR`/
+`MISSING` nodes -- the same honest, disclosed structural-only substitute Kotlin used before
+`kotlinc` was installed. Full suite: 4709+ cases (17 new test cases across all three
+format-kind test files), confirmed clean.
+
 ## The `--format` CLI
 
 ```sh
