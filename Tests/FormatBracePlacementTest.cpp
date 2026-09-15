@@ -29,6 +29,20 @@ struct FormatRulesGuard {
     }
 };
 
+// Real format.janet files now name more than one capture over the same
+// source (a control statement's own brace body alongside its own condition
+// parens, see cpp/javascript's format.janet's "capture-coverage-widening"
+// comments) -- filter by name rather than asserting a total count.
+std::vector<FormatCapture> CapturesNamed(const std::vector<FormatCapture>& captures, std::string_view name) {
+    std::vector<FormatCapture> matches;
+    for (const FormatCapture& capture : captures) {
+        if (capture.name == name) {
+            matches.push_back(capture);
+        }
+    }
+    return matches;
+}
+
 } // namespace
 
 TEST_CASE("cpp-mode's format.janet names brace.function over a real function body", "[FormatBracePlacement]") {
@@ -42,6 +56,36 @@ TEST_CASE("cpp-mode's format.janet names brace.function over a real function bod
     REQUIRE(captures[0].name == "brace.function");
     REQUIRE(captures[0].startByte == source.find('{'));
     REQUIRE(captures[0].endByte == source.size() - 1); // through the closing '}'
+}
+
+TEST_CASE("cpp-mode's format.janet names brace.control for if/while/for/switch/catch bodies", "[FormatBracePlacement]") {
+    const Mode mode = CppMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f() { if (x) {\n} }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f() { while (x) {\n} }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f() { for (;;) {\n} }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f() { switch (x) {\n} }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f() { try {\n} catch (int e) {\n} }"), "brace.control").size() == 1);
+
+    // A braceless body has no brace to place at all -- no capture at all,
+    // not a degenerate zero-width one.
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f() { if (x) return; }"), "brace.control").empty());
+}
+
+TEST_CASE("cpp-mode's format.janet names brace.class and brace.namespace", "[FormatBracePlacement]") {
+    const Mode mode = CppMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C {\n};"), "brace.class").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("struct S {\n};"), "brace.class").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("namespace n {\n}"), "brace.namespace").size() == 1);
+}
+
+TEST_CASE("javascript-mode's format.janet names brace.control and brace.class too", "[FormatBracePlacement]") {
+    const Mode mode = JavaScriptMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("function f() { if (x) {\n} }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("function f() { switch (x) {\n} }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C {\n}"), "brace.class").size() == 1);
 }
 
 TEST_CASE("javascript-mode's format.janet also names brace.function, over a different node type", "[FormatBracePlacement]") {
