@@ -198,13 +198,14 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Four languages exist today: cpp, JavaScript, Java, and Python** (`Source/Languages/{cpp,
-javascript,java,python}/format.janet` -- the same capture NAMES throughout, over each
-grammar's own different node types: cpp's `compound_statement`/`condition_clause`,
-JavaScript's `statement_block`/`parenthesized_expression`, Java's
-`block`/`parenthesized_expression`), all wired into `format-buffer`'s and `--format`'s
-Native chain (reindent, then Break, then Space, then Hygiene) and all shipping no built-in
-default -- neither does anything until you configure a rule:
+**Five languages exist today: cpp, JavaScript, Java, Python, and Go**
+(`Source/Languages/{cpp,javascript,java,python,go}/format.janet` -- the same capture NAMES
+throughout, over each grammar's own different node types: cpp's
+`compound_statement`/`condition_clause`, JavaScript's
+`statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`,
+Go's `block`/`parenthesized_expression`), all wired into `format-buffer`'s and `--format`'s
+Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and all shipping
+no built-in default -- neither does anything until you configure a rule:
 
 - **Break-kind captures** (`Editor/FormatBracePlacement.h`'s `ComputeBracePlacementEdits`,
   reading every `:break` field): `brace.function` (a function definition's own body),
@@ -385,6 +386,62 @@ blank line." Nothing about `:blank`'s own mechanism is Python-specific, though: 
 language's capture -- `brace.function`, `control.parens`, anything a `format.janet` names
 -- can carry a `:blank` rule the same way, the moment a future language's own file adds
 one.
+
+## Go: a real correctness hazard, not just a style question
+
+Go is the fifth language and the first one where a Break-kind rule can silently produce
+code that no longer **compiles**, not merely code in a different style -- verified live
+with a real `go build`, not assumed. Go's spec performs automatic semicolon insertion
+(ASI) after a `)` token at end-of-line; a function header on its own line followed by `{`
+on the next fails with `syntax error: unexpected semicolon or newline before {`, because
+the inserted semicolon terminates the declaration before the brace is ever reached.
+Every OTHER ASI-adjacent language already in this template is unaffected -- JavaScript's
+own ASI does not fire after `)`, so `function f()\n{` parses (and compiles) fine there,
+checked against the live grammar the same way.
+
+Because `:break` rules are shared-by-default across every language naming the same
+capture (the whole point of the language-scoped-override design), a project's
+`(ned/set-format-brace-placement "brace.function" "next-line")` -- written with cpp/Java
+in mind -- would otherwise apply to Go's own `brace.function` capture too, and silently
+break every Go buffer it touches. `Editor/FormatBracePlacement.cpp`'s
+`PlacementUnsafeForLanguage` neutralizes a `:next-line`/`:next-line-indented` placement
+for language key `"go"` specifically, treating it as though `:placement` were never set --
+`:same-line` (Go's only legal brace style) and every other field (`:collapse-empty`,
+`:collapse-simple`, `:before`/`:after`) are completely unaffected, scoped or not.
+Belt-and-suspenders: Go source already SHAPED like a `:next-line` rewrite (brace on its
+own line) is invisible to the query engine independently of the guard too -- tree-sitter-go
+performs the same ASI the real compiler does, so `function_declaration`'s own `body:`
+field simply never resolves against such a file, and `mode.formatCaptures` returns zero
+captures for it. Neither mechanism alone was assumed sufficient without checking; both
+were verified live before shipping.
+
+`go/format.janet` otherwise follows the same template as every prior language --
+`brace.function`/`brace.control`/`brace.class` (the last reaching one level deeper into
+`struct_type`'s nested `field_declaration_list`, since `struct_type`'s own span starts at
+the `struct` keyword rather than at `{`), plus a Go-only `brace.interface` (its own
+distinct name, the same precedent cpp's `brace.namespace` set, since `interface_type` has
+no nested wrapper node at all and needs the paired-delimiter mechanism). `switch`/`select`
+also need the paired mechanism for their own outer braces (`expression_switch_statement`/
+`type_switch_statement`/`select_statement` have no field OR wrapper node naming their own
+body), which is why they get no `.simple` marker -- there is no single node to anchor a
+`.`-anchor against, the same reason a for-loop's own clause has no paired-parens capture
+in any language. `control.parens` is the same narrow lever Python's own file has: Go's
+idiomatic style omits condition parens entirely (`if x {`, `switch x {`), but the grammar
+still allows writing them, and only then does the capture fire. Go's own for-loop clause
+has no wrapping parens in the grammar AT ALL (writing them is a syntax error, not merely
+non-idiomatic) -- confirming, independently of the ASI question, that "verify what a
+grammar actually allows" keeps paying off language after language.
+
+One `.simple`-marker bug caught by the test suite before this shipped, not by inspection:
+Go's `block` wraps its statements in exactly one intermediate `statement_list` child
+(`{ (statement_list ...) }`, at most one -- an empty block has none at all), unlike every
+other language's block-shaped node, whose own children ARE the statements directly. A
+first attempt anchoring `.` against `block` itself reported `isSimple` for a
+TWO-statement body, because `block` always has exactly one child (the whole list)
+regardless of how many statements are inside it. Fixed by anchoring one level deeper,
+against `statement_list`'s own children, while still capturing the outer `block` (so the
+marker's byte range matches the base capture's) -- `(function_declaration body: (block
+(statement_list . (_) .)) @brace.function.simple)`.
 
 ## The `--format` CLI
 

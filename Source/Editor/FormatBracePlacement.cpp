@@ -32,6 +32,28 @@ namespace {
         return text.substr(lineStart, indentEnd - lineStart);
     }
 
+    // go-language-pilot follow-up: Go's grammar performs automatic
+    // semicolon insertion after a `)` token at end-of-line (the Go spec's
+    // own rule -- confirmed live with a real `go build`, not assumed: a
+    // function header on its own line followed by `{` on the next fails to
+    // compile with "syntax error: unexpected semicolon or newline before
+    // {", because the inserted semicolon after `)` terminates the
+    // declaration before the brace is ever reached). Every OTHER
+    // ASI-adjacent language already in this template is unaffected --
+    // JavaScript's own ASI does not fire after `)`, so `function f()\n{`
+    // parses (and compiles) fine there, verified against the live grammar
+    // the same way. `:placement` values other than SameLine are therefore
+    // not merely a style preference for Go, they are a correctness hazard:
+    // a project's SHARED `:break` rule (the whole point of the
+    // language-scoped-override design) would silently break every Go
+    // buffer it touches. Neutralized here rather than left to the config
+    // author to avoid -- the same "decline rather than risk corruption"
+    // precedent Text/DiskSpace.h's save-guard and collapse-simple's
+    // multi-line decline both already set.
+    bool PlacementUnsafeForLanguage(BracePlacement placement, std::string_view languageKey) {
+        return placement != BracePlacement::SameLine && languageKey == "go";
+    }
+
     // Where this construct's closing delimiter belongs, for a given
     // placement -- shared between the "reposition an existing multi-line
     // closer" step and collapse-empty's "force expand" step, so the two
@@ -60,7 +82,10 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
         if (capture.startByte == 0 || capture.startByte >= capture.endByte || capture.endByte > text.size()) {
             continue; // nothing could precede a capture at offset 0; a degenerate span is never expected from a real query
         }
-        const BreakRuleValue rule = BreakRuleFor(capture.name, languageKey);
+        BreakRuleValue rule = BreakRuleFor(capture.name, languageKey);
+        if (rule.placement && PlacementUnsafeForLanguage(*rule.placement, languageKey)) {
+            rule.placement.reset(); // see PlacementUnsafeForLanguage's own comment
+        }
         if (!rule.placement && !rule.collapseEmpty && !rule.collapseSimple) {
             continue; // unconfigured -- no built-in default, nothing forced
         }
