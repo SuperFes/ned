@@ -15,6 +15,7 @@ using ned::editor::CppMode;
 using ned::editor::ComputeBracePlacementEdits;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
+using ned::editor::GoMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
@@ -593,4 +594,121 @@ TEST_CASE("End to end: brace-placement rules are a no-op on python-mode even whe
 
     SetBracePlacement("brace.function", std::nullopt);
     SetBraceCollapseSimple("brace.control", std::nullopt);
+}
+
+// go-mode: the fourth brace-carrying language. Its own real edge, verified
+// live with a real `go build` before this shipped: Go performs automatic
+// semicolon insertion after a `)` at end-of-line, so `func f()` followed
+// by `{` on the NEXT line is a genuine compile error, not merely a style
+// deviation -- confirmed with `./main.go:N: syntax error: unexpected
+// semicolon or newline before {`. FormatBracePlacement.cpp's
+// PlacementUnsafeForLanguage neutralizes a NextLine/NextLineIndented
+// :placement rule for "go" specifically (JavaScript's own ASI does not
+// fire after `)`, verified the same way, so it is unaffected).
+TEST_CASE("go-mode's format.janet names the full capture set over a real file", "[FormatBracePlacement]") {
+    const Mode mode = GoMode();
+    REQUIRE(mode.formatCaptures);
+
+    const std::string source = "package main\n"
+                               "type I interface {\n"
+                               "\tM()\n"
+                               "}\n"
+                               "type T struct {\n"
+                               "\tX int\n"
+                               "}\n"
+                               "func f() {\n"
+                               "\tif x {\n"
+                               "\t\treturn\n"
+                               "\t}\n"
+                               "\tswitch x {\n"
+                               "\tcase 1:\n"
+                               "\t}\n"
+                               "}\n";
+    const auto captures = mode.formatCaptures(source);
+
+    REQUIRE(CapturesNamed(captures, "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(captures, "brace.control").size() == 2); // the if's body and the switch's own braces
+    REQUIRE(CapturesNamed(captures, "brace.class").size() == 1);
+    REQUIRE(CapturesNamed(captures, "brace.interface").size() == 1);
+}
+
+TEST_CASE("go-mode's format.janet marks a single-statement body isSimple too", "[FormatBracePlacement]") {
+    const Mode        mode   = GoMode();
+    const std::string simple = "package main\nfunc f() {\n\treturn\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(simple), "brace.function")[0].isSimple);
+
+    const std::string multi = "package main\nfunc f() {\n\tg()\n\treturn\n}\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(multi), "brace.function")[0].isSimple);
+}
+
+TEST_CASE("go-mode's format.janet does not name a for-loop's own clause at all", "[FormatBracePlacement]") {
+    // Unlike cpp/javascript/java, a for-loop's three-part clause has NO
+    // wrapping parens in Go's own grammar -- writing them is a syntax
+    // error, not merely non-idiomatic (verified live), so there is no
+    // paired-parens capture for it here. brace.control still fires for
+    // the loop's own BODY.
+    const Mode        mode   = GoMode();
+    const std::string source = "package main\nfunc f() {\n\tfor i := 0; i < 10; i++ {\n\t}\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.control").size() == 1);
+}
+
+TEST_CASE("End to end: a NextLine :placement is a safe no-op on go-mode (ASI-unsafe)", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::NextLine);
+
+    const Mode        mode   = GoMode();
+    const std::string source = "package main\nfunc f() {\n\treturn\n}\n";
+    Buffer            buffer("test.go");
+    buffer.InsertAtPoint(source);
+
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "go", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == source); // NOT rewritten to Allman -- that would fail to compile
+
+    SetBracePlacement("brace.function", std::nullopt);
+}
+
+// Deliberately NOT testing a "brace already on its own line" starting
+// shape here the way the same test does for every other language: that
+// shape is exactly the ASI-broken one the guard above exists for, and
+// tree-sitter-go's own parser performs the same automatic semicolon
+// insertion the real compiler does (verified live: `mode.formatCaptures`
+// returns ZERO captures for that shape -- the query's own
+// `body: (block)` field simply never resolves, since the parser doesn't
+// attach the orphaned `{...}` as the function's body at all). So Go
+// SOURCE SHAPED like a NextLine rewrite is invisible to this pass twice
+// over -- the guard, and separately the query never matching it in the
+// first place. What SameLine still legitimately fixes for Go is
+// horizontal spacing around an already-correctly-placed brace.
+TEST_CASE("End to end: SameLine :placement still applies normally on go-mode", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::SameLine);
+
+    const Mode mode = GoMode();
+    Buffer     buffer("test.go");
+    buffer.InsertAtPoint("package main\nfunc f()   {\n\treturn\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "go", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "package main\nfunc f() {\n\treturn\n}\n");
+
+    SetBracePlacement("brace.function", std::nullopt);
+}
+
+TEST_CASE("End to end: a language-scoped go/ override is unaffected by the ASI guard on a safe placement",
+          "[FormatBracePlacement]") {
+    // The guard only neutralizes an UNSAFE placement -- it must never
+    // interfere with a normal, safe one, scoped or not.
+    const FormatRulesGuard guard;
+    SetBracePlacement("go/brace.function", BracePlacement::SameLine);
+
+    const Mode mode = GoMode();
+    Buffer     buffer("test.go");
+    buffer.InsertAtPoint("package main\nfunc f()   {\n\treturn\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "go", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "package main\nfunc f() {\n\treturn\n}\n");
+
+    SetBracePlacement("go/brace.function", std::nullopt);
 }
