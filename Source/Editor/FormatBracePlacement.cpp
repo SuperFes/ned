@@ -59,8 +59,35 @@ namespace {
     // author to avoid -- the same "decline rather than risk corruption"
     // precedent Text/DiskSpace.h's save-guard and collapse-simple's
     // multi-line decline both already set.
-    bool PlacementUnsafeForLanguage(BracePlacement placement, std::string_view languageKey) {
-        return placement != BracePlacement::SameLine && languageKey == "go";
+    // bash-format-revisit follow-up: the INVERSE hazard from Go's own --
+    // here SameLine specifically is the dangerous value, every other
+    // placement is safe. `do`/`then` are bash reserved words that must be
+    // preceded by a real statement TERMINATOR (a semicolon or a newline),
+    // never merely whitespace -- confirmed live with a real `bash -n`:
+    // "while true do" and "if true then" (SameLine's own plain-space gap)
+    // are hard syntax errors, while "while true\ndo"/"if true\nthen"
+    // (NextLine's own newline gap, which IS a valid terminator) parse
+    // fine. This is real for while/until/for/select's own "do" and
+    // if_statement's own "then" -- NOT for case_statement's own "in" or a
+    // C-style for-loop's own "do" (both have an OPTIONAL terminator in
+    // the grammar, confirmed live SameLine is fine for either) -- but
+    // brace.control captures do_group/if_statement/case_statement all
+    // under one shared name with no per-instance signal available here,
+    // so this declines SameLine for the capture NAME as a whole rather
+    // than risk corrupting the while/until/for/if shapes that need it.
+    // brace.function is unaffected (bash's function bodies are real
+    // braces, needing no terminator at all, confirmed live SameLine works
+    // there) -- Go's own guard didn't need a capture-name parameter
+    // because its hazard was language-wide; this one only exists on
+    // brace.control, so the added parameter is real, not speculative.
+    bool PlacementUnsafeForLanguage(BracePlacement placement, std::string_view languageKey, std::string_view captureName) {
+        if (languageKey == "go") {
+            return placement != BracePlacement::SameLine;
+        }
+        if (languageKey == "bash" && captureName == "brace.control") {
+            return placement == BracePlacement::SameLine;
+        }
+        return false;
     }
 
     // Where this construct's closing delimiter belongs, for a given
@@ -96,7 +123,7 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
             continue; // degenerate delimiter lengths -- never expected from a real .open/.close pair
         }
         BreakRuleValue rule = BreakRuleFor(capture.name, languageKey);
-        if (rule.placement && PlacementUnsafeForLanguage(*rule.placement, languageKey)) {
+        if (rule.placement && PlacementUnsafeForLanguage(*rule.placement, languageKey, capture.name)) {
             rule.placement.reset(); // see PlacementUnsafeForLanguage's own comment
         }
         if (!rule.placement && !rule.collapseEmpty && !rule.collapseSimple) {
