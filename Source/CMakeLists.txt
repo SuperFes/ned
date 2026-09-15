@@ -28,6 +28,7 @@ add_library(ned_lib STATIC
         Text/ConflictHunk.cpp
         Text/Utf8.cpp
         Text/LineEnding.cpp
+        Text/WhitespaceHygiene.cpp
         Editor/Key.cpp
         Editor/Command.cpp
         Editor/FuzzyMatch.cpp
@@ -102,12 +103,14 @@ add_library(ned_lib STATIC
         Editor/LineEndingPolicy.cpp
         Editor/FormatOnSave.cpp
         Editor/FormatConfigParse.cpp
+        Editor/Format.cpp
         Editor/Clipboard.cpp
         Editor/TabWidth.cpp
         Editor/IndentStyle.cpp
         Editor/IndentDefaults.cpp
         Editor/Indent.cpp
         Editor/BlankLineCleanup.cpp
+        Editor/MaxConsecutiveBlankLines.cpp
         Editor/FillColumn.cpp
         Editor/Fill.cpp
         Editor/PageScroll.cpp

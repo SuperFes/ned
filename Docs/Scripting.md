@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-162 bindings.
+163 bindings.
 
 ## `ned/backward-char`
 
@@ -384,6 +384,10 @@ Set the delay, in milliseconds, after an edit before ned actually sends textDocu
 ## `ned/set-lsp-workspace-folders`
 
 Enable or disable letting a buffer whose LSP root differs from an already-running same-language server join that server as an extra workspace folder instead of spawning its own process (default true) -- one server for a whole monorepo rather than one per subpackage. A server that doesn't advertise workspaceFolders support is never asked, and falls back to a separate process per root. Turn this off when isolation matters more than footprint: joined roots share one process, so one crash takes them all down together.
+
+## `ned/set-max-consecutive-blank-lines`
+
+Set the longest run of consecutive blank lines the Hygiene pass (format-buffer's native fallback) leaves in place -- a longer run is collapsed down to exactly this many (default 2). A negative value disables the rule entirely (no limit).
 
 ## `ned/set-max-highlight-bytes`
 

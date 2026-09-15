@@ -29,7 +29,14 @@
 //
 //   {:indent {:<language-key> {:tabs true/false :width N} ...}
 //    :trim-trailing-whitespace true/false
-//    :ensure-final-newline true/false}
+//    :ensure-final-newline true/false
+//    :max-consecutive-blank-lines N}
+//
+// The last three map straight onto the Hygiene pass' own settings
+// (TrimOnSave.h/FinalNewline.h/MaxConsecutiveBlankLines.h) -- same "only call
+// the setter when the file actually sets the key" fall-through rule as
+// :indent's fields, no sub-struct needed since none of the three take a
+// per-language override.
 //
 // <language-key> is the same key IndentDefaults.cpp's built-in table and
 // ned/set-lsp-command use ("python", "cpp", ...) -- LanguageDefinition::name,
@@ -57,6 +64,9 @@ struct FormatConfig {
     std::unordered_map<std::string, FormatConfigIndentEntry> indent; // keyed by language key
     std::optional<bool>                                       trimTrailingWhitespaceOnSave;
     std::optional<bool>                                       ensureFinalNewline;
+    // A negative value means "no limit", the same sentinel
+    // ned/set-max-consecutive-blank-lines uses (MaxConsecutiveBlankLines.h).
+    std::optional<int> maxConsecutiveBlankLines;
 };
 
 // Parses `source` (format.janet's own content). `path` is used only to
