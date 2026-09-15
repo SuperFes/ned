@@ -42,6 +42,7 @@
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/Format.h"
+#include "Editor/FormatBlankLines.h"
 #include "Editor/FormatBracePlacement.h"
 #include "Editor/FormatConfigParse.h"
 #include "Editor/FormatOnSave.h"
@@ -345,11 +346,17 @@ int RunFormatFiles(const std::vector<std::string>& paths) {
                 if (mode.indentColumn) {
                     ned::editor::IndentBuffer(buffer, mode);
                 }
-                // configurable-formatter-rules follow-up: same pilot Break-kind
-                // (brace placement) and Space-kind steps format-buffer's own Native
-                // chain runs -- see that command's own comment in Commands.cpp.
+                // configurable-formatter-rules follow-up: same pilot Blank-, Break-
+                // (brace placement), and Space-kind steps format-buffer's own Native
+                // chain runs, same order -- see that command's own comment in
+                // Commands.cpp.
                 if (mode.formatCaptures) {
                     const std::string languageKey = ned::editor::LanguageKeyForMode(mode);
+                    const std::vector<ned::editor::FormatTextEdit> blankEdits =
+                        ned::editor::ComputeBlankLineEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
+                    if (!blankEdits.empty()) {
+                        ned::editor::ApplyFormatTextEdits(buffer, blankEdits);
+                    }
                     const std::vector<ned::editor::FormatTextEdit> braceEdits =
                         ned::editor::ComputeBracePlacementEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
                     if (!braceEdits.empty()) {

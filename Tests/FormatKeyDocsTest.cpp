@@ -61,6 +61,9 @@ std::vector<std::string> AllRealKeys() {
     for (const std::string& key : ned::editor::FormatConfigBreakEntryKeys()) {
         keys.push_back(key);
     }
+    for (const std::string& key : ned::editor::FormatConfigBlankEntryKeys()) {
+        keys.push_back(key);
+    }
     return keys;
 }
 

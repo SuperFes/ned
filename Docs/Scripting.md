@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-179 bindings.
+183 bindings.
 
 ## `ned/backward-char`
 
@@ -56,6 +56,14 @@ Bind a key sequence (e.g. "C-c C-j") to a command name.
 ## `ned/delete-char`
 
 Delete the grapheme cluster at point.
+
+## `ned/format-blank-max-before`
+
+The capture name's own overridden blank-max-before rule, or nil if unset.
+
+## `ned/format-blank-min-before`
+
+The capture name's own overridden blank-min-before rule, or nil if unset.
 
 ## `ned/format-brace-collapse-empty`
 
@@ -284,6 +292,14 @@ Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comme
 ## `ned/set-follow-symlinks-on-save`
 
 Whether saving a file reached through a symlink writes the file the link points at (default true) or replaces the link itself with a regular file (false). Following also means the temporary file a save writes is created beside the real target, so a link pointing to another filesystem still saves.
+
+## `ned/set-format-blank-max-before`
+
+Override the maximum blank lines preserved immediately before the given capture name -- an integer, nil clears. Applied unconditionally, unlike min-before.
+
+## `ned/set-format-blank-min-before`
+
+Override the minimum blank lines required immediately before the given capture name -- an integer, nil clears. Skipped when the capture is the first named child of its own container (nothing above it to separate from but the container's own opening line).
 
 ## `ned/set-format-brace-collapse-empty`
 

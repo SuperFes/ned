@@ -71,6 +71,27 @@ struct BreakRuleValue {
     std::optional<bool>           collapseSimple; // keep a simple one-statement block on one line
 };
 
+// Kind 6 (Blank lines): minimum enforced and maximum preserved blank lines
+// immediately before a capture's own line -- FormattingCapabilities.md's
+// "two independent halves, both needed". Deliberately "before" only for
+// now: "around X" (JetBrains' own framing for e.g. "around method") is
+// expressed as minBefore on the FOLLOWING sibling capture rather than as a
+// separate minAfter on the preceding one, which would otherwise let two
+// adjacent captures' independent edits collide at the one gap between them
+// -- the same class of coincident-edit bug :within's empty-pair case
+// already surfaced once (see FormatSpacing.cpp). minBefore is skipped
+// outright when the capture is the first named child of its own immediate
+// container (Mode.cpp's "<name>.first" marker, `FormatCapture::isFirst`)
+// -- there is nothing above it to separate from but the container's own
+// opening line, matching JetBrains' own separate (and usually off) "before
+// first method" toggle. maxBefore is NOT gated on isFirst -- JetBrains'
+// "keep maximum blank lines" is an unconditional cap applied everywhere,
+// not a minimum-style exception.
+struct BlankRuleValue {
+    std::optional<int> minBefore;
+    std::optional<int> maxBefore;
+};
+
 // Malformed vs. merely unknown follows SyntaxTheme.h's own trust-boundary
 // split: an empty name, a leading '@', a leading/trailing/doubled '.', or
 // embedded whitespace is a real bad call and throws std::runtime_error; an
@@ -96,6 +117,12 @@ void SetBraceCollapseSimple(const std::string& name, std::optional<bool> value);
 
 [[nodiscard]] BreakRuleValue BreakRuleFor(std::string_view name);
 [[nodiscard]] BreakRuleValue BreakRuleFor(std::string_view name, std::string_view language);
+
+void SetBlankMinBefore(const std::string& name, std::optional<int> value);
+void SetBlankMaxBefore(const std::string& name, std::optional<int> value);
+
+[[nodiscard]] BlankRuleValue BlankRuleFor(std::string_view name);
+[[nodiscard]] BlankRuleValue BlankRuleFor(std::string_view name, std::string_view language);
 
 // Bumped by every setter above -- one counter for both kinds, mirroring
 // SyntaxThemeGeneration()'s own "cheap, did-it-change" signal shape (the
