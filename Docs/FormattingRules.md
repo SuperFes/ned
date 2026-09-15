@@ -212,21 +212,33 @@ configure a rule:
 - **Space-kind captures** (`Editor/FormatSpacing.h`'s `ComputeSpaceEdits`, reading all
   three `:space` fields; deliberately never touches a whitespace run that crosses a
   newline -- a Space rule never second-guesses wherever a line break already is):
-  `control.parens`, covering `if`/`while`/`switch`'s own condition and, cpp only, a
-  `catch` clause's own parameter parens.
+  `control.parens`, covering `if`/`while`/`switch`/`for`'s own condition and a `catch`
+  clause's own parameter parens, in both languages.
   ```janet
   (ned/set-format-space-before "control.parens" true)
   (ned/set-format-space-after "control.parens" true)
   ```
-  **Deliberately not captured, in either language:** a `for` loop's own
-  `(init; condition; update)` -- neither grammar has one node spanning the whole
-  parenthesized clause the way if/while/switch do (it's three independent, individually
-  optional fields around bare anonymous `(`/`)` tokens), and `ComputeSpaceEdits`'/
-  `ComputeBracePlacementEdits`' shared model requires a capture's own first/last byte to
-  BE the delimiter pair. Declined rather than approximated. JavaScript's own `catch`
-  clause is declined for the same structural reason (no parens node at all in its
-  grammar -- and ES2019+ allows a parameter-less `catch { }`), which is a real,
-  load-bearing difference from cpp's own `catch_clause`, not an oversight.
+
+**Paired-delimiter captures.** `if`/`while`/`switch`'s own condition each have one grammar
+node spanning the whole `(...)` -- a capture's own first/last byte simply ARE the delimiter
+pair. A `for` loop's `(init; condition; update)` doesn't: it's three independent,
+individually-optional fields around bare anonymous `(`/`)` tokens, no single node to
+attach a capture to. Neither does JavaScript's own `catch` clause (a bare `parameter:`
+field, no wrapping parens node the way cpp's `parameter_list` is -- and ES2019+ allows a
+parameter-less `catch { }` besides). Rather than decline these outright, a query can
+capture the open and close tokens directly, as a **pair**:
+
+```janet
+(for_statement "(" @control.parens.open ")" @control.parens.close)
+```
+
+`Mode.cpp`'s `formatCaptures` closure correlates a `"<name>.open"`/`"<name>.close"` pair
+found in the *same pattern match* -- never across two different constructs, verified live
+against two adjacent for-loops and a for-loop with a nested function call in its own
+condition before this shipped -- into one synthesized capture spanning open to close,
+indistinguishable from `if`/`while`'s own whole-span capture to `ComputeSpaceEdits` or any
+other consumer. A pattern that simply doesn't match (JavaScript's parameter-less `catch`)
+contributes nothing, not a false capture -- also verified live.
   Combined in one `format.janet`, with cpp's own brace-placement exception:
   ```janet
   {:break {"brace.function" {:placement :same-line}       # the shared rule (JavaScript gets this)

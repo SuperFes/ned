@@ -31,14 +31,16 @@
 # contract apply with no new C++ code.
 (switch_statement value: (parenthesized_expression) @control.parens)
 
-# Deliberately NOT captured, both for the same "no single delimited node to
-# attach to" reason cpp/format.janet's own for-loop exclusion documents:
-# - a for-loop's own "(init; condition; update)" -- three independent
-#   fields around bare anonymous "(" ")" tokens, not one node.
-# - a catch clause's own parens -- tree-sitter-javascript's catch_clause
-#   has a bare "parameter:" field (identifier/array_pattern/object_pattern,
-#   no wrapping parens node at all, unlike cpp's own parameter_list), and
-#   ES2019+ allows `catch { ... }` with no parameter/parens at all. cpp's
-#   own catch_clause DOES get :space coverage (a real, load-bearing
-#   difference between what two languages' grammars can express, not an
-#   oversight here).
+# paired-delimiter-captures follow-up: neither a for-loop's own
+# "(init; condition; update)" nor tree-sitter-javascript's own catch_clause
+# (a bare "parameter:" field -- identifier/array_pattern/object_pattern,
+# no wrapping parens node at all, unlike cpp's own parameter_list) has a
+# single node spanning the whole parenthesized clause. Both captured
+# directly as a matched pair of single-token captures instead -- see
+# cpp/format.janet's own comment on the mechanism. ES2019+'s
+# parameter-less `catch { ... }` needs no special-casing here: the pattern
+# simply fails to match a catch_clause with no "(" ")" tokens at all,
+# verified live (0 matches, not a crash or a false one) before this
+# shipped.
+(for_statement "(" @control.parens.open ")" @control.parens.close)
+(catch_clause "(" @control.parens.open ")" @control.parens.close)
