@@ -25,6 +25,7 @@
 #include "FormatBracePlacement.h"
 #include "FormatConfigParse.h"
 #include "FormatOnSave.h"
+#include "FormatSpacing.h"
 #include "Indent.h"
 #include "IndentStyle.h"
 #include "InlineDiagnostics.h"
@@ -1893,17 +1894,28 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               changed = IndentBuffer(context.buffer, *context.mode) > 0;
                           }
                           // configurable-formatter-rules follow-up: the pilot Break-kind
-                          // (brace placement) pass -- a no-op for every mode but cpp's own
-                          // pilot capture until a rule is actually configured (see
-                          // Docs/FormattingRules.md). Runs after the structural reindent
-                          // (whose body indentation this doesn't touch) and before Hygiene
-                          // (which cleans up whatever whitespace either step left behind).
+                          // (brace placement) and Space-kind passes -- both a no-op for
+                          // every mode but cpp's own pilot captures until a rule is
+                          // actually configured (see Docs/FormattingRules.md). Run after
+                          // the structural reindent (whose body indentation neither
+                          // touches) and before Hygiene (which cleans up whatever
+                          // whitespace either step left behind). Space reads a FRESH
+                          // capture list re-read from context.buffer.Text() rather than
+                          // reusing Break's -- Break may have already shifted every byte
+                          // offset after its own edits, so reusing its list would be
+                          // reading stale offsets.
                           if (context.mode != nullptr && context.mode->formatCaptures) {
                               const std::string languageKey = LanguageKeyForMode(*context.mode);
                               const std::vector<FormatTextEdit> braceEdits = ComputeBracePlacementEdits(
                                   context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
                               if (!braceEdits.empty()) {
                                   ApplyFormatTextEdits(context.buffer, braceEdits);
+                                  changed = true;
+                              }
+                              const std::vector<FormatTextEdit> spaceEdits = ComputeSpaceEdits(
+                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
+                              if (!spaceEdits.empty()) {
+                                  ApplyFormatTextEdits(context.buffer, spaceEdits);
                                   changed = true;
                               }
                           }

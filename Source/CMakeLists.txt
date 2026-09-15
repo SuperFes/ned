@@ -104,7 +104,9 @@ add_library(ned_lib STATIC
         Editor/FormatOnSave.cpp
         Editor/FormatConfigParse.cpp
         Editor/FormatRules.cpp
+        Editor/FormatEdit.cpp
         Editor/FormatBracePlacement.cpp
+        Editor/FormatSpacing.cpp
         Editor/Format.cpp
         Editor/Clipboard.cpp
         Editor/TabWidth.cpp

@@ -18,8 +18,9 @@ always does something useful, never just "nothing configured."
 
 Per-capture-name `:space`/`:break` rule *storage and resolution* also exists today
 (`Editor/FormatRules.h`, `format.janet`'s `:space`/`:break` keys, `ned/set-format-*`) --
-see "Space and Break rules" below. One pilot pass and one pilot language consume it today
-(cpp's `brace.function` brace placement); every other capture/language is still inert.
+see "Space and Break rules" below. Both rule kinds have a live pilot pass, cpp-only (brace
+placement and if/while condition-paren spacing); every other capture/language is still
+inert.
 
 A capture-scoped per-construct indent override (`ned/set-indent-rule`) is planned but not
 built yet -- see `Docs/FormattingCapabilities.md` and `ROADMAP.md`. LSP-based formatting is
@@ -168,8 +169,8 @@ keyed by a language key (`python`, `cpp`, the same key the defaults table above 
 `:break` (kind 3, with brace placement folded in as its specialised case -- placing
 `else`/`while`/`catch` on a new line after a closing `}`, K&R vs. Allman brace style, and
 so on) are both keyed by **capture name**, not language -- a dotted identity a language's
-own `*-format.scm` query names (`control.parens`, `brace.function`, ...), the same
-vocabulary `highlights.scm`/`tags.scm` already use for their own capture names. A bare
+own `format.janet` query names (`control.parens`, `brace.function`, ...), the same
+vocabulary `highlights.janet`/`tags.janet` already use for their own capture names. A bare
 capture name is the shared rule every language with that capture gets; prefixing it with
 `"<language>/"` (the same key IndentDefaults.cpp's table uses) narrows the rule to one
 language's own quirk, without touching what every other language's use of that capture
@@ -190,22 +191,36 @@ before, after, or just inside the captured token/delimiter pair. `:break` entrie
 GNU-Whitesmiths, meaningful only on a brace-carrying capture), `:collapse-empty`/
 `:collapse-simple` (true/false -- keep an empty or single-statement block on one line).
 
-**One pilot exists today: cpp's `brace.function` capture** (a function definition's own
-body, `Source/Languages/cpp/format.janet`), consumed by `Editor/FormatBracePlacement.h`'s
-`ComputeBracePlacementEdits`/`ApplyFormatTextEdits` -- wired into `format-buffer`'s and
-`--format`'s Native chain, after the structural reindent and before the Hygiene pass. It
-reads only `:break`'s `:placement` field (`:collapse-empty`/`:collapse-simple` and the
-whole `:space` side are still unconsumed) and ships no built-in default, so it does
-nothing until you configure one:
+**Two pilots exist today, both cpp-only** (`Source/Languages/cpp/format.janet`), both wired
+into `format-buffer`'s and `--format`'s Native chain (reindent, then Break, then Space,
+then Hygiene) and both shipping no built-in default -- neither does anything until you
+configure a rule:
 
-```janet
-(ned/set-format-brace-placement "brace.function" "next-line")   # or in format.janet: {:break {"brace.function" {:placement :next-line}}}
-```
+- **`brace.function`** (a function definition's own body) -- `Editor/FormatBracePlacement.h`'s
+  `ComputeBracePlacementEdits`, reading only `:break`'s `:placement` field
+  (`:collapse-empty`/`:collapse-simple` are still unconsumed).
+  ```janet
+  (ned/set-format-brace-placement "brace.function" "next-line")
+  ```
+- **`control.parens`** (an `if`/`while` statement's own condition parens) --
+  `Editor/FormatSpacing.h`'s `ComputeSpaceEdits`, reading all three `:space` fields.
+  Deliberately never touches a whitespace run that crosses a newline -- a Space rule
+  never second-guesses wherever a line break already is.
+  ```janet
+  (ned/set-format-space-before "control.parens" true)
+  (ned/set-format-space-after "control.parens" true)
+  ```
+  Combined in one `format.janet`:
+  ```janet
+  {:break {"brace.function" {:placement :next-line}}
+   :space {"control.parens" {:before true :after true}}}
+  ```
 
-No other bundled language has a `format.janet` yet. This is the proof that the full chain
-(query -> `Mode::formatCaptures` -> `FormatRules` resolution -> a computed edit -> applied
-to a live buffer) works end to end, ahead of rolling the remaining rule kinds/languages out
-(see `Docs/FormattingCapabilities.md`'s Tier B1).
+No other bundled language has a `format.janet` yet, and no capture yet reads `:within` on
+an empty pair, `:collapse-empty`, or `:collapse-simple`. This is the proof that the full
+chain (query -> `Mode::formatCaptures` -> `FormatRules` resolution -> a computed edit ->
+applied to a live buffer) works end to end for both rule kinds, ahead of rolling the
+remaining rule kinds/languages out (see `Docs/FormattingCapabilities.md`'s Tier B1).
 
 The same rules are settable live from `init.janet`, per-field, mirroring
 `ned/set-capture-*`'s own shape:
