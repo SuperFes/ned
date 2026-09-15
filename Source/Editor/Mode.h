@@ -504,6 +504,18 @@ struct FormatCapture {
     std::string name; // e.g. "brace.function", without the leading '@'
     std::size_t startByte;
     std::size_t endByte;
+    // collapse-simple follow-up: true when a "<name>.simple" marker capture
+    // (a format.janet convention -- an anchored "exactly one named child"
+    // pattern over the SAME node, e.g.
+    // "(function_definition body: (compound_statement . (_) .) @brace.
+    // function.simple)") matched this exact capture's own byte range in
+    // the same query run. Correlated across the two separate pattern
+    // matches by Mode.cpp's formatCaptures closure (the marker's own
+    // pattern is never emitted as a capture in its own right -- see that
+    // closure's header comment). Unused by anything but Editor/
+    // FormatBracePlacement.h's collapse-simple handling today; false for
+    // every capture no "<name>.simple" pattern exists for.
+    bool isSimple = false;
 };
 
 // Given a buffer's full text, returns every format.janet capture in it, in

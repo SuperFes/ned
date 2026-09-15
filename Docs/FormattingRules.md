@@ -194,9 +194,8 @@ GNU-Whitesmiths, meaningful only on a brace-carrying capture), `:collapse-empty`
 new (deeper) column -- the one placement whose closer doesn't align with the header's own
 indent the way `:same-line`/`:next-line`'s already does, found live as a real mismatched-
 brace bug during a 2026-09-15 audit and fixed before it was ever the default for anything.
-Skipped (left alone) when the closer shares its line with real content -- a collapsed
-one-line body is `:collapse-empty`/`:collapse-simple`'s territory, not this one, and
-neither is consumed by any pass yet.
+Skipped (left alone) when the closer shares its line with real content, deferring to
+`:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
 **Two pilots exist today, cpp and JavaScript** (`Source/Languages/cpp/format.janet`,
 `Source/Languages/javascript/format.janet` -- the same two capture NAMES, over each
@@ -207,14 +206,15 @@ Hygiene) and both shipping no built-in default -- neither does anything until yo
 configure a rule:
 
 - **Break-kind captures** (`Editor/FormatBracePlacement.h`'s `ComputeBracePlacementEdits`,
-  reading only `:break`'s `:placement` field -- `:collapse-empty`/`:collapse-simple` are
-  still unconsumed): `brace.function` (a function definition's own body), `brace.control`
-  (an `if`/`while`/`for`/`switch`/`catch` statement's own body -- one shared name, matching
-  JetBrains' own "Other statements and blocks" grouping), `brace.class` (a class/struct
-  body), and, cpp only, `brace.namespace`.
+  reading every `:break` field): `brace.function` (a function definition's own body),
+  `brace.control` (an `if`/`while`/`for`/`switch`/`catch` statement's own body -- one
+  shared name, matching JetBrains' own "Other statements and blocks" grouping),
+  `brace.class` (a class/struct body), and, cpp only, `brace.namespace`.
   ```janet
   (ned/set-format-brace-placement "brace.function" "next-line")
   (ned/set-format-brace-placement "brace.control" "same-line")
+  (ned/set-format-brace-collapse-empty "brace.function" true)
+  (ned/set-format-brace-collapse-simple "brace.control" true)
   ```
 - **Space-kind captures** (`Editor/FormatSpacing.h`'s `ComputeSpaceEdits`, reading all
   three `:space` fields; deliberately never touches a whitespace run that crosses a
@@ -256,12 +256,40 @@ contributes nothing, not a false capture -- also verified live.
   different brace styles: cpp's function gets Allman (its own override), JavaScript's
   gets K&R (the shared rule) -- both get the same `if (x)` spacing.
 
+**Collapse-empty and collapse-simple.** Two more `:break` fields, both consumed by
+`Editor/FormatBracePlacement.h`, both composing freely with `:placement` and with each
+other (an empty body and a single-statement body are mutually exclusive by construction,
+so a capture only ever takes one path):
+
+- **`:collapse-empty`** is purely textual -- whitespace-only content between the two
+  delimiter bytes is empty regardless of language, no tree needed. `true` glues an
+  expanded empty body onto one line (`{\n}` -> `{}`); `false` forces an already-glued one
+  apart, at whatever indent `:placement` would put its closer at (defaulting to the
+  header's own indent with no `:placement` configured at all).
+- **`:collapse-simple`** needs a real structural fact no text scan can safely
+  answer -- "does this body have exactly one top-level statement" -- so it comes from the
+  query, not from counting `;` characters (which a nested block, a string, or a for-loop's
+  own semicolons would trip up). A **`"<name>.simple"` marker capture**, anchored to
+  "exactly one named child" via tree-sitter's `.` (immediate-sibling) anchors:
+  ```janet
+  (function_definition body: (compound_statement . (_) .) @brace.function.simple)
+  ```
+  verified live to answer correctly regardless of what that one statement itself contains
+  (a nested block, an if with its own block, ...) and to correctly report "not simple" for
+  both a multi-statement body and an empty one. `Mode.cpp`'s `formatCaptures` closure
+  correlates the marker against the base `brace.*` capture sharing its exact byte range
+  (`FormatCapture::isSimple`) and never emits the marker as a capture in its own right.
+  `true` joins an expanded single-statement body onto one line; `false` expands a one-line
+  one. Both directions are declined -- left alone, not force-reflowed -- when the
+  statement itself already spans more than one physical line, so this never risks joining
+  or breaking something a human deliberately wrapped (a long call, a comment).
+
 No other bundled language has a `format.janet` yet, and no capture yet reads `:within` on
-an empty pair, `:collapse-empty`, or `:collapse-simple`. This is the proof that the full
-chain (query -> `Mode::formatCaptures` -> `FormatRules` resolution -> a computed edit ->
-applied to a live buffer) works end to end for both rule kinds AND across two real
-languages sharing one rule set with one exception, ahead of rolling the remaining rule
-kinds/languages out (see `Docs/FormattingCapabilities.md`'s Tier B1).
+an empty pair. This is the proof that the full chain (query -> `Mode::formatCaptures` ->
+`FormatRules` resolution -> a computed edit -> applied to a live buffer) works end to end
+for both rule kinds AND across two real languages sharing one rule set with one exception,
+ahead of rolling the remaining rule kinds/languages out (see
+`Docs/FormattingCapabilities.md`'s Tier B1).
 
 The same rules are settable live from `init.janet`, per-field, mirroring
 `ned/set-capture-*`'s own shape:
