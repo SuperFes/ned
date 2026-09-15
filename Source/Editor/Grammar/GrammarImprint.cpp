@@ -364,30 +364,67 @@ std::optional<imprint::DelimitedBody> MatchKeywordPair(const std::vector<const j
     return body;
 }
 
+// The closer need not be the production's own final member. `if_statement`/
+// `while_statement`/`switch_statement`'s "(condition)" factors out into a
+// shared condition_clause rule that legitimately ends in ')', but
+// `for_statement`/`for_range_loop` write their own "(...)" inline and follow
+// it with a REQUIRED trailing `body` field (the loop's statement/block) --
+// SEQ['for', '(', ..., ')', FIELD:body]. The old "closer is core.back()"
+// check skipped both entirely, so a multi-line for-loop header got no
+// indent/fold/bracket-match contribution at all: a continuation line landed
+// flush with the `for` itself instead of aligned or indented one level,
+// reported live against this project's own main.cpp.
+//
+// Searching backward for the LAST member naming a real closing-bracket
+// literal, rather than assuming index size()-1, finds it -- but ONLY
+// members that are themselves a genuinely named FIELD (checked on the RAW,
+// pre-Unwrap member `core` itself stores, since Unwrap/Literals sees
+// through a FIELD wrapper to its content) may be skipped on the way there.
+// That restriction is load-bearing, not incidental: TOML's `table` trails
+// its own closing ']' with a bare, UNNAMED external-scanner symbol
+// (`_line_ending_or_eof`, a required line terminator) before its real
+// list-like content (a REPEAT of pairs, already trimmed by the existing
+// IsOptional loop above this function). That trailing symbol has no
+// literal either -- the exact same shape a real trailing body field has --
+// so an unrestricted backward search misclassified `table` as a Bracket
+// body wrapping content it does not actually delimit (a table's body is
+// unbounded, closed only by the next header or EOF, i.e. genuinely
+// DelimiterKind::Indent). Requiring FIELD stops the search there instead:
+// `_line_ending_or_eof` is a bare SYMBOL, not a FIELD, so the walk halts
+// without finding a closer, preserving `table`'s original classification.
+// Every production whose closer already sits at the last index (the common
+// case) resolves identically to before either way.
 std::optional<imprint::DelimitedBody> MatchBracketed(const std::vector<const json*>& core) {
     if (core.size() < 2) return std::nullopt;
 
+    std::size_t closerIndex = core.size();
     std::string closer;
-    for (const std::string& candidate : Literals(*core.back())) {
-        if (kClosers.find(candidate) != std::string_view::npos) {
-            closer = candidate;
-            break;
+    for (std::size_t i = core.size(); i-- > 0;) {
+        for (const std::string& candidate : Literals(*core[i])) {
+            if (kClosers.find(candidate) != std::string_view::npos) {
+                closer      = candidate;
+                closerIndex = i;
+                break;
+            }
         }
+        if (!closer.empty()) break;
+        if (TypeOf(*core[i]) != "FIELD") break; // not a closer, and not safe to skip past either -- stop searching
     }
-    if (closer.empty()) return std::nullopt;
+    if (closer.empty() || closerIndex == 0) return std::nullopt; // need at least one member before it to open
 
-    const std::string opener   = OpenerFor(closer);
-    const auto        openerIt = std::find_if(core.begin(), core.end() - 1, [&](const json* m) {
+    const std::string opener      = OpenerFor(closer);
+    const auto        closerIt    = core.begin() + static_cast<std::ptrdiff_t>(closerIndex);
+    const auto        openerIt    = std::find_if(core.begin(), closerIt, [&](const json* m) {
         const std::set<std::string> literals = Literals(*m);
         return std::any_of(literals.begin(), literals.end(),
                            [&](const std::string& literal) { return imprint::OpensWithBracket(literal, opener[0]); });
     });
-    if (openerIt == core.end() - 1) return std::nullopt;
+    if (openerIt == closerIt) return std::nullopt;
 
     imprint::DelimitedBody body;
     body.kind             = imprint::DelimiterKind::Bracket;
     body.openerIsFirst    = (openerIt == core.begin());
-    body.listLikeInterior = std::any_of(openerIt + 1, core.end() - 1, [](const json* m) {
+    body.listLikeInterior = std::any_of(openerIt + 1, closerIt, [](const json* m) {
         const std::string type = TypeOf(Unwrap(*m));
         return type == "REPEAT" || type == "REPEAT1" || type == "CHOICE";
     });

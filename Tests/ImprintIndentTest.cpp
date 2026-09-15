@@ -179,3 +179,42 @@ TEST_CASE("A sigil-prefixed bracket body indents from the imprint", "[Indent][Im
     CHECK(ColumnOf(bash, sub, 1) == Width(bash));
     CHECK(ColumnOf(bash, sub, 2) == 0);
 }
+
+TEST_CASE("A for-loop header's own parens indent a continuation line, without leaking into its body",
+          "[Indent][Imprint]") {
+    // for-loop-header-imprint follow-up, reported live against this
+    // project's own main.cpp. Two distinct bugs, both from the SAME root
+    // cause (for_statement/for_range_loop's own "(...)" trails its closer
+    // with a required `body` field, GrammarImprint.cpp's MatchBracketed):
+    //  1. Classifying for_statement/for_range_loop at all (they had NO
+    //     imprint entry before) is what makes line 2 below indent one level
+    //     past "for" itself (level 2 overall: f()'s body, then the for
+    //     header's own continuation) -- previously it landed flush with
+    //     "for" (level 1).
+    //  2. Bounding that container's own contribution to the closer's end
+    //     (Indent.h's IndentCaptures::interiorEnd), not the node's full
+    //     span, is what keeps the for-loop's OWN {...} body (lines 3-8) at
+    //     its own correct level (2: f()'s body, then the for's compound
+    //     statement body) rather than 3 -- an earlier version of this fix
+    //     let the for's own header container reach all the way through
+    //     that body, double counting every line in it.
+    const Mode        cpp  = ned::editor::CppMode();
+    const std::string text = "void f() {\n"
+                             "    for (const std::filesystem::path& p :\n"
+                             "        Directories(x)) {\n"
+                             "        try {\n"
+                             "            g();\n"
+                             "        }\n"
+                             "        catch (const std::exception& e) {\n"
+                             "            h();\n"
+                             "        }\n"
+                             "    }\n"
+                             "}\n";
+    const int w = Width(cpp);
+    CHECK(ColumnOf(cpp, text, 2) == 2 * w); // "Directories(x)) {" -- one level past "for" itself
+    CHECK(ColumnOf(cpp, text, 3) == 2 * w); // "try {" -- level 2, not 3
+    CHECK(ColumnOf(cpp, text, 4) == 3 * w); // "g();"
+    CHECK(ColumnOf(cpp, text, 5) == 2 * w); // the try's own "}"
+    CHECK(ColumnOf(cpp, text, 6) == 2 * w); // "catch (...) {"
+    CHECK(ColumnOf(cpp, text, 9) == w);     // the for's own closing "}", aligned with the "for" line itself
+}

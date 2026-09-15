@@ -145,6 +145,28 @@ struct IndentCaptures {
     std::unordered_set<NodeKey, NodeKeyHash>              barrier;    // "align.barrier"
     std::unordered_set<NodeKey, NodeKeyHash>              suppressed; // "indent.suppress" -- only ever consulted by AddImprintCaptures
     std::vector<Dedent>                                   dedents;    // "dedent"
+    // for-loop-header-imprint follow-up: an OPTIONAL cap on a container's own
+    // contribution, set only for a node whose grammar production trails its
+    // own closer with a real, unrelated field (a for-loop's own `body`
+    // statement, GrammarImprint.cpp's MatchBracketed) -- the container
+    // otherwise reaches all the way to the node's own true end, which for a
+    // trailing-body production would wrongly count for lines genuinely
+    // inside that separate body (already its own, distinct container).
+    // Deliberately a SEPARATE map rather than shrinking NodeKey's own
+    // endByte or `indent`'s stored interiorStart: NodeKey identifies a
+    // capture by the exact (startByte, endByte, type) every lookup
+    // recomputes fresh from the LIVE tree node (keyOf(), Indent.cpp), so
+    // changing what endByte a stored key uses breaks every future lookup's
+    // ability to find it at all -- confirmed live: an earlier version of
+    // this fix did exactly that, silently making the container invisible
+    // to the walk entirely (which incidentally also "fixed" the over-count
+    // bug below, for the wrong reason -- caught by testing the FIX itself
+    // against a real multi-line for-loop, not just re-running the existing
+    // suite). Absent for every other container (the overwhelmingly common
+    // case): the ordinary tree-ancestor walk already guarantees containment
+    // there with no extra check needed, since an ancestor's own EndByte()
+    // always contains any position inside it by construction.
+    std::unordered_map<NodeKey, std::size_t, NodeKeyHash> interiorEnd;
 };
 
 [[nodiscard]] IndentCaptures IndentCapturesFromQuery(const grammar::Tree& tree, std::string_view bufferText,
