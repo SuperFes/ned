@@ -735,10 +735,97 @@ permanent test (every prior discrimination hazard checked explicitly: expression
 functions, brace-less if branches, empty catch bodies, companion object nesting) -- caught
 nothing wrong on that pass except the `when_subject` mistake above, caught immediately by
 the first permanent test run. Live-verified via `ned --format` on a real project
-`.ned/format.janet` combining all three rule kinds; no `kotlinc` available in this
-environment, so the formatted output was instead re-parsed with `ned`'s own engine and
-confirmed to contain no `ERROR`/`MISSING` nodes (a structural, not semantic, validity
-check -- the honest substitute available here). Full suite: 4636 cases.
+`.ned/format.janet` combining all three rule kinds; `kotlinc` wasn't available at the time,
+so the formatted output was instead re-parsed with `ned`'s own engine and confirmed to
+contain no `ERROR`/`MISSING` nodes (structural, not semantic, validity). Full suite: 4636
+cases.
+
+**09-15 follow-up: real `kotlinc` verification, once installed.** The structural-only check
+above was upgraded to a genuine one: a representative `.kt` file exercising every capture
+this file names (a class/companion object/interface, an expression-bodied AND a
+brace-bodied function, if/else/while/for/try-catch/when) was formatted through
+`ned --format` with a real project config (`brace.function`/`brace.control` same-line,
+`brace.class` next-line, `control.parens` within-false), then compiled with
+`kotlinc -include-runtime` and RUN -- 0 compiler errors, correct program output. This is
+strictly stronger than the structural-only check: it confirms the formatter's output isn't
+merely parseable but semantically compiles and executes as intended.
+
+## Bash, revisited: `brace.control`/`control.parens` unlocked by Lua's own
+generalization, and a second real placement hazard found and guarded
+
+Once Lua's `openLength`/`closeLength` generalization (below) proved out the paired
+keyword-delimiter mechanism, bash's own file -- originally shipped PARTIAL (only
+`brace.function`/`def.toplevel`, see the section above) specifically because the mechanism
+didn't exist yet -- was revisited to add the rest. Every construct verified live against a
+real sexp dump before writing any query, same discipline as every language before it:
+
+- **`brace.control`**: `do_group`'s own `"do"`/`"done"` pair (shared by while/until/for/
+  select's own body field AND a C-style for-loop's `do`/`done` alternative -- captured
+  ONCE, not once per parent construct); `if_statement`'s `"then"`/`"fi"` pair, spanning an
+  elif/else chain to the one real closing `"fi"` token (the exact shape Lua's own
+  if/then/end pairing established); `case_statement`'s `"in"`/`"esac"` pair; a C-style
+  for-loop's own brace-body ALTERNATIVE (`for ((;;)) { ... }`, confirmed live this is real,
+  accepted bash syntax, not merely something the grammar tolerates); a bare `subshell`
+  `"(...)"` and a standalone group command `"{ ...; }"` (both real, distinct constructs --
+  the group command needed an explicit `:not-has-parent?` exclusion of the two other
+  `compound_statement` contexts already captured elsewhere, or the same node would be
+  captured twice under different names at the identical byte range).
+- **A real, verified fact, not assumed to carry over from Lua's own precedent**: a truly
+  empty `do`/`done`, `then`/`fi`, subshell, or group-command body is a hard SYNTAX ERROR in
+  real bash (confirmed live with `bash -n`) -- unlike Lua's `do end`. So `:collapse-empty`'s
+  own trigger condition can only ever arise from ALREADY-invalid source for those four
+  shapes, making the feature real but practically inert there, not a hazard. `case`/`esac`
+  is the one genuine exception -- `case $x in esac` (zero items) IS valid bash, confirmed
+  live, so `:collapse-empty` is a real, reachable lever there specifically.
+- **A second real, Go-ASI-class `:placement` hazard, found live and GUARDED in C++ this
+  time, not just documented**: unlike every brace-carrying language so far, `:same-line` is
+  the DANGEROUS placement value for bash's `brace.control` (every other value is safe) --
+  confirmed live with a real `bash -n`: `"while true do"`/`"if true then"` (same-line's own
+  plain-space gap) are hard syntax errors, since `do`/`then` are bash reserved words
+  requiring a real statement TERMINATOR (a semicolon or newline) before them, never merely
+  whitespace. `Editor/FormatBracePlacement.h`'s own `PlacementUnsafeForLanguage` gained a
+  capture-NAME parameter for this (Go's own guard never needed one, since its hazard was
+  language-wide) and now declines `:same-line` for `brace.control` specifically --
+  `brace.function` is unaffected (bash's function bodies are real braces, confirmed live
+  `:same-line` works fine there). The guard is a blanket decline for the whole capture name
+  rather than per-construct: `case`'s own `"in"` and a C-style for-loop's own `"do"` both
+  have an OPTIONAL terminator in the grammar and are actually safe for `:same-line`
+  (confirmed live), but `brace.control` has no per-instance signal available at this layer
+  to tell them apart from while/until/for/if's genuinely unsafe shapes -- declining the
+  safe cases too is the same "decline rather than risk corruption" tradeoff Go's own guard
+  already accepts.
+- **`control.parens`**: `test_command`'s own `"["`/`"]"` or `"[["`/`"]]"` (both parse to
+  the same node type, differing only in bracket width -- 1 byte vs. 2, both handled
+  correctly by the openLength/closeLength generalization) -- the MANDATORY condition
+  syntax itself, not a redundant/optional lever the way every prior language's
+  `control.parens` was (the same "mandatory yet still needs pairing" shape C#'s own
+  condition parens turned out to have, for an unrelated grammar reason). A C-style
+  for-loop's own `"(("`/`"))"` clause, captured the same way every C-family language's own
+  for-loop clause is. **A third real, narrower hazard, documented rather than guarded**:
+  `[[`/`]]` are bash reserved words needing whitespace separation from their own content
+  too (confirmed live: `"[[-f x]]"` fails as `"[[-f: command not found"`, the whole token
+  reading as one word) -- so `:within false` would silently corrupt every `[[ ... ]]` test
+  in a file, while `[ ... ]`/`(( ... ))` stay fine either way. Left undguarded in C++
+  (unlike the `:same-line` hazard above): this fires from a specific, uncommon "compact
+  test brackets" style choice most shell guides advise against, not from either of the
+  two common brace-placement styles every project reasonably picks between, and
+  discriminating it in code would need inspecting each capture's own TEXT (`[[` vs
+  `[`/`((`), not just its language and rule.
+- **A real, pre-existing test-isolation bug found and fixed along the way**: `Tests/
+  FormatBracePlacementTest.cpp`'s own `FormatRulesGuard` only ever reset bare
+  `"brace.function"`'s rules, never `"brace.control"`'s, even though at least six
+  pre-existing tests (php/java/... `End to end` tests) set a bare `"brace.control"` rule
+  relying on this guard for cleanup. Surfaced as an intermittent, `--order rand`-dependent
+  failure once a new bash-mode test needed `brace.control`'s `:placement` to be a genuine
+  no-op and instead got a leaked `collapse-simple=true` from an earlier php-mode test.
+  Fixed by extending the guard to cover `brace.control` too -- confirmed with several
+  `--order rand` runs clean afterward, not just the one failure disappearing.
+
+Live-verified with a real `bash` run (not just `-n`) executing every construct above and
+producing correct output, and via `ned --format` on a real project config combining
+`:break`/`:space` rules, re-checked with `bash -n` (exit 0). Full suite: 4682 cases.
+
+## Lua: the first KEYWORD-delimited language, and a real mechanism gap it exposed
 
 ## C: a separate grammar from cpp, not a subset, confirmed rather than assumed
 

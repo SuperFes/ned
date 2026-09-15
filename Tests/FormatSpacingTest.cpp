@@ -10,6 +10,7 @@
 #include "Text/Buffer.h"
 
 using ned::editor::ApplyFormatTextEdits;
+using ned::editor::BashMode;
 using ned::editor::CMode;
 using ned::editor::ComputeSpaceEdits;
 using ned::editor::CppMode;
@@ -729,4 +730,54 @@ TEST_CASE("End to end: lua-mode's :within reads a keyword delimiter's real lengt
     REQUIRE(buffer.Text() == "local x = 1\ndo y() end\n");
 
     SetSpaceWithin("lua/brace.control", std::nullopt);
+}
+
+// bash-mode: control.parens over test-command brackets ("[", "[[") -- a
+// real, mandatory (not merely optional/redundant) construct, unlike every
+// other language's own control.parens lever, added once the paired
+// keyword-delimiter mechanism (Editor/FormatBracePlacement.h's own
+// follow-up, proven on lua-mode) made this safe for a 2-byte "[[" too.
+TEST_CASE("bash-mode's format.janet names control.parens over both single and double test "
+          "brackets",
+          "[FormatSpacing]") {
+    const Mode mode = BashMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("if [ -f x ]; then\n    y\nfi\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("if [[ -f x ]]; then\n    y\nfi\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("for ((i=0;i<10;i++)); do\n    y\ndone\n"), "control.parens").size() ==
+            1);
+}
+
+TEST_CASE("End to end: bash-mode's :within adds a space inside single test brackets, and "
+          "normalizes EXCESS space inside double test brackets down to exactly one",
+          "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceWithin("bash/control.parens", true);
+
+    const Mode mode = BashMode();
+
+    Buffer single("t.sh");
+    single.InsertAtPoint("if [-f x]; then\n    y\nfi\n");
+    ApplyFormatTextEdits(single, ComputeSpaceEdits(single.Text(), "bash", mode.formatCaptures(single.Text())));
+    REQUIRE(single.Text() == "if [ -f x ]; then\n    y\nfi\n");
+
+    // "[[-f x]]" (missing space on either side of the double bracket) is
+    // NOT valid bash -- confirmed live with a real `bash`/`bash -n` run
+    // ("[[-f: command not found" / "unexpected token `;'"), unlike "[-f",
+    // which IS valid (single "[" is an ordinary command name, not a
+    // reserved word needing lexical separation). So :within=true's own
+    // "insert a missing space" direction is unreachable from valid bash
+    // for the double-bracket form -- the reachable, meaningful case is
+    // normalizing EXCESS space down to exactly one, tested here instead.
+    // A capture using capture.startByte+1/endByte-1 (the pre-
+    // generalization code) would land INSIDE "[[" itself (between the two
+    // '[' characters), not after it -- this is the real regression test
+    // for that, over input this mechanism can actually be asked to touch.
+    Buffer doubleBracket("t2.sh");
+    doubleBracket.InsertAtPoint("if [[  -f x  ]]; then\n    y\nfi\n");
+    ApplyFormatTextEdits(doubleBracket,
+                         ComputeSpaceEdits(doubleBracket.Text(), "bash", mode.formatCaptures(doubleBracket.Text())));
+    REQUIRE(doubleBracket.Text() == "if [[ -f x ]]; then\n    y\nfi\n");
+
+    SetSpaceWithin("bash/control.parens", std::nullopt);
 }
