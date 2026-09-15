@@ -807,12 +807,15 @@ over ordinary buffer text, so "never a modal trap" fell out for free.
 
 ### Configurable Formatter (New Feature)
 
-Design scoped 2026-09-14, nothing built yet. Full rationale and the nine-rule-kind
-catalogue: `Docs/FormattingCapabilities.md` (JetBrains' code-style panes across ten
-languages, sorted into what Ned can/could/can't do). Kind 1 (indent) is the only one Ned
-covers today. Goal: one native formatter, the same code whether reached from
-`M-x format-buffer`, an automatic on-save convergence pass, or a headless CLI invocation
-— not a clang-format wrapper with extra steps.
+Design scoped 2026-09-14; Phase 1 (indent defaults, config file, headless CLI, Hygiene
+pass, format-buffer wiring) built and shipped 2026-09-14/15 — see the "Phase 1 status"
+note below for what actually landed and where it deviated from the original design this
+section still records. Full rationale and the nine-rule-kind catalogue:
+`Docs/FormattingCapabilities.md` (JetBrains' code-style panes across ten languages, sorted
+into what Ned can/could/can't do). Kind 1 (indent) is the only one Ned covers today. Goal:
+one native formatter, the same code whether reached from `M-x format-buffer`, an automatic
+on-save convergence pass, or a headless CLI invocation — not a clang-format wrapper with
+extra steps.
 
 Architecture:
 - **Entry points**: `format-buffer` (existing command, currently a thin `RunFormatCommand`
@@ -881,12 +884,50 @@ implied the upstream library still runs there, when only `ned_tests`' conformanc
 links it now. 70 files touched, pure rename (509/509 diff, no logic changes) — build and
 the full suite (4430 cases, 66,764 assertions) verified clean on the renamed tree.
 
-- [ ] Nothing implemented yet. Suggested build order: the Indent-pass override mechanism
-      plus the Hygiene pass plus the `format-buffer` chain first (single-buffer, testable
-      in isolation, no UI); then the mode-line indicator (cheap, immediately useful
-      diagnostic on its own); then automatic scoped on-save; then the CLI/headless path
-      and the huge-file streaming sweep last (the most novel piece, worth isolating once
-      everything else is solid).
+**Phase 1 status (2026-09-14/15).** Built, tested (unit + a full sanitizer run + live tmux
+smoke tests), and committed: per-language `IndentStyle` defaults
+(`Editor/IndentDefaults.cpp`, ~28 languages with source citations, `Docs/FormattingRules.md`
+is the settings reference); a `format.janet` config file, project (`.ned/format.janet`) and
+personal (`$XDG_CONFIG_HOME/ned/format.janet`) tiers, read via the existing no-VM
+`JanetData.h` reader rather than a new file format/dependency; the Hygiene pass
+(`Editor/Format.h`'s `ApplyHygienePass` — trim/blank-line-collapse/final-newline, sharing
+its trim/final-newline algorithm with `Buffer::SaveToFile`'s disk-only default via the new
+`Text/WhitespaceHygiene.h`, not a second implementation); `format-buffer`'s chain wired to
+External → Native (Indent + Hygiene) with LSP left out (see below); and a headless
+`ned --format <paths...>` flag running the same chain (the `ned-format` argv[0] symlink
+itself did not ship — see below). `reload-format-config` (`M-x`) re-reads both
+`format.janet` tiers without restarting ned.
+
+Real deviations from the design above, found while building it:
+- **Config layering is a genuine per-field cascade** (git config's model — CLI flags →
+  project `format.janet` → personal `format.janet` → built-in table), not "`init.janet`
+  overriding a flat setter" as first sketched — `format.janet` didn't exist yet when this
+  section was first written. `init.janet` still wins last, for the interactive editor only.
+- **The Hygiene pass edits the live buffer, not just save-time content** — `format-buffer`
+  never saves, so a save-time-only Hygiene step (as this section originally implied) would
+  never be visible until a later `save-buffer`. `Buffer::SaveToFile`'s own disk-only
+  trim/final-newline default is untouched and still runs independently.
+- **`ned/set-indent-rule`, LSP-in-the-chain, the `ned-format` symlink, the mode-line
+  indicator, automatic scoped on-save, and the huge-file streaming sweep are all still
+  open** — each was found to be more work than a Phase 1 line item once actually scoped
+  (the indent-rule override in particular needs a hybrid capture-name/grammar-type keying
+  design, since most indent-contributing nodes come from the imprint, not a query capture,
+  and have no capture name to hang an override on at all) and is tracked as its own
+  follow-up rather than attempted here. `format-buffer` has no async request/response
+  machinery of its own, which is why LSP folds into `save-buffer`'s existing, separate
+  `RequestLspFormatThenSaveBuffer` path instead — that mechanism is the one to mirror when
+  LSP joins `format-buffer`'s own chain.
+
+- [ ] `ned/set-indent-rule` — capture-scoped indent override, hybrid capture-name/
+      grammar-type keying, piloted on C++ first (see above).
+- [ ] Fold LSP into `format-buffer`'s own External/Native chain.
+- [ ] `ned-format` argv[0] dispatch + an `install()` symlink (no precedent for either in
+      this codebase yet).
+- [ ] Mode-line indent-style indicator.
+- [ ] Automatic scoped on-save (`ned/set-auto-format-on-save`) — also where
+      `TrimOnSave.h`/`FinalNewline.h`'s disk-only call sites would finally be retired in
+      favor of the Hygiene pass, rather than the two coexisting as they do today.
+- [ ] Huge-file streaming sweep for a whole-buffer Native reindent.
 
 ### Jupyter Notebooks
 
