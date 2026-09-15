@@ -16,6 +16,7 @@ using ned::editor::CMode;
 using ned::editor::ComputeBlankLineEdits;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
+using ned::editor::FishMode;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
 using ned::editor::GoMode;
@@ -813,4 +814,53 @@ TEST_CASE("End to end: blank lines applied to a real lua-mode buffer", "[FormatB
     ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "lua", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "function f()\n    return 1\nend\n\nfunction g()\n    return 2\nend\n");
+}
+
+// fish-mode: def.toplevel over every function, not a nested one -- the
+// same "direct child of the container" rule every prior language's
+// def.toplevel already follows. No def.method at all (no type/class
+// concept), matching bash/Go's own precedent.
+TEST_CASE("fish-mode's format.janet names def.toplevel over every function, not a nested "
+          "one, with correct .first markers",
+          "[FormatBlankLines]") {
+    const Mode mode = FishMode();
+
+    const std::string source   = "function f\n"
+                                 "    function inner\n"
+                                 "        echo inner\n"
+                                 "    end\n"
+                                 "end\n"
+                                 "function g\n"
+                                 "    echo hi\n"
+                                 "end\n";
+    const auto        toplevel = CapturesNamed(mode.formatCaptures(source), "def.toplevel");
+    REQUIRE(toplevel.size() == 2); // f() and g() -- the nested inner() is excluded
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "def.method").empty());
+}
+
+TEST_CASE("fish-mode's format.janet treats a real preceding statement as a real preceding "
+          "sibling",
+          "[FormatBlankLines]") {
+    // Same lesson every prior language's own leading-construct case
+    // already taught (python's "import os", go's "package main", bash's
+    // shebang, ...) -- not a bug.
+    const Mode        mode   = FishMode();
+    const std::string source = "echo starting\nfunction f\nend\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(source), "def.toplevel")[0].isFirst);
+}
+
+TEST_CASE("End to end: blank lines applied to a real fish-mode buffer", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 1);
+
+    const Mode mode = FishMode();
+    Buffer     buffer("test.fish");
+    buffer.InsertAtPoint("function f\n    echo hi\nend\nfunction g\n    echo bye\nend\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "fish", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "function f\n    echo hi\nend\n\nfunction g\n    echo bye\nend\n");
 }

@@ -16,6 +16,7 @@ using ned::editor::CMode;
 using ned::editor::ComputeBracePlacementEdits;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
+using ned::editor::FishMode;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
 using ned::editor::GoMode;
@@ -1792,4 +1793,143 @@ TEST_CASE("End to end: lua-mode's collapse-empty on brace.function glues \")\" d
     REQUIRE(buffer.Text() == "function f()end\n");
 
     SetBraceCollapseEmpty("lua/brace.function", std::nullopt);
+}
+
+// fish-mode: the fifteenth language, and an even more minimal partial
+// case than bash's own original shape -- if/while/for/switch/function
+// have NO capturable brace.function/brace.control at all (their own
+// header ends directly in the SAME terminator that separates any two
+// ordinary statements, with no separate movable opening keyword the way
+// bash's "do"/"then" are). begin_statement is the ONLY construct with a
+// real delimiter pair, in two forms sharing one node type.
+TEST_CASE("fish-mode's format.janet has no brace.function/brace.control at all for "
+          "if/while/for/switch/function -- a real absence, not a scope cut",
+          "[FormatBracePlacement]") {
+    const Mode mode = FishMode();
+
+    const std::string source = "function f\n"
+                               "    echo hi\n"
+                               "end\n"
+                               "if true\n"
+                               "    echo yes\n"
+                               "else\n"
+                               "    echo no\n"
+                               "end\n"
+                               "while true\n"
+                               "    echo loop\n"
+                               "end\n"
+                               "for i in 1 2 3\n"
+                               "    echo $i\n"
+                               "end\n"
+                               "switch $x\n"
+                               "    case 1\n"
+                               "        echo one\n"
+                               "end\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.function").empty());
+    // brace.control is real, but ONLY for begin_statement -- none of the
+    // constructs above contribute to it.
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.control").empty());
+}
+
+TEST_CASE("fish-mode's format.janet names brace.control over both begin_statement forms, "
+          "reporting the real multi-byte delimiter lengths",
+          "[FormatBracePlacement]") {
+    const Mode mode = FishMode();
+
+    const auto beginEnd = CapturesNamed(mode.formatCaptures("begin\n    echo hi\nend\n"), "brace.control");
+    REQUIRE(beginEnd.size() == 1);
+    REQUIRE(beginEnd[0].openLength == 5);  // "begin"
+    REQUIRE(beginEnd[0].closeLength == 3); // "end"
+
+    const auto braced = CapturesNamed(mode.formatCaptures("{\n    echo hi\n}\n"), "brace.control");
+    REQUIRE(braced.size() == 1);
+    REQUIRE(braced[0].openLength == 1);  // "{"
+    REQUIRE(braced[0].closeLength == 1); // "}"
+}
+
+TEST_CASE("fish-mode's format.janet has a .simple marker for BOTH begin_statement forms "
+          "(unlike bash's own then/fi and in/esac, begin_statement's own node span starts "
+          "and ends exactly at its paired tokens for either form)",
+          "[FormatBracePlacement]") {
+    const Mode mode = FishMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("begin\n    echo hi\nend\n"), "brace.control")[0].isSimple);
+    REQUIRE_FALSE(
+        CapturesNamed(mode.formatCaptures("begin\n    echo hi\n    echo bye\nend\n"), "brace.control")[0].isSimple);
+    REQUIRE(CapturesNamed(mode.formatCaptures("{\n    echo hi\n}\n"), "brace.control")[0].isSimple);
+    REQUIRE_FALSE(
+        CapturesNamed(mode.formatCaptures("{\n    echo hi\n    echo bye\n}\n"), "brace.control")[0].isSimple);
+}
+
+TEST_CASE("fish-mode's format.janet names def.toplevel over every function, not a nested "
+          "one, with correct .first markers",
+          "[FormatBracePlacement]") {
+    const Mode mode = FishMode();
+
+    const std::string source   = "function f\n"
+                                 "    function inner\n"
+                                 "        echo inner\n"
+                                 "    end\n"
+                                 "end\n"
+                                 "function g\n"
+                                 "    echo hi\n"
+                                 "end\n";
+    const auto        toplevel = CapturesNamed(mode.formatCaptures(source), "def.toplevel");
+    REQUIRE(toplevel.size() == 2); // f() and g() -- the nested inner() is not its own def.toplevel
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "def.method").empty());
+}
+
+// End to end: the SAME "SameLine glues onto a preceding statement's own
+// terminator" hazard bash's own do/then turned out to have -- confirmed
+// live with a real fish RUN, not assumed to transfer just because the
+// shape looks similar.
+TEST_CASE("End to end: a SameLine :placement is a safe no-op on fish-mode's brace.control "
+          "(begin_statement is a bare statement needing a real terminator before it)",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+
+    const Mode mode = FishMode();
+
+    Buffer            beginBuffer("test.fish");
+    const std::string beginSource = "echo hi\nbegin\n    echo x\nend\n";
+    beginBuffer.InsertAtPoint(beginSource);
+    ApplyFormatTextEdits(
+        beginBuffer, ComputeBracePlacementEdits(beginBuffer.Text(), "fish", mode.formatCaptures(beginBuffer.Text())));
+    REQUIRE(beginBuffer.Text() == beginSource); // NOT glued onto "echo hi begin" -- "begin" reads as an argument then
+
+    Buffer            braceBuffer("test2.fish");
+    const std::string braceSource = "echo hi\n{\n    echo x\n}\n";
+    braceBuffer.InsertAtPoint(braceSource);
+    ApplyFormatTextEdits(
+        braceBuffer, ComputeBracePlacementEdits(braceBuffer.Text(), "fish", mode.formatCaptures(braceBuffer.Text())));
+    REQUIRE(braceBuffer.Text() == braceSource);
+
+    SetBracePlacement("brace.control", std::nullopt);
+}
+
+TEST_CASE("End to end: fish-mode's collapse-empty glues begin/end with a real separating "
+          "space (word-byte fusion), but the brace form glues with none",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseEmpty("fish/brace.control", true);
+
+    const Mode mode = FishMode();
+
+    Buffer beginBuffer("t.fish");
+    beginBuffer.InsertAtPoint("echo hi\nbegin\nend\n");
+    ApplyFormatTextEdits(
+        beginBuffer, ComputeBracePlacementEdits(beginBuffer.Text(), "fish", mode.formatCaptures(beginBuffer.Text())));
+    REQUIRE(beginBuffer.Text() == "echo hi\nbegin end\n");
+
+    Buffer braceBuffer("t2.fish");
+    braceBuffer.InsertAtPoint("echo hi\n{\n}\n");
+    ApplyFormatTextEdits(
+        braceBuffer, ComputeBracePlacementEdits(braceBuffer.Text(), "fish", mode.formatCaptures(braceBuffer.Text())));
+    REQUIRE(braceBuffer.Text() == "echo hi\n{}\n");
+
+    SetBraceCollapseEmpty("fish/brace.control", std::nullopt);
 }

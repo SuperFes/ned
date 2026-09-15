@@ -14,15 +14,6 @@ namespace {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r';
     }
 
-    // keyword-delimiter-captures follow-up: whether gluing two delimiter
-    // tokens directly together would fuse them into one word -- true for
-    // any ASCII letter/digit/underscore, which is every byte a keyword
-    // token ("do", "end") can end or start with. A brace/paren is never a
-    // word byte, so this is always false for every pre-Lua capture.
-    bool IsWordByte(char c) {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-    }
-
     // The literal leading-whitespace substring of the line containing byte
     // offset `at` -- reused verbatim (not recomputed from a column) so a
     // mixed tabs/spaces header's own indent survives untouched, matching
@@ -80,11 +71,20 @@ namespace {
     // there) -- Go's own guard didn't need a capture-name parameter
     // because its hazard was language-wide; this one only exists on
     // brace.control, so the added parameter is real, not speculative.
+    // fish-format follow-up: the SAME "SameLine glues onto a preceding
+    // statement's own terminator" hazard as bash's own "do"/"then" --
+    // begin_statement is a bare, standalone statement (no header/
+    // condition of its own), so confirmed live with a real fish RUN:
+    // "echo hi begin ... end" reads "begin" as an ARGUMENT to "echo"
+    // rather than starting a new block ("'end' outside of a block").
+    // Both begin_statement's own forms ("begin"/"end" and "{"/"}") share
+    // this one capture name, so the decline is the same capture-name-wide
+    // shape bash's own guard already uses.
     bool PlacementUnsafeForLanguage(BracePlacement placement, std::string_view languageKey, std::string_view captureName) {
         if (languageKey == "go") {
             return placement != BracePlacement::SameLine;
         }
-        if (languageKey == "bash" && captureName == "brace.control") {
+        if ((languageKey == "bash" || languageKey == "fish") && captureName == "brace.control") {
             return placement == BracePlacement::SameLine;
         }
         return false;
