@@ -16,6 +16,11 @@ the same chain: your configured external formatter if one's set
 whenever no external formatter is configured *or* it fails at runtime -- so `format-buffer`
 always does something useful, never just "nothing configured."
 
+Per-capture-name `:space`/`:break` rule *storage and resolution* also exists today
+(`Editor/FormatRules.h`, `format.janet`'s `:space`/`:break` keys, `ned/set-format-*`) --
+see "Space and Break rules" below. One pilot pass and one pilot language consume it today
+(cpp's `brace.function` brace placement); every other capture/language is still inert.
+
 A capture-scoped per-construct indent override (`ned/set-indent-rule`) is planned but not
 built yet -- see `Docs/FormattingCapabilities.md` and `ROADMAP.md`. LSP-based formatting is
 not part of this chain either (`format-buffer` has no request/response machinery of its
@@ -145,16 +150,70 @@ oversight, and is worth knowing if you `cd` into an unfamiliar repo.
 
 ### Schema
 
-Top-level keys, and the two fields inside each `:indent` entry (keyed by a language key --
-`python`, `cpp`, the same key the defaults table above and `ned/set-lsp-command` both use).
-This list is held against the real schema on every build:
+Top-level keys, and the fields inside each `:indent`/`:space`/`:break` entry. `:indent` is
+keyed by a language key (`python`, `cpp`, the same key the defaults table above and
+`ned/set-lsp-command` both use). This list is held against the real schema on every build:
 
 <!-- format-keys:begin -->
 
-`indent` `trim-trailing-whitespace` `ensure-final-newline` `max-consecutive-blank-lines`
-`tabs` `width`
+`indent` `space` `break` `trim-trailing-whitespace` `ensure-final-newline`
+`max-consecutive-blank-lines` `tabs` `width` `before` `after` `within` `placement`
+`collapse-empty` `collapse-simple`
 
 <!-- format-keys:end -->
+
+## Space and Break rules, and overriding them per language
+
+`:space` (kind 2 of `Docs/FormattingCapabilities.md`'s nine-rule-kind catalogue) and
+`:break` (kind 3, with brace placement folded in as its specialised case -- placing
+`else`/`while`/`catch` on a new line after a closing `}`, K&R vs. Allman brace style, and
+so on) are both keyed by **capture name**, not language -- a dotted identity a language's
+own `*-format.scm` query names (`control.parens`, `brace.function`, ...), the same
+vocabulary `highlights.scm`/`tags.scm` already use for their own capture names. A bare
+capture name is the shared rule every language with that capture gets; prefixing it with
+`"<language>/"` (the same key IndentDefaults.cpp's table uses) narrows the rule to one
+language's own quirk, without touching what every other language's use of that capture
+resolves to -- `Editor/FormatRules.h`'s own resolution shape, mirroring
+`SyntaxTheme.h`'s per-capture-name style overrides (`ned/set-capture-*`) exactly.
+
+```janet
+{:space {"control.parens" {:before true :after false}     # shared: every language's if/for/while parens
+         "cpp/control.parens" {:before false}}             # cpp's own override -- no space before
+ :break {"brace.function" {:placement :next-line            # Allman, not this language's usual K&R
+                            :collapse-empty true}}}
+```
+
+`:space` entries: `:before`/`:after`/`:within` (true/false) -- whether a space is inserted
+before, after, or just inside the captured token/delimiter pair. `:break` entries:
+`:before`/`:after` (true/false, a mandatory or forbidden newline at that point),
+`:placement` (`:same-line`/`:next-line`/`:next-line-indented` -- K&R/Allman/
+GNU-Whitesmiths, meaningful only on a brace-carrying capture), `:collapse-empty`/
+`:collapse-simple` (true/false -- keep an empty or single-statement block on one line).
+
+**One pilot exists today: cpp's `brace.function` capture** (a function definition's own
+body, `Source/Languages/cpp/format.janet`), consumed by `Editor/FormatBracePlacement.h`'s
+`ComputeBracePlacementEdits`/`ApplyFormatTextEdits` -- wired into `format-buffer`'s and
+`--format`'s Native chain, after the structural reindent and before the Hygiene pass. It
+reads only `:break`'s `:placement` field (`:collapse-empty`/`:collapse-simple` and the
+whole `:space` side are still unconsumed) and ships no built-in default, so it does
+nothing until you configure one:
+
+```janet
+(ned/set-format-brace-placement "brace.function" "next-line")   # or in format.janet: {:break {"brace.function" {:placement :next-line}}}
+```
+
+No other bundled language has a `format.janet` yet. This is the proof that the full chain
+(query -> `Mode::formatCaptures` -> `FormatRules` resolution -> a computed edit -> applied
+to a live buffer) works end to end, ahead of rolling the remaining rule kinds/languages out
+(see `Docs/FormattingCapabilities.md`'s Tier B1).
+
+The same rules are settable live from `init.janet`, per-field, mirroring
+`ned/set-capture-*`'s own shape:
+
+```janet
+(ned/set-format-space-before "cpp/control.parens" false)
+(ned/set-format-brace-placement "brace.function" "next-line")
+```
 
 ## The `--format` CLI
 

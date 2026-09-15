@@ -1463,6 +1463,29 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         };
     }
 
+    // configurable-formatter-rules follow-up: a tenth closure sharing the
+    // same parser/sharedParse, same reasoning as testDiscovery/localScopes
+    // above. No MatchCache here -- this capability has no consumer yet
+    // (Docs/FormattingRules.md), and its eventual caller (format-buffer/
+    // --format) is far more sporadic even than rename-symbol's already-rare
+    // localScopes call, so a plain query.Captures() per call is the honest
+    // cost until real usage says otherwise.
+    FormatCaptureFunction formatCaptures;
+    if (!queries.format.empty()) {
+        const auto formatQuery = std::make_shared<grammar::QueryMatcher>(language, queries.format);
+        formatCaptures = [parser, formatQuery, sharedParse](std::string_view bufferText) -> std::vector<FormatCapture> {
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
+            if (tree.IsNull()) {
+                return {};
+            }
+            std::vector<FormatCapture> captures;
+            for (const grammar::QueryCapture& capture : formatQuery->Captures(tree.RootNode(), bufferText)) {
+                captures.push_back(FormatCapture{capture.name, capture.startByte, capture.endByte});
+            }
+            return captures;
+        };
+    }
+
     // Debugging wishlist (line-inspect follow-up): Tier 1 -- unconditional,
     // every GrammarModeFromLanguage-built mode gets this generic default
     // (bare identifiers only, no per-language query authoring). Its own
@@ -1499,7 +1522,8 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 .indentColumn       = std::move(indentColumn),
                 .lineInspect        = std::move(lineInspect),
                 .localScopes        = std::move(localScopes),
-                .matchingDelimiters = std::move(matchingDelimiters)};
+                .matchingDelimiters = std::move(matchingDelimiters),
+                .formatCaptures     = std::move(formatCaptures)};
 }
 
 Mode GrammarMode(std::string name, std::string_view languageName, const GrammarQuerySources& queries) {

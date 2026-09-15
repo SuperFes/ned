@@ -102,6 +102,8 @@ add_executable(ned_tests
             IndentDefaultsTest.cpp
             MaxConsecutiveBlankLinesTest.cpp
             FormatConfigParseTest.cpp
+            FormatRulesTest.cpp
+            FormatBracePlacementTest.cpp
             FormatTest.cpp
             FormatKeyDocsTest.cpp
             IndentEngineTest.cpp

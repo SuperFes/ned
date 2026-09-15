@@ -22,6 +22,7 @@
 #include "Fill.h"
 #include "FillColumn.h"
 #include "Format.h"
+#include "FormatBracePlacement.h"
 #include "FormatConfigParse.h"
 #include "FormatOnSave.h"
 #include "Indent.h"
@@ -1890,6 +1891,21 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           bool changed = false;
                           if (context.mode != nullptr && context.mode->indentColumn) {
                               changed = IndentBuffer(context.buffer, *context.mode) > 0;
+                          }
+                          // configurable-formatter-rules follow-up: the pilot Break-kind
+                          // (brace placement) pass -- a no-op for every mode but cpp's own
+                          // pilot capture until a rule is actually configured (see
+                          // Docs/FormattingRules.md). Runs after the structural reindent
+                          // (whose body indentation this doesn't touch) and before Hygiene
+                          // (which cleans up whatever whitespace either step left behind).
+                          if (context.mode != nullptr && context.mode->formatCaptures) {
+                              const std::string languageKey = LanguageKeyForMode(*context.mode);
+                              const std::vector<FormatTextEdit> braceEdits = ComputeBracePlacementEdits(
+                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
+                              if (!braceEdits.empty()) {
+                                  ApplyFormatTextEdits(context.buffer, braceEdits);
+                                  changed = true;
+                              }
                           }
                           changed = ApplyHygienePass(context.buffer) || changed;
                           context.buffer.EndUndoGroup();

@@ -176,10 +176,10 @@ Mode ModeFromDefinition(const LanguageDefinition& definition) {
 
 namespace {
 
-    // The eight kinds, compiled; kept alive for the duration of the build
+    // The nine kinds, compiled; kept alive for the duration of the build
     // (GrammarModeFromLanguage retains none of the text).
     struct CompiledQueries {
-        QueryText highlights, folds, imports, tags, tests, indents, locals, injections;
+        QueryText highlights, folds, imports, tags, tests, indents, locals, injections, format;
 
         [[nodiscard]] GrammarQuerySources Views() const {
             return {.highlights = highlights.text,
@@ -189,7 +189,8 @@ namespace {
                     .tests      = tests.text,
                     .indents    = indents.text,
                     .locals     = locals.text,
-                    .injections = injections.text};
+                    .injections = injections.text,
+                    .format     = format.text};
         }
     };
 
@@ -201,7 +202,8 @@ namespace {
                 .tests      = CompileQueryFiles(files.tests),
                 .indents    = CompileQueryFiles(files.indents),
                 .locals     = CompileQueryFiles(files.locals),
-                .injections = CompileQueryFiles(files.injections)};
+                .injections = CompileQueryFiles(files.injections),
+                .format     = CompileQueryFiles(files.format)};
     }
 
     // The byte offset where 1-based `line` starts in `text` -- the matcher's
@@ -226,7 +228,7 @@ namespace {
     [[noreturn]] void RethrowLocated(const LanguageDefinition& definition, const grammar::Language& language,
                                      const CompiledQueries& compiled, const grammar::QueryMatcherError& error) {
         for (const QueryText* text : {&compiled.highlights, &compiled.folds, &compiled.imports, &compiled.tags, &compiled.tests,
-                                      &compiled.indents, &compiled.locals, &compiled.injections}) {
+                                      &compiled.indents, &compiled.locals, &compiled.injections, &compiled.format}) {
             if (text->text.empty()) {
                 continue;
             }

@@ -492,6 +492,28 @@ struct LocalCapture {
 // exists to avoid being).
 using LocalScopeFunction = std::function<std::vector<LocalCapture>(std::string_view bufferText)>;
 
+// configurable-formatter-rules follow-up. One capture from a `format.janet`
+// query -- a plain (name, byte range) pair, deliberately not a reuse of
+// Grammar/QueryMatcher.h's own QueryCapture (which this header only ever
+// forward-declares, never includes in full) nor LocalCapture's richer shape
+// above: unlike a locals.scm capture, a format.janet capture carries no
+// fixed small enum of kinds -- what a name like "brace.function" MEANS is
+// entirely up to whichever Editor/FormatRules.h-consuming pass reads it, so
+// there is nothing this struct could usefully classify ahead of time.
+struct FormatCapture {
+    std::string name; // e.g. "brace.function", without the leading '@'
+    std::size_t startByte;
+    std::size_t endByte;
+};
+
+// Given a buffer's full text, returns every format.janet capture in it, in
+// tree order. Empty function (the default) means this mode has no format
+// query at all, the standing "empty means not configured" convention --
+// nothing consumes this yet (see Docs/FormattingRules.md's own note); it
+// exists so a pass can be built against real capture data once one is
+// written, rather than against a hypothetical.
+using FormatCaptureFunction = std::function<std::vector<FormatCapture>(std::string_view bufferText)>;
+
 // embedded-language-documents follow-up: one tree-sitter injection match's
 // resolved (host-buffer byte range, canonical target language) pair --
 // Injection.h's CollectInjectionRegions is what produces these. Lives here
@@ -658,6 +680,11 @@ struct Mode {
     // convention as everything above.
     LocalScopeFunction        localScopes;
     MatchingDelimiterFunction matchingDelimiters;
+    // configurable-formatter-rules follow-up: empty function (the default)
+    // means this mode has no format.janet query, same "empty means not
+    // configured" convention as everything above. No consumer reads this
+    // yet -- see FormatCaptureFunction's own doc comment.
+    FormatCaptureFunction formatCaptures;
     // line-wrap follow-up: this mode's own default for whether BufferView
     // should soft-wrap long lines at word boundaries instead of scrolling
     // horizontally -- false (matching every bundled mode except the two
@@ -726,6 +753,9 @@ struct GrammarQuerySources {
     // after its own, and Mode::embeddedRegions is offered to a definition
     // that asks for it (LanguageDefinition::embeddedDocuments).
     std::string_view injections;
+    // a Space/Break-kind capture query (Editor/FormatRules.h) -> Mode::
+    // formatCaptures (configurable-formatter-rules follow-up)
+    std::string_view format;
 };
 
 // One HighlightFunction cache per distinct embedded language actually

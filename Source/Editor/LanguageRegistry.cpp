@@ -53,6 +53,7 @@ namespace {
         fill(definition.queries.indents, "indents");
         fill(definition.queries.locals, "locals");
         fill(definition.queries.injections, "injections");
+        fill(definition.queries.format, "format");
     }
 
 } // namespace
