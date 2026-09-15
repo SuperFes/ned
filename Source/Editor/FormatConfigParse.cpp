@@ -156,6 +156,14 @@ std::filesystem::path ProjectFormatConfigPath(const std::filesystem::path& proje
     return projectRoot / ".ned" / "format.janet";
 }
 
+std::vector<std::string> FormatConfigKeys() {
+    return {"ensure-final-newline", "indent", "trim-trailing-whitespace"};
+}
+
+std::vector<std::string> FormatConfigIndentEntryKeys() {
+    return {"tabs", "width"};
+}
+
 void LoadFormatConfigFile(const std::filesystem::path& path) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec)) {
