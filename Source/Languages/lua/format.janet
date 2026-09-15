@@ -127,3 +127,18 @@
 # def.method itself uses, never at a generic nested block).
 (chunk (function_declaration) @def.toplevel)
 (chunk . (function_declaration) @def.toplevel.first)
+
+# coverage-audit follow-up: repeat_statement ("repeat ... until cond") is
+# a real, distinct delimiter pair every prior pass over this file focused
+# on if/while/for/do's own "do"/"end" shape and never touched -- confirmed
+# live as valid, runnable Lua. Its own "body" field (grammar.json) sits
+# between the literal "repeat" and "until" tokens; the paired mechanism
+# captures exactly that span regardless of what repeat_statement's own
+# OUTER node span covers. No `.simple` marker: unlike do_group's own span
+# (which ends exactly at "done"), repeat_statement's own node span does
+# NOT end at "until" -- it continues through the trailing condition
+# expression after it (verified against grammar.json before assuming the
+# do_group asymmetry would transfer), so no single node's span matches
+# the synthesized "repeat".."until" range, the same "no .simple possible"
+# reasoning already established for this file's own if/then/end pairing.
+(repeat_statement "repeat" @brace.control.open "until" @brace.control.close)

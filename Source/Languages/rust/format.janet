@@ -111,3 +111,25 @@
 (source_file . [(function_item) (struct_item) (enum_item) (trait_item) (mod_item) (impl_item)]
   @def.toplevel.first)
 (declaration_list . (function_item) @def.method.first)
+
+# anon-function-policy-reversal follow-up (see project memory): closure_
+# expression's own "body" field is typed EITHER "_expression" or a bare
+# "_" wildcard (node-types.json) -- but `block` is itself one of
+# "_expression"'s own real, concrete variants (a block IS a valid Rust
+# expression, e.g. `let x = { 1 };`), so a type-qualified "(block)"
+# capture already discriminates the real "|x| { ... }" case from a bare-
+# expression closure body ("|x| x + 1") with no :match? predicate needed
+# -- confirmed this isn't Kotlin's own single-ambiguous-node-type shape
+# before reaching for that mechanism.
+(closure_expression body: (block) @brace.function)
+(closure_expression body: (block . (_) .) @brace.function.simple)
+
+# unsafe_block/async_block's own "block" child is an unconditional,
+# unambiguous single child (node-types.json) -- always real braces, no
+# discriminator needed.
+(unsafe_block (block) @brace.control)
+(unsafe_block (block . (_) .) @brace.control.simple)
+(async_block (block) @brace.control)
+(async_block (block . (_) .) @brace.control.simple)
+(const_block body: (block) @brace.control)
+(const_block body: (block . (_) .) @brace.control.simple)

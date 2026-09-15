@@ -122,3 +122,28 @@
 (program . [(function_definition) (class_declaration) (trait_declaration) (interface_declaration)
             (enum_declaration)] @def.toplevel.first)
 (declaration_list . (method_declaration) @def.method.first)
+
+# coverage-audit follow-up: match_expression's own body field
+# (match_block) has NO colon-alternate form the way switch_block does --
+# confirmed via node-types.json, a single required shape -- so it's safe
+# to capture directly with no paired-token workaround.
+(match_expression body: (match_block) @brace.control)
+
+# enum_declaration's own body field (enum_declaration_list -- a DIFFERENT
+# node type from class/trait/interface's shared declaration_list, so it
+# needs its own line even though it shares the capture NAME) was only
+# ever named for def.toplevel -- never given a brace.class capture,
+# inconsistent with class/trait/interface above.
+(enum_declaration body: (enum_declaration_list) @brace.class)
+
+# anon-function-policy-reversal follow-up (see project memory): a real
+# prior gap regardless of the policy question -- closures
+# (`function() { }`, extremely common/idiomatic in PHP) have a REQUIRED
+# compound_statement body, no colon-alternate/bare-statement ambiguity
+# the way if/while have (unlike a declared function, a closure has no
+# colon-syntax form at all) -- a clean, unambiguous addition. Anonymous
+# classes (`new class { }`) share the same declaration_list body every
+# named class already does, folded into brace.class the same way.
+(anonymous_function body: (compound_statement) @brace.function)
+(anonymous_function body: (compound_statement . (_) .) @brace.function.simple)
+(anonymous_class body: (declaration_list) @brace.class)

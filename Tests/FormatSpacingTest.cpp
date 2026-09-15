@@ -853,3 +853,22 @@ TEST_CASE("fish-mode's :within=false is declined on begin_statement's own \"begi
 
     SetSpaceWithin("fish/brace.control", std::nullopt);
 }
+
+// coverage-audit follow-up (see project memory): do-while's own condition
+// needed the SAME paired mechanism a for-loop's own clause already uses
+// in every language that has if/while's condition field span "(...)"
+// directly -- csharp's if/while/switch already needed pairing (a bare
+// expression field, anonymous paren tokens); do-while shares that exact
+// shape. Kotlin needed it too, same as every one of its own conditions.
+TEST_CASE("csharp-mode's format.janet names control.parens over do-while's own condition too",
+          "[FormatSpacing]") {
+    const Mode mode = CSharpMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void F() { do { G(); } while (x); } }"), "control.parens")
+                .size() == 1);
+}
+
+TEST_CASE("kotlin-mode's format.janet names control.parens over do-while's own condition too",
+          "[FormatSpacing]") {
+    const Mode mode = KotlinMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("fun f() { do { g() } while (x) }"), "control.parens").size() == 1);
+}

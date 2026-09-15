@@ -55,6 +55,11 @@
 (interface_body . (method_signature) @def.method.first)
 (class_body . (abstract_method_signature) @def.method.first)
 
+# coverage-audit follow-up: enum_declaration's own body field (enum_body)
+# was only ever named for def.toplevel's blank-lines purposes -- never
+# given a brace.class capture, unlike class/interface/abstract-class above.
+(enum_declaration body: (enum_body) @brace.class)
+
 # Deliberately declined: TypeScript's legacy `namespace N { ... }`/
 # `module N { ... }` syntax (internal_module) -- verified live it parses
 # wrapped in an `expression_statement` with no field name of its own,

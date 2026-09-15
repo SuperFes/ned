@@ -1495,6 +1495,20 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
+- **Lua's `repeat_statement` body is never reindented.** Found live during the
+  formatter coverage audit (2026-09-15) while testing the new `repeat`/`until`
+  format capture -- unrelated to that capture itself: `Editor/ImprintTables.cpp`'s
+  `kLua[]` table has entries for `do_statement`/`if_statement`/`while_statement`
+  (each `DelimiterKind::Keyword` plus an `Indent` entry) but none at all for
+  `repeat_statement`, so `repeat\n  body\nuntil cond` reindents its body to column
+  0 regardless of nesting -- confirmed with `ned --format` on a real `.lua` file,
+  no format.janet rules involved. Fix shape: add `{"repeat_statement",
+  DelimiterKind::Keyword, true, true, "repeat", "until"}` plus its own `Indent`
+  entry to `kLua[]`, then regenerate via `NED_BLESS_IMPRINT=1 ./build/ned_tests
+  "[Imprint]"` and review the diff -- same shape the three existing Lua entries
+  already have, this file is generated/checked-in so hand-editing it directly
+  would be overwritten by the next real regeneration.
+
 - **Intermittent shutdown hang blocked on the LSP broker socket.** Found 2026-09-13
   during the Phase 4b live smoke runs: quitting ned a few seconds after opening a C++
   buffer occasionally leaves "Shutting down..." parked with the MAIN thread in a

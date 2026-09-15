@@ -99,7 +99,10 @@ TEST_CASE("cpp-mode's format.janet names brace.control for if/while/for/switch/c
     REQUIRE(CapturesNamed(mode.formatCaptures("void f() { while (x) {\n} }"), "brace.control").size() == 1);
     REQUIRE(CapturesNamed(mode.formatCaptures("void f() { for (;;) {\n} }"), "brace.control").size() == 1);
     REQUIRE(CapturesNamed(mode.formatCaptures("void f() { switch (x) {\n} }"), "brace.control").size() == 1);
-    REQUIRE(CapturesNamed(mode.formatCaptures("void f() { try {\n} catch (int e) {\n} }"), "brace.control").size() == 1);
+    // coverage-audit follow-up: this used to assert 1 (catch's own body
+    // only) -- try_statement's OWN body ("try { }" itself) now also
+    // fires, a real gap this rollout's own audit found, not a regression.
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f() { try {\n} catch (int e) {\n} }"), "brace.control").size() == 2);
 
     // A braceless body has no brace to place at all -- no capture at all,
     // not a degenerate zero-width one.
@@ -1072,7 +1075,12 @@ TEST_CASE("typescript-mode inherits javascript's own brace.function/control/clas
                                "    m(): void {}\n"
                                "}\n";
     const auto captures = mode.formatCaptures(source);
-    REQUIRE(CapturesNamed(captures, "brace.function").size() == 1);
+    // coverage-audit follow-up: this used to assert 1 -- method_
+    // definition's own body ("m(): void {}") now also gets brace.
+    // function, a real gap this rollout's own audit found (previously
+    // ZERO placement capture existed for any class method at all), not a
+    // regression in this inheritance mechanism.
+    REQUIRE(CapturesNamed(captures, "brace.function").size() == 2);
     REQUIRE(CapturesNamed(captures, "brace.control").size() == 1);
     REQUIRE(CapturesNamed(captures, "brace.class").size() == 1);
 }
@@ -1795,40 +1803,96 @@ TEST_CASE("End to end: lua-mode's collapse-empty on brace.function glues \")\" d
     SetBraceCollapseEmpty("lua/brace.function", std::nullopt);
 }
 
+// coverage-audit follow-up: repeat_statement ("repeat ... until cond") --
+// a real, distinct delimiter pair the original Lua rollout never touched
+// (every pass focused on if/while/for/do's own "do"/"end" shape).
+TEST_CASE("lua-mode's format.janet names brace.control over repeat/until, reporting the real "
+          "multi-byte delimiter lengths",
+          "[FormatBracePlacement]") {
+    const Mode mode = LuaMode();
+
+    const auto caps = CapturesNamed(mode.formatCaptures("repeat\n    f()\nuntil x > 3\n"), "brace.control");
+    REQUIRE(caps.size() == 1);
+    REQUIRE(caps[0].openLength == 6);  // "repeat"
+    REQUIRE(caps[0].closeLength == 5); // "until"
+    // repeat_statement's own node span does NOT end at "until" (it
+    // continues through the trailing condition), unlike do_group's own
+    // symmetric span -- so no .simple marker exists here, matching every
+    // other paired capture in this file.
+    REQUIRE_FALSE(caps[0].isSimple);
+}
+
+TEST_CASE("End to end: lua-mode's formatCaptures drives a real brace-placement edit on "
+          "repeat/until (SameLine squeezes the gap before \"repeat\" itself, the same "
+          "\"opens with its own very first token, no header\" shape this file's own bare "
+          "do_statement already has -- verified live this joined form is valid, running Lua)",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("lua/brace.control", BracePlacement::SameLine);
+
+    const Mode mode = LuaMode();
+    Buffer     buffer("t.lua");
+    buffer.InsertAtPoint("x = 1\nrepeat\n    f()\nuntil x > 3\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "lua", mode.formatCaptures(buffer.Text())));
+    REQUIRE(buffer.Text() == "x = 1 repeat\n    f()\nuntil x > 3\n");
+
+    // test-isolation follow-up: FormatRulesGuard only resets the BARE
+    // "brace.control" key -- a language-scoped override like this one
+    // must be reset explicitly, the same lesson a leaked bash-mode
+    // collapse-simple rule already taught this file once (see
+    // project memory's own bash-revisit follow-up).
+    SetBracePlacement("lua/brace.control", std::nullopt);
+}
+
 // fish-mode: the fifteenth language, and an even more minimal partial
-// case than bash's own original shape -- if/while/for/switch/function
-// have NO capturable brace.function/brace.control at all (their own
-// header ends directly in the SAME terminator that separates any two
-// ordinary statements, with no separate movable opening keyword the way
-// bash's "do"/"then" are). begin_statement is the ONLY construct with a
-// real delimiter pair, in two forms sharing one node type.
-TEST_CASE("fish-mode's format.janet has no brace.function/brace.control at all for "
-          "if/while/for/switch/function -- a real absence, not a scope cut",
+// case than bash's own original shape -- if/while/for/switch have NO
+// capturable brace.control at all (their own header ends directly in the
+// SAME terminator that separates any two ordinary statements, with no
+// separate movable opening keyword the way bash's "do"/"then" are).
+// function_definition is NOT in that group (coverage-audit follow-up: an
+// earlier writeup wrongly lumped it in) -- it has a real, literal
+// "function"/"end" pair, captured below alongside begin_statement's own.
+TEST_CASE("fish-mode's format.janet has no brace.control at all for if/while/for/switch -- a "
+          "real absence, not a scope cut -- but function_definition DOES get brace.function "
+          "(coverage-audit follow-up: this rollout's own earlier writeup wrongly lumped it in "
+          "with the other four, which share a genuinely different reason for their absence)",
           "[FormatBracePlacement]") {
     const Mode mode = FishMode();
 
-    const std::string source = "function f\n"
-                               "    echo hi\n"
-                               "end\n"
-                               "if true\n"
-                               "    echo yes\n"
-                               "else\n"
-                               "    echo no\n"
-                               "end\n"
-                               "while true\n"
-                               "    echo loop\n"
-                               "end\n"
-                               "for i in 1 2 3\n"
-                               "    echo $i\n"
-                               "end\n"
-                               "switch $x\n"
-                               "    case 1\n"
-                               "        echo one\n"
-                               "end\n";
-    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.function").empty());
+    const std::string controlOnly = "if true\n"
+                                    "    echo yes\n"
+                                    "else\n"
+                                    "    echo no\n"
+                                    "end\n"
+                                    "while true\n"
+                                    "    echo loop\n"
+                                    "end\n"
+                                    "for i in 1 2 3\n"
+                                    "    echo $i\n"
+                                    "end\n"
+                                    "switch $x\n"
+                                    "    case 1\n"
+                                    "        echo one\n"
+                                    "end\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(controlOnly), "brace.function").empty());
     // brace.control is real, but ONLY for begin_statement -- none of the
     // constructs above contribute to it.
-    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.control").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures(controlOnly), "brace.control").empty());
+
+    const auto fn = CapturesNamed(mode.formatCaptures("function f\n    echo hi\nend\n"), "brace.function");
+    REQUIRE(fn.size() == 1);
+    REQUIRE(fn[0].openLength == 8);  // "function"
+    REQUIRE(fn[0].closeLength == 3); // "end"
+    REQUIRE(fn[0].isSimple);
+    REQUIRE_FALSE(
+        CapturesNamed(mode.formatCaptures("function f\n    echo hi\n    echo bye\nend\n"), "brace.function")[0]
+            .isSimple);
+    // A "-d" description option between the name and the body is a real,
+    // if uncommon, shape this file's own .simple anchor deliberately
+    // declines rather than risks a false positive on -- conservatively
+    // "not simple", never a wrong "simple".
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures("function f -d 'desc'\n    echo hi\nend\n"), "brace.function")[0]
+                      .isSimple);
 }
 
 TEST_CASE("fish-mode's format.janet names brace.control over both begin_statement forms, "
@@ -1911,6 +1975,66 @@ TEST_CASE("End to end: a SameLine :placement is a safe no-op on fish-mode's brac
     SetBracePlacement("brace.control", std::nullopt);
 }
 
+// coverage-audit follow-up: the IDENTICAL hazard for brace.function --
+// function_definition is a bare, standalone statement too, so a SameLine
+// gap after a preceding statement is equally dangerous ("'end' outside
+// of a block", confirmed live). PlacementUnsafeForLanguage now guards
+// both capture names for fish, unlike bash (whose own brace.function is
+// unaffected -- real braces, no terminator needed).
+TEST_CASE("End to end: a SameLine :placement is a safe no-op on fish-mode's brace.function too",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::SameLine);
+
+    const Mode        mode = FishMode();
+    Buffer            buffer("test.fish");
+    const std::string source = "echo hi\nfunction f\n    echo x\nend\n";
+    buffer.InsertAtPoint(source);
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "fish", mode.formatCaptures(buffer.Text())));
+    REQUIRE(buffer.Text() == source); // NOT glued onto "echo hi function" -- "function" reads as an argument then
+}
+
+// coverage-audit follow-up: a real corruption hazard found live via this
+// exact apply-and-check-whole-result discipline, not by inspection --
+// collapse-simple's own interior computation assumes the open TOKEN sits
+// directly beside the real body, true everywhere else in this codebase
+// but false for fish's own function_definition (name:/option: fields sit
+// between "function" and the body). Both directions are declined for
+// "fish"/"brace.function" specifically (CollapseSimpleUnsafeForLanguage).
+TEST_CASE("End to end: fish-mode's collapse-simple is declined (both directions) for "
+          "brace.function -- its own interior computation would otherwise split "
+          "\"function\" from the function's own name",
+          "[FormatBracePlacement]") {
+    const Mode mode = FishMode();
+
+    {
+        const FormatRulesGuard guard;
+        SetBraceCollapseSimple("fish/brace.function", false); // force-expand direction
+        Buffer            buffer("t.fish");
+        const std::string source = "echo pre\nfunction greet; echo hello; end\n";
+        buffer.InsertAtPoint(source);
+        ApplyFormatTextEdits(buffer,
+                             ComputeBracePlacementEdits(buffer.Text(), "fish", mode.formatCaptures(buffer.Text())));
+        // NOT "function\n    greet; echo hello;\nend" -- fish -n confirmed
+        // that shape is a hard syntax error ("function" names nothing).
+        REQUIRE(buffer.Text() == source);
+        SetBraceCollapseSimple("fish/brace.function", std::nullopt);
+    }
+    {
+        const FormatRulesGuard guard;
+        SetBraceCollapseSimple("fish/brace.function", true); // join direction
+        Buffer            buffer("t2.fish");
+        const std::string source = "echo pre\nfunction greet\n    echo hello\nend\n";
+        buffer.InsertAtPoint(source);
+        ApplyFormatTextEdits(buffer,
+                             ComputeBracePlacementEdits(buffer.Text(), "fish", mode.formatCaptures(buffer.Text())));
+        // NOT "function greet echo hello end" -- would fold the name into
+        // the reconstructed "body" text.
+        REQUIRE(buffer.Text() == source);
+        SetBraceCollapseSimple("fish/brace.function", std::nullopt);
+    }
+}
+
 TEST_CASE("End to end: fish-mode's collapse-empty glues begin/end with a real separating "
           "space (word-byte fusion), but the brace form glues with none",
           "[FormatBracePlacement]") {
@@ -1932,4 +2056,182 @@ TEST_CASE("End to end: fish-mode's collapse-empty glues begin/end with a real se
     REQUIRE(braceBuffer.Text() == "echo hi\n{}\n");
 
     SetBraceCollapseEmpty("fish/brace.control", std::nullopt);
+}
+
+// coverage-audit follow-up (see project memory): a dedicated audit pass
+// found constructs this rollout's own per-language passes skipped
+// because they weren't the day's focus, not because the grammar lacks
+// them -- plus a deliberate policy reversal (anonymous function/lambda/
+// closure bodies now get brace.function everywhere, matching declared
+// functions' own placement, superseding the earlier "declarations, not
+// expressions" scope cut).
+
+TEST_CASE("cpp-mode's format.janet now covers do-while/try's-own-body/union/lambda/extern-C",
+          "[FormatBracePlacement]") {
+    const Mode mode = CppMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f() { do { g(); } while (x); }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f() { try { g(); } catch (int e) {} }"), "brace.control")
+                .size() == 2); // the try block's own body AND catch's
+    REQUIRE(CapturesNamed(mode.formatCaptures("union U { int a; float b; };"), "brace.class").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("enum E { A, B };"), "def.toplevel").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("auto f = [](int x) { return x; };"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("extern \"C\" { void f(); }"), "brace.namespace").size() == 1);
+    // extern "C" f(); (single-declaration form, no braces) must NOT match.
+    REQUIRE(CapturesNamed(mode.formatCaptures("extern \"C\" void f();"), "brace.namespace").empty());
+}
+
+TEST_CASE("c-mode's format.janet now covers do-while", "[FormatBracePlacement]") {
+    REQUIRE(CapturesNamed(CMode().formatCaptures("void f() { do { g(); } while (x); }"), "brace.control").size() ==
+            1);
+}
+
+TEST_CASE("java-mode's format.janet now covers do-while/try's-own-body/finally/static-and-"
+          "instance-initializers/lambda/anonymous-class/enum-constant-body/switch-arrow-arm",
+          "[FormatBracePlacement]") {
+    const Mode mode = JavaMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void f() { do { g(); } while (x); } }"), "brace.control")
+                .size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void f() { try { g(); } finally { h(); } } }"),
+                          "brace.control")
+                .size() == 2); // the try block's own body AND finally's
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { static { init(); } }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { { init(); } }"), "brace.control").size() == 1);
+    REQUIRE(
+        CapturesNamed(mode.formatCaptures("class C { Runnable r = () -> { g(); }; }"), "brace.function").size() ==
+        1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { Object o = new Object() { void f() {} }; }"), "brace.class")
+                .size() == 2); // C itself AND the anonymous class body
+    REQUIRE(CapturesNamed(mode.formatCaptures("enum E { A { void f() {} } }"), "brace.class").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void f(int x) { switch (x) { case 1 -> { g(); } } } }"),
+                          "brace.control")
+                .size() == 2); // switch's own body AND the arrow-arm's
+}
+
+TEST_CASE("csharp-mode's format.janet now covers do-while/try's-own-body/finally/constructor/"
+          "destructor/property-accessor/local-function/using-lock-fixed/unsafe-checked/lambda/"
+          "anonymous-method/switch-expression",
+          "[FormatBracePlacement]") {
+    const Mode mode = CSharpMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void F() { do { G(); } while (x); } }"), "brace.control")
+                .size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void F() { try { G(); } finally { H(); } } }"),
+                          "brace.control")
+                .size() == 2);
+    // Previously ONLY method_declaration got brace.function -- the
+    // single highest-impact C# gap this audit found.
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { C() { G(); } }"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { ~C() { G(); } }"), "brace.function").size() == 1);
+    // Both accessors have real (if trivial) blocks here -- both fire.
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { int X { get { return 1; } set { } } }"), "brace.function")
+                .size() == 2);
+    // A true auto-property accessor ("set;", no braces at all) has no
+    // block body at all -- must not match.
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { int X { get; set; } }"), "brace.function").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void F() { void L() { } L(); } }"), "brace.function")
+                .size() == 2); // F's own body AND L's
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void F() { using (var x = G()) { H(); } } }"),
+                          "brace.control")
+                .size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void F() { lock (x) { H(); } } }"), "brace.control")
+                .size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void F() { unsafe { H(); } } }"), "brace.control").size() ==
+            1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { Action a = () => { G(); }; }"), "brace.function").size() ==
+            1);
+    // switch_expression has no "body:" field at all -- needs the paired
+    // mechanism, same as a for-loop's own clause.
+    const auto switchExpr =
+        CapturesNamed(mode.formatCaptures("class C { void F() { var y = x switch { 1 => 2, _ => 3 }; } }"),
+                      "brace.control");
+    REQUIRE(switchExpr.size() == 1);
+    REQUIRE_FALSE(switchExpr[0].isSimple); // no single node's span matches the synthesized range
+}
+
+TEST_CASE("javascript-mode's format.janet now covers method_definition (previously ZERO "
+          "placement capture at all)/do-while/try's-own-body/finally/class-static-block/arrow-"
+          "and-function-expression-bodies",
+          "[FormatBracePlacement]") {
+    const Mode mode = JavaScriptMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { f() { g(); } }"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { constructor() { g(); } }"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("const o = { f() { g(); } };"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("function f() { do { g(); } while (x); }"), "brace.control").size() ==
+            1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("function f() { do { g(); } while (x); }"), "control.parens").size() ==
+            1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("function f() { try { g(); } finally { h(); } }"), "brace.control")
+                .size() == 2);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { static { init(); } }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("const f = (x) => { return x; };"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("const f = function(x) { return x; };"), "brace.function").size() ==
+            1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("const f = function*(x) { yield x; };"), "brace.function").size() ==
+            1);
+    // Arrow functions can ALSO be bare-expression-bodied -- must not match.
+    REQUIRE(CapturesNamed(mode.formatCaptures("const f = (x) => x + 1;"), "brace.function").empty());
+}
+
+TEST_CASE("typescript-mode's format.janet now covers enum bodies for brace.class",
+          "[FormatBracePlacement]") {
+    REQUIRE(CapturesNamed(TypeScriptMode().formatCaptures("enum E { A, B }"), "brace.class").size() == 1);
+}
+
+TEST_CASE("go-mode's format.janet now covers func_literal (anonymous function EXPRESSIONS, "
+          "used constantly for goroutines/defer/callbacks) -- a real prior gap regardless of "
+          "the anon-function policy question, not merely a policy-driven addition",
+          "[FormatBracePlacement]") {
+    const Mode mode = GoMode();
+    const auto caps = CapturesNamed(mode.formatCaptures("func f() {\n\tgo func() {\n\t\th()\n\t}()\n}"),
+                                    "brace.function");
+    REQUIRE(caps.size() == 2); // f's own body AND the func_literal's
+    REQUIRE(CapturesNamed(mode.formatCaptures("func f() {\n\tgo func() {\n\t\th()\n\t\ti()\n\t}()\n}"),
+                          "brace.function")[1]
+                .isSimple == false);
+}
+
+TEST_CASE("rust-mode's format.janet now covers closure_expression/unsafe_block/async_block/"
+          "const_block",
+          "[FormatBracePlacement]") {
+    const Mode mode = RustMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("fn f() { let g = |x| { x }; }"), "brace.function").size() == 2);
+    // A bare-expression-bodied closure must not match.
+    REQUIRE(CapturesNamed(mode.formatCaptures("fn f() { let g = |x| x + 1; }"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("fn f() { unsafe { g(); } }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("fn f() { let x = async { g(); }; }"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("const X: i32 = const { 1 + 1 };"), "brace.control").size() == 1);
+}
+
+TEST_CASE("php-mode's format.janet now covers closures (a real prior gap, extremely common/"
+          "idiomatic in PHP)/anonymous-classes/match-expressions/enum-bodies",
+          "[FormatBracePlacement]") {
+    const Mode mode = PhpMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php $f = function() { g(); };"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php $c = new class { function f() {} };"), "brace.class").size() ==
+            1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php $y = match($x) { 1 => 2, default => 3 };"), "brace.control")
+                .size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php enum Suit { case Hearts; case Spades; }"), "brace.class")
+                .size() == 1);
+}
+
+TEST_CASE("kotlin-mode's format.janet now covers do-while/init-blocks/secondary-constructors/"
+          "object-literals/lambda-literals",
+          "[FormatBracePlacement]") {
+    const Mode mode = KotlinMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("fun f() { do { g() } while (x) }"), "brace.control").size() == 1);
+    // A brace-less do-while body must not match.
+    REQUIRE(CapturesNamed(mode.formatCaptures("fun f() { do g() while (x) }"), "brace.control").empty());
+    const auto init = CapturesNamed(mode.formatCaptures("class C { init { g() } }"), "brace.control");
+    REQUIRE(init.size() == 1);
+    REQUIRE_FALSE(init[0].isSimple); // no single node's span matches the synthesized "{".."}"
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { constructor(x: Int) { g() } }"), "brace.function").size() ==
+            1);
+    // A bodyless delegating secondary constructor must not match.
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C(val y: Int) { constructor(x: Int) : this(x) }"),
+                          "brace.function")
+                .empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("val o = object : Foo() { }"), "brace.class").size() == 1);
+    // Trailing-lambda call syntax is a real, common lambda_literal use.
+    const auto lambda = CapturesNamed(mode.formatCaptures("fun f() { list.map { it * 2 } }"), "brace.function");
+    REQUIRE(lambda.size() == 2); // f's own body AND the trailing lambda
 }
