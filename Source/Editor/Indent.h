@@ -307,13 +307,18 @@ std::ptrdiff_t SetLineIndent(text::Buffer& buffer, std::size_t lineStart, int co
 // SetLineIndent's own inner group). No-op (returns 0, touches nothing) if
 // mode.indentColumn is unset. Returns the number of lines actually changed.
 //
-// For an ORDINARY buffer: buffer.Text() -- a full O(n) materialize -- is
-// called once per line processed, so this is O(n * linesInRange) for a large
-// n. Accepted rather than engineered around (mirrors Buffer.cpp's own
-// kMaxTabAwareColumnScan precedent of "bounded/approximate over unbounded/
-// exact") -- fine for an occasional, user-triggered whole-buffer cleanup
-// (the same cost class as fill-paragraph or a manual reindent, not a hot
-// per-frame path).
+// indent-region-batch-perf follow-up: for an ORDINARY buffer, buffer.Text()
+// is materialized exactly ONCE for the whole call, not once per line -- an
+// earlier version paid that O(n) copy per line (O(n * linesInRange) for a
+// large n), "accepted rather than engineered around" on the theory that
+// indent-region/indent-buffer were rare, human-triggered cleanups. That
+// stopped being true once format-buffer's Native fallback started routing
+// through this same function on every no-external-formatter invocation --
+// measured at 104s on this project's own ~3000-line main.cpp before this
+// fix. Reusing the same frozen string object across every line is also
+// what lets BuildIndentFunction's own captures cache (its doc comment has
+// the other, larger half of this fix) actually recognize a cache hit and
+// skip re-deriving the imprint captures from scratch on every line.
 //
 // huge-file-indent-windowing follow-up: for a HUGE (ITextStorage::IsHuge())
 // buffer, mode.indentColumn is instead handed a bounded window around
