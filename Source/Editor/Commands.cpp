@@ -21,6 +21,7 @@
 #include "EmbeddedDocuments.h"
 #include "Fill.h"
 #include "FillColumn.h"
+#include "FormatConfigParse.h"
 #include "FormatOnSave.h"
 #include "Indent.h"
 #include "IndentStyle.h"
@@ -1869,6 +1870,31 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           }
                           else if (context.message) {
                               *context.message = "Format command failed.";
+                          }
+                      });
+
+    // configurable-formatter follow-up: re-reads format.janet (personal then
+    // project, same order and same FormatConfigParse.h functions main.cpp's
+    // startup path uses) without restarting ned -- the point of this command
+    // is a fast iterate-on-your-format-preferences loop: edit format.janet,
+    // run this, then format-buffer again to see the effect. A parse/schema
+    // error in either file is reported through context.message rather than
+    // thrown -- exactly the situation this command exists to make cheap to
+    // fix and retry.
+    registry.Register("reload-format-config", "Re-read format.janet (personal, then project) without restarting ned.",
+                      [](CommandContext& context) {
+                          try {
+                              LoadFormatConfigFile(PersonalFormatConfigPath());
+                              LoadFormatConfigFile(ProjectFormatConfigPath(ProjectRoot()));
+                          }
+                          catch (const std::exception& e) {
+                              if (context.message) {
+                                  *context.message = std::string("format.janet error: ") + e.what();
+                              }
+                              return;
+                          }
+                          if (context.message) {
+                              *context.message = "Reloaded format.janet.";
                           }
                       });
 

@@ -1,0 +1,95 @@
+//
+// configurable-formatter follow-up. `<root>/.ned/format.janet` (project) and
+// `$XDG_CONFIG_HOME/ned/format.janet` (personal) -- ned's own plain
+// Janet-data format-preferences file, read with the same no-VM reader
+// (JanetData.h) `language.janet` already uses. Deliberately NOT trust-gated
+// (Project/Trust.h): its schema is bool/int/keyword-enum leaves only, with no
+// field naming a shell command, executable path, or anything else
+// interpretable as code -- see Docs/FormattingRules.md's tripwire note. If
+// this schema ever grows such a field, that field (or the whole file) must
+// move onto Trust.h's allowlist FIRST -- nothing here enforces that
+// automatically.
+//
+// Layering is a per-field cascade, not a per-file wholesale replace: CLI
+// flags (applied by the --format entry point, separately) win over the
+// project file, which wins over the personal file, which wins over
+// IndentDefaults.h's built-in per-language table. Resolved by applying files
+// in reverse-precedence order (personal, then project) and having each
+// application read the CURRENT EffectiveIndentStyle for a touched language,
+// override only the fields it actually sets, and write the merged result
+// back via SetIndentStyleForMode -- so a field a file is silent on always
+// falls through to whatever was already in effect, never resets to a
+// hardcoded C++ default. trim-trailing-whitespace/ensure-final-newline are
+// plain global bools with no sub-fields, so the same "only call the setter
+// when the file actually sets the key" rule gives them the identical
+// fall-through behavior for free.
+//
+// Schema (every field optional; an unrecognized key or wrong-typed value is
+// a loud path:line error, never silently ignored):
+//
+//   {:indent {:<language-key> {:tabs true/false :width N} ...}
+//    :trim-trailing-whitespace true/false
+//    :ensure-final-newline true/false}
+//
+// <language-key> is the same key IndentDefaults.cpp's built-in table and
+// ned/set-lsp-command use ("python", "cpp", ...) -- LanguageDefinition::name,
+// not the "<name>-mode" Mode name.
+//
+
+#ifndef NED_EDITOR_FORMATCONFIGPARSE_H
+#define NED_EDITOR_FORMATCONFIGPARSE_H
+
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+
+namespace ned::editor {
+
+struct FormatConfigIndentEntry {
+    std::optional<bool> useTabs;
+    std::optional<int>  width;
+};
+
+struct FormatConfig {
+    std::unordered_map<std::string, FormatConfigIndentEntry> indent; // keyed by language key
+    std::optional<bool>                                       trimTrailingWhitespaceOnSave;
+    std::optional<bool>                                       ensureFinalNewline;
+};
+
+// Parses `source` (format.janet's own content). `path` is used only to
+// prefix a thrown error ("path:line: message") -- mirrors LanguageParse.h's
+// ParseLanguageDefinition exactly. Throws std::runtime_error on any parse
+// or schema error.
+[[nodiscard]] FormatConfig ParseFormatConfig(std::string_view source, const std::string& path);
+
+// Applies every field `config` sets, per the cascade rule above -- calls
+// only existing setters (IndentStyle.h's SetIndentStyleForMode,
+// TrimOnSave.h's SetTrimTrailingWhitespaceOnSave, FinalNewline.h's
+// SetEnsureFinalNewline). A field left at nullopt is untouched.
+void ApplyFormatConfig(const FormatConfig& config);
+
+// Reads `path`, parses it, and applies it. A missing file is a silent no-op
+// -- there's simply no config there. A real parse/schema error propagates as
+// std::runtime_error for the caller to report, the same convention as
+// ned::janet::LoadInitFile.
+void LoadFormatConfigFile(const std::filesystem::path& path);
+
+// $XDG_CONFIG_HOME/ned/format.janet, falling back to $HOME/.config/ned/
+// format.janet -- the personal-tier file's own path, resolved independently
+// of ned::janet::InitFilePath() (Janet/InitFile.h) so this stays reachable
+// from Editor/ code (Commands.cpp's reload-format-config command included)
+// without inverting the Editor-depends-on-Text-only / Janet-depends-on-
+// Editor layering this codebase otherwise holds throughout. Throws
+// std::runtime_error if neither XDG_CONFIG_HOME nor HOME is set, matching
+// InitFilePath()'s own behavior.
+[[nodiscard]] std::filesystem::path PersonalFormatConfigPath();
+
+// projectRoot / ".ned" / "format.janet" -- the project-tier file's own path,
+// named here purely so every caller spells it the same way.
+[[nodiscard]] std::filesystem::path ProjectFormatConfigPath(const std::filesystem::path& projectRoot);
+
+} // namespace ned::editor
+
+#endif // NED_EDITOR_FORMATCONFIGPARSE_H

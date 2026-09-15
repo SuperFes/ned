@@ -40,6 +40,7 @@
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
+#include "Editor/FormatConfigParse.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/BrokerMain.h"
 #include "Editor/Lsp/BrokerSocketPath.h"
@@ -469,6 +470,28 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         catch (const std::exception& e) {
             statusMessage = std::string("language error: ") + e.what();
         }
+    }
+
+    // configurable-formatter follow-up: format.janet is ned's own plain
+    // Janet-data (no VM) formatter-preferences file -- see
+    // Editor/FormatConfigParse.h for the schema and the cascade rule. Loaded
+    // before LoadInitFile, same override-ordering reasoning as everything
+    // above, and deliberately NOT trust-gated (its schema has no
+    // code-execution surface, unlike a project's own language.janet).
+    // Personal first, then project, so the project's own explicit settings
+    // win where both set the same field -- everything either is silent
+    // about falls through to IndentDefaults.h's built-in per-language table.
+    try {
+        ned::editor::LoadFormatConfigFile(ned::editor::PersonalFormatConfigPath());
+    }
+    catch (const std::exception& e) {
+        statusMessage = std::string("format.janet error: ") + e.what();
+    }
+    try {
+        ned::editor::LoadFormatConfigFile(ned::editor::ProjectFormatConfigPath(projectRoot));
+    }
+    catch (const std::exception& e) {
+        statusMessage = std::string("format.janet error: ") + e.what();
     }
 
     try {
