@@ -10,12 +10,16 @@ role, for the formatter.
 
 Structural indentation, per language, via a compiled-in safe default plus your own
 overrides, and a Hygiene pass (trailing-whitespace strip, blank-line-run collapse, final
-newline). `format-buffer` (`C-c f f`) runs your configured external formatter if one's set
-(`ned/set-format-command`), over the whole buffer; `ned --format <files...>` runs the same
-chain headlessly, for a pre-commit hook or a script, with no editor UI and no `init.janet`.
+newline). `format-buffer` (`C-c f f`) and the headless `ned --format <files...>` both run
+the same chain: your configured external formatter if one's set
+(`ned/set-format-command`), falling back to ned's own native reindent + Hygiene pass
+whenever no external formatter is configured *or* it fails at runtime -- so `format-buffer`
+always does something useful, never just "nothing configured."
 
 A capture-scoped per-construct indent override (`ned/set-indent-rule`) is planned but not
-built yet -- see `Docs/FormattingCapabilities.md` and `ROADMAP.md`.
+built yet -- see `Docs/FormattingCapabilities.md` and `ROADMAP.md`. LSP-based formatting is
+not part of this chain either (`format-buffer` has no request/response machinery of its
+own) -- `save-buffer`'s own, separate LSP-format-on-save path is unaffected either way.
 
 ## The Hygiene pass
 
@@ -36,14 +40,12 @@ section except for sharing the same underlying text transforms):
   `ned/set-ensure-final-newline` (default on).
 
 Unlike the save-time defaults, this pass edits the live buffer directly, as one undo step --
-so `format-buffer` will show you the cleaned-up result immediately, without needing a save
-first. **Not yet wired into `format-buffer`/`--format` themselves** -- today it's a standalone
-function (`Editor::ApplyHygienePass`); hooking it (and the per-language indent reindent)
-into both commands' actual External/Native chain is tracked separately. Until then,
-`ned/set-trim-trailing-whitespace-on-save`/`ned/set-ensure-final-newline` keep doing exactly
-what they always did (governing an ordinary `save-buffer`'s disk-only cleanup), while
-`ned/set-max-consecutive-blank-lines` has no effect anywhere yet -- its only consumer is
-this not-yet-wired-in pass.
+so `format-buffer`'s Native fallback shows you the cleaned-up result immediately, without
+needing a save first. It runs as part of `format-buffer`/`--format`'s own Native step
+(alongside the per-language reindent), never as part of an ordinary `save-buffer` -- that
+command's own disk-only trim/final-newline default (unaffected by any of this) is where
+`ned/set-trim-trailing-whitespace-on-save`/`ned/set-ensure-final-newline` already applied
+before this pass existed, and still does.
 
 ## Per-language indent defaults
 
@@ -162,9 +164,9 @@ ned --format file1.py file2.js
 
 Headless -- no Notcurses, no event loop, no `init.janet` (format.janet only, both tiers).
 Runs your configured external formatter if one's set (`ned/set-format-command` -- but see
-the note below), falling back to a native per-language reindent when none is configured or
-the external one fails. Whole-file only: a fresh headless process has no edit history to
-scope a smaller pass against.
+the note below), falling back to a native per-language reindent plus the Hygiene pass when
+none is configured or the external one fails. Whole-file only: a fresh headless process has
+no edit history to scope a smaller pass against.
 
 **External formatter configuration is Janet-only today**, so it has no effect in headless
 mode -- `--format` never loads `init.janet`, and `ned/set-format-command` has no other way
