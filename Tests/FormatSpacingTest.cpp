@@ -18,6 +18,7 @@ using ned::editor::FormatTextEdit;
 using ned::editor::GoMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
+using ned::editor::KotlinMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
@@ -598,4 +599,40 @@ TEST_CASE("End to end: typescript-mode's formatCaptures drives a real space edit
     ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "typescript", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "function f(x: number): void {\n    if (x) {\n    }\n}\n");
+}
+
+// kotlin-mode: the eleventh language. Every condition/subject here is an
+// unwrapped bare expression with no spanning node at all (confirmed
+// live), needing the paired mechanism even for if/while's own simple
+// case, unlike every prior language where at least SOME constructs had a
+// real spanning node to capture directly.
+TEST_CASE("kotlin-mode's format.janet names control.parens over if/while/for/when, as a matched pair",
+          "[FormatSpacing]") {
+    const Mode mode = KotlinMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("fun f() {\n    if (x) {}\n}\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("fun f() {\n    while (x) {}\n}\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("fun f() {\n    for (i in xs) {}\n}\n"), "control.parens").size()
+            == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("fun f() {\n    when (x) {\n    }\n}\n"), "control.parens").size()
+            == 1);
+}
+
+TEST_CASE("kotlin-mode's format.janet captures a catch clause's own parens as a matched pair too",
+          "[FormatSpacing]") {
+    const Mode        mode   = KotlinMode();
+    const std::string source = "fun f() {\n    try {\n    } catch (e: Exception) {\n    }\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "control.parens").size() == 1);
+}
+
+TEST_CASE("End to end: kotlin-mode's formatCaptures drives a real space edit", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceBefore("control.parens", true);
+
+    const Mode mode = KotlinMode();
+    Buffer     buffer("test.kt");
+    buffer.InsertAtPoint("fun f() {\n    if(x) {\n    }\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "kotlin", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "fun f() {\n    if (x) {\n    }\n}\n");
 }

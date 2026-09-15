@@ -198,16 +198,17 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Ten languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, C#, TypeScript,
-and TSX** (`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp}/format.janet`
--- the same capture NAMES throughout, over each grammar's own different node types: cpp's
+**Eleven languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, C#,
+TypeScript, TSX, and Kotlin**
+(`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp,kotlin}/format.janet` --
+the same capture NAMES throughout, over each grammar's own different node types: cpp's
 `compound_statement`/`condition_clause`, JavaScript's
 `statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`,
 Go's `block`/`parenthesized_expression`, PHP's
 `compound_statement`/`parenthesized_expression`, Rust's
-`block`/`parenthesized_expression`, C#'s `block`/paired anonymous parens tokens; TypeScript
-and TSX have no `format.janet` files of their own at all, see below), all wired into
-`format-buffer`'s and
+`block`/`parenthesized_expression`, C#'s `block`/paired anonymous parens tokens, Kotlin's
+`function_body`+a text predicate/paired anonymous parens tokens; TypeScript and TSX have no
+`format.janet` files of their own at all, see below), all wired into `format-buffer`'s and
 `--format`'s Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and
 all shipping no built-in default -- neither does anything until you configure a rule:
 
@@ -664,6 +665,74 @@ reason `tsx/language.janet` already duplicates `:tags` verbatim rather than rely
 inheritance. Live-verified via `ned --format` combining a real `.ts` and `.js` file in one
 project `.ned/format.janet`, output re-checked with `tsc --strict --noEmit` (0 errors) for
 the TypeScript file.
+
+## Kotlin: no fields at all, and the first format capture needing a text predicate
+
+Kotlin is the eleventh language and a real outlier, not just another grammar with its own
+node types. `tree-sitter-kotlin` (fwcd's community grammar) declares **zero fields
+anywhere in the whole grammar** -- confirmed against `node-types.json`, not assumed -- so
+`kotlin/format.janet` has no `body:`/`condition:`-style capture at all; every pattern is a
+bare node-type match.
+
+That absence of fields creates a real hazard no prior language had: `function_body` is the
+SAME node type for both a real `{ ... }` block AND Kotlin's own brace-less
+single-expression function body (`fun f(x: Int) = x + 1` parses to `(function_body
+(additive_expression ...))`, no distinguishing wrapper at all) -- verified live. A bare
+`(function_body) @brace.function` capture would sometimes hand `ComputeBracePlacementEdits`
+a span with no literal brace in it whatsoever, the same severity class as PHP's
+`switch_block` hazard. `control_structure_body` (if/while/for/when's own body) has the
+IDENTICAL ambiguity: `if (x) 1 else 2` wraps each branch in a bare `control_structure_body
+(integer_literal)`, no braces.
+
+**Fixed with this codebase's `:match?` query predicate**
+(`Editor/Grammar/QueryPredicates.cpp`, ECMAScript `std::regex`, already used elsewhere --
+e.g. `rust/tests.janet`'s own `#[test]` detection) checking the captured span itself starts
+with a literal `{`:
+
+```
+(function_declaration (function_body) @brace.function (:match? @brace.function "^\\{"))
+```
+
+Verified live: zero captures for an expression body, correct exact-brace spans for both an
+empty and a real block. This is the first TEXT predicate this whole rollout has needed for
+a format capture -- every prior discrimination problem (Go's ASI, PHP's 3-way body, C#'s
+catch span) was solved with pure structure (field types, paired tokens, a node's own
+grammar-rule span); Kotlin's grammar offers no structural handle to use instead.
+
+**`if_expression` has no field to distinguish its "then" branch from its "else" branch**
+either -- unlike every prior language (cpp/Java/JavaScript/Rust/C#/TypeScript all
+deliberately exclude the else branch from `brace.control` via field-based selection),
+Kotlin's own grammar has no way to single one out. `brace.control` here captures BOTH
+branches uniformly, a real, grammar-forced deviation from that precedent rather than an
+oversight.
+
+**There is no `interface_declaration` node type in this grammar at all** -- confirmed
+against `node-types.json` -- a Kotlin `interface` parses to the exact same
+`class_declaration` node a `class` does, discriminated only by an anonymous `interface`
+keyword token with no field naming it. So there is no `brace.interface` capture in this
+file: an interface's own body is captured as `brace.class`, a real grammar limitation
+rather than an oversight. `object_declaration` and `companion_object` both wrap their own
+plain `class_body` the identical way `class_declaration` does, so `brace.class`/`def.method`
+cover them for free with the same patterns -- a companion object's own methods get
+`def.method` with no extra work, confirmed live.
+
+**One real mistake caught by a test, not by inspection:** the first attempt captured
+`when`'s own `(subject)` with the same paired `"("`/`")"` mechanism if/while/for/catch all
+correctly need -- and it matched zero times. Checking `grammar.json`'s actual rule (the
+same discipline C#'s `catch_declaration` taught) showed `when_subject` is a real named node
+whose own rule literally opens with `"("` and closes with `")"`, the same shape as C#'s
+`catch_declaration` -- so it needed a direct node capture (`(when_expression (when_subject)
+@control.parens)`), not pairing. Fixed and reconfirmed live.
+
+Verified live throughout with a comprehensive capture-shape probe before writing any
+permanent test (every prior discrimination hazard checked explicitly: expression-bodied
+functions, brace-less if branches, empty catch bodies, companion object nesting) -- caught
+nothing wrong on that pass except the `when_subject` mistake above, caught immediately by
+the first permanent test run. Live-verified via `ned --format` on a real project
+`.ned/format.janet` combining all three rule kinds; no `kotlinc` available in this
+environment, so the formatted output was instead re-parsed with `ned`'s own engine and
+confirmed to contain no `ERROR`/`MISSING` nodes (a structural, not semantic, validity
+check -- the honest substitute available here). Full suite: 4636 cases.
 
 ## The `--format` CLI
 
