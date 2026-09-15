@@ -198,13 +198,14 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Six languages exist today: cpp, JavaScript, Java, Python, Go, and PHP**
-(`Source/Languages/{cpp,javascript,java,python,go,php}/format.janet` -- the same capture
-NAMES throughout, over each grammar's own different node types: cpp's
+**Seven languages exist today: cpp, JavaScript, Java, Python, Go, PHP, and Rust**
+(`Source/Languages/{cpp,javascript,java,python,go,php,rust}/format.janet` -- the same
+capture NAMES throughout, over each grammar's own different node types: cpp's
 `compound_statement`/`condition_clause`, JavaScript's
 `statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`,
 Go's `block`/`parenthesized_expression`, PHP's
-`compound_statement`/`parenthesized_expression`), all wired into `format-buffer`'s and
+`compound_statement`/`parenthesized_expression`, Rust's
+`block`/`parenthesized_expression`), all wired into `format-buffer`'s and
 `--format`'s Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and
 all shipping no built-in default -- neither does anything until you configure a rule:
 
@@ -212,7 +213,8 @@ all shipping no built-in default -- neither does anything until you configure a 
   reading every `:break` field): `brace.function` (a function definition's own body),
   `brace.control` (an `if`/`while`/`for`/`switch`/`catch` statement's own body -- one
   shared name, matching JetBrains' own "Other statements and blocks" grouping),
-  `brace.class` (a class/struct body), and, cpp only, `brace.namespace`.
+  `brace.class` (a class/struct/enum/impl body), `brace.interface` (Go/PHP/Rust's own
+  interface/trait body), and `brace.namespace` (cpp's own namespace, Rust's own module).
   ```janet
   (ned/set-format-brace-placement "brace.function" "next-line")
   (ned/set-format-brace-placement "brace.control" "same-line")
@@ -484,6 +486,49 @@ redundant-parens edge case (if/while/switch/elseif's own condition is a REQUIRED
 shape, not Python/Go's optional one), and a for-loop's own clause and a catch clause's own
 parameter both need the paired mechanism, the same reasons cpp/JavaScript/Java's own files
 already document.
+
+## Rust: no new structural hazard, but a real judgment call on scope
+
+Rust is the seventh language, and the first with neither Go's ASI trap nor PHP's per-
+construct body ambiguity -- every brace-carrying construct's own `body`/`consequence`
+field is a plain, required `block` (or, for `match`, `match_block`), with no second
+syntax to discriminate and no compiler behavior a Break rule could silently break.
+`rust/format.janet` follows the established template: `brace.function` (`function_item`),
+`brace.control` (`if`/`while`/`loop`/`for`/`match`'s own body), `brace.class` (folding
+`struct`/`enum`/`impl` together -- a struct's data, an enum's variants, and an impl
+block's methods all read as one "type body" grouping, the same "close enough to fold
+together" call cpp's own `brace.class` makes for structs and classes, and PHP's for
+classes and traits), `brace.interface` (`trait`'s own body, the same precedent Go/PHP's
+own `brace.interface` set), and `brace.namespace` (`mod`'s own body -- the same name and
+precedent cpp's `namespace_definition` set; a bodyless `mod foo;` file-per-module
+declaration has no `body` field at all, verified live, so it never matches). A unit
+struct (`struct Unit;`) and a tuple struct (`struct Tup(i32, i32);`) likewise have no
+`body` field carrying `field_declaration_list` -- confirmed against node-types.json rather
+than assumed -- so neither is ever captured; there is no brace to place.
+
+`control.parens` is the same narrow lever Go/Python's own files are: idiomatic Rust omits
+condition parens entirely (`if x {`, `match x {`), but the grammar still allows writing
+them (`parenthesized_expression` is one of `_expression`'s own subtypes), and the capture
+only fires when they're actually present. The one genuine judgment call: `match`'s own
+`value:` field gets `control.parens` (matching JavaScript/Go's own treatment of `switch`'s
+condition-like value), but a `for`-loop's own iterable does NOT, even though wrapping it in
+parens (`for x in (0..3) {`) parses fine -- verified live, so this is a scope choice, not a
+grammar limitation the way Go's whole-clause for-loop omission is. The distinction:
+`match`/`switch`/`if`/`while` all test a value as a condition/scrutinee; a `for`-loop's
+value merely names a sequence to walk, a different semantic role no prior language's own
+grammar happened to offer a redundant-parens lever on at all. A `match_arm`'s own `value:`
+(sometimes itself a `block`, `_ => { ... }`) is left uncaptured for the same "no
+distinguishing shape to anchor a pattern against" reason -- match's OWN outer braces are
+still captured, only the per-arm body is the scope cut.
+
+Rust's `else` branch (`if_expression`'s own `alternative` field) needed no special-casing
+at all, unlike PHP's colon-alternate hazard -- an else-if chain resolves itself
+clause-by-clause through the same `if_expression`/`consequence` pattern recursing into each
+nested `if_expression`, and a trailing bare `else { ... }` is simply never captured, the
+same scope cut cpp/JavaScript/Java's own `else_clause` already carries. `block` wraps its
+statements directly (no Go-style intermediate `statement_list` wrapper -- confirmed against
+node-types.json before writing the `.simple` markers), so every `.simple` marker anchors
+the same way cpp/JavaScript/Java's own do, not Go's one-level-deeper anchor.
 
 ## The `--format` CLI
 
