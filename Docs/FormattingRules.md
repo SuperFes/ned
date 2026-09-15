@@ -198,14 +198,15 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Seven languages exist today: cpp, JavaScript, Java, Python, Go, PHP, and Rust**
-(`Source/Languages/{cpp,javascript,java,python,go,php,rust}/format.janet` -- the same
-capture NAMES throughout, over each grammar's own different node types: cpp's
+**Eight languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, and C#**
+(`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp}/format.janet` -- the
+same capture NAMES throughout, over each grammar's own different node types: cpp's
 `compound_statement`/`condition_clause`, JavaScript's
 `statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`,
 Go's `block`/`parenthesized_expression`, PHP's
 `compound_statement`/`parenthesized_expression`, Rust's
-`block`/`parenthesized_expression`), all wired into `format-buffer`'s and
+`block`/`parenthesized_expression`, C#'s `block`/paired anonymous parens tokens), all
+wired into `format-buffer`'s and
 `--format`'s Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and
 all shipping no built-in default -- neither does anything until you configure a rule:
 
@@ -566,6 +567,45 @@ same scope cut cpp/JavaScript/Java's own `else_clause` already carries. `block` 
 statements directly (no Go-style intermediate `statement_list` wrapper -- confirmed against
 node-types.json before writing the `.simple` markers), so every `.simple` marker anchors
 the same way cpp/JavaScript/Java's own do, not Go's one-level-deeper anchor.
+
+## C#: mandatory parens that still need the paired mechanism
+
+C# is the eighth language, and the first with a genuine surprise about what "mandatory
+parens" implies. Every prior language with required condition parens (cpp/Java/JavaScript)
+had them because the condition FIELD itself was typed as a node spanning the whole
+`"(...)"` (`condition_clause`/`parenthesized_expression`) -- capturing that field directly
+was enough. C#'s `if_statement`/`while_statement`/`switch_statement` condition/value field
+is instead a bare `expression`, with the parens as unwrapped anonymous tokens beside it
+(confirmed against `grammar.json`'s own rule, not assumed from cpp's shape) -- so even
+though writing `if x` with no parens at all is a compile error, `control.parens` still
+needs the SAME paired `"("`/`")"` mechanism a for-loop's own clause uses in every language,
+not a bare field capture. A genuinely redundant double-paren lever
+(`condition: (parenthesized_expression)`, the python/go-style narrow trick) was considered
+and declined: it would overlap the outer paired capture's own span rather than sit beside
+it the way python/go's version safely does (their languages have no outer paired capture to
+begin with), risking the exact "two captures editing the same gap" class of bug `:within`
+on an empty delimiter pair already taught a lesson about once.
+
+**One real mistake caught before shipping, not after:** a catch clause's own `"(Type
+name)"` is a real named node (`catch_declaration`), and the first guess -- since its
+`fields` only name `type`/`name`, nothing about parens -- was that it needed the paired
+mechanism too, the same as the condition case above. Wrong: a node's `fields` list names
+only its FIELDS, not its whole byte span, and `grammar.json`'s own rule for
+`catch_declaration` shows it literally starts with the `"("` token and ends with `")"` --
+so the node's own span already covers the whole clause, the same as cpp's named
+`parameter_list`, needing no pairing at all. Caught by checking `grammar.json` directly
+(not just `node-types.json`'s field summary) before writing the query, and reconfirmed with
+a live byte-range check once written.
+
+`class`/`struct`/`record` bodies all share the same `declaration_list` node type already
+load-bearing for `brace.class`, `brace.interface` (`interface_declaration`'s own body), and
+`brace.namespace` (`namespace_declaration`'s own body) -- one `def.method` pattern covers a
+method nested in any of them, the same "one node type, several owners" shape PHP's own
+class/trait/interface bodies already established. A positional record
+(`record R(int X, int Y);`) has no `body` field at all when it ends in `;` -- confirmed
+live -- so it's captured as `def.toplevel` alone, same as every other bodyless top-level
+shape in this whole rollout. Verified live via a real `dotnet build`: the formatted output
+compiled clean (one pre-existing unused-variable warning, no errors).
 
 ## The `--format` CLI
 

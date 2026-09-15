@@ -12,6 +12,7 @@
 using ned::editor::ApplyFormatTextEdits;
 using ned::editor::BracePlacement;
 using ned::editor::CppMode;
+using ned::editor::CSharpMode;
 using ned::editor::ComputeBracePlacementEdits;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
@@ -952,5 +953,79 @@ TEST_CASE("End to end: rust-mode's formatCaptures drives real edits across all t
 
     REQUIRE(buffer.Text() == "fn f(x: i32) {\n"
                              "    if x > 0 { return; }\n"
+                             "}\n");
+}
+
+// csharp-mode: the eighth language. No new structural hazard, but a real
+// wrinkle: unlike cpp/java/javascript (whose condition field IS a node
+// spanning the whole "(...)"), c#'s own if/while/switch condition/value is
+// a bare expression field with the parens as unwrapped anonymous tokens --
+// confirmed against grammar.json, not assumed -- so those need the SAME
+// paired mechanism a for-loop's own clause does everywhere else, even
+// though c#'s parens are mandatory, not an optional python/go-style lever.
+TEST_CASE("csharp-mode's format.janet names the full capture set over a real file", "[FormatBracePlacement]") {
+    const Mode mode = CSharpMode();
+    REQUIRE(mode.formatCaptures);
+
+    const std::string source = "namespace N {\n"
+                               "    interface I {\n"
+                               "        void M();\n"
+                               "    }\n"
+                               "    class C {\n"
+                               "        void F() {\n"
+                               "            if (x) {\n"
+                               "                return;\n"
+                               "            }\n"
+                               "        }\n"
+                               "    }\n"
+                               "}\n";
+    const auto captures = mode.formatCaptures(source);
+
+    REQUIRE(CapturesNamed(captures, "brace.function").size() == 1); // F()
+    REQUIRE(CapturesNamed(captures, "brace.control").size() == 1);  // the if's body
+    REQUIRE(CapturesNamed(captures, "brace.class").size() == 1);
+    REQUIRE(CapturesNamed(captures, "brace.interface").size() == 1);
+    REQUIRE(CapturesNamed(captures, "brace.namespace").size() == 1);
+}
+
+TEST_CASE("csharp-mode's format.janet does not capture a bodyless positional record",
+          "[FormatBracePlacement]") {
+    const Mode mode = CSharpMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("record R(int X, int Y);\n"), "brace.class").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("record class R { void M() {} }\n"), "brace.class").size() == 1);
+}
+
+TEST_CASE("csharp-mode's format.janet marks a single-statement body isSimple too", "[FormatBracePlacement]") {
+    const Mode        mode   = CSharpMode();
+    const std::string simple = "class C {\n    void M() {\n        return;\n    }\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(simple), "brace.function")[0].isSimple);
+
+    const std::string multi = "class C {\n    void M() {\n        G();\n        return;\n    }\n}\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(multi), "brace.function")[0].isSimple);
+}
+
+TEST_CASE("End to end: csharp-mode's formatCaptures drives real edits across all three features",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+    SetBraceCollapseSimple("brace.control", true);
+
+    const Mode mode = CSharpMode();
+    Buffer     buffer("test.cs");
+    buffer.InsertAtPoint("class C {\n"
+                         "    void M(int x) {\n"
+                         "        if (x > 0)\n"
+                         "        {\n"
+                         "            return;\n"
+                         "        }\n"
+                         "    }\n"
+                         "}\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "csharp", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "class C {\n"
+                             "    void M(int x) {\n"
+                             "        if (x > 0) { return; }\n"
+                             "    }\n"
                              "}\n");
 }
