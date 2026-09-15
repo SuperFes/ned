@@ -22,6 +22,7 @@ using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::RustMode;
+using ned::editor::TypeScriptMode;
 using ned::editor::SetSpaceAfter;
 using ned::editor::SetSpaceBefore;
 using ned::editor::SetSpaceWithin;
@@ -573,4 +574,28 @@ TEST_CASE("End to end: csharp-mode's formatCaptures drives a real space edit", "
     ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "csharp", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "class C {\n    void M() {\n        if (x) {\n        }\n    }\n}\n");
+}
+
+// typescript-mode: control.parens is fully inherited from
+// javascript/format.janet with zero typescript-specific additions --
+// confirmed live it matches a real typescript parse unmodified.
+TEST_CASE("typescript-mode's control.parens is inherited from javascript/format.janet unmodified",
+          "[FormatSpacing]") {
+    const Mode mode = TypeScriptMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("function f(x: number) {\n    if (x) {}\n}\n"), "control.parens")
+                .size()
+            == 1);
+}
+
+TEST_CASE("End to end: typescript-mode's formatCaptures drives a real space edit", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceBefore("control.parens", true);
+
+    const Mode mode = TypeScriptMode();
+    Buffer     buffer("test.ts");
+    buffer.InsertAtPoint("function f(x: number): void {\n    if(x) {\n    }\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "typescript", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "function f(x: number): void {\n    if (x) {\n    }\n}\n");
 }

@@ -71,9 +71,19 @@
 # node-types.json/a live parse before writing this, not assumed from cpp's
 # shape. One capture covers ordinary/static/generator/async methods alike,
 # since tree-sitter-javascript types all of them as plain
-# "method_definition" regardless of modifier.
-(class_body member: (method_definition) @def.method)
+# "method_definition" regardless of modifier. The field name is
+# deliberately NOT named in the pattern (typescript-rollout follow-up):
+# tree-sitter-typescript's own class_body has no "member" field at all
+# despite sharing the "class_body"/"method_definition" node type names
+# with javascript verbatim (confirmed live -- this file is embedded
+# directly into typescript/language.janet's own :format list, and a
+# field-tagged pattern failed to even COMPILE against that grammar).
+# Dropping the field name changes nothing for javascript itself: every
+# method_definition inside a class_body IS the "member" field there, so
+# an unqualified "(method_definition)" match is already exactly as
+# narrow, just no longer grammar-specific.
+(class_body (method_definition) @def.method)
 
 (program . [(function_declaration) (generator_function_declaration) (class_declaration) (export_statement)]
   @def.toplevel.first)
-(class_body . member: (method_definition) @def.method.first)
+(class_body . (method_definition) @def.method.first)
