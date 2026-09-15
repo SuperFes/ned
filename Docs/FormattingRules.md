@@ -197,13 +197,13 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Three languages exist today: cpp, JavaScript, and Java** (`Source/Languages/{cpp,
-javascript,java}/format.janet` -- the same capture NAMES throughout, over each grammar's
-own different node types: cpp's `compound_statement`/`condition_clause`, JavaScript's
-`statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`),
-all wired into `format-buffer`'s and `--format`'s Native chain (reindent, then Break, then
-Space, then Hygiene) and all shipping no built-in default -- neither does anything until
-you configure a rule:
+**Four languages exist today: cpp, JavaScript, Java, and Python** (`Source/Languages/{cpp,
+javascript,java,python}/format.janet` -- the same capture NAMES throughout, over each
+grammar's own different node types: cpp's `compound_statement`/`condition_clause`,
+JavaScript's `statement_block`/`parenthesized_expression`, Java's
+`block`/`parenthesized_expression`), all wired into `format-buffer`'s and `--format`'s
+Native chain (reindent, then Break, then Space, then Hygiene) and all shipping no built-in
+default -- neither does anything until you configure a rule:
 
 - **Break-kind captures** (`Editor/FormatBracePlacement.h`'s `ComputeBracePlacementEdits`,
   reading every `:break` field): `brace.function` (a function definition's own body),
@@ -287,11 +287,33 @@ so a capture only ever takes one path):
 No other bundled language has a `format.janet` yet, and no capture yet reads `:within` on
 an empty pair. This is the proof that the full chain (query -> `Mode::formatCaptures` ->
 `FormatRules` resolution -> a computed edit -> applied to a live buffer) works end to end
-for both rule kinds AND across three real languages sharing one rule set with per-language
-exceptions, ahead of rolling the remaining rule kinds/languages out (see
+for both rule kinds AND across three brace-carrying languages sharing one rule set with
+per-language exceptions, ahead of rolling the remaining rule kinds/languages out (see
 `Docs/FormattingCapabilities.md`'s Tier B1). Java's own for-loop allows several
 comma-separated init/update expressions, unlike cpp/JavaScript's single ones -- verified
 live that the paired `"("`/`")"` capture still finds the outer pair regardless.
+
+**Python has no brace-delimited bodies at all.** Verified against tree-sitter-python's own
+`node-types.json`, not assumed: `function_definition`, `if_statement`, `while_statement`,
+`for_statement`, `class_definition`, `try_statement`'s `except`/`finally` clauses,
+`with_statement`, and `match_statement`'s `case_clause` all use a bare `block` field with
+no wrapping delimiter tokens whatsoever -- indentation alone marks a body's extent.
+`ComputeBracePlacementEdits` hardcodes `text[capture.startByte]`/`text[capture.endByte-1]`
+as single literal delimiter characters to reposition or splice, so `brace.function`/
+`brace.control`/`brace.class`, the paired-capture mechanism, and `:collapse-empty`/
+`:collapse-simple` are all structurally inapplicable to Python, not merely unconfigured --
+`Source/Languages/python/format.janet` names none of them, and a `:break` rule configured
+against any of those names is a verified no-op on a Python buffer (nothing to act on, not
+a silent failure). The one construct that still fits the template: `if`/`while`'s own
+condition is a plain `expression` field, not a required-parenthesized one, but the grammar
+still allows a user to write `if (x):` anyway, which parses as a real
+`parenthesized_expression` node -- verified live this only matches when parens are
+actually present in the source. `control.parens`'s `:space` rules are therefore a real,
+if narrow, lever for Python (keeping spacing inside a project's redundant condition parens
+consistent), the only rule kind/capture that carries over from the brace-based languages at
+all. This is the moment the brace-based template runs out: Python's own real formatting
+need (PEP8's blank-lines-before-`def`/`class`) belongs to the unbuilt Blank rule kind, not
+Space/Break.
 
 The same rules are settable live from `init.janet`, per-field, mirroring
 `ned/set-capture-*`'s own shape:
