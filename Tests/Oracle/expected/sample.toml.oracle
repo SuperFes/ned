@@ -42,8 +42,8 @@ indent 23..40  [0]  "version = \"0.5.0\""
 indent 41..41  [0]
 indent 42..56  [0]  "[dependencies]"
 indent 57..66  [0]  "items = ["
-indent 67..75  [4]  "  \"one\","
-indent 76..84  [4]  "  \"two\","
+indent 67..75  [2]  "  \"one\","
+indent 76..84  [2]  "  \"two\","
 indent 85..86  [0]  "]"
 indent 87..87  [0]
 indent 88..105  [0]  "[profile.release]"

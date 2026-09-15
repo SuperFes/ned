@@ -104,6 +104,7 @@ add_library(ned_lib STATIC
         Editor/Clipboard.cpp
         Editor/TabWidth.cpp
         Editor/IndentStyle.cpp
+        Editor/IndentDefaults.cpp
         Editor/Indent.cpp
         Editor/BlankLineCleanup.cpp
         Editor/FillColumn.cpp

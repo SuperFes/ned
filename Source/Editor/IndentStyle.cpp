@@ -2,7 +2,11 @@
 
 #include <algorithm>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
+
+#include "ImprintBracket.h"
+#include "IndentDefaults.h"
 
 namespace ned::editor {
 
@@ -49,6 +53,15 @@ IndentStyle EffectiveIndentStyle(const std::string& modeName) {
     const std::lock_guard<std::mutex> lock(StyleMutex());
     if (const auto it = PerModeStorage().find(modeName); it != PerModeStorage().end()) {
         return it->second;
+    }
+    // configurable-formatter follow-up: the compiled-in per-language safe
+    // default (IndentDefaults.h) sits between "no per-mode override" and
+    // the flat process-wide default -- languageKey is the inverse of
+    // ModeNameFor (LanguageDefinition.h), so this is exact for every
+    // bundled or registered language and simply misses for anything else
+    // (FundamentalMode, a made-up test mode name), falling through below.
+    if (const std::optional<IndentStyle> builtin = BuiltinIndentStyleForLanguage(imprint::LanguageKeyForMode(modeName))) {
+        return *builtin;
     }
     return DefaultStorage();
 }

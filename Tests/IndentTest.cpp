@@ -392,12 +392,12 @@ TEST_CASE("JsonMode indentColumn indents a nested array element and aligns its c
     const auto [elementStart, elementEnd] = LineRange(buffer, 2); // "1"
     const auto elementColumn              = mode.indentColumn(buffer.Text(), elementStart, elementEnd);
     REQUIRE(elementColumn.has_value());
-    REQUIRE(*elementColumn == 8); // two levels deep (object + array), width 4
+    REQUIRE(*elementColumn == 4); // two levels deep (object + array), width 2 (json's own built-in default -- IndentDefaults.h)
 
     const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "]"
     const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd);
     REQUIRE(closeColumn.has_value());
-    REQUIRE(*closeColumn == 4); // matches "\"a\": ["'s own level
+    REQUIRE(*closeColumn == 2); // matches "\"a\": ["'s own level
 }
 
 TEST_CASE("PythonMode indentColumn indents a function body and a nested if-block", "[Indent]") {
@@ -568,10 +568,10 @@ TEST_CASE("JavaScriptMode indentColumn indents a nested if-block and aligns its 
     buffer.InsertAtPoint("function f() {\nif (x) {\nreturn 1;\n}\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "return 1;"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 8);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4); // two levels deep, javascript's own built-in default is width 2 (IndentDefaults.h)
 
     const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "}" closing the if
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 2);
 }
 
 TEST_CASE("JavaScriptMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
@@ -592,7 +592,7 @@ TEST_CASE("TypeScriptMode indentColumn indents an interface body", "[Indent]") {
     buffer.InsertAtPoint("interface I {\nx: number;\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "x: number;"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // typescript's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "}"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
@@ -604,7 +604,7 @@ TEST_CASE("TsxMode indentColumn shares TypeScript's own statement_block indentat
     buffer.InsertAtPoint("function f() {\nreturn 1;\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1);
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // tsx's own built-in default is width 2 (IndentDefaults.h)
 }
 
 TEST_CASE("PhpMode indentColumn indents an if-block and aligns its closing brace", "[Indent]") {
@@ -624,7 +624,7 @@ TEST_CASE("CssMode indentColumn indents a rule body and aligns its closing brace
     buffer.InsertAtPoint(".a {\ncolor: red;\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "color: red;"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // css's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "}"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
@@ -635,7 +635,7 @@ TEST_CASE("HtmlMode indentColumn indents a nested element and aligns its closing
     buffer.InsertAtPoint("<div>\n<p>hi</p>\n</div>\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "<p>hi</p>"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // html's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "</div>"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
@@ -646,7 +646,7 @@ TEST_CASE("XmlMode indentColumn indents a nested element and aligns its closing 
     buffer.InsertAtPoint("<a>\n<b>x</b>\n</a>\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "<b>x</b>"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // xml's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "</a>"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
@@ -657,7 +657,7 @@ TEST_CASE("BashMode indentColumn indents an if-body and aligns fi with its own i
     buffer.InsertAtPoint("if x; then\necho y\nfi\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "echo y"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // bash's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "fi"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
@@ -668,7 +668,7 @@ TEST_CASE("BashMode indentColumn indents a for-loop body via do_group and aligns
     buffer.InsertAtPoint("for i in a b; do\necho $i\ndone\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "echo $i"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // bash's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "done"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
@@ -679,7 +679,7 @@ TEST_CASE("FishMode indentColumn indents an if-body and aligns end with its own 
     buffer.InsertAtPoint("if test 1\necho a\nend\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "echo a"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // fish's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "end"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
@@ -751,7 +751,7 @@ TEST_CASE("JanetMode indentColumn falls back to plain bracket-depth when an ordi
     buffer.InsertAtPoint("(\n  foo a\n  b)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "  b)"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // janet's own built-in default is width 2 (IndentDefaults.h)
 }
 
 TEST_CASE("ClojureMode indentColumn indents a let form's body a fixed 2 columns past its own column", "[Indent]") {
@@ -780,7 +780,7 @@ TEST_CASE("ClojureMode indentColumn falls back to plain bracket-depth when an or
     buffer.InsertAtPoint("(\n  foo a\n  b)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "  b)"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // clojure's own built-in default is width 2 (IndentDefaults.h)
 }
 
 TEST_CASE("YamlMode indentColumn indents one level per genuinely nested mapping, not the document root",
@@ -790,9 +790,9 @@ TEST_CASE("YamlMode indentColumn indents one level per genuinely nested mapping,
     buffer.InsertAtPoint("a:\n  b:\n    c: 1\n");
 
     const auto [level1Start, level1End] = LineRange(buffer, 1); // "  b:"
-    REQUIRE(mode.indentColumn(buffer.Text(), level1Start, level1End) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), level1Start, level1End) == 2); // yaml's own built-in default is width 2 (IndentDefaults.h)
     const auto [level2Start, level2End] = LineRange(buffer, 2); // "    c: 1"
-    REQUIRE(mode.indentColumn(buffer.Text(), level2Start, level2End) == 8);
+    REQUIRE(mode.indentColumn(buffer.Text(), level2Start, level2End) == 4);
 }
 
 TEST_CASE("YamlMode indentColumn indents a nested sequence item", "[Indent]") {
@@ -801,7 +801,7 @@ TEST_CASE("YamlMode indentColumn indents a nested sequence item", "[Indent]") {
     buffer.InsertAtPoint("a:\n  - x\n  - y\n");
 
     const auto [itemStart, itemEnd] = LineRange(buffer, 1); // "  - x"
-    REQUIRE(mode.indentColumn(buffer.Text(), itemStart, itemEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), itemStart, itemEnd) == 2); // yaml's own built-in default is width 2 (IndentDefaults.h)
 }
 
 TEST_CASE("TomlMode indentColumn indents inside a multi-line array and aligns its closing bracket", "[Indent]") {
@@ -810,7 +810,7 @@ TEST_CASE("TomlMode indentColumn indents inside a multi-line array and aligns it
     buffer.InsertAtPoint("a = [\n1,\n2\n]\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "1,"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2); // toml's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "]"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
@@ -916,7 +916,7 @@ TEST_CASE("JavaScriptMode indentColumn indents a callback body from the statemen
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1);
     const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
     REQUIRE(bodyColumn.has_value());
-    REQUIRE(*bodyColumn == 4);
+    REQUIRE(*bodyColumn == 2); // one level from the statement, javascript's own built-in default is width 2 (IndentDefaults.h)
 }
 
 TEST_CASE("GoMode indentColumn indents a func literal's body from the statement, not the call's paren column",
@@ -984,7 +984,13 @@ TEST_CASE("JanetMode indentColumn still lets a nested bracket inherit the enclos
     const auto [contStart, contEnd] = LineRange(buffer, 1);
     const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
     REQUIRE(contColumn.has_value());
-    REQUIRE(*contColumn == 5); // under "bar", the enclosing par_tup_lit's own alignment column
+    // The enclosing call's own alignment column (right after "(", since "foo"
+    // is the only thing following the opener on its own line) plus one level
+    // -- the vector's own nesting -- counted strictly inside it: 1 + 1 *
+    // janet's own built-in width (2, IndentDefaults.h). Deliberately not "the
+    // byte column under 'bar'" (a coincidental reading that only held while
+    // the old flat default was 4, since 1 + 1*4 == 5 == that column too).
+    REQUIRE(*contColumn == 3);
 }
 
 TEST_CASE("CppMode indentColumn does not indent a top-level namespace's own body", "[Indent]") {
