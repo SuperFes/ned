@@ -748,36 +748,74 @@ TEST_CASE("bash-mode's format.janet names control.parens over both single and do
             1);
 }
 
-TEST_CASE("End to end: bash-mode's :within adds a space inside single test brackets, and "
-          "normalizes EXCESS space inside double test brackets down to exactly one",
+TEST_CASE("End to end: bash-mode's :within adds a space inside single AND double test "
+          "brackets, or normalizes excess space down to exactly one",
           "[FormatSpacing]") {
     const FormatRulesGuard guard;
     SetSpaceWithin("bash/control.parens", true);
 
     const Mode mode = BashMode();
 
+    // "[-f x]" (missing space on either side) is NOT actually valid bash
+    // either -- confirmed live with a real bash RUN (not just `bash -n`):
+    // "[-f: command not found". :within=true's own "insert" direction is
+    // always safe regardless (it can only ever ADD separation, and a
+    // real project's own source presumably already has SOME separation,
+    // however much), so this remains a meaningful, reachable test even
+    // though the exact zero-space starting shape below wouldn't itself
+    // have come from valid bash.
     Buffer single("t.sh");
     single.InsertAtPoint("if [-f x]; then\n    y\nfi\n");
     ApplyFormatTextEdits(single, ComputeSpaceEdits(single.Text(), "bash", mode.formatCaptures(single.Text())));
     REQUIRE(single.Text() == "if [ -f x ]; then\n    y\nfi\n");
 
-    // "[[-f x]]" (missing space on either side of the double bracket) is
-    // NOT valid bash -- confirmed live with a real `bash`/`bash -n` run
-    // ("[[-f: command not found" / "unexpected token `;'"), unlike "[-f",
-    // which IS valid (single "[" is an ordinary command name, not a
-    // reserved word needing lexical separation). So :within=true's own
-    // "insert a missing space" direction is unreachable from valid bash
-    // for the double-bracket form -- the reachable, meaningful case is
-    // normalizing EXCESS space down to exactly one, tested here instead.
     // A capture using capture.startByte+1/endByte-1 (the pre-
     // generalization code) would land INSIDE "[[" itself (between the two
-    // '[' characters), not after it -- this is the real regression test
-    // for that, over input this mechanism can actually be asked to touch.
+    // '[' characters), not after it.
     Buffer doubleBracket("t2.sh");
     doubleBracket.InsertAtPoint("if [[  -f x  ]]; then\n    y\nfi\n");
     ApplyFormatTextEdits(doubleBracket,
                          ComputeSpaceEdits(doubleBracket.Text(), "bash", mode.formatCaptures(doubleBracket.Text())));
     REQUIRE(doubleBracket.Text() == "if [[ -f x ]]; then\n    y\nfi\n");
+
+    SetSpaceWithin("bash/control.parens", std::nullopt);
+}
+
+// End to end: the real hazard :within=false has for bash's test brackets
+// (found live, documented in format.janet, and reported to the user) --
+// now actually GUARDED, not merely documented. "["/"[[" are both ordinary
+// bash WORDS needing whitespace separation from their own content --
+// confirmed live with a real bash RUN, not just `bash -n`: "[ -n $x]"
+// parses fine but fails at runtime ("[: missing ']'"), and "[[-f x]]"
+// fails outright. A C-style for-loop's own "(("/"))" has no such
+// requirement (arithmetic context, confirmed live removing its own
+// interior space still runs correctly) and is UNAFFECTED by this guard.
+TEST_CASE("End to end: bash-mode's :within=false is declined for single and double test "
+          "brackets (removing the space would corrupt real bash), but still applies "
+          "normally to a C-style for-loop's own arithmetic clause",
+          "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceWithin("bash/control.parens", false);
+
+    const Mode mode = BashMode();
+
+    Buffer            single("t.sh");
+    const std::string singleSource = "if [ -f x ]; then\n    y\nfi\n";
+    single.InsertAtPoint(singleSource);
+    ApplyFormatTextEdits(single, ComputeSpaceEdits(single.Text(), "bash", mode.formatCaptures(single.Text())));
+    REQUIRE(single.Text() == singleSource); // NOT compacted to "[-f x]" -- that fails at runtime
+
+    Buffer            doubleBracket("t2.sh");
+    const std::string doubleSource = "if [[ -f x ]]; then\n    y\nfi\n";
+    doubleBracket.InsertAtPoint(doubleSource);
+    ApplyFormatTextEdits(doubleBracket,
+                         ComputeSpaceEdits(doubleBracket.Text(), "bash", mode.formatCaptures(doubleBracket.Text())));
+    REQUIRE(doubleBracket.Text() == doubleSource); // NOT compacted to "[[-f x]]" -- that fails to parse
+
+    Buffer arith("t3.sh");
+    arith.InsertAtPoint("for (( i=0; i<10; i++ )); do\n    y\ndone\n");
+    ApplyFormatTextEdits(arith, ComputeSpaceEdits(arith.Text(), "bash", mode.formatCaptures(arith.Text())));
+    REQUIRE(arith.Text() == "for ((i=0; i<10; i++)); do\n    y\ndone\n"); // safe -- arithmetic context, no hazard
 
     SetSpaceWithin("bash/control.parens", std::nullopt);
 }
