@@ -3,7 +3,7 @@
 Every command reachable from `M-x`, from a keybinding, or from Janet via
 `ned/run-command`.
 
-302 commands.
+303 commands.
 
 ## `acp-rewind`
 
@@ -872,6 +872,10 @@ Redo the last undone change.
 ## `refresh-toolchain-include-paths`
 
 Clear the cached compiler-derived default include paths, so the next lookup re-probes the real toolchain.
+
+## `reload-format-config`
+
+Re-read format.janet (personal, then project) without restarting ned.
 
 ## `remove-last-cursor`
 
