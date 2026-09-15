@@ -190,6 +190,13 @@ before, after, or just inside the captured token/delimiter pair. `:break` entrie
 `:placement` (`:same-line`/`:next-line`/`:next-line-indented` -- K&R/Allman/
 GNU-Whitesmiths, meaningful only on a brace-carrying capture), `:collapse-empty`/
 `:collapse-simple` (true/false -- keep an empty or single-statement block on one line).
+`:next-line-indented` also repositions the CLOSING delimiter to match the opening one's
+new (deeper) column -- the one placement whose closer doesn't align with the header's own
+indent the way `:same-line`/`:next-line`'s already does, found live as a real mismatched-
+brace bug during a 2026-09-15 audit and fixed before it was ever the default for anything.
+Skipped (left alone) when the closer shares its line with real content -- a collapsed
+one-line body is `:collapse-empty`/`:collapse-simple`'s territory, not this one, and
+neither is consumed by any pass yet.
 
 **Two pilots exist today, cpp and JavaScript** (`Source/Languages/cpp/format.janet`,
 `Source/Languages/javascript/format.janet` -- the same two capture NAMES, over each

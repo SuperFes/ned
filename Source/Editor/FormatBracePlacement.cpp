@@ -80,6 +80,38 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
         if (currentGap != desiredGap) {
             edits.push_back(FormatTextEdit{headerEnd, capture.startByte, std::move(desiredGap)});
         }
+
+        // NextLineIndented is the one placement whose closing delimiter does
+        // NOT align with the header's own indent (SameLine/NextLine's
+        // closer already matches it, since that's the ordinary indenter's
+        // own convention for where a block's closer belongs) -- GNU/
+        // Whitesmiths instead aligns the closer with the OPENING
+        // delimiter's own (deeper) column. Left unhandled, the pair ends up
+        // structurally mismatched: the open brace one level deeper than the
+        // header, the close brace still at the header's own indent (found
+        // via a live probe, not assumed -- see [[project-format-rules-per-language-engine]]).
+        // Only applied when the closer is the FIRST thing on its own line --
+        // a collapsed one-line body ("int f() {}"/"{ return 1; }") is left
+        // alone, matching the same "nothing inside the body is ever
+        // touched" contract as everywhere else in this function; that's
+        // collapse-empty/collapse-simple's territory, not this one.
+        if (*rule.placement == BracePlacement::NextLineIndented && capture.endByte > capture.startByte + 1) {
+            const std::size_t closerPos       = capture.endByte - 1;
+            const std::size_t closerLineStart = [&] {
+                const std::size_t found = text.rfind('\n', closerPos == 0 ? 0 : closerPos - 1);
+                return found == std::string_view::npos ? std::size_t{0} : found + 1;
+            }();
+            const std::string_view beforeCloser = text.substr(closerLineStart, closerPos - closerLineStart);
+            const bool              closerIsAloneOnItsLine =
+                std::all_of(beforeCloser.begin(), beforeCloser.end(), [](char c) { return c == ' ' || c == '\t'; });
+            if (closerIsAloneOnItsLine) {
+                std::string desiredCloserIndent(headerIndent);
+                desiredCloserIndent += IndentString(style.width, style);
+                if (beforeCloser != desiredCloserIndent) {
+                    edits.push_back(FormatTextEdit{closerLineStart, closerPos, std::move(desiredCloserIndent)});
+                }
+            }
+        }
     }
 
     std::sort(edits.begin(), edits.end(), [](const FormatTextEdit& a, const FormatTextEdit& b) { return a.start < b.start; });

@@ -231,6 +231,30 @@ TEST_CASE(":within adjusts both the just-inside-open and just-inside-close gaps"
     REQUIRE(edits[1].text == " "); // just inside ')'
 }
 
+// Regression: found live 2026-09-15 alongside the NextLineIndented bug
+// below, when the user asked whether anything else had been "declared"
+// rather than verified. A genuinely empty pair has the "just inside open"
+// and "just inside close" gaps sitting at the exact same byte position --
+// emitting both independently double-inserted ("(  )" instead of "( )").
+TEST_CASE(":within on a genuinely empty pair inserts exactly one space, not two", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceWithin("control.parens", true);
+
+    const std::string source = "if() {}";
+    const std::vector<FormatCapture> captures = {{"control.parens", source.find('('), source.find(')') + 1}};
+    const std::vector<FormatTextEdit> edits = ComputeSpaceEdits(source, "cpp", captures);
+    REQUIRE(edits.size() == 1);
+
+    Buffer buffer("test.cpp");
+    buffer.InsertAtPoint(source);
+    ApplyFormatTextEdits(buffer, edits);
+    REQUIRE(buffer.Text() == "if( ) {}");
+
+    // Idempotent: re-running against the result finds nothing left to do.
+    const std::vector<FormatCapture> after = {{"control.parens", buffer.Text().find('('), buffer.Text().find(')') + 1}};
+    REQUIRE(ComputeSpaceEdits(buffer.Text(), "cpp", after).empty());
+}
+
 TEST_CASE("A gap crossing a newline is never touched", "[FormatSpacing]") {
     const FormatRulesGuard guard;
     SetSpaceBefore("control.parens", true);
