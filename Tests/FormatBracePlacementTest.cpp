@@ -27,6 +27,7 @@ using ned::editor::LuaMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
+using ned::editor::RubyMode;
 using ned::editor::RustMode;
 using ned::editor::SetBraceCollapseEmpty;
 using ned::editor::SetBraceCollapseSimple;
@@ -2234,4 +2235,290 @@ TEST_CASE("kotlin-mode's format.janet now covers do-while/init-blocks/secondary-
     // Trailing-lambda call syntax is a real, common lambda_literal use.
     const auto lambda = CapturesNamed(mode.formatCaptures("fun f() { list.map { it * 2 } }"), "brace.function");
     REQUIRE(lambda.size() == 2); // f's own body AND the trailing lambda
+}
+
+// ruby-format-rollout: seventeenth language, and the proven `def...end`
+// keyword-delimited path Ruby was flagged as a candidate for. The one
+// genuinely new wrinkle: EVERY construct's own opening keyword is
+// OPTIONAL in Ruby's own grammar (unlike Lua/Bash/Fish, where a real
+// opening keyword is always present) -- confirmed live via
+// `tree-sitter query` before writing anything.
+TEST_CASE("ruby-mode's format.janet names brace.function over method/singleton_method, "
+          "anchored on the NAME field regardless of parameter style, excluding endless "
+          "methods entirely",
+          "[FormatBracePlacement]") {
+    const Mode mode = RubyMode();
+
+    // Anchored on the name rather than the parameter list's own closing
+    // paren (Lua's own precedent): confirmed live a second, ")"-anchored
+    // pattern would ALSO fire for the parenthesized form, producing two
+    // overlapping candidate opens for the same method -- a real
+    // correctness hazard this file avoids by using one uniform anchor for
+    // every parameter style instead.
+    const auto noParen = CapturesNamed(mode.formatCaptures("def foo\n  1\nend\n"), "brace.function");
+    REQUIRE(noParen.size() == 1);
+    REQUIRE(noParen[0].openLength == 3);  // "foo"
+    REQUIRE(noParen[0].closeLength == 3); // "end"
+
+    const auto bare = CapturesNamed(mode.formatCaptures("def foo a, b\n  1\nend\n"), "brace.function");
+    REQUIRE(bare.size() == 1);
+    REQUIRE(bare[0].openLength == 3); // still "foo", not the bare param list
+
+    const auto paren = CapturesNamed(mode.formatCaptures("def foo(a, b)\n  1\nend\n"), "brace.function");
+    REQUIRE(paren.size() == 1);
+    REQUIRE(paren[0].openLength == 3); // still "foo", not ")"
+
+    const auto singleton = CapturesNamed(mode.formatCaptures("def self.foo\n  1\nend\n"), "brace.function");
+    REQUIRE(singleton.size() == 1);
+    REQUIRE(singleton[0].openLength == 3); // "foo", not "self"
+
+    // Ruby's own "endless method" (`def f = 1`, a real expression-bodied
+    // form, not a rare edge) has no "end" token at all -- confirmed live
+    // this needs no `:match?` discriminator (unlike Kotlin's identically-
+    // shaped ambiguity): requiring a literal "end" as this node's own
+    // child is already a real structural fact an endless method's own
+    // node simply doesn't have.
+    REQUIRE(CapturesNamed(mode.formatCaptures("def f = 1\n"), "brace.function").empty());
+}
+
+TEST_CASE("ruby-mode's format.janet names brace.function over both anonymous-block forms "
+          "(reversed anon-fn policy), each with correct .simple markers -- do_block's own "
+          "multi-byte \"do\"/\"end\" pair needed a real fix, not assumed correct",
+          "[FormatBracePlacement]") {
+    const Mode mode = RubyMode();
+
+    const auto brace = CapturesNamed(mode.formatCaptures("[1,2].each { |x| puts x }\n"), "brace.function");
+    REQUIRE(brace.size() == 1);
+    REQUIRE(brace[0].openLength == 1);  // "{"
+    REQUIRE(brace[0].closeLength == 1); // "}"
+    REQUIRE(brace[0].isSimple);
+    REQUIRE_FALSE(
+        CapturesNamed(mode.formatCaptures("[1,2].each { |x| puts x; puts x }\n"), "brace.function")[0].isSimple);
+
+    // Found live via this rollout's own apply-and-check discipline, not by
+    // inspection: a bare `(do_block) @brace.function` direct capture would
+    // silently default openLength/closeLength to 1 (matching only the
+    // first byte of "do"/"end"), corrupting any collapse-empty/:within
+    // edit onto "d"/"e" alone. Paired instead, the same way begin/while's
+    // own multi-byte keywords are.
+    const auto doBlock = CapturesNamed(mode.formatCaptures("[1,2].each do |x|\n  puts x\nend\n"), "brace.function");
+    REQUIRE(doBlock.size() == 1);
+    REQUIRE(doBlock[0].openLength == 2);  // "do"
+    REQUIRE(doBlock[0].closeLength == 3); // "end"
+    REQUIRE(doBlock[0].isSimple);
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures("[1,2].each do |x|\n  puts x\n  puts x\nend\n"),
+                                "brace.function")[0]
+                      .isSimple);
+}
+
+TEST_CASE("ruby-mode's format.janet names brace.control for if/unless/while/until ONLY when "
+          "the optional then/do keyword is actually written -- the far more common "
+          "keyword-less form is a real structural absence, not a scope cut",
+          "[FormatBracePlacement]") {
+    const Mode mode = RubyMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("if x\n  1\nend\n"), "brace.control").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("unless x\n  1\nend\n"), "brace.control").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("while x\n  1\nend\n"), "brace.control").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("until x\n  1\nend\n"), "brace.control").empty());
+    // case/case_match are declined entirely (no opening keyword of their
+    // own analogous to bash's "case ... in"), and rescue/ensure clauses
+    // inside begin share the ONE enclosing "end" rather than owning a
+    // closing token of their own -- both real absences.
+    REQUIRE(CapturesNamed(mode.formatCaptures("case x\nwhen 1\n  a\nend\n"), "brace.control").empty());
+
+    const auto ifThen = CapturesNamed(mode.formatCaptures("if x then\n  1\nend\n"), "brace.control");
+    REQUIRE(ifThen.size() == 1);
+    REQUIRE(ifThen[0].openLength == 4); // "then"
+
+    const auto whileDo = CapturesNamed(mode.formatCaptures("while x do\n  1\nend\n"), "brace.control");
+    REQUIRE(whileDo.size() == 1);
+    REQUIRE(whileDo[0].openLength == 2); // "do"
+
+    // An elsif/else chain shares exactly ONE "end" -- confirmed only the
+    // top-level if's own leading "then" produces a capture, matching
+    // Lua's own if/then/end precedent.
+    const auto chain =
+        CapturesNamed(mode.formatCaptures("if x then\n  1\nelsif y\n  2\nelse\n  3\nend\n"), "brace.control");
+    REQUIRE(chain.size() == 1);
+
+    // begin...end (Ruby's own try-equivalent) is unconditional -- no
+    // then/do-style optionality -- and rescue/ensure inside it produce no
+    // additional captures of their own.
+    const auto beginBlock =
+        CapturesNamed(mode.formatCaptures("begin\n  1\nrescue => e\n  2\nensure\n  3\nend\n"), "brace.control");
+    REQUIRE(beginBlock.size() == 1);
+    REQUIRE(beginBlock[0].openLength == 5);  // "begin"
+    REQUIRE(beginBlock[0].closeLength == 3); // "end"
+}
+
+TEST_CASE("ruby-mode's format.janet names brace.class over class and the singleton-class "
+          "reopen form, and brace.namespace over module",
+          "[FormatBracePlacement]") {
+    const Mode mode = RubyMode();
+
+    const auto cls = CapturesNamed(mode.formatCaptures("class Foo < Bar\n  1\nend\n"), "brace.class");
+    REQUIRE(cls.size() == 1);
+    REQUIRE(cls[0].openLength == 3); // "Foo", not the superclass
+
+    const auto singletonClass = CapturesNamed(
+        mode.formatCaptures("class Foo\n  class << self\n    1\n  end\nend\n"), "brace.class");
+    REQUIRE(singletonClass.size() == 2);        // the outer class AND the singleton reopen
+    REQUIRE(singletonClass[1].openLength == 4); // "self"
+
+    const auto mod = CapturesNamed(mode.formatCaptures("module M\n  X = 1\nend\n"), "brace.namespace");
+    REQUIRE(mod.size() == 1);
+    REQUIRE(mod[0].openLength == 1); // "M"
+}
+
+TEST_CASE("ruby-mode's format.janet names control.parens over if/unless/while/until/case's "
+          "own optional parenthesized condition/value",
+          "[FormatBracePlacement]") {
+    const Mode mode = RubyMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("if x\n  1\nend\n"), "control.parens").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("if (x)\n  1\nend\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("while (x)\n  1\nend\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("case (x)\nwhen 1\n  a\nend\n"), "control.parens").size() == 1);
+}
+
+TEST_CASE("ruby-mode's format.janet names def.toplevel over method/singleton_method/class/"
+          "module directly inside program, and def.method one level down inside a "
+          "class/module/singleton_class's own body, with correct .first markers",
+          "[FormatBracePlacement]") {
+    const Mode mode = RubyMode();
+
+    const std::string source   = "def a\n"
+                                 "  1\n"
+                                 "end\n"
+                                 "def b\n"
+                                 "  1\n"
+                                 "end\n";
+    const auto        toplevel = CapturesNamed(mode.formatCaptures(source), "def.toplevel");
+    REQUIRE(toplevel.size() == 2);
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+
+    const std::string classSource = "class Bar\n"
+                                    "  def first_method\n"
+                                    "    1\n"
+                                    "  end\n"
+                                    "\n"
+                                    "  def second_method\n"
+                                    "    1\n"
+                                    "  end\n"
+                                    "end\n";
+    const auto        methods     = CapturesNamed(mode.formatCaptures(classSource), "def.method");
+    REQUIRE(methods.size() == 2);
+    REQUIRE(methods[0].isFirst);
+    REQUIRE_FALSE(methods[1].isFirst);
+}
+
+// End to end: a real corruption hazard found live by this rollout's own
+// apply-and-check discipline, not by inspection -- method/singleton_
+// method/class/module/singleton_class anchor ".open" on a NAME/VALUE
+// field (an arbitrary identifier), unlike every other paired capture in
+// this codebase. Gluing that identifier directly against "end" is NOT
+// the word-fusion problem IsWordByte already guards (a separating space
+// IS inserted: "def foo end") -- confirmed live via `tree-sitter parse`
+// that shape still misparses ("end" swallowed as a bare parameter, a
+// genuine MISSING "end" node), purely from the grammar's own params-
+// continuation ambiguity at that lexical position. Declined via the new
+// CollapseEmptyUnsafeForLanguage guard, keyed on the open TOKEN'S OWN
+// TEXT (mirroring FormatSpacing.h's own WithinRemovalUnsafe precedent)
+// rather than the capture name, since "brace.function"/"brace.class"
+// each mix a safe shape (block/do_block's real keyword/punctuation open)
+// with an unsafe one (method/class's own name-anchored open) under ONE
+// name in this language.
+TEST_CASE("End to end: ruby-mode's collapse-empty is declined for method/class/module/"
+          "singleton_class (a name-anchored open glued onto \"end\" misparses, confirmed "
+          "live), but still applies correctly to do_block/block/begin (real keyword/"
+          "punctuation opens)",
+          "[FormatBracePlacement]") {
+    const Mode mode = RubyMode();
+
+    {
+        const FormatRulesGuard guard;
+        SetBraceCollapseEmpty("ruby/brace.function", true);
+
+        Buffer            methodBuffer("t.rb");
+        const std::string methodSource = "def foo\nend\n";
+        methodBuffer.InsertAtPoint(methodSource);
+        ApplyFormatTextEdits(methodBuffer, ComputeBracePlacementEdits(methodBuffer.Text(), "ruby",
+                                                                      mode.formatCaptures(methodBuffer.Text())));
+        REQUIRE(methodBuffer.Text() == methodSource); // NOT "def foo end" -- confirmed live that misparses
+
+        Buffer            doBlockBuffer("t2.rb");
+        const std::string doBlockSource = "x.each do\nend\n";
+        doBlockBuffer.InsertAtPoint(doBlockSource);
+        ApplyFormatTextEdits(doBlockBuffer, ComputeBracePlacementEdits(doBlockBuffer.Text(), "ruby",
+                                                                       mode.formatCaptures(doBlockBuffer.Text())));
+        REQUIRE(doBlockBuffer.Text() == "x.each do end\n"); // real keyword pair -- safe, and DOES collapse
+
+        SetBraceCollapseEmpty("ruby/brace.function", std::nullopt);
+    }
+    {
+        const FormatRulesGuard guard;
+        SetBraceCollapseEmpty("ruby/brace.class", true);
+
+        Buffer            classBuffer("t3.rb");
+        const std::string classSource = "class Foo\nend\n";
+        classBuffer.InsertAtPoint(classSource);
+        ApplyFormatTextEdits(classBuffer, ComputeBracePlacementEdits(classBuffer.Text(), "ruby",
+                                                                     mode.formatCaptures(classBuffer.Text())));
+        REQUIRE(classBuffer.Text() == classSource); // NOT "class Foo end" -- confirmed live that misparses
+
+        SetBraceCollapseEmpty("ruby/brace.class", std::nullopt);
+    }
+    {
+        const FormatRulesGuard guard;
+        SetBraceCollapseEmpty("ruby/brace.control", true);
+
+        Buffer            beginBuffer("t4.rb");
+        const std::string beginSource = "x = 1\nbegin\nend\n";
+        beginBuffer.InsertAtPoint(beginSource);
+        ApplyFormatTextEdits(beginBuffer, ComputeBracePlacementEdits(beginBuffer.Text(), "ruby",
+                                                                     mode.formatCaptures(beginBuffer.Text())));
+        REQUIRE(beginBuffer.Text() == "x = 1\nbegin end\n"); // real keyword pair -- safe, and DOES collapse
+
+        SetBraceCollapseEmpty("ruby/brace.control", std::nullopt);
+    }
+}
+
+// End to end: the SAME "SameLine glues onto a preceding statement's own
+// terminator" hazard class bash/fish's own do/then/begin_statement have,
+// confirmed live -- "begin" is a bare, standalone statement with nothing
+// of its own preceding the delimiter. if/unless/while/until's own "then"/
+// "do" are UNAFFECTED (always nested inside their own statement's
+// header, confirmed safe by construction), so this guard is keyed on the
+// open text ("begin" only) rather than declining the whole "brace.control"
+// capture name the way bash/fish's own guards do -- the signal is
+// available here (this codebase's collapse-empty guard above already
+// needed it), so the more precise fix was preferred.
+TEST_CASE("End to end: ruby-mode's SameLine placement is a safe no-op on \"begin\" (glues "
+          "onto a preceding statement, confirmed live), but a real, safe edit on if/while's "
+          "own then/do (always nested inside their own header)",
+          "[FormatBracePlacement]") {
+    const Mode mode = RubyMode();
+
+    {
+        const FormatRulesGuard guard;
+        SetBracePlacement("brace.control", BracePlacement::SameLine);
+
+        Buffer            beginBuffer("t.rb");
+        const std::string beginSource = "x = 1\nbegin\n  1\nend\n";
+        beginBuffer.InsertAtPoint(beginSource);
+        ApplyFormatTextEdits(beginBuffer, ComputeBracePlacementEdits(beginBuffer.Text(), "ruby",
+                                                                     mode.formatCaptures(beginBuffer.Text())));
+        REQUIRE(beginBuffer.Text() == beginSource); // NOT glued onto "x = 1 begin" -- confirmed live that misparses
+
+        Buffer            ifBuffer("t2.rb");
+        const std::string ifSource = "if x\nthen\n  1\nend\n";
+        ifBuffer.InsertAtPoint(ifSource);
+        ApplyFormatTextEdits(
+            ifBuffer, ComputeBracePlacementEdits(ifBuffer.Text(), "ruby", mode.formatCaptures(ifBuffer.Text())));
+        REQUIRE(ifBuffer.Text() == "if x then\n  1\nend\n"); // safe: "then" is nested in if's own header
+
+        SetBracePlacement("brace.control", std::nullopt);
+    }
 }

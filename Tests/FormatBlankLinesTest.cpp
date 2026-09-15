@@ -27,6 +27,7 @@ using ned::editor::LuaMode;
 using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
+using ned::editor::RubyMode;
 using ned::editor::RustMode;
 using ned::editor::SetBlankMaxBefore;
 using ned::editor::SetBlankMinBefore;
@@ -863,4 +864,46 @@ TEST_CASE("End to end: blank lines applied to a real fish-mode buffer", "[Format
     ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "fish", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "function f\n    echo hi\nend\n\nfunction g\n    echo bye\nend\n");
+}
+
+TEST_CASE("ruby-mode's format.janet names def.toplevel over method/singleton_method/class/"
+          "module directly inside program, and def.method one level down inside a class/"
+          "module/singleton_class's own body, with correct .first markers",
+          "[FormatBlankLines]") {
+    const Mode mode = RubyMode();
+
+    const std::string source   = "def a\n  1\nend\ndef b\n  1\nend\n";
+    const auto        toplevel = CapturesNamed(mode.formatCaptures(source), "def.toplevel");
+    REQUIRE(toplevel.size() == 2);
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+
+    const std::string classSource =
+        "class Bar\n  def first_method\n    1\n  end\n  def second_method\n    1\n  end\nend\n";
+    const auto methods = CapturesNamed(mode.formatCaptures(classSource), "def.method");
+    REQUIRE(methods.size() == 2);
+    REQUIRE(methods[0].isFirst);
+    REQUIRE_FALSE(methods[1].isFirst);
+}
+
+TEST_CASE("ruby-mode's format.janet treats a real preceding statement as a real preceding "
+          "sibling, matching the same 'import os'/'package' lesson every prior language "
+          "has independently reconfirmed",
+          "[FormatBlankLines]") {
+    const Mode        mode   = RubyMode();
+    const std::string source = "require 'foo'\ndef a\n  1\nend\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(source), "def.toplevel")[0].isFirst);
+}
+
+TEST_CASE("End to end: blank lines applied to a real ruby-mode buffer", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 1);
+
+    const Mode mode = RubyMode();
+    Buffer     buffer("test.rb");
+    buffer.InsertAtPoint("def a\n  1\nend\ndef b\n  1\nend\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "ruby", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "def a\n  1\nend\n\ndef b\n  1\nend\n");
 }

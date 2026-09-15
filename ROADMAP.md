@@ -1509,6 +1509,31 @@ for closed-issue history.
   already have, this file is generated/checked-in so hand-editing it directly
   would be overwritten by the next real regeneration.
 
+- **Ruby's `method`/`singleton_method`/`while`/`until` bodies are never reindented.**
+  Found live during Ruby's own formatter rollout (2026-09-15) via a real `ned
+  --format` pass with no format.janet rules configured at all -- unrelated to the
+  new format captures themselves, a separate pre-existing gap in the structural
+  indent engine. `Editor/ImprintTables.cpp`'s `kRuby[]` table has `DelimiterKind::
+  Keyword` entries for `if`/`unless`/`class`/`singleton_class`/`module`/`case`/
+  `case_match`/`begin`/`do`/`do_block`, but none at all for `method`,
+  `singleton_method`, `while`, or `until` -- confirmed via a baseline reindent
+  (`class Greeter\n  def greet(name)\n    if name\n      ...`) collapsing a
+  method's own body to the SAME indent as its own `def` line, rather than one
+  level deeper, while the nested `if`'s own body still indents correctly relative
+  to that (wrong) baseline. Same underlying reason the format rollout's own
+  `method`/`while`/`until` captures needed extra care (see
+  `Source/Languages/ruby/format.janet`'s own header comment): none of the four
+  has a single, always-present, unambiguous open token directly beside the body
+  for the grammar-inference tool to key on -- `method`'s own parameter list has
+  three mutually-ambiguous shapes (parenthesized/bare/absent) sharing one aliased
+  node type, and `while`/`until`'s own "do" keyword is grammatically OPTIONAL
+  (confirmed live: `while x\n...end`, the dominant style, has no "do" token in
+  the tree at all). Fixing this properly needs the same kind of real design work
+  the format rollout went through for these exact four constructs, not a
+  mechanical `kRuby[]` entry -- likely a `DelimiterKind::Indent`-style entry
+  keyed on the `body`/`method_parameters` field rather than a literal keyword
+  pair, worth scoping as its own follow-up rather than attempted here.
+
 - **Intermittent shutdown hang blocked on the LSP broker socket.** Found 2026-09-13
   during the Phase 4b live smoke runs: quitting ned a few seconds after opening a C++
   buffer occasionally leaves "Shutting down..." parked with the MAIN thread in a

@@ -86,7 +86,24 @@ namespace {
     // brace.function is UNAFFECTED (real braces, no terminator needed at
     // all), so the two languages' own capture-name sets genuinely differ
     // here, not merely for lack of checking.
-    bool PlacementUnsafeForLanguage(BracePlacement placement, std::string_view languageKey, std::string_view captureName) {
+    // ruby-rollout follow-up: the openText parameter is new -- bash/fish's
+    // own guards above predate it and don't need it (their own hazard is
+    // real for every instance sharing the capture name, confirmed live,
+    // so a capture-name-wide decline is the correct, not merely
+    // convenient, answer for them). Ruby's own "brace.control" is
+    // genuinely mixed: "begin" is a bare, standalone statement with the
+    // SAME "glues onto whatever precedes it" hazard bash/fish's own
+    // do/then/begin_statement have (confirmed live: "foo begin...end"
+    // gets swallowed as an argument to "foo" rather than starting a fresh
+    // block), while if/unless/while/until's own "then"/"do" are always
+    // nested inside their OWN statement's header (the gap SameLine would
+    // touch sits between "if x"/"while x" and "then"/"do", never a
+    // separate preceding statement) -- confirmed safe by construction, not
+    // just untested. Discriminated by the open text itself rather than a
+    // capture-name-wide decline, since the signal is available and the
+    // safe/unsafe split is real, not speculative.
+    bool PlacementUnsafeForLanguage(BracePlacement placement, std::string_view languageKey,
+                                    std::string_view captureName, std::string_view openText) {
         if (languageKey == "go") {
             return placement != BracePlacement::SameLine;
         }
@@ -94,6 +111,9 @@ namespace {
             return placement == BracePlacement::SameLine;
         }
         if (languageKey == "fish" && (captureName == "brace.control" || captureName == "brace.function")) {
+            return placement == BracePlacement::SameLine;
+        }
+        if (languageKey == "ruby" && captureName == "brace.control" && openText == "begin") {
             return placement == BracePlacement::SameLine;
         }
         return false;
@@ -118,6 +138,37 @@ namespace {
     // so it's already, if incidentally, inert rather than merely declined.
     bool CollapseSimpleUnsafeForLanguage(std::string_view languageKey, std::string_view captureName) {
         return languageKey == "fish" && captureName == "brace.function";
+    }
+
+    // ruby-rollout follow-up: a real corruption hazard found live, not by
+    // inspection, and a genuinely NEW shape -- every other guard in this
+    // file keys on (language, captureName) because within a given
+    // language, every INSTANCE of a capture name shares the same open-side
+    // shape. Ruby's own "brace.function" doesn't: method/singleton_method
+    // anchor ".open" on their own NAME field (a real, unavoidable choice --
+    // see ruby/format.janet's own header comment for why a real delimiter
+    // token can't be used there), while block/do_block anchor on a real
+    // "{"/"do" delimiter, both sharing the SAME capture name. Gluing an
+    // arbitrary identifier directly against "end" is NOT the word-fusion
+    // problem IsWordByte already guards below (a separating space IS
+    // inserted) -- confirmed live via `tree-sitter parse` that "def foo
+    // end" still misparses ("end" swallowed as a bare parameter, a genuine
+    // MISSING "end" node) purely from the grammar's own params-
+    // continuation ambiguity at that lexical position, regardless of the
+    // space. So this keys on the open TOKEN'S OWN TEXT instead (the same
+    // finer-grained precedent `FormatSpacing.h`'s `WithinRemovalUnsafe`
+    // already set for bash's own `[`-vs-`((` distinction under one shared
+    // capture name): unsafe for any word-shaped open text that ISN'T one
+    // of Ruby's own fixed keyword opens (do/then/begin -- confirmed live
+    // that "do end"/"then end"/"begin end" all parse clean, no MISSING/
+    // ERROR node). A punctuation open ("{") is never ambiguous with a
+    // following identifier, so it's excluded up front rather than needing
+    // its own keyword-list entry.
+    bool CollapseEmptyUnsafeForLanguage(std::string_view languageKey, std::string_view openText) {
+        if (languageKey != "ruby" || openText.empty() || !IsWordByte(openText.front())) {
+            return false;
+        }
+        return openText != "do" && openText != "then" && openText != "begin";
     }
 
     // Where this construct's closing delimiter belongs, for a given
@@ -152,12 +203,25 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
             capture.openLength + capture.closeLength > capture.endByte - capture.startByte) {
             continue; // degenerate delimiter lengths -- never expected from a real .open/.close pair
         }
+        // keyword-delimiter-captures follow-up: the open/close TOKEN text
+        // itself, not just its length -- "{"/"}"  for every capture before
+        // Lua's, "do"/"end" or "then"/"end" for one of Lua's own paired
+        // captures. Computed up front (moved ahead of the placement check
+        // by the ruby rollout) since both PlacementUnsafeForLanguage and
+        // CollapseEmptyUnsafeForLanguage now need the open text too, not
+        // just collapse-empty/collapse-simple below.
+        const std::string_view openText  = text.substr(capture.startByte, capture.openLength);
+        const std::string_view closeText = text.substr(capture.endByte - capture.closeLength, capture.closeLength);
+
         BreakRuleValue rule = BreakRuleFor(capture.name, languageKey);
-        if (rule.placement && PlacementUnsafeForLanguage(*rule.placement, languageKey, capture.name)) {
+        if (rule.placement && PlacementUnsafeForLanguage(*rule.placement, languageKey, capture.name, openText)) {
             rule.placement.reset(); // see PlacementUnsafeForLanguage's own comment
         }
         if (rule.collapseSimple && CollapseSimpleUnsafeForLanguage(languageKey, capture.name)) {
             rule.collapseSimple.reset(); // see CollapseSimpleUnsafeForLanguage's own comment
+        }
+        if (rule.collapseEmpty && CollapseEmptyUnsafeForLanguage(languageKey, openText)) {
+            rule.collapseEmpty.reset(); // see CollapseEmptyUnsafeForLanguage's own comment
         }
         if (!rule.placement && !rule.collapseEmpty && !rule.collapseSimple) {
             continue; // unconfigured -- no built-in default, nothing forced
@@ -200,14 +264,6 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
                 edits.push_back(FormatTextEdit{headerEnd, capture.startByte, std::move(desiredGap)});
             }
         }
-
-        // keyword-delimiter-captures follow-up: the open/close TOKEN text
-        // itself, not just its length -- "{"/"}"  for every capture before
-        // Lua's, "do"/"end" or "then"/"end" for one of Lua's own paired
-        // captures. Read once here and reused by both collapse-empty and
-        // collapse-simple below.
-        const std::string_view openText  = text.substr(capture.startByte, capture.openLength);
-        const std::string_view closeText = text.substr(capture.endByte - capture.closeLength, capture.closeLength);
 
         // collapse-empty: purely textual and unambiguous, no tree needed --
         // whitespace-only content between the two delimiter tokens is empty
