@@ -18,4 +18,8 @@ void ApplyFormatTextEdits(text::Buffer& buffer, std::vector<FormatTextEdit> edit
     buffer.EndUndoGroup();
 }
 
+bool IsWordByte(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
 } // namespace ned::editor

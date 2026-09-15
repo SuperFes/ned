@@ -15,6 +15,7 @@ using ned::editor::CMode;
 using ned::editor::ComputeSpaceEdits;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
+using ned::editor::FishMode;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
 using ned::editor::GoMode;
@@ -818,4 +819,37 @@ TEST_CASE("End to end: bash-mode's :within=false is declined for single and doub
     REQUIRE(arith.Text() == "for ((i=0; i<10; i++)); do\n    y\ndone\n"); // safe -- arithmetic context, no hazard
 
     SetSpaceWithin("bash/control.parens", std::nullopt);
+}
+
+// fish-mode: brace.control's own :within=false has a DIFFERENT hazard
+// shape than bash's -- not a lexer-specific reserved-word quirk, but a
+// GENERAL word-byte fusion risk (Editor/FormatSpacing.h's own
+// `EmitWithinIfSafe`, shared with FormatBracePlacement.h's collapse-empty
+// glue via FormatEdit.h's `IsWordByte`). "begin" ends in a word byte and
+// so does typical body content ("echo"), so removing that one space
+// fuses them into "beginecho" -- confirmed live with a real fish RUN.
+// "{" is not a word byte, so the identical :within=false direction is
+// perfectly safe for the brace form.
+TEST_CASE("fish-mode's :within=false is declined on begin_statement's own \"begin\" side "
+          "(word-byte fusion), but applies normally to its \"{\" form",
+          "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceWithin("fish/brace.control", false);
+
+    const Mode mode = FishMode();
+
+    Buffer            beginBuffer("t.fish");
+    const std::string beginSource = "echo hi\nbegin echo x;end\n";
+    beginBuffer.InsertAtPoint(beginSource);
+    ApplyFormatTextEdits(beginBuffer,
+                         ComputeSpaceEdits(beginBuffer.Text(), "fish", mode.formatCaptures(beginBuffer.Text())));
+    REQUIRE(beginBuffer.Text() == beginSource); // NOT compacted to "beginecho" -- that fuses two words
+
+    Buffer braceBuffer("t2.fish");
+    braceBuffer.InsertAtPoint("echo hi\n{ echo x;}\n");
+    ApplyFormatTextEdits(braceBuffer,
+                         ComputeSpaceEdits(braceBuffer.Text(), "fish", mode.formatCaptures(braceBuffer.Text())));
+    REQUIRE(braceBuffer.Text() == "echo hi\n{echo x;}\n"); // safe -- "{" is not a word byte
+
+    SetSpaceWithin("fish/brace.control", std::nullopt);
 }
