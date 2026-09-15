@@ -59,12 +59,16 @@ TEST_CASE("cpp-mode's format.janet names brace.function over a real function bod
     REQUIRE(mode.formatCaptures); // the query is wired up at all
 
     const std::string source = "int f(int x) {\n    return x;\n}\n";
-    const std::vector<FormatCapture> captures = mode.formatCaptures(source);
+    // Narrowed to the one named capture this test is actually about --
+    // blank-lines-kind rollout follow-up: this same source now ALSO names
+    // a "def.toplevel" capture, so the full list is no longer size 1 (the
+    // same "stale total-count assumption" lesson python's own "no
+    // brace-shaped captures" test already taught, see FormatBlankLines).
+    const auto braceFunction = CapturesNamed(mode.formatCaptures(source), "brace.function");
 
-    REQUIRE(captures.size() == 1);
-    REQUIRE(captures[0].name == "brace.function");
-    REQUIRE(captures[0].startByte == source.find('{'));
-    REQUIRE(captures[0].endByte == source.size() - 1); // through the closing '}'
+    REQUIRE(braceFunction.size() == 1);
+    REQUIRE(braceFunction[0].startByte == source.find('{'));
+    REQUIRE(braceFunction[0].endByte == source.size() - 1); // through the closing '}'
 }
 
 TEST_CASE("cpp-mode's format.janet names brace.control for if/while/for/switch/catch bodies", "[FormatBracePlacement]") {
@@ -102,11 +106,12 @@ TEST_CASE("javascript-mode's format.janet also names brace.function, over a diff
     REQUIRE(mode.formatCaptures);
 
     const std::string source = "function f(x) {\n    return x;\n}\n";
-    const std::vector<FormatCapture> captures = mode.formatCaptures(source);
+    // Narrowed the same way cpp's own equivalent test above is, for the
+    // same reason: this source also names "def.toplevel" now.
+    const auto braceFunction = CapturesNamed(mode.formatCaptures(source), "brace.function");
 
-    REQUIRE(captures.size() == 1);
-    REQUIRE(captures[0].name == "brace.function"); // same capture name as cpp's, different grammar node underneath
-    REQUIRE(captures[0].startByte == source.find('{'));
+    REQUIRE(braceFunction.size() == 1);
+    REQUIRE(braceFunction[0].startByte == source.find('{')); // same capture name as cpp's, different grammar node
 }
 
 TEST_CASE("A per-language override actually differentiates two real languages", "[FormatBracePlacement]") {

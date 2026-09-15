@@ -91,3 +91,23 @@
 (loop_expression body: (block . (_) .) @brace.control.simple)
 (for_expression body: (block . (_) .) @brace.control.simple)
 (match_expression body: (match_block . (_) .) @brace.control.simple)
+
+# blank-lines-kind rollout follow-up: def.toplevel/def.method, the same
+# names every prior language's file carries.
+(source_file [(function_item) (struct_item) (enum_item) (trait_item) (mod_item) (impl_item)]
+  @def.toplevel)
+# def.method: impl_item/trait_item/mod_item bodies all share the SAME
+# "declaration_list" node type (confirmed live -- the same shape already
+# load-bearing for this file's own brace.class/brace.interface/
+# brace.namespace captures above), so one pattern covers a function nested
+# in any of the three. Deliberately NOT distinguishing "a real impl/trait
+# METHOD" from "a free function nested inside a mod block" -- both are
+# equally "not top-level" and there is no single node-type-level fact that
+# tells them apart (mod_item's own body is the identical declaration_list
+# type), the same "close enough to fold together" call this file's own
+# brace.class already makes for struct+enum+impl.
+(declaration_list (function_item) @def.method)
+
+(source_file . [(function_item) (struct_item) (enum_item) (trait_item) (mod_item) (impl_item)]
+  @def.toplevel.first)
+(declaration_list . (function_item) @def.method.first)

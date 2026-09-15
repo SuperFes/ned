@@ -56,3 +56,27 @@
 (for_statement body: (block . (_) .) @brace.control.simple)
 (switch_expression body: (switch_block . (_) .) @brace.control.simple)
 (catch_clause body: (block . (_) .) @brace.control.simple)
+
+# blank-lines-kind rollout follow-up: def.toplevel/def.method, the same
+# names cpp/javascript/python's own files carry. Java has no top-level
+# FUNCTIONS the way cpp/javascript/Python do -- only top-level TYPE
+# declarations, so def.toplevel covers just those (class/interface/enum/
+# record/annotation-type), matching Python's own class_definition side of
+# its alternation with no function_definition equivalent here.
+(program [(class_declaration) (interface_declaration) (enum_declaration) (record_declaration)
+          (annotation_type_declaration)] @def.toplevel)
+# def.method: unlike javascript's own field-tagged "member:" children,
+# class_body/interface_body/enum_body_declarations hold method_declaration/
+# constructor_declaration as plain untagged children -- confirmed against a
+# live parse, not assumed from javascript's shape. Three separate body node
+# types (Java has no single shared "declaration_list" the way PHP's
+# class/trait/interface bodies do), so three patterns.
+(class_body [(method_declaration) (constructor_declaration)] @def.method)
+(interface_body (method_declaration) @def.method)
+(enum_body_declarations [(method_declaration) (constructor_declaration)] @def.method)
+
+(program . [(class_declaration) (interface_declaration) (enum_declaration) (record_declaration)
+            (annotation_type_declaration)] @def.toplevel.first)
+(class_body . [(method_declaration) (constructor_declaration)] @def.method.first)
+(interface_body . (method_declaration) @def.method.first)
+(enum_body_declarations . [(method_declaration) (constructor_declaration)] @def.method.first)

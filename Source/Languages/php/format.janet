@@ -104,3 +104,21 @@
 (for_statement body: (compound_statement . (_) .) @brace.control.simple)
 (foreach_statement body: (compound_statement . (_) .) @brace.control.simple)
 (catch_clause body: (compound_statement . (_) .) @brace.control.simple)
+
+# blank-lines-kind rollout follow-up: def.toplevel/def.method, the same
+# names every prior language's file carries. `namespace_definition` is
+# deliberately NOT included (matching cpp's own namespace_definition
+# exclusion from def.toplevel) -- a namespace is a container, not a
+# definition, the same distinction drawn there.
+(program [(function_definition) (class_declaration) (trait_declaration) (interface_declaration)
+          (enum_declaration)] @def.toplevel)
+# def.method: class_declaration/trait_declaration/interface_declaration
+# all share the SAME body node type (declaration_list) -- confirmed
+# against a live parse, the same "one node type, several owners" shape
+# already load-bearing for this file's own brace.class/brace.interface
+# captures above -- so one pattern covers a method in any of the three.
+(declaration_list (method_declaration) @def.method)
+
+(program . [(function_definition) (class_declaration) (trait_declaration) (interface_declaration)
+            (enum_declaration)] @def.toplevel.first)
+(declaration_list . (method_declaration) @def.method.first)
