@@ -14,6 +14,7 @@ using ned::editor::CppMode;
 using ned::editor::ComputeSpaceEdits;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
+using ned::editor::GoMode;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
@@ -390,4 +391,44 @@ TEST_CASE("End to end: python-mode's formatCaptures drives a real space edit onl
     ApplyFormatTextEdits(
         withoutParens, ComputeSpaceEdits(withoutParens.Text(), "python", mode.formatCaptures(withoutParens.Text())));
     REQUIRE(withoutParens.Text() == "if x:\n    pass\n"); // nothing to touch, no crash either
+}
+
+// go-mode: the fourth brace-carrying language, same narrow control.parens
+// lever Python's own file has -- Go's idiomatic style omits condition
+// parens entirely, but the grammar still allows writing them.
+TEST_CASE("go-mode's format.janet only captures a condition already wrapped in parens", "[FormatSpacing]") {
+    const Mode mode = GoMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("package main\nfunc f() {\n\tif x {\n\t}\n}\n"), "control.parens")
+                .empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("package main\nfunc f() {\n\tif (x) {\n\t}\n}\n"), "control.parens")
+                .size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("package main\nfunc f() {\n\tswitch x {\n\t}\n}\n"), "control.parens")
+                .empty());
+    REQUIRE(
+        CapturesNamed(mode.formatCaptures("package main\nfunc f() {\n\tswitch (x) {\n\t}\n}\n"), "control.parens")
+            .size() == 1);
+}
+
+TEST_CASE("go-mode's format.janet names no control.parens for a for-loop's own clause", "[FormatSpacing]") {
+    // A for-loop's three-part clause has no wrapping parens in Go's own
+    // grammar at all -- writing them is a syntax error, unlike
+    // cpp/javascript/java's own for-loops, so there is no paired capture
+    // for it here (verified live before this shipped).
+    const Mode        mode   = GoMode();
+    const std::string source = "package main\nfunc f() {\n\tfor i := 0; i < 10; i++ {\n\t}\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "control.parens").empty());
+}
+
+TEST_CASE("End to end: go-mode's formatCaptures drives a real space edit", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceBefore("control.parens", true);
+
+    const Mode mode = GoMode();
+    Buffer     buffer("test.go");
+    buffer.InsertAtPoint("package main\nfunc f() {\n\tif(x) {\n\t}\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "go", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "package main\nfunc f() {\n\tif (x) {\n\t}\n}\n");
 }

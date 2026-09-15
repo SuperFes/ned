@@ -1537,6 +1537,22 @@ for closed-issue history.
   `EvaluatePredicateCall`, any-of semantics. Unblocked now that the M3 gate has landed — the change will
   show as a deliberate differential/oracle diff rather than an invisible drift.
 
+- **Go's `switch`/`select` `case`/`default` clauses indent one level too deep.**
+  Found 2026-09-14 during the formatter's Go pilot rollout (unrelated to that work —
+  reproduces with NO `format.janet` at all, plain `indent-buffer`/`ned --format` on
+  ordinary Go source): `switch x {\n\tcase 1:\n\t}` reindents to
+  `switch x {\n\t\tcase 1:\n\t}` -- the `case` line gets two tabs instead of one, while
+  the closing `}` stays correctly aligned with `switch`. `Source/Languages/go/
+  indents.janet` has no `@indent`/`@dedent`/`@aligned` capture naming
+  `expression_case`/`type_case`/`default_case`/`communication_case` at all --
+  `expression_switch_statement`/`type_switch_statement`/`select_statement` are only
+  named for `@align.barrier`, so whatever's adding the extra level is coming from the
+  generic delimiter-imprint walk (`Editor/ImprintIndent.h`) alone, not a query. Not
+  root-caused yet -- worth an `ImprintTest.cpp`-style live probe against
+  `expression_switch_statement`'s own imprint table entry before touching
+  `Indent.cpp`'s walk. Not urgent (cosmetic, one extra tab, `case` lines still land in
+  the right relative order) but real and reproducible.
+
 - **org.indent hangs a headline that directly follows a list item.** Surfaced by (not
   introduced by) the Step 5 oracle corpus: in `Tests/Oracle/expected/sample.org.oracle`,
   `* Second tree` — the line right after `- [ ] unchecked box`, no blank line between —
