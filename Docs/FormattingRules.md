@@ -18,9 +18,9 @@ always does something useful, never just "nothing configured."
 
 Per-capture-name `:space`/`:break` rule *storage and resolution* also exists today
 (`Editor/FormatRules.h`, `format.janet`'s `:space`/`:break` keys, `ned/set-format-*`) --
-see "Space and Break rules" below. Both rule kinds have a live pilot pass, cpp-only (brace
-placement and if/while condition-paren spacing); every other capture/language is still
-inert.
+see "Space and Break rules" below. Both rule kinds have a live pilot pass (brace placement
+and if/while condition-paren spacing), each with two languages (cpp, JavaScript) sharing
+one rule set via a common capture name; every other capture/language is still inert.
 
 A capture-scoped per-construct indent override (`ned/set-indent-rule`) is planned but not
 built yet -- see `Docs/FormattingCapabilities.md` and `ROADMAP.md`. LSP-based formatting is
@@ -191,9 +191,12 @@ before, after, or just inside the captured token/delimiter pair. `:break` entrie
 GNU-Whitesmiths, meaningful only on a brace-carrying capture), `:collapse-empty`/
 `:collapse-simple` (true/false -- keep an empty or single-statement block on one line).
 
-**Two pilots exist today, both cpp-only** (`Source/Languages/cpp/format.janet`), both wired
-into `format-buffer`'s and `--format`'s Native chain (reindent, then Break, then Space,
-then Hygiene) and both shipping no built-in default -- neither does anything until you
+**Two pilots exist today, cpp and JavaScript** (`Source/Languages/cpp/format.janet`,
+`Source/Languages/javascript/format.janet` -- the same two capture NAMES, over each
+grammar's own different node types: cpp's `compound_statement`/`condition_clause` vs.
+JavaScript's `statement_block`/`parenthesized_expression`), both wired into
+`format-buffer`'s and `--format`'s Native chain (reindent, then Break, then Space, then
+Hygiene) and both shipping no built-in default -- neither does anything until you
 configure a rule:
 
 - **`brace.function`** (a function definition's own body) -- `Editor/FormatBracePlacement.h`'s
@@ -210,17 +213,22 @@ configure a rule:
   (ned/set-format-space-before "control.parens" true)
   (ned/set-format-space-after "control.parens" true)
   ```
-  Combined in one `format.janet`:
+  Combined in one `format.janet`, with cpp's own brace-placement exception:
   ```janet
-  {:break {"brace.function" {:placement :next-line}}
-   :space {"control.parens" {:before true :after true}}}
+  {:break {"brace.function" {:placement :same-line}       # the shared rule (JavaScript gets this)
+           "cpp/brace.function" {:placement :next-line}}  # cpp's own override
+   :space {"control.parens" {:before true}}}              # every language's if/while parens
   ```
+  Formatting a `.cpp` and a `.js` file with this one config genuinely produces two
+  different brace styles: cpp's function gets Allman (its own override), JavaScript's
+  gets K&R (the shared rule) -- both get the same `if (x)` spacing.
 
 No other bundled language has a `format.janet` yet, and no capture yet reads `:within` on
 an empty pair, `:collapse-empty`, or `:collapse-simple`. This is the proof that the full
 chain (query -> `Mode::formatCaptures` -> `FormatRules` resolution -> a computed edit ->
-applied to a live buffer) works end to end for both rule kinds, ahead of rolling the
-remaining rule kinds/languages out (see `Docs/FormattingCapabilities.md`'s Tier B1).
+applied to a live buffer) works end to end for both rule kinds AND across two real
+languages sharing one rule set with one exception, ahead of rolling the remaining rule
+kinds/languages out (see `Docs/FormattingCapabilities.md`'s Tier B1).
 
 The same rules are settable live from `init.janet`, per-field, mirroring
 `ned/set-capture-*`'s own shape:
