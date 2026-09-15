@@ -110,27 +110,27 @@ indent 0..73  [0]  "# A representative class: me … terpolation."
 indent 74..88  [0]  "require \"json\""
 indent 89..89  [0]
 indent 90..103  [0]  "module Sample"
-indent 104..118  [4]  "  class Widget"
-indent 119..150  [8]  "    attr_accessor :name, :count"
-indent 151..151  [8]
-indent 152..187  [8]  "    def initialize(name, count = 0)"
-indent 188..206  [8]  "      @name = name"
-indent 207..227  [8]  "      @count = count"
-indent 228..235  [8]  "    end"
-indent 236..236  [8]
-indent 237..249  [8]  "    def to_s"
-indent 250..278  [8]  "      \"#{@name} (#{@count})\""
-indent 279..286  [8]  "    end"
-indent 287..287  [8]
-indent 288..316  [8]  "    def self.from_hash(hash)"
-indent 317..353  [8]  "      new(hash[:name], hash[:count])"
-indent 354..361  [8]  "    end"
-indent 362..367  [4]  "  end"
+indent 104..118  [2]  "  class Widget"
+indent 119..150  [4]  "    attr_accessor :name, :count"
+indent 151..151  [4]
+indent 152..187  [4]  "    def initialize(name, count = 0)"
+indent 188..206  [4]  "      @name = name"
+indent 207..227  [4]  "      @count = count"
+indent 228..235  [4]  "    end"
+indent 236..236  [4]
+indent 237..249  [4]  "    def to_s"
+indent 250..278  [4]  "      \"#{@name} (#{@count})\""
+indent 279..286  [4]  "    end"
+indent 287..287  [4]
+indent 288..316  [4]  "    def self.from_hash(hash)"
+indent 317..353  [4]  "      new(hash[:name], hash[:count])"
+indent 354..361  [4]  "    end"
+indent 362..367  [2]  "  end"
 indent 368..371  [0]  "end"
 indent 372..372  [0]
 indent 373..440  [0]  "widgets = [1, 2, 3].map { |n … t#{n}\", n) }"
 indent 441..460  [0]  "widgets.each do |w|"
-indent 461..489  [4]  "  puts w.to_s if w.count > 1"
+indent 461..489  [2]  "  puts w.to_s if w.count > 1"
 indent 490..493  [0]  "end"
 indent 494..494  [0]
 symbol 90..371  [Namespace Sample]  "module Sample\n  class Widget … nd\n  end\nend"

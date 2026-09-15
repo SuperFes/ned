@@ -98,6 +98,7 @@ add_executable(ned_tests
             JanetCaptureClassifierTest.cpp
             CodeFoldTest.cpp
             IndentStyleTest.cpp
+            IndentDefaultsTest.cpp
             IndentEngineTest.cpp
             IndentTest.cpp
             StickyScrollTest.cpp

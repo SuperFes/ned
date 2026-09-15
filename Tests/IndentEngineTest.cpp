@@ -340,19 +340,23 @@ void CheckAgreesWithWrittenIndent(const ned::editor::Mode& mode, const std::stri
 
 } // namespace
 
+// tsx/javascript's own built-in default is width 2 (IndentDefaults.h), so
+// these fixtures are hand-indented at 2 columns per level -- not 4 --
+// matching what CheckAgreesWithWrittenIndent actually asserts (the mode's
+// computed column agrees with what's literally written on each line).
 TEST_CASE("TSX indents JSX elements, expressions and closing tags", "[Indent]") {
     CheckAgreesWithWrittenIndent(ned::editor::TsxMode(),
                                  "export function Panel(props: Props) {\n"
-                                 "    const items = props.items.map((item) => (\n"
-                                 "        <li key={item.id}>\n"
-                                 "            {item.label}\n"
-                                 "        </li>\n"
-                                 "    ));\n"
-                                 "    return (\n"
-                                 "        <ul className=\"panel\">\n"
-                                 "            {items}\n"
-                                 "        </ul>\n"
-                                 "    );\n"
+                                 "  const items = props.items.map((item) => (\n"
+                                 "    <li key={item.id}>\n"
+                                 "      {item.label}\n"
+                                 "    </li>\n"
+                                 "  ));\n"
+                                 "  return (\n"
+                                 "    <ul className=\"panel\">\n"
+                                 "      {items}\n"
+                                 "    </ul>\n"
+                                 "  );\n"
                                  "}\n");
 }
 
@@ -360,12 +364,12 @@ TEST_CASE("A multi-line JSX attribute list indents its own attributes", "[Indent
     // The opening tag is a container in its own right, and its ">" closes it.
     CheckAgreesWithWrittenIndent(ned::editor::TsxMode(),
                                  "const view = (\n"
-                                 "    <section\n"
-                                 "        className=\"wide\"\n"
-                                 "        onClick={handler}\n"
-                                 "    >\n"
-                                 "        <Item />\n"
-                                 "    </section>\n"
+                                 "  <section\n"
+                                 "    className=\"wide\"\n"
+                                 "    onClick={handler}\n"
+                                 "  >\n"
+                                 "    <Item />\n"
+                                 "  </section>\n"
                                  ");\n");
 }
 
@@ -373,10 +377,10 @@ TEST_CASE("JSX in a plain .jsx file indents the same way", "[Indent]") {
     // javascript-indents.scm carries the same rules: JSX is not TypeScript's.
     CheckAgreesWithWrittenIndent(ned::editor::JavaScriptMode(),
                                  "function App() {\n"
-                                 "    return (\n"
-                                 "        <div>\n"
-                                 "            <span>hello</span>\n"
-                                 "        </div>\n"
-                                 "    );\n"
+                                 "  return (\n"
+                                 "    <div>\n"
+                                 "      <span>hello</span>\n"
+                                 "    </div>\n"
+                                 "  );\n"
                                  "}\n");
 }
