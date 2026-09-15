@@ -151,19 +151,35 @@ namespace {
     // "{"/"do" delimiter, both sharing the SAME capture name. Gluing an
     // arbitrary identifier directly against "end" is NOT the word-fusion
     // problem IsWordByte already guards below (a separating space IS
-    // inserted) -- confirmed live via `tree-sitter parse` that "def foo
-    // end" still misparses ("end" swallowed as a bare parameter, a genuine
-    // MISSING "end" node) purely from the grammar's own params-
-    // continuation ambiguity at that lexical position, regardless of the
-    // space. So this keys on the open TOKEN'S OWN TEXT instead (the same
-    // finer-grained precedent `FormatSpacing.h`'s `WithinRemovalUnsafe`
-    // already set for bash's own `[`-vs-`((` distinction under one shared
-    // capture name): unsafe for any word-shaped open text that ISN'T one
-    // of Ruby's own fixed keyword opens (do/then/begin -- confirmed live
-    // that "do end"/"then end"/"begin end" all parse clean, no MISSING/
-    // ERROR node). A punctuation open ("{") is never ambiguous with a
-    // following identifier, so it's excluded up front rather than needing
-    // its own keyword-list entry.
+    // inserted) -- confirmed with a real `ruby -c` that "def foo end"
+    // still fails ("expected a delimiter to close the parameters") purely
+    // from the grammar's own params-continuation ambiguity at that lexical
+    // position, regardless of the space -- same for singleton_class's own
+    // "class << self end" ("unexpected 'end'; expected a newline or a ';'
+    // after the singleton class"). So this keys on the open TOKEN'S OWN
+    // TEXT instead (the same finer-grained precedent `FormatSpacing.h`'s
+    // `WithinRemovalUnsafe` already set for bash's own `[`-vs-`((`
+    // distinction under one shared capture name): unsafe for any
+    // word-shaped open text that ISN'T one of Ruby's own fixed keyword
+    // opens (do/then/begin -- confirmed with a real `ruby -c` that "do
+    // end"/"then end"/"begin end" all pass clean). A punctuation open
+    // ("{") is never ambiguous with a following identifier, so it's
+    // excluded up front rather than needing its own keyword-list entry.
+    //
+    // A real `ruby -c` also turned up a genuine imprecision in this
+    // decline, found only once the interpreter was actually available:
+    // "class Foo end"/"module M end" pass clean too (class/module's own
+    // NAME field is a grammar-guaranteed CONSTANT, never ambiguous the way
+    // a bare method name is) -- so this declines a real, if minor, safe
+    // case for them. Left as-is rather than narrowed: singleton_class
+    // shares "brace.class" with plain class, and its own VALUE field is an
+    // arbitrary expression (`class << SomeConstant end` is ALSO confirmed
+    // unsafe, and "SomeConstant" is textually indistinguishable from a
+    // real class name) -- there's no text-only signal here that
+    // reliably tells "class's own NAME" apart from "singleton_class's own
+    // VALUE," and the feature this would unlock (collapse-empty on a
+    // handful of empty class/module bodies) isn't worth risking that
+    // distinction being wrong on a construct that IS a real corruption.
     bool CollapseEmptyUnsafeForLanguage(std::string_view languageKey, std::string_view openText) {
         if (languageKey != "ruby" || openText.empty() || !IsWordByte(openText.front())) {
             return false;

@@ -57,6 +57,19 @@ struct FormatRulesGuard {
         SetBracePlacement("brace.control", std::nullopt);
         SetBraceCollapseEmpty("brace.control", std::nullopt);
         SetBraceCollapseSimple("brace.control", std::nullopt);
+        // ruby-rollout follow-up: the EXACT same test-isolation gap as
+        // above, for the SAME reason -- a manual reset at the end of a
+        // test body never runs if an earlier REQUIRE in that same body
+        // fails first (REQUIRE aborts the test case immediately), leaking
+        // a scoped rule into whichever test runs next under `--order
+        // rand`. Several tests below set "ruby/brace.function"/"ruby/
+        // brace.class"/"ruby/brace.control" this same way; covered here so
+        // a leak from any of them (or a future one) can't survive past
+        // this guard's own destructor.
+        SetBracePlacement("ruby/brace.function", std::nullopt);
+        SetBraceCollapseEmpty("ruby/brace.function", std::nullopt);
+        SetBraceCollapseEmpty("ruby/brace.class", std::nullopt);
+        SetBraceCollapseEmpty("ruby/brace.control", std::nullopt);
     }
 };
 
@@ -2420,20 +2433,31 @@ TEST_CASE("ruby-mode's format.janet names def.toplevel over method/singleton_met
 // field (an arbitrary identifier), unlike every other paired capture in
 // this codebase. Gluing that identifier directly against "end" is NOT
 // the word-fusion problem IsWordByte already guards (a separating space
-// IS inserted: "def foo end") -- confirmed live via `tree-sitter parse`
-// that shape still misparses ("end" swallowed as a bare parameter, a
-// genuine MISSING "end" node), purely from the grammar's own params-
-// continuation ambiguity at that lexical position. Declined via the new
-// CollapseEmptyUnsafeForLanguage guard, keyed on the open TOKEN'S OWN
-// TEXT (mirroring FormatSpacing.h's own WithinRemovalUnsafe precedent)
-// rather than the capture name, since "brace.function"/"brace.class"
-// each mix a safe shape (block/do_block's real keyword/punctuation open)
-// with an unsafe one (method/class's own name-anchored open) under ONE
-// name in this language.
+// IS inserted: "def foo end") -- confirmed with a real `ruby -c` that
+// shape still fails ("expected a delimiter to close the parameters"),
+// purely from the grammar's own params-continuation ambiguity at that
+// lexical position (same for singleton_class's own "class << self end").
+// Declined via the new CollapseEmptyUnsafeForLanguage guard, keyed on the
+// open TOKEN'S OWN TEXT (mirroring FormatSpacing.h's own
+// WithinRemovalUnsafe precedent) rather than the capture name, since
+// "brace.function"/"brace.class" each mix a safe shape (block/do_block's
+// real keyword/punctuation open) with an unsafe one (method/singleton_
+// class's own name/value-anchored open) under ONE name in this language.
+// A real `ruby -c`, once installed, showed the decline is WIDER than it
+// needs to be for plain `class`/`module` specifically (their own NAME
+// field is a grammar-guaranteed CONSTANT, so "class Foo end"/"module M
+// end" both actually pass) -- left declined anyway, since singleton_class
+// shares "brace.class" with plain class and its own VALUE field can be
+// any expression, including a constant ("class << SomeConstant end" is
+// ALSO confirmed unsafe) -- there's no text-only way to tell those two
+// apart reliably, and the feature this would unlock isn't worth risking
+// getting that distinction wrong.
 TEST_CASE("End to end: ruby-mode's collapse-empty is declined for method/class/module/"
-          "singleton_class (a name-anchored open glued onto \"end\" misparses, confirmed "
-          "live), but still applies correctly to do_block/block/begin (real keyword/"
-          "punctuation opens)",
+          "singleton_class (conservatively -- a name-anchored open glued onto \"end\" is "
+          "genuinely unsafe for method/singleton_class, confirmed with a real ruby -c, and "
+          "class/module are declined too rather than risk misclassifying singleton_class), "
+          "but still applies correctly to do_block/block/begin (real keyword/punctuation "
+          "opens)",
           "[FormatBracePlacement]") {
     const Mode mode = RubyMode();
 
@@ -2446,7 +2470,7 @@ TEST_CASE("End to end: ruby-mode's collapse-empty is declined for method/class/m
         methodBuffer.InsertAtPoint(methodSource);
         ApplyFormatTextEdits(methodBuffer, ComputeBracePlacementEdits(methodBuffer.Text(), "ruby",
                                                                       mode.formatCaptures(methodBuffer.Text())));
-        REQUIRE(methodBuffer.Text() == methodSource); // NOT "def foo end" -- confirmed live that misparses
+        REQUIRE(methodBuffer.Text() == methodSource); // NOT "def foo end" -- confirmed with a real `ruby -c` that fails
 
         Buffer            doBlockBuffer("t2.rb");
         const std::string doBlockSource = "x.each do\nend\n";
@@ -2466,7 +2490,13 @@ TEST_CASE("End to end: ruby-mode's collapse-empty is declined for method/class/m
         classBuffer.InsertAtPoint(classSource);
         ApplyFormatTextEdits(classBuffer, ComputeBracePlacementEdits(classBuffer.Text(), "ruby",
                                                                      mode.formatCaptures(classBuffer.Text())));
-        REQUIRE(classBuffer.Text() == classSource); // NOT "class Foo end" -- confirmed live that misparses
+        // "class Foo end" is actually safe per a real `ruby -c` (class's
+        // own NAME is a grammar-guaranteed constant, never param-like) --
+        // still declined, since the guard can't reliably tell it apart
+        // from singleton_class's own unsafe VALUE-anchored open under the
+        // same "brace.class" name (see CollapseEmptyUnsafeForLanguage's
+        // own comment).
+        REQUIRE(classBuffer.Text() == classSource);
 
         SetBraceCollapseEmpty("ruby/brace.class", std::nullopt);
     }
