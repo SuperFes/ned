@@ -143,6 +143,33 @@ namespace {
         return entry;
     }
 
+    // :blank's own entry -- FormatRules.h's BlankRuleValue, "before" only
+    // (see that struct's own header comment for why there's no :max-after/
+    // :min-after).
+    BlankRuleValue ParseBlankEntry(const std::string& path, const std::string& captureKey, const Value& entryValue) {
+        if (!entryValue.IsStruct()) {
+            Fail(path, entryValue.line, "\"" + captureKey + "\"'s :blank entry must be {:min-before N :max-before N}");
+        }
+        BlankRuleValue entry;
+        for (std::size_t k = 0; k + 1 < entryValue.pairs.size(); k += 2) {
+            const Value& fieldKey   = entryValue.pairs[k];
+            const Value& fieldValue = entryValue.pairs[k + 1];
+            if (!fieldKey.IsKeyword()) {
+                Fail(path, fieldKey.line, ":blank entries are keyed by :min-before/:max-before");
+            }
+            if (fieldKey.text == "min-before") {
+                entry.minBefore = ExpectInt(path, fieldValue, "\"" + captureKey + "\"'s :min-before");
+            }
+            else if (fieldKey.text == "max-before") {
+                entry.maxBefore = ExpectInt(path, fieldValue, "\"" + captureKey + "\"'s :max-before");
+            }
+            else {
+                Fail(path, fieldKey.line, "unknown :blank entry key :" + fieldKey.text);
+            }
+        }
+        return entry;
+    }
+
 } // namespace
 
 FormatConfig ParseFormatConfig(std::string_view source, const std::string& path) {
@@ -224,6 +251,18 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
                 config.breakRules[capture] = ParseBreakEntry(path, capture, entryValue);
             }
         }
+        else if (key == "blank") {
+            if (!value.IsStruct()) {
+                Fail(path, value.line, ":blank is {\"<capture>\" {:min-before N :max-before N} ...}");
+            }
+            for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
+                const Value& captureKey = value.pairs[j];
+                const Value& entryValue = value.pairs[j + 1];
+                const std::string capture =
+                    ExpectString(path, captureKey, ":blank's own keys are capture-name strings, e.g. \"def.toplevel\"");
+                config.blank[capture] = ParseBlankEntry(path, capture, entryValue);
+            }
+        }
         else if (key == "trim-trailing-whitespace") {
             config.trimTrailingWhitespaceOnSave = ExpectBool(path, value, ":trim-trailing-whitespace");
         }
@@ -281,6 +320,14 @@ void ApplyFormatConfig(const FormatConfig& config) {
             SetBraceCollapseSimple(captureKey, entry.collapseSimple);
         }
     }
+    for (const auto& [captureKey, entry] : config.blank) {
+        if (entry.minBefore) {
+            SetBlankMinBefore(captureKey, entry.minBefore);
+        }
+        if (entry.maxBefore) {
+            SetBlankMaxBefore(captureKey, entry.maxBefore);
+        }
+    }
     if (config.trimTrailingWhitespaceOnSave) {
         SetTrimTrailingWhitespaceOnSave(*config.trimTrailingWhitespaceOnSave);
     }
@@ -307,7 +354,8 @@ std::filesystem::path ProjectFormatConfigPath(const std::filesystem::path& proje
 }
 
 std::vector<std::string> FormatConfigKeys() {
-    return {"break", "ensure-final-newline", "indent", "max-consecutive-blank-lines", "space", "trim-trailing-whitespace"};
+    return {"blank", "break", "ensure-final-newline", "indent",
+            "max-consecutive-blank-lines", "space", "trim-trailing-whitespace"};
 }
 
 std::vector<std::string> FormatConfigIndentEntryKeys() {
@@ -316,6 +364,10 @@ std::vector<std::string> FormatConfigIndentEntryKeys() {
 
 std::vector<std::string> FormatConfigSpaceEntryKeys() {
     return {"after", "before", "within"};
+}
+
+std::vector<std::string> FormatConfigBlankEntryKeys() {
+    return {"max-before", "min-before"};
 }
 
 std::vector<std::string> FormatConfigBreakEntryKeys() {

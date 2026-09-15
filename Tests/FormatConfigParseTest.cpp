@@ -14,6 +14,7 @@
 #include "Editor/FinalNewline.h"
 
 using ned::editor::ApplyFormatConfig;
+using ned::editor::BlankRuleFor;
 using ned::editor::BracePlacement;
 using ned::editor::BreakRuleFor;
 using ned::editor::EffectiveIndentStyle;
@@ -25,6 +26,8 @@ using ned::editor::MaxConsecutiveBlankLines;
 using ned::editor::ParseFormatConfig;
 using ned::editor::PersonalFormatConfigPath;
 using ned::editor::ProjectFormatConfigPath;
+using ned::editor::SetBlankMaxBefore;
+using ned::editor::SetBlankMinBefore;
 using ned::editor::SetEnsureFinalNewline;
 using ned::editor::SetIndentStyle;
 using ned::editor::SetIndentStyleForMode;
@@ -102,6 +105,8 @@ struct FormatRulesGuard {
         SetBracePlacement("format-config-test.capture", std::nullopt);
         SetBraceCollapseEmpty("format-config-test.capture", std::nullopt);
         SetBraceCollapseSimple("format-config-test.capture", std::nullopt);
+        SetBlankMinBefore("format-config-test.capture", std::nullopt);
+        SetBlankMaxBefore("format-config-test.capture", std::nullopt);
     }
 };
 
@@ -145,6 +150,27 @@ TEST_CASE("ParseFormatConfig reads :space and :break entries", "[FormatConfigPar
     REQUIRE_FALSE(config.breakRules.at("brace.function").before.has_value());
 }
 
+TEST_CASE("ParseFormatConfig reads :blank entries", "[FormatConfigParse]") {
+    const FormatConfig config = ParseFormatConfig(
+        "{:blank {\"def.toplevel\" {:min-before 2 :max-before 2}\n"
+        "         \"def.method\" {:min-before 1}}}",
+        "test.janet");
+
+    REQUIRE(config.blank.size() == 2);
+    REQUIRE(config.blank.at("def.toplevel").minBefore == 2);
+    REQUIRE(config.blank.at("def.toplevel").maxBefore == 2);
+    REQUIRE(config.blank.at("def.method").minBefore == 1);
+    REQUIRE_FALSE(config.blank.at("def.method").maxBefore.has_value());
+}
+
+TEST_CASE("ParseFormatConfig rejects a malformed :blank shape", "[FormatConfigParse]") {
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:blank \"not a struct\"}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:blank {:not-a-string true}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:blank {\"x\" \"not a struct\"}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:blank {\"x\" {:unknown-field true}}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:blank {\"x\" {:min-before true}}}", "test.janet"), std::runtime_error); // wants an int
+}
+
 TEST_CASE("ParseFormatConfig rejects a malformed :space/:break shape", "[FormatConfigParse]") {
     REQUIRE_THROWS_AS(ParseFormatConfig("{:space \"not a struct\"}", "test.janet"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseFormatConfig("{:space {:not-a-string true}}", "test.janet"), std::runtime_error); // keys are strings
@@ -163,12 +189,15 @@ TEST_CASE("ApplyFormatConfig sets only the :space/:break fields a config touches
     FormatConfig config;
     config.space["format-config-test.capture"] = {.before = true};
     config.breakRules["format-config-test.capture"] = {.placement = BracePlacement::SameLine};
+    config.blank["format-config-test.capture"] = {.minBefore = 2};
     ApplyFormatConfig(config);
 
     REQUIRE(SpaceRuleFor("format-config-test.capture").before == true);
     REQUIRE_FALSE(SpaceRuleFor("format-config-test.capture").after.has_value());
     REQUIRE(BreakRuleFor("format-config-test.capture").placement == BracePlacement::SameLine);
     REQUIRE_FALSE(BreakRuleFor("format-config-test.capture").before.has_value());
+    REQUIRE(BlankRuleFor("format-config-test.capture").minBefore == 2);
+    REQUIRE_FALSE(BlankRuleFor("format-config-test.capture").maxBefore.has_value());
 }
 
 TEST_CASE("ParseFormatConfig accepts a negative :max-consecutive-blank-lines (the disabled sentinel)",
@@ -182,6 +211,7 @@ TEST_CASE("ParseFormatConfig leaves every field unset for an empty struct", "[Fo
     REQUIRE(config.indent.empty());
     REQUIRE(config.space.empty());
     REQUIRE(config.breakRules.empty());
+    REQUIRE(config.blank.empty());
     REQUIRE_FALSE(config.trimTrailingWhitespaceOnSave.has_value());
     REQUIRE_FALSE(config.ensureFinalNewline.has_value());
 }

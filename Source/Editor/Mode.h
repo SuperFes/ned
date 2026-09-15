@@ -516,6 +516,15 @@ struct FormatCapture {
     // FormatBracePlacement.h's collapse-simple handling today; false for
     // every capture no "<name>.simple" pattern exists for.
     bool isSimple = false;
+    // blank-lines-kind follow-up: same convention/correlation mechanism,
+    // for a "<name>.first" marker (a "." tree-sitter anchor over the SAME
+    // node, e.g. "(block . (function_definition) @def.method.first)") --
+    // true when this capture is the first named child of its immediate
+    // container, so a min-blank-lines-before rule can decline to force a
+    // blank line where there is no preceding sibling to separate from
+    // (matching JetBrains' own separate "before first method" toggle,
+    // which most style guides leave off).
+    bool isFirst = false;
 };
 
 // Given a buffer's full text, returns every format.janet capture in it, in

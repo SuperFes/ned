@@ -1102,6 +1102,15 @@ namespace {
         return FromJanet<bool>(value);
     }
 
+    // blank-lines-kind follow-up: BlankRuleValue's fields are counts, not
+    // bools -- same nil-clears convention as JanetToOptionalBool above.
+    std::optional<int> JanetToOptionalInt(Janet value) {
+        if (janet_checktype(value, JANET_NIL)) {
+            return std::nullopt;
+        }
+        return static_cast<int>(FromJanet<std::int64_t>(value));
+    }
+
     void NedSetSyntaxBold(std::string className, Janet value) {
         editor::SetSyntaxBold(editor::SyntaxClassByName(className), JanetToOptionalBool(value));
     }
@@ -1310,6 +1319,22 @@ namespace {
         return editor::BreakRuleFor(captureName).collapseSimple;
     }
 
+    void NedSetFormatBlankMinBefore(std::string captureName, Janet value) {
+        editor::SetBlankMinBefore(captureName, JanetToOptionalInt(value));
+    }
+
+    void NedSetFormatBlankMaxBefore(std::string captureName, Janet value) {
+        editor::SetBlankMaxBefore(captureName, JanetToOptionalInt(value));
+    }
+
+    std::optional<int> NedFormatBlankMinBefore(std::string captureName) {
+        return editor::BlankRuleFor(captureName).minBefore;
+    }
+
+    std::optional<int> NedFormatBlankMaxBefore(std::string captureName) {
+        return editor::BlankRuleFor(captureName).maxBefore;
+    }
+
     // Registers a VCS-agnostic plugin from one struct/table of callbacks
     // keyed by keyword -- see JanetVcsProvider's header comment for the
     // full key list and which are optional (vocabulary-completion
@@ -1404,6 +1429,19 @@ void InstallEditorBindings(Environment& env) {
         "ned", "format-brace-collapse-empty", "The capture name's own overridden collapse-empty rule, or nil if unset.");
     env.Register<&NedFormatBraceCollapseSimple>(
         "ned", "format-brace-collapse-simple", "The capture name's own overridden collapse-simple rule, or nil if unset.");
+    env.Register<&NedSetFormatBlankMinBefore>(
+        "ned", "set-format-blank-min-before",
+        "Override the minimum blank lines required immediately before the given capture name -- an integer, nil "
+        "clears. Skipped when the capture is the first named child of its own container (nothing above it to "
+        "separate from but the container's own opening line).");
+    env.Register<&NedSetFormatBlankMaxBefore>(
+        "ned", "set-format-blank-max-before",
+        "Override the maximum blank lines preserved immediately before the given capture name -- an integer, nil "
+        "clears. Applied unconditionally, unlike min-before.");
+    env.Register<&NedFormatBlankMinBefore>(
+        "ned", "format-blank-min-before", "The capture name's own overridden blank-min-before rule, or nil if unset.");
+    env.Register<&NedFormatBlankMaxBefore>(
+        "ned", "format-blank-max-before", "The capture name's own overridden blank-max-before rule, or nil if unset.");
     env.Register<&NedSetFillColumn>(
         "ned", "set-fill-column",
         "Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comments to (default 70).");

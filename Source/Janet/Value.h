@@ -41,6 +41,7 @@ Janet ToJanet(const std::string& value);
 // header comment has the full nil-vs-throw rationale).
 Janet ToJanet(const std::optional<std::string>& value);
 Janet ToJanet(const std::optional<bool>& value);
+Janet ToJanet(const std::optional<int>& value);
 
 // A real Janet array of strings -- ned/syntax-classes' own return type
 // (syntax-theme-overrides follow-up), the first ToJanet overload in this

@@ -105,6 +105,10 @@ Janet ToJanet(const std::optional<bool>& value) {
     return value ? ToJanet(*value) : janet_wrap_nil();
 }
 
+Janet ToJanet(const std::optional<int>& value) {
+    return value ? ToJanet(static_cast<std::int64_t>(*value)) : janet_wrap_nil();
+}
+
 Janet ToJanet(const std::vector<std::string>& value) {
     JanetArray* array = janet_array(static_cast<std::int32_t>(value.size()));
     for (const std::string& item : value) {

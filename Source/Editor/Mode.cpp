@@ -1514,6 +1514,10 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             std::vector<FormatCapture> captures;
             // (base name, startByte, endByte) for every "<name>.simple" marker seen.
             std::vector<std::tuple<std::string, std::size_t, std::size_t>> simpleMarkers;
+            // Same shape for "<name>.first" -- "this capture is the first named
+            // child of its immediate container" (blank-lines-kind follow-up: a
+            // .-anchored query, e.g. "(block . (function_definition) @def.method.first)").
+            std::vector<std::tuple<std::string, std::size_t, std::size_t>> firstMarkers;
             for (const grammar::QueryMatch& match : formatQuery->Matches(tree.RootNode(), bufferText)) {
                 std::optional<std::size_t> openStart;
                 std::optional<std::size_t> closeEnd;
@@ -1522,6 +1526,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     constexpr std::string_view kOpenSuffix   = ".open";
                     constexpr std::string_view kCloseSuffix  = ".close";
                     constexpr std::string_view kSimpleSuffix = ".simple";
+                    constexpr std::string_view kFirstSuffix  = ".first";
                     const std::string_view     name(capture.name);
                     if (name.ends_with(kOpenSuffix)) {
                         openStart  = capture.startByte;
@@ -1535,6 +1540,10 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         simpleMarkers.emplace_back(capture.name.substr(0, capture.name.size() - kSimpleSuffix.size()),
                                                    capture.startByte, capture.endByte);
                     }
+                    else if (name.ends_with(kFirstSuffix)) {
+                        firstMarkers.emplace_back(capture.name.substr(0, capture.name.size() - kFirstSuffix.size()),
+                                                  capture.startByte, capture.endByte);
+                    }
                     else {
                         captures.push_back(FormatCapture{capture.name, capture.startByte, capture.endByte});
                     }
@@ -1547,6 +1556,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 for (const auto& [name, start, end] : simpleMarkers) {
                     if (capture.name == name && capture.startByte == start && capture.endByte == end) {
                         capture.isSimple = true;
+                        break;
+                    }
+                }
+                for (const auto& [name, start, end] : firstMarkers) {
+                    if (capture.name == name && capture.startByte == start && capture.endByte == end) {
+                        capture.isFirst = true;
                         break;
                     }
                 }

@@ -151,15 +151,16 @@ oversight, and is worth knowing if you `cd` into an unfamiliar repo.
 
 ### Schema
 
-Top-level keys, and the fields inside each `:indent`/`:space`/`:break` entry. `:indent` is
-keyed by a language key (`python`, `cpp`, the same key the defaults table above and
-`ned/set-lsp-command` both use). This list is held against the real schema on every build:
+Top-level keys, and the fields inside each `:indent`/`:space`/`:break`/`:blank` entry.
+`:indent` is keyed by a language key (`python`, `cpp`, the same key the defaults table
+above and `ned/set-lsp-command` both use). This list is held against the real schema on
+every build:
 
 <!-- format-keys:begin -->
 
-`indent` `space` `break` `trim-trailing-whitespace` `ensure-final-newline`
+`indent` `space` `break` `blank` `trim-trailing-whitespace` `ensure-final-newline`
 `max-consecutive-blank-lines` `tabs` `width` `before` `after` `within` `placement`
-`collapse-empty` `collapse-simple`
+`collapse-empty` `collapse-simple` `min-before` `max-before`
 
 <!-- format-keys:end -->
 
@@ -310,10 +311,9 @@ still allows a user to write `if (x):` anyway, which parses as a real
 `parenthesized_expression` node -- verified live this only matches when parens are
 actually present in the source. `control.parens`'s `:space` rules are therefore a real,
 if narrow, lever for Python (keeping spacing inside a project's redundant condition parens
-consistent), the only rule kind/capture that carries over from the brace-based languages at
-all. This is the moment the brace-based template runs out: Python's own real formatting
-need (PEP8's blank-lines-before-`def`/`class`) belongs to the unbuilt Blank rule kind, not
-Space/Break.
+consistent). This is the moment the brace-based template runs out -- Python's own real
+formatting need (PEP8's blank-lines-before-`def`/`class`) is the Blank rule kind's
+territory instead, covered next.
 
 The same rules are settable live from `init.janet`, per-field, mirroring
 `ned/set-capture-*`'s own shape:
@@ -322,6 +322,69 @@ The same rules are settable live from `init.janet`, per-field, mirroring
 (ned/set-format-space-before "cpp/control.parens" false)
 (ned/set-format-brace-placement "brace.function" "next-line")
 ```
+
+## Blank lines, and overriding them per language
+
+`:blank` (kind 6 of `Docs/FormattingCapabilities.md`'s catalogue -- "two independent
+halves, both needed: maximum preserved and minimum enforced") reads
+`Editor/FormatRules.h`'s `BlankRuleValue` the same capture-name-keyed way `:space`/`:break`
+do, via `Editor/FormatBlankLines.h`'s `ComputeBlankLineEdits`, wired into the Native
+chain FIRST (before Break/Space -- see that chain's own comment in `Commands.cpp` for why
+running order matters here). Deliberately **"before" only**, and deliberately int-valued
+rather than bool:
+
+- **`:min-before`** -- the minimum blank lines required immediately above a capture's own
+  line, enforced by inserting more if there are too few.
+- **`:max-before`** -- the maximum blank lines preserved immediately above it, enforced by
+  removing any excess.
+
+```janet
+(ned/set-format-blank-min-before "def.toplevel" 2)
+(ned/set-format-blank-max-before "def.toplevel" 2)
+(ned/set-format-blank-min-before "def.method" 1)
+```
+
+**Why "before" only.** JetBrains' own UI frames some rules as "around X" (its own wording
+for "between two definitions of the same kind"). Expressing that as a *pair* of
+independent `:min-after`-on-the-first-capture / `:min-before`-on-the-second-capture rules
+would let two adjacent captures' edits collide at the exact same gap between them -- the
+same class of coincident-edit bug `:within` on a genuinely empty delimiter pair already
+surfaced once (`Editor/FormatSpacing.cpp`'s own fix). `:min-before` on the *following*
+capture alone says the same thing with no possible collision, so that is the only knob
+this kind exposes.
+
+**The "first in its container" exception.** `:min-before` is skipped outright when a
+capture is the first named child of its own immediate container (`Mode.cpp`'s
+`"<name>.first"` marker convention, `FormatCapture::isFirst` -- the same correlation
+mechanism `:collapse-simple`'s `"<name>.simple"` marker already established, applied to a
+`.`-anchored tree-sitter query instead: `(block . (function_definition) @def.method.first)`).
+There is nothing above such a capture to separate from but the container's own opening
+line -- forcing a blank line directly under `class C:` before its first method is exactly
+the behavior most style guides (and JetBrains' own, usually-off "before first method"
+toggle) reject. Verified live against seven real shapes before this shipped: a module-
+level def with nothing above it (first), a second module-level def (not first), a
+decorated def/class (the marker fires on the *outer* `decorated_definition` node, so the
+blank line lands above the decorator, matching where the base capture itself starts), a
+class's first method with no docstring (first), the same class *with* a leading docstring
+(NOT first -- a docstring is a real preceding sibling, not a transparent extra, so the
+conservative "decline rather than guess" rule collapse-simple already set carries over
+here unchanged), a decorated first method (first, decorator included), and a comment
+immediately before a first method (still first -- comments are declared `extras` in
+Python's own grammar, so a `.` anchor is correctly transparent to them). `:max-before` is
+**not** gated on `isFirst` -- unlike the minimum, JetBrains' "keep maximum blank lines" is
+an unconditional cap applied everywhere, so three blank lines hand-typed directly under a
+class header are still trimmed down to whatever `:max-before` says, even for that class's
+own first method.
+
+**Python is the pilot, and currently the only language with a `:blank` capture.**
+`def.toplevel` (a `function_definition`/`class_definition`/`decorated_definition` that is
+a direct child of the module) and `def.method` (the same, but a direct child of a class's
+own `block`) are exactly PEP8's own two rules -- "surround top-level function and class
+definitions with two blank lines" and "methods inside a class are surrounded by a single
+blank line." Nothing about `:blank`'s own mechanism is Python-specific, though: any
+language's capture -- `brace.function`, `control.parens`, anything a `format.janet` names
+-- can carry a `:blank` rule the same way, the moment a future language's own file adds
+one.
 
 ## The `--format` CLI
 
