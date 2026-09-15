@@ -18,6 +18,7 @@ using ned::editor::FormatTextEdit;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
+using ned::editor::PythonMode;
 using ned::editor::SetBraceCollapseEmpty;
 using ned::editor::SetBraceCollapseSimple;
 using ned::editor::SetBracePlacement;
@@ -549,5 +550,42 @@ TEST_CASE("End to end: java-mode's formatCaptures drives real edits across all t
                              "}\n");
 
     SetBracePlacement("brace.control", std::nullopt);
+    SetBraceCollapseSimple("brace.control", std::nullopt);
+}
+
+// python-mode: verified live against tree-sitter-python's own
+// node-types.json that every compound statement's body is a bare "block"
+// field with no wrapping delimiter tokens at all -- indentation alone
+// marks the extent. python/format.janet therefore names no brace.*/
+// collapse-* captures whatsoever, so this whole pass is a structural no-op
+// for Python regardless of what placement/collapse rules a project
+// configures -- there is simply nothing here for it to act on.
+TEST_CASE("python-mode's format.janet names no brace-shaped captures at all", "[FormatBracePlacement]") {
+    const Mode        mode   = PythonMode();
+    const std::string source = "def f(x):\n"
+                                "    if x:\n"
+                                "        pass\n"
+                                "class C:\n"
+                                "    def m(self):\n"
+                                "        pass\n";
+    REQUIRE(mode.formatCaptures(source).empty());
+}
+
+TEST_CASE("End to end: brace-placement rules are a no-op on python-mode even when configured",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::NextLineIndented);
+    SetBraceCollapseSimple("brace.control", true);
+
+    const Mode  mode   = PythonMode();
+    const std::string source = "def f(x):\n    if x:\n        pass\n";
+    Buffer      buffer("test.py");
+    buffer.InsertAtPoint(source);
+
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "python", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == source);
+
+    SetBracePlacement("brace.function", std::nullopt);
     SetBraceCollapseSimple("brace.control", std::nullopt);
 }

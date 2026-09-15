@@ -17,6 +17,7 @@ using ned::editor::FormatTextEdit;
 using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
+using ned::editor::PythonMode;
 using ned::editor::SetSpaceAfter;
 using ned::editor::SetSpaceBefore;
 using ned::editor::SetSpaceWithin;
@@ -339,4 +340,54 @@ TEST_CASE("End to end: java-mode's formatCaptures drives a real space edit", "[F
     ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "java", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "class C { void m() { if (x) {\n    return;\n} } }");
+}
+
+// python-mode: the language whose grammar has no brace-delimited bodies at
+// all (function/if/while/for/class/try/with/match all use a bare "block"
+// field, verified against tree-sitter-python's node-types.json) -- its
+// format.janet names no brace.*/collapse-*/paired captures at all, only
+// control.parens, and only for the rare case a condition is already
+// parenthesized (the grammar never requires it).
+TEST_CASE("python-mode's format.janet only captures a condition already wrapped in parens", "[FormatSpacing]") {
+    const Mode mode = PythonMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("if x:\n    pass\n"), "control.parens").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("if (x):\n    pass\n"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("while x:\n    pass\n"), "control.parens").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("while (x and y):\n    pass\n"), "control.parens").size() == 1);
+}
+
+TEST_CASE("python-mode's format.janet has no brace-shaped captures at all", "[FormatSpacing]") {
+    const Mode        mode   = PythonMode();
+    const std::string source = "def f(x):\n"
+                                "    if x:\n"
+                                "        pass\n"
+                                "    while x:\n"
+                                "        pass\n"
+                                "class C:\n"
+                                "    def m(self):\n"
+                                "        pass\n";
+    for (const char* name : {"brace.function", "brace.control", "brace.class"}) {
+        REQUIRE(CapturesNamed(mode.formatCaptures(source), name).empty());
+    }
+}
+
+TEST_CASE("End to end: python-mode's formatCaptures drives a real space edit only when parens are present",
+          "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceWithin("control.parens", false);
+
+    const Mode mode = PythonMode();
+
+    Buffer withParens("test.py");
+    withParens.InsertAtPoint("if ( x ):\n    pass\n");
+    ApplyFormatTextEdits(withParens,
+                          ComputeSpaceEdits(withParens.Text(), "python", mode.formatCaptures(withParens.Text())));
+    REQUIRE(withParens.Text() == "if (x):\n    pass\n");
+
+    Buffer withoutParens("test2.py");
+    withoutParens.InsertAtPoint("if x:\n    pass\n");
+    ApplyFormatTextEdits(
+        withoutParens, ComputeSpaceEdits(withoutParens.Text(), "python", mode.formatCaptures(withoutParens.Text())));
+    REQUIRE(withoutParens.Text() == "if x:\n    pass\n"); // nothing to touch, no crash either
 }
