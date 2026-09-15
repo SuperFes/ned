@@ -7,12 +7,15 @@
 #include <string>
 
 #include "Editor/FormatConfigParse.h"
+#include "Editor/FormatRules.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/MaxConsecutiveBlankLines.h"
 #include "Editor/TrimOnSave.h"
 #include "Editor/FinalNewline.h"
 
 using ned::editor::ApplyFormatConfig;
+using ned::editor::BracePlacement;
+using ned::editor::BreakRuleFor;
 using ned::editor::EffectiveIndentStyle;
 using ned::editor::EnsureFinalNewline;
 using ned::editor::FormatConfig;
@@ -27,6 +30,7 @@ using ned::editor::SetIndentStyle;
 using ned::editor::SetIndentStyleForMode;
 using ned::editor::SetMaxConsecutiveBlankLines;
 using ned::editor::SetTrimTrailingWhitespaceOnSave;
+using ned::editor::SpaceRuleFor;
 using ned::editor::TrimTrailingWhitespaceOnSave;
 
 namespace {
@@ -86,6 +90,21 @@ struct FinalNewlineGuard {
     }
 };
 
+// FormatRules.h is process-wide state too -- clears whatever this file's
+// :space/:break tests touch.
+struct FormatRulesGuard {
+    ~FormatRulesGuard() {
+        using namespace ned::editor;
+        SetSpaceBefore("format-config-test.capture", std::nullopt);
+        SetSpaceAfter("format-config-test.capture", std::nullopt);
+        SetSpaceWithin("format-config-test.capture", std::nullopt);
+        SetBreakBefore("format-config-test.capture", std::nullopt);
+        SetBracePlacement("format-config-test.capture", std::nullopt);
+        SetBraceCollapseEmpty("format-config-test.capture", std::nullopt);
+        SetBraceCollapseSimple("format-config-test.capture", std::nullopt);
+    }
+};
+
 } // namespace
 
 TEST_CASE("ParseFormatConfig reads every field", "[FormatConfigParse]") {
@@ -107,6 +126,51 @@ TEST_CASE("ParseFormatConfig reads every field", "[FormatConfigParse]") {
     REQUIRE(config.maxConsecutiveBlankLines == 3);
 }
 
+TEST_CASE("ParseFormatConfig reads :space and :break entries", "[FormatConfigParse]") {
+    const FormatConfig config = ParseFormatConfig(
+        "{:space {\"control.parens\" {:before true :after false}\n"
+        "         \"cpp/control.parens\" {:within true}}\n"
+        " :break {\"brace.function\" {:placement :next-line :collapse-empty true}}}",
+        "test.janet");
+
+    REQUIRE(config.space.size() == 2);
+    REQUIRE(config.space.at("control.parens").before == true);
+    REQUIRE(config.space.at("control.parens").after == false);
+    REQUIRE_FALSE(config.space.at("control.parens").within.has_value());
+    REQUIRE(config.space.at("cpp/control.parens").within == true);
+
+    REQUIRE(config.breakRules.size() == 1);
+    REQUIRE(config.breakRules.at("brace.function").placement == BracePlacement::NextLine);
+    REQUIRE(config.breakRules.at("brace.function").collapseEmpty == true);
+    REQUIRE_FALSE(config.breakRules.at("brace.function").before.has_value());
+}
+
+TEST_CASE("ParseFormatConfig rejects a malformed :space/:break shape", "[FormatConfigParse]") {
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:space \"not a struct\"}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:space {:not-a-string true}}", "test.janet"), std::runtime_error); // keys are strings
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:space {\"x\" \"not a struct\"}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:space {\"x\" {:unknown-field true}}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:space {\"x\" {:before 4}}}", "test.janet"), std::runtime_error); // :before wants a bool
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:break \"not a struct\"}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:break {\"x\" {:unknown-field true}}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:break {\"x\" {:placement \"not-a-keyword\"}}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:break {\"x\" {:placement :not-a-real-placement}}}", "test.janet"), std::runtime_error);
+}
+
+TEST_CASE("ApplyFormatConfig sets only the :space/:break fields a config touches", "[FormatConfigParse]") {
+    const FormatRulesGuard guard;
+
+    FormatConfig config;
+    config.space["format-config-test.capture"] = {.before = true};
+    config.breakRules["format-config-test.capture"] = {.placement = BracePlacement::SameLine};
+    ApplyFormatConfig(config);
+
+    REQUIRE(SpaceRuleFor("format-config-test.capture").before == true);
+    REQUIRE_FALSE(SpaceRuleFor("format-config-test.capture").after.has_value());
+    REQUIRE(BreakRuleFor("format-config-test.capture").placement == BracePlacement::SameLine);
+    REQUIRE_FALSE(BreakRuleFor("format-config-test.capture").before.has_value());
+}
+
 TEST_CASE("ParseFormatConfig accepts a negative :max-consecutive-blank-lines (the disabled sentinel)",
           "[FormatConfigParse]") {
     const FormatConfig config = ParseFormatConfig("{:max-consecutive-blank-lines -1}", "test.janet");
@@ -116,6 +180,8 @@ TEST_CASE("ParseFormatConfig accepts a negative :max-consecutive-blank-lines (th
 TEST_CASE("ParseFormatConfig leaves every field unset for an empty struct", "[FormatConfigParse]") {
     const FormatConfig config = ParseFormatConfig("{}", "test.janet");
     REQUIRE(config.indent.empty());
+    REQUIRE(config.space.empty());
+    REQUIRE(config.breakRules.empty());
     REQUIRE_FALSE(config.trimTrailingWhitespaceOnSave.has_value());
     REQUIRE_FALSE(config.ensureFinalNewline.has_value());
 }

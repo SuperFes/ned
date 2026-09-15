@@ -29,6 +29,7 @@
 #include "Editor/FillColumn.h"
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/FormatRules.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/ImportFixupSettings.h"
@@ -1230,6 +1231,85 @@ namespace {
         return names;
     }
 
+    // configurable-formatter-rules follow-up: kind 2 (Space) / kind 3 (Break,
+    // brace placement folded in) per-capture-name rule overrides --
+    // Editor/FormatRules.h's own flat, language-prefixed key convention
+    // ("control.parens" or "cpp/control.parens", the language-scoped form
+    // resolved by prefix alone, not a separate parameter). Same
+    // nil-clears-a-field / empty-string-clears-an-enum shape as
+    // ned/set-capture-*/ned/set-capture-class above; getters are exact-name
+    // lookups only, matching ned/capture-foreground's own shape (no
+    // dotted/language resolution surfaced to Janet -- FormatRules.h's
+    // language-scoped overload is for a future pass's own internal use).
+    void NedSetFormatSpaceBefore(std::string captureName, Janet value) {
+        editor::SetSpaceBefore(captureName, JanetToOptionalBool(value));
+    }
+
+    void NedSetFormatSpaceAfter(std::string captureName, Janet value) {
+        editor::SetSpaceAfter(captureName, JanetToOptionalBool(value));
+    }
+
+    void NedSetFormatSpaceWithin(std::string captureName, Janet value) {
+        editor::SetSpaceWithin(captureName, JanetToOptionalBool(value));
+    }
+
+    std::optional<bool> NedFormatSpaceBefore(std::string captureName) {
+        return editor::SpaceRuleFor(captureName).before;
+    }
+
+    std::optional<bool> NedFormatSpaceAfter(std::string captureName) {
+        return editor::SpaceRuleFor(captureName).after;
+    }
+
+    std::optional<bool> NedFormatSpaceWithin(std::string captureName) {
+        return editor::SpaceRuleFor(captureName).within;
+    }
+
+    void NedSetFormatBreakBefore(std::string captureName, Janet value) {
+        editor::SetBreakBefore(captureName, JanetToOptionalBool(value));
+    }
+
+    void NedSetFormatBreakAfter(std::string captureName, Janet value) {
+        editor::SetBreakAfter(captureName, JanetToOptionalBool(value));
+    }
+
+    // Empty string clears, mirroring ned/set-capture-class's own convention
+    // for an enum-valued field.
+    void NedSetFormatBracePlacement(std::string captureName, std::string placement) {
+        editor::SetBracePlacement(captureName, placement.empty()
+                                                    ? std::nullopt
+                                                    : std::optional(editor::BracePlacementByName(placement)));
+    }
+
+    void NedSetFormatBraceCollapseEmpty(std::string captureName, Janet value) {
+        editor::SetBraceCollapseEmpty(captureName, JanetToOptionalBool(value));
+    }
+
+    void NedSetFormatBraceCollapseSimple(std::string captureName, Janet value) {
+        editor::SetBraceCollapseSimple(captureName, JanetToOptionalBool(value));
+    }
+
+    std::optional<bool> NedFormatBreakBefore(std::string captureName) {
+        return editor::BreakRuleFor(captureName).before;
+    }
+
+    std::optional<bool> NedFormatBreakAfter(std::string captureName) {
+        return editor::BreakRuleFor(captureName).after;
+    }
+
+    std::optional<std::string> NedFormatBracePlacement(std::string captureName) {
+        const auto placement = editor::BreakRuleFor(captureName).placement;
+        return placement ? std::optional(editor::BracePlacementName(*placement)) : std::nullopt;
+    }
+
+    std::optional<bool> NedFormatBraceCollapseEmpty(std::string captureName) {
+        return editor::BreakRuleFor(captureName).collapseEmpty;
+    }
+
+    std::optional<bool> NedFormatBraceCollapseSimple(std::string captureName) {
+        return editor::BreakRuleFor(captureName).collapseSimple;
+    }
+
     // Registers a VCS-agnostic plugin from one struct/table of callbacks
     // keyed by keyword -- see JanetVcsProvider's header comment for the
     // full key list and which are optional (vocabulary-completion
@@ -1281,6 +1361,49 @@ void InstallEditorBindings(Environment& env) {
         "Set the indent style smart-indentation (indent-for-tab-command/newline/indent-region/indent-buffer) writes: "
         "(mode-name-or-empty use-tabs? width). An empty mode-name sets the process-wide default (spaces, width 4); "
         "a Mode name (e.g. \"python-mode\") sets a per-mode override, checked first.");
+    env.Register<&NedSetFormatSpaceBefore>(
+        "ned", "set-format-space-before",
+        "Override whether a space is inserted before the given capture name (e.g. \"control.parens\", or "
+        "\"cpp/control.parens\" for a one-language override) -- true/false, nil clears. No format.scm query "
+        "consumes this yet (configurable-formatter-rules follow-up, Editor/FormatRules.h).");
+    env.Register<&NedSetFormatSpaceAfter>(
+        "ned", "set-format-space-after", "Override whether a space is inserted after the given capture name -- true/false, nil clears.");
+    env.Register<&NedSetFormatSpaceWithin>(
+        "ned", "set-format-space-within",
+        "Override whether a space is inserted just inside the given capture's delimiter pair -- true/false, nil clears.");
+    env.Register<&NedFormatSpaceBefore>(
+        "ned", "format-space-before", "The capture name's own overridden space-before rule, or nil if unset (no inheritance walk).");
+    env.Register<&NedFormatSpaceAfter>(
+        "ned", "format-space-after", "The capture name's own overridden space-after rule, or nil if unset.");
+    env.Register<&NedFormatSpaceWithin>(
+        "ned", "format-space-within", "The capture name's own overridden space-within rule, or nil if unset.");
+    env.Register<&NedSetFormatBreakBefore>(
+        "ned", "set-format-break-before",
+        "Override whether a mandatory newline is forced before the given capture name -- true/false, nil clears.");
+    env.Register<&NedSetFormatBreakAfter>(
+        "ned", "set-format-break-after",
+        "Override whether a mandatory newline is forced after the given capture name -- true/false, nil clears.");
+    env.Register<&NedSetFormatBracePlacement>(
+        "ned", "set-format-brace-placement",
+        "Override brace placement for a brace-carrying capture name: \"same-line\" (K&R), \"next-line\" (Allman), "
+        "or \"next-line-indented\" (GNU/Whitesmiths); empty string clears.");
+    env.Register<&NedSetFormatBraceCollapseEmpty>(
+        "ned", "set-format-brace-collapse-empty",
+        "Override whether the given brace-carrying capture keeps empty braces/block on one line -- true/false, nil clears.");
+    env.Register<&NedSetFormatBraceCollapseSimple>(
+        "ned", "set-format-brace-collapse-simple",
+        "Override whether the given brace-carrying capture keeps a simple one-statement block on one line -- "
+        "true/false, nil clears.");
+    env.Register<&NedFormatBreakBefore>(
+        "ned", "format-break-before", "The capture name's own overridden break-before rule, or nil if unset.");
+    env.Register<&NedFormatBreakAfter>(
+        "ned", "format-break-after", "The capture name's own overridden break-after rule, or nil if unset.");
+    env.Register<&NedFormatBracePlacement>(
+        "ned", "format-brace-placement", "The capture name's own overridden brace-placement name, or nil if unset.");
+    env.Register<&NedFormatBraceCollapseEmpty>(
+        "ned", "format-brace-collapse-empty", "The capture name's own overridden collapse-empty rule, or nil if unset.");
+    env.Register<&NedFormatBraceCollapseSimple>(
+        "ned", "format-brace-collapse-simple", "The capture name's own overridden collapse-simple rule, or nil if unset.");
     env.Register<&NedSetFillColumn>(
         "ned", "set-fill-column",
         "Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comments to (default 70).");

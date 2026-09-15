@@ -59,6 +59,7 @@ const std::set<std::string, std::less<>>& QueryKinds() {
         "indents",
         "locals",
         "injections",
+        "format",
     };
     return kKinds;
 }
@@ -444,6 +445,7 @@ std::vector<KindText> QueryTextsFor(const LanguageDefinition& definition) {
     add("indents", files.indents);
     add("locals", files.locals);
     add("injections", files.injections);
+    add("format", files.format);
     return out;
 }
 

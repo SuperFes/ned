@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-163 bindings.
+179 bindings.
 
 ## `ned/backward-char`
 
@@ -56,6 +56,38 @@ Bind a key sequence (e.g. "C-c C-j") to a command name.
 ## `ned/delete-char`
 
 Delete the grapheme cluster at point.
+
+## `ned/format-brace-collapse-empty`
+
+The capture name's own overridden collapse-empty rule, or nil if unset.
+
+## `ned/format-brace-collapse-simple`
+
+The capture name's own overridden collapse-simple rule, or nil if unset.
+
+## `ned/format-brace-placement`
+
+The capture name's own overridden brace-placement name, or nil if unset.
+
+## `ned/format-break-after`
+
+The capture name's own overridden break-after rule, or nil if unset.
+
+## `ned/format-break-before`
+
+The capture name's own overridden break-before rule, or nil if unset.
+
+## `ned/format-space-after`
+
+The capture name's own overridden space-after rule, or nil if unset.
+
+## `ned/format-space-before`
+
+The capture name's own overridden space-before rule, or nil if unset (no inheritance walk).
+
+## `ned/format-space-within`
+
+The capture name's own overridden space-within rule, or nil if unset.
 
 ## `ned/forward-char`
 
@@ -253,9 +285,41 @@ Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comme
 
 Whether saving a file reached through a symlink writes the file the link points at (default true) or replaces the link itself with a regular file (false). Following also means the temporary file a save writes is created beside the real target, so a link pointing to another filesystem still saves.
 
+## `ned/set-format-brace-collapse-empty`
+
+Override whether the given brace-carrying capture keeps empty braces/block on one line -- true/false, nil clears.
+
+## `ned/set-format-brace-collapse-simple`
+
+Override whether the given brace-carrying capture keeps a simple one-statement block on one line -- true/false, nil clears.
+
+## `ned/set-format-brace-placement`
+
+Override brace placement for a brace-carrying capture name: "same-line" (K&R), "next-line" (Allman), or "next-line-indented" (GNU/Whitesmiths); empty string clears.
+
+## `ned/set-format-break-after`
+
+Override whether a mandatory newline is forced after the given capture name -- true/false, nil clears.
+
+## `ned/set-format-break-before`
+
+Override whether a mandatory newline is forced before the given capture name -- true/false, nil clears.
+
 ## `ned/set-format-command`
 
 Set the shell command save-buffer pipes buffer content through before writing (empty string clears it).
+
+## `ned/set-format-space-after`
+
+Override whether a space is inserted after the given capture name -- true/false, nil clears.
+
+## `ned/set-format-space-before`
+
+Override whether a space is inserted before the given capture name (e.g. "control.parens", or "cpp/control.parens" for a one-language override) -- true/false, nil clears. No format.scm query consumes this yet (configurable-formatter-rules follow-up, Editor/FormatRules.h).
+
+## `ned/set-format-space-within`
+
+Override whether a space is inserted just inside the given capture's delimiter pair -- true/false, nil clears.
 
 ## `ned/set-huge-file-disk-space-check-enabled`
 

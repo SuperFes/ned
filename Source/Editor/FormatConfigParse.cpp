@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include "FinalNewline.h"
+#include "FormatRules.h"
 #include "IndentStyle.h"
 #include "JanetData.h"
 #include "MaxConsecutiveBlankLines.h"
@@ -50,6 +51,96 @@ namespace {
             }
         }
         return std::stoi(value.text);
+    }
+
+    std::string ExpectString(const std::string& path, const Value& value, std::string_view what) {
+        if (!value.IsString()) {
+            Fail(path, value.line, std::string(what) + " must be a string");
+        }
+        return value.text;
+    }
+
+    BracePlacement ExpectBracePlacement(const std::string& path, const Value& value, std::string_view what) {
+        if (!value.IsKeyword()) {
+            Fail(path, value.line,
+                std::string(what) + " must be a keyword (:same-line, :next-line, or :next-line-indented)");
+        }
+        try {
+            return BracePlacementByName(value.text);
+        }
+        catch (const std::runtime_error&) {
+            Fail(path, value.line, std::string(what) + " must be :same-line, :next-line, or :next-line-indented");
+        }
+    }
+
+    // :space's own {"<capture>" {:before true/false :after true/false
+    // :within true/false} ...} -- the capture-name key is a STRING (a
+    // dotted capture name isn't a valid Janet keyword symbol), unlike every
+    // other struct key in this file.
+    SpaceRuleValue ParseSpaceEntry(const std::string& path, const std::string& captureKey, const Value& entryValue) {
+        if (!entryValue.IsStruct()) {
+            Fail(path, entryValue.line, "\"" + captureKey + "\"'s :space entry must be {:before .. :after .. :within ..}");
+        }
+        SpaceRuleValue entry;
+        for (std::size_t k = 0; k + 1 < entryValue.pairs.size(); k += 2) {
+            const Value& fieldKey   = entryValue.pairs[k];
+            const Value& fieldValue = entryValue.pairs[k + 1];
+            if (!fieldKey.IsKeyword()) {
+                Fail(path, fieldKey.line, ":space entries are keyed by :before/:after/:within");
+            }
+            if (fieldKey.text == "before") {
+                entry.before = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :before");
+            }
+            else if (fieldKey.text == "after") {
+                entry.after = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :after");
+            }
+            else if (fieldKey.text == "within") {
+                entry.within = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :within");
+            }
+            else {
+                Fail(path, fieldKey.line, "unknown :space entry key :" + fieldKey.text);
+            }
+        }
+        return entry;
+    }
+
+    // :break's own entry -- same shape one level up, with brace placement
+    // folded in (Editor/FormatRules.h's own header comment explains why).
+    BreakRuleValue ParseBreakEntry(const std::string& path, const std::string& captureKey, const Value& entryValue) {
+        if (!entryValue.IsStruct()) {
+            Fail(path, entryValue.line,
+                "\"" + captureKey +
+                    "\"'s :break entry must be {:before .. :after .. :placement .. :collapse-empty .. "
+                    ":collapse-simple ..}");
+        }
+        BreakRuleValue entry;
+        for (std::size_t k = 0; k + 1 < entryValue.pairs.size(); k += 2) {
+            const Value& fieldKey   = entryValue.pairs[k];
+            const Value& fieldValue = entryValue.pairs[k + 1];
+            if (!fieldKey.IsKeyword()) {
+                Fail(path, fieldKey.line,
+                    ":break entries are keyed by :before/:after/:placement/:collapse-empty/:collapse-simple");
+            }
+            if (fieldKey.text == "before") {
+                entry.before = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :before");
+            }
+            else if (fieldKey.text == "after") {
+                entry.after = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :after");
+            }
+            else if (fieldKey.text == "placement") {
+                entry.placement = ExpectBracePlacement(path, fieldValue, "\"" + captureKey + "\"'s :placement");
+            }
+            else if (fieldKey.text == "collapse-empty") {
+                entry.collapseEmpty = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :collapse-empty");
+            }
+            else if (fieldKey.text == "collapse-simple") {
+                entry.collapseSimple = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :collapse-simple");
+            }
+            else {
+                Fail(path, fieldKey.line, "unknown :break entry key :" + fieldKey.text);
+            }
+        }
+        return entry;
     }
 
 } // namespace
@@ -109,6 +200,30 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
                 config.indent[languageKey.text] = entry;
             }
         }
+        else if (key == "space") {
+            if (!value.IsStruct()) {
+                Fail(path, value.line, ":space is {\"<capture>\" {:before .. :after .. :within ..} ...}");
+            }
+            for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
+                const Value& captureKey = value.pairs[j];
+                const Value& entryValue = value.pairs[j + 1];
+                const std::string capture =
+                    ExpectString(path, captureKey, ":space's own keys are capture-name strings, e.g. \"control.parens\"");
+                config.space[capture] = ParseSpaceEntry(path, capture, entryValue);
+            }
+        }
+        else if (key == "break") {
+            if (!value.IsStruct()) {
+                Fail(path, value.line, ":break is {\"<capture>\" {:before .. :after .. :placement ..} ...}");
+            }
+            for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
+                const Value& captureKey = value.pairs[j];
+                const Value& entryValue = value.pairs[j + 1];
+                const std::string capture =
+                    ExpectString(path, captureKey, ":break's own keys are capture-name strings, e.g. \"brace.function\"");
+                config.breakRules[capture] = ParseBreakEntry(path, capture, entryValue);
+            }
+        }
         else if (key == "trim-trailing-whitespace") {
             config.trimTrailingWhitespaceOnSave = ExpectBool(path, value, ":trim-trailing-whitespace");
         }
@@ -138,6 +253,34 @@ void ApplyFormatConfig(const FormatConfig& config) {
         }
         SetIndentStyleForMode(modeName, style);
     }
+    for (const auto& [captureKey, entry] : config.space) {
+        if (entry.before) {
+            SetSpaceBefore(captureKey, entry.before);
+        }
+        if (entry.after) {
+            SetSpaceAfter(captureKey, entry.after);
+        }
+        if (entry.within) {
+            SetSpaceWithin(captureKey, entry.within);
+        }
+    }
+    for (const auto& [captureKey, entry] : config.breakRules) {
+        if (entry.before) {
+            SetBreakBefore(captureKey, entry.before);
+        }
+        if (entry.after) {
+            SetBreakAfter(captureKey, entry.after);
+        }
+        if (entry.placement) {
+            SetBracePlacement(captureKey, entry.placement);
+        }
+        if (entry.collapseEmpty) {
+            SetBraceCollapseEmpty(captureKey, entry.collapseEmpty);
+        }
+        if (entry.collapseSimple) {
+            SetBraceCollapseSimple(captureKey, entry.collapseSimple);
+        }
+    }
     if (config.trimTrailingWhitespaceOnSave) {
         SetTrimTrailingWhitespaceOnSave(*config.trimTrailingWhitespaceOnSave);
     }
@@ -164,11 +307,19 @@ std::filesystem::path ProjectFormatConfigPath(const std::filesystem::path& proje
 }
 
 std::vector<std::string> FormatConfigKeys() {
-    return {"ensure-final-newline", "indent", "max-consecutive-blank-lines", "trim-trailing-whitespace"};
+    return {"break", "ensure-final-newline", "indent", "max-consecutive-blank-lines", "space", "trim-trailing-whitespace"};
 }
 
 std::vector<std::string> FormatConfigIndentEntryKeys() {
     return {"tabs", "width"};
+}
+
+std::vector<std::string> FormatConfigSpaceEntryKeys() {
+    return {"after", "before", "within"};
+}
+
+std::vector<std::string> FormatConfigBreakEntryKeys() {
+    return {"after", "before", "collapse-empty", "collapse-simple", "placement"};
 }
 
 void LoadFormatConfigFile(const std::filesystem::path& path) {

@@ -28,6 +28,10 @@
 // a loud path:line error, never silently ignored):
 //
 //   {:indent {:<language-key> {:tabs true/false :width N} ...}
+//    :space  {"<capture>" {:before true/false :after true/false :within true/false} ...}
+//    :break  {"<capture>" {:before true/false :after true/false
+//                           :placement :same-line/:next-line/:next-line-indented
+//                           :collapse-empty true/false :collapse-simple true/false} ...}
 //    :trim-trailing-whitespace true/false
 //    :ensure-final-newline true/false
 //    :max-consecutive-blank-lines N}
@@ -42,6 +46,18 @@
 // ned/set-lsp-command use ("python", "cpp", ...) -- LanguageDefinition::name,
 // not the "<name>-mode" Mode name.
 //
+// :space/:break follow a different keying convention from :indent --
+// configurable-formatter-rules follow-up (Editor/FormatRules.h). Their keys
+// are STRINGS, not keywords (a capture name like "control.parens" isn't a
+// valid Janet keyword symbol), and each key is either a bare capture name
+// (the shared rule every language gets) or "<language>/<capture>" (that
+// language's own override) -- FormatRules.h's own flat, language-prefixed
+// key convention, mirroring SyntaxTheme.h's SyntaxClassOverrideForCapture
+// resolution. There is no nested per-language sub-table: the prefix IS the
+// scoping, so applying a :space/:break entry is one FormatRules setter call
+// per field the entry sets, keyed by the string exactly as written --
+// no language/capture split happens in this parser at all.
+//
 
 #ifndef NED_EDITOR_FORMATCONFIGPARSE_H
 #define NED_EDITOR_FORMATCONFIGPARSE_H
@@ -53,6 +69,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "FormatRules.h"
+
 namespace ned::editor {
 
 struct FormatConfigIndentEntry {
@@ -62,6 +80,14 @@ struct FormatConfigIndentEntry {
 
 struct FormatConfig {
     std::unordered_map<std::string, FormatConfigIndentEntry> indent; // keyed by language key
+    // Keyed by capture name, bare ("control.parens") or language-scoped
+    // ("cpp/control.parens") -- FormatRules.h's own key convention, applied
+    // verbatim with no parsing of the "/" here. SpaceRuleValue/BreakRuleValue
+    // reused directly rather than a parser-local entry struct: both are
+    // already "every field optional" structs shaped exactly like what the
+    // schema accepts.
+    std::unordered_map<std::string, SpaceRuleValue> space;
+    std::unordered_map<std::string, BreakRuleValue> breakRules; // "break" is a C++ keyword
     std::optional<bool>                                       trimTrailingWhitespaceOnSave;
     std::optional<bool>                                       ensureFinalNewline;
     // A negative value means "no limit", the same sentinel
@@ -111,6 +137,10 @@ void LoadFormatConfigFile(const std::filesystem::path& path);
 // Every field name inside one :indent language entry (":python {...}"),
 // sorted -- the same parity role, one level down.
 [[nodiscard]] std::vector<std::string> FormatConfigIndentEntryKeys();
+
+// Same, one level down inside a :space / :break entry.
+[[nodiscard]] std::vector<std::string> FormatConfigSpaceEntryKeys();
+[[nodiscard]] std::vector<std::string> FormatConfigBreakEntryKeys();
 
 } // namespace ned::editor
 

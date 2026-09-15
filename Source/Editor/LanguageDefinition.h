@@ -64,6 +64,11 @@ struct QueryFiles {
     std::vector<std::string> indents;
     std::vector<std::string> locals;
     std::vector<std::string> injections;
+    // configurable-formatter-rules follow-up: names the nodes Editor/
+    // FormatRules.h's Space/Break rule kinds attach to (e.g.
+    // "@brace.function") -> Mode::formatCaptures. No bundled language ships
+    // one yet except the cpp pilot (Docs/FormattingRules.md).
+    std::vector<std::string> format;
 };
 
 struct LanguageDefinition {
