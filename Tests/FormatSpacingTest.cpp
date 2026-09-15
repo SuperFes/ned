@@ -14,6 +14,7 @@ using ned::editor::CppMode;
 using ned::editor::ComputeSpaceEdits;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
+using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
 using ned::editor::SetSpaceAfter;
@@ -299,4 +300,43 @@ TEST_CASE("End to end: a real cpp Mode's formatCaptures drives a real edit", "[F
     ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "if (x) {\n    return;\n}\n");
+}
+
+// java-mode: the third language over the full template.
+TEST_CASE("java-mode's format.janet names control.parens over if/switch", "[FormatSpacing]") {
+    const Mode mode = JavaMode();
+    const std::string ifSource     = "class C { void m() { if(x) {} } }";
+    const std::string switchSource = "class C { void m() { switch(x) {} } }";
+    REQUIRE(CapturesNamed(mode.formatCaptures(ifSource), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures(switchSource), "control.parens").size() == 1);
+}
+
+TEST_CASE("java-mode's format.janet captures a for-loop's outer parens despite multiple init/update expressions",
+          "[FormatSpacing]") {
+    const Mode mode = JavaMode();
+    const std::string source = "class C { void m() { for (int i = 0, j = 1; i < 10; ++i, --j) {} } }";
+    const auto        parens = CapturesNamed(mode.formatCaptures(source), "control.parens");
+
+    REQUIRE(parens.size() == 1); // one pair, not one per comma-separated expression
+    REQUIRE(source.substr(parens[0].startByte, parens[0].endByte - parens[0].startByte) ==
+            "(int i = 0, j = 1; i < 10; ++i, --j)");
+}
+
+TEST_CASE("java-mode's format.janet captures a catch clause's parens as a matched pair", "[FormatSpacing]") {
+    const Mode mode = JavaMode();
+    const std::string source = "class C { void m() { try {} catch (Exception e) {} } }";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "control.parens").size() == 1);
+}
+
+TEST_CASE("End to end: java-mode's formatCaptures drives a real space edit", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceBefore("control.parens", true);
+
+    const Mode mode = JavaMode();
+    Buffer     buffer("test.java");
+    buffer.InsertAtPoint("class C { void m() { if(x) {\n    return;\n} } }");
+
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "java", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "class C { void m() { if (x) {\n    return;\n} } }");
 }
