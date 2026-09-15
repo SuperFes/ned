@@ -10,6 +10,7 @@
 #include "Text/Buffer.h"
 
 using ned::editor::ApplyFormatTextEdits;
+using ned::editor::CMode;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
 using ned::editor::ComputeSpaceEdits;
@@ -635,4 +636,33 @@ TEST_CASE("End to end: kotlin-mode's formatCaptures drives a real space edit", "
     ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "kotlin", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "fun f() {\n    if (x) {\n    }\n}\n");
+}
+
+// c-mode: the twelfth language. control.parens's own node type
+// (`parenthesized_expression`) differs from cpp's `condition_clause`,
+// confirmed live rather than assumed to carry over.
+TEST_CASE("c-mode's format.janet names control.parens over if/while/switch", "[FormatSpacing]") {
+    const Mode mode = CMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f(void) { if (x) {} }"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f(void) { while (x) {} }"), "control.parens").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f(void) { switch (x) {} }"), "control.parens").size() == 1);
+}
+
+TEST_CASE("c-mode's format.janet captures a for-loop's own parens as a matched pair", "[FormatSpacing]") {
+    const Mode        mode   = CMode();
+    const std::string source = "void f(void) { for (int i = 0; i < 10; i++) {} }";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "control.parens").size() == 1);
+}
+
+TEST_CASE("End to end: c-mode's formatCaptures drives a real space edit", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceBefore("control.parens", true);
+
+    const Mode mode = CMode();
+    Buffer     buffer("test.c");
+    buffer.InsertAtPoint("int f(int x) {\n    if(x) {\n    }\n    return 0;\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "c", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "int f(int x) {\n    if (x) {\n    }\n    return 0;\n}\n");
 }

@@ -198,16 +198,18 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Eleven languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, C#,
-TypeScript, TSX, and Kotlin**
-(`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp,kotlin}/format.janet` --
-the same capture NAMES throughout, over each grammar's own different node types: cpp's
+**Twelve languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, C#,
+TypeScript, TSX, Kotlin, and C**
+(`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp,kotlin,c}/format.janet`
+-- the same capture NAMES throughout, over each grammar's own different node types: cpp's
 `compound_statement`/`condition_clause`, JavaScript's
 `statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`,
 Go's `block`/`parenthesized_expression`, PHP's
 `compound_statement`/`parenthesized_expression`, Rust's
 `block`/`parenthesized_expression`, C#'s `block`/paired anonymous parens tokens, Kotlin's
-`function_body`+a text predicate/paired anonymous parens tokens; TypeScript and TSX have no
+`function_body`+a text predicate/paired anonymous parens tokens, C's
+`compound_statement`/`parenthesized_expression` (a DIFFERENT node type from cpp's own
+`condition_clause`, despite the grammars' close relationship); TypeScript and TSX have no
 `format.janet` files of their own at all, see below), all wired into `format-buffer`'s and
 `--format`'s Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and
 all shipping no built-in default -- neither does anything until you configure a rule:
@@ -733,6 +735,37 @@ the first permanent test run. Live-verified via `ned --format` on a real project
 environment, so the formatted output was instead re-parsed with `ned`'s own engine and
 confirmed to contain no `ERROR`/`MISSING` nodes (a structural, not semantic, validity
 check -- the honest substitute available here). Full suite: 4636 cases.
+
+## C: a separate grammar from cpp, not a subset, confirmed rather than assumed
+
+C is the twelfth language, and deliberately NOT treated as "cpp minus the parts C doesn't
+have" the way TypeScript was treated as a delta over JavaScript -- `tree-sitter-c` is a
+genuinely separate grammar from `tree-sitter-cpp`, not a shared base the way
+tree-sitter-typescript extends tree-sitter-javascript's own rules, so every shape was
+verified live rather than assumed to carry over. One real difference found doing exactly
+that: C's own `if`/`while`/`switch` condition field is typed `parenthesized_expression`
+directly, the same node type name JavaScript/Java use -- NOT cpp's own `condition_clause`,
+despite the two grammars' close relationship and shared ancestry.
+
+Otherwise the template applies directly: `brace.function` (`function_definition`),
+`brace.control` (if/while/for/switch bodies -- C has no try/catch at all, so no analogous
+capture), `brace.class` folding `struct_specifier` and `union_specifier` together (both are
+plain data-field aggregates in C, the same "close enough" call cpp's own `brace.class`
+already makes for struct+class) while `enum_specifier`'s own body
+(`enumerator_list`/`enumerator`, not `field_declaration`) gets no `brace.class` capture --
+there is nothing brace-shaped worth placing inside it, only `def.toplevel` names it. A
+bodyless function prototype (`int f(int x);`) parses to a plain `declaration` node, not
+`function_definition`, so it is captured by nothing at all here -- the same "no defining
+shape, no capture" precedent every prior language's own bodyless forms already set.
+
+**No `def.method` at all** -- a real language absence, not a scope cut, the same one
+`go/format.janet`'s own file documents for Go: C structs/unions hold only data fields,
+never functions, so there is no "method nested in a type body" concept for this language to
+capture in the first place.
+
+Live-verified via `ned --format` on a real project `.ned/format.janet` combining all three
+rule kinds, output re-checked with `gcc -Wall -Wextra` -- 0 errors, 0 warnings. Full suite:
+4645 cases.
 
 ## The `--format` CLI
 

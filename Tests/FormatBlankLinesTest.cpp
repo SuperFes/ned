@@ -12,6 +12,7 @@
 
 using ned::editor::ApplyFormatTextEdits;
 using ned::editor::ComputeBlankLineEdits;
+using ned::editor::CMode;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
 using ned::editor::FormatCapture;
@@ -676,4 +677,39 @@ TEST_CASE("End to end: blank lines applied to a real kotlin-mode buffer", "[Form
                              "\n"
                              "    fun n(): Unit {}\n"
                              "}\n");
+}
+
+TEST_CASE("c-mode's format.janet names def.toplevel and NO def.method at all", "[FormatBlankLines]") {
+    // C structs/unions hold only data fields, never functions -- a real
+    // language absence, the same one go/format.janet's own file
+    // documents for Go.
+    const Mode mode = CMode();
+
+    const std::string source = "int f(void) {\n"
+                               "    return 1;\n"
+                               "}\n"
+                               "struct S {\n"
+                               "    int x;\n"
+                               "};\n";
+    const auto captures = mode.formatCaptures(source);
+
+    const auto toplevel = CapturesNamed(captures, "def.toplevel");
+    REQUIRE(toplevel.size() == 2);
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+
+    REQUIRE(CapturesNamed(captures, "def.method").empty());
+}
+
+TEST_CASE("End to end: blank lines applied to a real c-mode buffer", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 1);
+
+    const Mode mode = CMode();
+    Buffer     buffer("test.c");
+    buffer.InsertAtPoint("int f(void) {\n    return 1;\n}\nint g(void) {\n    return 2;\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "c", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "int f(void) {\n    return 1;\n}\n\nint g(void) {\n    return 2;\n}\n");
 }
