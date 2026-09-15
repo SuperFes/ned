@@ -486,6 +486,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             }
         }
     }
+
     // session-persistence slice 2: the scratch-buffer fallback that used to
     // live right here moved below the project-session restore -- a restored
     // session's own buffers should become the startup view instead of an
@@ -505,9 +506,11 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // more than one such confirmation through at this point in startup.
     for (std::size_t i = 1; i < paths.size(); ++i) {
         std::error_code extraIsDirectoryEc;
+
         if (std::filesystem::is_directory(paths[i], extraIsDirectoryEc)) {
             continue;
         }
+
         try {
             bufferList.OpenOrCreateFile(paths[i], forceBinary);
         }
@@ -531,12 +534,15 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         if (pathArg != nullptr) {
             return ned::editor::DetectProjectRoot(pathArg);
         }
+
         const std::filesystem::path cwd = std::filesystem::current_path();
+
         if (const auto markerRoot = ned::editor::FindProjectMarkerRoot(cwd)) {
             return *markerRoot;
         }
         return cwd;
     }();
+
     ned::editor::SetProjectRoot(projectRoot);
 
     // Only a real project -- a root actually carrying a VCS/.ned marker --
