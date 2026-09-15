@@ -628,6 +628,7 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         WARN("ancestor-crossing total: " << total);
     }
     const std::map<std::string, std::size_t> expected = {
+        {"bash/format", 2},
         {"c/highlights", 2},
         {"cpp/highlights", 5},
         {"cpp/indents", 1},
@@ -639,7 +640,7 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"yaml/indents", 2},
     };
     CHECK(counts == expected);
-    CHECK(total == 15);
+    CHECK(total == 17);
 }
 
 // Ned's own emission order, pinned. The matcher's capture stream reproduces

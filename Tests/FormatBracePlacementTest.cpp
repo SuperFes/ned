@@ -42,6 +42,19 @@ struct FormatRulesGuard {
         SetBracePlacement("cpp/brace.function", std::nullopt);
         SetBraceCollapseEmpty("brace.function", std::nullopt);
         SetBraceCollapseSimple("brace.function", std::nullopt);
+        // test-isolation follow-up: several pre-existing tests below set a
+        // bare "brace.control" rule (placement/collapse-empty/collapse-
+        // simple) relying on THIS guard for cleanup, but it only ever
+        // covered brace.function -- found live via an intermittent,
+        // order-dependent failure once a bash-mode test needed brace.
+        // control's placement to be a genuine no-op and got a leaked
+        // collapse-simple=true from an earlier php-mode test instead. Also
+        // covers bash/lua's own multi-byte-delimiter placement, since
+        // several new tests below set "brace.control" scoped to those
+        // languages too.
+        SetBracePlacement("brace.control", std::nullopt);
+        SetBraceCollapseEmpty("brace.control", std::nullopt);
+        SetBraceCollapseSimple("brace.control", std::nullopt);
     }
 };
 
@@ -1271,12 +1284,13 @@ TEST_CASE("End to end: c-mode's formatCaptures drives real edits across all thre
                              "}\n");
 }
 
-// bash-mode: the thirteenth language, and a genuinely PARTIAL case rather
-// than a full brace-carrying one -- function_definition is the ONLY
-// brace-delimited construct in this grammar at all (verified live);
-// if/while/for/case all use keyword delimiters (then/fi, do/done,
-// in/esac), never braces, so there is no brace.control capture here, a
-// real language absence rather than a scope cut.
+// bash-mode: originally shipped as a genuinely PARTIAL case (only
+// function_definition was brace-delimited, no brace.control/control.parens
+// at all) since if/while/for/case use keyword delimiters (then/fi,
+// do/done, in/esac) rather than single-character braces. Revisited once
+// lua-mode's own openLength/closeLength generalization (see below) proved
+// out the mechanism for multi-byte delimiters -- bash now carries the
+// full set too, via the exact same paired mechanism.
 TEST_CASE("bash-mode's format.janet names brace.function over all three function syntaxes",
           "[FormatBracePlacement]") {
     const Mode mode = BashMode();
@@ -1284,22 +1298,6 @@ TEST_CASE("bash-mode's format.janet names brace.function over all three function
     REQUIRE(CapturesNamed(mode.formatCaptures("f() {\n    echo hi\n}\n"), "brace.function").size() == 1);
     REQUIRE(CapturesNamed(mode.formatCaptures("function g {\n    echo hi\n}\n"), "brace.function").size() == 1);
     REQUIRE(CapturesNamed(mode.formatCaptures("function h() {\n    echo hi\n}\n"), "brace.function").size() == 1);
-}
-
-TEST_CASE("bash-mode's format.janet names no brace.control at all -- if/while/for/case use "
-          "keyword delimiters, never braces",
-          "[FormatBracePlacement]") {
-    const Mode        mode   = BashMode();
-    const std::string source = "if [ \"$x\" -gt 0 ]; then\n"
-                               "    echo pos\n"
-                               "fi\n"
-                               "while [ true ]; do\n"
-                               "    echo loop\n"
-                               "done\n"
-                               "for i in 1 2 3; do\n"
-                               "    echo $i\n"
-                               "done\n";
-    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.control").empty());
 }
 
 TEST_CASE("bash-mode's format.janet still captures a nested function's own braces, even though "
@@ -1331,6 +1329,253 @@ TEST_CASE("End to end: bash-mode's formatCaptures drives a real brace-placement 
                          ComputeBracePlacementEdits(buffer.Text(), "bash", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "f() {\n    echo hi\n}\n");
+}
+
+// bash-mode revisit: brace.control/control.parens, added once the
+// openLength/closeLength generalization (below, lua-mode's own follow-up)
+// proved out the paired keyword-delimiter mechanism.
+TEST_CASE("bash-mode's format.janet names brace.control over while/for/if/case, spanning an "
+          "elif/else chain to the one real closing token",
+          "[FormatBracePlacement]") {
+    const Mode mode = BashMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("while true; do\n    echo hi\ndone\n"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("until false; do\n    echo hi\ndone\n"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("for i in 1 2 3; do\n    echo $i\ndone\n"), "brace.control").size() ==
+            1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("select o in a b; do\n    echo $o\ndone\n"), "brace.control").size() ==
+            1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("if true; then\n    echo hi\nfi\n"), "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("case $x in\n    a) echo 1 ;;\nesac\n"), "brace.control").size() == 1);
+
+    const std::string chained  = "if true; then\n    a\nelif false; then\n    b\nelse\n    c\nfi\n";
+    const auto        captures = CapturesNamed(mode.formatCaptures(chained), "brace.control");
+    REQUIRE(captures.size() == 1);
+    REQUIRE(captures[0].startByte == chained.find("then"));
+    REQUIRE(captures[0].endByte == chained.rfind("fi") + 2);
+}
+
+TEST_CASE("bash-mode's format.janet reports real multi-byte delimiter lengths for do/done, "
+          "then/fi, and in/esac",
+          "[FormatBracePlacement]") {
+    const Mode mode = BashMode();
+
+    const auto doneCap = CapturesNamed(mode.formatCaptures("while true; do\n    x\ndone\n"), "brace.control");
+    REQUIRE(doneCap[0].openLength == 2);  // "do"
+    REQUIRE(doneCap[0].closeLength == 4); // "done"
+
+    const auto fiCap = CapturesNamed(mode.formatCaptures("if true; then\n    x\nfi\n"), "brace.control");
+    REQUIRE(fiCap[0].openLength == 4);  // "then"
+    REQUIRE(fiCap[0].closeLength == 2); // "fi"
+
+    const auto esacCap = CapturesNamed(mode.formatCaptures("case $x in\n    a) x ;;\nesac\n"), "brace.control");
+    REQUIRE(esacCap[0].openLength == 2);  // "in"
+    REQUIRE(esacCap[0].closeLength == 4); // "esac"
+}
+
+TEST_CASE("bash-mode's format.janet has a .simple marker for do/done bodies (its own node span "
+          "starts at \"do\" and ends at \"done\") but not for then/fi or in/esac (neither "
+          "starts its own span at the paired keyword)",
+          "[FormatBracePlacement]") {
+    const Mode mode = BashMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("while true; do\n    echo hi\ndone\n"), "brace.control")[0].isSimple);
+    REQUIRE_FALSE(
+        CapturesNamed(mode.formatCaptures("while true; do\n    echo hi\n    echo bye\ndone\n"), "brace.control")[0]
+            .isSimple);
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures("if true; then\n    echo hi\nfi\n"), "brace.control")[0].isSimple);
+    REQUIRE_FALSE(
+        CapturesNamed(mode.formatCaptures("case $x in\n    a) echo 1 ;;\nesac\n"), "brace.control")[0].isSimple);
+}
+
+TEST_CASE("bash-mode's format.janet names brace.control for a C-style for-loop's own brace "
+          "body, a subshell, and a standalone group command, all with .simple support",
+          "[FormatBracePlacement]") {
+    const Mode mode = BashMode();
+
+    const auto cStyleBrace =
+        CapturesNamed(mode.formatCaptures("for ((i=0;i<10;i++)) { echo $i; }\n"), "brace.control");
+    REQUIRE(cStyleBrace.size() == 1);
+    REQUIRE(cStyleBrace[0].isSimple);
+
+    // the do/done alternative is a genuinely different construct, captured
+    // by the shared do_group pattern, not this one.
+    REQUIRE(CapturesNamed(mode.formatCaptures("for ((i=0;i<10;i++)); do echo $i; done\n"), "brace.control").size() ==
+            1);
+
+    const auto subshellCap = CapturesNamed(mode.formatCaptures("( echo hi )\n"), "brace.control");
+    REQUIRE(subshellCap.size() == 1);
+    REQUIRE(subshellCap[0].isSimple);
+
+    const auto groupCap = CapturesNamed(mode.formatCaptures("{ echo hi; }\n"), "brace.control");
+    REQUIRE(groupCap.size() == 1);
+    REQUIRE(groupCap[0].isSimple);
+}
+
+TEST_CASE("bash-mode's format.janet excludes a function's own compound_statement body and a "
+          "C-style for-loop's own from the generic standalone-group-command capture, so "
+          "neither is double-captured under two different names",
+          "[FormatBracePlacement]") {
+    const Mode mode = BashMode();
+
+    const std::string source = "f() {\n    echo hi\n}\n";
+    const auto        fn     = CapturesNamed(mode.formatCaptures(source), "brace.function");
+    REQUIRE(fn.size() == 1);
+    for (const auto& bc : CapturesNamed(mode.formatCaptures(source), "brace.control")) {
+        REQUIRE_FALSE((bc.startByte == fn[0].startByte && bc.endByte == fn[0].endByte));
+    }
+
+    // a group command genuinely NESTED inside a function body (not AS its
+    // body) must still be captured -- #not-has-parent? checks the
+    // IMMEDIATE parent only, so this is unaffected by the exclusion above.
+    const std::string nested = "f() {\n    echo hi\n    { echo nested; }\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(nested), "brace.control").size() == 1);
+}
+
+TEST_CASE("bash-mode's format.janet names control.parens over test-command brackets and a "
+          "C-style for-loop's own arithmetic clause",
+          "[FormatBracePlacement]") {
+    const Mode mode = BashMode();
+
+    const auto singleBracket = CapturesNamed(mode.formatCaptures("if [ -f x ]; then\n    y\nfi\n"), "control.parens");
+    REQUIRE(singleBracket.size() == 1);
+    REQUIRE(singleBracket[0].openLength == 1);  // "["
+    REQUIRE(singleBracket[0].closeLength == 1); // "]"
+
+    const auto doubleBracket =
+        CapturesNamed(mode.formatCaptures("if [[ -f x ]]; then\n    y\nfi\n"), "control.parens");
+    REQUIRE(doubleBracket.size() == 1);
+    REQUIRE(doubleBracket[0].openLength == 2);  // "[["
+    REQUIRE(doubleBracket[0].closeLength == 2); // "]]"
+
+    const auto arithClause =
+        CapturesNamed(mode.formatCaptures("for ((i=0;i<10;i++)); do\n    x\ndone\n"), "control.parens");
+    REQUIRE(arithClause.size() == 1);
+    REQUIRE(arithClause[0].openLength == 2);  // "(("
+    REQUIRE(arithClause[0].closeLength == 2); // "))"
+}
+
+TEST_CASE("End to end: bash-mode's collapse-empty on do/done inserts a real separating space, "
+          "the same word-byte hazard lua-mode's own do/end capture has",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseEmpty("bash/brace.control", true);
+
+    const Mode mode = BashMode();
+    Buffer     buffer("t.sh");
+    buffer.InsertAtPoint("x=1\nwhile true; do\ndone\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "bash", mode.formatCaptures(buffer.Text())));
+
+    // "do done" is still NOT valid bash on its own (a real do/done body
+    // must be non-empty, confirmed live with `bash -n`) -- this test
+    // exercises the mechanism's own correctness (no token fusion into
+    // "dodone"), not a claim that the result is runnable. See this
+    // capture's own format.janet comment for why that's not a hazard.
+    REQUIRE(buffer.Text() == "x=1\nwhile true; do done\n");
+
+    SetBraceCollapseEmpty("bash/brace.control", std::nullopt);
+}
+
+TEST_CASE("End to end: bash-mode's collapse-empty on case/esac is real, reachable, and "
+          "produces valid bash (unlike do/done, an empty case IS legal)",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseEmpty("bash/brace.control", true);
+
+    const Mode mode = BashMode();
+    Buffer     buffer("t.sh");
+    buffer.InsertAtPoint("x=1\ncase $x in\nesac\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "bash", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "x=1\ncase $x in esac\n");
+
+    SetBraceCollapseEmpty("bash/brace.control", std::nullopt);
+}
+
+TEST_CASE("End to end: bash-mode's NextLineIndented repositions the real multi-byte closer "
+          "token, not one hardcoded byte before the capture ends",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("bash/brace.control", BracePlacement::NextLineIndented);
+
+    const Mode mode = BashMode();
+    Buffer     buffer("t.sh");
+    buffer.InsertAtPoint("x=1\nwhile true; do\necho hi\ndone\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "bash", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "x=1\nwhile true;\n  do\necho hi\n  done\n");
+
+    SetBracePlacement("bash/brace.control", std::nullopt);
+}
+
+// PlacementUnsafeForLanguage's second real hazard (after Go's own ASI
+// one) -- the INVERSE shape: SameLine specifically is what's dangerous
+// here, every other placement is safe, and it's scoped to brace.control
+// only (bash's real-brace brace.function is unaffected). `do`/`then` are
+// bash reserved words needing a real statement TERMINATOR (";" or a
+// newline) before them, never merely whitespace -- confirmed live with a
+// real `bash -n`: "while true do"/"if true then" are hard syntax errors.
+TEST_CASE("End to end: a SameLine :placement is a safe no-op on bash-mode's brace.control "
+          "(do/then need a real terminator, not just whitespace)",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+
+    const Mode mode = BashMode();
+
+    Buffer            doBuffer("test.sh");
+    const std::string doSource = "while true\ndo\n    echo hi\ndone\n";
+    doBuffer.InsertAtPoint(doSource);
+    ApplyFormatTextEdits(doBuffer,
+                         ComputeBracePlacementEdits(doBuffer.Text(), "bash", mode.formatCaptures(doBuffer.Text())));
+    REQUIRE(doBuffer.Text() == doSource); // NOT glued onto "while true do" -- that fails to parse
+
+    Buffer            thenBuffer("test2.sh");
+    const std::string thenSource = "if true\nthen\n    echo hi\nfi\n";
+    thenBuffer.InsertAtPoint(thenSource);
+    ApplyFormatTextEdits(
+        thenBuffer, ComputeBracePlacementEdits(thenBuffer.Text(), "bash", mode.formatCaptures(thenBuffer.Text())));
+    REQUIRE(thenBuffer.Text() == thenSource);
+
+    SetBracePlacement("brace.control", std::nullopt);
+}
+
+TEST_CASE("End to end: the bash brace.control SameLine guard is scoped to brace.control -- "
+          "brace.function (a real brace, no terminator needed) is unaffected",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::SameLine);
+
+    const Mode mode = BashMode();
+    Buffer     buffer("test.sh");
+    buffer.InsertAtPoint("f()\n{\n    echo hi\n}\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "bash", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "f() {\n    echo hi\n}\n");
+
+    SetBracePlacement("brace.function", std::nullopt);
+}
+
+TEST_CASE("End to end: a language-scoped bash/brace.control override is still caught by the "
+          "SameLine guard, not just the bare name",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("bash/brace.control", BracePlacement::SameLine);
+
+    const Mode        mode = BashMode();
+    Buffer            buffer("test.sh");
+    const std::string source = "while true\ndo\n    echo hi\ndone\n";
+    buffer.InsertAtPoint(source);
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "bash", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == source);
+
+    SetBracePlacement("bash/brace.control", std::nullopt);
 }
 
 // lua-mode: the fourteenth language, and the first whose delimiters are
