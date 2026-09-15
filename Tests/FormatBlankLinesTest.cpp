@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,6 +23,7 @@ using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::RustMode;
+using ned::editor::TypeScriptMode;
 using ned::editor::SetBlankMaxBefore;
 using ned::editor::SetBlankMinBefore;
 using ned::text::Buffer;
@@ -539,4 +541,81 @@ TEST_CASE("End to end: blank lines applied to a real csharp-mode buffer", "[Form
                              "\n"
                              "    void N() {}\n"
                              "}\n");
+}
+
+TEST_CASE("typescript-mode's own format.janet widens def.toplevel to interface/enum/type-alias/"
+          "abstract-class",
+          "[FormatBlankLines]") {
+    const Mode mode = TypeScriptMode();
+
+    const std::string source = "interface I {\n"
+                               "    m(): void;\n"
+                               "}\n"
+                               "enum E {\n"
+                               "    A\n"
+                               "}\n"
+                               "type T = { x: number };\n"
+                               "abstract class A {\n"
+                               "    abstract m(): void;\n"
+                               "}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "def.toplevel").size() == 4);
+}
+
+TEST_CASE("typescript-mode's own format.janet names def.method for an interface's own method signature",
+          "[FormatBlankLines]") {
+    const Mode        mode    = TypeScriptMode();
+    const std::string source  = "interface I {\n    m(): void;\n    n(): void;\n}\n";
+    const auto         methods = CapturesNamed(mode.formatCaptures(source), "def.method");
+    REQUIRE(methods.size() == 2);
+    REQUIRE(methods[0].isFirst);
+    REQUIRE_FALSE(methods[1].isFirst);
+}
+
+TEST_CASE("typescript-mode's own format.janet names def.method for BOTH an abstract member and a "
+          "concrete method sharing one class_body -- three distinct node types",
+          "[FormatBlankLines]") {
+    // method_signature/abstract_method_signature/method_definition are
+    // three distinct node types (verified live), each needing its own
+    // pattern; found by isFirst rather than vector position, since
+    // captures from different underlying patterns are not guaranteed to
+    // come back in byte order relative to each other.
+    const Mode        mode   = TypeScriptMode();
+    const std::string source = "abstract class A {\n"
+                               "    abstract m(): void;\n"
+                               "    concrete(): void {}\n"
+                               "}\n";
+    const auto methods = CapturesNamed(mode.formatCaptures(source), "def.method");
+    REQUIRE(methods.size() == 2);
+
+    const auto firstIt = std::find_if(methods.begin(), methods.end(), [](const FormatCapture& c) { return c.isFirst; });
+    REQUIRE(firstIt != methods.end());
+    REQUIRE(source.substr(firstIt->startByte, 8) == "abstract");
+
+    const auto secondIt =
+        std::find_if(methods.begin(), methods.end(), [](const FormatCapture& c) { return !c.isFirst; });
+    REQUIRE(secondIt != methods.end());
+    REQUIRE(source.substr(secondIt->startByte, 8) == "concrete");
+}
+
+TEST_CASE("End to end: blank lines applied to a real typescript-mode buffer, combining inherited "
+          "javascript captures with typescript-only ones",
+          "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 1);
+
+    const Mode mode = TypeScriptMode();
+    Buffer     buffer("test.ts");
+    buffer.InsertAtPoint("interface I {\n"
+                         "    m(): void;\n"
+                         "}\n"
+                         "function f(): void {}\n");
+
+    ApplyFormatTextEdits(buffer,
+                         ComputeBlankLineEdits(buffer.Text(), "typescript", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "interface I {\n"
+                             "    m(): void;\n"
+                             "}\n"
+                             "\n"
+                             "function f(): void {}\n");
 }
