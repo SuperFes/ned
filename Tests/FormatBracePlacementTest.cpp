@@ -17,6 +17,8 @@ using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
 using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
+using ned::editor::SetBraceCollapseEmpty;
+using ned::editor::SetBraceCollapseSimple;
 using ned::editor::SetBracePlacement;
 using ned::text::Buffer;
 
@@ -26,6 +28,8 @@ struct FormatRulesGuard {
     ~FormatRulesGuard() {
         SetBracePlacement("brace.function", std::nullopt);
         SetBracePlacement("cpp/brace.function", std::nullopt);
+        SetBraceCollapseEmpty("brace.function", std::nullopt);
+        SetBraceCollapseSimple("brace.function", std::nullopt);
     }
 };
 
@@ -283,4 +287,199 @@ TEST_CASE("End to end: a real cpp Mode's formatCaptures drives a real edit", "[F
     ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "int f(int x)\n{\n    return x;\n}\n");
+}
+
+// collapse-empty: purely textual (whitespace-only content between the
+// delimiters), independent of :placement -- these exercise it standalone
+// (no :placement configured at all) as well as combined with each
+// placement.
+TEST_CASE("collapse-empty=true glues an expanded empty body onto one line", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseEmpty("brace.function", true);
+
+    const std::string text = "int f() {\n}\n";
+    const std::vector<FormatCapture> captures = {{"brace.function", text.find('{'), text.find('}') + 1}};
+    const std::vector<FormatTextEdit> edits = ComputeBracePlacementEdits(text, "cpp", captures);
+
+    REQUIRE(edits.size() == 1);
+    REQUIRE(edits[0].text == "{}");
+}
+
+TEST_CASE("collapse-empty=false expands a glued empty body onto two lines", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseEmpty("brace.function", false);
+
+    const std::string text = "int f() {}\n";
+    const std::vector<FormatCapture> captures = {{"brace.function", text.find('{'), text.find('}') + 1}};
+    const std::vector<FormatTextEdit> edits = ComputeBracePlacementEdits(text, "cpp", captures);
+
+    REQUIRE(edits.size() == 1);
+    REQUIRE(edits[0].text == "{\n}"); // no :placement configured -- closer defaults to the header's own indent
+}
+
+TEST_CASE("collapse-empty leaves a non-empty body alone", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseEmpty("brace.function", true);
+
+    const std::string text = "int f() {\n    return 1;\n}\n";
+    const std::vector<FormatCapture> captures = {{"brace.function", text.find('{'), text.rfind('}') + 1}};
+    REQUIRE(ComputeBracePlacementEdits(text, "cpp", captures).empty());
+}
+
+TEST_CASE("collapse-empty is idempotent in both directions", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+
+    SetBraceCollapseEmpty("brace.function", true);
+    {
+        const std::string text = "int f() {}\n";
+        const std::vector<FormatCapture> captures = {{"brace.function", text.find('{'), text.find('}') + 1}};
+        REQUIRE(ComputeBracePlacementEdits(text, "cpp", captures).empty()); // already collapsed
+    }
+
+    SetBraceCollapseEmpty("brace.function", false);
+    {
+        const std::string text = "int f() {\n}\n";
+        const std::vector<FormatCapture> captures = {{"brace.function", text.find('{'), text.find('}') + 1}};
+        REQUIRE(ComputeBracePlacementEdits(text, "cpp", captures).empty()); // already expanded
+    }
+}
+
+TEST_CASE("collapse-empty=true composes with :placement on a real buffer", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::NextLine);
+    SetBraceCollapseEmpty("brace.function", true);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("int f() {\n}\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    // The opening brace still moves to its own line (NextLine); the now-
+    // empty body glues onto that same line rather than staying expanded.
+    REQUIRE(buffer.Text() == "int f()\n{}\n");
+
+    REQUIRE(ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())).empty());
+}
+
+TEST_CASE("collapse-empty=false composes with NextLineIndented's own closer alignment", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::NextLineIndented);
+    SetBraceCollapseEmpty("brace.function", false);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("int f() {}\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    // Both halves of the pair land at the SAME (header + one level) column
+    // -- the shared ClosingIndentFor helper is what keeps this and the
+    // ordinary multi-line NextLineIndented case from disagreeing.
+    REQUIRE(buffer.Text() == "int f()\n    {\n    }\n");
+}
+
+// collapse-simple: capture.isSimple is a structural fact set by Mode.cpp's
+// "<name>.simple" marker correlation over the real grammar -- these first
+// confirm the correlation itself is right before testing what
+// ComputeBracePlacementEdits does with it.
+TEST_CASE("cpp-mode's format.janet marks a single-statement body isSimple, not a multi-statement one", "[FormatBracePlacement]") {
+    const Mode mode = CppMode();
+
+    const auto simpleCaptures = CapturesNamed(mode.formatCaptures("void f() { return; }"), "brace.function");
+    REQUIRE(simpleCaptures.size() == 1);
+    REQUIRE(simpleCaptures[0].isSimple);
+
+    const auto multiCaptures = CapturesNamed(mode.formatCaptures("void f() { g(); return; }"), "brace.function");
+    REQUIRE(multiCaptures.size() == 1);
+    REQUIRE_FALSE(multiCaptures[0].isSimple);
+
+    // Mutually exclusive with isEmpty by construction -- the marker query
+    // requires "exactly one" child, an empty body has zero.
+    const auto emptyCaptures = CapturesNamed(mode.formatCaptures("void f() { }"), "brace.function");
+    REQUIRE(emptyCaptures.size() == 1);
+    REQUIRE_FALSE(emptyCaptures[0].isSimple);
+}
+
+TEST_CASE("isSimple is correct even when the one statement is itself a nested block", "[FormatBracePlacement]") {
+    const Mode mode = CppMode();
+    // The function's OWN body has exactly one statement (an if); what that
+    // if itself contains is irrelevant -- the marker is field-anchored to
+    // the function's own body, not recursive.
+    const auto captures = CapturesNamed(mode.formatCaptures("void f() { if (x) { g(); h(); } }"), "brace.function");
+    REQUIRE(captures.size() == 1);
+    REQUIRE(captures[0].isSimple);
+}
+
+TEST_CASE("collapse-simple=true joins an expanded single-statement body onto one line", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseSimple("brace.function", true);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("void f() {\n    return;\n}\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "void f() { return; }\n");
+    REQUIRE(ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())).empty());
+}
+
+TEST_CASE("collapse-simple=false expands a one-line single-statement body", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseSimple("brace.function", false);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("void f() { return; }\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "void f() {\n    return;\n}\n");
+    REQUIRE(ComputeBracePlacementEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())).empty());
+}
+
+TEST_CASE("collapse-simple leaves a multi-statement body alone", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseSimple("brace.function", true);
+
+    const Mode mode = CppMode();
+    const std::string text = "void f() {\n    g();\n    return;\n}\n";
+    REQUIRE(ComputeBracePlacementEdits(text, "cpp", mode.formatCaptures(text)).empty());
+}
+
+TEST_CASE("collapse-simple=true declines to join a statement that already spans multiple lines", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBraceCollapseSimple("brace.function", true);
+
+    const Mode mode = CppMode();
+    // One statement, but it already spans two physical lines -- joining it
+    // would risk mangling a meaningfully-broken call/comment, so this is
+    // declined rather than force-joined.
+    const std::string text = "void f() {\n    g(a,\n      b);\n}\n";
+    REQUIRE(ComputeBracePlacementEdits(text, "cpp", mode.formatCaptures(text)).empty());
+}
+
+TEST_CASE("collapse-simple composes with :placement and with :collapse-empty on real buffers", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::NextLine);
+    SetBraceCollapseSimple("brace.function", true);
+    SetBraceCollapseEmpty("brace.function", true);
+
+    const Mode mode = CppMode();
+
+    Buffer simpleBuffer("test.cpp");
+    simpleBuffer.InsertAtPoint("int f() {\n    return 1;\n}\n");
+    ApplyFormatTextEdits(simpleBuffer,
+                         ComputeBracePlacementEdits(simpleBuffer.Text(), "cpp", mode.formatCaptures(simpleBuffer.Text())));
+    REQUIRE(simpleBuffer.Text() == "int f()\n{ return 1; }\n");
+
+    Buffer emptyBuffer("test.cpp");
+    emptyBuffer.InsertAtPoint("int f() {\n}\n");
+    ApplyFormatTextEdits(emptyBuffer,
+                         ComputeBracePlacementEdits(emptyBuffer.Text(), "cpp", mode.formatCaptures(emptyBuffer.Text())));
+    REQUIRE(emptyBuffer.Text() == "int f()\n{}\n");
+}
+
+TEST_CASE("javascript-mode's format.janet marks a single-statement body isSimple too", "[FormatBracePlacement]") {
+    const Mode mode = JavaScriptMode();
+    const auto captures = CapturesNamed(mode.formatCaptures("function f() { return; }"), "brace.function");
+    REQUIRE(captures.size() == 1);
+    REQUIRE(captures[0].isSimple);
 }

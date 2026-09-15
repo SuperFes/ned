@@ -65,3 +65,20 @@
 # indistinguishable from condition_clause's own whole-span capture to
 # every consumer (Editor/FormatSpacing.h needs no changes for this).
 (for_statement "(" @control.parens.open ")" @control.parens.close)
+
+# collapse-simple follow-up: a second pattern per brace-carrying construct,
+# anchored to "exactly one named child" via tree-sitter's "." (immediate-
+# sibling) anchors -- verified live (Docs/FormattingRules.md) to answer
+# "does this body have exactly one top-level statement" correctly
+# regardless of what that one statement itself contains (a nested block,
+# an if with its own block, ...), and to correctly report "not simple" for
+# both an empty body and a multi-statement one. The marker is never
+# emitted as a capture in its own right -- Mode.cpp's formatCaptures
+# closure correlates it against the base "brace.*" capture sharing its
+# exact byte range and discards the marker itself.
+(function_definition body: (compound_statement . (_) .) @brace.function.simple)
+(if_statement consequence: (compound_statement . (_) .) @brace.control.simple)
+(while_statement body: (compound_statement . (_) .) @brace.control.simple)
+(for_statement body: (compound_statement . (_) .) @brace.control.simple)
+(switch_statement body: (compound_statement . (_) .) @brace.control.simple)
+(catch_clause body: (compound_statement . (_) .) @brace.control.simple)

@@ -32,6 +32,23 @@ namespace {
         return text.substr(lineStart, indentEnd - lineStart);
     }
 
+    // Where this construct's closing delimiter belongs, for a given
+    // placement -- shared between the "reposition an existing multi-line
+    // closer" step and collapse-empty's "force expand" step, so the two
+    // always agree on where the closer goes. Every placement but
+    // NextLineIndented aligns the closer with the header's own indent
+    // (SameLine/NextLine/no-placement-configured-at-all alike); only
+    // GNU/Whitesmiths adds the extra level (see this file's own header
+    // comment on why).
+    std::string ClosingIndentFor(std::optional<BracePlacement> placement, std::string_view headerIndent,
+                                 const IndentStyle& style) {
+        std::string indent(headerIndent);
+        if (placement == BracePlacement::NextLineIndented) {
+            indent += IndentString(style.width, style);
+        }
+        return indent;
+    }
+
 } // namespace
 
 std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, std::string_view languageKey,
@@ -40,16 +57,19 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
     const IndentStyle           style = EffectiveIndentStyle(std::string(languageKey) + "-mode");
 
     for (const FormatCapture& capture : captures) {
-        if (capture.startByte == 0 || capture.startByte > text.size()) {
-            continue; // nothing could precede a capture at offset 0
+        if (capture.startByte == 0 || capture.startByte >= capture.endByte || capture.endByte > text.size()) {
+            continue; // nothing could precede a capture at offset 0; a degenerate span is never expected from a real query
         }
         const BreakRuleValue rule = BreakRuleFor(capture.name, languageKey);
-        if (!rule.placement) {
+        if (!rule.placement && !rule.collapseEmpty && !rule.collapseSimple) {
             continue; // unconfigured -- no built-in default, nothing forced
         }
 
         // The header's own end: the last non-whitespace byte before the
-        // capture's start.
+        // capture's start. Needed by both :placement and collapse-empty's
+        // force-expand path (which needs to know where the closer belongs
+        // even with no :placement configured at all), so computed whenever
+        // either field is set.
         std::size_t headerEnd = capture.startByte;
         while (headerEnd > 0 && IsFormatWhitespace(text[headerEnd - 1])) {
             --headerEnd;
@@ -60,25 +80,111 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
 
         const std::string_view headerIndent = LineIndentOf(text, headerEnd - 1);
 
-        std::string desiredGap;
-        switch (*rule.placement) {
-            case BracePlacement::SameLine:
-                desiredGap = " ";
-                break;
-            case BracePlacement::NextLine:
-                desiredGap = "\n";
-                desiredGap += headerIndent;
-                break;
-            case BracePlacement::NextLineIndented:
-                desiredGap = "\n";
-                desiredGap += headerIndent;
-                desiredGap += IndentString(style.width, style);
-                break;
+        if (rule.placement) {
+            std::string desiredGap;
+            switch (*rule.placement) {
+                case BracePlacement::SameLine:
+                    desiredGap = " ";
+                    break;
+                case BracePlacement::NextLine:
+                    desiredGap = "\n";
+                    desiredGap += headerIndent;
+                    break;
+                case BracePlacement::NextLineIndented:
+                    desiredGap = "\n";
+                    desiredGap += headerIndent;
+                    desiredGap += IndentString(style.width, style);
+                    break;
+            }
+
+            const std::string_view currentGap = text.substr(headerEnd, capture.startByte - headerEnd);
+            if (currentGap != desiredGap) {
+                edits.push_back(FormatTextEdit{headerEnd, capture.startByte, std::move(desiredGap)});
+            }
         }
 
-        const std::string_view currentGap = text.substr(headerEnd, capture.startByte - headerEnd);
-        if (currentGap != desiredGap) {
-            edits.push_back(FormatTextEdit{headerEnd, capture.startByte, std::move(desiredGap)});
+        // collapse-empty: purely textual and unambiguous, no tree needed --
+        // whitespace-only content between the two delimiter bytes is empty
+        // regardless of language. Owns the WHOLE capture span in one edit
+        // (open delimiter through close), which is why it's mutually
+        // exclusive with the closer-repositioning step below for the same
+        // capture: an empty "{\n}" body's closer is "alone on its own
+        // line" too, and letting both steps touch it would emit two
+        // overlapping edits.
+        const std::string_view interior = text.substr(capture.startByte + 1, capture.endByte - capture.startByte - 2);
+        const bool              isEmpty  = std::all_of(interior.begin(), interior.end(), IsFormatWhitespace);
+        if (rule.collapseEmpty && isEmpty) {
+            std::string desired(1, text[capture.startByte]);
+            if (*rule.collapseEmpty) {
+                desired += text[capture.endByte - 1]; // glue: "{}"
+            }
+            else {
+                desired += "\n";
+                desired += ClosingIndentFor(rule.placement, headerIndent, style);
+                desired += text[capture.endByte - 1];
+            }
+            const std::string_view current = text.substr(capture.startByte, capture.endByte - capture.startByte);
+            if (current != desired) {
+                edits.push_back(FormatTextEdit{capture.startByte, capture.endByte, std::move(desired)});
+            }
+            continue; // this capture's body is fully handled; skip the closer-repositioning step below
+        }
+
+        // collapse-simple: capture.isSimple is a structural fact (exactly
+        // one top-level statement, whatever it itself contains) set by
+        // Mode.cpp's "<name>.simple" marker correlation -- never guessed
+        // from text. isEmpty/isSimple are mutually exclusive by
+        // construction (the marker query requires "exactly one" child, an
+        // empty body has zero), so this never fires for a capture
+        // collapse-empty already handled above.
+        //
+        // Deliberately conservative in both directions: collapsing a
+        // statement that ALREADY spans multiple lines (a long call, a
+        // multi-line lambda) is declined rather than joining lines that
+        // might be meaningfully broken (a comment, a string) -- and
+        // force-expanding is declined when the body isn't currently a
+        // single physical line, so this never re-flows something already
+        // spread across lines in some other shape.
+        if (rule.collapseSimple && capture.isSimple) {
+            const std::string_view interior = text.substr(capture.startByte + 1, capture.endByte - capture.startByte - 2);
+            std::size_t            trimStart = 0;
+            while (trimStart < interior.size() && IsFormatWhitespace(interior[trimStart])) {
+                ++trimStart;
+            }
+            std::size_t trimEnd = interior.size();
+            while (trimEnd > trimStart && IsFormatWhitespace(interior[trimEnd - 1])) {
+                --trimEnd;
+            }
+            const std::string_view trimmed  = interior.substr(trimStart, trimEnd - trimStart);
+            const std::string_view wholeSpan = text.substr(capture.startByte, capture.endByte - capture.startByte);
+
+            if (*rule.collapseSimple) {
+                if (trimmed.find('\n') == std::string_view::npos) {
+                    std::string desired(1, text[capture.startByte]);
+                    desired += " ";
+                    desired += trimmed;
+                    desired += " ";
+                    desired += text[capture.endByte - 1];
+                    if (wholeSpan != desired) {
+                        edits.push_back(FormatTextEdit{capture.startByte, capture.endByte, std::move(desired)});
+                    }
+                }
+            }
+            else if (wholeSpan.find('\n') == std::string_view::npos) {
+                std::string bodyIndent(headerIndent);
+                bodyIndent += IndentString(style.width, style);
+                std::string desired(1, text[capture.startByte]);
+                desired += "\n";
+                desired += bodyIndent;
+                desired += trimmed;
+                desired += "\n";
+                desired += ClosingIndentFor(rule.placement, headerIndent, style);
+                desired += text[capture.endByte - 1];
+                if (wholeSpan != desired) {
+                    edits.push_back(FormatTextEdit{capture.startByte, capture.endByte, std::move(desired)});
+                }
+            }
+            continue; // this capture's body is fully handled either way; skip the closer-repositioning step below
         }
 
         // NextLineIndented is the one placement whose closing delimiter does
@@ -91,11 +197,9 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
         // header, the close brace still at the header's own indent (found
         // via a live probe, not assumed -- see [[project-format-rules-per-language-engine]]).
         // Only applied when the closer is the FIRST thing on its own line --
-        // a collapsed one-line body ("int f() {}"/"{ return 1; }") is left
-        // alone, matching the same "nothing inside the body is ever
-        // touched" contract as everywhere else in this function; that's
-        // collapse-empty/collapse-simple's territory, not this one.
-        if (*rule.placement == BracePlacement::NextLineIndented && capture.endByte > capture.startByte + 1) {
+        // a collapsed one-line body ("{ return 1; }", collapse-simple's
+        // territory, not this one) is left alone.
+        if (rule.placement == BracePlacement::NextLineIndented) {
             const std::size_t closerPos       = capture.endByte - 1;
             const std::size_t closerLineStart = [&] {
                 const std::size_t found = text.rfind('\n', closerPos == 0 ? 0 : closerPos - 1);
@@ -105,8 +209,7 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
             const bool              closerIsAloneOnItsLine =
                 std::all_of(beforeCloser.begin(), beforeCloser.end(), [](char c) { return c == ' ' || c == '\t'; });
             if (closerIsAloneOnItsLine) {
-                std::string desiredCloserIndent(headerIndent);
-                desiredCloserIndent += IndentString(style.width, style);
+                std::string desiredCloserIndent = ClosingIndentFor(rule.placement, headerIndent, style);
                 if (beforeCloser != desiredCloserIndent) {
                     edits.push_back(FormatTextEdit{closerLineStart, closerPos, std::move(desiredCloserIndent)});
                 }
