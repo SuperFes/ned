@@ -387,9 +387,22 @@ blank line lands above the decorator, matching where the base capture itself sta
 class's first method with no docstring (first), the same class *with* a leading docstring
 (NOT first -- a docstring is a real preceding sibling, not a transparent extra, so the
 conservative "decline rather than guess" rule collapse-simple already set carries over
-here unchanged), a decorated first method (first, decorator included), and a comment
-immediately before a first method (still first -- comments are declared `extras` in
-Python's own grammar, so a `.` anchor is correctly transparent to them). `:max-before` is
+here unchanged), and a decorated first method (first, decorator included).
+**Correction (found during the Lisp-family rollout, 2026-09-15):** this section originally
+also claimed a comment immediately before a first method stays first, reasoning that
+Python declares `comment` as a grammar `extras`. Re-checked directly against a live
+`Mode::formatCaptures` call rather than trusted from the original writeup, and it does
+NOT hold: `Editor/Grammar/QueryMatcher.cpp` has no extras-aware logic anywhere (confirmed
+by reading it), so a comment is a real tree sibling for `.`-anchor purposes exactly like
+any other node, in every language, regardless of what a grammar's own `extras` list says
+-- a grammar's `extras` declaration is about where a node may appear without being
+threaded through every rule explicitly, not about anchor transparency, and the two facts
+were conflated in the original claim. No permanent test asserted the wrong behavior (this
+was a narrative claim only), so nothing shipped was actually broken -- see
+`Source/Languages/janet/format.janet`'s own comment for where this was caught (Janet's
+grammar DOES declare `comment` as extras, unlike Clojure's, and a leading comment still
+disqualifies `isFirst` there too, which is what prompted re-checking Python's own claim).
+`:max-before` is
 **not** gated on `isFirst` -- unlike the minimum, JetBrains' "keep maximum blank lines" is
 an unconditional cap applied everywhere, so three blank lines hand-typed directly under a
 class header are still trimmed down to whatever `:max-before` says, even for that class's
@@ -1289,6 +1302,81 @@ still safe (just wider than strictly necessary), but the REASONING behind it was
 a real interpreter could check it. Full suite: 4709+ cases (17 new format-kind test cases
 across all three format-kind test files, plus 4 more in `Tests/IndentTest.cpp` for the
 indent-engine follow-up), confirmed clean.
+
+## Lisp-family (Clojure/jank/Janet): a genuinely different template, def.toplevel only
+
+Clojure, jank, and Janet are the eighteenth/nineteenth/twentieth languages, and the first
+where the template genuinely runs out in a NEW way -- not "some constructs lack a
+particular field" (Python/Go's own story) but "every construct is the SAME node type, with
+no field distinguishing a definition from an ordinary function call at all." Confirmed
+live before writing anything (a real sexp dump plus throwaway `tree-sitter query` probes):
+`def`, `defn`, `ns`, a `let` binding, and an ordinary function call are ALL just `list_lit`
+(Clojure) / `par_tup_lit` (Janet) nodes -- there is no `body:`/`condition:` field anywhere
+to hang a capture on, not even the way Kotlin's zero-field grammar still had (Kotlin's own
+ambiguity was node-type reuse WITHIN one construct; this grammar has no per-construct node
+types to begin with).
+
+Consequence: `brace.function`/`brace.control`/`brace.class`/`control.parens` are all
+genuinely inapplicable, not declined for lack of trying -- there is no separate
+"block-opening delimiter" distinct from the list itself for `:placement` to move (Lisp
+code never debates same-line-vs-next-line parens the way C-family debates brace style),
+and no optional-parens lever the way Python/Go/Lua's own files have (every form is
+ALREADY parenthesized, unconditionally). None of the three files name a single Space/Break
+capture.
+
+`def.toplevel` IS real, via a technique this rollout hadn't needed before: matching the
+list's own first child symbol's TEXT rather than any field or node type, the same
+"dispatch on the head symbol" approach already proven for this language family's own
+`locals.scm`/`tags.scm`. `(:match? @head "^def")` catches `def`/`defn`/`defn-`/
+`defmacro`/`defprotocol`/`defrecord`/`deftype`/`defmulti`/`defmethod` uniformly with no
+per-macro enumeration -- the same "starts with def" heuristic cljfmt (the real Clojure
+community formatter) itself uses, not an invented cut. Clojure's `ns` and Janet's
+`var`/`var-` are checked separately (neither starts with "def", but each is a real, common
+top-level form in its own language) via `:eq?`/a second `:match?`. Verified live neither
+check falsely fires on an ordinary function call or a nested `let` binding. **A real
+predicate-syntax trap, caught immediately rather than silently producing wrong results**:
+this codebase's own `.janet` query files use the COLON form (`:match?`/`:eq?`), not
+upstream tree-sitter's hash form (`#match?`/`#eq?`) -- a bare `#` is read as a genuine
+Janet line-comment marker by the no-VM reader even mid-token, so the hash form doesn't
+error, it silently truncates the rest of the pattern (caught by a parse failure the moment
+the file was loaded: `"unclosed '('"`, not a wrong-answer that could have shipped quietly).
+
+`def.method` is deliberately not attempted for Clojure: confirmed live via a real parse
+dump that `defprotocol`/`defrecord`'s own nested method signatures (`(area [this])`) are
+ordinary `list_lit` children with ARBITRARY head symbols (the method's own name) -- no
+vocabulary-based signal the way `"^def"` is, only a position-and-container-dependent one
+that would need per-macro-shape special-casing this codebase's own "decline rather than
+approximate a fragile signal" precedent argues against, for a narrow preference (blank
+lines between protocol method signatures) not worth that risk. A real, honest absence,
+matching Go's own "no def.method" precedent for an analogous reason (no reliable signal).
+Janet has no protocol/record/method-nesting construct at all, so the same absence holds
+there for an even more direct reason.
+
+jank needs no file of its own at all: `jank/language.janet` already declares
+`:queries-from "clojure"` (jank shares Clojure's own grammar byte-for-byte, unlike
+TypeScript/JavaScript's merely-similar one), so `clojure/format.janet` is picked up by the
+existing convention-discovery mechanism with zero extra configuration -- confirmed live via
+`ned --format` on a real `.jank` file.
+
+**A real, cross-language correction this rollout's own comment-transparency check turned
+up, not something Lisp-specific**: Janet's own grammar DOES declare `comment` as `extras`
+(unlike Clojure's empty extras list), so a leading comment before a first `defn` was
+expected to be anchor-transparent, matching a claim this doc's own Blank-kind section
+already made for Python. Live-verified it is NOT transparent -- a leading comment still
+disqualifies `isFirst` in Janet, and re-checking Python's own claim the same way (a direct
+`Mode::formatCaptures` call, not trusted from the original writeup) showed it was ALSO
+wrong. `Editor/Grammar/QueryMatcher.cpp` has no extras-aware logic anywhere (confirmed by
+reading it): a grammar's `extras` declaration is about where a node may appear without
+being threaded through every rule explicitly, not about anchor transparency, and the two
+facts were conflated in the original Python finding. See this section's own correction
+note under "Blank lines" above for the fuller writeup; nothing shipped was actually
+broken by this (no permanent test asserted the wrong behavior), but the doc claim was.
+
+Live-verified via `ned --format` on real `.clj`/`.jank`/`.janet` files combining `:blank`
+rules, output re-checked by re-parsing with the real vendored grammars for zero
+`ERROR`/`MISSING` nodes (no Clojure/Janet toolchain available in this environment, the
+same honest structural-only substitute used elsewhere in this rollout when a real
+interpreter isn't installed). Full suite: 4733 cases (7 new test cases).
 
 ## The `--format` CLI
 
