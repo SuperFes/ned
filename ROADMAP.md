@@ -1495,6 +1495,24 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
+- **`BufferView's highlight cache updates after an edit changes the buffer's content`
+  is intermittently flaky under `--order rand`.** Found 2026-09-15 while stress-testing
+  the new Wrap rule kind's own `--order rand` reruns -- confirmed unrelated to that work
+  (the failure reproduces on its own, in a test file/subsystem the Wrap rollout never
+  touches: `Editor/Mode.cpp`'s `formatCaptures` closure and the Wrap/Rules/Config files
+  are all it changed, none of which this test exercises). Roughly 1 in 10-15
+  `--order rand` runs. The surprising part: it's the test's OWN FIRST assertion that
+  fails (`Tests/BufferViewTest.cpp:1774`, checking that a freshly-painted `"a"` string
+  literal renders with `SyntaxClass::String` on the very first `Paint()` call), not the
+  post-edit one the test's own name is about -- `REQUIRE(CellMatchesBrush(screen.PixelAt
+  (gutter + 0, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String)))` evaluates
+  false, meaning the cell rendered as `Default` instead, as if the JSON mode's highlight
+  query hadn't produced a capture yet at the moment of that first paint. Smells like a
+  mode-construction/parse-readiness race (this codebase already has precedent for that
+  class of bug -- see `ModePrewarmTest.cpp` and the dynamic-mode-race entry closed
+  earlier) rather than anything about cache invalidation specifically, but not
+  root-caused -- logged rather than guessed at.
+
 - **Lua's `repeat_statement` body is never reindented.** Found live during the
   formatter coverage audit (2026-09-15) while testing the new `repeat`/`until`
   format capture -- unrelated to that capture itself: `Editor/ImprintTables.cpp`'s

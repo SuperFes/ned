@@ -10,27 +10,8 @@ namespace ned::editor {
 
 namespace {
 
-    bool IsFormatWhitespace(char c) {
-        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-    }
-
-    // The literal leading-whitespace substring of the line containing byte
-    // offset `at` -- reused verbatim (not recomputed from a column) so a
-    // mixed tabs/spaces header's own indent survives untouched, matching
-    // NextLineIndented's own "one level deeper than whatever's already
-    // there" contract rather than a from-scratch column recomputation.
-    std::string_view LineIndentOf(std::string_view text, std::size_t at) {
-        const std::size_t lineStart =
-            (at == 0) ? 0 : [&] {
-                const std::size_t found = text.rfind('\n', at - 1);
-                return found == std::string_view::npos ? std::size_t{0} : found + 1;
-            }();
-        std::size_t indentEnd = lineStart;
-        while (indentEnd < text.size() && (text[indentEnd] == ' ' || text[indentEnd] == '\t')) {
-            ++indentEnd;
-        }
-        return text.substr(lineStart, indentEnd - lineStart);
-    }
+    // wrap-kind follow-up: IsFormatWhitespace/LineIndentOf moved to
+    // FormatEdit.h once a second consumer (FormatWrap.h) needed them.
 
     // go-language-pilot follow-up: Go's grammar performs automatic
     // semicolon insertion after a `)` token at end-of-line (the Go spec's
