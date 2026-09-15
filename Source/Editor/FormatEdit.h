@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Text/Buffer.h"
@@ -40,6 +41,19 @@ void ApplyFormatTextEdits(text::Buffer& buffer, std::vector<FormatTextEdit> edit
 // removal (fish's "begin"+"echo" must not become "beginecho") -- the same
 // underlying hazard, reached from two different rule kinds.
 bool IsWordByte(char c);
+
+// wrap-kind follow-up: lifted out of FormatBracePlacement.h once a second
+// consumer (FormatWrap.h) needed the exact same two helpers, the same
+// "extract once a real second use shows up" precedent IsWordByte/
+// FormatTextEdit themselves already set.
+bool IsFormatWhitespace(char c);
+
+// The literal leading-whitespace substring of the line containing byte
+// offset `at` -- reused verbatim (not recomputed from a column) so a mixed
+// tabs/spaces header's own indent survives untouched, matching
+// NextLineIndented's own "one level deeper than whatever's already there"
+// contract rather than a from-scratch column recomputation.
+std::string_view LineIndentOf(std::string_view text, std::size_t at);
 
 } // namespace ned::editor
 

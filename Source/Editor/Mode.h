@@ -539,6 +539,32 @@ struct FormatCapture {
     // bytes.
     std::size_t openLength  = 1;
     std::size_t closeLength = 1;
+    // wrap-kind follow-up: a FOURTH suffix convention, and a genuinely new
+    // correlation shape -- every marker before this one is either scalar
+    // (".open"/".close", one pair per match) or a same-span boolean
+    // (".simple"/".first"). Wrap needs to know each SIBLING item of a
+    // delimited list (a call's own arguments, an array literal's own
+    // elements) and each separator token between them, in source order --
+    // there is no fixed arity, so this can't reuse either existing shape.
+    // A "<name>.item"/"<name>.separator" pair of captures, repeated within
+    // ONE match via the query's own quantifier (e.g. "(argument_list "("
+    // @wrap.args.open (_)? @wrap.args.item ("," @wrap.args.separator (_)
+    // @wrap.args.item)* ")" @wrap.args.close)", verified live this
+    // correlates correctly -- zero, one, or many item/separator pairs, all
+    // scoped to the SAME argument_list instance Matches() already groups
+    // everything else in this struct by), collected in source order and
+    // attached to the base (open/close-synthesized or plain) capture from
+    // that same match. Empty for every capture no ".item" pattern exists
+    // for, or whose list is genuinely empty (an item-less "()").
+    std::vector<std::pair<std::size_t, std::size_t>> items;
+    // Same shape as items, for the "<name>.separator" capture (a list's own
+    // comma, semicolon, ...) -- deliberately a separate vector rather than
+    // interleaved with items, since a well-formed list always has exactly
+    // items.size()-1 separators (none after the last item) OR
+    // items.size() when a trailing separator is already present, and a
+    // consumer (:force-trailing-comma) needs to tell those two shapes
+    // apart without re-deriving it from byte adjacency.
+    std::vector<std::pair<std::size_t, std::size_t>> separators;
 };
 
 // Given a buffer's full text, returns every format.janet capture in it, in

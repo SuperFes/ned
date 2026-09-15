@@ -73,6 +73,18 @@ namespace {
         }
     }
 
+    WrapPolicy ExpectWrapPolicy(const std::string& path, const Value& value, std::string_view what) {
+        if (!value.IsKeyword()) {
+            Fail(path, value.line, std::string(what) + " must be a keyword (:never or :always)");
+        }
+        try {
+            return WrapPolicyByName(value.text);
+        }
+        catch (const std::runtime_error&) {
+            Fail(path, value.line, std::string(what) + " must be :never or :always");
+        }
+    }
+
     // :space's own {"<capture>" {:before true/false :after true/false
     // :within true/false} ...} -- the capture-name key is a STRING (a
     // dotted capture name isn't a valid Janet keyword symbol), unlike every
@@ -165,6 +177,33 @@ namespace {
             }
             else {
                 Fail(path, fieldKey.line, "unknown :blank entry key :" + fieldKey.text);
+            }
+        }
+        return entry;
+    }
+
+    // :wrap's own entry -- FormatRules.h's WrapRuleValue.
+    WrapRuleValue ParseWrapEntry(const std::string& path, const std::string& captureKey, const Value& entryValue) {
+        if (!entryValue.IsStruct()) {
+            Fail(path, entryValue.line,
+                 "\"" + captureKey + "\"'s :wrap entry must be {:policy .. :force-trailing-comma ..}");
+        }
+        WrapRuleValue entry;
+        for (std::size_t k = 0; k + 1 < entryValue.pairs.size(); k += 2) {
+            const Value& fieldKey   = entryValue.pairs[k];
+            const Value& fieldValue = entryValue.pairs[k + 1];
+            if (!fieldKey.IsKeyword()) {
+                Fail(path, fieldKey.line, ":wrap entries are keyed by :policy/:force-trailing-comma");
+            }
+            if (fieldKey.text == "policy") {
+                entry.policy = ExpectWrapPolicy(path, fieldValue, "\"" + captureKey + "\"'s :policy");
+            }
+            else if (fieldKey.text == "force-trailing-comma") {
+                entry.forceTrailingComma =
+                    ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :force-trailing-comma");
+            }
+            else {
+                Fail(path, fieldKey.line, "unknown :wrap entry key :" + fieldKey.text);
             }
         }
         return entry;
@@ -263,6 +302,18 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
                 config.blank[capture] = ParseBlankEntry(path, capture, entryValue);
             }
         }
+        else if (key == "wrap") {
+            if (!value.IsStruct()) {
+                Fail(path, value.line, ":wrap is {\"<capture>\" {:policy .. :force-trailing-comma ..} ...}");
+            }
+            for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
+                const Value&      captureKey = value.pairs[j];
+                const Value&      entryValue = value.pairs[j + 1];
+                const std::string capture =
+                    ExpectString(path, captureKey, ":wrap's own keys are capture-name strings, e.g. \"wrap.args\"");
+                config.wrap[capture] = ParseWrapEntry(path, capture, entryValue);
+            }
+        }
         else if (key == "trim-trailing-whitespace") {
             config.trimTrailingWhitespaceOnSave = ExpectBool(path, value, ":trim-trailing-whitespace");
         }
@@ -328,6 +379,14 @@ void ApplyFormatConfig(const FormatConfig& config) {
             SetBlankMaxBefore(captureKey, entry.maxBefore);
         }
     }
+    for (const auto& [captureKey, entry] : config.wrap) {
+        if (entry.policy) {
+            SetWrapPolicy(captureKey, entry.policy);
+        }
+        if (entry.forceTrailingComma) {
+            SetWrapForceTrailingComma(captureKey, entry.forceTrailingComma);
+        }
+    }
     if (config.trimTrailingWhitespaceOnSave) {
         SetTrimTrailingWhitespaceOnSave(*config.trimTrailingWhitespaceOnSave);
     }
@@ -354,8 +413,8 @@ std::filesystem::path ProjectFormatConfigPath(const std::filesystem::path& proje
 }
 
 std::vector<std::string> FormatConfigKeys() {
-    return {"blank", "break", "ensure-final-newline", "indent",
-            "max-consecutive-blank-lines", "space", "trim-trailing-whitespace"};
+    return {"blank", "break", "ensure-final-newline", "indent", "max-consecutive-blank-lines",
+            "space", "trim-trailing-whitespace", "wrap"};
 }
 
 std::vector<std::string> FormatConfigIndentEntryKeys() {
@@ -372,6 +431,10 @@ std::vector<std::string> FormatConfigBlankEntryKeys() {
 
 std::vector<std::string> FormatConfigBreakEntryKeys() {
     return {"after", "before", "collapse-empty", "collapse-simple", "placement"};
+}
+
+std::vector<std::string> FormatConfigWrapEntryKeys() {
+    return {"force-trailing-comma", "policy"};
 }
 
 void LoadFormatConfigFile(const std::filesystem::path& path) {

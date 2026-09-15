@@ -18,6 +18,9 @@
 #include "CodeFold.h"
 #include "ConflictResolution.h"
 #include "Coverage/Config.h"
+#include "Editor/Project/Root.h"
+#include "Editor/Project/Session.h"
+#include "Editor/Project/Undo.h"
 #include "EmbeddedDocuments.h"
 #include "Fill.h"
 #include "FillColumn.h"
@@ -27,6 +30,7 @@
 #include "FormatConfigParse.h"
 #include "FormatOnSave.h"
 #include "FormatSpacing.h"
+#include "FormatWrap.h"
 #include "Indent.h"
 #include "IndentStyle.h"
 #include "InlineDiagnostics.h"
@@ -38,9 +42,6 @@
 #include "Multibuffer.h"
 #include "Org.h"
 #include "PageScroll.h"
-#include "Editor/Project/Root.h"
-#include "Editor/Project/Session.h"
-#include "Editor/Project/Undo.h"
 #include "SnippetRegistry.h"
 #include "TabWidth.h"
 #include "Text/Grapheme.h"
@@ -1895,29 +1896,46 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               changed = IndentBuffer(context.buffer, *context.mode) > 0;
                           }
                           // configurable-formatter-rules follow-up: the pilot Blank-,
-                          // Break- (brace placement), and Space-kind passes -- all a
-                          // no-op for every mode but their own pilot captures until a
-                          // rule is actually configured (see Docs/FormattingRules.md).
-                          // Run after the structural reindent (whose body indentation
-                          // none of them touch) and before Hygiene (which cleans up
-                          // whatever whitespace any of them left behind). Blank runs
-                          // FIRST: its own edit region always ends at a capture's own
-                          // startByte and sits strictly ABOVE that capture's line, never
-                          // overlapping a Break/Space capture's region (those sit AT OR
-                          // AFTER a construct's header) for any capture this codebase
-                          // names today, so running it first avoids the other two
-                          // passes ever having to account for shifted blank-line
-                          // whitespace above them. Every pass after the first reads a
-                          // FRESH capture list re-read from context.buffer.Text() rather
-                          // than reusing an earlier one -- an earlier pass may have
-                          // already shifted every byte offset after its own edits, so
-                          // reusing its list would be reading stale offsets.
+                          // Break- (brace placement), Wrap-, and Space-kind passes --
+                          // all a no-op for every mode but their own pilot captures
+                          // until a rule is actually configured (see
+                          // Docs/FormattingRules.md). Run after the structural reindent
+                          // (whose body indentation none of them touch) and before
+                          // Hygiene (which cleans up whatever whitespace any of them
+                          // left behind). Blank runs FIRST: its own edit region always
+                          // ends at a capture's own startByte and sits strictly ABOVE
+                          // that capture's line, never overlapping a Break/Wrap/Space
+                          // capture's region (those sit AT OR AFTER a construct's
+                          // header) for any capture this codebase names today, so
+                          // running it first avoids the other passes ever having to
+                          // account for shifted blank-line whitespace above them.
+                          // wrap-kind follow-up: Wrap runs SECOND, before Break/Space --
+                          // a wrap decision rewrites a list's own interior line layout
+                          // wholesale (collapsing it to one line or chopping it to many),
+                          // which is exactly the kind of structural change Break's own
+                          // brace-placement gap and Space's own token-adjacency checks
+                          // need to see the RESULT of, not the pre-wrap shape (a chopped
+                          // list's own closing delimiter, for instance, now sits on a
+                          // fresh line at the header's indent -- Break's own placement
+                          // logic for a capture immediately following it should react to
+                          // that, not to wherever the delimiter used to be). Every pass
+                          // after the first reads a FRESH capture list re-read from
+                          // context.buffer.Text() rather than reusing an earlier one --
+                          // an earlier pass may have already shifted every byte offset
+                          // after its own edits, so reusing its list would be reading
+                          // stale offsets.
                           if (context.mode != nullptr && context.mode->formatCaptures) {
                               const std::string languageKey = LanguageKeyForMode(*context.mode);
                               const std::vector<FormatTextEdit> blankEdits = ComputeBlankLineEdits(
                                   context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
                               if (!blankEdits.empty()) {
                                   ApplyFormatTextEdits(context.buffer, blankEdits);
+                                  changed = true;
+                              }
+                              const std::vector<FormatTextEdit> wrapEdits = ComputeWrapEdits(
+                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
+                              if (!wrapEdits.empty()) {
+                                  ApplyFormatTextEdits(context.buffer, wrapEdits);
                                   changed = true;
                               }
                               const std::vector<FormatTextEdit> braceEdits = ComputeBracePlacementEdits(

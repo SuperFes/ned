@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-183 bindings.
+187 bindings.
 
 ## `ned/backward-char`
 
@@ -96,6 +96,14 @@ The capture name's own overridden space-before rule, or nil if unset (no inherit
 ## `ned/format-space-within`
 
 The capture name's own overridden space-within rule, or nil if unset.
+
+## `ned/format-wrap-force-trailing-comma`
+
+The capture name's own overridden wrap-force-trailing-comma rule, or nil if unset.
+
+## `ned/format-wrap-policy`
+
+The capture name's own overridden wrap-policy name, or nil if unset.
 
 ## `ned/forward-char`
 
@@ -336,6 +344,14 @@ Override whether a space is inserted before the given capture name (e.g. "contro
 ## `ned/set-format-space-within`
 
 Override whether a space is inserted just inside the given capture's delimiter pair -- true/false, nil clears.
+
+## `ned/set-format-wrap-force-trailing-comma`
+
+Override whether a wrapped (multi-line) list gets a trailing separator after its last item -- true/false, nil clears.
+
+## `ned/set-format-wrap-policy`
+
+Override the wrap policy for a delimited-list capture name: "never" (always collapse to one line) or "always" (always one item per line); empty string clears.
 
 ## `ned/set-huge-file-disk-space-check-enabled`
 

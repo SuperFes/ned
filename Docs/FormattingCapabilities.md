@@ -39,11 +39,11 @@ applied to node types a query names:
 | # | Kind | What it decides | State |
 |---|---|---|---|
 | 1 | **Indent** | Leading whitespace on a line | **Have** |
-| 2 | **Space** | A space between two adjacent tokens, or inside a delimiter pair | Need |
-| 3 | **Break** | A mandatory or forbidden newline at one point | Need |
-| 4 | **Wrap** | A policy over a *list* when it exceeds the margin: never / if-long / chop-down / always | Need |
+| 2 | **Space** | A space between two adjacent tokens, or inside a delimiter pair | **Have** (19 languages) |
+| 3 | **Break** | A mandatory or forbidden newline at one point | **Have** (19 languages) |
+| 4 | **Wrap** | A policy over a *list* when it exceeds the margin: never / if-long / chop-down / always | Partial (never/always only, no margin-aware if-long/chop-down-if-long yet; cpp's own call-argument-list pilot only) |
 | 5 | **Align** | A shared column across sibling lines | Partial |
-| 6 | **Blank** | Min/max blank lines around a node | Need |
+| 6 | **Blank** | Min/max blank lines around a node | **Have** (19 languages) |
 | 7 | **Case** | A token's own text case | Need |
 | 8 | **Arrange** | Reorder siblings by a key | Need |
 | 9 | **Rewrite** | Replace a construct with an equivalent one | Need |
@@ -79,7 +79,14 @@ Shipped and live today.
 | LSP formatting / range / on-type | `Editor/Lsp/Manager.h` |
 | Soft-wrap override per extension | `Editor/WrapOverrides.h` |
 
-That covers rule kind 1 completely and kind 5 partially. Everything else below is new.
+That covered rule kind 1 completely and kind 5 partially when this doc was first written
+(2026-09-14). Kinds 2/3/6 (Space/Break/Blank) shipped since -- see `Editor/FormatRules.h`,
+`Editor/FormatSpacing.h`/`FormatBracePlacement.h`/`FormatBlankLines.h`, and
+`Docs/FormattingRules.md` -- across every bundled language with a real brace/keyword/Lisp
+shape (19 language keys). Kind 4 (Wrap) followed the same "one pilot construct" pattern
+one level further out; see that doc's own Wrap section for what's still open (margin-aware
+policies, more languages/constructs). Case/Arrange/Rewrite (kinds 7-9) are still genuinely
+new -- everything in this doc about them is unstarted design, not stale.
 
 ---
 

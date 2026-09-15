@@ -33,6 +33,7 @@
 //                           :placement :same-line/:next-line/:next-line-indented
 //                           :collapse-empty true/false :collapse-simple true/false} ...}
 //    :blank  {"<capture>" {:min-before N :max-before N} ...}
+//    :wrap   {"<capture>" {:policy :never/:always :force-trailing-comma true/false} ...}
 //    :trim-trailing-whitespace true/false
 //    :ensure-final-newline true/false
 //    :max-consecutive-blank-lines N}
@@ -90,6 +91,7 @@ struct FormatConfig {
     std::unordered_map<std::string, SpaceRuleValue> space;
     std::unordered_map<std::string, BreakRuleValue> breakRules; // "break" is a C++ keyword
     std::unordered_map<std::string, BlankRuleValue> blank;
+    std::unordered_map<std::string, WrapRuleValue>            wrap;
     std::optional<bool>                                       trimTrailingWhitespaceOnSave;
     std::optional<bool>                                       ensureFinalNewline;
     // A negative value means "no limit", the same sentinel
@@ -144,6 +146,7 @@ void LoadFormatConfigFile(const std::filesystem::path& path);
 [[nodiscard]] std::vector<std::string> FormatConfigSpaceEntryKeys();
 [[nodiscard]] std::vector<std::string> FormatConfigBreakEntryKeys();
 [[nodiscard]] std::vector<std::string> FormatConfigBlankEntryKeys();
+[[nodiscard]] std::vector<std::string> FormatConfigWrapEntryKeys();
 
 } // namespace ned::editor
 

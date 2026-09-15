@@ -92,6 +92,36 @@ struct BlankRuleValue {
     std::optional<int> maxBefore;
 };
 
+// Kind 4 (Wrap): a policy over a delimited LIST (a call's own arguments, an
+// array literal's own elements) captured via Mode.h's own "<name>.item"
+// convention (FormatCapture::items) -- FormattingCapabilities.md's own
+// "policy over a list... plus the companion booleans every pane repeats."
+// Only the two margin-INDEPENDENT policy values are implemented so far --
+// `never` (always collapse to one line) and `always` (always one item per
+// line) -- deliberately: `wrap-if-long`/`chop-down-if-long` need a real
+// per-language wrap margin this rollout hasn't built yet (FillColumn.h is
+// process-wide and prose-oriented, a different number in practice from a
+// code line-length policy), logged as a real, scoped follow-up rather than
+// guessed at. An unconfigured capture (no `policy` set) is a total no-op,
+// the same "no built-in default, nothing forced" rule Break/Space/Blank
+// already have -- which is what makes "keep existing line breaks" (JetBrains'
+// own load-bearing default-on toggle) fall out for free: nothing touches a
+// list's own line layout unless a policy is explicitly configured for it.
+enum class WrapPolicy {
+    Never,  // always collapse the list onto its own header's line
+    Always, // always one item per line (chop-down), regardless of length
+};
+
+struct WrapRuleValue {
+    std::optional<WrapPolicy> policy;
+    // "Force trailing comma if multiline" -- only meaningful together with
+    // `Always` (a `Never`-collapsed list never gets a trailing separator,
+    // matching ordinary single-line call-site style). Left independently
+    // optional rather than folded into `policy` since a future `if-long`
+    // policy will want the exact same companion.
+    std::optional<bool> forceTrailingComma;
+};
+
 // Malformed vs. merely unknown follows SyntaxTheme.h's own trust-boundary
 // split: an empty name, a leading '@', a leading/trailing/doubled '.', or
 // embedded whitespace is a real bad call and throws std::runtime_error; an
@@ -118,6 +148,12 @@ void SetBraceCollapseSimple(const std::string& name, std::optional<bool> value);
 [[nodiscard]] BreakRuleValue BreakRuleFor(std::string_view name);
 [[nodiscard]] BreakRuleValue BreakRuleFor(std::string_view name, std::string_view language);
 
+void SetWrapPolicy(const std::string& name, std::optional<WrapPolicy> value);
+void SetWrapForceTrailingComma(const std::string& name, std::optional<bool> value);
+
+[[nodiscard]] WrapRuleValue WrapRuleFor(std::string_view name);
+[[nodiscard]] WrapRuleValue WrapRuleFor(std::string_view name, std::string_view language);
+
 void SetBlankMinBefore(const std::string& name, std::optional<int> value);
 void SetBlankMaxBefore(const std::string& name, std::optional<int> value);
 
@@ -135,6 +171,10 @@ void SetBlankMaxBefore(const std::string& name, std::optional<int> value);
 // name.
 [[nodiscard]] BracePlacement BracePlacementByName(const std::string& name);
 [[nodiscard]] std::string    BracePlacementName(BracePlacement placement);
+
+// Same round-trip shape for WrapPolicy ("never"/"always").
+[[nodiscard]] WrapPolicy  WrapPolicyByName(const std::string& name);
+[[nodiscard]] std::string WrapPolicyName(WrapPolicy policy);
 
 } // namespace ned::editor
 

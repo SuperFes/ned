@@ -161,3 +161,37 @@
 # only, matching c/format.janet's own reasoning for the identical node).
 (translation_unit [(union_specifier) (enum_specifier)] @def.toplevel)
 (translation_unit . [(union_specifier) (enum_specifier)] @def.toplevel.first)
+
+# wrap-kind follow-up (kind 4): the pilot construct for the whole rule
+# kind -- a call's own argument list, the same "one pilot construct, full
+# chain end to end" discipline every other rule kind's own first capture
+# in this file already followed. `Mode.cpp`'s new "<name>.item" marker
+# convention (a single-node quantifier repeated within the SAME pattern
+# as the paired ".open"/".close" delimiter, `(_)* @wrap.args.item`)
+# collects each argument in source order -- verified live via
+# `tree-sitter query` before writing this that a bare literal-token
+# quantifier (`"," *`) has NO proven syntax in this codebase's own query
+# engine (a "multi-pattern group is only supported at the top level"
+# error, and a bare `*`-quantified string produced one separate match per
+# repetition count rather than one combined match), so separators are
+# deliberately NOT captured here at all -- `Editor/FormatWrap.cpp` derives
+# comma placement purely from item count instead, needing no query-level
+# separator concept. Verified live (`tree-sitter query`, then a real
+# `Mode::formatCaptures` scratch probe) this correctly handles zero
+# items, one item, many items, and nested calls (`f(g(1, 2), 3)`
+# resolves to two independent, non-overlapping captures, one per call).
+#
+# **A real corruption hazard found live, not by inspection**: a trailing
+# comma after this construct's own last argument is a hard C++ syntax
+# error (confirmed with a real `g++` compile -- "expected
+# primary-expression before ')' token"), unlike a brace-init-list, where
+# JetBrains' own "force trailing comma if multiline" feature is squarely
+# aimed. Declined via `Editor/FormatWrap.cpp`'s own
+# `TrailingCommaUnsafeForLanguage(languageKey, captureName)` guard, scoped
+# to exactly `("cpp", "wrap.args")` rather than a blanket rule -- this is
+# a genuinely per-language, per-construct fact (ES2017+ JavaScript, for
+# one, legally allows a trailing comma in a call's own argument list), not
+# something safe to generalize from one language's own grammar. The
+# chop-down LAYOUT itself (one argument per line, no trailing comma) is
+# unaffected and confirmed live it compiles clean.
+(argument_list "(" @wrap.args.open (_)* @wrap.args.item ")" @wrap.args.close)

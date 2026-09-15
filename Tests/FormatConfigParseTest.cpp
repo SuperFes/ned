@@ -33,8 +33,12 @@ using ned::editor::SetIndentStyle;
 using ned::editor::SetIndentStyleForMode;
 using ned::editor::SetMaxConsecutiveBlankLines;
 using ned::editor::SetTrimTrailingWhitespaceOnSave;
+using ned::editor::SetWrapForceTrailingComma;
+using ned::editor::SetWrapPolicy;
 using ned::editor::SpaceRuleFor;
 using ned::editor::TrimTrailingWhitespaceOnSave;
+using ned::editor::WrapPolicy;
+using ned::editor::WrapRuleFor;
 
 namespace {
 
@@ -107,6 +111,8 @@ struct FormatRulesGuard {
         SetBraceCollapseSimple("format-config-test.capture", std::nullopt);
         SetBlankMinBefore("format-config-test.capture", std::nullopt);
         SetBlankMaxBefore("format-config-test.capture", std::nullopt);
+        SetWrapPolicy("format-config-test.capture", std::nullopt);
+        SetWrapForceTrailingComma("format-config-test.capture", std::nullopt);
     }
 };
 
@@ -169,6 +175,39 @@ TEST_CASE("ParseFormatConfig rejects a malformed :blank shape", "[FormatConfigPa
     REQUIRE_THROWS_AS(ParseFormatConfig("{:blank {\"x\" \"not a struct\"}}", "test.janet"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseFormatConfig("{:blank {\"x\" {:unknown-field true}}}", "test.janet"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseFormatConfig("{:blank {\"x\" {:min-before true}}}", "test.janet"), std::runtime_error); // wants an int
+}
+
+TEST_CASE("ParseFormatConfig reads :wrap entries", "[FormatConfigParse]") {
+    const FormatConfig config = ParseFormatConfig(
+        "{:wrap {\"wrap.args\" {:policy :always :force-trailing-comma true}\n"
+        "        \"wrap.params\" {:policy :never}}}",
+        "test.janet");
+
+    REQUIRE(config.wrap.size() == 2);
+    REQUIRE(config.wrap.at("wrap.args").policy == WrapPolicy::Always);
+    REQUIRE(config.wrap.at("wrap.args").forceTrailingComma == true);
+    REQUIRE(config.wrap.at("wrap.params").policy == WrapPolicy::Never);
+    REQUIRE_FALSE(config.wrap.at("wrap.params").forceTrailingComma.has_value());
+}
+
+TEST_CASE("ParseFormatConfig rejects a malformed :wrap shape", "[FormatConfigParse]") {
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:wrap \"not a struct\"}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:wrap {:not-a-string true}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:wrap {\"x\" \"not a struct\"}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:wrap {\"x\" {:unknown-field true}}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:wrap {\"x\" {:policy \"not-a-keyword\"}}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:wrap {\"x\" {:policy :not-a-real-policy}}}", "test.janet"), std::runtime_error);
+}
+
+TEST_CASE("ApplyFormatConfig sets only the :wrap fields a config touches", "[FormatConfigParse]") {
+    const FormatRulesGuard guard;
+
+    FormatConfig config;
+    config.wrap["format-config-test.capture"] = {.policy = WrapPolicy::Always};
+    ApplyFormatConfig(config);
+
+    REQUIRE(WrapRuleFor("format-config-test.capture").policy == WrapPolicy::Always);
+    REQUIRE_FALSE(WrapRuleFor("format-config-test.capture").forceTrailingComma.has_value());
 }
 
 TEST_CASE("ParseFormatConfig rejects a malformed :space/:break shape", "[FormatConfigParse]") {
