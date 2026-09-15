@@ -513,22 +513,57 @@ IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser> parser, std:
     // closure does, so the diff is computed once per generation regardless
     // of how many capabilities ask for it.
     const auto indentMatchCache = indentQuery ? std::make_shared<grammar::MatchCache>() : nullptr;
-    return [parser, indentQuery, sharedParse, indentMatchCache, modeName,
+    // indent-region-batch-perf follow-up: caches the fully merged (query +
+    // imprint) captures set, reused wholesale whenever bufferText is
+    // byte-identical to the text this SAME closure last computed captures
+    // for. Without this, a caller invoking this closure many times over the
+    // SAME frozen text -- IndentRegion's own batch loop below, once it
+    // stopped re-materializing buffer.Text() every iteration -- paid a full
+    // AddImprintCaptures tree walk (O(document size), no incremental
+    // reconciliation at all, unlike the query side's MatchCache) on EVERY
+    // call, turning an O(n) batch reindent into O(n * linesInRange):
+    // measured at 104s on this project's own ~3000-line main.cpp via
+    // format-buffer's new Native fallback.
+    //
+    // Deliberately compares bufferText directly rather than trusting
+    // sharedParse->LastEdit() (nullopt there does NOT mean "unchanged since
+    // this closure's own last call" -- it means "unchanged since the last
+    // call to sharedParse->Update by ANY caller", and sharedParse is shared
+    // across a Mode's other capabilities too, e.g. mode.highlight, which
+    // IndentColumnForLine's own VerbatimRanges call invokes with the exact
+    // same bufferText just before calling into this closure. That interleaving
+    // made LastEdit() falsely report "no edit" here even when the document
+    // genuinely changed since this closure's own previous invocation --
+    // caught by ImprintIndentTest.cpp's "indented relative to nothing is a
+    // root" case, which calls this closure three times over three different
+    // documents on one shared Mode).
+    struct CapturesCache {
+        bool           hasResult = false;
+        std::string    lastText;
+        IndentCaptures result;
+    };
+    const auto capturesCache = std::make_shared<CapturesCache>();
+    return [parser, indentQuery, sharedParse, indentMatchCache, capturesCache, modeName,
             languageKey](std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd) -> std::optional<int> {
         const grammar::Tree& tree  = sharedParse->Update(*parser, bufferText);
         const IndentStyle       style = EffectiveIndentStyle(modeName);
-        // Tree::RootNode()'s own precondition is !IsNull() -- guard here
-        // rather than rely on Reconcile/Matches tolerating a null root,
-        // matching what IndentCapturesFromQuery already checked internally
-        // before this closure started calling MatchCache::Reconcile directly.
-        IndentCaptures captures =
-            (indentQuery && !tree.IsNull())
-                ? IndentCapturesFromMatches(indentMatchCache->Reconcile(*indentQuery, tree, bufferText,
-                                                                        sharedParse->LastEdit()))
-                : IndentCaptures{};
-        AddImprintCaptures(captures, tree, languageKey, bufferText);
+        if (!capturesCache->hasResult || capturesCache->lastText != bufferText) {
+            // Tree::RootNode()'s own precondition is !IsNull() -- guard here
+            // rather than rely on Reconcile/Matches tolerating a null root,
+            // matching what IndentCapturesFromQuery already checked internally
+            // before this closure started calling MatchCache::Reconcile directly.
+            IndentCaptures captures =
+                (indentQuery && !tree.IsNull())
+                    ? IndentCapturesFromMatches(indentMatchCache->Reconcile(*indentQuery, tree, bufferText,
+                                                                            sharedParse->LastEdit()))
+                    : IndentCaptures{};
+            AddImprintCaptures(captures, tree, languageKey, bufferText);
+            capturesCache->result    = std::move(captures);
+            capturesCache->lastText.assign(bufferText);
+            capturesCache->hasResult = true;
+        }
         const std::optional<IndentComputation> result =
-            IndentLevelForLine(tree, bufferText, captures, lineStart, lineEnd, style);
+            IndentLevelForLine(tree, bufferText, capturesCache->result, lineStart, lineEnd, style);
         if (!result) {
             return std::nullopt;
         }
@@ -672,6 +707,18 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
         windowEndLineExclusive             = std::min(initialContent.ByteOffsetToLine(rawWindowEndByte) + 1, initialContent.LineCount());
     }
 
+    // indent-region-batch-perf follow-up: materialized ONCE, not once per
+    // line as this loop used to -- an O(document size) string copy on every
+    // one of the loop's iterations was the other half of the same O(n *
+    // linesInRange) blowup BuildIndentFunction's own new captures cache
+    // fixes (see that function's doc comment). Safe to freeze, same
+    // bottom-to-top reasoning as everywhere else in this function: every
+    // byte at or before the line currently being processed is exactly where
+    // it was when this was captured. Reusing the SAME string object on
+    // every call is also what lets IncrementalParseCache::Update recognize
+    // a cache hit and BuildIndentFunction's captures cache actually fire.
+    const std::string nonHugeText = huge ? std::string() : buffer.Text();
+
     // One highlight pass for the whole run, not one per line. Valid for
     // every line the loop still has to visit: it walks BOTTOM-TO-TOP and a
     // reindent only ever changes its own line's leading whitespace, so every
@@ -683,7 +730,7 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
                                                                   ? initialContent.LineToByteOffset(windowEndLineExclusive)
                                                                   : initialContent.ByteLength()) -
                                                                  initialContent.LineToByteOffset(windowStartLine)))
-             : VerbatimRanges(mode, buffer.Text());
+             : VerbatimRanges(mode, nonHugeText);
 
     buffer.BeginUndoGroup();
     std::size_t changed = 0;
@@ -718,8 +765,7 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
                                                                     &verbatim);
         }
         else {
-            const std::string text = buffer.Text(); // see this function's own doc comment on this cost
-            column                 = IndentColumnForLine(mode, text, lineStart, lineEnd, &verbatim);
+            column = IndentColumnForLine(mode, nonHugeText, lineStart, lineEnd, &verbatim);
         }
         if (!column) {
             continue;
