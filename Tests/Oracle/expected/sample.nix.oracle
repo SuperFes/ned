@@ -95,18 +95,18 @@ indent 112..132  [0]  "  version = \"1.0.0\";"
 indent 133..151  [0]  "  name = \"sample\";"
 indent 152..154  [0]  "in"
 indent 155..185  [0]  "pkgs.stdenv.mkDerivation rec {"
-indent 186..209  [4]  "  inherit name version;"
-indent 210..210  [4]
-indent 211..234  [4]  "  src = pkgs.fetchurl {"
-indent 235..293  [8]  "    url = \"https://example.c … on}.tar.gz\";"
-indent 294..356  [8]  "    sha256 = \"00000000000000 … 0000000000\";"
-indent 357..361  [4]  "  };"
-indent 362..362  [4]
-indent 363..405  [4]  "  buildInputs = [ pkgs.gcc pkgs.gnumake ];"
-indent 406..406  [4]
-indent 407..432  [4]  "  meta = with pkgs.lib; {"
-indent 433..470  [8]  "    description = \"A sample package\";"
-indent 471..498  [8]  "    license = licenses.mit;"
-indent 499..503  [4]  "  };"
+indent 186..209  [2]  "  inherit name version;"
+indent 210..210  [2]
+indent 211..234  [2]  "  src = pkgs.fetchurl {"
+indent 235..293  [4]  "    url = \"https://example.c … on}.tar.gz\";"
+indent 294..356  [4]  "    sha256 = \"00000000000000 … 0000000000\";"
+indent 357..361  [2]  "  };"
+indent 362..362  [2]
+indent 363..405  [2]  "  buildInputs = [ pkgs.gcc pkgs.gnumake ];"
+indent 406..406  [2]
+indent 407..432  [2]  "  meta = with pkgs.lib; {"
+indent 433..470  [4]  "    description = \"A sample package\";"
+indent 471..498  [4]  "    license = licenses.mit;"
+indent 499..503  [2]  "  };"
 indent 504..505  [0]  "}"
 indent 506..506  [0]

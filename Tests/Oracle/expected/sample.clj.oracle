@@ -61,7 +61,7 @@ indent 15..15  [0]
 indent 16..76  [0]  ";; The binding-vector case l …  pair index."
 indent 77..97  [0]  "(defn total [values]"
 indent 98..111  [2]  "  (let [sum 0"
-indent 112..150  [8]  "        doubled (map #(* 2 %) values)]"
+indent 112..150  [6]  "        doubled (map #(* 2 %) values)]"
 indent 151..179  [4]  "    (reduce + sum doubled)))"
 indent 180..180  [0]
 indent 181..195  [0]  "(def limit 10)"
