@@ -11,6 +11,7 @@
 
 using ned::editor::ApplyFormatTextEdits;
 using ned::editor::BracePlacement;
+using ned::editor::CMode;
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
 using ned::editor::ComputeBracePlacementEdits;
@@ -1196,5 +1197,74 @@ TEST_CASE("End to end: kotlin-mode's formatCaptures drives real edits across all
 
     REQUIRE(buffer.Text() == "fun f(x: Int) {\n"
                              "    if (x > 0) { println(x) }\n"
+                             "}\n");
+}
+
+// c-mode: the twelfth language. tree-sitter-c is a SEPARATE grammar from
+// tree-sitter-cpp, not shared -- verified live rather than assumed, and a
+// real difference found doing so: C's own if/while/switch condition field
+// is typed `parenthesized_expression`, not cpp's own `condition_clause`.
+TEST_CASE("c-mode's format.janet names the full capture set over a real file", "[FormatBracePlacement]") {
+    const Mode mode = CMode();
+    REQUIRE(mode.formatCaptures);
+
+    const std::string source = "int f(int x) {\n"
+                               "    if (x > 0) {\n"
+                               "        return x;\n"
+                               "    }\n"
+                               "    switch (x) {\n"
+                               "    case 1:\n"
+                               "        break;\n"
+                               "    }\n"
+                               "    return 0;\n"
+                               "}\n"
+                               "struct S {\n"
+                               "    int x;\n"
+                               "};\n"
+                               "union U {\n"
+                               "    int x;\n"
+                               "};\n";
+    const auto captures = mode.formatCaptures(source);
+
+    REQUIRE(CapturesNamed(captures, "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(captures, "brace.control").size() == 2); // the if's body and the switch's own braces
+    REQUIRE(CapturesNamed(captures, "brace.class").size() == 2);   // struct S and union U
+}
+
+TEST_CASE("c-mode's format.janet does not capture a bodyless function declaration at all",
+          "[FormatBracePlacement]") {
+    const Mode mode = CMode();
+    REQUIRE(mode.formatCaptures("int f(int x);\n").empty());
+}
+
+TEST_CASE("c-mode's format.janet marks a single-statement body isSimple too", "[FormatBracePlacement]") {
+    const Mode        mode   = CMode();
+    const std::string simple = "int f(void) {\n    return 1;\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(simple), "brace.function")[0].isSimple);
+
+    const std::string multi = "int f(void) {\n    g();\n    return 1;\n}\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(multi), "brace.function")[0].isSimple);
+}
+
+TEST_CASE("End to end: c-mode's formatCaptures drives real edits across all three features",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+    SetBraceCollapseSimple("brace.control", true);
+
+    const Mode mode = CMode();
+    Buffer     buffer("test.c");
+    buffer.InsertAtPoint("int f(int x) {\n"
+                         "    if (x > 0)\n"
+                         "    {\n"
+                         "        return x;\n"
+                         "    }\n"
+                         "    return 0;\n"
+                         "}\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "c", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "int f(int x) {\n"
+                             "    if (x > 0) { return x; }\n"
+                             "    return 0;\n"
                              "}\n");
 }
