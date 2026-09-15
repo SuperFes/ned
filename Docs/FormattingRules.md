@@ -198,9 +198,9 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Thirteen languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, C#,
-TypeScript, TSX, Kotlin, C, and Bash**
-(`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp,kotlin,c,bash}/format.janet`
+**Fourteen languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, C#,
+TypeScript, TSX, Kotlin, C, Bash, and Lua**
+(`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp,kotlin,c,bash,lua}/format.janet`
 -- the same capture NAMES throughout, over each grammar's own different node types: cpp's
 `compound_statement`/`condition_clause`, JavaScript's
 `statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`,
@@ -210,7 +210,9 @@ Go's `block`/`parenthesized_expression`, PHP's
 `function_body`+a text predicate/paired anonymous parens tokens, C's
 `compound_statement`/`parenthesized_expression` (a DIFFERENT node type from cpp's own
 `condition_clause`, despite the grammars' close relationship), Bash's `function_definition`/
-`compound_statement` (the only brace-delimited construct in the whole grammar); TypeScript
+`compound_statement` (the only brace-delimited construct in the whole grammar), Lua's paired
+KEYWORD tokens (`")"`/`"end"`, `"do"`/`"end"`, `"then"`/`"end"` -- no brace/paren delimiter
+anywhere in the grammar at all, see below); TypeScript
 and TSX have no `format.janet` files of their own at all, see below), all wired into
 `format-buffer`'s and
 `--format`'s Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and
@@ -798,6 +800,120 @@ PHP's `<?php` tag already taught, reconfirmed live rather than assumed to carry 
 Live-verified via `ned --format` on a real project `.ned/format.janet` combining
 `:break`/`:blank`, output re-checked with `bash -n` (syntax check) -- exit 0. Full suite:
 4653 cases.
+
+## Lua: the first KEYWORD-delimited language, and a real mechanism gap it exposed
+
+Lua is the fourteenth language, and the first with **no brace or paren delimiter
+anywhere in its block-forming grammar at all** -- verified live against a real parse:
+`if`/`while`/`for`/`do` bodies are a bare `block` field with the delimiting keyword tokens
+(`"then"`/`"do"`/`"end"`) sitting OUTSIDE it as direct siblings, the same shape
+Python's own `block` field has, minus Python's total absence of any delimiter. The paired
+`"<name>.open"`/`"<name>.close"` capture mechanism (already proven for C#/Kotlin/for-loops
+on single-BYTE tokens like `"("`/`")"`) is what this file leans on -- but every consumer of
+a synthesized paired capture (`Editor/FormatBracePlacement.h`, `Editor/FormatSpacing.h`)
+had hardcoded `text[capture.startByte]`/`text[capture.endByte - 1]` as ONE-BYTE delimiter
+characters throughout, since every capture before this one satisfied "my own first/last
+byte IS the delimiter" for free. `"do"` (2 bytes), `"then"` (4 bytes) and `"end"`
+(3 bytes) don't. This is the real "we need the additional formatters" moment the language
+rollout was always going to hit eventually (see the session's own standing directive) --
+not a new rule KIND, but a genuine generalization of the Break-kind mechanism itself:
+
+- `FormatCapture` (`Source/Editor/Mode.h`) gained `openLength`/`closeLength`, defaulting
+  to 1 so every existing capture (a brace, a paren) needs no query change at all.
+  `Mode.cpp`'s own paired-capture correlation sets them from the raw `.open`/`.close`
+  captures' own spans -- the delimiter TOKEN's length, whatever it is.
+- `ComputeBracePlacementEdits` (`FormatBracePlacement.cpp`) now reads the open/close
+  TOKEN TEXT (`text.substr(capture.startByte, capture.openLength)` and its close-side
+  twin) everywhere it used to read a single byte -- the interior-is-empty check,
+  collapse-empty's glue, collapse-simple's expand/collapse, and the `NextLineIndented`
+  closer-repositioning step (which needed the closer TOKEN's own start, not just
+  "one byte before the capture ends").
+- `ComputeSpaceEdits`'s (`FormatSpacing.cpp`) `:within` handling generalized the same way
+  (`capture.startByte + capture.openLength` / `capture.endByte - capture.closeLength`
+  instead of `+1`/`-1`) -- unexercised by any bundled default, but a real correctness fix
+  once a keyword-paired capture could reach it at all.
+- **Gluing two keyword tokens together is a real hazard single-character delimiters never
+  faced**: `collapse-empty`'s `{}`-style glue (no inserted space) would turn Lua's
+  `"do"`+`"end"` into the single identifier `doend` if applied unchanged. A general,
+  content-based rule -- insert a space only when both sides are ASCII word bytes
+  (letter/digit/underscore) -- fixes this without any per-language special case: `"{"`+`"}"`
+  still glues with nothing (neither is a word byte), `")"`+`"end"` still glues with
+  nothing (`")"` isn't a word byte either), and `"do"`+`"end"` glues as `"do end"`.
+
+Verified against the full suite (4670 cases, unchanged) before any Lua-specific test was
+added, then against three hand-built regression cases specific to the generalization: a
+`NextLineIndented` edit on `while x do\nprint(1)\nend\n` repositioning BOTH the 2-byte
+`"do"` and the 3-byte `"end"` correctly; the same repositioning applied through a real
+`if`/`elseif`/`else`/`end` chain, confirming the elseif/else content in between the
+captured `"then"` and the final `"end"` is never touched (`brace.control` on `if_statement`
+spans the WHOLE chain -- there is only ever one literal `"end"`, closing every branch, not
+one per branch, so `collapse-empty`/`collapse-simple` correctly never fire once an
+elseif/else is present, needing no special-case query); and the word-byte glue boundary
+itself, both directions.
+
+`lua/format.janet` itself:
+
+- **`brace.function`**: paired on the parameter list's own closing `")"` (the one token
+  always present, even with zero parameters) through to `"end"` -- Lua has no opening
+  keyword for a function body at all (`_function_body` is `parameters, body, end`, verified
+  against the real grammar rule, not assumed from the field list). Covers every
+  DECLARATION shape uniformly: free functions, `local function`, and dot/colon "method"
+  syntax (`function M.f()`/`function M:f()`) all parse as the identical
+  `function_declaration` node, differing only in their own `name:` field's node type --
+  Lua draws no structural method/function split the way a class body would. Deliberately
+  does NOT capture `function_definition` (an anonymous function EXPRESSION, e.g.
+  `local f = function() end` or an inline callback) even though it has the identical
+  `parameters`/`end` shape and would match if named -- matching every prior language's own
+  "declarations, not expressions" scope for `brace.function`. An earlier draft captured it
+  anyway and was caught by this file's own test before it shipped.
+- **`brace.control`**: `"do"`/`"end"` for `while`/`for`/a standalone `do_statement`;
+  `"then"`/`"end"` for `if_statement` (see the elseif/else discussion above). elseif/else
+  branches themselves get NO capture of their own -- a real absence, not a scope cut:
+  neither has a delimiter pair naming just its own body (an elseif's `"then"` opens it, but
+  its closer is whatever comes next -- another elseif's `"then"`, `"else"`, or the outer
+  `"end"` -- never a token belonging to the elseif itself).
+- **`control.parens`**: the same narrow "already parenthesized" lever python's and go's own
+  files use -- Lua's idiomatic style omits parens (`"if x then"`), but the grammar still
+  allows writing them (`"if (x) then"`), parsing as a real `parenthesized_expression`
+  (verified live, zero matches vs. exactly one). `for`'s own clause takes no general
+  boolean expression at all, so it has no analogous capture, matching every other
+  language's own "for-loops don't get `control.parens` unless the grammar genuinely wraps
+  them" precedent.
+- **No `brace.class`/`brace.interface`/`def.method` at all**: Lua has no dedicated
+  class/interface syntax the grammar could ever name (a "class" is conventionally just a
+  table plus dot/colon-qualified functions), and a "method" is structurally identical to
+  and interleaved with an ordinary function -- never nested inside a distinct class-body
+  container the way every `def.method`-carrying language's own methods are. Matches Go's
+  own precedent exactly (a receiver method is a top-level declaration too, for the same
+  structural reason).
+- **No `.simple` marker anywhere**: the marker mechanism (`Mode.cpp`'s own correlation)
+  requires a SECOND pattern capturing the exact same byte range as the base capture from a
+  SINGLE node; every capture in this file is instead synthesized from a paired open/close
+  match with no single node spanning `")"..."end"` or `"then"..."end"` (the block sits
+  strictly BETWEEN the two keyword tokens, never wrapped by anything that also includes
+  them), so there is no single node to anchor a matching `.simple` pattern against either.
+  A real, documented scope cut, matching `go/format.janet`'s own switch/select and
+  `csharp/format.janet`'s own catch precedent -- extending the marker convention to a
+  paired form of its own is real future work, not attempted here.
+- **`def.toplevel`/`.first`**: covers every declaration shape (see `brace.function` above)
+  but never a nested one (only a direct child of `chunk`, the module-top-level node, the
+  same "direct child of the container" rule every prior language's `def.toplevel` already
+  follows) and never the anonymous `function_definition` expression form. `.first` is
+  wired at exactly the SAME level `def.toplevel`'s own primary capture is (`chunk`),
+  deliberately NOT at every `block` a function could be nested inside -- an earlier draft
+  did this and was wrong (it made `isFirst` fire for a function that's merely the first
+  statement of some arbitrary nested `do`/`if`/`while` body, a scope no other language's
+  own `.first` convention ever covers either: python/go/js all wire `.first` at the
+  identical module/class-body level their `def.toplevel`/`def.method` itself uses, never at
+  a generic nested block). `local function f() end` is NOT a distinct node type -- it
+  parses to the same `function_declaration`, merely wrapped by its parent's own
+  `local_declaration:` field; an earlier draft named a nonexistent `local_function` type
+  and failed to compile, the same class of mistake `typescript/format.janet`'s own
+  field-name lesson already recorded.
+
+Live-verified with `luac -p` (syntax check) on three representative outputs -- a
+`NextLineIndented` edit, a keyword-pair glue, and a brace-pair glue -- all exit 0. Full
+suite: 4670 cases.
 
 ## The `--format` CLI
 

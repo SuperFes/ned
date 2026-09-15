@@ -14,6 +14,15 @@ namespace {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r';
     }
 
+    // keyword-delimiter-captures follow-up: whether gluing two delimiter
+    // tokens directly together would fuse them into one word -- true for
+    // any ASCII letter/digit/underscore, which is every byte a keyword
+    // token ("do", "end") can end or start with. A brace/paren is never a
+    // word byte, so this is always false for every pre-Lua capture.
+    bool IsWordByte(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    }
+
     // The literal leading-whitespace substring of the line containing byte
     // offset `at` -- reused verbatim (not recomputed from a column) so a
     // mixed tabs/spaces header's own indent survives untouched, matching
@@ -82,6 +91,10 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
         if (capture.startByte == 0 || capture.startByte >= capture.endByte || capture.endByte > text.size()) {
             continue; // nothing could precede a capture at offset 0; a degenerate span is never expected from a real query
         }
+        if (capture.openLength == 0 || capture.closeLength == 0 ||
+            capture.openLength + capture.closeLength > capture.endByte - capture.startByte) {
+            continue; // degenerate delimiter lengths -- never expected from a real .open/.close pair
+        }
         BreakRuleValue rule = BreakRuleFor(capture.name, languageKey);
         if (rule.placement && PlacementUnsafeForLanguage(*rule.placement, languageKey)) {
             rule.placement.reset(); // see PlacementUnsafeForLanguage's own comment
@@ -128,25 +141,44 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
             }
         }
 
+        // keyword-delimiter-captures follow-up: the open/close TOKEN text
+        // itself, not just its length -- "{"/"}"  for every capture before
+        // Lua's, "do"/"end" or "then"/"end" for one of Lua's own paired
+        // captures. Read once here and reused by both collapse-empty and
+        // collapse-simple below.
+        const std::string_view openText  = text.substr(capture.startByte, capture.openLength);
+        const std::string_view closeText = text.substr(capture.endByte - capture.closeLength, capture.closeLength);
+
         // collapse-empty: purely textual and unambiguous, no tree needed --
-        // whitespace-only content between the two delimiter bytes is empty
+        // whitespace-only content between the two delimiter tokens is empty
         // regardless of language. Owns the WHOLE capture span in one edit
         // (open delimiter through close), which is why it's mutually
         // exclusive with the closer-repositioning step below for the same
         // capture: an empty "{\n}" body's closer is "alone on its own
         // line" too, and letting both steps touch it would emit two
         // overlapping edits.
-        const std::string_view interior = text.substr(capture.startByte + 1, capture.endByte - capture.startByte - 2);
-        const bool              isEmpty  = std::all_of(interior.begin(), interior.end(), IsFormatWhitespace);
+        const std::string_view interior =
+            text.substr(capture.startByte + capture.openLength,
+                        capture.endByte - capture.startByte - capture.openLength - capture.closeLength);
+        const bool isEmpty = std::all_of(interior.begin(), interior.end(), IsFormatWhitespace);
         if (rule.collapseEmpty && isEmpty) {
-            std::string desired(1, text[capture.startByte]);
+            std::string desired(openText);
             if (*rule.collapseEmpty) {
-                desired += text[capture.endByte - 1]; // glue: "{}"
+                // A single-character delimiter glues with nothing between
+                // ("{}"); a keyword delimiter needs a real separator or
+                // the two tokens fuse into one identifier ("doend" is not
+                // "do"+"end") -- inserted whenever both sides are
+                // word-constituent bytes, a general rule rather than a
+                // per-language one.
+                if (!openText.empty() && !closeText.empty() && IsWordByte(openText.back()) && IsWordByte(closeText.front())) {
+                    desired += ' ';
+                }
+                desired += closeText; // glue: "{}" / "do end"
             }
             else {
                 desired += "\n";
                 desired += ClosingIndentFor(rule.placement, headerIndent, style);
-                desired += text[capture.endByte - 1];
+                desired += closeText;
             }
             const std::string_view current = text.substr(capture.startByte, capture.endByte - capture.startByte);
             if (current != desired) {
@@ -171,7 +203,9 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
         // single physical line, so this never re-flows something already
         // spread across lines in some other shape.
         if (rule.collapseSimple && capture.isSimple) {
-            const std::string_view interior = text.substr(capture.startByte + 1, capture.endByte - capture.startByte - 2);
+            const std::string_view interior =
+                text.substr(capture.startByte + capture.openLength,
+                            capture.endByte - capture.startByte - capture.openLength - capture.closeLength);
             std::size_t            trimStart = 0;
             while (trimStart < interior.size() && IsFormatWhitespace(interior[trimStart])) {
                 ++trimStart;
@@ -185,11 +219,11 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
 
             if (*rule.collapseSimple) {
                 if (trimmed.find('\n') == std::string_view::npos) {
-                    std::string desired(1, text[capture.startByte]);
+                    std::string desired(openText);
                     desired += " ";
                     desired += trimmed;
                     desired += " ";
-                    desired += text[capture.endByte - 1];
+                    desired += closeText;
                     if (wholeSpan != desired) {
                         edits.push_back(FormatTextEdit{capture.startByte, capture.endByte, std::move(desired)});
                     }
@@ -198,13 +232,13 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
             else if (wholeSpan.find('\n') == std::string_view::npos) {
                 std::string bodyIndent(headerIndent);
                 bodyIndent += IndentString(style.width, style);
-                std::string desired(1, text[capture.startByte]);
+                std::string desired(openText);
                 desired += "\n";
                 desired += bodyIndent;
                 desired += trimmed;
                 desired += "\n";
                 desired += ClosingIndentFor(rule.placement, headerIndent, style);
-                desired += text[capture.endByte - 1];
+                desired += closeText;
                 if (wholeSpan != desired) {
                     edits.push_back(FormatTextEdit{capture.startByte, capture.endByte, std::move(desired)});
                 }
@@ -225,18 +259,24 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
         // a collapsed one-line body ("{ return 1; }", collapse-simple's
         // territory, not this one) is left alone.
         if (rule.placement == BracePlacement::NextLineIndented) {
-            const std::size_t closerPos       = capture.endByte - 1;
-            const std::size_t closerLineStart = [&] {
-                const std::size_t found = text.rfind('\n', closerPos == 0 ? 0 : closerPos - 1);
+            // keyword-delimiter-captures follow-up: the closer TOKEN's own
+            // start, not just "one byte before the capture ends" -- a
+            // single-char delimiter has the two coincide (closerPos ==
+            // closerTokenStart), a multi-byte one ("end") does not, and
+            // repositioning must leave the token itself untouched either
+            // way.
+            const std::size_t closerTokenStart = capture.endByte - capture.closeLength;
+            const std::size_t closerLineStart  = [&] {
+                const std::size_t found = text.rfind('\n', closerTokenStart == 0 ? 0 : closerTokenStart - 1);
                 return found == std::string_view::npos ? std::size_t{0} : found + 1;
             }();
-            const std::string_view beforeCloser = text.substr(closerLineStart, closerPos - closerLineStart);
+            const std::string_view  beforeCloser = text.substr(closerLineStart, closerTokenStart - closerLineStart);
             const bool              closerIsAloneOnItsLine =
                 std::all_of(beforeCloser.begin(), beforeCloser.end(), [](char c) { return c == ' ' || c == '\t'; });
             if (closerIsAloneOnItsLine) {
                 std::string desiredCloserIndent = ClosingIndentFor(rule.placement, headerIndent, style);
                 if (beforeCloser != desiredCloserIndent) {
-                    edits.push_back(FormatTextEdit{closerLineStart, closerPos, std::move(desiredCloserIndent)});
+                    edits.push_back(FormatTextEdit{closerLineStart, closerTokenStart, std::move(desiredCloserIndent)});
                 }
             }
         }

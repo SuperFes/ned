@@ -525,6 +525,20 @@ struct FormatCapture {
     // (matching JetBrains' own separate "before first method" toggle,
     // which most style guides leave off).
     bool isFirst = false;
+    // keyword-delimiter-captures follow-up (Lua): the open/close
+    // delimiter's OWN byte length. Every capture before this one satisfied
+    // "my own first/last byte IS the delimiter" for free -- a brace, a
+    // paren -- so this defaults to 1 and needs no query change anywhere
+    // that assumption already held. A paired "<name>.open"/"<name>.close"
+    // capture (Mode.cpp's own correlation, see above) can name a
+    // MULTI-byte token instead -- Lua's "do"/"then" opening a block, "end"
+    // closing one, none of them a single character -- and Mode.cpp sets
+    // these from the raw open/close captures' own spans when it does.
+    // Editor/FormatBracePlacement.h/FormatSpacing.h read these instead of
+    // hardcoding +1/-1 wherever they touch a capture's own delimiter
+    // bytes.
+    std::size_t openLength  = 1;
+    std::size_t closeLength = 1;
 };
 
 // Given a buffer's full text, returns every format.janet capture in it, in

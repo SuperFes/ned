@@ -73,9 +73,13 @@ std::vector<FormatTextEdit> ComputeSpaceEdits(std::string_view text, std::string
         if (rule.after) {
             EmitIfChanged(edits, text, HorizontalGapAfter(text, capture.endByte), *rule.after);
         }
-        if (rule.within && capture.endByte - capture.startByte >= 2) {
-            const Gap openGap  = HorizontalGapAfter(text, capture.startByte + 1);
-            const Gap closeGap = HorizontalGapBefore(text, capture.endByte - 1);
+        // keyword-delimiter-captures follow-up: capture.openLength/
+        // closeLength generalize past a single-byte "(" "{" -- default 1
+        // for every capture before Lua's own, so this is a no-op change
+        // for them.
+        if (rule.within && capture.endByte - capture.startByte >= capture.openLength + capture.closeLength) {
+            const Gap openGap  = HorizontalGapAfter(text, capture.startByte + capture.openLength);
+            const Gap closeGap = HorizontalGapBefore(text, capture.endByte - capture.closeLength);
             EmitIfChanged(edits, text, openGap, *rule.within);
             // A genuinely empty pair ("()", nothing between the delimiters)
             // has openGap and closeGap sitting at the exact same position --
