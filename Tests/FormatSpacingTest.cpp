@@ -14,6 +14,7 @@ using ned::editor::CppMode;
 using ned::editor::ComputeSpaceEdits;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
+using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
 using ned::editor::SetSpaceAfter;
 using ned::editor::SetSpaceBefore;
@@ -59,6 +60,27 @@ TEST_CASE("cpp-mode's format.janet also captures a while statement's condition",
 
     REQUIRE(captures.size() == 1);
     REQUIRE(captures[0].name == "control.parens");
+}
+
+TEST_CASE("javascript-mode's format.janet also names control.parens, over a different node type", "[FormatSpacing]") {
+    const Mode mode = JavaScriptMode();
+    const std::string source = "if(x){\n}\n";
+    const std::vector<FormatCapture> captures = mode.formatCaptures(source);
+
+    REQUIRE(captures.size() == 1);
+    REQUIRE(captures[0].name == "control.parens"); // same capture name as cpp's, different grammar node underneath
+}
+
+TEST_CASE("A per-language override actually differentiates two real languages", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceBefore("control.parens", true);       // the shared rule
+    SetSpaceBefore("cpp/control.parens", false);  // cpp's own exception
+
+    const std::string cppSource = "if(x) {}";
+    const std::string jsSource  = "if(x) {}";
+
+    REQUIRE(ComputeSpaceEdits(cppSource, "cpp", CppMode().formatCaptures(cppSource)).empty()); // cpp wants none, already none
+    REQUIRE(ComputeSpaceEdits(jsSource, "javascript", JavaScriptMode().formatCaptures(jsSource)).size() == 1); // js falls through to the shared rule
 }
 
 TEST_CASE("An unconfigured capture contributes no edit", "[FormatSpacing]") {

@@ -15,6 +15,7 @@ using ned::editor::CppMode;
 using ned::editor::ComputeBracePlacementEdits;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
+using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
 using ned::editor::SetBracePlacement;
 using ned::text::Buffer;
@@ -41,6 +42,37 @@ TEST_CASE("cpp-mode's format.janet names brace.function over a real function bod
     REQUIRE(captures[0].name == "brace.function");
     REQUIRE(captures[0].startByte == source.find('{'));
     REQUIRE(captures[0].endByte == source.size() - 1); // through the closing '}'
+}
+
+TEST_CASE("javascript-mode's format.janet also names brace.function, over a different node type", "[FormatBracePlacement]") {
+    const Mode mode = JavaScriptMode();
+    REQUIRE(mode.formatCaptures);
+
+    const std::string source = "function f(x) {\n    return x;\n}\n";
+    const std::vector<FormatCapture> captures = mode.formatCaptures(source);
+
+    REQUIRE(captures.size() == 1);
+    REQUIRE(captures[0].name == "brace.function"); // same capture name as cpp's, different grammar node underneath
+    REQUIRE(captures[0].startByte == source.find('{'));
+}
+
+TEST_CASE("A per-language override actually differentiates two real languages", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::SameLine); // the shared rule
+    SetBracePlacement("cpp/brace.function", BracePlacement::NextLine); // cpp's own exception
+
+    const std::string cppSource = "int f() {\n}\n";
+    const std::string jsSource  = "function f() {\n}\n";
+
+    const std::vector<FormatTextEdit> cppEdits =
+        ComputeBracePlacementEdits(cppSource, "cpp", CppMode().formatCaptures(cppSource));
+    const std::vector<FormatTextEdit> jsEdits =
+        ComputeBracePlacementEdits(jsSource, "javascript", JavaScriptMode().formatCaptures(jsSource));
+
+    REQUIRE(cppEdits.size() == 1);
+    REQUIRE(cppEdits[0].text == "\n"); // cpp's own override won
+
+    REQUIRE(jsEdits.empty()); // javascript falls through to the shared rule, already SameLine
 }
 
 TEST_CASE("An unconfigured capture contributes no edit", "[FormatBracePlacement]") {
