@@ -10,6 +10,7 @@
 #include "Text/Buffer.h"
 
 using ned::editor::ApplyFormatTextEdits;
+using ned::editor::BashMode;
 using ned::editor::BracePlacement;
 using ned::editor::CMode;
 using ned::editor::CppMode;
@@ -1267,4 +1268,66 @@ TEST_CASE("End to end: c-mode's formatCaptures drives real edits across all thre
                              "    if (x > 0) { return x; }\n"
                              "    return 0;\n"
                              "}\n");
+}
+
+// bash-mode: the thirteenth language, and a genuinely PARTIAL case rather
+// than a full brace-carrying one -- function_definition is the ONLY
+// brace-delimited construct in this grammar at all (verified live);
+// if/while/for/case all use keyword delimiters (then/fi, do/done,
+// in/esac), never braces, so there is no brace.control capture here, a
+// real language absence rather than a scope cut.
+TEST_CASE("bash-mode's format.janet names brace.function over all three function syntaxes",
+          "[FormatBracePlacement]") {
+    const Mode mode = BashMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("f() {\n    echo hi\n}\n"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("function g {\n    echo hi\n}\n"), "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("function h() {\n    echo hi\n}\n"), "brace.function").size() == 1);
+}
+
+TEST_CASE("bash-mode's format.janet names no brace.control at all -- if/while/for/case use "
+          "keyword delimiters, never braces",
+          "[FormatBracePlacement]") {
+    const Mode        mode   = BashMode();
+    const std::string source = "if [ \"$x\" -gt 0 ]; then\n"
+                               "    echo pos\n"
+                               "fi\n"
+                               "while [ true ]; do\n"
+                               "    echo loop\n"
+                               "done\n"
+                               "for i in 1 2 3; do\n"
+                               "    echo $i\n"
+                               "done\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.control").empty());
+}
+
+TEST_CASE("bash-mode's format.janet still captures a nested function's own braces, even though "
+          "only the outer one is def.toplevel",
+          "[FormatBracePlacement]") {
+    const Mode        mode   = BashMode();
+    const std::string source = "f() {\n    g() {\n        echo inner\n    }\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.function").size() == 2);
+}
+
+TEST_CASE("bash-mode's format.janet marks a single-statement body isSimple too", "[FormatBracePlacement]") {
+    const Mode        mode   = BashMode();
+    const std::string simple = "f() {\n    echo hi\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(simple), "brace.function")[0].isSimple);
+
+    const std::string multi = "f() {\n    echo hi\n    echo bye\n}\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(multi), "brace.function")[0].isSimple);
+}
+
+TEST_CASE("End to end: bash-mode's formatCaptures drives a real brace-placement edit",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::SameLine);
+
+    const Mode mode = BashMode();
+    Buffer     buffer("test.sh");
+    buffer.InsertAtPoint("f()\n{\n    echo hi\n}\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "bash", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "f() {\n    echo hi\n}\n");
 }
