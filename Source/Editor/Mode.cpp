@@ -1468,8 +1468,25 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
     // above. No MatchCache here -- this capability has no consumer yet
     // (Docs/FormattingRules.md), and its eventual caller (format-buffer/
     // --format) is far more sporadic even than rename-symbol's already-rare
-    // localScopes call, so a plain query.Captures() per call is the honest
+    // localScopes call, so a plain query.Matches() per call is the honest
     // cost until real usage says otherwise.
+    //
+    // paired-delimiter-captures follow-up: goes through Matches() rather
+    // than the flat Captures(), specifically so a "<name>.open"/
+    // "<name>.close" pair -- two single-anonymous-token captures naming a
+    // delimiter with no single node spanning the whole pair (a for-loop's
+    // own "(...)"; a JS catch clause's) -- can be correlated to the ONE
+    // pattern instance that produced both halves, never a same-named pair
+    // from two different constructs. Verified live against tree-sitter-cpp
+    // with two adjacent for-loops before shipping: Matches() never crosses
+    // the pairing between them. The two halves are synthesized into one
+    // FormatCapture spanning open's start to close's end, under the bare
+    // name (suffix stripped) -- the exact same "capture's own first/last
+    // byte ARE the delimiter pair" contract every whole-span capture
+    // (condition_clause and friends) already satisfies, so
+    // Editor/FormatSpacing.h/FormatBracePlacement.h need no changes at all
+    // for this. Any capture in a match that isn't part of such a pair
+    // passes through unchanged.
     FormatCaptureFunction formatCaptures;
     if (!queries.format.empty()) {
         const auto formatQuery = std::make_shared<grammar::QueryMatcher>(language, queries.format);
@@ -1479,8 +1496,28 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 return {};
             }
             std::vector<FormatCapture> captures;
-            for (const grammar::QueryCapture& capture : formatQuery->Captures(tree.RootNode(), bufferText)) {
-                captures.push_back(FormatCapture{capture.name, capture.startByte, capture.endByte});
+            for (const grammar::QueryMatch& match : formatQuery->Matches(tree.RootNode(), bufferText)) {
+                std::optional<std::size_t> openStart;
+                std::optional<std::size_t> closeEnd;
+                std::string                pairedName;
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
+                    constexpr std::string_view kOpenSuffix  = ".open";
+                    constexpr std::string_view kCloseSuffix = ".close";
+                    if (std::string_view(capture.name).ends_with(kOpenSuffix)) {
+                        openStart  = capture.startByte;
+                        pairedName = capture.name.substr(0, capture.name.size() - kOpenSuffix.size());
+                    }
+                    else if (std::string_view(capture.name).ends_with(kCloseSuffix)) {
+                        closeEnd   = capture.endByte;
+                        pairedName = capture.name.substr(0, capture.name.size() - kCloseSuffix.size());
+                    }
+                    else {
+                        captures.push_back(FormatCapture{capture.name, capture.startByte, capture.endByte});
+                    }
+                }
+                if (openStart && closeEnd) {
+                    captures.push_back(FormatCapture{pairedName, *openStart, *closeEnd});
+                }
             }
             return captures;
         };

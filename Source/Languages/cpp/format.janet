@@ -52,13 +52,16 @@
 (switch_statement condition: (condition_clause) @control.parens)
 (catch_clause parameters: (parameter_list) @control.parens)
 
-# Deliberately NOT captured: a for-loop's own "(init; condition; update)".
-# Unlike if/while/switch, tree-sitter-cpp's for_statement has no single node
-# spanning the whole parenthesized clause -- initializer/condition/update
-# are three independent, individually-optional fields with the "(" ")"
-# themselves as bare anonymous tokens in between. ComputeSpaceEdits' model
-# (a capture's own first/last byte ARE the delimiter pair) has no node to
-# attach to here; declined rather than approximated, the same "declined and
-# counted, never approximated" precedent ImportFixup.h's RewriteSpec
-# already sets. Revisit only if a capture kind ever needs bare anonymous-
-# token pairs as first-class input, not just whole delimited nodes.
+# paired-delimiter-captures follow-up: a for-loop's own
+# "(init; condition; update)" has no single node spanning the whole
+# parenthesized clause the way if/while/switch's condition_clause does --
+# initializer/condition/update are three independent, individually-optional
+# fields with the "(" ")" themselves as bare anonymous tokens in between.
+# Captured directly as a matched pair of single-token captures instead --
+# Mode.cpp's formatCaptures closure correlates a "<name>.open"/"<name>.close"
+# pair found in the SAME pattern match (never across two different
+# for-loops -- verified live against tree-sitter-cpp before this landed)
+# into one synthesized "control.parens" capture spanning open to close,
+# indistinguishable from condition_clause's own whole-span capture to
+# every consumer (Editor/FormatSpacing.h needs no changes for this).
+(for_statement "(" @control.parens.open ")" @control.parens.close)

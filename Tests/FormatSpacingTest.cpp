@@ -90,17 +90,82 @@ TEST_CASE("cpp-mode's format.janet names control.parens for switch and catch too
     REQUIRE(CapturesNamed(mode.formatCaptures(tryCatchSource), "control.parens").size() == 1);
 }
 
-TEST_CASE("javascript-mode's format.janet names control.parens for switch but not catch", "[FormatSpacing]") {
+TEST_CASE("javascript-mode's format.janet names control.parens for switch and catch too", "[FormatSpacing]") {
     const Mode mode = JavaScriptMode();
 
     const std::string switchSource = "switch(x){\n}\n";
     REQUIRE(CapturesNamed(mode.formatCaptures(switchSource), "control.parens").size() == 1);
 
-    // No dedicated parens node in tree-sitter-javascript's own catch_clause
-    // (see javascript/format.janet's own comment) -- a documented gap, not
-    // a bug.
+    // Captured via the paired-delimiter-captures mechanism -- javascript's
+    // catch_clause has no wrapping parens node the way cpp's parameter_list
+    // is, only bare "(" ")" anonymous tokens (see the format.janet's own
+    // comment).
     const std::string tryCatchSource = "try {\n} catch(e) {\n}\n";
-    REQUIRE(CapturesNamed(mode.formatCaptures(tryCatchSource), "control.parens").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures(tryCatchSource), "control.parens").size() == 1);
+
+    // ES2019+'s parameter-less catch has no "(" ")" at all -- the paired
+    // pattern simply doesn't match, not a false capture.
+    const std::string catchNoParamSource = "try {\n} catch {\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(catchNoParamSource), "control.parens").empty());
+}
+
+// paired-delimiter-captures follow-up: a for-loop's own
+// "(init; condition; update)" has no single node spanning the whole clause
+// in either grammar -- captured as a matched "<name>.open"/"<name>.close"
+// pair of single anonymous tokens instead (Mode.cpp's formatCaptures
+// closure correlates them per pattern match). These tests exercise that
+// mechanism specifically, not just the whole-span capture shape every
+// other test above uses.
+TEST_CASE("cpp-mode's format.janet captures a for-loop's own parens as a matched pair", "[FormatSpacing]") {
+    const Mode mode = CppMode();
+    // "void f()"'s own empty parameter-list parens come first in the source
+    // -- deliberately, so a naive find('(') would grab the WRONG pair and
+    // this test would pass for the wrong reason.
+    const std::string source = "void f() { for (int i = 0; i < 10; ++i) {} }";
+    const std::vector<FormatCapture> parens = CapturesNamed(mode.formatCaptures(source), "control.parens");
+
+    REQUIRE(parens.size() == 1);
+    REQUIRE(source.substr(parens[0].startByte, parens[0].endByte - parens[0].startByte) ==
+            "(int i = 0; i < 10; ++i)");
+}
+
+TEST_CASE("A nested call's own parens inside a for-loop condition don't confuse the pair", "[FormatSpacing]") {
+    const Mode mode = CppMode();
+    const std::string source = "void g() { for (int i = 0; i < f(x); ++i) {} }";
+    const std::vector<FormatCapture> parens = CapturesNamed(mode.formatCaptures(source), "control.parens");
+
+    REQUIRE(parens.size() == 1); // not 2 -- f(x)'s own parens are a nested descendant, never a direct child
+    REQUIRE(source.substr(parens[0].startByte, parens[0].endByte - parens[0].startByte) ==
+            "(int i = 0; i < f(x); ++i)");
+}
+
+TEST_CASE("Two adjacent for-loops each get their own pair, never cross-paired", "[FormatSpacing]") {
+    const Mode mode = CppMode();
+    const std::string source = "void f() { for (int i = 0; i < 1; ++i) {} for (int j = 0; j < 2; ++j) {} }";
+    const std::vector<FormatCapture> parens = CapturesNamed(mode.formatCaptures(source), "control.parens");
+
+    REQUIRE(parens.size() == 2);
+    REQUIRE(source.substr(parens[0].startByte, parens[0].endByte - parens[0].startByte) == "(int i = 0; i < 1; ++i)");
+    REQUIRE(source.substr(parens[1].startByte, parens[1].endByte - parens[1].startByte) == "(int j = 0; j < 2; ++j)");
+}
+
+TEST_CASE("javascript-mode's format.janet captures a for-loop's own parens as a matched pair too", "[FormatSpacing]") {
+    const Mode mode = JavaScriptMode();
+    const std::string source = "function f() { for (let i = 0; i < 10; ++i) {} }";
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "control.parens").size() == 1);
+}
+
+TEST_CASE(":before applies correctly to a paired for-loop capture", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceBefore("control.parens", true);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("void f() { for(int i = 0; i < 10; ++i) {} }");
+
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "void f() { for (int i = 0; i < 10; ++i) {} }");
 }
 
 TEST_CASE("A per-language override actually differentiates two real languages", "[FormatSpacing]") {
