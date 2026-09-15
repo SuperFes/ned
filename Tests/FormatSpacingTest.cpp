@@ -38,6 +38,21 @@ FormatCapture ParensCapture(std::string_view text) {
     return {"control.parens", text.find('('), text.find(')') + 1};
 }
 
+// Real format.janet files now name more than one capture over the same
+// source (a control statement's own condition parens AND its own brace
+// body, see cpp/javascript's format.janet's "capture-coverage-widening"
+// comments) -- filter by name rather than asserting a total count, so this
+// file doesn't need touching every time coverage widens further.
+std::vector<FormatCapture> CapturesNamed(const std::vector<FormatCapture>& captures, std::string_view name) {
+    std::vector<FormatCapture> matches;
+    for (const FormatCapture& capture : captures) {
+        if (capture.name == name) {
+            matches.push_back(capture);
+        }
+    }
+    return matches;
+}
+
 } // namespace
 
 TEST_CASE("cpp-mode's format.janet names control.parens over a real if statement", "[FormatSpacing]") {
@@ -45,30 +60,47 @@ TEST_CASE("cpp-mode's format.janet names control.parens over a real if statement
     REQUIRE(mode.formatCaptures);
 
     const std::string source = "if(x){\n}\n";
-    const std::vector<FormatCapture> captures = mode.formatCaptures(source);
+    const std::vector<FormatCapture> parens = CapturesNamed(mode.formatCaptures(source), "control.parens");
 
-    REQUIRE(captures.size() == 1);
-    REQUIRE(captures[0].name == "control.parens");
-    REQUIRE(captures[0].startByte == source.find('('));
-    REQUIRE(captures[0].endByte == source.find(')') + 1);
+    REQUIRE(parens.size() == 1);
+    REQUIRE(parens[0].startByte == source.find('('));
+    REQUIRE(parens[0].endByte == source.find(')') + 1);
 }
 
 TEST_CASE("cpp-mode's format.janet also captures a while statement's condition", "[FormatSpacing]") {
     const Mode mode = CppMode();
     const std::string source = "while(x){\n}\n";
-    const std::vector<FormatCapture> captures = mode.formatCaptures(source);
-
-    REQUIRE(captures.size() == 1);
-    REQUIRE(captures[0].name == "control.parens");
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "control.parens").size() == 1);
 }
 
 TEST_CASE("javascript-mode's format.janet also names control.parens, over a different node type", "[FormatSpacing]") {
     const Mode mode = JavaScriptMode();
     const std::string source = "if(x){\n}\n";
-    const std::vector<FormatCapture> captures = mode.formatCaptures(source);
+    // same capture name as cpp's, different grammar node underneath
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "control.parens").size() == 1);
+}
 
-    REQUIRE(captures.size() == 1);
-    REQUIRE(captures[0].name == "control.parens"); // same capture name as cpp's, different grammar node underneath
+TEST_CASE("cpp-mode's format.janet names control.parens for switch and catch too", "[FormatSpacing]") {
+    const Mode mode = CppMode();
+
+    const std::string switchSource = "switch(x){\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(switchSource), "control.parens").size() == 1);
+
+    const std::string tryCatchSource = "try {\n} catch(int e) {\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(tryCatchSource), "control.parens").size() == 1);
+}
+
+TEST_CASE("javascript-mode's format.janet names control.parens for switch but not catch", "[FormatSpacing]") {
+    const Mode mode = JavaScriptMode();
+
+    const std::string switchSource = "switch(x){\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(switchSource), "control.parens").size() == 1);
+
+    // No dedicated parens node in tree-sitter-javascript's own catch_clause
+    // (see javascript/format.janet's own comment) -- a documented gap, not
+    // a bug.
+    const std::string tryCatchSource = "try {\n} catch(e) {\n}\n";
+    REQUIRE(CapturesNamed(mode.formatCaptures(tryCatchSource), "control.parens").empty());
 }
 
 TEST_CASE("A per-language override actually differentiates two real languages", "[FormatSpacing]") {
