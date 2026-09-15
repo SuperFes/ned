@@ -112,3 +112,48 @@
 
 (source_file . [(function_declaration) (class_declaration) (object_declaration)] @def.toplevel.first)
 (class_body . (function_declaration) @def.method.first)
+
+# coverage-audit follow-up: constructs skipped because they weren't the
+# day's focus, not because the grammar lacks them.
+#
+# do_while_statement's own body is a control_structure_body with the
+# IDENTICAL brace-vs-bare-expression ambiguity if/while/for/when already
+# needed the ":match?" predicate for -- same fix, verified against
+# grammar.json (a Kotlin do-while can write `do 1 while (x)`, no braces
+# at all). Its own condition parens ARE a real, matchable pair (unlike
+# if/while/for's unwrapped condition, do-while's own grammar rule wraps
+# it in literal "(" ")" tokens directly after "while").
+(do_while_statement (control_structure_body) @brace.control (:match? @brace.control "^\\{"))
+(do_while_statement "(" @control.parens.open ")" @control.parens.close)
+
+# anonymous_initializer (`init { }`) and secondary_constructor's own body
+# both end with the grammar's hidden `_block` rule (`grammar.json`:
+# SEQ["{", statements?, "}"], inlined with no wrapper node) -- but
+# neither node's OWN span starts at "{" (anonymous_initializer's starts
+# at "init", secondary_constructor's at "constructor"/its modifiers), so
+# both need the paired "{"/"}" mechanism rather than a direct capture.
+# Real, unconditional braces once present -- no :match? needed, and
+# secondary_constructor's own body is genuinely OPTIONAL (a delegating
+# constructor like `constructor(x: Int) : this()` has none), so a
+# bodyless one simply never matches. Neither gets a .simple marker -- no
+# single node's span matches the synthesized "{".."}" range, the same
+# reason go's own switch/select and bash's own if/case carry none.
+(anonymous_initializer "{" @brace.control.open "}" @brace.control.close)
+(secondary_constructor "{" @brace.function.open "}" @brace.function.close)
+
+# anon-function-policy-reversal follow-up (see project memory): unlike
+# function_body's own brace-vs-bare-expression ambiguity, Kotlin's lambda
+# LITERAL syntax (`{ x -> ... }`, including trailing-lambda call syntax
+# like `list.map { it * 2 }`) is ALWAYS brace-delimited -- confirmed via
+# grammar.json: lambda_literal's own rule is a literal SEQ starting with
+# "{" and ending with "}", no bare-expression alternative exists at all.
+# So its own node span already starts/ends exactly at the braces -- a
+# direct whole-node capture, no pairing and no :match? needed, and (since
+# it's the SAME node either way) a real .simple marker is possible.
+(lambda_literal) @brace.function
+(lambda_literal (statements . (_) .)) @brace.function.simple
+
+# object_literal (anonymous `object : Foo() { }`) wraps a plain,
+# unambiguous class_body -- folds into brace.class the same way
+# object_declaration/companion_object already do.
+(object_literal (class_body) @brace.class)

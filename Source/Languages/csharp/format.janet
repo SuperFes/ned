@@ -110,3 +110,82 @@
 (compilation_unit . [(class_declaration) (struct_declaration) (interface_declaration) (enum_declaration)
                       (record_declaration) (namespace_declaration)] @def.toplevel.first)
 (declaration_list . (method_declaration) @def.method.first)
+
+# coverage-audit follow-up: constructs skipped because they weren't the
+# day's focus, not because the grammar lacks them -- each verified
+# against node-types.json before landing here.
+#
+# do-while's own body field is typed "statement" (the same abstract
+# supertype if/while/for's own consequence/body fields already narrow to
+# "block"); its own condition is a bare `expression` field, not a
+# parenthesized one, matching if/while/switch's own shape above -- same
+# paired mechanism.
+(do_statement body: (block) @brace.control)
+(do_statement body: (block . (_) .) @brace.control.simple)
+(do_statement "(" @control.parens.open ")" @control.parens.close)
+
+# try_statement's OWN body (the try block itself, not catch/finally) is a
+# required "block" field; finally_clause's own body has no field name at
+# all (a bare child, node-types.json) but there's exactly one such child.
+(try_statement body: (block) @brace.control)
+(try_statement body: (block . (_) .) @brace.control.simple)
+(finally_clause (block) @brace.control)
+(finally_clause (block . (_) .) @brace.control.simple)
+
+# using/lock/fixed's own body may be any statement, not necessarily a
+# block -- lock/fixed have no field name (bare children); using does.
+(using_statement body: (block) @brace.control)
+(using_statement body: (block . (_) .) @brace.control.simple)
+(lock_statement (block) @brace.control)
+(lock_statement (block . (_) .) @brace.control.simple)
+(fixed_statement (block) @brace.control)
+(fixed_statement (block . (_) .) @brace.control.simple)
+
+# unsafe/checked's own block is an unconditional, unambiguous child.
+(unsafe_statement (block) @brace.control)
+(unsafe_statement (block . (_) .) @brace.control.simple)
+(checked_statement (block) @brace.control)
+(checked_statement (block . (_) .) @brace.control.simple)
+
+# switch_expression ("x switch { 1 => ..., }") has no "body:" field at
+# all -- its braces are bare anonymous tokens around a list of
+# switch_expression_arm children, needing the same paired mechanism a
+# for-loop's own clause uses. No .simple marker -- no single node's span
+# matches the synthesized "{".."}" range, the same reason go's own
+# switch/select carry none.
+(switch_expression "{" @brace.control.open "}" @brace.control.close)
+
+# constructor_declaration/destructor_declaration/accessor_declaration/
+# local_function_statement all share the SAME "body: block | arrow_
+# expression_clause" field shape method_declaration already narrows to
+# "block" -- confirmed via node-types.json: block and arrow_expression_
+# clause are two DISTINCT node types in that field slot, so a type-
+# qualified capture already discriminates with no :match? predicate
+# needed. Constructor/destructor bodies were the highest-impact gap this
+# audit found -- previously ONLY method_declaration got brace.function at
+# all.
+(constructor_declaration body: (block) @brace.function)
+(constructor_declaration body: (block . (_) .) @brace.function.simple)
+(destructor_declaration body: (block) @brace.function)
+(destructor_declaration body: (block . (_) .) @brace.function.simple)
+(accessor_declaration body: (block) @brace.function)
+(accessor_declaration body: (block . (_) .) @brace.function.simple)
+(local_function_statement body: (block) @brace.function)
+(local_function_statement body: (block . (_) .) @brace.function.simple)
+# Deliberately NOT added to def.method: every def.method pattern here is
+# anchored to a TYPE-body container (declaration_list); a local function
+# nests inside an ordinary statement block instead, a genuinely different
+# container shape def.method's own "member of a type" concept doesn't
+# cover -- widening it would need a real design decision (does blank-lines
+# spacing apply the same way inside a method body?), left for a future
+# pass rather than guessed at here.
+
+# anon-function-policy-reversal follow-up (see project memory): lambda_
+# expression's own body field is typed "block | expression" (node-
+# types.json) -- same two-distinct-types shape as the constructors above,
+# no predicate needed. anonymous_method_expression's own block is an
+# unconditional, unambiguous child.
+(lambda_expression body: (block) @brace.function)
+(lambda_expression body: (block . (_) .) @brace.function.simple)
+(anonymous_method_expression (block) @brace.function)
+(anonymous_method_expression (block . (_) .) @brace.function.simple)

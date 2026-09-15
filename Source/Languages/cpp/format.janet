@@ -108,3 +108,56 @@
 # not a bug, the same honest behavior as every prior language's `.first`.
 (translation_unit . [(function_definition) (class_specifier) (struct_specifier) (template_declaration)] @def.toplevel.first)
 (field_declaration_list . (function_definition) @def.method.first)
+
+# coverage-audit follow-up: constructs this rollout's own per-language
+# passes skipped because they weren't the day's focus, not because the
+# grammar lacks them -- found by a dedicated audit pass, each verified
+# against grammar.json/node-types.json before landing here.
+#
+# do_statement's own body field is typed "statement" (grammar.json), the
+# same abstract supertype if/while's own consequence/body fields already
+# narrow to compound_statement -- do-while was simply never added.
+(do_statement body: (compound_statement) @brace.control)
+(do_statement body: (compound_statement . (_) .) @brace.control.simple)
+
+# try_statement's OWN body (the "try { }" block itself, distinct from the
+# already-captured catch_clause body) is a required compound_statement --
+# confirmed via grammar.json, not just node-types.json's field list (the
+# csharp/kotlin lesson). Function-try-blocks stay outside brace.function's
+# own documented scope, untouched by this.
+(try_statement body: (compound_statement) @brace.control)
+(try_statement body: (compound_statement . (_) .) @brace.control.simple)
+
+# union_specifier folds into brace.class -- c/format.janet already makes
+# this "close enough" call for union+struct; cpp's own file never got the
+# equivalent line ported over. Same field/type as struct_specifier's own
+# capture above (verified via node-types.json).
+(union_specifier body: (field_declaration_list) @brace.class)
+
+# anon-function-policy-reversal follow-up: a lambda's own body is a
+# REQUIRED compound_statement (grammar.json) -- always real braces, no
+# expression-bodied alternative the way JS/C#/Rust's closures have, so no
+# discriminator is needed. Previously excluded under this rollout's own
+# "declarations, not expressions" scope cut; that policy is reversed as of
+# this pass (see project memory) -- anonymous function bodies now get
+# brace.function everywhere, matching whatever placement their language's
+# declared functions already use.
+(lambda_expression body: (compound_statement) @brace.function)
+(lambda_expression body: (compound_statement . (_) .) @brace.function.simple)
+
+# linkage_specification's own "body" field (grammar.json) is a CHOICE of
+# function_definition/declaration/declaration_list -- only the last is the
+# real brace-bodied `extern "C" { ... }` form; the other two are the
+# single-declaration form with no braces at all. Folded into
+# brace.namespace (same name/precedent namespace_definition already set) --
+# structurally identical "keyword + brace-delimited declaration list"
+# shape, verified live it's real, reachable syntax.
+(linkage_specification body: (declaration_list) @brace.namespace)
+
+# def.toplevel widened: union_specifier/enum_specifier were omitted here
+# even though c/format.janet's own def.toplevel already names both -- a
+# straight backport, no brace body to place for either (enum_specifier's
+# own body is enumerator_list, not field_declaration_list -- blank-lines
+# only, matching c/format.janet's own reasoning for the identical node).
+(translation_unit [(union_specifier) (enum_specifier)] @def.toplevel)
+(translation_unit . [(union_specifier) (enum_specifier)] @def.toplevel.first)

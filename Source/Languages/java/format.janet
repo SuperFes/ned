@@ -80,3 +80,58 @@
 (class_body . [(method_declaration) (constructor_declaration)] @def.method.first)
 (interface_body . (method_declaration) @def.method.first)
 (enum_body_declarations . [(method_declaration) (constructor_declaration)] @def.method.first)
+
+# coverage-audit follow-up: constructs skipped because they weren't the
+# day's focus, not because the grammar lacks them -- each verified against
+# node-types.json/grammar.json before landing here.
+#
+# do-while's body field is typed "statement" (the same supertype if/
+# while's own consequence/body fields already narrow to "block"), and
+# try_statement's OWN body (the try block itself, not catch/finally) is a
+# required "block" -- both simply never added.
+(do_statement body: (block) @brace.control)
+(do_statement body: (block . (_) .) @brace.control.simple)
+(try_statement body: (block) @brace.control)
+(try_statement body: (block . (_) .) @brace.control.simple)
+(try_with_resources_statement body: (block) @brace.control)
+(try_with_resources_statement body: (block . (_) .) @brace.control.simple)
+
+# finally_clause/static_initializer have no FIELD at all (node-types.json)
+# -- their own "block" is a bare, untagged child, same shape a for-loop's
+# anonymous "(" ")" tokens already needed a different mechanism for; here
+# a plain child-match suffices since there's exactly one such child.
+# A bare instance-initializer block (no "static" keyword) is a real,
+# DIFFERENT shape again -- confirmed via class_body's own children list:
+# it's a "block" sitting directly among class_body's children, distinct
+# from static_initializer's own wrapping node.
+(finally_clause (block) @brace.control)
+(finally_clause (block . (_) .) @brace.control.simple)
+(static_initializer (block) @brace.control)
+(static_initializer (block . (_) .) @brace.control.simple)
+(class_body (block) @brace.control)
+(class_body (block . (_) .) @brace.control.simple)
+
+# switch_rule's own arrow-arm block (Java 14+ "case X -> { }") is one of
+# several untagged alternatives among switch_rule's children (the others
+# are expression_statement/switch_label/throw_statement, none brace-
+# shaped) -- a plain child-match is unambiguous.
+(switch_rule (block) @brace.control)
+(switch_rule (block . (_) .) @brace.control.simple)
+
+# anon-function-policy-reversal follow-up (see project memory): lambda
+# bodies now get brace.function everywhere, matching declared functions'
+# own placement. lambda_expression's own "body" field (node-types.json) is
+# typed EITHER "block" OR "expression" -- two structurally DISTINCT node
+# types in the same field slot, so a type-qualified capture already
+# discriminates with no :match? predicate needed (unlike Kotlin's
+# function_body, where both shapes share one node type and only their
+# own leading byte differs).
+(lambda_expression body: (block) @brace.function)
+(lambda_expression body: (block . (_) .) @brace.function.simple)
+
+# Anonymous class bodies (`new Foo() { }`) and per-constant enum bodies
+# (`RED { ... }`) both wrap a plain class_body -- folded into brace.class,
+# the same "close enough" call this file already makes for class/
+# interface/enum/record's own top-level bodies.
+(object_creation_expression (class_body) @brace.class)
+(enum_constant body: (class_body) @brace.class)

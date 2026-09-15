@@ -93,3 +93,16 @@
 # minBefore rule legitimately wants to say something about the gap right
 # after "package main" too.
 (source_file . [(function_declaration) (method_declaration) (type_declaration)] @def.toplevel.first)
+
+# anon-function-policy-reversal follow-up (see project memory): a real
+# prior gap regardless of the policy question -- func_literal (an
+# anonymous function EXPRESSION, used constantly in idiomatic Go for
+# goroutines/defer/callbacks: `go func() { ... }()`) has a required
+# "body: (block)" field, the identical shape function_declaration/
+# method_declaration already capture, but was never named here at all.
+# Anchored one level deeper via statement_list for the same reason those
+# two already are (Go's own "block" wraps its statements in one
+# intermediate statement_list child, verified against this file's own
+# existing comment on the mechanism).
+(func_literal body: (block) @brace.function)
+(func_literal body: (block (statement_list . (_) .)) @brace.function.simple)

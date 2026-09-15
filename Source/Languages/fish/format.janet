@@ -79,3 +79,56 @@
 # precedent.
 (program (function_definition) @def.toplevel)
 (program . (function_definition) @def.toplevel.first)
+
+# coverage-audit follow-up: this file's own original writeup wrongly
+# lumped `function_definition` in with if/while/for/switch's genuine
+# structural absence -- it does NOT share their reason at all. Verified
+# against `grammar.json`'s own rule: SEQ["function", name, option*,
+# _terminator, statements*, "end"] -- a literal "function" token opens
+# it and a literal "end" token closes it, BOTH always present, the exact
+# same shape begin_statement's own "begin"/"end" form already captures
+# above. Simply never captured, not a real absence.
+(function_definition "function" @brace.function.open "end" @brace.function.close)
+# The naive "function" . (_) . "end" anchor is WRONG here (caught live,
+# not by inspection): "function" is an anonymous token and doesn't count
+# against adjacency, but function_definition's own required "name:" field
+# DOES -- so "(_)" would bind to the function's NAME, never a body
+# statement, and the marker would never fire at all for any real,
+# name-carrying function. Anchored past the name field instead -- verified
+# live this correctly requires exactly one statement immediately after the
+# name. A function declaring one or more "-d"/"-a"/... options between its
+# name and body is deliberately left unmatched here (declined, not wrong):
+# each option sits as its own extra named sibling between name and the
+# real body, so this conservatively reports "not simple" rather than
+# risking a false "simple" -- the same "decline a rare shape rather than
+# guess" precedent every prior language's own narrow scope cuts already
+# set, options being a real but uncommon fish feature.
+(function_definition name: (_) . (_) . "end") @brace.function.simple
+
+# The SAME SameLine hazard begin_statement's own brace.control guard
+# already covers, for the identical reason (function_definition is a
+# bare, standalone statement) -- confirmed live with a real fish RUN:
+# gluing "function" onto a preceding statement produces the identical
+# "'end' outside of a block" corruption. Guarded in
+# Editor/FormatBracePlacement.cpp's own PlacementUnsafeForLanguage,
+# extended to cover "fish"/"brace.function" alongside "brace.control".
+#
+# **A THIRD real hazard, this time in :collapse-simple itself, caught by
+# an end-to-end apply-and-check live smoke test, not by inspection**:
+# collapse-simple's own interior computation assumes the open TOKEN sits
+# directly beside the real body -- true everywhere else in this codebase,
+# false here, since "name:" (and any "option:" fields) sit between
+# "function" and the body. Force-expanding
+# "function greet; echo hello; end" produced "function\n    greet; echo
+# hello;\nend" -- confirmed live via `fish -n` this is a hard syntax
+# error ("function" alone names no function at all). Guarded in
+# Editor/FormatBracePlacement.cpp's own new
+# CollapseSimpleUnsafeForLanguage, declining BOTH collapse-simple
+# directions for "fish"/"brace.function" specifically (:placement and
+# :within are both unaffected -- neither one reads "interior" the same
+# name-inclusive way). :collapse-empty needs no equivalent guard: its own
+# isEmpty check can never be true here (the name is never whitespace), so
+# it's already, if incidentally, inert rather than merely declined.
+# The `:within=false` word-fusion risk on the "function" keyword needs NO
+# new code -- already covered by the general IsWordByte/EmitWithinIfSafe
+# mechanism this file's own begin_statement rollout already built.
