@@ -6,9 +6,19 @@
  # tree-sitter-typescript's tags.scm is a delta on javascript's and carries
  # no class_declaration/function_declaration of its own, so embedding it
  # alone leaves every class and function with no symbol marker at all.
+ #
+ # :format is the same shape for the same reason: every shared-with-JS
+ # construct (function/class/if/while/for/switch/catch, control.parens)
+ # uses the identical node types tree-sitter-javascript does (confirmed
+ # live), so javascript/format.janet's own queries match a typescript
+ # parse unmodified -- embedding it directly instead of duplicating it.
+ # typescript/format.janet is a pure DELTA adding only what JS's grammar
+ # has no equivalent for at all: interface/enum/abstract-class/type-alias.
  :queries {:tags ["javascript/upstream/tags.janet"
            "typescript/upstream/tags.janet"
-           "typescript/tags.janet"]}
+           "typescript/tags.janet"]
+           :format ["javascript/format.janet"
+                    "typescript/format.janet"]}
  :lsp-root-markers ["package.json" "tsconfig.json"]
  :import-resolution {:extensions ["ts" "tsx" "js" "jsx" "mjs" "cjs"] :index-basenames ["index"] :search-package-dirs true}
  :injection-aliases ["ts"]

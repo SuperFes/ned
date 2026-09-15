@@ -198,15 +198,16 @@ brace bug during a 2026-09-15 audit and fixed before it was ever the default for
 Skipped (left alone) when the closer shares its line with real content, deferring to
 `:collapse-empty`/`:collapse-simple` for that case instead of guessing at it.
 
-**Eight languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, and C#**
-(`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp}/format.janet` -- the
-same capture NAMES throughout, over each grammar's own different node types: cpp's
+**Ten languages exist today: cpp, JavaScript, Java, Python, Go, PHP, Rust, C#, TypeScript,
+and TSX** (`Source/Languages/{cpp,javascript,java,python,go,php,rust,csharp}/format.janet`
+-- the same capture NAMES throughout, over each grammar's own different node types: cpp's
 `compound_statement`/`condition_clause`, JavaScript's
 `statement_block`/`parenthesized_expression`, Java's `block`/`parenthesized_expression`,
 Go's `block`/`parenthesized_expression`, PHP's
 `compound_statement`/`parenthesized_expression`, Rust's
-`block`/`parenthesized_expression`, C#'s `block`/paired anonymous parens tokens), all
-wired into `format-buffer`'s and
+`block`/`parenthesized_expression`, C#'s `block`/paired anonymous parens tokens; TypeScript
+and TSX have no `format.janet` files of their own at all, see below), all wired into
+`format-buffer`'s and
 `--format`'s Native chain (reindent, then Blank, then Break, then Space, then Hygiene) and
 all shipping no built-in default -- neither does anything until you configure a rule:
 
@@ -396,8 +397,10 @@ grammar's equivalent shapes are:
   is an inline-bodied method directly inside a `field_declaration_list`.
 - **JavaScript**: `def.toplevel` covers `function`/`class` declarations plus
   `export_statement` (captured itself, same "outer wrapper" precedent) and
-  `generator_function_declaration`; `def.method` reads `class_body`'s own field-tagged
-  `member:` children (`method_definition`, covering ordinary/static/generator/async alike).
+  `generator_function_declaration`; `def.method` reads `class_body`'s own `method_definition`
+  children (covering ordinary/static/generator/async alike) -- deliberately unqualified by
+  field name (TypeScript rollout follow-up, below) rather than JS's own `member:` tag, since
+  the pattern is shared verbatim with a grammar that has no such field at all.
 - **Java**: `def.toplevel` is TYPE declarations only (`class`/`interface`/`enum`/`record`/
   `annotation_type_declaration`) -- Java has no top-level *functions* the way cpp/
   JavaScript/Python do; `def.method` covers `method_declaration`/`constructor_declaration`
@@ -606,6 +609,61 @@ class/trait/interface bodies already established. A positional record
 live -- so it's captured as `def.toplevel` alone, same as every other bodyless top-level
 shape in this whole rollout. Verified live via a real `dotnet build`: the formatted output
 compiled clean (one pre-existing unused-variable warning, no errors).
+
+## TypeScript and TSX: a shared file, not a new one, and one real cross-grammar surprise
+
+TypeScript is the ninth language, and the first added as a pure DELTA over an existing
+file rather than its own from-scratch one. Every shared-with-JavaScript construct
+(function/class/if/while/for/switch/catch bodies, `control.parens`, the method side of
+`def.method`) uses byte-identical node type names in tree-sitter-typescript and
+tree-sitter-javascript, confirmed live before writing anything -- so
+`typescript/language.janet`'s own `:queries` entry concatenates
+`["javascript/format.janet" "typescript/format.janet"]` directly (the exact mechanism
+`:tags` already uses to reuse javascript's own tags query, described above) rather than
+duplicating those captures. `typescript/format.janet` itself is small: only what
+JavaScript's grammar has no equivalent for at all --
+`interface_declaration`/`enum_declaration`/`type_alias_declaration`/
+`abstract_class_declaration` widen `def.toplevel` (a BARE, unexported one; `export
+interface I {}` is already caught by javascript's own `export_statement` capture, which
+wraps the outer node regardless of what it exports), `interface_declaration`'s own body
+gets `brace.interface`, and `abstract_class_declaration`'s own body gets `brace.class` --
+it's a genuinely distinct node type from `class_declaration`, not a modifier on it, so
+JavaScript's own `brace.class` pattern (anchored on `class_declaration` specifically) does
+not match it at all. A class member with no body comes in THREE distinct node-type
+flavors here, each needing its own `def.method` pattern: `method_signature` (an
+interface's own abstract member), `abstract_method_signature` (an abstract class's own),
+and the ordinary `method_definition` JavaScript's own file already captures -- confirmed
+live all three coexist as siblings inside one `abstract class`'s own `class_body`
+(a concrete method right alongside an abstract one). TypeScript's legacy
+`namespace N { ... }`/`module N { ... }` syntax (`internal_module`) is deliberately
+declined: verified live it parses wrapped in a field-less `expression_statement`, an
+unusual enough shape for a feature ES modules have mostly superseded that it wasn't worth
+chasing.
+
+**One real cross-grammar mistake, caught by the query failing to COMPILE, not by a wrong
+answer:** the first attempt at reusing `javascript/format.janet` unmodified failed outright
+-- `unknown field name 'member'` -- because tree-sitter-typescript's own `class_body` has
+NO `member:` field at all, despite sharing the `class_body`/`method_definition` node type
+NAMES with JavaScript verbatim. Fixed by dropping the field-name qualifier from
+`javascript/format.janet`'s own `def.method` pattern (`(class_body (method_definition)
+@def.method)` instead of `(class_body member: (method_definition) @def.method)`) --
+verified live this changes nothing for JavaScript itself (every `method_definition` inside
+a `class_body` IS the `member` field there, so the unqualified match is already exactly as
+narrow), while making the SAME pattern text compile and match correctly against both
+grammars. The lesson: two grammars sharing a node type's NAME is not a guarantee they share
+its FIELD names too.
+
+**TSX inherits from TypeScript, but needs the SAME explicit `:format` entry restated in
+its own `language.janet`, not just `:queries-from "typescript"`** -- confirmed against
+`LanguageParse.cpp`'s `DiscoverQueryFiles`: each language definition's own explicit
+`:queries` map is consulted independently; `:queries-from` only redirects the DIRECTORY
+convention-based discovery searches for kinds an explicit entry doesn't already cover.
+Since TypeScript's own `:format` entry is itself explicit (not a bare file discovered by
+convention), TSX's `:queries-from "typescript"` would never find it on its own -- the same
+reason `tsx/language.janet` already duplicates `:tags` verbatim rather than relying on
+inheritance. Live-verified via `ned --format` combining a real `.ts` and `.js` file in one
+project `.ned/format.janet`, output re-checked with `tsc --strict --noEmit` (0 errors) for
+the TypeScript file.
 
 ## The `--format` CLI
 

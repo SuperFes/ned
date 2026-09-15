@@ -23,6 +23,8 @@ using ned::editor::Mode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
 using ned::editor::RustMode;
+using ned::editor::TsxMode;
+using ned::editor::TypeScriptMode;
 using ned::editor::SetBraceCollapseEmpty;
 using ned::editor::SetBraceCollapseSimple;
 using ned::editor::SetBracePlacement;
@@ -1028,4 +1030,90 @@ TEST_CASE("End to end: csharp-mode's formatCaptures drives real edits across all
                              "        if (x > 0) { return; }\n"
                              "    }\n"
                              "}\n");
+}
+
+// typescript-mode: the ninth language, but embedded as a DELTA over
+// javascript/format.janet rather than a from-scratch file -- every
+// shared construct (function/class/if/control.parens/def.method's own
+// method case) uses byte-identical node types to plain JavaScript,
+// confirmed live, so typescript/language.janet's own :queries entry
+// concatenates javascript/format.janet directly instead of duplicating
+// it. typescript/format.janet itself names only what JS's grammar has no
+// equivalent for: interface/enum/abstract-class/type-alias.
+TEST_CASE("typescript-mode inherits javascript's own brace.function/control/class captures unmodified",
+          "[FormatBracePlacement]") {
+    const Mode mode = TypeScriptMode();
+
+    const std::string source = "function f(x: number): number {\n"
+                               "    if (x > 0) {\n"
+                               "        return x;\n"
+                               "    }\n"
+                               "    return 0;\n"
+                               "}\n"
+                               "class C {\n"
+                               "    m(): void {}\n"
+                               "}\n";
+    const auto captures = mode.formatCaptures(source);
+    REQUIRE(CapturesNamed(captures, "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(captures, "brace.control").size() == 1);
+    REQUIRE(CapturesNamed(captures, "brace.class").size() == 1);
+}
+
+TEST_CASE("typescript-mode's own format.janet names brace.interface, and brace.class over an "
+          "abstract_class_declaration (a distinct node type from class_declaration)",
+          "[FormatBracePlacement]") {
+    const Mode mode = TypeScriptMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("interface I {\n    m(): void;\n}\n"), "brace.interface").size()
+            == 1);
+    // A bare class_declaration pattern (javascript's own) does NOT match
+    // this distinct node type -- confirmed live it needed its own
+    // pattern in typescript/format.janet, not inherited for free.
+    REQUIRE(CapturesNamed(mode.formatCaptures("abstract class A {\n    abstract m(): void;\n}\n"), "brace.class")
+                .size()
+            == 1);
+}
+
+TEST_CASE("End to end: typescript-mode's formatCaptures drives a real edit combining inherited and "
+          "typescript-only captures",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+    SetBraceCollapseSimple("brace.control", true);
+
+    const Mode mode = TypeScriptMode();
+    Buffer     buffer("test.ts");
+    buffer.InsertAtPoint("function f(x: number): number {\n"
+                         "    if (x > 0)\n"
+                         "    {\n"
+                         "        return x;\n"
+                         "    }\n"
+                         "    return 0;\n"
+                         "}\n");
+    ApplyFormatTextEdits(buffer,
+                         ComputeBracePlacementEdits(buffer.Text(), "typescript", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "function f(x: number): number {\n"
+                             "    if (x > 0) { return x; }\n"
+                             "    return 0;\n"
+                             "}\n");
+}
+
+TEST_CASE("tsx-mode inherits the same typescript+javascript capture set (via :queries-from + its own "
+          "duplicated :format entry)",
+          "[FormatBracePlacement]") {
+    const Mode        mode   = TsxMode();
+    const std::string source = "interface P {\n"
+                               "    x: number;\n"
+                               "}\n"
+                               "function C(): JSX.Element {\n"
+                               "    if (x) {\n"
+                               "        return <div>hi</div>;\n"
+                               "    }\n"
+                               "    return <div>bye</div>;\n"
+                               "}\n";
+    const auto captures = mode.formatCaptures(source);
+    REQUIRE(CapturesNamed(captures, "brace.interface").size() == 1);
+    REQUIRE(CapturesNamed(captures, "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(captures, "brace.control").size() == 1);
 }

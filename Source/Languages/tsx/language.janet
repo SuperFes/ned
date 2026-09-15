@@ -5,10 +5,20 @@
  :extensions [".tsx"]
  :line-comment "//"
  :queries-from "typescript"
+ # :format duplicated from typescript/language.janet's own entry rather
+ # than inherited through :queries-from -- an explicit :queries override
+ # on one language definition is never visible to another's own discovery,
+ # the same reason :tags is duplicated here too (confirmed against
+ # LanguageParse.cpp's DiscoverQueryFiles: each definition's own explicit
+ # :queries map is consulted independently, :queries-from only redirects
+ # the DIRECTORY convention-based discovery searches, for kinds an
+ # explicit entry doesn't already cover).
  :queries {:indents ["tsx/indents.janet"]
   :tags ["javascript/upstream/tags.janet"
          "typescript/upstream/tags.janet"
-         "typescript/tags.janet"]}
+         "typescript/tags.janet"]
+  :format ["javascript/format.janet"
+           "typescript/format.janet"]}
  :lsp-root-markers ["package.json" "tsconfig.json"]
  :import-resolution {:extensions ["ts" "tsx" "js" "jsx" "mjs" "cjs"] :index-basenames ["index"] :search-package-dirs true}
  :injection-aliases ["jsx"]
