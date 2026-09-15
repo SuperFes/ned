@@ -12,6 +12,7 @@
 using ned::editor::ApplyFormatTextEdits;
 using ned::editor::ComputeBlankLineEdits;
 using ned::editor::CppMode;
+using ned::editor::CSharpMode;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
 using ned::editor::GoMode;
@@ -483,5 +484,59 @@ TEST_CASE("End to end: blank lines applied to a real rust-mode buffer", "[Format
                              "    fn m(&self) {}\n"
                              "\n"
                              "    fn n(&self) {}\n"
+                             "}\n");
+}
+
+TEST_CASE("csharp-mode's format.janet names def.toplevel/def.method with correct .first markers",
+          "[FormatBlankLines]") {
+    const Mode mode = CSharpMode();
+
+    const std::string source = "class C {\n"
+                               "    void M() {}\n"
+                               "    void N() {}\n"
+                               "}\n"
+                               "interface I {\n"
+                               "    void M();\n"
+                               "}\n";
+    const auto captures = mode.formatCaptures(source);
+
+    const auto toplevel = CapturesNamed(captures, "def.toplevel");
+    REQUIRE(toplevel.size() == 2);
+    REQUIRE(toplevel[0].isFirst);
+    REQUIRE_FALSE(toplevel[1].isFirst);
+
+    const auto methods = CapturesNamed(captures, "def.method");
+    REQUIRE(methods.size() == 3); // C's M()/N(), and I's own M()
+    REQUIRE(methods[0].isFirst);
+    REQUIRE_FALSE(methods[1].isFirst);
+    REQUIRE(methods[2].isFirst); // interface I's own method list starts fresh
+}
+
+TEST_CASE("csharp-mode's format.janet treats a using directive as a real preceding sibling",
+          "[FormatBlankLines]") {
+    // Same lesson python's own leading "import os"/go's "package main"
+    // already taught -- not a bug.
+    const Mode        mode   = CSharpMode();
+    const std::string source = "using System;\nclass C {\n}\n";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(source), "def.toplevel")[0].isFirst);
+}
+
+TEST_CASE("End to end: blank lines applied to a real csharp-mode buffer", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.method", 1);
+
+    const Mode mode = CSharpMode();
+    Buffer     buffer("test.cs");
+    buffer.InsertAtPoint("class C {\n"
+                         "    void M() {}\n"
+                         "    void N() {}\n"
+                         "}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "csharp", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "class C {\n"
+                             "    void M() {}\n"
+                             "\n"
+                             "    void N() {}\n"
                              "}\n");
 }

@@ -11,6 +11,7 @@
 
 using ned::editor::ApplyFormatTextEdits;
 using ned::editor::CppMode;
+using ned::editor::CSharpMode;
 using ned::editor::ComputeSpaceEdits;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
@@ -516,4 +517,60 @@ TEST_CASE("End to end: rust-mode's formatCaptures drives a real space edit", "[F
     ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "rust", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "fn f() {\n    if (x) {\n    }\n}\n");
+}
+
+// csharp-mode: the eighth language, and the one where "mandatory parens"
+// still needed the PAIRED mechanism -- unlike cpp/java/javascript's own
+// condition field (a node spanning the whole "(...)"), c#'s is a bare
+// expression with the parens as unwrapped anonymous tokens (confirmed via
+// grammar.json).
+TEST_CASE("csharp-mode's format.janet names control.parens over if/while/switch, as a matched pair",
+          "[FormatSpacing]") {
+    const Mode mode = CSharpMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void M() { if (x) {} } }"), "control.parens").size()
+            == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void M() { while (x) {} } }"), "control.parens").size()
+            == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void M() { switch (x) {} } }"), "control.parens").size()
+            == 1);
+}
+
+TEST_CASE("csharp-mode's format.janet captures a for/foreach loop's own parens as a matched pair too",
+          "[FormatSpacing]") {
+    const Mode mode = CSharpMode();
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void M() { for (int i = 0; i < 10; i++) {} } }"),
+                          "control.parens")
+                .size()
+            == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("class C { void M() { foreach (var i in xs) {} } }"), "control.parens")
+                .size()
+            == 1);
+}
+
+TEST_CASE("csharp-mode's format.janet captures a catch clause's own parens directly, not paired",
+          "[FormatSpacing]") {
+    // catch_declaration's own node span really does cover "(Type name)"
+    // whole, confirmed via grammar.json's rule (its own STRING "(" is the
+    // rule's first member) rather than assumed from its field list, which
+    // only names "type"/"name" and says nothing about the node's own byte
+    // span.
+    const Mode        mode   = CSharpMode();
+    const std::string source = "class C { void M() { try {} catch (Exception e) {} } }";
+    const auto        caps   = CapturesNamed(mode.formatCaptures(source), "control.parens");
+    REQUIRE(caps.size() == 1);
+    REQUIRE(caps[0].startByte == source.find('(', source.find("catch")));
+    REQUIRE(caps[0].endByte == source.find(')', source.find("catch")) + 1);
+}
+
+TEST_CASE("End to end: csharp-mode's formatCaptures drives a real space edit", "[FormatSpacing]") {
+    const FormatRulesGuard guard;
+    SetSpaceBefore("control.parens", true);
+
+    const Mode mode = CSharpMode();
+    Buffer     buffer("test.cs");
+    buffer.InsertAtPoint("class C {\n    void M() {\n        if(x) {\n        }\n    }\n}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeSpaceEdits(buffer.Text(), "csharp", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "class C {\n    void M() {\n        if (x) {\n        }\n    }\n}\n");
 }
