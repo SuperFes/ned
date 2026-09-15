@@ -70,3 +70,26 @@
 (method_declaration body: (block (statement_list . (_) .)) @brace.function.simple)
 (if_statement consequence: (block (statement_list . (_) .)) @brace.control.simple)
 (for_statement body: (block (statement_list . (_) .)) @brace.control.simple)
+
+# blank-lines-kind rollout follow-up: def.toplevel, the same capture NAME
+# cpp/javascript/java/python's own files carry -- but Go gets NO
+# def.method at all, a real language difference rather than a scope cut.
+# Go has no nested methods: a method is its own top-level
+# "method_declaration" carrying a separate receiver, not a node inside a
+# struct's own field_declaration_list (verified against this file's own
+# brace.class capture above, which reaches struct_type's field list for a
+# wholly different reason -- a receiver method is never a child of it).
+# def.toplevel covers free functions, receiver methods, AND type
+# declarations (struct/interface/alias) alike -- one shared name, since Go
+# draws no formatting distinction between them the way a class-body split
+# would.
+(source_file [(function_declaration) (method_declaration) (type_declaration)] @def.toplevel)
+
+# ".first" marker: same convention as every prior language. source_file's
+# own "package main" clause is always a real preceding sibling (the same
+# lesson python/format.janet's own "import os" case already taught, and
+# cpp's leading #include/using), so the FIRST real declaration in an
+# ordinary Go file correctly reports isFirst=false, not a bug -- a
+# minBefore rule legitimately wants to say something about the gap right
+# after "package main" too.
+(source_file . [(function_declaration) (method_declaration) (type_declaration)] @def.toplevel.first)

@@ -56,3 +56,24 @@
 (for_statement body: (statement_block . (_) .) @brace.control.simple)
 (switch_statement body: (switch_body . (_) .) @brace.control.simple)
 (catch_clause body: (statement_block . (_) .) @brace.control.simple)
+
+# blank-lines-kind rollout follow-up: same def.toplevel/def.method names
+# cpp/python's own files carry. `generator_function_declaration` folds in
+# alongside `function_declaration` (same shape, `function*` vs `function`);
+# `export_statement` is captured itself, not its own inner `declaration:`
+# field -- verified live it wraps with no field name the same way cpp's
+# `template_declaration`/Python's `decorated_definition` do, so a blank
+# line lands above "export", not between it and what it exports.
+(program [(function_declaration) (generator_function_declaration) (class_declaration) (export_statement)]
+  @def.toplevel)
+# def.method: class_body's own children are field-tagged "member:", unlike
+# cpp's bare field_declaration_list children -- confirmed against
+# node-types.json/a live parse before writing this, not assumed from cpp's
+# shape. One capture covers ordinary/static/generator/async methods alike,
+# since tree-sitter-javascript types all of them as plain
+# "method_definition" regardless of modifier.
+(class_body member: (method_definition) @def.method)
+
+(program . [(function_declaration) (generator_function_declaration) (class_declaration) (export_statement)]
+  @def.toplevel.first)
+(class_body . member: (method_definition) @def.method.first)

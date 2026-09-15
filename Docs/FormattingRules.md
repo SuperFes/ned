@@ -380,15 +380,52 @@ an unconditional cap applied everywhere, so three blank lines hand-typed directl
 class header are still trimmed down to whatever `:max-before` says, even for that class's
 own first method.
 
-**Python is the pilot, and currently the only language with a `:blank` capture.**
+**Python is the pilot; all seven languages now name `def.toplevel`/`def.method`.**
 `def.toplevel` (a `function_definition`/`class_definition`/`decorated_definition` that is
 a direct child of the module) and `def.method` (the same, but a direct child of a class's
 own `block`) are exactly PEP8's own two rules -- "surround top-level function and class
 definitions with two blank lines" and "methods inside a class are surrounded by a single
-blank line." Nothing about `:blank`'s own mechanism is Python-specific, though: any
-language's capture -- `brace.function`, `control.parens`, anything a `format.janet` names
--- can carry a `:blank` rule the same way, the moment a future language's own file adds
-one.
+blank line." Nothing about `:blank`'s own mechanism is Python-specific: every other
+language's `format.janet` now names the same two capture NAMES, over whatever its own
+grammar's equivalent shapes are:
+
+- **cpp**: `def.toplevel` covers a free function, `class`/`struct`, AND a
+  `template_declaration` (captured itself, not its own inner function/class -- the same
+  "capture the outer wrapper" precedent Python's own `decorated_definition` set); `def.method`
+  is an inline-bodied method directly inside a `field_declaration_list`.
+- **JavaScript**: `def.toplevel` covers `function`/`class` declarations plus
+  `export_statement` (captured itself, same "outer wrapper" precedent) and
+  `generator_function_declaration`; `def.method` reads `class_body`'s own field-tagged
+  `member:` children (`method_definition`, covering ordinary/static/generator/async alike).
+- **Java**: `def.toplevel` is TYPE declarations only (`class`/`interface`/`enum`/`record`/
+  `annotation_type_declaration`) -- Java has no top-level *functions* the way cpp/
+  JavaScript/Python do; `def.method` covers `method_declaration`/`constructor_declaration`
+  across all three of Java's distinct body node types (`class_body`, `interface_body`,
+  `enum_body_declarations` -- no single shared node the way PHP's `declaration_list` is).
+- **Go**: `def.toplevel` covers free functions, receiver methods, AND type declarations
+  (struct/interface/alias) alike -- but Go gets **no `def.method` at all**, a real language
+  difference rather than a scope cut: a Go method is its own top-level declaration carrying
+  a separate receiver, never a node nested inside a struct's own field list.
+- **PHP**: `def.toplevel` covers `function`/`class`/`trait`/`interface`/`enum` (not
+  `namespace_definition` -- a container, not a definition, the same distinction cpp's own
+  `namespace_definition` exclusion draws); `def.method` reads `declaration_list`, the same
+  single node type already shared by class/trait/interface bodies for `brace.class`/
+  `brace.interface` above.
+- **Rust**: `def.toplevel` covers `fn`/`struct`/`enum`/`trait`/`mod`/`impl`; `def.method`
+  reads `declaration_list`, shared by `impl`/`trait`/`mod` bodies alike -- deliberately NOT
+  distinguishing a real `impl`/`trait` method from a free function merely nested inside a
+  `mod` block, since both share the identical node type with no fact at that level to tell
+  them apart (the same "close enough to fold together" call this file's own `brace.class`
+  already makes for struct+enum+impl).
+
+**The "first in its container" exception has one sharp edge, found in every language that
+has one:** a file-level construct that always precedes the first real definition --
+Python's own leading `import`, cpp's `#include`, Go's mandatory `package` clause, PHP's
+opening `<?php` tag -- is a REAL preceding sibling, so `isFirst` is correctly `false` for
+even the very first definition in an ordinary file of any of these languages. Not a bug:
+a `:min-before` rule legitimately wants to say something about the gap right after
+`package main` or `<?php` too, and verified live in every case rather than assumed to
+carry over from Python's own finding.
 
 ## Go: a real correctness hazard, not just a style question
 

@@ -82,3 +82,29 @@
 (for_statement body: (compound_statement . (_) .) @brace.control.simple)
 (switch_statement body: (compound_statement . (_) .) @brace.control.simple)
 (catch_clause body: (compound_statement . (_) .) @brace.control.simple)
+
+# blank-lines-kind rollout follow-up: def.toplevel/def.method, the same
+# capture NAMES Python's own file pioneers -- one rule, several grammars,
+# per Docs/FormattingCapabilities.md's "collapse across languages" stance.
+# def.toplevel: a free function or a class/struct AT FILE SCOPE.
+# `template_declaration` is captured too (not its own inner
+# function_definition/class_specifier) -- verified live it wraps with no
+# field name of its own the same way Python's own `decorated_definition`
+# does, so a blank line lands above the "template<...>" line, not between
+# it and what it templates.
+(translation_unit [(function_definition) (class_specifier) (struct_specifier) (template_declaration)] @def.toplevel)
+# def.method: an inline-bodied method inside a class/struct's own field
+# list -- verified live `field_declaration_list` holds a real, complete
+# `function_definition` node directly for an inline method (not merely a
+# `field_declaration` naming an out-of-line one), the same node type
+# def.toplevel's own function_definition already captures.
+(field_declaration_list (function_definition) @def.method)
+
+# ".first" markers: same convention as Python's own file -- true when
+# nothing precedes this capture in its immediate container. A `#include`/
+# `using`/preprocessor directive above the first real definition is a real
+# preceding sibling (same lesson Python's own `import os` case already
+# taught), so this correctly reports NOT first whenever one precedes --
+# not a bug, the same honest behavior as every prior language's `.first`.
+(translation_unit . [(function_definition) (class_specifier) (struct_specifier) (template_declaration)] @def.toplevel.first)
+(field_declaration_list . (function_definition) @def.method.first)
