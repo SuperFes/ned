@@ -1520,6 +1520,8 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             std::vector<std::tuple<std::string, std::size_t, std::size_t>> firstMarkers;
             for (const grammar::QueryMatch& match : formatQuery->Matches(tree.RootNode(), bufferText)) {
                 std::optional<std::size_t> openStart;
+                std::optional<std::size_t> openEnd;
+                std::optional<std::size_t> closeStart;
                 std::optional<std::size_t> closeEnd;
                 std::string                pairedName;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
@@ -1530,9 +1532,11 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     const std::string_view     name(capture.name);
                     if (name.ends_with(kOpenSuffix)) {
                         openStart  = capture.startByte;
+                        openEnd    = capture.endByte;
                         pairedName = capture.name.substr(0, capture.name.size() - kOpenSuffix.size());
                     }
                     else if (name.ends_with(kCloseSuffix)) {
+                        closeStart = capture.startByte;
                         closeEnd   = capture.endByte;
                         pairedName = capture.name.substr(0, capture.name.size() - kCloseSuffix.size());
                     }
@@ -1549,7 +1553,15 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     }
                 }
                 if (openStart && closeEnd) {
-                    captures.push_back(FormatCapture{pairedName, *openStart, *closeEnd});
+                    FormatCapture merged{pairedName, *openStart, *closeEnd};
+                    // keyword-delimiter-captures follow-up: the raw open/
+                    // close captures' own spans ARE the delimiter token's
+                    // byte length (a single "{" is 1 byte, same as
+                    // before; Lua's "do"/"end" are 2/3) -- see this
+                    // field's own comment on Mode.h's FormatCapture.
+                    merged.openLength  = *openEnd - *openStart;
+                    merged.closeLength = *closeEnd - *closeStart;
+                    captures.push_back(std::move(merged));
                 }
             }
             for (FormatCapture& capture : captures) {
