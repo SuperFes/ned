@@ -15,6 +15,23 @@
 #   (ned/set-format-brace-placement "brace.function" "next-line")
 (function_definition body: (compound_statement) @brace.function)
 
+# capture-coverage-widening follow-up: every other brace-carrying construct
+# JetBrains' own "Braces Layout" pane treats as its own placement row --
+# control-flow bodies share one name (JetBrains groups "Other statements and
+# blocks" the same way), type/namespace bodies get their own since a project
+# very often styles those differently from a control-flow block. Each
+# pattern's field-typed child (`(compound_statement)`, not a bare
+# `(statement)`) is what keeps a braceless body ("if (x) return;") from
+# ever matching at all -- there's no brace there to place.
+(if_statement consequence: (compound_statement) @brace.control)
+(while_statement body: (compound_statement) @brace.control)
+(for_statement body: (compound_statement) @brace.control)
+(switch_statement body: (compound_statement) @brace.control)
+(catch_clause body: (compound_statement) @brace.control)
+(class_specifier body: (field_declaration_list) @brace.class)
+(struct_specifier body: (field_declaration_list) @brace.class)
+(namespace_definition body: (declaration_list) @brace.namespace)
+
 # Space-kind (kind 2) pilot capture, Editor/FormatSpacing.h: an if/while
 # statement's own condition_clause -- its span is exactly the "(...)"
 # (condition_clause's own first/last byte are the parens themselves per
@@ -25,3 +42,23 @@
 # Docs/FormattingCapabilities.md's own "collapse across languages" stance.
 (if_statement condition: (condition_clause) @control.parens)
 (while_statement condition: (condition_clause) @control.parens)
+
+# capture-coverage-widening follow-up: switch's condition is the same
+# condition_clause shape as if/while's, and catch's own parameter_list is
+# ALSO a single node spanning exactly "(...)" -- both qualify for the same
+# capture name and the same "before/after/within" contract with no new
+# C++ code at all (ComputeSpaceEdits reads the capture NAME, never the
+# grammar node type it came from).
+(switch_statement condition: (condition_clause) @control.parens)
+(catch_clause parameters: (parameter_list) @control.parens)
+
+# Deliberately NOT captured: a for-loop's own "(init; condition; update)".
+# Unlike if/while/switch, tree-sitter-cpp's for_statement has no single node
+# spanning the whole parenthesized clause -- initializer/condition/update
+# are three independent, individually-optional fields with the "(" ")"
+# themselves as bare anonymous tokens in between. ComputeSpaceEdits' model
+# (a capture's own first/last byte ARE the delimiter pair) has no node to
+# attach to here; declined rather than approximated, the same "declined and
+# counted, never approximated" precedent ImportFixup.h's RewriteSpec
+# already sets. Revisit only if a capture kind ever needs bare anonymous-
+# token pairs as first-class input, not just whole delimited nodes.

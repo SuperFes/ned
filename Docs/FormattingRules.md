@@ -199,20 +199,34 @@ JavaScript's `statement_block`/`parenthesized_expression`), both wired into
 Hygiene) and both shipping no built-in default -- neither does anything until you
 configure a rule:
 
-- **`brace.function`** (a function definition's own body) -- `Editor/FormatBracePlacement.h`'s
-  `ComputeBracePlacementEdits`, reading only `:break`'s `:placement` field
-  (`:collapse-empty`/`:collapse-simple` are still unconsumed).
+- **Break-kind captures** (`Editor/FormatBracePlacement.h`'s `ComputeBracePlacementEdits`,
+  reading only `:break`'s `:placement` field -- `:collapse-empty`/`:collapse-simple` are
+  still unconsumed): `brace.function` (a function definition's own body), `brace.control`
+  (an `if`/`while`/`for`/`switch`/`catch` statement's own body -- one shared name, matching
+  JetBrains' own "Other statements and blocks" grouping), `brace.class` (a class/struct
+  body), and, cpp only, `brace.namespace`.
   ```janet
   (ned/set-format-brace-placement "brace.function" "next-line")
+  (ned/set-format-brace-placement "brace.control" "same-line")
   ```
-- **`control.parens`** (an `if`/`while` statement's own condition parens) --
-  `Editor/FormatSpacing.h`'s `ComputeSpaceEdits`, reading all three `:space` fields.
-  Deliberately never touches a whitespace run that crosses a newline -- a Space rule
-  never second-guesses wherever a line break already is.
+- **Space-kind captures** (`Editor/FormatSpacing.h`'s `ComputeSpaceEdits`, reading all
+  three `:space` fields; deliberately never touches a whitespace run that crosses a
+  newline -- a Space rule never second-guesses wherever a line break already is):
+  `control.parens`, covering `if`/`while`/`switch`'s own condition and, cpp only, a
+  `catch` clause's own parameter parens.
   ```janet
   (ned/set-format-space-before "control.parens" true)
   (ned/set-format-space-after "control.parens" true)
   ```
+  **Deliberately not captured, in either language:** a `for` loop's own
+  `(init; condition; update)` -- neither grammar has one node spanning the whole
+  parenthesized clause the way if/while/switch do (it's three independent, individually
+  optional fields around bare anonymous `(`/`)` tokens), and `ComputeSpaceEdits`'/
+  `ComputeBracePlacementEdits`' shared model requires a capture's own first/last byte to
+  BE the delimiter pair. Declined rather than approximated. JavaScript's own `catch`
+  clause is declined for the same structural reason (no parens node at all in its
+  grammar -- and ES2019+ allows a parameter-less `catch { }`), which is a real,
+  load-bearing difference from cpp's own `catch_clause`, not an oversight.
   Combined in one `format.janet`, with cpp's own brace-placement exception:
   ```janet
   {:break {"brace.function" {:placement :same-line}       # the shared rule (JavaScript gets this)
