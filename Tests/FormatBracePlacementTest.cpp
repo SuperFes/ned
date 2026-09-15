@@ -15,6 +15,7 @@ using ned::editor::CppMode;
 using ned::editor::ComputeBracePlacementEdits;
 using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
+using ned::editor::JavaMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
 using ned::editor::SetBraceCollapseEmpty;
@@ -482,4 +483,71 @@ TEST_CASE("javascript-mode's format.janet marks a single-statement body isSimple
     const auto captures = CapturesNamed(mode.formatCaptures("function f() { return; }"), "brace.function");
     REQUIRE(captures.size() == 1);
     REQUIRE(captures[0].isSimple);
+}
+
+// java-mode: the third language over the full template, verified live
+// against tree-sitter-java (including a multi-init/update for-loop, which
+// javascript/cpp don't have) before this landed.
+TEST_CASE("java-mode's format.janet names the full capture set over a real method", "[FormatBracePlacement]") {
+    const Mode mode = JavaMode();
+    REQUIRE(mode.formatCaptures);
+
+    const std::string source = "class C {\n"
+                               "  void m() {\n"
+                               "    if (x) {\n"
+                               "      return;\n"
+                               "    }\n"
+                               "  }\n"
+                               "}\n";
+    const auto captures = mode.formatCaptures(source);
+
+    REQUIRE(CapturesNamed(captures, "brace.function").size() == 1);
+    REQUIRE(CapturesNamed(captures, "brace.control").size() == 1); // the if's own body
+    REQUIRE(CapturesNamed(captures, "brace.class").size() == 1);
+}
+
+TEST_CASE("java-mode's format.janet handles a for-loop with several init/update expressions", "[FormatBracePlacement]") {
+    const Mode mode = JavaMode();
+    const std::string source = "class C { void m() { for (int i = 0, j = 1; i < 10; ++i, --j) {} } }";
+    // brace.control fires for the for-loop's own body, same as any other
+    // control-flow construct -- the interesting part is proven in
+    // FormatSpacingTest.cpp (the paired parens capture finding the OUTER
+    // "(" ")" despite the multiple comma-separated init/update expressions).
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.control").size() == 1);
+}
+
+TEST_CASE("java-mode's format.janet marks a single-statement body isSimple too", "[FormatBracePlacement]") {
+    const Mode mode = JavaMode();
+    const std::string simple = "class C { void m() { return; } }";
+    REQUIRE(CapturesNamed(mode.formatCaptures(simple), "brace.function")[0].isSimple);
+
+    const std::string multi = "class C { void m() { g(); return; } }";
+    REQUIRE_FALSE(CapturesNamed(mode.formatCaptures(multi), "brace.function")[0].isSimple);
+}
+
+TEST_CASE("End to end: java-mode's formatCaptures drives real edits across all three features", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+    SetBraceCollapseSimple("brace.control", true);
+
+    const Mode mode = JavaMode();
+    Buffer     buffer("test.java");
+    buffer.InsertAtPoint("class C {\n"
+                         "  void m() {\n"
+                         "    if (x)\n"
+                         "    {\n"
+                         "      return;\n"
+                         "    }\n"
+                         "  }\n"
+                         "}\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "java", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "class C {\n"
+                             "  void m() {\n"
+                             "    if (x) { return; }\n"
+                             "  }\n"
+                             "}\n");
+
+    SetBracePlacement("brace.control", std::nullopt);
+    SetBraceCollapseSimple("brace.control", std::nullopt);
 }
