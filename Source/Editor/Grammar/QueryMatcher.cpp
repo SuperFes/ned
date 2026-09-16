@@ -241,7 +241,16 @@ struct QueryMatcher::Impl {
     // Symbol) into a PatternNode. Predicates found anywhere inside attach
     // to `pattern`. A single-pattern paren group -- the ((x) (#pred))
     // idiom -- collapses to its one item; the collapsed item's own trailing
-    // captures come back through `hoistedCaptures`.
+    // captures come back through `hoistedCaptures`. `allowGroup` is false
+    // only inside an alternation branch (a multi-item group there would be
+    // a second, structurally different construct -- an alternative that
+    // matches a whole sibling run rather than one node -- not measured in
+    // the bundled corpus); everywhere else a genuine (non-collapsing) group
+    // compiles and is spliced into its enclosing sequence by the caller
+    // (CompileSequence) exactly like a nested group's real tree-sitter
+    // semantics: a grouping construct with no quantifier of its own has no
+    // boundary effect on anchors or predicates, so inlining its items is
+    // observably identical to matching them as a sub-sequence.
     PatternNode CompileNode(const Form& form, Pattern& pattern, std::vector<uint32_t>& hoistedCaptures,
                             bool allowGroup) {
         switch (form.kind) {
@@ -341,7 +350,7 @@ struct QueryMatcher::Impl {
             }
         }
         if (!allowGroup) {
-            throw QueryMatcherError(form.line, "a multi-pattern group is only supported at the top level");
+            throw QueryMatcherError(form.line, "a multi-pattern group inside an alternation is not supported");
         }
         return group;
     }
@@ -420,7 +429,7 @@ struct QueryMatcher::Impl {
             pendingField      = 0;
 
             std::vector<uint32_t> hoisted;
-            item.node     = CompileNode(form, pattern, hoisted, /*allowGroup=*/context == SequenceContext::TopLevel);
+            item.node     = CompileNode(form, pattern, hoisted, /*allowGroup=*/!isAlternation);
             item.captures = std::move(hoisted);
 
             // Quantifiers are accepted on any pattern kind and '+' alongside
@@ -430,6 +439,37 @@ struct QueryMatcher::Impl {
             // would take the whole runtime language down.
             if (item.node.kind == PatternNode::Kind::Group && item.quantifier != 0) {
                 throw QueryMatcherError(form.line, "quantifier on a multi-pattern group is not supported");
+            }
+
+            if (item.node.kind == PatternNode::Kind::Group && context != SequenceContext::TopLevel) {
+                // A nested group (cmake's `(argument_list . (argument)
+                // ((argument) @a . (argument) @b (#pred...)))` shape): no
+                // quantifier of its own (rejected above), so it has no
+                // matching-engine identity distinct from its own items --
+                // splice them straight into this sequence. A field prefix
+                // on the group itself has no single node to constrain and
+                // isn't a real construct (every measured user of a nested
+                // group puts fields inside it, on its own items).
+                if (item.field != 0) {
+                    throw QueryMatcherError(form.line, "field prefix before a multi-pattern group is not supported");
+                }
+                PatternNode& group = item.node;
+                if (group.children.empty()) {
+                    throw QueryMatcherError(form.line, "empty group");
+                }
+                if (!group.negatedFields.empty()) {
+                    throw QueryMatcherError(form.line, "negated field directly in a multi-pattern group is not supported");
+                }
+                group.children.front().anchorBefore = group.children.front().anchorBefore || item.anchorBefore;
+                for (ChildItem& child : group.children) {
+                    parent.children.push_back(std::move(child));
+                }
+                // The group's own trailing anchor ('.') carries to whatever
+                // this sequence processes next, exactly like an anchor
+                // owed by a zero-matched optional -- a grouping paren has
+                // no boundary effect on adjacency.
+                pendingAnchor = group.trailingAnchor;
+                continue;
             }
             parent.children.push_back(std::move(item));
         }
@@ -486,6 +526,26 @@ struct QueryMatcher::Impl {
             std::vector<Form> slice;
             slice.push_back(form);
             ++i;
+
+            // A leading field-prefix symbol ("forward:") names the field
+            // the FOLLOWING pattern must hold in its own parent (diff's
+            // `forward: (binary_hunk ...)` / `reverse: (binary_hunk ...)`
+            // top-level pair) -- it isn't a standalone top-level unit on
+            // its own, so pull the pattern it prefixes into this same
+            // slice before falling through to the ordinary trailing-
+            // capture scan below.
+            if (form.kind == Form::Kind::Symbol && !form.text.empty() && form.text != "." &&
+                form.text.front() != '@' && form.text.front() != '!' && form.text.back() == ':') {
+                while (i < forms.size() && forms[i].kind == Form::Kind::Comment) {
+                    ++i;
+                }
+                if (i >= forms.size()) {
+                    throw QueryMatcherError(form.line, "field prefix with no pattern after it");
+                }
+                slice.push_back(forms[i]);
+                ++i;
+            }
+
             while (i < forms.size()) {
                 const Form& next = forms[i];
                 if (next.kind == Form::Kind::Comment) {
@@ -878,6 +938,16 @@ struct QueryMatcher::Impl {
     void TryPattern(std::size_t patternIndex, parse::RedNode node, parse::abi::FieldId nodeField, std::vector<Binding>& bindings,
                     const MatchFn& next) const {
         const ChildItem& root = patterns[patternIndex].root;
+        if (root.field != 0 && root.field != nodeField) {
+            // A top-level field-prefixed pattern (diff's `forward: (binary_hunk
+            // ...)`) constrains which field `node` must hold in ITS OWN
+            // parent, the same way a field-prefixed alternation branch does
+            // -- checked against the field the walk/RunAtNode already
+            // resolved for this node (FieldOfNode for the entry node, the
+            // cursor's own field for everything below it), so no extra
+            // parent lookup is needed here.
+            return;
+        }
         if (root.node.kind == PatternNode::Kind::Group) {
             std::vector<ChildInfo> children;
             CollectChildren(node, children);

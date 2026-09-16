@@ -1,13 +1,8 @@
 # Adapted from DerekStride/tree-sitter-sql v0.3.11's queries/highlights.scm
-# (converted via Editor/QueryData.h's #pred?->:pred? respelling), with one
-# clause removed: upstream's cast pattern gated on an optional single-type
-# alternation (`parameter: [(literal)]?`), which QueryMatcher's census-
-# measured scope deliberately excludes (kotlin/cmake/diff precedent -- see
-# ROADMAP's watch-list entry). Dropping the field constraint entirely widens
-# when the surrounding pattern matches slightly (any parameter type instead
-# of only a literal-or-absent one) but changes nothing observable, since the
-# @function.call capture is on `name`, never on `parameter`. Everything else
-# here is upstream's own file, unmodified in substance.
+# (converted via Editor/QueryData.h's #pred?->:pred? respelling). Verbatim
+# in substance throughout, including the cast pattern's `parameter:
+# [(literal)]?` -- a quantifier on a single-element alternation, restored
+# once QueryMatcher gained support for it (see ROADMAP's watch-list entry).
 
 (object_reference
   name: (identifier) @type)
@@ -38,7 +33,8 @@
 
 ((term
    value: (cast
-    name: (keyword_cast) @function.call)))
+    name: (keyword_cast) @function.call
+    parameter: [(literal)]?)))
 
 (literal) @string
 (comment) @comment @spell
