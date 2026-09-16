@@ -47,6 +47,34 @@ namespace {
         }
     }
 
+    // shutdown-hang-protection follow-up. SIGKILL is unblockable, but a
+    // process wedged in the same contention that motivated killing it in
+    // the first place (a clangd instance thrashing shared page cache
+    // against a sibling cold-indexing process, say) can still take a real
+    // moment to actually get scheduled, die, and be reaped -- the plain
+    // blocking waitpid(pid, &status, 0) this replaces had no bound at all,
+    // so the caller's thread (the destructor, Kill(), and move-assignment
+    // below all run on the main thread in every real caller) parked for
+    // however long that took. Reproduced live: /proc/<pid>/task/<tid>/wchan
+    // == do_wait on ned's own main thread during rapid open-quit cycles
+    // against a cold, multiply-contended clangd index (see ROADMAP.md's
+    // shutdown-hang entry -- the earlier guess that this was a broker
+    // socket read was wrong; it's this waitpid). Bounded WNOHANG poll
+    // instead, the same shape the pre-kill grace loop already uses just
+    // above each call site; giving up after budgetMs leaves a zombie
+    // rather than a frozen editor -- harmless (a zombie holds nothing but
+    // a process-table slot) and reaped by init the moment this process
+    // itself exits, if not sooner.
+    bool ReapAfterKill(pid_t pid, int* status, int budgetMs = 3000) {
+        for (int elapsed = 0; elapsed < budgetMs; elapsed += 10) {
+            if (::waitpid(pid, status, WNOHANG) == pid) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
+    }
+
 } // namespace
 
 // Manual $PATH search -- see this file's own header comment for why this
@@ -237,7 +265,7 @@ ChildProcess::~ChildProcess() {
         }
         if (!reaped) {
             ::kill(-pid_, SIGKILL); // whole process group -- see the spawn site's own comment
-            ::waitpid(pid_, &status, 0);
+            ReapAfterKill(pid_, &status);
         }
     }
 }
@@ -265,7 +293,7 @@ ChildProcess& ChildProcess::operator=(ChildProcess&& other) noexcept {
         if (pid_ > 0) {
             int status = 0;
             ::kill(-pid_, SIGKILL); // whole process group -- see the spawn site's own comment
-            ::waitpid(pid_, &status, 0);
+            ReapAfterKill(pid_, &status);
         }
         writeFd_  = std::exchange(other.writeFd_, -1);
         readFd_   = std::exchange(other.readFd_, -1);
@@ -400,8 +428,8 @@ void ChildProcess::Kill() noexcept {
     if (pid_ > 0) {
         int status = 0;
         ::kill(-pid_, SIGKILL); // whole process group -- see the spawn site's own comment
-        ::waitpid(pid_, &status, 0);
-        pid_ = -1; // reaped -- destructor must not try again
+        ReapAfterKill(pid_, &status);
+        pid_ = -1; // reaped, or gave up and left a zombie for init -- either way, the destructor must not try again
     }
 }
 
