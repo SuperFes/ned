@@ -32,3 +32,19 @@
 (type_switch_statement) @align.barrier
 (select_statement) @align.barrier
 
+# ROADMAP.md watch-list entry: case/default clause headers were indenting
+# one level too deep. `expression_case`/`default_case`/`type_case`/
+# `communication_case` carry no delimiters of their own (confirmed via
+# node-types.json -- each is just an optional trailing `statement_list`),
+# so the imprint contributes nothing for them and every line starting
+# inside the switch/select body's own `{`/`}` -- including the case labels
+# themselves -- got the same single level the imprint's bracket container
+# already assigns. gofmt (and every other Go formatter) aligns a case
+# label back to its own switch/select, one level shallower than its own
+# body -- the same C-like-but-not shape Python's elif/except/finally and
+# bash's elif_clause/else_clause already have their own @dedent for.
+(expression_case) @dedent
+(default_case) @dedent
+(type_case) @dedent
+(communication_case) @dedent
+
