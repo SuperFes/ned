@@ -306,108 +306,115 @@ std::optional<Color> ParseColorToken(std::string_view token) {
 // anything a themed terminal would have shown, so an operator painted in
 // #800000 was effectively invisible.
 //
-// The values below stay in the family the theme already used for the fields
-// that were always RGB (#e06c75 / #e5c07b / #61afef / #5c6370 -- One
-// Dark-adjacent), and each named constant maps to exactly one colour so
-// every equality the theme expressed (keyword == controlKeyword, function ==
+// Vibrancy pass: the original set leaned almost entirely on one blue/violet
+// family (keyword, number, constant and namespace were all close cousins of
+// the same hue), which is what read as monochrome once the desktop-accent
+// tint (DesktopThemeProbe.cpp's BuildDesktopTheme) painted the mode line and
+// keywords the same purple on top of it. The palette below spreads syntax
+// classes across nine distinct, saturated hues -- azure keywords, cyan
+// functions, teal-green properties, leaf-green strings, gold types, warm
+// orange numbers, rose operators, pink constants, violet namespaces -- so
+// the buffer reads as colourful even before any accent tint is applied.
+// Each named constant still maps to exactly one colour, so every equality
+// the theme expressed (keyword == controlKeyword, function ==
 // functionBuiltin, ...) is preserved. The two *background* usages are the
 // exception: a colour that reads as text is not a colour text reads on.
 Theme DarkTheme() {
     return Theme{
         .name                        = "dark",
         .background                  = Color::Default, // let the terminal's own (typically dark) background show
-        .defaultForeground           = Color::RGB(0xc5c8d6),
-        .commentForeground           = Color::RGB(0xa6a6a0),
-        .stringForeground            = Color::RGB(0x98c379),
-        .keywordForeground           = Color::RGB(0x61afef),
-        .numberForeground            = Color::RGB(0xc678dd),
-        .docCommentForeground        = Color::RGB(0x6c7280),
-        .stringEscapeForeground      = Color::RGB(0xb5e890),
-        .controlKeywordForeground    = Color::RGB(0x61afef),
-        .functionForeground          = Color::RGB(0x4ec9b0),
-        .functionBuiltinForeground   = Color::RGB(0x4ec9b0),
-        .typeForeground              = Color::RGB(0xe5c07b),
-        .typeBuiltinForeground       = Color::RGB(0xe5c07b),
-        .constantForeground          = Color::RGB(0xd7a3ea),
-        .constantBuiltinForeground   = Color::RGB(0xd7a3ea),
-        .variableForeground          = Color::RGB(0xf0f2f8),
-        .variableBuiltinForeground   = Color::RGB(0xf0f2f8),
-        .parameterForeground         = Color::RGB(0xf0d399),
-        .propertyForeground          = Color::RGB(0x7fdbca),
-        .operatorForeground          = Color::RGB(0xe06c75),
-        .punctuationForeground       = Color::RGB(0x6c7280),
-        .tagForeground               = Color::RGB(0x82c0ff),
-        .attributeForeground         = Color::RGB(0xff7b86),
-        .namespaceForeground         = Color::RGB(0xd7a3ea),
-        .keywordModifierForeground   = Color::RGB(0x6fa8dc),
-        .methodForeground            = Color::RGB(0x4ec9b0),
-        .constructorForeground       = Color::RGB(0xd7ba7d),
-        .labelForeground             = Color::RGB(0xc586c0),
-        .returnTypeForeground        = Color::RGB(0xe0af68),
-        .includePathForeground       = Color::RGB(0xce9178),
-        .modeLineForeground          = Color::RGB(0xf0f2f8),
-        .modeLineGradientStart       = Color::RGB(0x2b2b40),
-        .modeLineGradientEnd         = Color::RGB(0x1b1b30),
-        .echoArea                    = Brush{.foreground = Color::RGB(0xf0d399)},
-        .lineNumberForeground        = Color::RGB(0x6c7280),
-        .currentLineNumberForeground = Color::RGB(0xf0f2f8),
-        .selectionBackground         = Color::RGB(0x33406b), // deep indigo; keeps 6:1 against defaultForeground
-        .isearchMatchBackground      = Color::RGB(0x5a4a1e), // warm amber wash, same family as lineInspectBackground
+        .defaultForeground           = Color::RGB(0xcdd6f4),
+        .commentForeground           = Color::RGB(0x7f87b3), // slate-lavender, not flat grey -- still recessive once italicized
+        .stringForeground            = Color::RGB(0x8fd67e),
+        .keywordForeground           = Color::RGB(0x4fb4ff),
+        .numberForeground            = Color::RGB(0xff9e64), // warm orange -- freed from the purple family for hue spread
+        .docCommentForeground        = Color::RGB(0x9aa0d9),
+        .stringEscapeForeground      = Color::RGB(0x7ce0b0), // mint, distinct from stringForeground's leaf green
+        .controlKeywordForeground    = Color::RGB(0x4fb4ff),
+        .functionForeground          = Color::RGB(0x4fd0e8),
+        .functionBuiltinForeground   = Color::RGB(0x4fd0e8),
+        .typeForeground              = Color::RGB(0xffcb6b),
+        .typeBuiltinForeground       = Color::RGB(0xffcb6b),
+        .constantForeground          = Color::RGB(0xff8fd1),
+        .constantBuiltinForeground   = Color::RGB(0xff8fd1),
+        .variableForeground          = Color::RGB(0xeef0fb),
+        .variableBuiltinForeground   = Color::RGB(0xeef0fb),
+        .parameterForeground         = Color::RGB(0xffc88a),
+        .propertyForeground          = Color::RGB(0x6fe0a0),
+        .operatorForeground          = Color::RGB(0xff6b81),
+        .punctuationForeground       = Color::RGB(0x7b81ad),
+        .tagForeground               = Color::RGB(0x74c7ff),
+        .attributeForeground         = Color::RGB(0xffa07a), // coral-orange, kept apart from operator's rose-red
+        .namespaceForeground         = Color::RGB(0xc48cff),
+        .keywordModifierForeground   = Color::RGB(0x5cb8ff),
+        .methodForeground            = Color::RGB(0x4fd0e8),
+        .constructorForeground       = Color::RGB(0xe8b96a),
+        .labelForeground             = Color::RGB(0xd68fe0),
+        .returnTypeForeground        = Color::RGB(0xf0b86a),
+        .includePathForeground       = Color::RGB(0xe2a37e),
+        .modeLineForeground          = Color::RGB(0xf2f4ff),
+        .modeLineGradientStart       = Color::RGB(0x2e2350),
+        .modeLineGradientEnd         = Color::RGB(0x1c1638),
+        .echoArea                    = Brush{.foreground = Color::RGB(0xffc88a)},
+        .lineNumberForeground        = Color::RGB(0x757bab),
+        .currentLineNumberForeground = Color::RGB(0xf2f4ff),
+        .selectionBackground         = Color::RGB(0x36396e), // deep violet-indigo; keeps ~6:1 against defaultForeground
+        .isearchMatchBackground      = Color::RGB(0x6b5822), // warm amber wash, same family as lineInspectBackground
         // Deliberately weaker than the search wash: a bracket match is ambient
         // feedback you glance at, not a result you went looking for.
-        .matchingBracketBackground   = Color::RGB(0x3a4a5a),
-        .snippetFieldBackground      = Color::RGB(0x3d3d5c),
-        .documentHighlightBackground = Color::RGB(0x2a4a4a),
-        .lineInspectBackground       = Color::RGB(0x5a3f1a),
+        .matchingBracketBackground   = Color::RGB(0x35505f),
+        .snippetFieldBackground      = Color::RGB(0x423f6e),
+        .documentHighlightBackground = Color::RGB(0x275048),
+        .lineInspectBackground       = Color::RGB(0x603f16),
         .conflictOursBackground      = Color::RGB(0x2a4a2a), // dim green wash, "mine"
         .conflictTheirsBackground    = Color::RGB(0x2a2a4a), // dim indigo wash, "incoming"
         .conflictBaseBackground      = Color::RGB(0x3a3a3a), // dim neutral gray wash (diff3 only)
         // fg was BrightBlack -- bumped alongside the tab-restyle follow-up
         // so inactive tab labels actually read against their own block now
         // that the blocks are the only chrome on the row.
-        .tabBar                        = Brush{.background = Color::RGB(0x1b1b30), .foreground = Color::RGB(0x9898b0)},
-        .activeTab                     = Brush{.background = Color::RGB(0x2b2b40), .foreground = Color::RGB(0xf0f2f8), .bold = true},
-        .scrollBar                     = Brush{.foreground = Color::RGB(0x6c7280)},
-        .scrollBarDisabled             = Brush{.foreground = Color::RGB(0x333340)},
-        .binaryForeground              = Color::RGB(0xff7b86),
-        .ghostTextForeground           = Color::RGB(0x6c7280),
-        .linkForeground                = Color::RGB(0x7fdbca),
-        .truncationIndicatorForeground = Color::RGB(0x8f80e0),
-        .unsavedChangeIndicator        = Color::RGB(0xd19a66),
-        .diagnosticError               = Color::RGB(0xe06c75),
-        .diagnosticWarning             = Color::RGB(0xe5c07b),
-        .diagnosticInformation         = Color::RGB(0x61afef),
-        .diagnosticHint                = Color::RGB(0x5c6370),
-        .breakpointMarker              = Color::RGB(0xe06c75), // same red family as diagnosticError -- both mean "attention here"
-        .executionMarker               = Color::RGB(0xe5c07b), // the conventional debugger yellow
-        .executionLineBackground       = Color::RGB(0x3a3a28), // a dim warm wash the yellow arrow reads against
-        .unverifiedBreakpointMarker    = Color::RGB(0x5c6370), // same dim gray as diagnosticHint
+        .tabBar                        = Brush{.background = Color::RGB(0x1c1638), .foreground = Color::RGB(0xa6a8c9)},
+        .activeTab                     = Brush{.background = Color::RGB(0x2e2350), .foreground = Color::RGB(0xf2f4ff), .bold = true},
+        .scrollBar                     = Brush{.foreground = Color::RGB(0x757bab)},
+        .scrollBarDisabled             = Brush{.foreground = Color::RGB(0x36325a)},
+        .binaryForeground              = Color::RGB(0xff5c72),
+        .ghostTextForeground           = Color::RGB(0x757bab),
+        .linkForeground                = Color::RGB(0x5cc8ff),
+        .truncationIndicatorForeground = Color::RGB(0x9f8cff),
+        .unsavedChangeIndicator        = Color::RGB(0xe8a76a),
+        .diagnosticError               = Color::RGB(0xff6b81),
+        .diagnosticWarning             = Color::RGB(0xffcb6b),
+        .diagnosticInformation         = Color::RGB(0x4fb4ff),
+        .diagnosticHint                = Color::RGB(0x6a70a0),
+        .breakpointMarker              = Color::RGB(0xff6b81), // same red family as diagnosticError -- both mean "attention here"
+        .executionMarker               = Color::RGB(0xffcb6b), // the conventional debugger yellow
+        .executionLineBackground       = Color::RGB(0x3f3a22), // a dim warm wash the yellow arrow reads against
+        .unverifiedBreakpointMarker    = Color::RGB(0x6a70a0), // same dim gray as diagnosticHint
         .diffAddedBackground           = Color::RGB(0x2a3a2a), // dim green wash, dark enough to keep default-foreground text legible
         .diffRemovedBackground         = Color::RGB(0x3a2a2a), // dim red wash, same lightness as diffAddedBackground
         .trailingWhitespaceBackground  = Color::RGB(0x40282f), // dim maroon wash, distinct from diffRemovedBackground's red
-        .successForeground             = Color::RGB(0x98c379), // the theme's own green, matching stringForeground
-        .vcsModifiedForeground         = Color::RGB(0x61afef), // the theme's own blue, matching diagnosticInformation
-        .vcsUntrackedForeground        = Color::RGB(0x4ec9b0), // teal: present but unknown to the repository
-        .blameRecentForeground         = Color::RGB(0x7fdbca), // fresh commits read bright...
-        .blameOldForeground            = Color::RGB(0x5c6370), // ...and fade into the hint gray with age
-        .indentGuideForeground         = Color::RGB(0x4a4a48), // dim gray, deliberately low-contrast against defaultForeground
+        .successForeground             = Color::RGB(0x8fd67e), // the theme's own green, matching stringForeground
+        .vcsModifiedForeground         = Color::RGB(0x4fb4ff), // the theme's own blue, matching diagnosticInformation
+        .vcsUntrackedForeground        = Color::RGB(0x4fd0e8), // cyan: present but unknown to the repository
+        .blameRecentForeground         = Color::RGB(0x6fe0a0), // fresh commits read bright...
+        .blameOldForeground            = Color::RGB(0x6a70a0), // ...and fade into the hint gray with age
+        .indentGuideForeground         = Color::RGB(0x4a4a58), // dim gray, deliberately low-contrast against defaultForeground
         // Depth-colorized-indent-guides follow-up: a 6-color rotation, dim
         // enough to stay secondary to real syntax highlighting (same
         // "deliberately low-contrast" spirit as indentGuideForeground
         // above, just spread across a few distinct hues instead of one).
-        .indentGuideDepthPalette  = {Color::RGB(0x8a5050), Color::RGB(0x8a7250), Color::RGB(0x8a8a50),
-                                     Color::RGB(0x508a5f), Color::RGB(0x50748a), Color::RGB(0x74508a)},
-        .headlineLevel1Foreground = Color::RGB(0x82c0ff),
-        .headlineLevel2Foreground = Color::RGB(0x7fdbca),
-        .headlineLevel3Foreground = Color::RGB(0xb5e890),
-        .todoKeywordForeground    = Color::RGB(0xff7b86),
-        .doneKeywordForeground    = Color::RGB(0xb5e890),
-        .checkboxForeground       = Color::RGB(0xf0d399),
-        .underlineForeground      = Color::RGB(0xc5c8d6),
-        .strikethroughForeground  = Color::RGB(0x6c7280),
+        .indentGuideDepthPalette  = {Color::RGB(0x9a5555), Color::RGB(0x9a7a55), Color::RGB(0x9a9a55),
+                                     Color::RGB(0x559a68), Color::RGB(0x55809a), Color::RGB(0x80559a)},
+        .headlineLevel1Foreground = Color::RGB(0x74c7ff),
+        .headlineLevel2Foreground = Color::RGB(0x6fe0a0),
+        .headlineLevel3Foreground = Color::RGB(0x8fd67e),
+        .todoKeywordForeground    = Color::RGB(0xff5c72),
+        .doneKeywordForeground    = Color::RGB(0x8fd67e),
+        .checkboxForeground       = Color::RGB(0xffc88a),
+        .underlineForeground      = Color::RGB(0xcdd6f4),
+        .strikethroughForeground  = Color::RGB(0x757bab),
         // The chrome family's two poles (chrome-redesign follow-up): border
         // is a quiet structural blue-grey one step lighter than the
-        // 0x1b1b30/0x2b2b40 tab/mode-line chrome it frames; the accent is
+        // 0x1c1638/0x2e2350 tab/mode-line chrome it frames; the accent is
         // the same "blurple" truncationIndicatorForeground already uses, so
         // attention-colored chrome stays one hue everywhere. The focused
         // gradient is the base gradient pulled 60% toward that accent --
@@ -415,17 +422,24 @@ Theme DarkTheme() {
         // read next to how strongly the resize-drag accent pops --
         // precomputed literals, not Interpolate calls, so a theme file can
         // override the tint independently.
-        .border                       = Brush{.foreground = Color::RGB(0x3a3a50)},
-        .borderAccent                 = Brush{.foreground = Color::RGB(0x8f80e0), .bold = true},
-        .modeLineFocusedGradientStart = Color::RGB(0x675ea0),
-        .modeLineFocusedGradientEnd   = Color::RGB(0x605799),
-        .markupMarkerForeground       = Color::RGB(0x6c7280),
-        .diffAddedForeground          = Color::RGB(0x98c379), // the theme's own green (stringForeground)
-        .diffRemovedForeground        = Color::RGB(0xe06c75), // the diagnosticError/breakpoint red family
-        .diffChangedForeground        = Color::RGB(0xe5c07b),
+        .border                       = Brush{.foreground = Color::RGB(0x3e3a5e)},
+        .borderAccent                 = Brush{.foreground = Color::RGB(0x9f8cff), .bold = true},
+        .modeLineFocusedGradientStart = Color::RGB(0x6f5fc0),
+        .modeLineFocusedGradientEnd   = Color::RGB(0x6a56b8),
+        .markupMarkerForeground       = Color::RGB(0x757bab),
+        .diffAddedForeground          = Color::RGB(0x8fd67e), // the theme's own green (stringForeground)
+        .diffRemovedForeground        = Color::RGB(0xff6b81), // the diagnosticError/breakpoint red family
+        .diffChangedForeground        = Color::RGB(0xffcb6b),
     };
 }
 
+// Vibrancy pass (same intent as DarkTheme's own -- see its header comment):
+// darker, more saturated versions of the same nine-hue family so the light
+// theme reads as colourful rather than pastel-washed-out, while staying
+// legible on the cream background. Every hue family lines up with
+// DarkTheme's: azure keywords, teal functions, teal-green properties, leaf
+// -green strings, gold types, burnt-orange numbers, rose operators, magenta
+// constants, violet namespaces.
 Theme LightTheme() {
     const Color background = Color::RGB(0xfaf8f2);
 
@@ -433,100 +447,100 @@ Theme LightTheme() {
         .name                          = "light",
         .background                    = background,
         .defaultForeground             = Color::RGB(0x202020),
-        .commentForeground             = Color::RGB(0x8f8f80), // a genuinely faded, warm-toned gray against the cream background
-        .stringForeground              = Color::RGB(0x2f6f2f),
-        .keywordForeground             = Color::RGB(0x1f4fa0),
-        .numberForeground              = Color::RGB(0x8f3f8f),
-        .docCommentForeground          = Color::RGB(0x8f8f80),
-        .stringEscapeForeground        = Color::RGB(0x1f8f1f),
-        .controlKeywordForeground      = Color::RGB(0x1f4fa0),
-        .functionForeground            = Color::RGB(0x1f7a7a),
-        .functionBuiltinForeground     = Color::RGB(0x1f7a7a),
-        .typeForeground                = Color::RGB(0xa0701f),
-        .typeBuiltinForeground         = Color::RGB(0xa0701f),
-        .constantForeground            = Color::RGB(0xa03f7f),
-        .constantBuiltinForeground     = Color::RGB(0xa03f7f),
-        .variableForeground            = Color::RGB(0x303030),
-        .variableBuiltinForeground     = Color::RGB(0x303030),
-        .parameterForeground           = Color::RGB(0x8f6f1f),
-        .propertyForeground            = Color::RGB(0x1f6f8f),
-        .operatorForeground            = Color::RGB(0xa03f2f),
-        .punctuationForeground         = Color::RGB(0x808080),
-        .tagForeground                 = Color::RGB(0x1f4fa0),
-        .attributeForeground           = Color::RGB(0xc06f1f),
-        .namespaceForeground           = Color::RGB(0xa03f7f),
-        .keywordModifierForeground     = Color::RGB(0x2f6fa0),
-        .methodForeground              = Color::RGB(0x1f8f7a),
-        .constructorForeground         = Color::RGB(0x9f7a1f),
-        .labelForeground               = Color::RGB(0xa03f8f),
-        .returnTypeForeground          = Color::RGB(0xb0701f),
-        .includePathForeground         = Color::RGB(0x8f5f3f),
+        .commentForeground             = Color::RGB(0x8a86ab), // faded, cool lavender-grey against the cream background
+        .stringForeground              = Color::RGB(0x1f8f44),
+        .keywordForeground             = Color::RGB(0x1e5fd1),
+        .numberForeground              = Color::RGB(0xc4691a), // burnt orange -- freed from the purple family for hue spread
+        .docCommentForeground          = Color::RGB(0x9a96b8),
+        .stringEscapeForeground        = Color::RGB(0x0f9a7a), // teal-mint, distinct from stringForeground's leaf green
+        .controlKeywordForeground      = Color::RGB(0x1e5fd1),
+        .functionForeground            = Color::RGB(0x0e8f95),
+        .functionBuiltinForeground     = Color::RGB(0x0e8f95),
+        .typeForeground                = Color::RGB(0xb07d12),
+        .typeBuiltinForeground         = Color::RGB(0xb07d12),
+        .constantForeground            = Color::RGB(0xc23a91),
+        .constantBuiltinForeground     = Color::RGB(0xc23a91),
+        .variableForeground            = Color::RGB(0x2b2b2b),
+        .variableBuiltinForeground     = Color::RGB(0x2b2b2b),
+        .parameterForeground           = Color::RGB(0xa87a1a),
+        .propertyForeground            = Color::RGB(0x158f6a),
+        .operatorForeground            = Color::RGB(0xc23b4a),
+        .punctuationForeground         = Color::RGB(0x6b6f8f),
+        .tagForeground                 = Color::RGB(0x1c66c9),
+        .attributeForeground           = Color::RGB(0xd1791a),
+        .namespaceForeground           = Color::RGB(0x8438c9),
+        .keywordModifierForeground     = Color::RGB(0x2a6fd1),
+        .methodForeground              = Color::RGB(0x0e8f95),
+        .constructorForeground         = Color::RGB(0xb0821a),
+        .labelForeground               = Color::RGB(0xb23a9e),
+        .returnTypeForeground          = Color::RGB(0xba7818),
+        .includePathForeground         = Color::RGB(0xa8663a),
         .modeLineForeground            = Color::RGB(0xffffff),
-        .modeLineGradientStart         = Color::RGB(0x5f7fa0),
-        .modeLineGradientEnd           = Color::RGB(0x3f5f80),
-        .echoArea                      = Brush{.background = background, .foreground = Color::RGB(0x8f5f00)},
-        .lineNumberForeground          = Color::RGB(0xa0a0a0),
+        .modeLineGradientStart         = Color::RGB(0x5f6fc7),
+        .modeLineGradientEnd           = Color::RGB(0x3f4fa0),
+        .echoArea                      = Brush{.background = background, .foreground = Color::RGB(0xa8710a)},
+        .lineNumberForeground          = Color::RGB(0x9a9ab8),
         .currentLineNumberForeground   = Color::RGB(0x202020),
-        .selectionBackground           = Color::RGB(0xbcd4f0),
+        .selectionBackground           = Color::RGB(0xb8c8f5),
         .isearchMatchBackground        = Color::RGB(0xffe58a),
-        .matchingBracketBackground     = Color::RGB(0xcfe0f0),
+        .matchingBracketBackground     = Color::RGB(0xc8e4ec),
         .snippetFieldBackground        = Color::RGB(0xd0e8c8),
         .documentHighlightBackground   = Color::RGB(0xd8ecec),
         .lineInspectBackground         = Color::RGB(0xf5ddc0),
         .conflictOursBackground        = Color::RGB(0xd8f0d8), // light green wash, "mine"
         .conflictTheirsBackground      = Color::RGB(0xdcdcf5), // light lavender wash, "incoming"
         .conflictBaseBackground        = Color::RGB(0xe8e8e8), // light neutral gray wash (diff3 only)
-        .tabBar                        = Brush{.background = Color::RGB(0xe4e0d4), .foreground = Color::RGB(0x707070)},
-        .activeTab                     = Brush{.background = background, .foreground = Color::RGB(0x202020), .bold = true},
-        .scrollBar                     = Brush{.foreground = Color::RGB(0xa0a0a0)},
-        .scrollBarDisabled             = Brush{.foreground = Color::RGB(0xd8d4c8)},
-        .binaryForeground              = Color::RGB(0xc03030),
-        .ghostTextForeground           = Color::RGB(0xa0a0a0),
-        .linkForeground                = Color::RGB(0x1f6fa0),
-        .truncationIndicatorForeground = Color::RGB(0x6a5acd),
-        .unsavedChangeIndicator        = Color::RGB(0xb0651f),
-        .diagnosticError               = Color::RGB(0xc0392b),
-        .diagnosticWarning             = Color::RGB(0xb58900),
-        .diagnosticInformation         = Color::RGB(0x2980b9),
-        .diagnosticHint                = Color::RGB(0x95a5a6),
-        .breakpointMarker              = Color::RGB(0xc0392b),
-        .executionMarker               = Color::RGB(0xb58900),
+        .tabBar                        = Brush{.background = Color::RGB(0xe6e1f0), .foreground = Color::RGB(0x72728c)},
+        .activeTab                     = Brush{.background = background, .foreground = Color::RGB(0x1c1c2e), .bold = true},
+        .scrollBar                     = Brush{.foreground = Color::RGB(0x9a9ab8)},
+        .scrollBarDisabled             = Brush{.foreground = Color::RGB(0xdad4e8)},
+        .binaryForeground              = Color::RGB(0xc23b4a),
+        .ghostTextForeground           = Color::RGB(0x9a9ab8),
+        .linkForeground                = Color::RGB(0x1c66c9),
+        .truncationIndicatorForeground = Color::RGB(0x6f5fd6),
+        .unsavedChangeIndicator        = Color::RGB(0xb0721a),
+        .diagnosticError               = Color::RGB(0xc23b4a),
+        .diagnosticWarning             = Color::RGB(0xb07d12),
+        .diagnosticInformation         = Color::RGB(0x2073c9),
+        .diagnosticHint                = Color::RGB(0x8f93b3),
+        .breakpointMarker              = Color::RGB(0xc23b4a),
+        .executionMarker               = Color::RGB(0xb07d12),
         .executionLineBackground       = Color::RGB(0xf4ecd0),
-        .unverifiedBreakpointMarker    = Color::RGB(0x95a5a6), // same muted gray-blue as diagnosticHint
+        .unverifiedBreakpointMarker    = Color::RGB(0x8f93b3), // same muted gray-blue as diagnosticHint
         .diffAddedBackground           = Color::RGB(0xe0f0d8), // light green wash, dark text stays legible
         .diffRemovedBackground         = Color::RGB(0xf5dcdc), // light red wash, same lightness as diffAddedBackground
         .trailingWhitespaceBackground  = Color::RGB(0xf0dde8), // light pink wash, distinct from diffRemovedBackground's red
-        .successForeground             = Color::RGB(0x3d7a2e), // dark enough to read on a light background
-        .vcsModifiedForeground         = Color::RGB(0x1f6fa0), // the theme's own blue, matching linkForeground
-        .vcsUntrackedForeground        = Color::RGB(0x1f7f74), // teal: present but unknown to the repository
-        .blameRecentForeground         = Color::RGB(0x2b7f74), // fresh commits read strongest...
-        .blameOldForeground            = Color::RGB(0x95a5a6), // ...and fade into the hint gray with age
-        .indentGuideForeground         = Color::RGB(0xd8d8d0), // light gray, deliberately low-contrast against defaultForeground
+        .successForeground             = Color::RGB(0x1f8f44), // the theme's own green, matching stringForeground
+        .vcsModifiedForeground         = Color::RGB(0x1c66c9), // the theme's own blue, matching linkForeground
+        .vcsUntrackedForeground        = Color::RGB(0x0e8f95), // teal: present but unknown to the repository
+        .blameRecentForeground         = Color::RGB(0x1a8f6a), // fresh commits read strongest...
+        .blameOldForeground            = Color::RGB(0x8f93b3), // ...and fade into the hint gray with age
+        .indentGuideForeground         = Color::RGB(0xd8d4e8), // light gray, deliberately low-contrast against defaultForeground
         // Depth-colorized-indent-guides follow-up: DarkTheme's own palette
         // pulled darker/more saturated so each hue stays visible against a
         // light background instead of washing out.
         .indentGuideDepthPalette  = {Color::RGB(0xb03030), Color::RGB(0xb07a20), Color::RGB(0x9a9a20),
                                      Color::RGB(0x2f9a4f), Color::RGB(0x2f70b0), Color::RGB(0x7a2fb0)},
-        .headlineLevel1Foreground = Color::RGB(0x1f4fa0),
-        .headlineLevel2Foreground = Color::RGB(0x1f7a7a),
-        .headlineLevel3Foreground = Color::RGB(0x2f6f2f),
-        .todoKeywordForeground    = Color::RGB(0xa03030),
-        .doneKeywordForeground    = Color::RGB(0x2f8f2f),
-        .checkboxForeground       = Color::RGB(0x8f6f1f),
+        .headlineLevel1Foreground = Color::RGB(0x1c66c9),
+        .headlineLevel2Foreground = Color::RGB(0x158f6a),
+        .headlineLevel3Foreground = Color::RGB(0x1f8f44),
+        .todoKeywordForeground    = Color::RGB(0xb8283a),
+        .doneKeywordForeground    = Color::RGB(0x1f8f44),
+        .checkboxForeground       = Color::RGB(0xa8710a),
         .underlineForeground      = Color::RGB(0x202020),
-        .strikethroughForeground  = Color::RGB(0x808080),
-        // Same two-pole structure as DarkTheme's: a warm structural grey
-        // against the cream background, accent from the mode-line blue
-        // family, focused gradient pulled toward the light purple
-        // truncationIndicatorForeground uses.
-        .border                       = Brush{.background = background, .foreground = Color::RGB(0xc8c4b8)},
-        .borderAccent                 = Brush{.background = background, .foreground = Color::RGB(0x5f7fa0), .bold = true},
-        .modeLineFocusedGradientStart = Color::RGB(0x6568bb),
-        .modeLineFocusedGradientEnd   = Color::RGB(0x585cae),
-        .markupMarkerForeground       = Color::RGB(0xa8a496),
-        .diffAddedForeground          = Color::RGB(0x2f6f2f), // the light theme's own string green
-        .diffRemovedForeground        = Color::RGB(0xa03030),
-        .diffChangedForeground        = Color::RGB(0x8a6d1a),
+        .strikethroughForeground  = Color::RGB(0x8a8aa8),
+        // Same two-pole structure as DarkTheme's: a cool structural
+        // lavender-grey against the cream background, accent from the
+        // mode-line blue-violet family, focused gradient pulled toward the
+        // light purple truncationIndicatorForeground uses.
+        .border                       = Brush{.background = background, .foreground = Color::RGB(0xc8c2dc)},
+        .borderAccent                 = Brush{.background = background, .foreground = Color::RGB(0x5a6fd6), .bold = true},
+        .modeLineFocusedGradientStart = Color::RGB(0x6a5fd0),
+        .modeLineFocusedGradientEnd   = Color::RGB(0x5650b8),
+        .markupMarkerForeground       = Color::RGB(0xa8a2c0),
+        .diffAddedForeground          = Color::RGB(0x1f8f44), // the light theme's own string green
+        .diffRemovedForeground        = Color::RGB(0xc23b4a),
+        .diffChangedForeground        = Color::RGB(0xb07d12),
     };
 }
 

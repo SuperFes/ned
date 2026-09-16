@@ -235,10 +235,18 @@ void Minimap::AdvanceHighlightSweep(text::Buffer& buffer) const {
 
     const auto now = std::chrono::steady_clock::now();
 
-    // A real content/mode change since lastSpans_ was committed: any
-    // in-flight sweep was targeting a now-stale generation, so abandon it
-    // rather than let it commit a result for text that's already gone.
-    if (firstPaint || sweepGeneration_ != generation) {
+    // A real content/mode change since the in-flight sweep started: it was
+    // targeting a now-stale generation or mode, so abandon it rather than
+    // let it commit a result for text/highlighter that's already gone.
+    // Deliberately NOT keyed on firstPaint (whether we've ever *committed* a
+    // sweep) -- firstPaint stays true for every tick of a multi-chunk sweep
+    // right up until the final commit, so gating the reset on it wiped
+    // sweepSpans_/sweepText_/sweepCursor_ back to zero on every single tick,
+    // restarting from byte 0 forever and never actually finishing a sweep
+    // longer than one chunk (kHighlightSweepChunkBytes). sweepGeneration_/
+    // sweepModeName_ already capture exactly what a real restart needs to
+    // key on: what the *in-flight* sweep was started against.
+    if (sweepGeneration_ != generation || sweepModeName_ != mode_.name) {
         sweepActive_ = false;
         sweepSpans_.clear();
         sweepText_.clear();
@@ -268,6 +276,7 @@ void Minimap::AdvanceHighlightSweep(text::Buffer& buffer) const {
         // reintroduce an O(document) buffer.Text() cost on every tick.
         sweepActive_     = true;
         sweepGeneration_ = generation;
+        sweepModeName_   = mode_.name;
         sweepText_       = buffer.Text();
         sweepCursor_     = 0;
         sweepSpans_.clear();
