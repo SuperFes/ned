@@ -334,29 +334,30 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
             exitCode = 1;
             continue;
         }
-        // Checked explicitly rather than left to Buffer::FromFile's own
-        // LooksBinary pre-check: an unreadable path (LooksBinary's own doc
-        // comment: "unreadable -- not worth treating as text either")
-        // reports as BinaryFileError there, which would misleadingly read
-        // as "this file looks binary" for the much more common case of a
-        // typo'd path.
+
         std::error_code existsEc;
+
         if (!std::filesystem::exists(path, existsEc)) {
             std::cerr << "ned: --format: " << pathStr << ": no such file\n";
             exitCode = 1;
             continue;
         }
+
         std::error_code       sizeEc;
         const std::uintmax_t  fileSize = std::filesystem::file_size(path, sizeEc);
         const bool            isHuge   = !sizeEc && fileSize > ned::text::HugeFileThreshold();
+
         if (isHuge && !forceHuge) {
             std::cerr << "ned: --format: " << pathStr << ": file exceeds the huge-file threshold ("
                       << ned::text::HugeFileThreshold()
                       << " bytes) -- pass --force-huge to reindent it via the streaming engine (Native reindent "
                          "only; no external formatter, no space/break/wrap/blank rules)\n";
+
             exitCode = 1;
+
             continue;
         }
+
         if (isHuge) {
             try {
                 ned::text::Buffer         buffer = ned::text::Buffer::FromHugeFile(path);
