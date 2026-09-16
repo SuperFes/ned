@@ -28,6 +28,20 @@ namespace {
     // selection or a search hit has to win against it, not tie.
     constexpr std::uint8_t kCurrentLineAlpha = 40;
 
+    // dying-fade-quantization-floor follow-up: the fade's right-hand stop --
+    // confirmed live (NED_DEBUG_LAYOUT instrumentation) that a literal 0
+    // there does NOT read as "faded to nothing before the edge," which is
+    // the intent -- it reads as a hard, dead strip AT the edge. A byte alpha
+    // is an 8-bit quantity, and this wash's whole range tops out at 40/255:
+    // over a wide pane (measured on a 93-column canvas) the linear ramp's
+    // last two columns compute a fractional alpha under 0.5 and truncate to
+    // the literal integer 0 well before u actually reaches 1 -- not "very
+    // faint," but zero paint at all, indistinguishable from an ordinary
+    // unhighlighted row. A minimal nonzero floor keeps every column, all the
+    // way to the true right edge, at least one unit of tint -- imperceptible
+    // on its own, but it removes the hard boundary a true zero creates.
+    constexpr std::uint8_t kCurrentLineFadeFloorAlpha = 1;
+
     // How much of its own strength a selection keeps at the bottom of the
     // viewport. 78% measured against the bundled themes as the point where
     // the block gains depth while the weak end still reads unmistakably as
@@ -281,9 +295,16 @@ namespace {
             // ink compared to the flat wash, so it cannot cost contrast
             // anywhere. This is what the bundled `focus` preset was written
             // for (gradients.janet, "current-line wash") and never wired to.
+            //
+            // The right stop floors at kCurrentLineFadeFloorAlpha rather than
+            // a literal 0 -- see that constant's own doc comment for why a
+            // true zero endpoint reads as a hard-edged dead strip rather
+            // than "faded to nothing," on a pane wide enough for the ramp's
+            // tail to truncate to zero several columns short of the true
+            // edge.
             const Color accent = DetectedAccent().value_or(theme.modeLineFocusedGradientStart);
             surface.fill       = GradientPaint(PaintAxis::X, {ColorStop{.colour = accent.WithAlpha(kCurrentLineAlpha)},
-                                                              ColorStop{.colour = accent.WithAlpha(0)}});
+                                                              ColorStop{.colour = accent.WithAlpha(kCurrentLineFadeFloorAlpha)}});
             return surface;
         }
         if (name == "buffer.selection") {
