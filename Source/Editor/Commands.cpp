@@ -215,9 +215,16 @@ namespace {
         if (!mode || !mode->highlight || point == 0) {
             return SyntaxClass::Default;
         }
-        // A one-shot command, not a paint -- whole document is fine.
-        const std::vector<HighlightSpan> spans  = mode->highlight(buffer.Text(), HighlightWindow{});
-        const std::size_t                probe  = point - 1;
+        const std::size_t probe = point - 1;
+        // querymatcher-walk follow-up: bounded to the single probed byte,
+        // not the whole document -- confirmed live to cost ~60ms unbounded
+        // on this project's own 168KB main.cpp, on every quote keystroke.
+        // CapturesInRange's overlap+tree-pruned semantics still find a
+        // multi-line string/comment that opened far above probe (see
+        // Indent.h's VerbatimRanges, same fix, same reasoning).
+        const std::string  bufferText = buffer.Text();
+        const std::vector<HighlightSpan> spans =
+            mode->highlight(bufferText, HighlightWindow{probe, std::min(probe + 1, bufferText.size())});
         SyntaxClass                      winner = SyntaxClass::Default;
         for (const HighlightSpan& span : spans) {
             if (span.startByte <= probe && probe < span.endByte) {
