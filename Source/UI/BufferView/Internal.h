@@ -106,6 +106,7 @@
 #include "Editor/Vim/Settings.h"
 #include "Editor/WhichKeySettings.h"
 #include "Editor/WhitespaceSettings.h"
+#include "Editor/WrapIndent.h"
 #include "Editor/WrapOverrides.h"
 #include "Janet/Environment.h"
 #include "Janet/InitFile.h"
@@ -903,6 +904,19 @@ inline bool IsWrapBreakWhitespace(char32_t cp) {
 // drawing, so a trailing space cell looks identical whether "drawn" or
 // simply never reached.
 //
+// wrap-indent follow-up: continuationIndent (already clamped by the
+// caller, ComputeWrappedLineSegments below, to well under wrapWidth) is
+// the baseline every segment AFTER the first opens at instead of 0 --
+// the same visual effect as reserving that many columns for a hang
+// indent, achieved by making them count against the row's own width
+// budget rather than by drawing anything here (this function only ever
+// computes byte ranges). Segment 0 is unaffected by construction: it's
+// whichever one is first pushed while `segments` is still empty.
+// Clamped again here, defensively, to strictly less than wrapWidth --
+// were it not, the hard-break branch below could retry against a
+// segment that opens already over budget and never advance `offset`,
+// looping forever.
+//
 // Not cached beyond a single call -- same "recompute fresh, it's cheap
 // for one line" precedent VisualColumn/ByteOffsetForColumnInLine already
 // establish; called only for the handful of lines actually on screen or
@@ -910,8 +924,10 @@ inline bool IsWrapBreakWhitespace(char32_t cp) {
 // in BufferView.h is what avoids re-running this for the entire buffer
 // on every Paint()).
 inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& content, std::size_t lineStart, std::size_t lineEnd,
-                                                    int wrapWidth, const std::vector<RenderedLink>& lineLinks) {
-    wrapWidth = std::max(wrapWidth, 1);
+                                                    int wrapWidth, const std::vector<RenderedLink>& lineLinks,
+                                                    int continuationIndent = 0) {
+    wrapWidth          = std::max(wrapWidth, 1);
+    continuationIndent = std::clamp(continuationIndent, 0, wrapWidth - 1);
 
     std::vector<WrapSegment>   segments;
     std::size_t                segmentStart = lineStart;
@@ -919,6 +935,8 @@ inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& co
     int                        col          = 0;
     std::optional<std::size_t> breakByte;    // byte offset just past the latest whitespace run since segmentStart
     int                        breakCol = 0; // col value at that same point
+
+    const auto segIndent = [&]() { return segments.empty() ? 0 : continuationIndent; };
 
     while (offset < lineEnd) {
         std::size_t unitEnd;
@@ -937,14 +955,14 @@ inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& co
 
         if (col > 0 && col + unitWidth > wrapWidth) {
             if (breakByte && *breakByte > segmentStart) {
-                segments.push_back(WrapSegment{.startByte = segmentStart, .endByte = *breakByte});
+                segments.push_back(WrapSegment{.startByte = segmentStart, .endByte = *breakByte, .continuationIndent = segIndent()});
                 segmentStart = *breakByte;
-                col -= breakCol; // carry over the width already consumed between breakByte and offset
+                col          = continuationIndent + (col - breakCol); // carry over the width already consumed between breakByte and offset
             }
             else {
-                segments.push_back(WrapSegment{.startByte = segmentStart, .endByte = offset});
+                segments.push_back(WrapSegment{.startByte = segmentStart, .endByte = offset, .continuationIndent = segIndent()});
                 segmentStart = offset;
-                col          = 0;
+                col          = continuationIndent;
             }
             breakByte.reset();
             breakCol = 0;
@@ -958,7 +976,7 @@ inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& co
             breakCol  = col;
         }
     }
-    segments.push_back(WrapSegment{.startByte = segmentStart, .endByte = lineEnd});
+    segments.push_back(WrapSegment{.startByte = segmentStart, .endByte = lineEnd, .continuationIndent = segIndent()});
     return segments;
 }
 
@@ -983,10 +1001,40 @@ inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& co
 // is what made that whole class of bug findable and fixable in one
 // place, and `fullWidth` must still be the same
 // "size().width - gutterWidth" value at every call site.
+// wrap-indent follow-up: visual width of a line's own leading run of
+// spaces/tabs -- what a soft-wrapped continuation row hangs under, the
+// on-screen counterpart to Fill.cpp's own list-marker hang-width
+// computation for a hard-wrapped paragraph. Deliberately simpler than
+// that one: a soft wrap can land anywhere in the middle of a sentence
+// (unlike fill-paragraph, which only ever wraps a complete paragraph
+// starting at its own first line), so there is no marker to detect here
+// -- "match the line's own leading whitespace" is the only rule general
+// enough to always make sense, matching the "same" indent mode most
+// other editors that support this default to (VS Code's
+// editor.wrappingIndent, for one). Capped at half of wrapWidth (itself
+// clamped again, defensively, inside ComputeWrapSegments) so a
+// pathologically deep line can't consume a narrow pane's entire row and
+// leave no width for real content.
+inline int LeadingIndentColumns(const text::ITextStorage& content, std::size_t lineStart, std::size_t lineEnd, int wrapWidth) {
+    int         columns = 0;
+    std::size_t offset  = lineStart;
+    while (offset < lineEnd) {
+        const auto decoded = content.CodepointAt(offset);
+        if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
+            break;
+        }
+        columns += CodepointColumns(decoded.codepoint);
+        offset += decoded.byteLength;
+    }
+    return std::min(columns, std::max(wrapWidth, 1) / 2);
+}
+
 inline std::vector<WrapSegment> ComputeWrappedLineSegments(const text::ITextStorage& content, std::size_t lineStart,
                                                            std::size_t lineEnd, int fullWidth,
                                                            const std::vector<RenderedLink>& lineLinks) {
-    return ComputeWrapSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
+    const int continuationIndent =
+        editor::WrapIndent() ? LeadingIndentColumns(content, lineStart, lineEnd, fullWidth) : 0;
+    return ComputeWrapSegments(content, lineStart, lineEnd, fullWidth, lineLinks, continuationIndent);
 }
 
 // Filters mode_.highlight's whole-buffer HighlightSpan list down to just

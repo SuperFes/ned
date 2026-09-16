@@ -38,9 +38,21 @@ struct RenderedInlayHint {
 
 // The [startByte, endByte) content range one wrapped canvas row draws. There is
 // always at least one per line, even an empty one.
+//
+// wrap-indent follow-up: continuationIndent is the extra columns (past the
+// gutter) this row's own content starts drawing at -- 0 for a line's first
+// segment always, and 0 for every segment when Editor::WrapIndent() is off,
+// otherwise the line's own leading-whitespace width for every segment
+// AFTER the first. Stored per-segment (rather than left for each of
+// ComputeWrappedLineSegments' several consumers to re-derive on their own)
+// so Paint()'s render loop, CursorPosition(), and ByteOffsetForPoint's
+// click resolution can never disagree about where a continuation row's
+// content actually starts -- the same "one true source" discipline this
+// struct's own doc comment already establishes for startByte/endByte.
 struct WrapSegment {
     std::size_t startByte;
     std::size_t endByte;
+    int         continuationIndent = 0;
 };
 
 } // namespace ned::ui::bufferview

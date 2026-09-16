@@ -76,6 +76,7 @@ add_library(ned_lib STATIC
         Editor/MultibufferSearchSettings.cpp
         Editor/NextError.cpp
         Editor/WrapOverrides.cpp
+        Editor/WrapIndent.cpp
         Editor/CodeFold.cpp
         Editor/LocalScopes.cpp
         Editor/RenameReview.cpp
