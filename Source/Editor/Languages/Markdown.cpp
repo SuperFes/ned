@@ -5,13 +5,14 @@
 #include <utility>
 #include <vector>
 
-#include "Editor/Injection.h"
-#include "Editor/LanguageDefinition.h"
-#include "Editor/ModeInternal.h"
 #include "Editor/Grammar/IncrementalParse.h"
 #include "Editor/Grammar/Node.h"
 #include "Editor/Grammar/Parser.h"
 #include "Editor/Grammar/Tree.h"
+#include "Editor/IndentStyle.h"
+#include "Editor/Injection.h"
+#include "Editor/LanguageDefinition.h"
+#include "Editor/ModeInternal.h"
 
 namespace ned::editor::languages {
 
@@ -71,28 +72,46 @@ namespace {
                 return column;
             }
 
-            // Otherwise: sum each enclosing list_item's own marker width (its
-            // first child's byte length, e.g. "- " = 2, "10. " = 4 -- nested
-            // lists stack additively) plus 2 per enclosing block_quote ("> ").
-            // A list_item/block_quote is excluded from its OWN opening/marker
-            // line (StartByte() == position) -- the same self-exclusion
-            // Editor/Indent.h's generic engine needs for a bracket-language
-            // container's own opening line, confirmed by the same kind of real
-            // parse-tree check that caught that engine's own bugs. A lambda,
-            // not an inline loop -- smart-blank-line-on-newline follow-up:
-            // needs calling twice, see the rescue immediately below.
-            const auto sumHangColumn = [](const grammar::Node& startNode, std::size_t position) {
+            // Otherwise: one configured indent step per enclosing list_item,
+            // plus one per enclosing block_quote ("> ") -- nested levels
+            // stack additively. A list_item/block_quote is excluded from its
+            // OWN opening/marker line (StartByte() == position) -- the same
+            // self-exclusion Editor/Indent.h's generic engine needs for a
+            // bracket-language container's own opening line, confirmed by
+            // the same kind of real parse-tree check that caught that
+            // engine's own bugs. A lambda, not an inline loop --
+            // smart-blank-line-on-newline follow-up: needs calling twice,
+            // see the rescue immediately below.
+            //
+            // checkbox-hang-matches-tab-depth follow-up: one step
+            // (EffectiveIndentStyle's own configured width), not the
+            // marker's own literal byte width ("- " is 2, "- [ ] " is 6,
+            // "10. " is 4) -- confirmed live against a real document (the
+            // wrap-indent-hang fix earlier the same session hit the exact
+            // same question for the VISUAL soft-wrap case) that a list
+            // item's own hard-wrapped continuation PARAGRAPHS already
+            // indent by one configured step regardless of which marker
+            // introduced the item, so a structural reindent landing on the
+            // marker's own width instead made TAB disagree with how this
+            // project's own documents are actually hand-formatted. Also
+            // fixes a narrower, previously-undiscovered gap the marker-
+            // width approach had: tree-sitter-markdown's task checkbox
+            // ("[ ]"/"[x]") is its own sibling node, not part of the
+            // marker's Child(0), so a checkbox item's own literal width was
+            // silently undercounted (2, the bullet alone) even on its own
+            // terms.
+            const int  indentStep    = EffectiveIndentStyle("markdown-mode").width;
+            const auto sumHangColumn = [indentStep](const grammar::Node& startNode, std::size_t position) {
                 int result = 0;
                 for (grammar::Node ancestor = startNode; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
                     if (ancestor.Type() == "list_item") {
-                        if (ancestor.StartByte() != position && ancestor.ChildCount() > 0) {
-                            const grammar::Node marker = ancestor.Child(0);
-                            result += static_cast<int>(marker.EndByte() - marker.StartByte());
+                        if (ancestor.StartByte() != position) {
+                            result += indentStep;
                         }
                     }
                     else if (ancestor.Type() == "block_quote") {
                         if (ancestor.StartByte() != position) {
-                            result += 2;
+                            result += indentStep;
                         }
                     }
                 }
@@ -110,7 +129,22 @@ namespace {
             // there's nothing here to accidentally rescue onto the WRONG side
             // of (unlike that engine's own dedent-range exclusion). Re-sum from
             // the last real, non-whitespace byte instead.
-            if (lineStart == lineEnd && column == 0 && contentStart == bufferText.size() && contentStart > 0) {
+            //
+            // tab-after-newline-blank-line-collapse follow-up: `contentStart
+            // == lineEnd` (the whole line is blank), not the narrower
+            // `lineStart == lineEnd` this originally checked -- confirmed
+            // live that the two aren't the same query. "newline" itself
+            // asks with the zero-width convention (lineStart == lineEnd,
+            // not-yet-typed) and got the rescue; a SUBSEQUENT TAB press on
+            // that SAME now-real blank line (the auto-indent "newline"
+            // already wrote, 2 real space bytes, lineStart != lineEnd) is
+            // just as blank but didn't match, so nothing rescued it and it
+            // silently collapsed to column 0, undoing the very indent
+            // "newline" had just computed one keystroke earlier. A
+            // contentStart default of lineEnd already captures "genuinely
+            // nothing but whitespace here" for both shapes -- see this
+            // function's own default-value comment just above.
+            if (contentStart == lineEnd && column == 0 && contentStart == bufferText.size() && contentStart > 0) {
                 const std::size_t rescuePos = bufferText.find_last_not_of(" \t\n\r", contentStart - 1);
                 if (rescuePos != std::string_view::npos) {
                     const grammar::Node rescueNode = tree.RootNode().NamedDescendantForByteRange(rescuePos, rescuePos);
