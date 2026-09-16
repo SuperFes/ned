@@ -115,16 +115,27 @@ bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOpera
     }
 
     if (baseName == "has-ancestor?" || baseName == "has-parent?") {
-        if (operands.size() != 2 || !operands[0].isCapture || operands[1].isCapture) {
+        if (operands.size() < 2 || !operands[0].isCapture) {
             return true;
         }
         if (parse::NodeIsNull(operands[0].node)) {
             return true;
         }
-        if (!operands[1].text) {
-            return true;
+        bool sawTypeOperand = false;
+        bool has            = false;
+        for (std::size_t i = 1; i < operands.size(); ++i) {
+            if (operands[i].isCapture || !operands[i].text) {
+                continue;
+            }
+            sawTypeOperand = true;
+            if (NodeHasAncestorOfType(operands[0].node, *operands[i].text, baseName == "has-parent?")) {
+                has = true;
+                break;
+            }
         }
-        const bool has = NodeHasAncestorOfType(operands[0].node, *operands[1].text, baseName == "has-parent?");
+        if (!sawTypeOperand) {
+            return true; // no usable type operand at all -- same inert quirk as every other malformed call
+        }
         return negated ? !has : has;
     }
 
@@ -134,7 +145,7 @@ bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOpera
 bool PredicateReadsOutsideSubtree(std::string_view name, std::size_t operandCount) {
     const auto [baseName, negated] = ParsePredicateName(name);
     (void)negated; // reads-outside-subtree-ness doesn't depend on negation
-    return (baseName == "has-ancestor?" || baseName == "has-parent?") && operandCount == 2;
+    return (baseName == "has-ancestor?" || baseName == "has-parent?") && operandCount >= 2;
 }
 
 } // namespace ned::editor::grammar

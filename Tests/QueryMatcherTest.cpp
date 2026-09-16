@@ -363,11 +363,8 @@ TEST_CASE("query construct census: every bundled query file uses only the enumer
         "predicate :has-ancestor? (capture token)",       // x10
         "predicate :not-has-ancestor? (capture token)",   // x2
         "predicate :not-has-parent? (capture string)",    // x7
-        // The two variadic has-parent spellings are INERT today: the
-        // evaluator handles exactly two operands and treats anything else as
-        // pass-through (Query.cpp), so these never filter. Recorded in the
-        // ROADMAP watch list; the matcher reproduces the inertness for the
-        // differential gate, and fixing it is a separate, deliberate change.
+        // The two variadic has-parent spellings: any-of semantics over the
+        // trailing type operands (nvim's own convention), same as any-of?.
         "predicate :has-parent? (capture token token)",           // x1, cpp/highlights.janet:370
         "predicate :not-has-parent? (capture token token token)", // x2, c/highlights.janet:181
         // Non-filtering directives.
@@ -595,9 +592,9 @@ TEST_CASE("QueryMatcher compiles every bundled language's every query kind", "[Q
 // of bundled patterns whose result can depend on structure OUTSIDE the node
 // they're attached to -- QueryMatch::ancestorCrossing, computed from an
 // actually-evaluated (not-)has-ancestor?/(not-)has-parent? predicate (the
-// variadic 3+-type-operand spelling is arity-inert per QueryPredicates.cpp
-// and correctly does NOT count -- see PredicateReadsOutsideSubtree). A
-// future per-subtree fact cache must always fully re-derive these, never
+// variadic 3+-operand spelling counts too, any-of semantics over its
+// trailing type operands -- see PredicateReadsOutsideSubtree/
+// QueryPredicates.cpp). A future per-subtree fact cache must always fully re-derive these, never
 // reuse them across a reparse: the same subtree can answer differently once
 // its ancestry changes even when its own bytes haven't. Pinned so a query
 // edit that adds, removes, or changes the arity of one of these predicates
@@ -631,8 +628,8 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
     }
     const std::map<std::string, std::size_t> expected = {
         {"bash/format", 2},
-        {"c/highlights", 2},
-        {"cpp/highlights", 5},
+        {"c/highlights", 3},
+        {"cpp/highlights", 7},
         {"cpp/indents", 1},
         {"csharp/locals", 1},
         {"java/locals", 1},
@@ -642,7 +639,7 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"yaml/indents", 2},
     };
     CHECK(counts == expected);
-    CHECK(total == 17);
+    CHECK(total == 20);
 }
 
 // Ned's own emission order, pinned. The matcher's capture stream reproduces
