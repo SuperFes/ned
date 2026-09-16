@@ -12354,6 +12354,51 @@ TEST_CASE("A mouse click on a wrapped continuation row resolves to the correct b
     REQUIRE(fixture.buffer.Point() == 11);
 }
 
+// visual-line-motion follow-up: next-line/previous-line move by on-screen
+// wrapped row instead of logical buffer line when wrapping is on --
+// verified through the real key-dispatch path (ArrowDown/ArrowUp), not by
+// calling Buffer::MoveToColumnInRange directly, since the point is to
+// confirm BufferView's own context.visualRowForPoint wiring actually
+// drives it.
+TEST_CASE("next-line/previous-line walk a wrapped line's own continuation rows before crossing to the next "
+          "buffer line, preserving the visual column",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.mode.wrapLines = true;
+    // Line 0 wraps into two rows the same way the click test above
+    // establishes: "aaaa bbbb " [0,10) then "cccc dddd" [10,19). Line 1
+    // ("xx") is short enough to need only one row of its own.
+    fixture.buffer.InsertAtPoint("aaaa bbbb cccc dddd\nxx");
+    fixture.buffer.SetPoint(6); // 'b' (the third one), visual column 6 on row 0
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(15, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    const auto& content = fixture.buffer.Content();
+
+    view.OnEvent(ned::ui::test::ArrowDown());
+    // Still line 0, its OWN second wrap segment -- column 6 within
+    // [10,19) is byte 16 (the second 'd' of "dddd").
+    REQUIRE(content.ByteOffsetToLine(fixture.buffer.Point()) == 0);
+    REQUIRE(fixture.buffer.Point() == 16);
+
+    view.OnEvent(ned::ui::test::ArrowDown());
+    // Line 0 had no further wrap segment -- falls through to line 1
+    // ("xx"), whose goal column (still 6, never clamped away) doesn't
+    // fit, so it clamps to line 1's own end.
+    REQUIRE(content.ByteOffsetToLine(fixture.buffer.Point()) == 1);
+    REQUIRE(fixture.buffer.Point() == content.ByteLength());
+
+    view.OnEvent(ned::ui::test::ArrowUp());
+    // Back onto line 0's own LAST wrap segment, at the same unclamped
+    // goal column (6) -- not line 1's own (short) column, and not line
+    // 0's FIRST segment either.
+    REQUIRE(content.ByteOffsetToLine(fixture.buffer.Point()) == 0);
+    REQUIRE(fixture.buffer.Point() == 16);
+}
+
 // gutter-wrap-indicator follow-up. The indicator used to be pinned to the
 // row's own right edge, which forced ComputeWrappedLineSegments to compute
 // twice -- once at full width, then again one column narrower once a line

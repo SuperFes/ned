@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "Key.h"
@@ -1079,6 +1080,26 @@ struct CommandContext {
     // two are not mutually exclusive in principle and mean different things
     // to the host UI (Exit() vs a to-the-shell Suspend()).
     bool suspend = false;
+    // visual-line-motion follow-up: set by the host UI before each dispatch
+    // (unset/nullptr whenever wrap is off, or nothing UI is driving this
+    // invocation -- most unit tests, M-x's own Registry().Invoke bypass) --
+    // same "a UI fact a command needs" shape as mode/lspManager above, but
+    // a callback rather than a plain value since what it answers (a byte
+    // range) depends on which point and which row-relative-to-that-point
+    // the caller asks about. Resolves the [start, end) byte range of the
+    // wrapped row `rowDelta` rows away from `point`'s own current row
+    // (rowDelta == 0 is that row itself) within the SAME logical line when
+    // possible, falling through to the adjacent logical line's own
+    // first/last row when `point`'s line doesn't have that many wrapped
+    // rows -- nullopt only when there is no such line at all (already on
+    // the buffer's first/last line and asking to go further). next-line/
+    // previous-line are the only commands that read this; every other
+    // command ignores it. next-line/previous-line fall back to their
+    // original, UI-agnostic Buffer::MoveToNextLine/MoveToPreviousLine
+    // behavior whenever this is unset -- see Commands.cpp's own comment on
+    // those two registrations for why that keeps every non-wrapped case
+    // (the overwhelming majority) byte-for-byte unchanged.
+    std::function<std::optional<std::pair<std::size_t, std::size_t>>(std::size_t point, int rowDelta)> visualRowForPoint;
 };
 
 using CommandFunction = std::function<void(CommandContext&)>;

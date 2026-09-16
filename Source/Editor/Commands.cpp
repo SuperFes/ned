@@ -365,6 +365,36 @@ namespace {
         }
     }
 
+    // visual-line-motion follow-up: next-line/previous-line's shared body.
+    // context.visualRowForPoint is set by the host UI only when wrap is
+    // actually on (see its own doc comment in Command.h) -- resolving both
+    // this cursor's OWN current row (rowDelta 0, needed as
+    // Buffer::MoveToColumnInRange's currentRowStart, the row a not-yet-set
+    // goal column is measured against) and the target row (rowDelta ±1)
+    // lets Buffer::MoveToColumnInRange do the actual moving with no
+    // wrap-awareness of its own. Falls back to the original, UI-agnostic
+    // Buffer::MoveToNextLine/MoveToPreviousLine whenever wrap is off (the
+    // overwhelming majority of buffers) or no UI is driving this
+    // invocation at all (most unit tests, M-x's own Registry().Invoke
+    // bypass) -- byte-for-byte the pre-existing behavior in both cases.
+    void MoveVisualOrLogicalLine(CommandContext& context, int rowDelta) {
+        if (context.visualRowForPoint) {
+            const std::size_t point      = context.buffer.Point();
+            const auto        currentRow = context.visualRowForPoint(point, 0);
+            const auto        targetRow  = context.visualRowForPoint(point, rowDelta);
+            if (currentRow && targetRow) {
+                context.buffer.MoveToColumnInRange(currentRow->first, targetRow->first, targetRow->second, TabWidth());
+                return;
+            }
+        }
+        if (rowDelta > 0) {
+            context.buffer.MoveToNextLine(TabWidth());
+        }
+        else {
+            context.buffer.MoveToPreviousLine(TabWidth());
+        }
+    }
+
     // ned-init-project follow-up. .ned/session.json is per-machine window/
     // buffer-layout state (see Editor/Project/Session.h's own header comment), not
     // shared project config like .ned/init.janet -- committing it would just
@@ -459,11 +489,15 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("backward-char", "Move point backward one grapheme cluster.",
                       PerCursor([](CommandContext& context) { context.buffer.MoveBackward(); }));
 
-    registry.Register("next-line", "Move point down one line, preserving column across a run.",
-                      PerCursor([](CommandContext& context) { context.buffer.MoveToNextLine(TabWidth()); }));
+    registry.Register("next-line",
+                      "Move point down one line -- one WRAPPED row, when wrapping is on -- preserving column "
+                      "across a run.",
+                      PerCursor([](CommandContext& context) { MoveVisualOrLogicalLine(context, 1); }));
 
-    registry.Register("previous-line", "Move point up one line, preserving column across a run.",
-                      PerCursor([](CommandContext& context) { context.buffer.MoveToPreviousLine(TabWidth()); }));
+    registry.Register("previous-line",
+                      "Move point up one line -- one WRAPPED row, when wrapping is on -- preserving column "
+                      "across a run.",
+                      PerCursor([](CommandContext& context) { MoveVisualOrLogicalLine(context, -1); }));
 
     // Shift+Arrow follow-up -- see EnsureMarkForShiftSelect's own comment
     // above for the selection model and its documented scope cut.
@@ -477,14 +511,18 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           EnsureMarkForShiftSelect(context.buffer);
                           context.buffer.MoveBackward();
                       });
-    registry.Register("shift-select-next-line", "Move point down one line, extending the selection.", [](CommandContext& context) {
-        EnsureMarkForShiftSelect(context.buffer);
-        context.buffer.MoveToNextLine(TabWidth());
-    });
-    registry.Register("shift-select-previous-line", "Move point up one line, extending the selection.", [](CommandContext& context) {
-        EnsureMarkForShiftSelect(context.buffer);
-        context.buffer.MoveToPreviousLine(TabWidth());
-    });
+    registry.Register("shift-select-next-line",
+                      "Move point down one line -- one wrapped row, when wrapping is on -- extending the selection.",
+                      [](CommandContext& context) {
+                          EnsureMarkForShiftSelect(context.buffer);
+                          MoveVisualOrLogicalLine(context, 1);
+                      });
+    registry.Register("shift-select-previous-line",
+                      "Move point up one line -- one wrapped row, when wrapping is on -- extending the selection.",
+                      [](CommandContext& context) {
+                          EnsureMarkForShiftSelect(context.buffer);
+                          MoveVisualOrLogicalLine(context, -1);
+                      });
 
     registry.Register("forward-word", "Move point forward one word.",
                       PerCursor([](CommandContext& context) { context.buffer.MoveForwardWord(); }));

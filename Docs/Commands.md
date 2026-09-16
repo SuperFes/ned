@@ -707,7 +707,7 @@ Move point to the next excerpt's body in a multibuffer.
 
 ## `next-line`
 
-Move point down one line, preserving column across a run.
+Move point down one line -- one WRAPPED row, when wrapping is on -- preserving column across a run.
 
 ## `open-line`
 
@@ -843,7 +843,7 @@ Move point to the previous excerpt's body in a multibuffer.
 
 ## `previous-line`
 
-Move point up one line, preserving column across a run.
+Move point up one line -- one WRAPPED row, when wrapping is on -- preserving column across a run.
 
 ## `project-find-file`
 
@@ -991,11 +991,11 @@ Move point forward one grapheme cluster, extending the selection.
 
 ## `shift-select-next-line`
 
-Move point down one line, extending the selection.
+Move point down one line -- one wrapped row, when wrapping is on -- extending the selection.
 
 ## `shift-select-previous-line`
 
-Move point up one line, extending the selection.
+Move point up one line -- one wrapped row, when wrapping is on -- extending the selection.
 
 ## `show-massif-graph`
 

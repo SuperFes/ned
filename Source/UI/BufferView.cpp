@@ -73,6 +73,60 @@ editor::CommandContext BufferView::MakeContext() {
     context.taskRunner  = context_.taskRunner;
     context.testRunner  = context_.testRunner;
     context.projectUndo = context_.projectUndo;
+
+    // visual-line-motion follow-up: only bound when wrap is actually on --
+    // next-line/previous-line fall back to their original, UI-agnostic
+    // logical-line behavior whenever this is unset (see Command.h's own
+    // doc comment). `point` is taken as a parameter rather than captured,
+    // since a multi-cursor invocation (Commands.cpp's PerCursor) calls
+    // this once per cursor with THAT cursor's own current point via
+    // Buffer::ForEachCursor's Point_ swap.
+    if (viewport_.EffectiveWrapLines()) {
+        context.visualRowForPoint =
+            [this](std::size_t point, int rowDelta) -> std::optional<std::pair<std::size_t, std::size_t>> {
+            const text::Buffer&       buffer     = context_.activeBuffer.Get();
+            const text::ITextStorage& content    = buffer.Content();
+            const std::size_t         totalLines = content.LineCount();
+            const std::size_t         line       = content.ByteOffsetToLine(std::min(point, content.ByteLength()));
+
+            const auto segmentsForLine = [&](std::size_t ln) {
+                const std::size_t lineStart = content.LineToByteOffset(ln);
+                const std::size_t lineEnd = (ln + 1 < totalLines) ? content.LineToByteOffset(ln + 1) - 1 : content.ByteLength();
+                const std::vector<bufferview::RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, point);
+                const int fullWidth = std::max(1, size().width - static_cast<int>(GutterWidth()));
+                return ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
+            };
+
+            std::vector<bufferview::WrapSegment> segments = segmentsForLine(line);
+            std::size_t                          idx      = 0;
+            for (std::size_t i = 0; i < segments.size(); ++i) {
+                const bool isLast = (i + 1 == segments.size());
+                if (point >= segments[i].startByte && (point < segments[i].endByte || (isLast && point == segments[i].endByte))) {
+                    idx = i;
+                    break;
+                }
+            }
+
+            const auto target = static_cast<std::ptrdiff_t>(idx) + rowDelta;
+            if (target >= 0 && target < static_cast<std::ptrdiff_t>(segments.size())) {
+                const bufferview::WrapSegment& seg = segments[static_cast<std::size_t>(target)];
+                return std::make_pair(seg.startByte, seg.endByte);
+            }
+            if (target < 0) {
+                if (line == 0) {
+                    return std::nullopt;
+                }
+                segments = segmentsForLine(line - 1);
+                return std::make_pair(segments.back().startByte, segments.back().endByte);
+            }
+            if (line + 1 >= totalLines) {
+                return std::nullopt;
+            }
+            segments = segmentsForLine(line + 1);
+            return std::make_pair(segments.front().startByte, segments.front().endByte);
+        };
+    }
+
     return context;
 }
 
