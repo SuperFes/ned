@@ -675,16 +675,24 @@ Normal` so it can't blow away an active session, `ned/set-search-everywhere-gest
 the escape hatch since it only fires under the Kitty keyboard protocol with no way to
 check in advance whether a given terminal supports it — confirmed by unit/`BufferView`-
 level tests only, since tmux itself doesn't advertise the protocol to the child process
-and so can't live-verify this one the way `M-s` itself was).
-
-- [ ] `search-everywhere` symbol/text-search categories. In-buffer symbols
-      (`Mode::symbolKind`) are cheap/synchronous and are the one plausible near-term
-      add. Project-wide `workspace/symbol` and `Project/Search.h`'s `SearchDirectory` are
-      both expensive (the former already needed its own debounce timer to avoid
-      hammering the LSP server; the latter is a blocking full-corpus scan with no
-      incremental precedent) — merging either into a single instantly-reranked-per-
-      keystroke list needs its own "arrives late, appends to the still-open list" design,
-      not a mechanical extension of the three synchronous sources already merged.
+and so can't live-verify this one the way `M-s` itself was), and
+`search-everywhere-symbols-and-text` (two more categories: in-buffer symbols, gathered
+synchronously once per session like the other four (`Mode::symbolKind`, skipped for a
+huge buffer or a language with no tags query), and project-wide ones, appended
+asynchronously as `workspace/symbol` replies arrive — both share one `Symbol` kind,
+distinguished only by which of `SearchEverywhereCandidate`'s two location fields is set,
+matching JetBrains' own "Symbols" tab not separating local from project-wide either. A
+new `TextMatch` kind is a debounced, *backgrounded* `Project/Search.h::SearchDirectory`
+scan (`ned/set-search-everywhere-text-search` as its own escape hatch, since this is the
+one part backed by genuinely new background-threading code — a detached `std::thread`
+plus a `shared_ptr<atomic<bool>>` alive-flag checked before its `EventLoop::Post`-marshaled
+result touches `BufferView`, since unlike every other async source here that work has no
+stop-token and will run to completion regardless of whether the pane still exists by
+then). Deliberately disk-only, not live-buffer-aware: `SearchDirectory`'s live overload
+requires its `BufferList` snapshot to happen on the *calling* thread, which would be this
+background thread rather than the main thread `BufferList` is otherwise never touched
+from — the same class of scope cut huge-file search already makes elsewhere for the
+identical reason).
 - [ ] Excerpt-scoped search covers isearch and query-replace only. A multibuffer's
       chrome is also visible to `next-error`, dabbrev completion and Vim-mode `/`
       search, none of which consult `multibuffer::ExcerptBodyRanges`

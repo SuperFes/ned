@@ -43,6 +43,7 @@
 #include "Editor/RenameReviewSettings.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/SearchEverywhereGestureSettings.h"
+#include "Editor/SearchEverywhereTextSearchSettings.h"
 #include "Editor/Session.h"
 #include "Editor/SnippetRegistry.h"
 #include "Editor/TabWidth.h"
@@ -7562,7 +7563,18 @@ TEST_CASE("TAB in search-everywhere cycles the kind filter, narrowing to just on
     REQUIRE(CandidatesContain(fixture.candidates, "quit-buffer"));
     REQUIRE_FALSE(CandidatesContain(fixture.candidates, "quit-plan.txt"));
 
-    view.OnEvent(ned::ui::test::Tab()); // Buffer -> All
+    // Symbol/TextMatch have nothing to show in this fixture (FundamentalMode
+    // has no symbolKind, no LSP manager is set, and TextMatch is async-only
+    // -- nothing arrives synchronously) -- an empty ranked list hides the
+    // popup entirely rather than showing an empty-titled one, so these two
+    // steps confirm the cycle passes through both kinds by their absence.
+    view.OnEvent(ned::ui::test::Tab()); // Buffer -> Symbol
+    REQUIRE_FALSE(fixture.candidates.has_value());
+
+    view.OnEvent(ned::ui::test::Tab()); // Symbol -> TextMatch
+    REQUIRE_FALSE(fixture.candidates.has_value());
+
+    view.OnEvent(ned::ui::test::Tab()); // TextMatch -> All
     REQUIRE(fixture.candidates->title == "Search Everywhere");
 
     view.OnEvent(ned::ui::test::Escape());
@@ -7653,6 +7665,213 @@ TEST_CASE("Escape cancels search-everywhere and returns to normal editing", "[Bu
 
     view.OnEvent(ned::ui::test::Character("z")); // proves inputMode_ is Normal again
     REQUIRE(fixture.buffer.Text() == "z");
+}
+
+// search-everywhere-symbols-and-text follow-up: in-buffer symbols.
+
+TEST_CASE("search-everywhere lists the current buffer's own symbols and Enter jumps within it",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    // A name with no chance of also fuzzy-matching a real command/macro
+    // name -- "add" alone ties exactly with add-cursor-above/-below (same
+    // FuzzyScore, since only the matched prefix affects the score) and
+    // Command outranks Symbol on a tie, which would pick the wrong one.
+    fixture.buffer.InsertAtPoint("int quxUniqueSymbolName(int a, int b) { return a + b; }\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "quxUniqueSymbolName");
+
+    REQUIRE(CandidateRowExists(fixture.candidates, "sym", "quxUniqueSymbolName"));
+
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(&fixture.activeBuffer.Get() == &fixture.buffer); // stayed in the same buffer
+    REQUIRE(fixture.buffer.Point() == 4);                    // right at the symbol's own name
+}
+
+TEST_CASE("search-everywhere reports no in-buffer symbols for a huge buffer or a language with no tags query",
+          "[BufferView]") {
+    Fixture fixture; // FundamentalMode() by default -- no symbolKind at all
+    fixture.buffer.InsertAtPoint("add add add\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "add");
+
+    REQUIRE_FALSE(CandidateRowExists(fixture.candidates, "sym", "add"));
+    view.OnEvent(ned::ui::test::Escape());
+}
+
+// search-everywhere-symbols-and-text follow-up: project-wide LSP symbols.
+
+TEST_CASE(
+    "search-everywhere debounces a workspace/symbol request as the query changes and jumps to the accepted result",
+    "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_bufferview_search_everywhere_wssymbol_test.txt";
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("x");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "Wid");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past CompletionDebounceMs()'s default 500ms
+    REQUIRE(eventLoop.DrainPosted_());                           // runs the debounce timer's posted fire callback
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "workspace/symbol");
+    REQUIRE(request["params"]["query"] == "Wid");
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array(
+                       {{{"name", "Widget"},
+                         {"kind", 23},
+                         {"location",
+                          {{"uri", "file://" + path.string()},
+                           {"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 1}}}}}}}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(CandidateRowExists(fixture.candidates, "sym", "Widget"));
+
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.activeBuffer.Get().Path() == path);
+}
+
+// search-everywhere-symbols-and-text follow-up: full-text search.
+
+TEST_CASE("search-everywhere debounces a background text search and Enter opens the matching file at that line",
+          "[BufferView]") {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_search_everywhere_text";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    { std::ofstream(dir / "notes.txt") << "line one\nfindMeUniqueString here\nline three\n"; }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::ui::EventLoop   eventLoop;
+    Fixture              fixture;
+    ned::ui::BufferView  view = fixture.View();
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "findMeUniqueString"); // >= 3 chars -- qualifies for the text-search category
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past the debounce
+    REQUIRE(eventLoop.DrainPosted_());                           // runs the debounce timer's fire callback, which
+                                                                  // spawns (and detaches) the background search thread
+
+    // That thread still needs to actually run SearchDirectory and Post its
+    // result back -- a second, independent wait/drain from the debounce
+    // timer's own one above.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    REQUIRE(eventLoop.DrainPosted_());
+
+    REQUIRE(CandidateRowExists(fixture.candidates, "text", "findMeUniqueString here"));
+
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.activeBuffer.Get().Path().has_value());
+    REQUIRE(std::filesystem::equivalent(*fixture.activeBuffer.Get().Path(), dir / "notes.txt"));
+    REQUIRE(fixture.activeBuffer.Get().Content().ByteOffsetToLine(fixture.activeBuffer.Get().Point()) == 1);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("search-everywhere never runs a text search under 3 characters", "[BufferView]") {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_search_everywhere_text_short";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    { std::ofstream(dir / "notes.txt") << "ab\n"; }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::ui::EventLoop   eventLoop;
+    Fixture              fixture;
+    ned::ui::BufferView  view = fixture.View();
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "ab"); // 2 chars -- below the threshold
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    eventLoop.DrainPosted_();
+
+    REQUIRE_FALSE(CandidateRowExists(fixture.candidates, "text", "ab"));
+
+    view.OnEvent(ned::ui::test::Escape());
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ned/set-search-everywhere-text-search false makes the text category inert", "[BufferView]") {
+    struct TextSearchGuard {
+        TextSearchGuard() : previous_(ned::editor::SearchEverywhereTextSearchEnabled()) {
+        }
+        ~TextSearchGuard() {
+            ned::editor::SetSearchEverywhereTextSearchEnabled(previous_);
+        }
+        bool previous_;
+    } const guard;
+    ned::editor::SetSearchEverywhereTextSearchEnabled(false);
+
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_search_everywhere_text_disabled";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    { std::ofstream(dir / "notes.txt") << "findMeUniqueString here\n"; }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::ui::EventLoop   eventLoop;
+    Fixture              fixture;
+    ned::ui::BufferView  view = fixture.View();
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "findMeUniqueString");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    eventLoop.DrainPosted_();
+
+    REQUIRE_FALSE(CandidateRowExists(fixture.candidates, "text", "findMeUniqueString here"));
+
+    view.OnEvent(ned::ui::test::Escape());
+    std::filesystem::remove_all(dir);
 }
 
 namespace {
