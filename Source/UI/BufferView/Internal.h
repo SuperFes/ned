@@ -49,6 +49,7 @@
 #include "Editor/Coverage/Config.h"
 #include "Editor/DabbrevComplete.h"
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/Fill.h"
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HeaderSource.h"
 #include "Editor/HighlightCache.h"
@@ -89,10 +90,10 @@
 #include "Editor/RegexPattern.h"
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/RenameReviewSettings.h"
-#include "Editor/SearchEverywhereGestureSettings.h"
-#include "Editor/SearchEverywhereTextSearchSettings.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/ScratchPad.h"
+#include "Editor/SearchEverywhereGestureSettings.h"
+#include "Editor/SearchEverywhereTextSearchSettings.h"
 #include "Editor/Session.h"
 #include "Editor/Sparkline.h"
 #include "Editor/StickyScroll.h"
@@ -1002,19 +1003,28 @@ inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& co
 // place, and `fullWidth` must still be the same
 // "size().width - gutterWidth" value at every call site.
 // wrap-indent follow-up: visual width of a line's own leading run of
-// spaces/tabs -- what a soft-wrapped continuation row hangs under, the
-// on-screen counterpart to Fill.cpp's own list-marker hang-width
-// computation for a hard-wrapped paragraph. Deliberately simpler than
-// that one: a soft wrap can land anywhere in the middle of a sentence
-// (unlike fill-paragraph, which only ever wraps a complete paragraph
-// starting at its own first line), so there is no marker to detect here
-// -- "match the line's own leading whitespace" is the only rule general
-// enough to always make sense, matching the "same" indent mode most
-// other editors that support this default to (VS Code's
-// editor.wrappingIndent, for one). Capped at half of wrapWidth (itself
-// clamped again, defensively, inside ComputeWrapSegments) so a
-// pathologically deep line can't consume a narrow pane's entire row and
-// leave no width for real content.
+// spaces/tabs, PLUS (soft-wrap-list-hang follow-up) a Markdown/Org-style
+// list marker right after it ("- ", "1. ", "- [ ] ", ...) -- what a
+// soft-wrapped continuation row hangs under, the on-screen counterpart to
+// Fill.cpp's own list-marker hang-width computation for a hard-wrapped
+// paragraph, sharing that same detector (Editor/Fill.h's DetectListMarker)
+// so the two can't recognize different marker shapes. A soft wrap can land
+// anywhere in the middle of a sentence (unlike fill-paragraph, which only
+// ever wraps a complete paragraph starting at its own first line), so
+// "match the line's own leading whitespace" alone used to be the only rule
+// general enough to always make sense -- correct for an ORDINARY paragraph,
+// but for a list item's own first line it hangs every continuation row
+// under the marker's own column (0 for a top-level item) instead of under
+// the text the marker introduces, which is what every other editor's
+// "same" wrapping-indent mode (VS Code's editor.wrappingIndent, for one)
+// actually means for a list. Marker width is counted in bytes, not
+// CodepointColumns -- safe because DetectListMarker's own alphabet
+// ("-*+.)[]xX" plus its separating space/tab) is ASCII, one byte one
+// column, the same "codepoints, not real display width" cut Fill.h's own
+// doc comment already accepts for exactly this syntax. Capped at half of
+// wrapWidth (itself clamped again, defensively, inside ComputeWrapSegments)
+// so a pathologically deep line -- marker included -- can't consume a
+// narrow pane's entire row and leave no width for real content.
 inline int LeadingIndentColumns(const text::ITextStorage& content, std::size_t lineStart, std::size_t lineEnd, int wrapWidth) {
     int         columns = 0;
     std::size_t offset  = lineStart;
@@ -1025,6 +1035,12 @@ inline int LeadingIndentColumns(const text::ITextStorage& content, std::size_t l
         }
         columns += CodepointColumns(decoded.codepoint);
         offset += decoded.byteLength;
+    }
+    if (offset < lineEnd) {
+        const std::string body = content.Substring(offset, lineEnd - offset);
+        if (const std::optional<std::size_t> markerWidth = editor::DetectListMarker(body)) {
+            columns += static_cast<int>(*markerWidth);
+        }
     }
     return std::min(columns, std::max(wrapWidth, 1) / 2);
 }
