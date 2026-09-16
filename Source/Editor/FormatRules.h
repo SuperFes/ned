@@ -122,6 +122,51 @@ struct WrapRuleValue {
     std::optional<bool> forceTrailingComma;
 };
 
+// Kind 7 (Case): a token's own text case, keyed by a bare entity-kind
+// string ("function", "parameter", "local", "type", "namespace", ...) --
+// unlike Space/Break/Blank/Wrap, this is NOT a real `*-format.scm` capture
+// name: FormatCase.h's own checker deliberately reuses EXISTING
+// infrastructure (Mode::localScopes' locals.janet qualifiers,
+// Mode::symbolKind's tags.janet SymbolKind buckets) rather than inventing
+// a new query-capture convention, so the "name" CaseRuleFor resolves
+// against is just the entity-kind label the checker itself assigns, not
+// anything a query ever emits. The entity KIND (function vs. class vs.
+// local) is still which key matched, not a separate keyed dimension,
+// matching FormattingCapabilities.md's own "per entity kind" framing
+// without inventing a second config shape alongside the flat string-keyed
+// one Space/Break/Blank/Wrap already use -- same language-scoping
+// convention too ("cpp/function" overrides the unscoped "function").
+// Ten conventions, FormattingCapabilities.md's own catalogue verbatim
+// (`<none>`, `lowercase`, `UPPERCASE`, `camelCase`, `PascalCase`,
+// `snake_case`, `Leading_snake_case`, `Upper_Snake_Case`,
+// `SCREAMING_SNAKE_CASE`, `lisp-case`) -- interpreted literally from that
+// doc's own naming (each convention's own name IS a real example of
+// itself, e.g. "Leading_snake_case" is itself leading-capitalized
+// snake_case), not independently re-verified against a live JetBrains
+// instance the way a grammar/compiler fact would be -- there is no
+// external ground truth to check a NAMING SPEC against beyond the
+// doc's own extraction. Deliberately NOT wired into the format-buffer/
+// --format reformat pipeline at all: FormattingCapabilities.md's own
+// stance is explicit -- "ship the checker first (a diagnostic), the
+// fixer second (a code action). Never an automatic reformat step --
+// renaming on save would be hostile."
+enum class CaseConvention {
+    None,             // <none> -- no constraint, always matches
+    Lowercase,        // lowercase
+    Uppercase,        // UPPERCASE
+    CamelCase,        // camelCase
+    PascalCase,       // PascalCase
+    SnakeCase,        // snake_case
+    LeadingSnakeCase, // Leading_snake_case
+    UpperSnakeCase,   // Upper_Snake_Case
+    ScreamingSnakeCase, // SCREAMING_SNAKE_CASE
+    LispCase,         // lisp-case
+};
+
+struct CaseRuleValue {
+    std::optional<CaseConvention> convention;
+};
+
 // Malformed vs. merely unknown follows SyntaxTheme.h's own trust-boundary
 // split: an empty name, a leading '@', a leading/trailing/doubled '.', or
 // embedded whitespace is a real bad call and throws std::runtime_error; an
@@ -147,6 +192,11 @@ void SetBraceCollapseSimple(const std::string& name, std::optional<bool> value);
 
 [[nodiscard]] BreakRuleValue BreakRuleFor(std::string_view name);
 [[nodiscard]] BreakRuleValue BreakRuleFor(std::string_view name, std::string_view language);
+
+void SetCaseConvention(const std::string& name, std::optional<CaseConvention> value);
+
+[[nodiscard]] CaseRuleValue CaseRuleFor(std::string_view name);
+[[nodiscard]] CaseRuleValue CaseRuleFor(std::string_view name, std::string_view language);
 
 void SetWrapPolicy(const std::string& name, std::optional<WrapPolicy> value);
 void SetWrapForceTrailingComma(const std::string& name, std::optional<bool> value);
@@ -175,6 +225,20 @@ void SetBlankMaxBefore(const std::string& name, std::optional<int> value);
 // Same round-trip shape for WrapPolicy ("never"/"always").
 [[nodiscard]] WrapPolicy  WrapPolicyByName(const std::string& name);
 [[nodiscard]] std::string WrapPolicyName(WrapPolicy policy);
+
+// Same round-trip shape for CaseConvention -- kebab-case names for the
+// multi-word conventions, matching every other Janet-facing enum name in
+// this codebase (BracePlacementByName's own "next-line-indented").
+[[nodiscard]] CaseConvention CaseConventionByName(const std::string& name);
+[[nodiscard]] std::string    CaseConventionName(CaseConvention convention);
+
+// The pure check itself: whether `name` conforms to `convention`. `None`
+// always matches; every other convention is interpreted literally from
+// FormattingCapabilities.md's own naming (see CaseConvention's own header
+// comment) via a straightforward structural scan, no regex. Empty input
+// never matches anything but `None` -- a real identifier is never empty,
+// so this only matters for a malformed/degenerate capture.
+[[nodiscard]] bool MatchesCaseConvention(std::string_view name, CaseConvention convention);
 
 } // namespace ned::editor
 
