@@ -1353,49 +1353,18 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
 
     **The load-bearing design decision — local is the degenerate case.** The protocol should be the *only* interface, with in-process execution as one transport behind it rather than a bypass around it. Two things follow. It can't rot: every local keystroke exercises the same path a remote session uses, so remote stops being a bolt-on that's broken every time it's picked back up. And it makes "where does this script run" a transport question rather than an architectural one — the same request answered in-process, by a local subprocess, or by a host across a socket.
 
-    That last point interacts directly with the jank analysis above: if scripts execute
-    where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
-    lives on whichever side actually runs them. A remote session's client could then be
-    genuinely thin — and, per the same analysis, a headless binary already links
-    `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` +
-    `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316
-    objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter
-    *grammar* rather than the runtime, and the whole UI-side coupling is one call
-    (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is
-    already there to be taken.
+    That last point interacts directly with the jank analysis above: if scripts execute where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS) lives on whichever side actually runs them. A remote session's client could then be genuinely thin — and, per the same analysis, a headless binary already links `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` + `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316 objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter *grammar* rather than the runtime, and the whole UI-side coupling is one call (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is already there to be taken.
 
-    **Compression must be negotiated, and "none" must be first-class.** Nothing
-    compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib,
-    lzma or brotli — so any codec is a new dependency, and assuming one is present on
-    both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream,
-    or the encoding can't change after the handshake; advertise available codecs at
-    handshake and fall back to identity. LSP's own `capabilities` exchange is the model,
-    and this codebase already understands it well.
+    **Compression must be negotiated, and "none" must be first-class.** Nothing compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib, lzma or brotli — so any codec is a new dependency, and assuming one is present on both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream, or the encoding can't change after the handshake; advertise available codecs at handshake and fall back to identity. LSP's own `capabilities` exchange is the model, and this codebase already understands it well.
 
-    **This must inherit four protocol bugs already paid for, not rediscover them.** Ned
-    has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type`
-    envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an
-    `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
-    - an unbounded blocking `connect()` froze a live editor when the daemon's backlog
-      filled (`Lsp/BrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
+    **This must inherit four protocol bugs already paid for, not rediscover them.** Ned has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type` envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
+    - an unbounded blocking `connect()` froze a live editor when the daemon's backlog filled (`Lsp/BrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
     - joining a reader thread under a held mutex wedged the daemon for hours;
-    - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the
-      `ctest -j8` timeouts;
-    - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in
-      `LspClient`/`DapClient`/`AcpClient`.
-    A new protocol gets timeouts on every blocking call, a non-blocking connect, an
-    asynchronous write queue, and no lock held across a join — by construction, on day
-    one. `EventLoop::Post` is the existing, proven way results come back to the main
-    thread; the protocol layer should not invent a second one.
+    - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the `ctest -j8` timeouts;
+    - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in `LspClient`/`DapClient`/`AcpClient`.
+    A new protocol gets timeouts on every blocking call, a non-blocking connect, an asynchronous write queue, and no lock held across a join — by construction, on day one. `EventLoop::Post` is the existing, proven way results come back to the main thread; the protocol layer should not invent a second one.
 
-    **Open questions worth settling before any code:** framing (length-prefixed binary vs.
-    reusing the `Content-Length` shape already implemented three times); whether requests
-    are JSON (nlohmann is already vendored) or something denser; how a long-running remote
-    operation streams partial results and gets cancelled (LSP's `$/progress` and
-    `$/cancelRequest` are the obvious prior art, already handled in `LspManager`);
-    versioning and forward compatibility; and authentication/transport (bare `AF_UNIX`
-    locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and trust conventions
-    in `BrokerSocketPath.cpp` are the local precedent).
+    **Open questions worth settling before any code:** framing (length-prefixed binary vs. reusing the `Content-Length` shape already implemented three times); whether requests are JSON (nlohmann is already vendored) or something denser; how a long-running remote operation streams partial results and gets cancelled (LSP's `$/progress` and `$/cancelRequest` are the obvious prior art, already handled in `LspManager`); versioning and forward compatibility; and authentication/transport (bare `AF_UNIX` locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and trust conventions in `BrokerSocketPath.cpp` are the local precedent).
 
     **Security is not a later concern here.** "Execute this script over a socket" is a
     remote code execution surface by definition. Ned already gates project-local
