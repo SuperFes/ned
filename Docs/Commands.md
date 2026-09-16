@@ -3,7 +3,7 @@
 Every command reachable from `M-x`, from a keybinding, or from Janet via
 `ned/run-command`.
 
-305 commands.
+308 commands.
 
 ## `acp-rewind`
 
@@ -464,6 +464,14 @@ Kill from point to the end of the next word.
 ## `kmacro-end-or-call-macro`
 
 Stop recording a keyboard macro, or replay the last recorded one if not currently recording.
+
+## `kmacro-insert-macro-definition`
+
+Insert a named macro's (ned/register-macro ...) form at point, for pasting into init.janet.
+
+## `kmacro-name-last-macro`
+
+Give the most recently recorded keyboard macro a name.
 
 ## `kmacro-start-macro`
 
@@ -944,6 +952,10 @@ Move point down by roughly a page.
 ## `scroll-page-up`
 
 Move point up by roughly a page.
+
+## `search-everywhere`
+
+Fuzzy-search commands, named macros, project files, and open buffers in one merged, ranked list; TAB narrows to one kind.
 
 ## `search-in-results`
 

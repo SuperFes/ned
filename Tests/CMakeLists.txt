@@ -30,6 +30,7 @@ add_executable(ned_tests
             BufferViewImportFixupTest.cpp
             SnippetTest.cpp
             SnippetRegistryTest.cpp
+            MacroRegistryTest.cpp
             BundledSnippetsTest.cpp
             LinkedEditingSessionTest.cpp
             JanetSymbolCompleteTest.cpp
@@ -57,6 +58,7 @@ add_executable(ned_tests
             KeyTest.cpp
             CommandTest.cpp
             FuzzyMatchTest.cpp
+            SearchEverywhereTest.cpp
             KeymapTest.cpp
             DispatcherTest.cpp
             CommandsTest.cpp

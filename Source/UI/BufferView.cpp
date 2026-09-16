@@ -291,6 +291,8 @@ bool BufferView::OnKeyEvent(const Event& event) {
         case InputMode::DapSetVariableValue:
         case InputMode::DeleteProperty:
         case InputMode::GotoLine:
+        case InputMode::NameLastMacro:
+        case InputMode::InsertMacroDefinition:
         case InputMode::LspRenameNewName:
         case InputMode::RenameLocalNewName:
         case InputMode::OrgDeadline:
@@ -359,6 +361,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
 
         case InputMode::SwitchToBuffer:
             HandleSwitchToBufferKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::SearchEverywhere:
+            HandleSearchEverywhereKey(*chord);
             ClampPointToNarrowing();
             return true;
 
@@ -1146,11 +1153,14 @@ void BufferView::RequestQuickFixAtPoint() {
 }
 
 void BufferView::ReplayMacro() {
+    ReplayMacro(dispatcher_.LastMacro());
+}
+
+void BufferView::ReplayMacro(const std::vector<editor::KeyChord>& macro) {
     if (replayingMacro_) {
         return;
     }
 
-    const std::vector<editor::KeyChord> macro = dispatcher_.LastMacro();
     if (macro.empty()) {
         statusMessage_ = "No keyboard macro has been recorded yet.";
         return;

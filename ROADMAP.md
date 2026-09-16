@@ -658,8 +658,32 @@ neither stops on an excerpt's own header path nor offers a replacement the buffe
 then silently refuse — `ned/set-multibuffer-scoped-search` turns it off) and
 `multibuffer-search-in-results` (`search-in-results` on `C-c s`: a fresh search over just
 the files the current results buffer already names, resolved from a multibuffer's own
-excerpt sources or from a flat `path:line:` buffer's own lines).
+excerpt sources or from a flat `path:line:` buffer's own lines), and
+`search-everywhere` (`M-s`: one merged, ranked popup over commands, named keyboard
+macros (`Editor/MacroRegistry.h`, `ned/register-macro` — the same feature that promoted
+`kmacro-end-or-call-macro`'s single anonymous last-macro slot to a listable,
+invoke-by-name set), project files, and open buffers — `Editor/SearchEverywhere.h`'s
+`RankSearchEverywhere` calls `FuzzyScore` directly per candidate rather than reusing
+`FuzzyFilterAndRank`, which discards the per-candidate kind/detail a merged list needs;
+`TAB` cycles a kind filter shown in the popup's own title, since no picker in this
+codebase has a tab-strip widget to put it in instead).
 
+- [ ] `search-everywhere` gesture: JetBrains' double-Shift-tap invocation is deliberately
+      not implemented yet. Confirmed feasible — a bare Shift press reaches a focused
+      widget's `OnKeyEvent` as a raw `ncinput` before `KeyTranslation.cpp`'s
+      `IsBareModifierKey` filters it out, so a `PrefixArgumentReader`-shaped detector
+      (press/press-within-a-window/no-real-key-between) could intercept it there — but it
+      only fires under the Kitty keyboard protocol (recent Konsole; likely not through
+      tmux), so `M-s` has to stay as the always-working fallback regardless. Real design
+      work (a new detector + gesture-vs-chord dispatch), not a mechanical follow-up.
+- [ ] `search-everywhere` symbol/text-search categories. In-buffer symbols
+      (`Mode::symbolKind`) are cheap/synchronous and are the one plausible near-term
+      add. Project-wide `workspace/symbol` and `Project/Search.h`'s `SearchDirectory` are
+      both expensive (the former already needed its own debounce timer to avoid
+      hammering the LSP server; the latter is a blocking full-corpus scan with no
+      incremental precedent) — merging either into a single instantly-reranked-per-
+      keystroke list needs its own "arrives late, appends to the still-open list" design,
+      not a mechanical extension of the three synchronous sources already merged.
 - [ ] Excerpt-scoped search covers isearch and query-replace only. A multibuffer's
       chrome is also visible to `next-error`, dabbrev completion and Vim-mode `/`
       search, none of which consult `multibuffer::ExcerptBodyRanges`

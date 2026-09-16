@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-191 bindings.
+193 bindings.
 
 ## `ned/backward-char`
 
@@ -121,6 +121,10 @@ Insert text at point.
 
 Backup snapshots recoverable for the current buffer, as an array of absolute paths -- the crash-recovery autosave first if one exists, then saved versions newest-first. Empty for a pathless buffer or when nothing was backed up. Index into it with ned/recover-backup.
 
+## `ned/macro-names`
+
+Return every registered macro name, sorted.
+
 ## `ned/message`
 
 Show a status/echo-area message.
@@ -152,6 +156,10 @@ Register a Janet function as a named, bindable command.
 ## `ned/register-language`
 
 Register a language from a directory holding its language.janet -- the exact layout ned's own bundled languages use (Source/Languages/`<name>`/), so everything a definition can say works: extensions and filenames (claimed automatically, no separate set-mode-for-extension call needed), comment syntax, keymap, query files discovered beside it as `<kind>`.janet with an upstream/ subdirectory checked first, escapes, LSP root markers, import resolution, injection aliases, snippets. The directory's basename is the language name and its mode is named `<name>`-mode; a registered name shadows a bundled one, so redefining a bundled language is expected use, as is re-registering. Two keys exist for exactly this path: :grammar-library names a shared library exporting tree_sitter_`<grammar>` to dlopen (omit it to use a bundled grammar), and :queries-dir names a foreign tree-sitter-layout directory (e.g. /usr/share/tree-sitter/queries/`<lang>`) scanned per kind as `<kind>`.janet or `<kind>`.scm for whatever discovery didn't find. Throws with a file:line message on a malformed definition. Directories under $XDG_CONFIG_HOME/ned/languages/ and a trusted project's .ned/languages/ load automatically at startup through this same path.
+
+## `ned/register-macro`
+
+Register a named keyboard macro: (name chords), e.g. (ned/register-macro "save-and-format" ["C-c C-f" "C-x C-s"]) -- chords is a list with one Emacs kbd-style chord per element, not one sequence string. search-everywhere can find and run a named macro; kmacro-insert-macro-definition writes one of these calls for you from an already-recorded, already-named macro. An empty chords list clears the name; re-registering overwrites it.
 
 ## `ned/register-snippet`
 
