@@ -1356,13 +1356,13 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
       project-wide search, a refactor, a script evaluation. Round-trip count, not bandwidth,
       is what makes remote editing feel bad, so this is likely faster as well as simpler.
 
-      **The load-bearing design decision — local is the degenerate case.** The protocol
-      should be the *only* interface, with in-process execution as one transport behind it
-      rather than a bypass around it. Two things follow. It can't rot: every local keystroke
-      exercises the same path a remote session uses, so remote stops being a bolt-on that's
-      broken every time it's picked back up. And it makes "where does this script run"
-      a transport question rather than an architectural one — the same request answered
-      in-process, by a local subprocess, or by a host across a socket.
+    **The load-bearing design decision — local is the degenerate case.** The protocol
+    should be the *only* interface, with in-process execution as one transport behind it
+    rather than a bypass around it. Two things follow. It can't rot: every local keystroke
+    exercises the same path a remote session uses, so remote stops being a bolt-on that's
+    broken every time it's picked back up. And it makes "where does this script run"
+    a transport question rather than an architectural one — the same request answered
+    in-process, by a local subprocess, or by a host across a socket.
 
     That last point interacts directly with the jank analysis above: if scripts execute
     where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
@@ -1813,18 +1813,6 @@ for closed-issue history.
   Fix shape: loop operands[1..] in the has-parent branch of `QueryPredicates.cpp`'s
   `EvaluatePredicateCall`, any-of semantics. Unblocked now that the M3 gate has landed — the change will
   show as a deliberate differential/oracle diff rather than an invisible drift.
-
-- **org.indent hangs a headline that directly follows a list item.** Surfaced by (not
-  introduced by) the Step 5 oracle corpus: in `Tests/Oracle/expected/sample.org.oracle`,
-  `* Second tree` — the line right after `- [ ] unchecked box`, no blank line between —
-  computes indent [2], the list item's hang column, because the grammar's `listitem`
-  node's byte range reaches through the following headline's line and the escape's
-  ancestor walk (`Languages/Org.cpp`) doesn't exclude a line that *starts a headline*.
-  A reindent would shift the star and corrupt the outline. Pre-existing in the escape
-  since smart-indentation; the oracle now pins the (wrong) behavior, so fixing it is a
-  visible one-line diff there. Fix shape: bail from the hang sum when the line's first
-  non-blank char is `*` at column 0 (a headline), mirroring the headline exclusion the
-  highlight side already has.
 
 - **A comment as the first line of a Python body reindents to column 0.** Found by the
   corpus addition for the indent-column work (2026-09-12), pre-existing and unrelated to

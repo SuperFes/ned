@@ -973,6 +973,22 @@ TEST_CASE("OrgMode indentColumn still hangs a blank continuation on the FIRST En
     REQUIRE(*column == 2);
 }
 
+TEST_CASE("OrgMode indentColumn never hangs a headline directly following a list item", "[Indent]") {
+    // ROADMAP.md watch-list entry: tree-sitter-org's own `listitem` node
+    // byte range reaches THROUGH a directly-following headline line with
+    // no blank line between them (confirmed via a real parse dump), so
+    // the ancestor walk used to resolve inside that listitem and hang the
+    // headline's stars to its own bullet width -- a reindent would shift
+    // the star and corrupt the outline. Real Org syntax requires a
+    // headline's stars to start at column 0, so this is unambiguous.
+    const auto mode = OrgMode();
+    Buffer     buffer("test.org");
+    buffer.InsertAtPoint("- [ ] unchecked box\n* Second tree\n");
+
+    const auto [headlineStart, headlineEnd] = LineRange(buffer, 1); // "* Second tree"
+    REQUIRE(mode.indentColumn(buffer.Text(), headlineStart, headlineEnd) == 0);
+}
+
 TEST_CASE("CppMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
           "[Indent]") {
     const auto mode = CppMode();

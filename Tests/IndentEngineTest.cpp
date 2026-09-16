@@ -276,6 +276,24 @@ TEST_CASE("Reindenting leaves a PHP heredoc byte-for-byte", "[Indent]") {
     CHECK(buffer.Text() == source);
 }
 
+TEST_CASE("Reindenting leaves an Org #+begin_src block's body byte-for-byte", "[Indent]") {
+    // org-block-body-verbatim-protection follow-up: a batch reindent used
+    // to silently flatten every source block's own indentation to column
+    // 0 -- this grammar tokenizes a block's body generically regardless
+    // of its declared language, so recomputing an indent from the tree
+    // would be nonsense anyway. Fixed via org/highlights.janet's
+    // `(block) @text.literal`, the same SyntaxClass::String-based
+    // VerbatimRanges protection markdown/highlights.janet's own
+    // `(fenced_code_block) @text.literal` already relies on.
+    const std::string source =
+        "* Heading\n#+begin_src python\ndef f():\n    return 1\n  ragged\n#+end_src\n";
+    ned::text::Buffer buffer("t.org");
+    buffer.InsertAtPoint(source);
+
+    CHECK(ReindentWhole(buffer, ned::editor::OrgMode()) == 0);
+    CHECK(buffer.Text() == source);
+}
+
 TEST_CASE("The line a multi-line string opens on is ordinary code and still indents", "[Indent]") {
     // The rule protects the INTERIOR, not the construct: getting this wrong in
     // the other direction would quietly stop reindenting any line that happens
