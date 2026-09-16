@@ -1939,13 +1939,19 @@ void Buffer::MoveToLine(std::size_t targetLine, std::size_t tabWidth) {
     CanAmend_   = false;
 }
 
-void Buffer::MoveToColumnInRange(std::size_t currentRowStart, std::size_t targetRangeStart, std::size_t targetRangeEnd,
-                                 std::size_t tabWidth) {
-    const std::size_t desiredColumn = GoalColumn_.value_or(VisualColumnForByteOffset(currentRowStart, Point_, tabWidth));
-    const std::size_t landingByte   = ByteOffsetForRangeAndColumn(targetRangeStart, targetRangeEnd, desiredColumn, tabWidth);
+void Buffer::MoveToColumnInRange(std::size_t currentRowStart, int currentRowHang, std::size_t targetRangeStart,
+                                 std::size_t targetRangeEnd, int targetRowHang, std::size_t tabWidth) {
+    const std::size_t desiredColumn = GoalColumn_.value_or(
+        static_cast<std::size_t>(std::max(0, currentRowHang)) + VisualColumnForByteOffset(currentRowStart, Point_, tabWidth));
+    // A goal column that doesn't even clear the target row's own hang
+    // clamps to that row's first real byte -- the mouse-click precedent
+    // for landing inside a hang region (Viewport::ByteOffsetForPoint).
+    const std::size_t columnWithinTarget =
+        (desiredColumn > static_cast<std::size_t>(std::max(0, targetRowHang))) ? desiredColumn - static_cast<std::size_t>(std::max(0, targetRowHang)) : 0;
+    const std::size_t landingByte = ByteOffsetForRangeAndColumn(targetRangeStart, targetRangeEnd, columnWithinTarget, tabWidth);
 
     Point_      = SnapToGraphemeBoundary(*Storage_, landingByte);
-    GoalColumn_ = desiredColumn; // the un-clamped goal, not necessarily where we landed
+    GoalColumn_ = desiredColumn; // the true on-screen column (hang included), un-clamped -- not necessarily where we landed
     CanAmend_   = false;
 }
 

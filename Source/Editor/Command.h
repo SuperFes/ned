@@ -1080,26 +1080,41 @@ struct CommandContext {
     // two are not mutually exclusive in principle and mean different things
     // to the host UI (Exit() vs a to-the-shell Suspend()).
     bool suspend = false;
+    // visual-line-motion follow-up: the [start, end) byte range of one
+    // wrapped row PLUS its own wrap-indent hang (Editor/WrapIndent.h) --
+    // the hang matters here as much as the range does. A stored goal
+    // column has to mean the same true on-screen column on every row it's
+    // reused against, and a hang shifts a row's own real content right of
+    // its range's start by that many columns -- carrying it alongside the
+    // range (rather than leaving Buffer::MoveToColumnInRange's caller to
+    // re-derive it) is what keeps a captured goal column from silently
+    // meaning a different screen column the moment source and target row
+    // have different hangs (a wrapped continuation row against a line's
+    // own first row, or two lines indented to different depths).
+    struct VisualRow {
+        std::size_t start;
+        std::size_t end;
+        int         hang = 0;
+    };
     // visual-line-motion follow-up: set by the host UI before each dispatch
     // (unset/nullptr whenever wrap is off, or nothing UI is driving this
     // invocation -- most unit tests, M-x's own Registry().Invoke bypass) --
     // same "a UI fact a command needs" shape as mode/lspManager above, but
-    // a callback rather than a plain value since what it answers (a byte
-    // range) depends on which point and which row-relative-to-that-point
-    // the caller asks about. Resolves the [start, end) byte range of the
-    // wrapped row `rowDelta` rows away from `point`'s own current row
-    // (rowDelta == 0 is that row itself) within the SAME logical line when
-    // possible, falling through to the adjacent logical line's own
-    // first/last row when `point`'s line doesn't have that many wrapped
-    // rows -- nullopt only when there is no such line at all (already on
-    // the buffer's first/last line and asking to go further). next-line/
-    // previous-line are the only commands that read this; every other
-    // command ignores it. next-line/previous-line fall back to their
+    // a callback rather than a plain value since what it answers depends
+    // on which point and which row-relative-to-that-point the caller asks
+    // about. Resolves the wrapped row `rowDelta` rows away from `point`'s
+    // own current row (rowDelta == 0 is that row itself) within the SAME
+    // logical line when possible, falling through to the adjacent logical
+    // line's own first/last row when `point`'s line doesn't have that many
+    // wrapped rows -- nullopt only when there is no such line at all
+    // (already on the buffer's first/last line and asking to go further).
+    // next-line/previous-line are the only commands that read this; every
+    // other command ignores it. next-line/previous-line fall back to their
     // original, UI-agnostic Buffer::MoveToNextLine/MoveToPreviousLine
     // behavior whenever this is unset -- see Commands.cpp's own comment on
     // those two registrations for why that keeps every non-wrapped case
     // (the overwhelming majority) byte-for-byte unchanged.
-    std::function<std::optional<std::pair<std::size_t, std::size_t>>(std::size_t point, int rowDelta)> visualRowForPoint;
+    std::function<std::optional<VisualRow>(std::size_t point, int rowDelta)> visualRowForPoint;
 };
 
 using CommandFunction = std::function<void(CommandContext&)>;

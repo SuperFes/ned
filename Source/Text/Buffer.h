@@ -740,18 +740,38 @@ class Buffer {
     // move by on-screen WRAPPED row instead of logical line when a UI
     // layer that knows about wrapping drives it (Commands.cpp, via
     // CommandContext::visualRowForPoint), while Buffer itself stays
-    // completely unaware wrapping exists. currentRowStart is where point's
-    // OWN current row begins (needed to interpret an as-yet-unset goal
-    // column as this row's own visual column, exactly the role
-    // MoveToLine's currentLineStart plays for logical motion); targetRange
-    // is the row being moved TO. GoalColumn_ persists across a run the
-    // same way MoveToLine's already does -- reset by everything else,
-    // including a plain logical MoveToLine/MoveDownLines/MoveUpLines call,
-    // so mixing visual and logical vertical motion in one run behaves
-    // exactly like switching row-shape mid-run naturally should: the goal
-    // recaptures from wherever point actually landed.
-    void MoveToColumnInRange(std::size_t currentRowStart, std::size_t targetRangeStart, std::size_t targetRangeEnd,
-                             std::size_t tabWidth = 1);
+    // completely unaware wrapping (or hang indents) exist. currentRowStart
+    // is where point's OWN current row begins (needed to interpret an
+    // as-yet-unset goal column as this row's own visual column, exactly
+    // the role MoveToLine's currentLineStart plays for logical motion);
+    // targetRange is the row being moved TO.
+    //
+    // currentRowHang/targetRowHang: an opaque extra column count each row
+    // contributes before its own real content starts -- the same "Buffer
+    // doesn't know WHY, just that it's a column offset" role tabWidth
+    // already plays. Without these, a captured goal column meant "this
+    // many columns into MY row's own real content," which stopped being
+    // the same on-screen column the instant a wrapped continuation row
+    // (visually indented under wrap-indent's own hang -- see
+    // Editor/WrapIndent.h) traded places with a row that has no hang (a
+    // line's own first row, or wrap-indent off): the exact same stored
+    // number pointed at two different screen columns. GoalColumn_ now
+    // always stores the true on-screen column, hang included: captured as
+    // currentRowHang + (real column within currentRowStart), and landed by
+    // subtracting targetRowHang back off before resolving into
+    // targetRange (clamped to 0 -- a goal column that doesn't clear the
+    // target row's own hang lands at that row's own first byte, the same
+    // clamp-to-start a mouse click into a hang region already gets).
+    // Both default to 0, so a caller with no concept of hang (there isn't
+    // one today outside BufferView's own wrap-indent code) behaves exactly
+    // as before. Persists across a run the same way MoveToLine's already
+    // does -- reset by everything else, including a plain logical
+    // MoveToLine/MoveDownLines/MoveUpLines call, so mixing visual and
+    // logical vertical motion in one run behaves exactly like switching
+    // row-shape mid-run naturally should: the goal recaptures from
+    // wherever point actually landed.
+    void MoveToColumnInRange(std::size_t currentRowStart, int currentRowHang, std::size_t targetRangeStart,
+                             std::size_t targetRangeEnd, int targetRowHang, std::size_t tabWidth = 1);
 
     [[nodiscard]] bool CanUndo() const;
     [[nodiscard]] bool CanRedo() const;

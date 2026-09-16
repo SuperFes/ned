@@ -82,8 +82,7 @@ editor::CommandContext BufferView::MakeContext() {
     // this once per cursor with THAT cursor's own current point via
     // Buffer::ForEachCursor's Point_ swap.
     if (viewport_.EffectiveWrapLines()) {
-        context.visualRowForPoint =
-            [this](std::size_t point, int rowDelta) -> std::optional<std::pair<std::size_t, std::size_t>> {
+        context.visualRowForPoint = [this](std::size_t point, int rowDelta) -> std::optional<editor::CommandContext::VisualRow> {
             const text::Buffer&       buffer     = context_.activeBuffer.Get();
             const text::ITextStorage& content    = buffer.Content();
             const std::size_t         totalLines = content.LineCount();
@@ -95,6 +94,9 @@ editor::CommandContext BufferView::MakeContext() {
                 const std::vector<bufferview::RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, point);
                 const int fullWidth = std::max(1, size().width - static_cast<int>(GutterWidth()));
                 return ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
+            };
+            const auto toRow = [](const bufferview::WrapSegment& seg) {
+                return editor::CommandContext::VisualRow{.start = seg.startByte, .end = seg.endByte, .hang = seg.continuationIndent};
             };
 
             std::vector<bufferview::WrapSegment> segments = segmentsForLine(line);
@@ -109,21 +111,20 @@ editor::CommandContext BufferView::MakeContext() {
 
             const auto target = static_cast<std::ptrdiff_t>(idx) + rowDelta;
             if (target >= 0 && target < static_cast<std::ptrdiff_t>(segments.size())) {
-                const bufferview::WrapSegment& seg = segments[static_cast<std::size_t>(target)];
-                return std::make_pair(seg.startByte, seg.endByte);
+                return toRow(segments[static_cast<std::size_t>(target)]);
             }
             if (target < 0) {
                 if (line == 0) {
                     return std::nullopt;
                 }
                 segments = segmentsForLine(line - 1);
-                return std::make_pair(segments.back().startByte, segments.back().endByte);
+                return toRow(segments.back());
             }
             if (line + 1 >= totalLines) {
                 return std::nullopt;
             }
             segments = segmentsForLine(line + 1);
-            return std::make_pair(segments.front().startByte, segments.front().endByte);
+            return toRow(segments.front());
         };
     }
 
