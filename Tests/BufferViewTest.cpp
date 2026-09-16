@@ -42,6 +42,7 @@
 #include "Editor/Register.h"
 #include "Editor/RenameReviewSettings.h"
 #include "Editor/ScratchPad.h"
+#include "Editor/SearchEverywhereGestureSettings.h"
 #include "Editor/Session.h"
 #include "Editor/SnippetRegistry.h"
 #include "Editor/TabWidth.h"
@@ -7652,6 +7653,96 @@ TEST_CASE("Escape cancels search-everywhere and returns to normal editing", "[Bu
 
     view.OnEvent(ned::ui::test::Character("z")); // proves inputMode_ is Normal again
     REQUIRE(fixture.buffer.Text() == "z");
+}
+
+namespace {
+
+// Process-wide static setting, SnippetRegistryGuard's own precedent.
+struct SearchEverywhereGestureGuard {
+    SearchEverywhereGestureGuard() : previous_(ned::editor::SearchEverywhereGestureEnabled()) {
+    }
+    ~SearchEverywhereGestureGuard() {
+        ned::editor::SetSearchEverywhereGestureEnabled(previous_);
+    }
+    bool previous_;
+};
+
+} // namespace
+
+// search-everywhere follow-up: the double-tap-Shift gesture.
+
+TEST_CASE("Two Shift presses close together open search-everywhere", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::ShiftPress());
+    view.OnEvent(ned::ui::test::ShiftPress());
+
+    REQUIRE(fixture.statusMessage == "Search: ");
+}
+
+TEST_CASE("Two Shift presses more than the gesture window apart do not open search-everywhere",
+          "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::ShiftPress());
+    std::this_thread::sleep_for(std::chrono::milliseconds(450));
+    view.OnEvent(ned::ui::test::ShiftPress());
+
+    REQUIRE(fixture.statusMessage.empty());
+    REQUIRE(fixture.buffer.Text().empty());
+}
+
+TEST_CASE("A real keystroke between two Shift presses prevents search-everywhere from opening",
+          "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::ShiftPress());
+    view.OnEvent(ned::ui::test::Character("z")); // an ordinary capital-less keystroke in between
+    view.OnEvent(ned::ui::test::ShiftPress());
+
+    REQUIRE(fixture.buffer.Text() == "z");
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("Disabling ned/set-search-everywhere-gesture makes the double-tap inert", "[BufferView]") {
+    const SearchEverywhereGestureGuard guard;
+    ned::editor::SetSearchEverywhereGestureEnabled(false);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::ShiftPress());
+    view.OnEvent(ned::ui::test::ShiftPress());
+
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("The gesture never interrupts an already-active isearch session", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("buzz");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('s')); // isearch-forward
+    REQUIRE(fixture.statusMessage == "I-search: ");
+
+    view.OnEvent(ned::ui::test::ShiftPress());
+    view.OnEvent(ned::ui::test::ShiftPress());
+    REQUIRE(fixture.statusMessage == "I-search: "); // untouched -- isearch is still the live session
+
+    TypeText(view, "z");
+    REQUIRE(fixture.statusMessage == "I-search: z"); // still typing into isearch, not a fresh search-everywhere query
+
+    view.OnEvent(ned::ui::test::Escape());
 }
 
 // point-to-register/jump-to-register/copy-to-register/insert-register follow-up.

@@ -666,16 +666,17 @@ invoke-by-name set), project files, and open buffers — `Editor/SearchEverywher
 `RankSearchEverywhere` calls `FuzzyScore` directly per candidate rather than reusing
 `FuzzyFilterAndRank`, which discards the per-candidate kind/detail a merged list needs;
 `TAB` cycles a kind filter shown in the popup's own title, since no picker in this
-codebase has a tab-strip widget to put it in instead).
+codebase has a tab-strip widget to put it in instead), and `search-everywhere-gesture`
+(JetBrains' double-Shift-tap invocation, `UI/DoubleTapModifier.h`'s
+`DoubleTapModifierDetector` — Shift-specific, not `KeyTranslation.cpp`'s own
+`IsBareModifierKey`, which spans all 14 modifier keys and would let Shift-then-Ctrl count
+as a "double tap"; fed at the top of `BufferView::OnKeyEvent`, gated on `inputMode_ ==
+Normal` so it can't blow away an active session, `ned/set-search-everywhere-gesture` as
+the escape hatch since it only fires under the Kitty keyboard protocol with no way to
+check in advance whether a given terminal supports it — confirmed by unit/`BufferView`-
+level tests only, since tmux itself doesn't advertise the protocol to the child process
+and so can't live-verify this one the way `M-s` itself was).
 
-- [ ] `search-everywhere` gesture: JetBrains' double-Shift-tap invocation is deliberately
-      not implemented yet. Confirmed feasible — a bare Shift press reaches a focused
-      widget's `OnKeyEvent` as a raw `ncinput` before `KeyTranslation.cpp`'s
-      `IsBareModifierKey` filters it out, so a `PrefixArgumentReader`-shaped detector
-      (press/press-within-a-window/no-real-key-between) could intercept it there — but it
-      only fires under the Kitty keyboard protocol (recent Konsole; likely not through
-      tmux), so `M-s` has to stay as the always-working fallback regardless. Real design
-      work (a new detector + gesture-vs-chord dispatch), not a mechanical follow-up.
 - [ ] `search-everywhere` symbol/text-search categories. In-buffer symbols
       (`Mode::symbolKind`) are cheap/synchronous and are the one plausible near-term
       add. Project-wide `workspace/symbol` and `Project/Search.h`'s `SearchDirectory` are

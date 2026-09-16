@@ -56,6 +56,7 @@ add_executable(ned_tests
             LineEndingTest.cpp
             LineEndingPolicyTest.cpp
             KeyTest.cpp
+            DoubleTapModifierTest.cpp
             CommandTest.cpp
             FuzzyMatchTest.cpp
             SearchEverywhereTest.cpp

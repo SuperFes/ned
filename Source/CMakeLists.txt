@@ -83,6 +83,7 @@ add_library(ned_lib STATIC
         Editor/ImportFixup.cpp
         Editor/ImportFixupSettings.cpp
         Editor/RenameReviewSettings.cpp
+        Editor/SearchEverywhereGestureSettings.cpp
         Editor/ClassFileSyncSettings.cpp
         Editor/CodeFoldSettings.cpp
         Editor/StickyScroll.cpp
@@ -271,6 +272,7 @@ add_library(ned_lib STATIC
         Janet/PluginLoader.cpp
         Janet/InitFile.cpp
         UI/KeyTranslation.cpp
+        UI/DoubleTapModifier.cpp
         UI/Border.cpp
         UI/Widget.cpp
         UI/Compositing.cpp

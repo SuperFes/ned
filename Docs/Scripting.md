@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-193 bindings.
+194 bindings.
 
 ## `ned/backward-char`
 
@@ -628,6 +628,10 @@ Enable/disable remembering each file's last point and scroll position across edi
 ## `ned/set-scratch-auto-save`
 
 Enable/disable automatically saving modified scratch notes (find-scratch) on a periodic timer (default true).
+
+## `ned/set-search-everywhere-gesture`
+
+Enable/disable the double-tap-Shift gesture that opens search-everywhere (default true) -- an escape hatch, not the only way in: M-s always works regardless of this setting. The gesture itself only fires under the Kitty keyboard protocol, which Notcurses negotiates on its own with no way for ned to check in advance whether a given terminal/multiplexer supports it; turn this off if an untested one produces a false trigger.
 
 ## `ned/set-session-restore`
 

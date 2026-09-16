@@ -63,6 +63,7 @@
 #include "Editor/RecencyGlow.h"
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/RenameReviewSettings.h"
+#include "Editor/SearchEverywhereGestureSettings.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
@@ -553,6 +554,10 @@ namespace {
 
     void NedSetRenameReview(bool enabled) {
         editor::SetRenameThroughReview(enabled);
+    }
+
+    void NedSetSearchEverywhereGesture(bool enabled) {
+        editor::SetSearchEverywhereGestureEnabled(enabled);
     }
 
     void NedSetClassFileSync(bool enabled) {
@@ -1879,6 +1884,13 @@ void InstallEditorBindings(Environment& env) {
         "occurrences a rename deliberately skipped are visible, each excluded until opted into. Turn it off to "
         "apply a rename immediately, as rename-symbol and lsp-rename did before. A rename that also creates, "
         "deletes or renames files is applied directly either way -- a multibuffer cannot represent that.");
+    env.Register<&NedSetSearchEverywhereGesture>(
+        "ned", "set-search-everywhere-gesture",
+        "Enable/disable the double-tap-Shift gesture that opens search-everywhere (default true) -- an escape "
+        "hatch, not the only way in: M-s always works regardless of this setting. The gesture itself only fires "
+        "under the Kitty keyboard protocol, which Notcurses negotiates on its own with no way for ned to check in "
+        "advance whether a given terminal/multiplexer supports it; turn this off if an untested one produces a "
+        "false trigger.");
     env.Register<&NedSetImportFixup>(
         "ned", "set-import-fixup",
         "Enable/disable rewriting imports when a file is renamed or moved (default true) -- both the imports in "

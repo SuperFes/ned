@@ -88,6 +88,7 @@
 #include "Editor/RegexPattern.h"
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/RenameReviewSettings.h"
+#include "Editor/SearchEverywhereGestureSettings.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
