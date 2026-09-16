@@ -1,6 +1,7 @@
 #include "Fill.h"
 
 #include <algorithm>
+#include <cctype>
 
 namespace ned::editor {
 
@@ -47,6 +48,60 @@ namespace {
                 words.emplace_back(body.substr(wordStart, i - wordStart));
             }
         }
+    }
+
+    // Detects a Markdown/Org/reST-style list marker at the very start of
+    // `body` -- a bullet ("-", "*", "+") or an ordinal ("1.", "12)"),
+    // always followed by real whitespace, optionally followed by a GFM
+    // task checkbox ("[ ]"/"[x]"/"[X]") and ITS own trailing whitespace.
+    // Returns the marker's total width (through its final trailing
+    // whitespace, where the real content starts), or nullopt if `body`
+    // doesn't open with one. Deliberately mode-agnostic, unlike
+    // Editor/Languages/Markdown.cpp's own list handling: this syntax is
+    // unambiguous wherever it appears -- a real word never starts "- " or
+    // "1. " -- so treating it specially is correct in a plain-text
+    // paragraph, an Org list, or a Doxygen-style bulleted comment alike.
+    // list-aware-fill-paragraph follow-up: without this, wrapping a list
+    // item's own first line folded its marker into the ordinary word
+    // stream, so every WRAPPED continuation line lost the marker's hang
+    // width entirely -- confirmed live as the root cause of ROADMAP.md's
+    // own ad hoc paragraphs occasionally drifting to an indentation that
+    // no longer matches their enclosing list item, which is exactly the
+    // "4 spaces relative to nothing" shape that becomes an indented code
+    // block under CommonMark.
+    std::optional<std::size_t> DetectListMarker(std::string_view body) {
+        std::size_t i = 0;
+        if (!body.empty() && (body[0] == '-' || body[0] == '*' || body[0] == '+')) {
+            i = 1;
+        }
+        else {
+            std::size_t digits = 0;
+            while (i < body.size() && std::isdigit(static_cast<unsigned char>(body[i]))) {
+                ++i;
+                ++digits;
+            }
+            if (digits == 0 || i >= body.size() || (body[i] != '.' && body[i] != ')')) {
+                return std::nullopt;
+            }
+            ++i; // the '.' or ')'
+        }
+        if (i >= body.size() || (body[i] != ' ' && body[i] != '\t')) {
+            return std::nullopt; // the glyph alone, with no following space, isn't a list marker
+        }
+        while (i < body.size() && (body[i] == ' ' || body[i] == '\t')) {
+            ++i;
+        }
+        if (i + 2 < body.size() && body[i] == '[' &&
+            (body[i + 1] == ' ' || body[i + 1] == 'x' || body[i + 1] == 'X') && body[i + 2] == ']') {
+            std::size_t afterCheckbox = i + 3;
+            if (afterCheckbox < body.size() && (body[afterCheckbox] == ' ' || body[afterCheckbox] == '\t')) {
+                i = afterCheckbox;
+                while (i < body.size() && (body[i] == ' ' || body[i] == '\t')) {
+                    ++i;
+                }
+            }
+        }
+        return i;
     }
 
 } // namespace
@@ -153,8 +208,13 @@ void FillParagraph(text::Buffer& buffer, std::size_t fillColumn, std::string_vie
     }
 
     // Pass 2: extract words, stripping the comment prefix per line only if
-    // every line actually carried one.
+    // every line actually carried one. The FIRST line's own body (after any
+    // comment-prefix strip) is also checked for a list marker -- see
+    // DetectListMarker's own doc comment -- so it's never folded into the
+    // ordinary word stream, and its width can become every OTHER line's
+    // hang indent below.
     std::vector<std::string> words;
+    std::string              listMarkerText; // verbatim, e.g. "- [ ] " -- empty when none detected
     for (std::size_t i = 0; i < lineTexts.size(); ++i) {
         std::string_view body = std::string_view(lineTexts[i]).substr(bodyStarts[i]);
         if (commentMode) {
@@ -163,27 +223,40 @@ void FillParagraph(text::Buffer& buffer, std::size_t fillColumn, std::string_vie
                 body.remove_prefix(1);
             }
         }
+        if (i == 0) {
+            if (const std::optional<std::size_t> markerWidth = DetectListMarker(body)) {
+                listMarkerText = std::string(body.substr(0, *markerWidth));
+                body.remove_prefix(*markerWidth);
+            }
+        }
         AppendWords(body, words);
     }
 
-    const std::string linePrefix  = commentMode ? indent + std::string(commentPrefix) + " " : indent;
-    const std::size_t prefixWidth = CodepointCount(linePrefix);
-    const std::size_t wrapWidth   = (fillColumn > prefixWidth) ? fillColumn - prefixWidth : 1;
+    const std::string commentLeader = commentMode ? std::string(commentPrefix) + " " : std::string();
+    // Both prefixes are the same codepoint WIDTH by construction -- the
+    // continuation one just spells the marker's own width as plain spaces
+    // instead of repeating it, the same "align under, don't repeat" rule a
+    // real Markdown/Org formatter (or Emacs' own adaptive-fill-mode) uses.
+    const std::string firstLinePrefix    = indent + commentLeader + listMarkerText;
+    const std::string continuationPrefix = indent + commentLeader + std::string(listMarkerText.size(), ' ');
+    const std::size_t prefixWidth        = CodepointCount(continuationPrefix);
+    const std::size_t wrapWidth          = (fillColumn > prefixWidth) ? fillColumn - prefixWidth : 1;
 
     const std::vector<std::string> wrapped = WrapWords(words, wrapWidth);
 
     std::string replacement;
     if (wrapped.empty()) {
-        // A comment-leader-only paragraph (e.g. a lone "//") has no words
-        // to wrap -- keep the leader alone rather than emitting nothing.
-        replacement = linePrefix;
+        // A comment-leader/list-marker-only paragraph (e.g. a lone "//" or
+        // "-") has no words to wrap -- keep it alone rather than emitting
+        // nothing.
+        replacement = firstLinePrefix;
     }
     else {
         for (std::size_t i = 0; i < wrapped.size(); ++i) {
             if (i > 0) {
                 replacement += '\n';
             }
-            replacement += linePrefix;
+            replacement += (i == 0) ? firstLinePrefix : continuationPrefix;
             replacement += wrapped[i];
         }
     }
