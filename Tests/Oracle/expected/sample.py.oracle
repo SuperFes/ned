@@ -98,7 +98,7 @@ indent 588..612  [4]  "    return usage.__doc__"
 indent 613..613  [0]
 indent 614..614  [0]
 indent 615..631  [0]  "def commented():"
-indent 632..702  [0]  "    # A comment as the body' … ill the def."
+indent 632..702  [4]  "    # A comment as the body' … ill the def."
 indent 703..715  [4]  "    return 1"
 indent 716..716  [4]
 local 7..9  [Reference]  "os"
