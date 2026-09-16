@@ -383,7 +383,8 @@ namespace {
             const auto        currentRow = context.visualRowForPoint(point, 0);
             const auto        targetRow  = context.visualRowForPoint(point, rowDelta);
             if (currentRow && targetRow) {
-                context.buffer.MoveToColumnInRange(currentRow->first, targetRow->first, targetRow->second, TabWidth());
+                context.buffer.MoveToColumnInRange(currentRow->start, currentRow->hang, targetRow->start, targetRow->end,
+                                                   targetRow->hang, TabWidth());
                 return;
             }
         }

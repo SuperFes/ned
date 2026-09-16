@@ -12399,6 +12399,40 @@ TEST_CASE("next-line/previous-line walk a wrapped line's own continuation rows b
     REQUIRE(fixture.buffer.Point() == 16);
 }
 
+// visual-line-motion-hang-fix follow-up: a real, live-reported bug --
+// next-line/previous-line used to carry a goal column "relative to
+// whichever row's own real content," with no idea that a wrap-indent hang
+// (Editor/WrapIndent.h) shifts a continuation row's content rightward on
+// screen but leaves a line's own FIRST row unshifted. The same stored
+// number meant two different screen columns depending on which kind of
+// row it was measured against or landed in.
+TEST_CASE("next-line lands at the true on-screen column, not the same row-relative column, when crossing into a "
+          "row with a different wrap-indent hang",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.mode.wrapLines = true;
+    // Row 0 [0,9) "    aaaa " has NO hang (it's the line's own first row).
+    // Row 1 [9,18) "bbbb cccc" hangs 4 columns, matching the line's own
+    // 4-space leading indent -- exactly the "A wrap-enabled buffer hangs a
+    // continuation row under its own leading whitespace" fixture above.
+    fixture.buffer.InsertAtPoint("    aaaa bbbb cccc");
+    fixture.buffer.SetPoint(2); // on-screen column 2, inside row 0's own leading spaces
+    ned::ui::BufferView view   = fixture.View();
+    const int           gutter = GutterWidth(1);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(gutter + 10, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    view.OnEvent(ned::ui::test::ArrowDown());
+    // On-screen column 2 doesn't even clear row 1's own 4-column hang --
+    // clamps to row 1's own first byte (9), the same way a mouse click
+    // into a hang region already does. The pre-fix bug landed at byte 11
+    // instead (row-relative column 2 within [9,18), hang never
+    // subtracted).
+    REQUIRE(fixture.buffer.Point() == 9);
+}
+
 // gutter-wrap-indicator follow-up. The indicator used to be pinned to the
 // row's own right edge, which forced ComputeWrappedLineSegments to compute
 // twice -- once at full width, then again one column narrower once a line
