@@ -34,6 +34,23 @@ namespace {
                 }
             }
 
+            // org.indent-hangs-headline-after-listitem follow-up: a headline
+            // directly following a list item with no blank line between it
+            // (`- [ ] unchecked box\n* Second tree`) reindents into the
+            // list's own hang column, because tree-sitter-org's `listitem`
+            // node byte range reaches THROUGH the following headline's line
+            // -- confirmed via a real parse dump, not assumed -- so
+            // NamedDescendantForByteRange below resolves inside that
+            // listitem and sumHangColumn counts it. A reindent would shift
+            // the star and corrupt the outline. Real Org syntax requires a
+            // headline's stars to start at column 0 with no leading
+            // whitespace, so this check is unambiguous and never fires for
+            // ordinary list content (which does have leading whitespace, or
+            // isn't `*`).
+            if (contentStart == lineStart && contentStart < lineEnd && bufferText[contentStart] == '*') {
+                return 0;
+            }
+
             const grammar::Node node = tree.RootNode().NamedDescendantForByteRange(contentStart, contentStart);
             if (node.IsNull()) {
                 return 0;

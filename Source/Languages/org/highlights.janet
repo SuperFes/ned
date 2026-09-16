@@ -40,6 +40,26 @@
 (property name: (expr) @attribute)
 (drawer name: (expr) @attribute)
 
+# org-block-body-verbatim-protection follow-up: `#+begin_src`/
+# `#+begin_example`/`#+begin_quote`/... block bodies are opaque to Org
+# structure -- real Org mode never reindents them, and this grammar
+# tokenizes a body generically regardless of its declared language (a real
+# parse dump of a `#+begin_src python` body shows plain `expr` leaves
+# split on whitespace, no python syntax awareness at all), so recomputing
+# an indent from this tree would be nonsense. `@text.literal` (resolves to
+# SyntaxClass::String) is what makes Editor/Indent.h's VerbatimRanges/
+# LineIsVerbatim protect a multi-line span from ANY reindent at all,
+# batch or interactive -- the exact mechanism markdown/highlights.janet's
+# own `(fenced_code_block) @text.literal` already relies on for its own
+# fenced code (confirmed live: a batch `ned --format` pass was silently
+# flattening every Org source block's own indentation to column 0 before
+# this). Whole-node, not just `contents`, so a query capture and the more
+# specific name:/end_name: keyword captures right below can still resolve
+# independently over their own narrower ranges -- VerbatimRanges only
+# needs ONE String-classified span crossing the line, not the winning one.
+(block) @text.literal
+(dynamic_block) @text.literal
+
 (directive name: (expr) @keyword)
 (block name: (expr) @keyword)
 (block end_name: (expr) @keyword)

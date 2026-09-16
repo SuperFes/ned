@@ -1,5 +1,5 @@
 # sample.org  (org-mode)
-# 32 facts
+# 30 facts
 highlight 0..26  [headline-level-1]  "* TODO Top headline :work:"
 highlight 2..6  [todo-keyword]  "TODO"
 highlight 21..25  [tag]  "work"
@@ -7,6 +7,7 @@ highlight 27..49  [headline-level-2]  "** DONE Child headline"
 highlight 30..34  [done-keyword]  "DONE"
 highlight 50..67  [headline-level-2]  "** Plain headline"
 highlight 121..124  [checkbox]  "[ ]"
+highlight 153..204  [string]  "#+begin_src python\ndef f():\n … 1\n#+end_src\n"
 highlight 161..164  [keyword]  "src"
 highlight 172..175  [keyword]  "def"
 highlight 176..177  [function]  "f"
@@ -21,11 +22,8 @@ indent 68..92  [0]  "Some body text under it."
 indent 93..103  [0]  "- item one"
 indent 104..118  [2]  "  continuation"
 indent 119..138  [0]  "- [ ] unchecked box"
-indent 139..152  [2]  "* Second tree"
+indent 139..152  [0]  "* Second tree"
 indent 153..171  [0]  "#+begin_src python"
-indent 172..180  [0]  "def f():"
-indent 181..193  [0]  "    return 1"
-indent 194..203  [0]  "#+end_src"
 indent 204..220  [0]  "# a comment line"
 indent 221..221  [0]
 symbol 0..139  [Namespace ]  "* TODO Top headline :work:\n* … checked box\n"

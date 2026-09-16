@@ -153,3 +153,78 @@ TEST_CASE("FillParagraph is a no-op when point sits in trailing blank lines", "[
 
     REQUIRE(buffer.Content().Substring(0, buffer.Content().ByteLength()) == "text\n\n  \n");
 }
+
+// list-aware-fill-paragraph follow-up: without this, wrapping a list item's
+// own first line folded its marker ("- ", "1. ", "- [ ] ") into the ordinary
+// word stream, so every wrapped continuation line lost the marker's hang
+// width entirely -- confirmed live as the root cause of a real Markdown
+// file's own paragraphs drifting to an indentation that no longer matched
+// their enclosing list item (which is exactly the "4 spaces relative to
+// nothing" shape CommonMark treats as an indented code block).
+
+TEST_CASE("FillParagraph hangs a wrapped bullet's continuation lines under its own text, not its marker",
+          "[Fill]") {
+    Buffer buffer("test", Rope("- the quick brown fox jumps over the lazy dog"));
+    buffer.SetPoint(0);
+
+    FillParagraph(buffer, 20);
+
+    REQUIRE(buffer.Content().Substring(0, buffer.Content().ByteLength()) ==
+            "- the quick brown\n  fox jumps over the\n  lazy dog");
+}
+
+TEST_CASE("FillParagraph hangs a wrapped ordinal list item the same way", "[Fill]") {
+    Buffer buffer("test", Rope("12. the quick brown fox jumps over the lazy dog"));
+    buffer.SetPoint(0);
+
+    FillParagraph(buffer, 20);
+
+    REQUIRE(buffer.Content().Substring(0, buffer.Content().ByteLength()) ==
+            "12. the quick brown\n    fox jumps over\n    the lazy dog");
+}
+
+TEST_CASE("FillParagraph hangs a wrapped GFM task-list item under its checkbox, not the marker", "[Fill]") {
+    Buffer buffer("test", Rope("- [ ] the quick brown fox jumps over the lazy dog"));
+    buffer.SetPoint(0);
+
+    FillParagraph(buffer, 20);
+
+    REQUIRE(buffer.Content().Substring(0, buffer.Content().ByteLength()) ==
+            "- [ ] the quick\n      brown fox\n      jumps over the\n      lazy dog");
+}
+
+TEST_CASE("FillParagraph's list-marker detection composes with a comment prefix", "[Fill]") {
+    // A Doxygen-style bulleted comment -- the marker sits AFTER the
+    // comment leader, so its own hang width stacks on top of the leader's.
+    Buffer buffer("test", Rope("// - the quick brown fox jumps over the lazy dog"));
+    buffer.SetPoint(0);
+
+    FillParagraph(buffer, 20, "//");
+
+    REQUIRE(buffer.Content().Substring(0, buffer.Content().ByteLength()) ==
+            "// - the quick brown\n//   fox jumps over\n//   the lazy dog");
+}
+
+TEST_CASE("FillParagraph does not mistake ordinary punctuation for a list marker", "[Fill]") {
+    Buffer buffer("test", Rope("-5 is not a bullet, and 1.5 is not an ordinal, so this stays plain prose text"));
+    buffer.SetPoint(0);
+
+    FillParagraph(buffer, 30);
+
+    REQUIRE(buffer.Content().Substring(0, buffer.Content().ByteLength()) ==
+            "-5 is not a bullet, and 1.5 is\nnot an ordinal, so this stays\nplain prose text");
+}
+
+TEST_CASE("FillParagraph leaves an ALREADY multi-line list item's continuation indent untouched", "[Fill]") {
+    // A paragraph whose first physical line is a plain continuation (point
+    // is somewhere past the marker line already) has no marker of its own
+    // to detect -- this is the existing "reuse the first line's own
+    // indentation" behavior, unaffected by the new detection.
+    Buffer buffer("test", Rope("  already indented text that continues a list item across lines"));
+    buffer.SetPoint(0);
+
+    FillParagraph(buffer, 20);
+
+    REQUIRE(buffer.Content().Substring(0, buffer.Content().ByteLength()) ==
+            "  already indented\n  text that\n  continues a list\n  item across lines");
+}

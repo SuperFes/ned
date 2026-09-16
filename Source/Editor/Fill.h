@@ -59,11 +59,20 @@ namespace ned::editor {
 // (after leading whitespace) is the prefix stripped before wrapping and
 // reattached to every output line -- a mixed paragraph (some lines
 // prefixed, some not) is left as plain text instead, since there's no
-// sensible single prefix to reattach. Every output line reuses the first
-// line's own leading whitespace as its indent. No-op if FindParagraphRange
-// finds nothing. Moves point to the end of the refilled paragraph; mark (if
-// any) is left untouched -- unlike toggle-line-comment, fill-paragraph
-// always operates on "the paragraph at point," never a region.
+// sensible single prefix to reattach. list-aware-fill-paragraph follow-up:
+// if the paragraph's own FIRST line opens with a Markdown/Org-style list
+// marker ("- ", "1. ", "- [ ] ", ...) right after any leading whitespace
+// and comment leader, that marker is kept verbatim on the first output line
+// and every OTHER output line hangs under it (indent + marker's own width,
+// as plain spaces) instead of reusing the first line's raw leading
+// whitespace -- without this, the marker itself got folded into the word
+// stream and every wrapped continuation line lost the hang entirely. Every
+// other paragraph (no marker detected) still just reuses the first line's
+// own leading whitespace as every output line's indent, unchanged. No-op if
+// FindParagraphRange finds nothing. Moves point to the end of the refilled
+// paragraph; mark (if any) is left untouched -- unlike toggle-line-comment,
+// fill-paragraph always operates on "the paragraph at point," never a
+// region.
 void FillParagraph(text::Buffer& buffer, std::size_t fillColumn, std::string_view commentPrefix = {});
 
 } // namespace ned::editor
