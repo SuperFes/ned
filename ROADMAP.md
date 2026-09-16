@@ -1814,36 +1814,6 @@ for closed-issue history.
   `EvaluatePredicateCall`, any-of semantics. Unblocked now that the M3 gate has landed — the change will
   show as a deliberate differential/oracle diff rather than an invisible drift.
 
-- **PHP's `case`/`default` clause bodies never get their own indent level, in
-  BOTH the brace and colon forms of `switch`.** Found 2026-09-16 while fixing this
-  same file's now-closed `if:`/`elseif:`/`else:`/`endif:` entry: even the
-  already-working brace form (`switch ($x) { case 1: echo 1; }`) reindents to
-  `case 1:` and `echo 1;` at the SAME column, unlike Go's exactly analogous
-  `expression_case`/`default_case` (fixed alongside the same investigation, see
-  `git log --grep=indent-case` -- Go dedents the label back to `switch`'s own
-  level instead, which is the opposite shape of what PHP/PSR-12 wants: PHP's
-  convention indents `case`/`default` one level under `switch`, same as any
-  other body, and it's the STATEMENTS under a case that need a further level
-  PHP never gives them). Root cause: `case_statement`/`default_statement` carry
-  no delimiters of their own (confirmed via node-types.json -- each is just an
-  optional trailing `statement_list`), so nothing in `Source/Languages/php/`
-  (no `indents.janet` existed before this investigation; see the new file's
-  own header) or `Editor/ImprintTables.cpp`'s `kPhp[]` gives their body a
-  container. The colon form (`switch (...): case 1: ... endswitch;`) is
-  additionally unindented altogether, same root shape as the now-fixed `if:`
-  form, but its own `switch_block` node is shared verbatim between both
-  syntaxes (the brace-vs-colon choice is inside `switch_block`'s own grammar
-  rule, not `switch_statement`'s) -- so fixing colon-form `switch` and fixing
-  `case`/`default` body indent are the same piece of work, not two. Fix shape:
-  `(case_statement) @indent` / `(default_statement) @indent`, each keyed off
-  its own trailing `statement_list` field's start (mirroring `@indent.body`'s
-  convention elsewhere, since neither node has a literal closer of its own --
-  the next case or `endswitch`/`}` ends it implicitly) plus
-  `(switch_block "endswitch") @indent` / `(switch_block "endswitch" @dedent)`
-  for the colon form's own container (same conditioned-on-a-literal-child
-  pattern as `php/indents.janet`'s existing `if_statement`/`while_statement`
-  entries).
-
 - **org.indent hangs a headline that directly follows a list item.** Surfaced by (not
   introduced by) the Step 5 oracle corpus: in `Tests/Oracle/expected/sample.org.oracle`,
   `* Second tree` — the line right after `- [ ] unchecked box`, no blank line between —
