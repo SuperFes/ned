@@ -44,6 +44,7 @@
 #include "Editor/Lsp/ProseChecker.h"
 #include "Editor/Lsp/RootResolver.h"
 #include "Editor/Lsp/ServerConfig.h"
+#include "Editor/MacroRegistry.h"
 #include "Editor/Mcp/BridgeSetting.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
@@ -971,6 +972,25 @@ namespace {
 
     std::vector<std::string> NedSnippetTriggers(std::string languageKey) {
         return editor::SnippetTriggers(languageKey);
+    }
+
+    // search-everywhere follow-up: named keyboard macros (Editor/
+    // MacroRegistry.h). Each chord is Emacs kbd-style text (Editor/Key.h's
+    // ParseKeyChord -- the same notation ned/define-key's ParseKeySequence
+    // already parses one chord at a time from); kmacro-insert-macro-definition
+    // is what actually generates a call shaped like this, via FormatKeyChord.
+    // Empty chords clears the name (NedRegisterSnippet's own convention).
+    void NedRegisterMacro(std::string name, std::vector<std::string> chords) {
+        std::vector<editor::KeyChord> parsed;
+        parsed.reserve(chords.size());
+        for (const std::string& chord : chords) {
+            parsed.push_back(editor::ParseKeyChord(chord));
+        }
+        editor::RegisterMacro(name, parsed);
+    }
+
+    std::vector<std::string> NedMacroNames() {
+        return editor::MacroNames();
     }
 
     // ACP chat panel: which edge the dock hugs and how much of the screen it
@@ -2087,6 +2107,14 @@ void InstallEditorBindings(Environment& env) {
         "ned", "snippet-triggers",
         "Return the snippet trigger words visible to a language key -- its own registrations merged with the "
         "\"\"-global tier, sorted. (ned/snippet-triggers \"cpp\")");
+    env.Register<&NedRegisterMacro>(
+        "ned", "register-macro",
+        "Register a named keyboard macro: (name chords), e.g. (ned/register-macro \"save-and-format\" [\"C-c C-f\" "
+        "\"C-x C-s\"]) -- chords is a list with one Emacs kbd-style chord per element, not one sequence string. "
+        "search-everywhere can find and run a named macro; kmacro-insert-macro-definition writes one of these "
+        "calls for you from an already-recorded, already-named macro. An empty chords list clears the name; "
+        "re-registering overwrites it.");
+    env.Register<&NedMacroNames>("ned", "macro-names", "Return every registered macro name, sorted.");
     env.Register<&NedSetAcpAgent>(
         "ned", "set-acp-agent",
         "Set the command used to launch an Agent Client Protocol (ACP) coding agent: (name argv), e.g. "

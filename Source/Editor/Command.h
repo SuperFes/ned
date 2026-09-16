@@ -193,6 +193,19 @@ enum class InteractiveRequest { None,
                                 // lives.
                                 StartKbdMacro,
                                 EndOrCallKbdMacro,
+                                // search-everywhere follow-up: named macros (Editor/
+                                // MacroRegistry.h) promote Dispatcher::LastMacro() from a
+                                // single anonymous slot to a listable, invoke-by-name set.
+                                // NameLastMacro is a prompt-shaped session (needs the name);
+                                // InsertMacroDefinition is also prompt-shaped (needs which
+                                // macro) and writes a `(ned/register-macro ...)` Janet form
+                                // at point rather than persisting anything itself -- see
+                                // MacroRegistry.h's own doc comment for why. SearchEverywhere
+                                // is the merged Actions/Files/Buffers fuzzy picker; macros
+                                // are one of the kinds it can find and run.
+                                NameLastMacro,
+                                InsertMacroDefinition,
+                                SearchEverywhere,
                                 // point-to-register/jump-to-register/copy-to-register/
                                 // insert-register follow-up: also prompt-shaped one-shot
                                 // requests -- each reads exactly one further character (the

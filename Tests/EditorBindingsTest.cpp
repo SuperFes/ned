@@ -20,6 +20,7 @@
 #include "Editor/Keymap.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/ServerConfig.h"
+#include "Editor/MacroRegistry.h"
 #include "Editor/MultibufferFoldSettings.h"
 #include "Editor/PageScroll.h"
 #include "Editor/Project/Root.h"
@@ -697,6 +698,30 @@ TEST_CASE("ned/register-snippet and ned/snippet-triggers round-trip the registry
 
     // An empty trigger panics with a real error.
     REQUIRE_THROWS(env.DoString(R"((ned/register-snippet "cpp" "" "body"))"));
+}
+
+TEST_CASE("ned/register-macro and ned/macro-names round-trip the registry", "[EditorBindings]") {
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+    struct RegistryGuard {
+        ~RegistryGuard() {
+            ned::editor::ClearAllMacros();
+        }
+    } guard;
+    ned::editor::ClearAllMacros();
+
+    env.DoString(R"((ned/register-macro "save" ["C-x" "C-s"]))");
+    REQUIRE(ned::editor::MacroForName("save") == ned::editor::ParseKeySequence("C-x C-s"));
+
+    env.DoString(R"((def names (ned/macro-names)))");
+    env.DoString(R"((assert (deep= names @["save"])))");
+
+    // Empty chords clears.
+    env.DoString(R"((ned/register-macro "save" []))");
+    REQUIRE(!ned::editor::MacroForName("save").has_value());
+
+    // An unparseable chord panics with a real error.
+    REQUIRE_THROWS(env.DoString(R"((ned/register-macro "bad" ["not-a-real-chord!!"]))"));
 }
 
 // completion-trigger-characters follow-up.

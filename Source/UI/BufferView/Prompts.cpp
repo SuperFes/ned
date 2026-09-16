@@ -658,6 +658,41 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Goto line: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        case editor::InteractiveRequest::NameLastMacro:
+            // Checked here rather than left to the command itself --
+            // ReplayMacro's own precedent (BufferView.cpp) for reporting
+            // "nothing recorded yet" without ever opening a prompt for it.
+            if (dispatcher_.LastMacro().empty()) {
+                statusMessage_ = "No keyboard macro has been recorded yet.";
+                return;
+            }
+            inputMode_ = InputMode::NameLastMacro;
+            prompt_.emplace("Macro name: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::InsertMacroDefinition:
+            if (editor::MacroNames().empty()) {
+                statusMessage_ = "No named macros yet -- kmacro-name-last-macro names one first.";
+                return;
+            }
+            inputMode_ = InputMode::InsertMacroDefinition;
+            prompt_.emplace("Insert macro definition: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        // search-everywhere follow-up: the pool is gathered once here, up
+        // front -- ProjectFindFile's own "too expensive to redo per
+        // keystroke" precedent (a real directory walk is one of the four
+        // sources merged in). Populated and shown immediately with an empty
+        // query, ExecuteCommand's own "there's a meaningful top" precedent
+        // (every command/macro/file/buffer, kind-grouped).
+        case editor::InteractiveRequest::SearchEverywhere:
+            inputMode_                  = InputMode::SearchEverywhere;
+            prompt_.emplace("Search: ");
+            searchEverywhereCandidates_ = BuildSearchEverywhereCandidates();
+            searchEverywhereKindFilter_.reset();
+            searchEverywhereSelection_ = 0;
+            RefreshSearchEverywhereStatus();
+            return;
         case editor::InteractiveRequest::ConfirmOverwriteSave:
             inputMode_     = InputMode::ConfirmOverwriteSave;
             statusMessage_ = activeBuffer_.Get().Name() + " changed on disk since it was read; save anyway? (y/n)";
@@ -1943,6 +1978,12 @@ void BufferView::EndInteractiveSession() {
     // Both pools are cached only for the duration of one session.
     projectFindFileList_.Clear();
     selectThemeList_.Clear();
+    // search-everywhere follow-up: same reasoning -- the pool is a real
+    // project file walk plus a buffer-list snapshot, cached for one session.
+    searchEverywhereCandidates_.clear();
+    searchEverywhereRanked_.clear();
+    searchEverywhereSelection_ = 0;
+    searchEverywhereKindFilter_.reset();
     // The cancel path re-applies this snapshot *before* calling here; the
     // commit path applies the selected theme instead and lets this drop.
     themeBeforePreview_.reset();
@@ -2098,6 +2139,10 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "find-scratch";
         case InputMode::GotoLine:
             return "goto-line";
+        case InputMode::NameLastMacro:
+            return "kmacro-name-last-macro";
+        case InputMode::InsertMacroDefinition:
+            return "kmacro-insert-macro-definition";
         case InputMode::StringRectangle:
             return "string-rectangle";
         case InputMode::SetHeadlineTags:
@@ -2258,6 +2303,10 @@ std::optional<bufferview::TextEntryPrompt> BufferView::TextEntryPromptFor(InputM
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Delete property"};
         case InputMode::GotoLine:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Goto line"};
+        case InputMode::NameLastMacro:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Name last macro"};
+        case InputMode::InsertMacroDefinition:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Insert macro definition"};
         case InputMode::LspRenameNewName:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Rename"};
         case InputMode::RenameLocalNewName:
@@ -2764,6 +2813,49 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             editor::RecordBookmark(input, activeBuffer_.Get(), static_cast<std::size_t>(editor::TabWidth()));
             editor::SaveBookmarks();
             statusMessage_ = "Bookmark set: " + input;
+        }
+    }
+    else if (inputMode_ == InputMode::NameLastMacro) {
+        if (input.empty()) {
+            statusMessage_ = "Macro name cannot be empty";
+        }
+        else {
+            editor::RegisterMacro(input, dispatcher_.LastMacro());
+            statusMessage_ = "Macro named: " + input;
+        }
+    }
+    else if (inputMode_ == InputMode::InsertMacroDefinition) {
+        const std::optional<std::vector<editor::KeyChord>> chords = editor::MacroForName(input);
+        if (!chords) {
+            statusMessage_ = "No macro named \"" + input + "\"";
+        }
+        else {
+            // Escaped rather than assumed clean -- a recorded macro can
+            // perfectly well contain a chord whose literal codepoint is `"`
+            // or `\`, which FormatKeyChord passes through verbatim (it has
+            // no reason to know it's about to land inside a Janet string
+            // literal here).
+            const auto escape = [](const std::string& text) {
+                std::string escaped;
+                escaped.reserve(text.size());
+                for (const char ch : text) {
+                    if (ch == '"' || ch == '\\') {
+                        escaped += '\\';
+                    }
+                    escaped += ch;
+                }
+                return escaped;
+            };
+            std::string form = "(ned/register-macro \"" + escape(input) + "\" '(";
+            for (std::size_t i = 0; i < chords->size(); ++i) {
+                if (i > 0) {
+                    form += ' ';
+                }
+                form += '"' + escape(editor::FormatKeyChord((*chords)[i])) + '"';
+            }
+            form += "))";
+            activeBuffer_.Get().InsertAtPoint(form);
+            statusMessage_.clear();
         }
     }
     else { // FindScratch
@@ -3751,6 +3843,144 @@ void BufferView::HandleFuzzyPromptKey(const bufferview::FuzzyPrompt& prompt, con
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }
 
+std::vector<editor::SearchEverywhereCandidate> BufferView::BuildSearchEverywhereCandidates() {
+    std::vector<editor::SearchEverywhereCandidate> candidates;
+
+    for (const std::string& name : dispatcher_.Registry().Names()) {
+        const editor::Command* command = dispatcher_.Registry().Find(name);
+        candidates.push_back({.kind   = editor::SearchEverywhereKind::Command,
+                              .label  = name,
+                              .detail = command ? command->Docstring() : std::string{}});
+    }
+    for (const std::string& name : editor::MacroNames()) {
+        candidates.push_back({.kind = editor::SearchEverywhereKind::Macro, .label = name, .detail = {}});
+    }
+    // ProjectFindFile's own candidate-gathering shape (Reset call above) --
+    // a real recursive directory walk, done once here rather than per
+    // keystroke.
+    const std::filesystem::path root = editor::ProjectRoot();
+    for (const editor::ProjectTreeEntry& entry : editor::BuildProjectTree(root)) {
+        if (!entry.isDirectory) {
+            candidates.push_back({.kind   = editor::SearchEverywhereKind::File,
+                                  .label  = std::filesystem::relative(entry.path, root).generic_string(),
+                                  .detail = {}});
+        }
+    }
+    for (const std::unique_ptr<text::Buffer>& buffer : bufferList_.Buffers()) {
+        std::string detail;
+        if (const std::optional<std::filesystem::path>& path = buffer->Path()) {
+            detail = path->generic_string();
+        }
+        candidates.push_back({.kind = editor::SearchEverywhereKind::Buffer, .label = buffer->Name(), .detail = detail});
+    }
+
+    return candidates;
+}
+
+void BufferView::RefreshSearchEverywhereStatus() {
+    searchEverywhereRanked_ =
+        editor::RankSearchEverywhere(searchEverywhereCandidates_, prompt_->Text(), searchEverywhereKindFilter_);
+    if (searchEverywhereRanked_.empty()) {
+        searchEverywhereSelection_ = 0;
+    }
+    else {
+        searchEverywhereSelection_ = std::min(searchEverywhereSelection_, searchEverywhereRanked_.size() - 1);
+    }
+
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(searchEverywhereRanked_.empty()
+                                ? std::nullopt
+                                : std::optional(BuildSearchEverywherePopupModel(
+                                      SearchEverywhereTitle(searchEverywhereKindFilter_), searchEverywhereCandidates_,
+                                      searchEverywhereRanked_, searchEverywhereSelection_)));
+    }
+}
+
+void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereCandidate& candidate) {
+    switch (candidate.kind) {
+        case editor::SearchEverywhereKind::Command: {
+            editor::CommandContext context = MakeContext();
+            context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+            RunCommandAndHandleOutcome(context, [&] {
+                dispatcher_.Registry().Invoke(candidate.label, context);
+                return true; // Invoke() always runs the command directly -- no Pending concept here
+            });
+            return;
+        }
+        case editor::SearchEverywhereKind::Macro:
+            if (const std::optional<std::vector<editor::KeyChord>> chords = editor::MacroForName(candidate.label)) {
+                ReplayMacro(*chords);
+            }
+            else {
+                ReportError("Internal error resolving the selected macro.");
+            }
+            return;
+        case editor::SearchEverywhereKind::File:
+            try {
+                text::Buffer& opened = bufferList_.OpenOrCreateFile(editor::ProjectRoot() / candidate.label);
+                activeBuffer_.Set(opened);
+                statusMessage_ = "Opened " + opened.Name();
+            }
+            catch (const std::exception& e) {
+                ReportError(e.what());
+            }
+            return;
+        case editor::SearchEverywhereKind::Buffer:
+            if (text::Buffer* found = bufferList_.Find(candidate.label)) {
+                activeBuffer_.Set(*found);
+                statusMessage_.clear();
+            }
+            else {
+                ReportError("Internal error resolving the selected buffer.");
+            }
+            return;
+    }
+}
+
+void BufferView::HandleSearchEverywhereKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        if (searchEverywhereRanked_.empty()) {
+            statusMessage_ = "No match for \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+        // Read before ending the session: ending it clears the pool.
+        const editor::SearchEverywhereCandidate selected =
+            searchEverywhereCandidates_[searchEverywhereRanked_[searchEverywhereSelection_].candidateIndex];
+        EndInteractiveSession();
+        CommitSearchEverywhereCandidate(selected);
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = "Search cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Tab) {
+        searchEverywhereKindFilter_ = NextSearchEverywhereKindFilter(searchEverywhereKindFilter_);
+        RefreshSearchEverywhereStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
+        if (!searchEverywhereRanked_.empty()) {
+            searchEverywhereSelection_ = chord.Special == editor::SpecialKey::Down
+                                            ? (searchEverywhereSelection_ + 1) % searchEverywhereRanked_.size()
+                                            : (searchEverywhereSelection_ + searchEverywhereRanked_.size() - 1) %
+                                                  searchEverywhereRanked_.size();
+        }
+        RefreshSearchEverywhereStatus();
+        return;
+    }
+
+    // Typing re-snaps to the top match, HandleFuzzyPromptKey's own reasoning.
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
+        searchEverywhereSelection_ = 0;
+        RefreshSearchEverywhereStatus();
+    }
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+}
+
 bufferview::FuzzyPrompt BufferView::ExecuteCommandPrompt() {
     return {.list          = &executeCommandList_,
             .historyKey    = "execute-command",
@@ -4270,6 +4500,16 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             RefreshPathCompletionPopup();
             return;
         }
+        case InputMode::SearchEverywhere: {
+            const auto resolved =
+                ResolveFuzzyCandidateRowIndex(index, searchEverywhereSelection_, searchEverywhereRanked_.size());
+            if (!resolved) {
+                return;
+            }
+            searchEverywhereSelection_ = *resolved;
+            HandleSearchEverywhereKey(enter);
+            return;
+        }
         default:
             return; // no candidate popup active for this mode (a stale click racing an already-ended session)
     }
@@ -4323,6 +4563,9 @@ void BufferView::ScrollCandidatePopup(int steps) {
             case InputMode::OpenProjectPath:
             case InputMode::FindScratch:
                 HandlePromptKey(nav);
+                break;
+            case InputMode::SearchEverywhere:
+                HandleSearchEverywhereKey(nav);
                 break;
             default:
                 return; // no candidate popup active for this mode -- nothing to scroll

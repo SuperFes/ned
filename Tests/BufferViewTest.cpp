@@ -34,6 +34,7 @@
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Lsp/Transport.h"
+#include "Editor/MacroRegistry.h"
 #include "Editor/Mode.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/Project/Root.h"
@@ -7384,6 +7385,273 @@ TEST_CASE("Replaying a macro stops cleanly once a replayed command opens an inte
     REQUIRE(fixture.statusMessage == "I-search: "); // isearch genuinely entered, not skipped/corrupted
 
     view.OnEvent(ned::ui::test::Escape()); // clean up the still-live isearch session
+}
+
+namespace {
+
+// MacroRegistry is process-wide static state, same precedent as
+// MacroRegistryTest.cpp's own MacroRegistryGuard.
+struct MacroRegistryGuard {
+    MacroRegistryGuard() {
+        ned::editor::ClearAllMacros();
+    }
+    ~MacroRegistryGuard() {
+        ned::editor::ClearAllMacros();
+    }
+};
+
+} // namespace
+
+// search-everywhere follow-up: kmacro-name-last-macro/kmacro-insert-macro-definition.
+
+TEST_CASE("kmacro-name-last-macro names the last recorded macro", "[BufferView]") {
+    const MacroRegistryGuard guard;
+    Fixture                  fixture;
+    ned::ui::BufferView      view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::F(3));
+    TypeText(view, "ab");
+    view.OnEvent(ned::ui::test::F(4));
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "kmacro-name-last-macro");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Macro name: ");
+
+    TypeText(view, "greet");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.statusMessage == "Macro named: greet");
+    REQUIRE(ned::editor::MacroForName("greet") == ned::editor::ParseKeySequence("a b"));
+}
+
+TEST_CASE("kmacro-name-last-macro with nothing recorded reports and never opens a prompt", "[BufferView]") {
+    const MacroRegistryGuard guard;
+    Fixture                  fixture;
+    ned::ui::BufferView      view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "kmacro-name-last-macro");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.statusMessage == "No keyboard macro has been recorded yet.");
+
+    // No prompt was opened -- a further keystroke self-inserts normally.
+    view.OnEvent(ned::ui::test::Character("z"));
+    REQUIRE(fixture.buffer.Text() == "z");
+}
+
+TEST_CASE("kmacro-insert-macro-definition inserts a ned/register-macro form for a named macro", "[BufferView]") {
+    const MacroRegistryGuard guard;
+    Fixture                  fixture;
+    ned::ui::BufferView      view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    ned::editor::RegisterMacro("greet", ned::editor::ParseKeySequence("a b"));
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "kmacro-insert-macro-definition");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Insert macro definition: ");
+
+    TypeText(view, "greet");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.buffer.Text() == R"((ned/register-macro "greet" '("a" "b")))");
+}
+
+TEST_CASE("kmacro-insert-macro-definition with no named macros reports and never opens a prompt", "[BufferView]") {
+    const MacroRegistryGuard guard;
+    Fixture                  fixture;
+    ned::ui::BufferView      view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "kmacro-insert-macro-definition");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.statusMessage == "No named macros yet -- kmacro-name-last-macro names one first.");
+
+    view.OnEvent(ned::ui::test::Character("z"));
+    REQUIRE(fixture.buffer.Text() == "z");
+}
+
+// search-everywhere follow-up.
+
+TEST_CASE("M-s (search-everywhere) lists commands, macros, files and buffers before any input, then narrows",
+          "[BufferView]") {
+    const MacroRegistryGuard    macroGuard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_search_everywhere";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    { std::ofstream(dir / "widget.txt") << "hello\n"; }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::editor::RegisterMacro("widget-macro", ned::editor::ParseKeySequence("a"));
+
+    Fixture fixture;
+    fixture.bufferList.CreateBuffer("widget-buffer");
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    REQUIRE(fixture.statusMessage == "Search: ");
+    // Not checked before narrowing: with hundreds of registered commands,
+    // an unfiltered "quit" sits well outside the popup's own kMaxPopupRows
+    // window -- BuildFuzzyCandidatePopupModel's own precedent, same reason
+    // every M-x test below narrows before asserting content.
+
+    TypeText(view, "widget");
+    REQUIRE(CandidatesContain(fixture.candidates, "widget-macro"));
+    REQUIRE(CandidatesContain(fixture.candidates, "widget.txt"));
+    REQUIRE(CandidatesContain(fixture.candidates, "widget-buffer"));
+    REQUIRE_FALSE(CandidatesContain(fixture.candidates, "quit"));
+
+    view.OnEvent(ned::ui::test::Escape());
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("TAB in search-everywhere cycles the kind filter, narrowing to just one kind at a time",
+          "[BufferView]") {
+    const MacroRegistryGuard    macroGuard;
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_search_everywhere_tab";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    { std::ofstream(dir / "quit-plan.txt") << "hello\n"; } // shares "quit" with the quit command
+    const CurrentPathGuard cwdGuard(dir);
+
+    // One "quit"-matching candidate per kind, so every filter step below has
+    // something to show (an empty ranked list hides the popup entirely --
+    // ExecuteCommandPrompt's own "nothing to show" convention -- which would
+    // otherwise make this test about that instead of about Tab cycling).
+    ned::editor::RegisterMacro("quit-macro", ned::editor::ParseKeySequence("a"));
+    Fixture fixture;
+    fixture.bufferList.CreateBuffer("quit-buffer");
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "quit");
+    REQUIRE(fixture.candidates->title == "Search Everywhere");
+    REQUIRE(CandidatesContain(fixture.candidates, "quit"));
+    REQUIRE(CandidatesContain(fixture.candidates, "quit-plan.txt"));
+
+    view.OnEvent(ned::ui::test::Tab()); // All -> Command
+    REQUIRE(fixture.candidates->title == "Search Everywhere -- Actions");
+    REQUIRE(CandidatesContain(fixture.candidates, "quit"));
+    REQUIRE_FALSE(CandidatesContain(fixture.candidates, "quit-plan.txt"));
+
+    view.OnEvent(ned::ui::test::Tab()); // Command -> Macro
+    REQUIRE(fixture.candidates->title == "Search Everywhere -- Macros");
+    REQUIRE(CandidatesContain(fixture.candidates, "quit-macro"));
+    REQUIRE_FALSE(CandidatesContain(fixture.candidates, "quit"));
+
+    view.OnEvent(ned::ui::test::Tab()); // Macro -> File
+    REQUIRE(fixture.candidates->title == "Search Everywhere -- Files");
+    REQUIRE(CandidatesContain(fixture.candidates, "quit-plan.txt"));
+    REQUIRE_FALSE(CandidatesContain(fixture.candidates, "quit-macro"));
+
+    view.OnEvent(ned::ui::test::Tab()); // File -> Buffer
+    REQUIRE(fixture.candidates->title == "Search Everywhere -- Buffers");
+    REQUIRE(CandidatesContain(fixture.candidates, "quit-buffer"));
+    REQUIRE_FALSE(CandidatesContain(fixture.candidates, "quit-plan.txt"));
+
+    view.OnEvent(ned::ui::test::Tab()); // Buffer -> All
+    REQUIRE(fixture.candidates->title == "Search Everywhere");
+
+    view.OnEvent(ned::ui::test::Escape());
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Enter in search-everywhere runs the selected command", "[BufferView]") {
+    Fixture fixture;
+    bool    invoked = false;
+    fixture.registry.Register("zzz-search-everywhere-command", "", [&](ned::editor::CommandContext&) { invoked = true; });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "zzz-search-everywhere-command");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(invoked);
+}
+
+TEST_CASE("Enter in search-everywhere replays the selected macro", "[BufferView]") {
+    const MacroRegistryGuard guard;
+    ned::editor::RegisterMacro("greet-macro", ned::editor::ParseKeySequence("a b"));
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "greet-macro");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.buffer.Text() == "ab");
+}
+
+TEST_CASE("Enter in search-everywhere opens the selected file", "[BufferView]") {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_search_everywhere_open";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    { std::ofstream(dir / "target.txt") << "content\n"; }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "target");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(&fixture.activeBuffer.Get() != &fixture.buffer);
+    REQUIRE(fixture.activeBuffer.Get().Name() == "target.txt");
+    REQUIRE(fixture.statusMessage == "Opened target.txt");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Enter in search-everywhere switches to the selected buffer", "[BufferView]") {
+    Fixture            fixture;
+    ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::text::Buffer& other   = fixture.bufferList.CreateBuffer("other-buffer");
+    other.InsertAtPoint("hi");
+
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "other-buffer");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(&activeBuffer.Get() == &other);
+}
+
+TEST_CASE("Escape cancels search-everywhere and returns to normal editing", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "quit");
+    view.OnEvent(ned::ui::test::Escape());
+
+    REQUIRE(fixture.statusMessage == "Search cancelled.");
+
+    view.OnEvent(ned::ui::test::Character("z")); // proves inputMode_ is Normal again
+    REQUIRE(fixture.buffer.Text() == "z");
 }
 
 // point-to-register/jump-to-register/copy-to-register/insert-register follow-up.
