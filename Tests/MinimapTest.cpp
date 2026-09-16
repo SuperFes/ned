@@ -8,6 +8,7 @@
 #include "Text/Buffer.h"
 #include "Text/Utf8.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/EventLoop.h"
 #include "UI/Minimap.h"
 #include "UI/Theme.h"
 
@@ -78,6 +79,51 @@ TEST_CASE("Minimap::ClearBufferCache is a safe no-op, with or without a prior pa
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 4, .y_min = 0, .y_max = 9});
     minimap.Paint(canvas);
     REQUIRE_NOTHROW(minimap.ClearBufferCache(fixture.buffer));
+}
+
+// minimap-not-inheriting-theme follow-up: AdvanceHighlightSweep's own reset
+// condition used to fire on `firstPaint` (!lastSpans_), which stays true for
+// every tick of a multi-chunk sweep right up until the final commit -- so on
+// any document needing more than one kHighlightSweepChunkBytes-sized chunk,
+// every single Paint() wiped sweepActive_/sweepSpans_/sweepText_ back to
+// scratch before the sweep ever advanced past its first chunk, and the
+// minimap rendered every dot as theme_.defaultForeground forever (visually
+// indistinguishable from "ignoring the theme's syntax colours" -- what
+// prompted this test). Repeated Paint() calls with nothing else about the
+// buffer changing between them is exactly how a live session behaves
+// between keystrokes; this reproduces that without a live terminal.
+TEST_CASE("Minimap's chunked highlight sweep completes across repeated frames with no edit between them",
+          "[Minimap]") {
+    const MinimapSettingsGuard guard;
+
+    // Real cpp syntax, well past kHighlightSweepChunkBytes (4096 bytes) so
+    // completing the sweep needs more than one AdvanceHighlightSweep tick.
+    std::string content;
+    for (int i = 0; i < 400; ++i) {
+        content += "int example_variable_" + std::to_string(i) + " = 12345; // a comment\n";
+    }
+    REQUIRE(content.size() > Minimap::kHighlightSweepChunkBytes * 2);
+
+    ned::text::Buffer     buffer{"scratch"};
+    buffer.InsertAtPoint(content);
+    ned::ui::ActiveBuffer activeBuffer{buffer};
+    ned::editor::Mode     mode  = ned::editor::CppMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+
+    ned::ui::EventLoop eventLoop;
+    Minimap            minimap(activeBuffer, mode, theme);
+    minimap.SetEventLoop(&eventLoop);
+    minimap.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 4, .y_min = 0, .y_max = 9});
+
+    ned::ui::Screen screen = ned::ui::Screen(5, 10);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 4, .y_min = 0, .y_max = 9});
+
+    const auto chunksNeeded = content.size() / Minimap::kHighlightSweepChunkBytes + 2;
+    for (std::size_t i = 0; i < chunksNeeded; ++i) {
+        minimap.Paint(canvas);
+    }
+
+    REQUIRE(minimap.CommittedSpanCountForTesting() > 0);
 }
 
 TEST_CASE("Minimap paints a flat background when no EventLoop is wired", "[Minimap]") {

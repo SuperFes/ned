@@ -173,6 +173,14 @@ class Minimap : public Widget {
     // one currently showing buffer.
     void ClearBufferCache(text::Buffer& buffer);
 
+    // How many spans the chunked highlight sweep has committed so far (0
+    // before the first commit) -- lets a test observe whether the sweep
+    // ever actually finishes across repeated Paint() calls with no real
+    // content change between them, without reaching into private state.
+    [[nodiscard]] std::size_t CommittedSpanCountForTesting() const {
+        return lastSpans_ ? lastSpans_->size() : 0;
+    }
+
     // Synced fresh every frame by BufferView (mirrors ScrollBar's own
     // public fields exactly, including semantics): position ranges over
     // [0, scrollable_length - 1], item_visual_length is how many of those
@@ -224,6 +232,7 @@ class Minimap : public Widget {
     // like the single-call version this replaced.
     mutable bool                               sweepActive_     = false;
     mutable std::size_t                        sweepGeneration_ = 0;
+    mutable std::string                        sweepModeName_; // mode the in-flight sweep started against, see AdvanceHighlightSweep
     mutable std::string                        sweepText_;
     mutable std::size_t                        sweepCursor_ = 0;
     mutable std::vector<editor::HighlightSpan> sweepSpans_;
