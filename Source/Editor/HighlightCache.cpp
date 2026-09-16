@@ -73,4 +73,8 @@ void ClearHighlightCache() {
     Entries().clear();
 }
 
+void ForgetHighlightCacheBuffer(const text::Buffer& buffer) {
+    std::erase_if(Entries(), [&buffer](const Entry& entry) { return entry.buffer == &buffer; });
+}
+
 } // namespace ned::editor

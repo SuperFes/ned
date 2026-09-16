@@ -3796,55 +3796,37 @@ class BufferView : public Widget {
     // foundation follow-up) -- Paint() runs far more often than the buffer's
     // content actually changes (cursor blink, scrolling, mouse move, an
     // unrelated widget repainting), and mode_.highlight can be a real
-    // tree-sitter parse + query run, not a free call. Recomputed only when
-    // either the active buffer's identity or its Buffer::ContentGeneration()
-    // has changed since the last Paint() -- a real, measured fix, not a
-    // preemptive one: an earlier version recomputed unconditionally every
-    // Paint() call and regressed a large-JSON [Performance] test to ~217ms
-    // per call (10.9s for 50 calls), caught before shipping the same way
-    // this project's other perf regressions have been.
-    bufferview::CacheStamp             highlightCacheStamp_;
+    // tree-sitter parse + query run, not a free call.
+    //
+    // window-highlight-cache-collapse follow-up: this used to be its own
+    // second staleness key (a CacheStamp of content/class/semantic
+    // generation, a separate window field, and a per-buffer map to survive
+    // a buffer switch) sitting in front of editor::CachedHighlightSpans
+    // (Editor/HighlightCache.h), which already tracks every one of those
+    // facts -- including the window, which the hand-rolled key here forgot
+    // to carry for a while, and coloring silently stopped updating past
+    // wherever the window last happened to be when you scrolled. Re-deriving
+    // that cache's own key a second time is exactly the kind of duplicate
+    // bookkeeping that drifts, so this now just asks that cache every
+    // Paint() (cheap on a hit -- a short linear scan, no recompute) and
+    // compares the shared_ptr it returns by identity: unequal to what was
+    // built from last time means something it already tracks changed,
+    // whatever that was. No separate window/generation bookkeeping to keep
+    // in sync, and correctness follows automatically from that cache's own
+    // containment rule rather than from re-deriving it here.
+    std::shared_ptr<const std::vector<editor::HighlightSpan>> highlightCacheRawSpans_;
+    // Manager::SemanticTokensGeneration(buffer) as of the last rebuild --
+    // deliberately not part of editor::CachedHighlightSpans' own key (see
+    // that header), since semantic tokens are appended here on top of its
+    // result and it has no reason to know about them.
+    std::size_t                        highlightCacheSemanticGeneration_ = 0;
+    // Which buffer highlightCacheSpans_ (below) belongs to -- ShouldSuppress
+    // AutoCompletion (BufferView/Lsp.cpp) asks this before trusting those
+    // spans for a syntax-class-at-point check.
+    const text::Buffer*                highlightCacheBuffer_ = nullptr;
+    // rawSpans (tree-sitter) plus any LSP semantic-token spans appended on
+    // top -- the actual per-frame paint/completion-suppression input.
     std::vector<editor::HighlightSpan> highlightCacheSpans_;
-    // exhaustive-highlighting follow-up: a ned/set-capture-class remap
-    // changes the SyntaxClass values *baked into* the cached spans above at
-    // parse time, not just how a class renders -- so the cache staleness
-    // check compares this against editor::CaptureClassGeneration() too, the
-    // same "cheap did-it-change counter" shape ContentGeneration() already
-    // has.
-
-    // semanticTokens follow-up: Manager::SemanticTokensGeneration(buffer)
-    // at the moment this cache entry was last built -- a third staleness
-    // check alongside content/class generation, since an LSP response can
-    // arrive (and change what should render) with no buffer edit at all.
-    // 0 (Manager's own "never had a response applied" value) when
-    // lspManager_ is unset, so every existing test/construction path that
-    // never wires it behaves exactly as before -- see Manager-sourced
-    // spans' own appending comment at this cache's build site.
-
-    // per-buffer-highlight-cache follow-up: the three fields just above only
-    // remember the *most recently painted* buffer -- switching away and
-    // back (A -> B -> A) was a guaranteed miss even though nothing about A
-    // itself had changed, forcing a full mode_.highlight() re-run (a real
-    // tree-sitter query-capture walk, not a free call) purely because some
-    // other buffer got painted in between. This persists that same result
-    // across a switch, keyed by buffer identity, alongside the modeName
-    // that produced it -- checked in addition to content/class generation
-    // because a rename (BufferView::SetPath call sites) can change which
-    // Mode applies to a still-open buffer whose content hasn't changed at
-    // all, and mode_ itself only resyncs on the *next* active-buffer-change
-    // (see WindowManager.cpp's own comment on that), so a stale entry here
-    // needs its own independent tell. Cleared via ClearBufferCaches, called
-    // from WindowManager::ReassignPanesShowing (the shared close funnel
-    // every real close already goes through) so a closed Buffer* never
-    // lingers as a cache key indefinitely.
-    struct HighlightCacheEntry {
-        std::size_t                        contentGeneration        = 0;
-        std::size_t                        classGeneration          = 0;
-        std::size_t                        semanticTokensGeneration = 0;
-        std::string                        modeName;
-        std::vector<editor::HighlightSpan> spans;
-    };
-    std::unordered_map<text::Buffer*, HighlightCacheEntry> highlightCacheByBuffer_;
 
     // embedded-language-documents follow-up: caches mode_.embeddedRegions'
     // resolved documents per buffer, same staleness check/eviction shape as
