@@ -1349,22 +1349,65 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
 
 ### Remote Execution & Server Protocol
 
-- [ ] **Design ned's own client/server protocol** (raised 2026-09-08 — unstarted, no design committed yet; this entry records the shape of the problem and what's already known, not a spec). The motivating idea: rather than a remote ned shipping buffers back and forth, send *the operation* to where the files are and return only the result — a project-wide search, a refactor, a script evaluation. Round-trip count, not bandwidth, is what makes remote editing feel bad, so this is likely faster as well as simpler.
+- [ ] **Design ned's own client/server protocol** (raised 2026-09-08 — unstarted, no
+	design committed yet; this entry records the shape of the problem and what's already
+	known, not a spec). The motivating idea: rather than a remote ned shipping buffers
+	back and forth, send *the operation* to where the files are and return only the
+	result — a project-wide search, a refactor, a script evaluation. Round-trip count,
+    not bandwidth, is what makes remote editing feel bad, so this is likely faster as
+    well as simpler.
 
-    **The load-bearing design decision — local is the degenerate case.** The protocol should be the *only* interface, with in-process execution as one transport behind it rather than a bypass around it. Two things follow. It can't rot: every local keystroke exercises the same path a remote session uses, so remote stops being a bolt-on that's broken every time it's picked back up. And it makes "where does this script run" a transport question rather than an architectural one — the same request answered in-process, by a local subprocess, or by a host across a socket.
+    **The load-bearing design decision — local is the degenerate case.** The protocol
+    should be the *only* interface, with in-process execution as one transport behind
+    it rather than a bypass around it. Two things follow. It can't rot: every local
+    keystroke exercises the same path a remote session uses, so remote stops being a
+    bolt-on that's broken every time it's picked back up. And it makes "where does
+    this script run" a transport question rather than an architectural one — the same
+    request answered in-process, by a local subprocess, or by a host across a socket.
 
-    That last point interacts directly with the jank analysis above: if scripts execute where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS) lives on whichever side actually runs them. A remote session's client could then be genuinely thin — and, per the same analysis, a headless binary already links `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` + `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316 objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter *grammar* rather than the runtime, and the whole UI-side coupling is one call (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is already there to be taken.
+    That last point interacts directly with the jank analysis above: if scripts execute
+    where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
+    lives on whichever side actually runs them. A remote session's client could then be
+    genuinely thin — and, per the same analysis, a headless binary already links
+    `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` +
+    `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316
+    objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter
+    *grammar* rather than the runtime, and the whole UI-side coupling is one call
+    (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is
+    already there to be taken.
 
-    **Compression must be negotiated, and "none" must be first-class.** Nothing compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib, lzma or brotli — so any codec is a new dependency, and assuming one is present on both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream, or the encoding can't change after the handshake; advertise available codecs at handshake and fall back to identity. LSP's own `capabilities` exchange is the model, and this codebase already understands it well.
+    **Compression must be negotiated, and "none" must be first-class.** Nothing
+    compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib,
+    lzma or brotli — so any codec is a new dependency, and assuming one is present on
+    both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream,
+    or the encoding can't change after the handshake; advertise available codecs at
+    handshake and fall back to identity. LSP's own `capabilities` exchange is the model,
+    and this codebase already understands it well.
 
-    **This must inherit four protocol bugs already paid for, not rediscover them.** Ned has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type` envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
-    - an unbounded blocking `connect()` froze a live editor when the daemon's backlog filled (`Lsp/BrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
+    **This must inherit four protocol bugs already paid for, not rediscover them.** Ned
+    has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type`
+    envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an
+    `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
+    - an unbounded blocking `connect()` froze a live editor when the daemon's backlog
+      filled (`Lsp/BrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
     - joining a reader thread under a held mutex wedged the daemon for hours;
-    - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the `ctest -j8` timeouts;
-    - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in `LspClient`/`DapClient`/`AcpClient`.
-    A new protocol gets timeouts on every blocking call, a non-blocking connect, an asynchronous write queue, and no lock held across a join — by construction, on day one. `EventLoop::Post` is the existing, proven way results come back to the main thread; the protocol layer should not invent a second one.
+    - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the
+      `ctest -j8` timeouts;
+    - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in
+      `LspClient`/`DapClient`/`AcpClient`.
+    A new protocol gets timeouts on every blocking call, a non-blocking connect, an
+    asynchronous write queue, and no lock held across a join — by construction, on day
+    one. `EventLoop::Post` is the existing, proven way results come back to the main
+    thread; the protocol layer should not invent a second one.
 
-    **Open questions worth settling before any code:** framing (length-prefixed binary vs. reusing the `Content-Length` shape already implemented three times); whether requests are JSON (nlohmann is already vendored) or something denser; how a long-running remote operation streams partial results and gets cancelled (LSP's `$/progress` and `$/cancelRequest` are the obvious prior art, already handled in `LspManager`); versioning and forward compatibility; and authentication/transport (bare `AF_UNIX` locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and trust conventions in `BrokerSocketPath.cpp` are the local precedent).
+    **Open questions worth settling before any code:** framing (length-prefixed binary
+    vs. reusing the `Content-Length` shape already implemented three times); whether
+    requests are JSON (nlohmann is already vendored) or something denser; how a long-
+    running remote operation streams partial results and gets cancelled (LSP's
+    `$/progress` and `$/cancelRequest` are the obvious prior art, already handled in
+    `LspManager`); versioning and forward compatibility; and authentication/transport
+    (bare `AF_UNIX` locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and
+    trust conventions in `BrokerSocketPath.cpp` are the local precedent).
 
     **Security is not a later concern here.** "Execute this script over a socket" is a
     remote code execution surface by definition. Ned already gates project-local
@@ -1712,18 +1755,23 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
-- **`Editor/Multibuffer.cpp`'s registry has the same dangling-pointer-collision shape
-  `HighlightCache` did before `Text/Buffer.h`'s `InstanceId()` fix (2026-09-16).**
-  Found while root-causing that flake, not yet confirmed to actually misfire:
-  `MultibufferIndexFor`'s `std::unordered_map<const text::Buffer*, MultibufferIndex>`
-  keys on the raw pointer alone, no generation/instance check at all, so a `Buffer`
-  destroyed with no `ClearMultibufferIndexFor` call and a later, unrelated `Buffer`
-  landing at the same address would silently inherit the dead buffer's index. Lower
-  risk than `HighlightCache` was: `Tests/MultibufferTest.cpp` already wraps itself in
-  `ClearRegistryForTesting()` (unlike `BufferViewTest.cpp`, which had no equivalent
-  guard), so this isn't currently flaking under `--order rand`. If it's ever worth
-  closing outright, `Buffer::InstanceId()` is now available to key on instead of the
-  bare pointer, the same fix shape.
+- **`BufferView's highlight cache updates after an edit changes the buffer's content`
+  is intermittently flaky under `--order rand`.** Found 2026-09-15 while stress-testing
+  the new Wrap rule kind's own `--order rand` reruns -- confirmed unrelated to that work
+  (the failure reproduces on its own, in a test file/subsystem the Wrap rollout never
+  touches: `Editor/Mode.cpp`'s `formatCaptures` closure and the Wrap/Rules/Config files
+  are all it changed, none of which this test exercises). Roughly 1 in 10-15
+  `--order rand` runs. The surprising part: it's the test's OWN FIRST assertion that
+  fails (`Tests/BufferViewTest.cpp:1774`, checking that a freshly-painted `"a"` string
+  literal renders with `SyntaxClass::String` on the very first `Paint()` call), not the
+  post-edit one the test's own name is about -- `REQUIRE(CellMatchesBrush(screen.PixelAt
+  (gutter + 0, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String)))` evaluates
+  false, meaning the cell rendered as `Default` instead, as if the JSON mode's highlight
+  query hadn't produced a capture yet at the moment of that first paint. Smells like a
+  mode-construction/parse-readiness race (this codebase already has precedent for that
+  class of bug -- see `ModePrewarmTest.cpp` and the dynamic-mode-race entry closed
+  earlier) rather than anything about cache invalidation specifically, but not
+  root-caused -- logged rather than guessed at.
 
 As of 2026-09-08: `ctest -j8` is clean under the `default` preset, and so is the
 single-process `./build/ned_tests` (see the build/test note at the end of this file for
