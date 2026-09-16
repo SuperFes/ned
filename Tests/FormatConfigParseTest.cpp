@@ -17,6 +17,9 @@ using ned::editor::ApplyFormatConfig;
 using ned::editor::BlankRuleFor;
 using ned::editor::BracePlacement;
 using ned::editor::BreakRuleFor;
+using ned::editor::CaseConvention;
+using ned::editor::CaseRuleFor;
+using ned::editor::SetCaseConvention;
 using ned::editor::EffectiveIndentStyle;
 using ned::editor::EnsureFinalNewline;
 using ned::editor::FormatConfig;
@@ -113,6 +116,7 @@ struct FormatRulesGuard {
         SetBlankMaxBefore("format-config-test.capture", std::nullopt);
         SetWrapPolicy("format-config-test.capture", std::nullopt);
         SetWrapForceTrailingComma("format-config-test.capture", std::nullopt);
+        SetCaseConvention("format-config-test.entity", std::nullopt);
     }
 };
 
@@ -208,6 +212,34 @@ TEST_CASE("ApplyFormatConfig sets only the :wrap fields a config touches", "[For
 
     REQUIRE(WrapRuleFor("format-config-test.capture").policy == WrapPolicy::Always);
     REQUIRE_FALSE(WrapRuleFor("format-config-test.capture").forceTrailingComma.has_value());
+}
+
+TEST_CASE("ParseFormatConfig reads :case entries", "[FormatConfigParse]") {
+    const FormatConfig config = ParseFormatConfig(
+        "{:case {\"function\" :camel-case\n"
+        "        \"cpp/type\" :pascal-case}}",
+        "test.janet");
+
+    REQUIRE(config.caseRules.size() == 2);
+    REQUIRE(config.caseRules.at("function").convention == CaseConvention::CamelCase);
+    REQUIRE(config.caseRules.at("cpp/type").convention == CaseConvention::PascalCase);
+}
+
+TEST_CASE("ParseFormatConfig rejects a malformed :case shape", "[FormatConfigParse]") {
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:case \"not a struct\"}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:case {:not-a-string :camel-case}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:case {\"function\" \"not-a-keyword\"}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:case {\"function\" :not-a-real-convention}}", "test.janet"), std::runtime_error);
+}
+
+TEST_CASE("ApplyFormatConfig sets only the :case fields a config touches", "[FormatConfigParse]") {
+    const FormatRulesGuard guard;
+
+    FormatConfig config;
+    config.caseRules["format-config-test.entity"] = {.convention = CaseConvention::SnakeCase};
+    ApplyFormatConfig(config);
+
+    REQUIRE(CaseRuleFor("format-config-test.entity").convention == CaseConvention::SnakeCase);
 }
 
 TEST_CASE("ParseFormatConfig rejects a malformed :space/:break shape", "[FormatConfigParse]") {

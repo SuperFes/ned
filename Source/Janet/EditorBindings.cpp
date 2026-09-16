@@ -1339,6 +1339,21 @@ namespace {
         return editor::WrapRuleFor(captureName).forceTrailingComma;
     }
 
+    // Empty string clears, same convention NedSetFormatWrapPolicy uses for its
+    // own enum-valued field. `entityKind` is a bare entity-kind string
+    // ("function", "parameter", ...) or its language-scoped form
+    // ("cpp/function") -- see FormatRules.h's own CaseConvention header
+    // comment for why this is not a real query-capture name.
+    void NedSetFormatCaseConvention(std::string entityKind, std::string convention) {
+        editor::SetCaseConvention(
+            entityKind, convention.empty() ? std::nullopt : std::optional(editor::CaseConventionByName(convention)));
+    }
+
+    std::optional<std::string> NedFormatCaseConvention(std::string entityKind) {
+        const auto convention = editor::CaseRuleFor(entityKind).convention;
+        return convention ? std::optional(editor::CaseConventionName(*convention)) : std::nullopt;
+    }
+
     void NedSetFormatBlankMinBefore(std::string captureName, Janet value) {
         editor::SetBlankMinBefore(captureName, JanetToOptionalInt(value));
     }
@@ -1462,6 +1477,17 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedFormatWrapForceTrailingComma>(
         "ned", "format-wrap-force-trailing-comma",
         "The capture name's own overridden wrap-force-trailing-comma rule, or nil if unset.");
+    env.Register<&NedSetFormatCaseConvention>(
+        "ned", "set-format-case-convention",
+        "Override the naming-case convention for an entity kind (\"function\", \"parameter\", \"local\", "
+        "\"type\", \"namespace\", or \"<language>/<entity-kind>\" for a language-scoped override): "
+        "\"none\", \"lowercase\", \"uppercase\", \"camel-case\", \"pascal-case\", \"snake-case\", "
+        "\"leading-snake-case\", \"upper-snake-case\", \"screaming-snake-case\", or \"lisp-case\"; empty string "
+        "clears. This is a CHECKER-only setting -- it is never applied automatically by format-buffer/--format, "
+        "matching Docs/FormattingCapabilities.md's own stance that renaming on save would be hostile.");
+    env.Register<&NedFormatCaseConvention>(
+        "ned", "format-case-convention",
+        "The entity kind's own overridden case-convention name, or nil if unset.");
     env.Register<&NedSetFormatBlankMinBefore>(
         "ned", "set-format-blank-min-before",
         "Override the minimum blank lines required immediately before the given capture name -- an integer, nil "

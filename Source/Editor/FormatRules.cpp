@@ -1,5 +1,6 @@
 #include "FormatRules.h"
 
+#include <algorithm>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
@@ -26,6 +27,10 @@ namespace {
         return a.policy == b.policy && a.forceTrailingComma == b.forceTrailingComma;
     }
 
+    bool operator==(const CaseRuleValue& a, const CaseRuleValue& b) {
+        return a.convention == b.convention;
+    }
+
     std::mutex& RulesMutex() {
         static std::mutex mutex;
         return mutex;
@@ -48,6 +53,11 @@ namespace {
 
     std::unordered_map<std::string, WrapRuleValue>& WrapRules() {
         static std::unordered_map<std::string, WrapRuleValue> rules;
+        return rules;
+    }
+
+    std::unordered_map<std::string, CaseRuleValue>& CaseRules() {
+        static std::unordered_map<std::string, CaseRuleValue> rules;
         return rules;
     }
 
@@ -94,6 +104,15 @@ namespace {
         ValidateCaptureName(name);
         const std::lock_guard<std::mutex> lock(RulesMutex());
         auto&                             entry = WrapRules()[name];
+        entry.*field                            = std::move(value);
+        ++Generation();
+    }
+
+    template <typename T, typename Field>
+    void SetCaseField(const std::string& name, std::optional<T> value, Field CaseRuleValue::* field) {
+        ValidateCaptureName(name);
+        const std::lock_guard<std::mutex> lock(RulesMutex());
+        auto&                             entry = CaseRules()[name];
         entry.*field                            = std::move(value);
         ++Generation();
     }
@@ -200,6 +219,19 @@ WrapRuleValue WrapRuleFor(std::string_view name, std::string_view language) {
     return ScopedRuleFor<WrapRuleValue>(name, language, [](std::string_view n) { return WrapRuleFor(n); });
 }
 
+void SetCaseConvention(const std::string& name, std::optional<CaseConvention> value) {
+    SetCaseField(name, value, &CaseRuleValue::convention);
+}
+
+CaseRuleValue CaseRuleFor(std::string_view name) {
+    const std::lock_guard<std::mutex> lock(RulesMutex());
+    return RuleFor(CaseRules(), name);
+}
+
+CaseRuleValue CaseRuleFor(std::string_view name, std::string_view language) {
+    return ScopedRuleFor<CaseRuleValue>(name, language, [](std::string_view n) { return CaseRuleFor(n); });
+}
+
 void SetBlankMinBefore(const std::string& name, std::optional<int> value) {
     SetBlankField(name, value, &BlankRuleValue::minBefore);
 }
@@ -266,6 +298,184 @@ std::string WrapPolicyName(WrapPolicy policy) {
             return "always";
     }
     throw std::runtime_error("ned: internal error: unhandled WrapPolicy");
+}
+
+CaseConvention CaseConventionByName(const std::string& name) {
+    if (name == "none") {
+        return CaseConvention::None;
+    }
+    if (name == "lowercase") {
+        return CaseConvention::Lowercase;
+    }
+    if (name == "uppercase") {
+        return CaseConvention::Uppercase;
+    }
+    if (name == "camel-case") {
+        return CaseConvention::CamelCase;
+    }
+    if (name == "pascal-case") {
+        return CaseConvention::PascalCase;
+    }
+    if (name == "snake-case") {
+        return CaseConvention::SnakeCase;
+    }
+    if (name == "leading-snake-case") {
+        return CaseConvention::LeadingSnakeCase;
+    }
+    if (name == "upper-snake-case") {
+        return CaseConvention::UpperSnakeCase;
+    }
+    if (name == "screaming-snake-case") {
+        return CaseConvention::ScreamingSnakeCase;
+    }
+    if (name == "lisp-case") {
+        return CaseConvention::LispCase;
+    }
+    throw std::runtime_error("ned: invalid case convention \"" + name +
+                             "\" -- expected one of none, lowercase, uppercase, camel-case, pascal-case, "
+                             "snake-case, leading-snake-case, upper-snake-case, screaming-snake-case, lisp-case");
+}
+
+std::string CaseConventionName(CaseConvention convention) {
+    switch (convention) {
+        case CaseConvention::None:
+            return "none";
+        case CaseConvention::Lowercase:
+            return "lowercase";
+        case CaseConvention::Uppercase:
+            return "uppercase";
+        case CaseConvention::CamelCase:
+            return "camel-case";
+        case CaseConvention::PascalCase:
+            return "pascal-case";
+        case CaseConvention::SnakeCase:
+            return "snake-case";
+        case CaseConvention::LeadingSnakeCase:
+            return "leading-snake-case";
+        case CaseConvention::UpperSnakeCase:
+            return "upper-snake-case";
+        case CaseConvention::ScreamingSnakeCase:
+            return "screaming-snake-case";
+        case CaseConvention::LispCase:
+            return "lisp-case";
+    }
+    throw std::runtime_error("ned: internal error: unhandled CaseConvention");
+}
+
+namespace {
+
+    bool IsAsciiLower(char c) {
+        return c >= 'a' && c <= 'z';
+    }
+    bool IsAsciiUpper(char c) {
+        return c >= 'A' && c <= 'Z';
+    }
+    bool IsAsciiDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    // A single "word" of a separator-delimited convention (snake_case's
+    // own "snake"/"case"). Each convention's own casing requirement per
+    // word is one of these four shapes.
+    enum class WordCase { AllLower, AllUpper, Capitalized };
+
+    bool WordMatches(std::string_view word, WordCase wordCase) {
+        if (word.empty()) {
+            return false; // a leading/trailing/doubled separator, e.g. "foo__bar" or "_foo"
+        }
+        // A word with no letters at all (a pure-digit suffix like the "123"
+        // in "MAX_VALUE_123") has no case to violate -- found live by this
+        // rollout's own test suite (a real bug, not a hypothetical): the
+        // first-character-must-be-a-letter checks below would otherwise
+        // reject a perfectly ordinary numbered constant. Still requires
+        // every byte be a digit (not, say, punctuation), just doesn't
+        // impose a case requirement on it.
+        if (std::none_of(word.begin(), word.end(), [](char c) { return IsAsciiLower(c) || IsAsciiUpper(c); })) {
+            return std::all_of(word.begin(), word.end(), IsAsciiDigit);
+        }
+        // A real letter IS present past this point (the all-digit bypass
+        // above already returned) -- the word's own FIRST character is
+        // still required to be a letter of the right case, same as
+        // Capitalized already does below. This is what keeps "123foo"
+        // rejected as Lowercase (a digit-then-letters word, not pure
+        // digits) while still accepting a pure-digit word like "123" --
+        // confirmed by this rollout's own tests for both shapes.
+        switch (wordCase) {
+            case WordCase::AllLower:
+                return IsAsciiLower(word.front()) &&
+                      std::all_of(word.begin() + 1, word.end(),
+                                  [](char c) { return IsAsciiLower(c) || IsAsciiDigit(c); });
+            case WordCase::AllUpper:
+                return IsAsciiUpper(word.front()) &&
+                      std::all_of(word.begin() + 1, word.end(),
+                                  [](char c) { return IsAsciiUpper(c) || IsAsciiDigit(c); });
+            case WordCase::Capitalized:
+                return IsAsciiUpper(word.front()) &&
+                      std::all_of(word.begin() + 1, word.end(),
+                                  [](char c) { return IsAsciiLower(c) || IsAsciiDigit(c); });
+        }
+        return false;
+    }
+
+    // "foo_bar_baz" / "Foo_Bar_Baz" / "FOO_BAR_BAZ" / "foo-bar-baz" shaped
+    // conventions: split on `separator`, apply `firstWord`'s own case rule
+    // to the first word and `restWords`' to every word after it (they
+    // differ for LeadingSnakeCase alone; every other separated convention
+    // uses the same rule for every word). A name with no separator at all
+    // is just "one word", handled the same way as any other -- SnakeCase
+    // correctly accepts a bare "foo", ScreamingSnakeCase a bare "FOO".
+    bool MatchesSeparated(std::string_view name, char separator, WordCase firstWord, WordCase restWords) {
+        std::size_t start   = 0;
+        bool        isFirst = true;
+        while (true) {
+            const std::size_t sep  = name.find(separator, start);
+            const std::string_view word = (sep == std::string_view::npos) ? name.substr(start)
+                                                                          : name.substr(start, sep - start);
+            if (!WordMatches(word, isFirst ? firstWord : restWords)) {
+                return false;
+            }
+            if (sep == std::string_view::npos) {
+                return true;
+            }
+            start   = sep + 1;
+            isFirst = false;
+        }
+    }
+
+} // namespace
+
+bool MatchesCaseConvention(std::string_view name, CaseConvention convention) {
+    if (convention == CaseConvention::None) {
+        return true;
+    }
+    if (name.empty()) {
+        return false;
+    }
+    switch (convention) {
+        case CaseConvention::None:
+            return true; // unreachable, handled above -- kept for the switch's own exhaustiveness
+        case CaseConvention::Lowercase:
+            return WordMatches(name, WordCase::AllLower);
+        case CaseConvention::Uppercase:
+            return WordMatches(name, WordCase::AllUpper);
+        case CaseConvention::CamelCase:
+            return IsAsciiLower(name.front()) &&
+                  std::all_of(name.begin() + 1, name.end(), [](char c) { return IsAsciiLower(c) || IsAsciiUpper(c) || IsAsciiDigit(c); });
+        case CaseConvention::PascalCase:
+            return IsAsciiUpper(name.front()) &&
+                  std::all_of(name.begin() + 1, name.end(), [](char c) { return IsAsciiLower(c) || IsAsciiUpper(c) || IsAsciiDigit(c); });
+        case CaseConvention::SnakeCase:
+            return MatchesSeparated(name, '_', WordCase::AllLower, WordCase::AllLower);
+        case CaseConvention::LeadingSnakeCase:
+            return MatchesSeparated(name, '_', WordCase::Capitalized, WordCase::AllLower);
+        case CaseConvention::UpperSnakeCase:
+            return MatchesSeparated(name, '_', WordCase::Capitalized, WordCase::Capitalized);
+        case CaseConvention::ScreamingSnakeCase:
+            return MatchesSeparated(name, '_', WordCase::AllUpper, WordCase::AllUpper);
+        case CaseConvention::LispCase:
+            return MatchesSeparated(name, '-', WordCase::AllLower, WordCase::AllLower);
+    }
+    return false;
 }
 
 } // namespace ned::editor

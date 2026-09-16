@@ -85,6 +85,21 @@ namespace {
         }
     }
 
+    CaseConvention ExpectCaseConvention(const std::string& path, const Value& value, std::string_view what) {
+        if (!value.IsKeyword()) {
+            Fail(path, value.line,
+                 std::string(what) + " must be a keyword (:none, :lowercase, :uppercase, :camel-case, "
+                                      ":pascal-case, :snake-case, :leading-snake-case, :upper-snake-case, "
+                                      ":screaming-snake-case, or :lisp-case)");
+        }
+        try {
+            return CaseConventionByName(value.text);
+        }
+        catch (const std::runtime_error&) {
+            Fail(path, value.line, std::string(what) + " is not a recognized case convention");
+        }
+    }
+
     // :space's own {"<capture>" {:before true/false :after true/false
     // :within true/false} ...} -- the capture-name key is a STRING (a
     // dotted capture name isn't a valid Janet keyword symbol), unlike every
@@ -314,6 +329,18 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
                 config.wrap[capture] = ParseWrapEntry(path, capture, entryValue);
             }
         }
+        else if (key == "case") {
+            if (!value.IsStruct()) {
+                Fail(path, value.line, ":case is {\"<entity-kind>\" :convention ...}");
+            }
+            for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
+                const Value&      entityKey  = value.pairs[j];
+                const Value&      entryValue = value.pairs[j + 1];
+                const std::string entity =
+                    ExpectString(path, entityKey, ":case's own keys are entity-kind strings, e.g. \"function\"");
+                config.caseRules[entity].convention = ExpectCaseConvention(path, entryValue, "\"" + entity + "\"'s :case entry");
+            }
+        }
         else if (key == "trim-trailing-whitespace") {
             config.trimTrailingWhitespaceOnSave = ExpectBool(path, value, ":trim-trailing-whitespace");
         }
@@ -387,6 +414,11 @@ void ApplyFormatConfig(const FormatConfig& config) {
             SetWrapForceTrailingComma(captureKey, entry.forceTrailingComma);
         }
     }
+    for (const auto& [entityKey, entry] : config.caseRules) {
+        if (entry.convention) {
+            SetCaseConvention(entityKey, entry.convention);
+        }
+    }
     if (config.trimTrailingWhitespaceOnSave) {
         SetTrimTrailingWhitespaceOnSave(*config.trimTrailingWhitespaceOnSave);
     }
@@ -413,7 +445,7 @@ std::filesystem::path ProjectFormatConfigPath(const std::filesystem::path& proje
 }
 
 std::vector<std::string> FormatConfigKeys() {
-    return {"blank", "break", "ensure-final-newline", "indent", "max-consecutive-blank-lines",
+    return {"blank", "break", "case", "ensure-final-newline", "indent", "max-consecutive-blank-lines",
             "space", "trim-trailing-whitespace", "wrap"};
 }
 

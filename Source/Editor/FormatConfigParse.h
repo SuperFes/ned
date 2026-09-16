@@ -34,6 +34,9 @@
 //                           :collapse-empty true/false :collapse-simple true/false} ...}
 //    :blank  {"<capture>" {:min-before N :max-before N} ...}
 //    :wrap   {"<capture>" {:policy :never/:always :force-trailing-comma true/false} ...}
+//    :case   {"<entity-kind>" :none/:lowercase/:uppercase/:camel-case/:pascal-case/
+//                              :snake-case/:leading-snake-case/:upper-snake-case/
+//                              :screaming-snake-case/:lisp-case ...}
 //    :trim-trailing-whitespace true/false
 //    :ensure-final-newline true/false
 //    :max-consecutive-blank-lines N}
@@ -92,6 +95,12 @@ struct FormatConfig {
     std::unordered_map<std::string, BreakRuleValue> breakRules; // "break" is a C++ keyword
     std::unordered_map<std::string, BlankRuleValue> blank;
     std::unordered_map<std::string, WrapRuleValue>            wrap;
+    // Kind 7 (Case) -- keyed by a bare entity-kind string ("function",
+    // "parameter", ...) or its language-scoped form ("cpp/function"),
+    // FormatRules.h's own CaseRuleFor key convention (see its header
+    // comment for why this is NOT a real query-capture name the way
+    // :space/:break/:blank/:wrap's keys are).
+    std::unordered_map<std::string, CaseRuleValue>            caseRules;
     std::optional<bool>                                       trimTrailingWhitespaceOnSave;
     std::optional<bool>                                       ensureFinalNewline;
     // A negative value means "no limit", the same sentinel

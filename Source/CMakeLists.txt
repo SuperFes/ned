@@ -109,6 +109,7 @@ add_library(ned_lib STATIC
         Editor/FormatSpacing.cpp
         Editor/FormatBlankLines.cpp
         Editor/FormatWrap.cpp
+        Editor/FormatCase.cpp
         Editor/Format.cpp
         Editor/Clipboard.cpp
         Editor/TabWidth.cpp
