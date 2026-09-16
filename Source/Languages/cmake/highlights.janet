@@ -1,7 +1,12 @@
-# ned-authored (kotlin-tags precedent): upstream's highlights.scm nests a
-# multi-pattern group inside a pattern, which QueryMatcher's census-measured
-# scope deliberately excludes -- see the ROADMAP watch-list entry. This file
-# keeps the useful core in constructs the matcher supports.
+# ned-authored (kotlin-tags precedent): a simplified core rather than a
+# full transcription of upstream's highlights.scm. The set(... CACHE ...)
+# pattern below was dropped for a time -- upstream nests a multi-pattern
+# group inside a pattern, a construct QueryMatcher's census-measured scope
+# excluded -- see the ROADMAP watch-list entry; restored once the matcher
+# gained support (placed after the generic @constant heuristic and the
+# "ENV"/"CACHE" @namespace list so its more precise @keyword.modifier/@type
+# captures win the overlap on those same tokens -- later patterns override
+# on a tie, see Mode.h).
 
 [
   (quoted_argument)
@@ -32,6 +37,18 @@
   "ENV"
   "CACHE"
 ] @namespace
+
+(normal_command
+  (identifier) @_function
+  (:match? @_function "^[sS][eE][tT]$")
+  (argument_list
+    .
+    (argument)
+    ((argument) @_cache @keyword.modifier
+      .
+      (argument) @_type @type
+      (:any-of? @_cache "CACHE")
+      (:any-of? @_type "BOOL" "FILEPATH" "PATH" "STRING" "INTERNAL"))))
 
 [
   "$"
