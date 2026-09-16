@@ -265,8 +265,20 @@ struct IndentComputation {
 // Comments are deliberately not protected. Reindenting inside a block comment
 // is conventional in every editor and changes no meaning -- it is a matter of
 // taste, where this is a matter of correctness.
-[[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> VerbatimRanges(const Mode&      mode,
-                                                                              std::string_view bufferText);
+//
+// `window` bounds the highlight query itself (not just which of its results
+// get kept) -- CapturesInRange prunes tree traversal to what overlaps it, so
+// a caller that only cares whether ONE line sits inside a verbatim span (the
+// interactive newline/indent-for-tab-command path -- IndentColumnForLine's
+// own single-line, ranges==nullptr call below) can pass {lineStart, lineEnd}
+// instead of paying for a whole-document query pass. A capture starting
+// before `window` but overlapping it (a multi-line string opened far above)
+// is still found -- overlap, not containment, and the traversal still walks
+// down to it via the tree rather than scanning every preceding byte. The
+// default (whole document) is what every batch/whole-buffer caller
+// (IndentRegion, the tests, FormatterPropertiesTest) still wants.
+[[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>>
+VerbatimRanges(const Mode& mode, std::string_view bufferText, HighlightWindow window = {});
 
 // Whether `lineStart` falls strictly inside one of `ranges`.
 [[nodiscard]] bool LineIsVerbatim(const std::vector<std::pair<std::size_t, std::size_t>>& ranges,

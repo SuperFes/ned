@@ -609,12 +609,13 @@ IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser> parser, std:
     };
 }
 
-std::vector<std::pair<std::size_t, std::size_t>> VerbatimRanges(const Mode& mode, std::string_view bufferText) {
+std::vector<std::pair<std::size_t, std::size_t>> VerbatimRanges(const Mode& mode, std::string_view bufferText,
+                                                                 HighlightWindow window) {
     std::vector<std::pair<std::size_t, std::size_t>> ranges;
     if (!mode.highlight) {
         return ranges;
     }
-    for (const HighlightSpan& span : mode.highlight(bufferText, HighlightWindow{})) {
+    for (const HighlightSpan& span : mode.highlight(bufferText, window)) {
         if (span.syntaxClass != SyntaxClass::String || span.startByte >= span.endByte) {
             continue;
         }
@@ -648,7 +649,22 @@ std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view buffer
             return std::nullopt;
         }
     }
-    else if (LineIsVerbatim(VerbatimRanges(mode, bufferText), lineStart)) {
+    // No precomputed ranges (the single-interactive-line path -- newline,
+    // indent-for-tab-command): bound the highlight pass to just the single
+    // point LineIsVerbatim actually tests (lineStart -- lineEnd plays no
+    // part in that check) instead of paying for a whole-document query
+    // pass. CapturesInRange's overlap+tree-pruned semantics still find a
+    // multi-line string that opened far above lineStart, so this is not an
+    // approximation -- see VerbatimRanges' own doc comment. NOT
+    // {lineStart, lineEnd}: newline's own call passes lineEnd == lineStart
+    // (its "blank line, no bound" convention -- mode.indentColumn's own
+    // reading of that empty range, unrelated to what a highlight window
+    // needs here), which would make the window zero-width and silently
+    // report "nothing is verbatim" every time. Confirmed live: this call
+    // alone cost ~60ms on this project's own 168KB main.cpp, unbounded, on
+    // every single keystroke.
+    else if (LineIsVerbatim(VerbatimRanges(mode, bufferText, HighlightWindow{lineStart, std::min(lineStart + 1, bufferText.size())}),
+                            lineStart)) {
         return std::nullopt;
     }
     return mode.indentColumn(bufferText, lineStart, lineEnd);

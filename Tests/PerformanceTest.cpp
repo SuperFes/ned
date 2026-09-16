@@ -441,22 +441,34 @@ TEST_CASE("BufferView::paint stays fast repeatedly switching between two tree-si
 
 TEST_CASE("CppMode full-buffer highlighting and electric indent stay fast on a large file", "[Performance]") {
     // querymatcher-walk follow-up: pressing Enter in a C++ buffer runs
-    // Indent.h's IndentColumnForLine synchronously on the key path, which
-    // runs Mode::highlight over the WHOLE buffer (VerbatimRanges' string
-    // check) plus the indents query -- so the newline keystroke costs two
-    // full QueryMatcher runs before it paints. The Phase 4a engine swap
-    // shipped with parity tests but no time bound, and its original walk
-    // (ts_node_child(i) recursion + a per-pattern parent-sibling scan for
-    // the node's field) was quadratic in sibling count: ~2,200ms per
-    // highlight run on a 154KB C++ file where ts_query took ~37ms --
-    // seconds of delay per Enter, reported live. Fixed (one TSTreeCursor
-    // pre-order walk carrying the field, plus symbol-indexed root dispatch
-    // so alternation-rooted keyword patterns aren't trialed at every node),
-    // both halves together measure ~130ms here; the budget catches the
-    // quadratic class, not tuning noise. C++ specifically because its
-    // highlights query is the alternation-heavy shape that triggered the
-    // per-node trial cost, and generated functions inside one namespace
-    // reproduce the long sibling runs the quadratic walk choked on.
+    // Indent.h's IndentColumnForLine synchronously on the key path. The
+    // Phase 4a engine swap shipped with parity tests but no time bound, and
+    // its original walk (ts_node_child(i) recursion + a per-pattern
+    // parent-sibling scan for the node's field) was quadratic in sibling
+    // count: ~2,200ms per highlight run on a 154KB C++ file where ts_query
+    // took ~37ms -- seconds of delay per Enter, reported live. Fixed (one
+    // TSTreeCursor pre-order walk carrying the field, plus symbol-indexed
+    // root dispatch so alternation-rooted keyword patterns aren't trialed at
+    // every node); the budget below catches the quadratic class, not tuning
+    // noise. C++ specifically because its highlights query is the
+    // alternation-heavy shape that triggered the per-node trial cost, and
+    // generated functions inside one namespace reproduce the long sibling
+    // runs the quadratic walk choked on.
+    //
+    // interactive-verbatim-window follow-up: IndentColumnForLine's own
+    // uncached (ranges == nullptr) branch used to call VerbatimRanges with
+    // an unbounded HighlightWindow -- a SECOND full-document QueryMatcher
+    // run on every single newline/indent-for-tab-command keystroke,
+    // redundant with the highlight() call above (which stands in for the
+    // repaint this same edit triggers). Measured live on this project's own
+    // 168KB main.cpp: ~60ms per call, so the "newline" command cost ~73ms
+    // total -- not quadratic, but nowhere near instant either. Fixed by
+    // bounding that internal highlight pass to the single byte
+    // LineIsVerbatim actually tests (CapturesInRange's overlap+tree-pruned
+    // semantics still find a multi-line string opened far above it). The
+    // isolated-cost check below guards that fix specifically, with a much
+    // tighter budget than kBudgetMs -- kBudgetMs alone (500-5000ms) is far
+    // too loose to have caught a 60ms regression.
     std::string content = "#include <string>\n\nnamespace perf {\n\n";
     for (int i = 0; i < 450; ++i) {
         const std::string n = std::to_string(i);
@@ -492,6 +504,19 @@ TEST_CASE("CppMode full-buffer highlighting and electric indent stay fast on a l
     REQUIRE(column.has_value());
     REQUIRE(*column > 0); // inside trailing()'s body
     REQUIRE(duration_cast<milliseconds>(elapsed).count() < kBudgetMs);
+
+    // Isolated: IndentColumnForLine alone, against the SAME already-parsed
+    // sharedParse tree (mode.highlight above already updated it to this
+    // exact content, so this measures VerbatimRanges' own windowing, not
+    // parse cost). A regression back to an unbounded highlight window here
+    // costs tens of ms on a file this size -- comfortably caught by a
+    // budget an order of magnitude under kBudgetMs, sanitizer noise included.
+    const auto indentOnlyStart   = steady_clock::now();
+    const auto indentOnlyColumn  = ned::editor::IndentColumnForLine(mode, content, lineStart, lineStart);
+    const auto indentOnlyElapsed = steady_clock::now() - indentOnlyStart;
+
+    REQUIRE(indentOnlyColumn.has_value());
+    REQUIRE(duration_cast<milliseconds>(indentOnlyElapsed).count() < kBudgetMs / 10);
 }
 
 TEST_CASE("IndentBuffer stays fast on a large real-shaped C++ file", "[Performance]") {
