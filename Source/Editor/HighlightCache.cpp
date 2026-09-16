@@ -11,6 +11,17 @@ namespace {
 
     struct Entry {
         const text::Buffer*                               buffer            = nullptr;
+        // Buffer::InstanceId() alongside the raw pointer -- confirmed live
+        // (a placement-new repro, see HighlightCacheTest.cpp): a Buffer with
+        // no lifetime hook into this cache (a stack-local test Fixture,
+        // e.g.) can be destroyed and a wholly unrelated later Buffer can be
+        // constructed at the exact same address, with the exact same
+        // contentGeneration/modeName/window this cache would otherwise
+        // accept as a match -- a dangling-pointer cache hit that served one
+        // buffer's spans for another's content. InstanceId() is unique for
+        // the process lifetime and never reused, so it's what actually
+        // tells "the same buffer, still alive" from "a coincidence."
+        std::size_t                                       instanceId        = 0;
         std::size_t                                       contentGeneration = 0;
         std::size_t                                       classGeneration   = 0;
         std::string                                       modeName;
@@ -38,24 +49,29 @@ std::shared_ptr<const std::vector<HighlightSpan>> CachedHighlightSpans(const tex
         return kEmpty;
     }
 
+    const std::size_t instanceId        = buffer.InstanceId();
     const std::size_t contentGeneration = buffer.ContentGeneration();
     const std::size_t classGeneration   = CaptureClassGeneration();
 
     std::deque<Entry>& entries = Entries();
     for (Entry& entry : entries) {
-        if (entry.buffer == &buffer && entry.contentGeneration == contentGeneration &&
+        if (entry.buffer == &buffer && entry.instanceId == instanceId && entry.contentGeneration == contentGeneration &&
             entry.classGeneration == classGeneration && entry.modeName == mode.name &&
             entry.window.Contains(window)) {
             return entry.spans;
         }
     }
 
-    // Miss: recompute, and drop any stale entry for this same buffer rather
-    // than letting one buffer fill the whole cache with its own history.
+    // Miss: recompute, and drop any stale entry for this same address rather
+    // than letting one buffer fill the whole cache with its own history --
+    // keyed on the address alone here (not instanceId too), since a dead
+    // buffer's own now-meaningless entry deserves eviction just as much as
+    // a live one's stale entry does.
     std::erase_if(entries, [&buffer](const Entry& entry) { return entry.buffer == &buffer; });
 
     Entry fresh;
     fresh.buffer            = &buffer;
+    fresh.instanceId        = instanceId;
     fresh.contentGeneration = contentGeneration;
     fresh.classGeneration   = classGeneration;
     fresh.modeName          = mode.name;

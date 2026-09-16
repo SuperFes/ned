@@ -506,6 +506,19 @@ class Buffer {
     // a before/after comparison on the same instance.
     [[nodiscard]] std::size_t ContentGeneration() const;
 
+    // A process-wide-unique value assigned once, at construction, and never
+    // reassigned -- unlike ContentGeneration() above, this identifies the
+    // INSTANCE itself rather than a point in its edit history. Exists so a
+    // cache keyed by `const Buffer*` (HighlightCache.h, e.g.) can tell "the
+    // same buffer, still alive" from "a different buffer whose allocator
+    // happened to reuse the address of one that's gone" -- a real hazard a
+    // stack-local Buffer with no lifetime hook into such a cache can hit
+    // (confirmed live: a destroyed test buffer's highlight spans served to
+    // an unrelated new buffer placement-constructed at the same address).
+    // Preserved by a move (the same logical buffer, relocated) since
+    // nothing overrides the implicitly-generated move constructor.
+    [[nodiscard]] std::size_t InstanceId() const;
+
     [[nodiscard]] std::size_t Point() const;
     void                      SetPoint(std::size_t byteOffset);
 
@@ -1242,6 +1255,7 @@ class Buffer {
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t>        GoalColumn_;
     std::size_t                       ContentGeneration_ = 0; // see ContentGeneration()
+    std::size_t                       InstanceId_;            // see InstanceId(), assigned in the constructor
     std::map<std::size_t, FoldMarker> FoldMarkers_;           // see FoldMarker's own doc comment above
     std::size_t                       FoldGeneration_ = 0;    // see FoldGeneration()
     std::vector<SnippetRange>         SnippetRanges_;         // see SnippetRange's own doc comment above
