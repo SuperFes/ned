@@ -1356,13 +1356,7 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
       project-wide search, a refactor, a script evaluation. Round-trip count, not bandwidth,
       is what makes remote editing feel bad, so this is likely faster as well as simpler.
 
-      **The load-bearing design decision — local is the degenerate case.** The protocol
-      should be the *only* interface, with in-process execution as one transport behind it
-      rather than a bypass around it. Two things follow. It can't rot: every local keystroke
-      exercises the same path a remote session uses, so remote stops being a bolt-on that's
-      broken every time it's picked back up. And it makes "where does this script run"
-      a transport question rather than an architectural one — the same request answered
-      in-process, by a local subprocess, or by a host across a socket.
+    **The load-bearing design decision — local is the degenerate case.** The protocol should be the *only* interface, with in-process execution as one transport behind it rather than a bypass around it. Two things follow. It can't rot: every local keystroke exercises the same path a remote session uses, so remote stops being a bolt-on that's broken every time it's picked back up. And it makes "where does this script run" a transport question rather than an architectural one — the same request answered in-process, by a local subprocess, or by a host across a socket.
 
     That last point interacts directly with the jank analysis above: if scripts execute
     where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
