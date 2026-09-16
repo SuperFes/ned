@@ -300,9 +300,9 @@ TEST_CASE("query construct census: every bundled query file uses only the enumer
     // NED_QUERY_CENSUS=1 reprints them). Adding a feature here is a conscious
     // matcher scope change; a census failure below names the new construct
     // and where it first appears. Notable absences the matcher therefore
-    // does NOT need: the '+' quantifier (nowhere), quantifiers on strings or
-    // alternations, bare-symbol node references as children or inside
-    // alternations, top-level predicates, and anchors inside alternations.
+    // does NOT need: the '+' quantifier (nowhere), quantifiers on strings,
+    // bare-symbol node references as children or inside alternations,
+    // top-level predicates, and anchors inside alternations.
     static const std::set<std::string, std::less<>> kSupported = {
         // Sequence membership.
         "list in top level",            // x988
@@ -340,10 +340,12 @@ TEST_CASE("query construct census: every bundled query file uses only the enumer
         "anchor between in node children",  // x38
         "anchor trailing in node children", // x1, kotlin upstream
         "anchor between in group",          // x10, go upstream tags
-        // Quantifiers -- lists and bare wildcards only, never '+'.
-        "quantifier '*' on list",     // x7
-        "quantifier '?' on list",     // x3
-        "quantifier '?' on wildcard", // x2
+        // Quantifiers -- lists, bare wildcards and single-branch
+        // alternations, never '+'.
+        "quantifier '*' on list",        // x7
+        "quantifier '?' on list",        // x3
+        "quantifier '?' on wildcard",    // x2
+        "quantifier '?' on alternation", // x1, sql upstream -- `parameter: [(literal)]?`
         // Predicates: placement.
         "predicate in node children", // x50
         "predicate in group",         // x162
@@ -692,4 +694,127 @@ TEST_CASE("QueryMatcher supports '+' for foreign queries: one maximal run, no em
     REQUIRE(matches[0].captures.size() == 2);
     CHECK(matches[0].captures[0].startByte == 0);
     CHECK(matches[0].captures[1].startByte == 7);
+}
+
+// ---------------------------------------------------------------------------
+// ROADMAP watch-list closure: "QueryMatcher scope: two upstream constructs
+// the census excludes" (cmake's nested group, diff's top-level field
+// prefix) plus the SQL quantified-single-alternation instance recorded
+// alongside them. All three are now supported; these pin real upstream
+// constructs (not synthetic stand-ins) as regression tests, per the
+// ROADMAP entry's own "written against these two files as the test cases".
+// ---------------------------------------------------------------------------
+
+// tree-sitter-cmake's queries/highlights.scm ~line 131: a multi-pattern
+// group -- CACHE followed immediately by a type keyword -- nested inside
+// `argument_list`'s own children sequence. Verbatim upstream text.
+TEST_CASE("QueryMatcher: nested multi-pattern group (cmake set/CACHE/type)", "[QueryMatcher]") {
+    const auto language = LanguageByName("cmake");
+    REQUIRE(language);
+    const QueryMatcher matcher(*language,
+                               "(normal_command\n"
+                               "  (identifier) @_function\n"
+                               "  (#match? @_function \"^[sS][eE][tT]$\")\n"
+                               "  (argument_list\n"
+                               "    .\n"
+                               "    (argument)\n"
+                               "    ((argument) @_cache @keyword.modifier\n"
+                               "      .\n"
+                               "      (argument) @_type @type\n"
+                               "      (#any-of? @_cache \"CACHE\")\n"
+                               "      (#any-of? @_type \"BOOL\" \"FILEPATH\" \"PATH\" \"STRING\" \"INTERNAL\"))))\n");
+
+    SECTION("a CACHE/BOOL pair right after the variable name matches, both group items captured") {
+        const std::string             source  = "set(FOO CACHE BOOL \"desc\")\n";
+        const auto                    tree    = ned::editor::grammar::Parser(*language).Parse(source);
+        const std::vector<QueryMatch> matches = matcher.Matches(tree.RootNode(), source);
+        REQUIRE(matches.size() == 1);
+        const QueryMatch& match = matches[0];
+        REQUIRE(match.captures.size() == 5);
+        CHECK(match.captures[0].name == "_function");
+        CHECK(source.substr(match.captures[0].startByte, match.captures[0].endByte - match.captures[0].startByte) == "set");
+        CHECK(match.captures[1].name == "_cache");
+        CHECK(match.captures[2].name == "keyword.modifier");
+        CHECK(source.substr(match.captures[1].startByte, match.captures[1].endByte - match.captures[1].startByte) == "CACHE");
+        CHECK(match.captures[1].startByte == match.captures[2].startByte);
+        CHECK(match.captures[3].name == "_type");
+        CHECK(match.captures[4].name == "type");
+        CHECK(source.substr(match.captures[3].startByte, match.captures[3].endByte - match.captures[3].startByte) == "BOOL");
+    }
+
+    SECTION("two non-CACHE arguments after the variable name: the group finds no match, predicate never lets it through") {
+        const std::string             source  = "set(FOO \"value\" \"value2\")\n";
+        const auto                    tree    = ned::editor::grammar::Parser(*language).Parse(source);
+        const std::vector<QueryMatch> matches = matcher.Matches(tree.RootNode(), source);
+        CHECK(matches.empty());
+    }
+}
+
+// tree-sitter-diff's queries/highlights.scm tail: two top-level
+// field-prefixed patterns constraining which field (forward/reverse) a
+// binary_hunk must hold in its binary_patch parent. Verbatim upstream
+// text; source is the grammar's own "Literal binary patch" corpus sample
+// (test/corpus/binary.txt), whose binary_patch node holds exactly one
+// forward hunk followed by one reverse hunk.
+TEST_CASE("QueryMatcher: top-level field-prefixed pattern (diff forward:/reverse: binary_hunk)", "[QueryMatcher]") {
+    const auto language = LanguageByName("diff");
+    REQUIRE(language);
+    const QueryMatcher matcher(*language,
+                               "forward: (binary_hunk\n"
+                               "  (payload) @diff.plus)\n"
+                               "\n"
+                               "reverse: (binary_hunk\n"
+                               "  (payload) @diff.minus)\n");
+    const std::string  source =
+        "diff --git a/bin.dat b/bin.dat\n"
+        "index d24dc6832d641b8bcae6c7bd4aaaf0fd11eb26ab..c93bd035c4823c2d202965b8c5a1addfd66ac157 100644\n"
+        "GIT binary patch\n"
+        "literal 13\n"
+        "UcmZQzWMX#qaP)I`bzztZ01RIOiU0rr\n"
+        "\n"
+        "literal 11\n"
+        "ScmZQzWMX#m^m7b~WB>pM^#RNP\n";
+    const auto tree = ned::editor::grammar::Parser(*language).Parse(source);
+
+    const std::vector<QueryCapture> captures = matcher.Captures(tree.RootNode(), source);
+    REQUIRE(captures.size() == 2);
+    CHECK(captures[0].name == "diff.plus");
+    CHECK(source.substr(captures[0].startByte, captures[0].endByte - captures[0].startByte) == "UcmZQzWMX#qaP)I`bzztZ01RIOiU0rr");
+    CHECK(captures[1].name == "diff.minus");
+    CHECK(source.substr(captures[1].startByte, captures[1].endByte - captures[1].startByte) == "ScmZQzWMX#m^m7b~WB>pM^#RNP");
+}
+
+// tree-sitter-sql's queries/highlights.scm cast pattern: `parameter:
+// [(literal)]?` -- a quantifier on a single-element alternation. Proven
+// generically (not tied to sql's own, unvendored grammar.js/corpus) by
+// showing `[(x)]?` and `(x)?` compile to observably identical matchers: a
+// single-branch alternation has no fork to differ on, so quantifying it
+// is exactly quantifying its one branch. Both present and absent cases are
+// checked, since an absent optional is where a fork-vs-no-fork difference
+// would most plausibly show up.
+TEST_CASE("QueryMatcher: quantifier on a single-element alternation matches its bare-node equivalent", "[QueryMatcher]") {
+    const auto language = LanguageByName("c");
+    REQUIRE(language);
+    const QueryMatcher alternationForm(*language, "(translation_unit [(declaration)]? @first)\n");
+    const QueryMatcher bareForm(*language, "(translation_unit (declaration)? @first)\n");
+
+    SECTION("the optional is present") {
+        const std::string               source = "int x;\n";
+        const auto                      tree   = ned::editor::grammar::Parser(*language).Parse(source);
+        const std::vector<QueryCapture> a      = alternationForm.Captures(tree.RootNode(), source);
+        const std::vector<QueryCapture> b      = bareForm.Captures(tree.RootNode(), source);
+        REQUIRE(a.size() == 1);
+        REQUIRE(b.size() == 1);
+        CHECK(a[0].startByte == b[0].startByte);
+        CHECK(a[0].endByte == b[0].endByte);
+    }
+
+    SECTION("the optional is absent") {
+        const std::string               source = "";
+        const auto                      tree   = ned::editor::grammar::Parser(*language).Parse(source);
+        const std::vector<QueryCapture> a      = alternationForm.Captures(tree.RootNode(), source);
+        const std::vector<QueryCapture> b      = bareForm.Captures(tree.RootNode(), source);
+        CHECK(a.empty());
+        CHECK(b.empty());
+    }
 }

@@ -1,9 +1,10 @@
-# ned-authored: upstream's highlights.scm ends with top-level
-# field-prefixed patterns (forward:/reverse: binary hunks), a construct
-# QueryMatcher's census-measured scope excludes -- see the ROADMAP
-# watch-list entry. Everything else here mirrors upstream's mappings in
-# supported constructs; @diff.plus/@diff.minus/@diff.delta resolve to
-# ned's own DiffAdded/DiffRemoved/DiffChanged classes.
+# ned-authored: mirrors upstream's mappings in supported constructs;
+# @diff.plus/@diff.minus/@diff.delta resolve to ned's own
+# DiffAdded/DiffRemoved/DiffChanged classes. The forward:/reverse: binary
+# hunk patterns below were dropped for a time -- upstream's highlights.scm
+# ends with top-level field-prefixed patterns, a construct QueryMatcher's
+# census-measured scope excluded -- see the ROADMAP watch-list entry;
+# restored once the matcher gained support.
 
 (comment) @comment
 
@@ -48,3 +49,9 @@
   (dissimilarity)
   (file_change)
 ] @label
+
+forward: (binary_hunk
+  (payload) @diff.plus)
+
+reverse: (binary_hunk
+  (payload) @diff.minus)

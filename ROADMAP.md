@@ -1766,22 +1766,6 @@ for closed-issue history.
   earlier) rather than anything about cache invalidation specifically, but not
   root-caused -- logged rather than guessed at.
 
-- **QueryMatcher scope: two upstream constructs the census excludes, now with real
-  files attached.** Found at the 2026-09-13 grammar admissions: a multi-pattern
-  group nested inside a pattern (`tree-sitter-cmake`'s highlights.scm, the
-  set/CACHE/type sequence at its line ~137) and a top-level field-prefixed pattern
-  (`tree-sitter-diff`'s highlights.scm, the `forward:`/`reverse:` binary-hunk
-  tail). Both compile-fail loudly (by design) and both languages ship ned-authored
-  highlights instead, so nothing is broken — but any foreign `:queries-dir` file
-  using either construct hits the same wall. Fix shape: the field-prefix form is
-  small (a root-level field constraint checked against FieldOfNode); the nested
-  group is a sequence-of-siblings child item and needs its own enumeration pins,
-  written against these two files as the test cases. A third instance landed with
-  SQL's admission (2026-09-13): a quantifier on a single-element alternation
-  (`tree-sitter-sql`'s highlights.scm, `parameter: [(literal)]?` on its cast
-  pattern) — same "compiles-fail loudly, ned-adapts the one clause" resolution,
-  in `Source/Languages/sql/highlights.janet`'s own header comment.
-
 - **Variadic `has-parent?` predicates are silently inert.** Found by the Phase 4a M0
   census (2026-09-12): `QueryPredicates.cpp`'s evaluator handles the has-parent/has-ancestor family
   only at exactly two operands and treats any other arity as pass-through, so
