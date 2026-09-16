@@ -435,12 +435,23 @@ bool GitIgnoreMatcher::AnySourceChanged() const {
 namespace {
 
     std::mutex& CacheMutex() {
-        static std::mutex mutex;
+        // Deliberately leaked (never destroyed): search-everywhere's
+        // text-search category (BufferView::RequestSearchEverywhereTextSearch)
+        // runs this cache from a detached background thread with no
+        // join/cancellation, so it may still be reading through this mutex
+        // and the matchers below while the process is exiting. A normal
+        // function-local static gets torn down by that same exit's static
+        // destructors, racing the still-running thread -- confirmed live via
+        // ASan (heap-use-after-free on a cached GitIgnoreMatcher's std::regex,
+        // freed by the exiting main thread while the detached search thread
+        // was still matching against it). Leaking is the standard fix for a
+        // singleton a background thread may touch at process exit.
+        static std::mutex& mutex = *new std::mutex();
         return mutex;
     }
 
     std::unordered_map<std::string, std::unique_ptr<GitIgnoreMatcher>>& Cache() {
-        static std::unordered_map<std::string, std::unique_ptr<GitIgnoreMatcher>> cache;
+        static auto& cache = *new std::unordered_map<std::string, std::unique_ptr<GitIgnoreMatcher>>();
         return cache;
     }
 

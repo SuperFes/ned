@@ -7716,6 +7716,24 @@ TEST_CASE("search-everywhere reports no in-buffer symbols for a huge buffer or a
 TEST_CASE(
     "search-everywhere debounces a workspace/symbol request as the query changes and jumps to the accepted result",
     "[BufferView]") {
+    // The typed query below is 3+ characters, which also satisfies
+    // kMinSearchEverywhereTextQueryLength and would otherwise arm the
+    // unrelated text-search category too (MaybeArmSearchEverywhereTextSearch),
+    // spawning its own detached background thread (RequestSearchEverywhereTextSearch)
+    // that this test never waits for -- see the "background text search"
+    // test below for the wait/drain that thread actually needs. This test
+    // is scoped to workspace/symbol alone, so keep text search off entirely
+    // rather than adding an unrelated synchronization step here.
+    struct TextSearchGuard {
+        TextSearchGuard() : previous_(ned::editor::SearchEverywhereTextSearchEnabled()) {
+        }
+        ~TextSearchGuard() {
+            ned::editor::SetSearchEverywhereTextSearchEnabled(previous_);
+        }
+        bool previous_;
+    } const textSearchGuard;
+    ned::editor::SetSearchEverywhereTextSearchEnabled(false);
+
     Fixture                     fixture;
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() / "ned_bufferview_search_everywhere_wssymbol_test.txt";
