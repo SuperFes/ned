@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-189 bindings.
+190 bindings.
 
 ## `ned/backward-char`
 
@@ -184,6 +184,10 @@ File size in bytes above which files load asynchronously in the background inste
 ## `ned/set-auto-detect-project-root`
 
 Enable/disable walking upward from an opened file for a VCS marker directory to find the project root (default true).
+
+## `ned/set-auto-format-on-save`
+
+Enable/disable running the Native reindent/space/break/wrap/blank-line rules and a scoped Hygiene trim, restricted to the lines touched since the buffer was last loaded/saved, before every save-buffer (default false). Skipped entirely whenever an external format-command or a running LSP server already formats this save (see set-format-command/set-lsp-format-on-save) -- those keep their existing whole-buffer precedence.
 
 ## `ned/set-auto-merge`
 
