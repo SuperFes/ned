@@ -549,6 +549,11 @@ bool BufferView::ForwardMouseWhileSiblingDrags(const MouseEvent& rawMouse) {
 }
 
 bool BufferView::OnMouseEvent(const Event& event) {
+    // search-everywhere follow-up: a mouse action is "something else
+    // happened" too -- OnKeyEvent's own Feed() call never sees this, since
+    // key and mouse events are dispatched through separate methods.
+    doubleTapShiftDetector_.Reset();
+
     const MouseEvent rawMouse = event.mouse();
     LogMouseEvent(MouseEventTag(rawMouse), rawMouse);
 
