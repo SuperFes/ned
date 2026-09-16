@@ -722,6 +722,37 @@ class Buffer {
     [[nodiscard]] std::size_t VisualColumnForByteOffset(std::size_t lineStart, std::size_t byteOffset,
                                                         std::size_t tabWidth) const;
 
+    // visual-line-motion follow-up: ByteOffsetForLineAndColumn's own landing
+    // walk, generalized from "a whole logical line" to an arbitrary
+    // caller-supplied [rangeStart, rangeEnd) -- still entirely UI-agnostic
+    // (Buffer has no idea what the range means; it's just bytes), but what
+    // lets a caller that DOES know about wrapped rows (BufferView, via a
+    // wrap segment's own [startByte, endByte)) reuse the identical
+    // tab-aware column math rather than re-deriving it. A pure query, same
+    // clamping/bounding behavior as ByteOffsetForLineAndColumn (kept as a
+    // thin wrapper over this for exactly that reason).
+    [[nodiscard]] std::size_t ByteOffsetForRangeAndColumn(std::size_t rangeStart, std::size_t rangeEnd,
+                                                          std::size_t column, std::size_t tabWidth = 1) const;
+
+    // visual-line-motion follow-up: MoveToLine's own logic (goal-column
+    // capture/reuse, landing, CanAmend_ reset), generalized the same way
+    // ByteOffsetForRangeAndColumn is -- what lets next-line/previous-line
+    // move by on-screen WRAPPED row instead of logical line when a UI
+    // layer that knows about wrapping drives it (Commands.cpp, via
+    // CommandContext::visualRowForPoint), while Buffer itself stays
+    // completely unaware wrapping exists. currentRowStart is where point's
+    // OWN current row begins (needed to interpret an as-yet-unset goal
+    // column as this row's own visual column, exactly the role
+    // MoveToLine's currentLineStart plays for logical motion); targetRange
+    // is the row being moved TO. GoalColumn_ persists across a run the
+    // same way MoveToLine's already does -- reset by everything else,
+    // including a plain logical MoveToLine/MoveDownLines/MoveUpLines call,
+    // so mixing visual and logical vertical motion in one run behaves
+    // exactly like switching row-shape mid-run naturally should: the goal
+    // recaptures from wherever point actually landed.
+    void MoveToColumnInRange(std::size_t currentRowStart, std::size_t targetRangeStart, std::size_t targetRangeEnd,
+                             std::size_t tabWidth = 1);
+
     [[nodiscard]] bool CanUndo() const;
     [[nodiscard]] bool CanRedo() const;
     void               Undo();

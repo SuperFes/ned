@@ -616,6 +616,64 @@ TEST_CASE("Vertical motion with the default tabWidth still treats a tab as a sin
     REQUIRE(buffer.Point() == 6); // line 1 starts at byte 4; column 2 -> 'c' (byte 6)
 }
 
+// visual-line-motion follow-up: ByteOffsetForRangeAndColumn/
+// MoveToColumnInRange are ByteOffsetForLineAndColumn/MoveToLine's own
+// logic generalized from "a whole logical line" to an arbitrary
+// caller-supplied byte range -- what lets a UI layer that knows about
+// wrapped rows (BufferView) reuse the identical tab-aware column math
+// and goal-column persistence for on-screen (not logical-line) vertical
+// motion. ByteOffsetForLineAndColumn is kept as a thin wrapper over this,
+// so its own existing tests above already cover the shared column walk;
+// these focus on what's new -- an explicit range rather than a line
+// index, and MoveToColumnInRange's goal-column capture/reuse.
+
+TEST_CASE("ByteOffsetForRangeAndColumn finds an exact position within an explicit range", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("abcdefghij"));
+
+    REQUIRE(buffer.ByteOffsetForRangeAndColumn(3, 7, 0) == 3);
+    REQUIRE(buffer.ByteOffsetForRangeAndColumn(3, 7, 2) == 5);
+    REQUIRE(buffer.ByteOffsetForRangeAndColumn(3, 7, 100) == 7); // clamped to the range's own end, not the line's
+}
+
+TEST_CASE("MoveToColumnInRange moves point into the target range at the current visual column", "[Buffer]") {
+    // Simulates two "wrapped rows" of one logical line: [0,5) "abcde" and
+    // [5,10) "fghij" -- no real line breaks involved, matching how a UI
+    // layer would call this with two WrapSegment ranges from the SAME
+    // buffer line.
+    Buffer buffer("scratch", ned::text::Rope("abcdefghij"));
+    buffer.SetPoint(2); // 'c', visual column 2 within [0,5)
+
+    buffer.MoveToColumnInRange(0, 5, 10);
+    REQUIRE(buffer.Point() == 7); // 'h': column 2 within [5,10)
+}
+
+TEST_CASE("MoveToColumnInRange captures an unclamped goal column and reuses it, same as MoveToLine", "[Buffer]") {
+    // Row B [2,8) "cdefgh" (6 columns wide); row C [8,10) "ij" (only 2).
+    Buffer buffer("scratch", ned::text::Rope("abcdefghij"));
+    buffer.SetPoint(7); // 'h', visual column 5 within row B [2,8)
+
+    buffer.MoveToColumnInRange(2, 8, 10); // into row C: column 5 doesn't fit -- clamps to its own end (byte 10)
+    REQUIRE(buffer.Point() == 10);
+
+    // Back into row B: the UNCLAMPED goal (5) is what gets reused, not
+    // wherever the clamp actually landed -- same "the un-clamped goal, not
+    // necessarily where we landed" rule MoveToLine's own doc comment states.
+    buffer.MoveToColumnInRange(8, 2, 8);
+    REQUIRE(buffer.Point() == 7); // back on 'h'
+}
+
+TEST_CASE("MoveToColumnInRange resets the goal column like every other mutating Buffer operation", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("abcdefghij"));
+    buffer.SetPoint(4); // 'e', visual column 4 within [0,10)
+
+    buffer.MoveToColumnInRange(0, 5, 10); // captures goal column 4 -> 'j' (byte 9, column 4 within [5,10))
+    REQUIRE(buffer.Point() == 9);
+
+    buffer.SetPoint(1); // an ordinary Buffer mutator -- clears GoalColumn_ like everything else does
+    buffer.MoveToColumnInRange(0, 5, 10); // no stale goal column left -- recaptures from point's OWN new column (1)
+    REQUIRE(buffer.Point() == 6);         // column 1 within [5,10) -> 'g' (byte 6)
+}
+
 TEST_CASE("Buffer::NewFile is empty and already associated with the given path", "[Buffer]") {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_newfile.txt";
     std::filesystem::remove(path);

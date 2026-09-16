@@ -1859,18 +1859,13 @@ void Buffer::MoveBackwardSentence() {
     GoalColumn_.reset();
 }
 
-std::size_t Buffer::ByteOffsetForLineAndColumn(std::size_t line, std::size_t column, std::size_t tabWidth) const {
-    const std::size_t totalLines = Storage_->LineCount();
-    line                         = std::min(line, totalLines - 1);
-
-    const std::size_t lineStart = Storage_->LineToByteOffset(line);
-    const std::size_t lineEnd   = (line + 1 < totalLines) ? Storage_->LineToByteOffset(line + 1) - 1 : Storage_->ByteLength();
-
+std::size_t Buffer::ByteOffsetForRangeAndColumn(std::size_t rangeStart, std::size_t rangeEnd, std::size_t column,
+                                                std::size_t tabWidth) const {
     if (tabWidth <= 1) {
-        const std::size_t lineStartCodepoint = Storage_->ByteOffsetToCodepointOffset(lineStart);
-        const std::size_t lineLength         = Storage_->ByteOffsetToCodepointOffset(lineEnd) - lineStartCodepoint;
+        const std::size_t rangeStartCodepoint = Storage_->ByteOffsetToCodepointOffset(rangeStart);
+        const std::size_t rangeLength         = Storage_->ByteOffsetToCodepointOffset(rangeEnd) - rangeStartCodepoint;
 
-        const std::size_t landingCodepoint = lineStartCodepoint + std::min(column, lineLength);
+        const std::size_t landingCodepoint = rangeStartCodepoint + std::min(column, rangeLength);
         return Storage_->CodepointOffsetToByteOffset(landingCodepoint);
     }
 
@@ -1881,16 +1876,16 @@ std::size_t Buffer::ByteOffsetForLineAndColumn(std::size_t line, std::size_t col
     // VisualColumnForByteOffset), and landing that huge column on an equally
     // long target line would walk the whole thing. kMaxTabAwareColumnScan
     // caps that the same way, falling back to plain codepoint arithmetic
-    // (clamped to the line's actual end) for the remainder.
-    std::size_t offset       = lineStart;
+    // (clamped to the range's actual end) for the remainder.
+    std::size_t offset       = rangeStart;
     std::size_t visualColumn = 0;
     std::size_t steps        = 0;
-    while (offset < lineEnd && visualColumn < column) {
+    while (offset < rangeEnd && visualColumn < column) {
         if (steps >= kMaxTabAwareColumnScan) {
-            const std::size_t remainingColumns = column - visualColumn;
-            const std::size_t lineEndCodepoint = Storage_->ByteOffsetToCodepointOffset(lineEnd);
-            const std::size_t landingCodepoint = std::min(Storage_->ByteOffsetToCodepointOffset(offset) + remainingColumns,
-                                                          lineEndCodepoint);
+            const std::size_t remainingColumns  = column - visualColumn;
+            const std::size_t rangeEndCodepoint = Storage_->ByteOffsetToCodepointOffset(rangeEnd);
+            const std::size_t landingCodepoint  = std::min(Storage_->ByteOffsetToCodepointOffset(offset) + remainingColumns,
+                                                            rangeEndCodepoint);
             return Storage_->CodepointOffsetToByteOffset(landingCodepoint);
         }
         const auto decoded = Storage_->CodepointAt(offset);
@@ -1899,6 +1894,15 @@ std::size_t Buffer::ByteOffsetForLineAndColumn(std::size_t line, std::size_t col
         ++steps;
     }
     return offset;
+}
+
+std::size_t Buffer::ByteOffsetForLineAndColumn(std::size_t line, std::size_t column, std::size_t tabWidth) const {
+    const std::size_t totalLines = Storage_->LineCount();
+    line                         = std::min(line, totalLines - 1);
+
+    const std::size_t lineStart = Storage_->LineToByteOffset(line);
+    const std::size_t lineEnd   = (line + 1 < totalLines) ? Storage_->LineToByteOffset(line + 1) - 1 : Storage_->ByteLength();
+    return ByteOffsetForRangeAndColumn(lineStart, lineEnd, column, tabWidth);
 }
 
 std::size_t Buffer::VisualColumnForByteOffset(std::size_t lineStart, std::size_t byteOffset,
@@ -1929,6 +1933,16 @@ void Buffer::MoveToLine(std::size_t targetLine, std::size_t tabWidth) {
     const std::size_t desiredColumn    = GoalColumn_.value_or(VisualColumnForByteOffset(currentLineStart, Point_, tabWidth));
 
     const std::size_t landingByte = ByteOffsetForLineAndColumn(targetLine, desiredColumn, tabWidth);
+
+    Point_      = SnapToGraphemeBoundary(*Storage_, landingByte);
+    GoalColumn_ = desiredColumn; // the un-clamped goal, not necessarily where we landed
+    CanAmend_   = false;
+}
+
+void Buffer::MoveToColumnInRange(std::size_t currentRowStart, std::size_t targetRangeStart, std::size_t targetRangeEnd,
+                                 std::size_t tabWidth) {
+    const std::size_t desiredColumn = GoalColumn_.value_or(VisualColumnForByteOffset(currentRowStart, Point_, tabWidth));
+    const std::size_t landingByte   = ByteOffsetForRangeAndColumn(targetRangeStart, targetRangeEnd, desiredColumn, tabWidth);
 
     Point_      = SnapToGraphemeBoundary(*Storage_, landingByte);
     GoalColumn_ = desiredColumn; // the un-clamped goal, not necessarily where we landed
