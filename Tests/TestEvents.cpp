@@ -203,6 +203,20 @@ Event F(int n) {
     return FromInput(SpecialInput(kFKeys[n - 1]));
 }
 
+Event ShiftPress() {
+    ncinput input{};
+    input.id     = NCKEY_LSHIFT;
+    input.evtype = NCTYPE_PRESS;
+    return FromInput(input);
+}
+
+Event ShiftRelease() {
+    ncinput input{};
+    input.id     = NCKEY_LSHIFT;
+    input.evtype = NCTYPE_RELEASE;
+    return FromInput(input);
+}
+
 Event Mouse(int x, int y, MouseEvent::Button button, MouseEvent::Motion motion, bool shift, bool meta, bool control) {
     ncinput input{};
     input.x = x;

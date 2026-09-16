@@ -94,6 +94,7 @@
 #include "UI/BufferView/RequestSlot.h"
 #include "UI/BufferView/TextEntryPrompt.h"
 #include "UI/BufferView/Viewport.h"
+#include "UI/DoubleTapModifier.h"
 #include "VcsPanel.h"
 #include "WhichKeyHint.h"
 
@@ -3474,6 +3475,10 @@ class BufferView : public Widget {
     std::optional<std::size_t>            lastClickOffset_;
     std::chrono::steady_clock::time_point lastClickTime_{};
     int                                   clickCount_ = 0;
+    // search-everywhere follow-up: this gesture's own keyboard-side
+    // double-tap detector, fed at the top of OnKeyEvent -- lastClickTime_/
+    // clickCount_ just above are the mouse-side sibling.
+    DoubleTapModifierDetector doubleTapShiftDetector_;
     std::optional<std::string>            debugMouseLogPath_;         // see LogMouseEvent
     ScrollBar*                            scrollBar_       = nullptr; // see SetScrollBar
     ScrollArrowButton*                    scrollUpArrow_   = nullptr; // see SetScrollArrows

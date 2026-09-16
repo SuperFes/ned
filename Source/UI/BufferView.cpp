@@ -190,6 +190,23 @@ bool BufferView::OnEvent(const Event& event) {
 }
 
 bool BufferView::OnKeyEvent(const Event& event) {
+    // search-everywhere follow-up: fed unconditionally (so a real keystroke
+    // typed *inside* another session still resets the pending tap
+    // correctly), but only acted on in Normal mode -- firing this mid-
+    // isearch/mid-M-x would silently blow away whatever session was
+    // already running (RunCommandAndHandleOutcome/StartInteractiveSession
+    // have no "already busy" guard of their own).
+    if (editor::SearchEverywhereGestureEnabled() && doubleTapShiftDetector_.Feed(event.raw()) &&
+        inputMode_ == InputMode::Normal) {
+        editor::CommandContext context = MakeContext();
+        context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+        RunCommandAndHandleOutcome(context, [&] {
+            dispatcher_.Registry().Invoke("search-everywhere", context);
+            return true;
+        });
+        return true;
+    }
+
     const auto chord = TranslateKey(event);
     if (!chord) {
         return false;

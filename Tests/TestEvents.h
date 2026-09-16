@@ -61,6 +61,13 @@ namespace ned::ui::test {
 [[nodiscard]] Event ArrowRightShift();
 [[nodiscard]] Event F(int n); // 1-12
 
+// A bare Left Shift press/release -- only ever reported at all under the
+// Kitty keyboard protocol (see KeyTranslation.cpp's IsBareModifierKey);
+// search-everywhere's double-tap gesture (UI/DoubleTapModifier.h) is the one
+// consumer that cares about this shape reaching a widget at all.
+[[nodiscard]] Event ShiftPress();
+[[nodiscard]] Event ShiftRelease();
+
 // A mouse event at absolute (screen-space) column/row x/y.
 [[nodiscard]] Event Mouse(int x, int y, MouseEvent::Button button, MouseEvent::Motion motion, bool shift = false,
                           bool meta = false, bool control = false);
