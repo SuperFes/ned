@@ -111,6 +111,8 @@ add_library(ned_lib STATIC
         Editor/FormatWrap.cpp
         Editor/FormatCase.cpp
         Editor/Format.cpp
+        Editor/AutoFormatOnSave.cpp
+        Editor/ScopedFormat.cpp
         Editor/Clipboard.cpp
         Editor/TabWidth.cpp
         Editor/IndentStyle.cpp

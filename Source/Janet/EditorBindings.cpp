@@ -13,6 +13,7 @@
 #include "Editor/Acp/Config.h"
 #include "Editor/Acp/PanelConfig.h"
 #include "Editor/AutoMerge.h"
+#include "Editor/AutoFormatOnSave.h"
 #include "Editor/AutoPair.h"
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
@@ -480,6 +481,11 @@ namespace {
 
     void NedSetTrimTrailingWhitespaceOnSave(bool enabled) {
         editor::SetTrimTrailingWhitespaceOnSave(enabled);
+    }
+
+    // automatic-scoped-on-save follow-up.
+    void NedSetAutoFormatOnSave(bool enabled) {
+        editor::SetAutoFormatOnSave(enabled);
     }
 
     // configurable-formatter Hygiene-pass follow-up: a negative value means
@@ -1753,6 +1759,13 @@ void InstallEditorBindings(Environment& env) {
         "Enable/disable stripping trailing spaces/tabs from every line and collapsing trailing blank lines at "
         "end-of-file, applied to a file's written content on save (default true). Disk-only, same as "
         "set-ensure-final-newline -- the buffer's own live content is never touched.");
+    env.Register<&NedSetAutoFormatOnSave>(
+        "ned", "set-auto-format-on-save",
+        "Enable/disable running the Native reindent/space/break/wrap/blank-line rules and a scoped Hygiene "
+        "trim, restricted to the lines touched since the buffer was last loaded/saved, before every save-buffer "
+        "(default false). Skipped entirely whenever an external format-command or a running LSP server already "
+        "formats this save (see set-format-command/set-lsp-format-on-save) -- those keep their existing "
+        "whole-buffer precedence.");
     env.Register<&NedSetMaxConsecutiveBlankLines>(
         "ned", "set-max-consecutive-blank-lines",
         "Set the longest run of consecutive blank lines the Hygiene pass (format-buffer's native fallback) leaves "

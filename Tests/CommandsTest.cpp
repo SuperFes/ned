@@ -11,6 +11,7 @@
 #include "Editor/AutoPair.h"
 #include "Editor/Backup.h"
 #include "Editor/BlankLineCleanup.h"
+#include "Editor/AutoFormatOnSave.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
@@ -1084,6 +1085,91 @@ TEST_CASE("format-buffer falls through to the Native Hygiene pass when no format
 
     REQUIRE(fixture.buffer.Text() == "hello\n");
     REQUIRE(message.find("Formatted") != std::string::npos);
+}
+
+namespace {
+// automatic-scoped-on-save follow-up: same RAII shape as FormatCommandGuard
+// above, for the sibling toggle.
+struct AutoFormatOnSaveGuard {
+    ~AutoFormatOnSaveGuard() {
+        ned::editor::SetAutoFormatOnSave(false);
+    }
+};
+} // namespace
+
+TEST_CASE("save-buffer runs the scoped Native format when auto-format-on-save is enabled and nothing else "
+          "claims the save",
+          "[Commands]") {
+    const AutoFormatOnSaveGuard guard;
+    ned::editor::SetAutoFormatOnSave(true);
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode                  cMode = CMode();
+    const std::filesystem::path path  = std::filesystem::temp_directory_path() / "ned_commands_test_auto_format_on_save.c";
+    std::filesystem::remove(path);
+
+    ned::text::Buffer buffer("scratch", ned::text::Rope("void a() {\nint x = 1;\n}\n\nvoid b() {\nint y = 2;\n}\n"));
+    buffer.SaveToFile(path); // establishes the path AND a clean saved snapshot -- nothing touched yet
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+    context.mode = &cMode;
+
+    // Touch only b's line.
+    const std::size_t offset = buffer.Text().find("int y = 2;") + 4; // the "y" itself
+    buffer.SetPoint(offset);
+    buffer.DeleteRange(offset, 1);
+    buffer.InsertAtPoint("Y");
+
+    registry.Invoke("save-buffer", context);
+
+    std::ifstream     file(path);
+    const std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    REQUIRE(written.find("\nint x = 1;\n") != std::string::npos);    // untouched function: still misindented
+    REQUIRE(written.find("\n    int Y = 2;\n") != std::string::npos); // touched function: reindented
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("save-buffer's auto-format-on-save is skipped entirely when an external format command is configured",
+          "[Commands]") {
+    const AutoFormatOnSaveGuard guard;
+    ned::editor::SetAutoFormatOnSave(true);
+    const FormatCommandGuard formatGuard;
+    SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode                  cMode = CMode();
+    const std::filesystem::path path  = std::filesystem::temp_directory_path() / "ned_commands_test_auto_format_on_save_precedence.c";
+    std::filesystem::remove(path);
+
+    ned::text::Buffer buffer("scratch", ned::text::Rope("int x=1;\n"));
+    buffer.SaveToFile(path);
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+    context.mode = &cMode;
+
+    buffer.SetPoint(0);
+    buffer.DeleteRange(0, 1);
+    buffer.InsertAt(0, "I");
+
+    registry.Invoke("save-buffer", context);
+
+    // External ran (whole-buffer upper-case) -- if the scoped Native pass
+    // had ALSO run, "x=1" would have become "x = 1" instead of staying
+    // upper-cased-and-unspaced.
+    REQUIRE(buffer.Text() == "INT X=1;\n");
+
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("format-buffer's Native fallback reindents per the active mode", "[Commands]") {

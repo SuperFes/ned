@@ -27,9 +27,25 @@ and if/while condition-paren spacing), each with two languages (cpp, JavaScript)
 one rule set via a common capture name; every other capture/language is still inert.
 
 A capture-scoped per-construct indent override (`ned/set-indent-rule`) is planned but not
-built yet -- see `Docs/FormattingCapabilities.md` and `ROADMAP.md`. LSP-based formatting is
-not part of this chain either (`format-buffer` has no request/response machinery of its
-own) -- `save-buffer`'s own, separate LSP-format-on-save path is unaffected either way.
+built yet -- see `Docs/FormattingCapabilities.md` and `ROADMAP.md`. `format-buffer`'s own
+chain now includes an LSP tier between External and Native (`textDocument/formatting`,
+used whenever no external command produced output and a server is running for the
+buffer's language) -- `save-buffer`'s own, separate LSP-format-on-save path
+(`ned/set-lsp-format-on-save`) is a different, independently-toggled mechanism.
+
+`ned/set-auto-format-on-save` (default off) runs the same Native rules -- reindent, then
+Space/Break/Wrap/Blank when configured, then a Hygiene subset (trailing-whitespace trim,
+final newline) -- automatically before every save, but SCOPED to only the lines touched
+since the buffer was last loaded/saved (`Buffer::UnsavedChangeRanges()`, snapped to whole
+lines), converging a file gradually as you touch it rather than reformatting the whole
+file on the first save. Skipped entirely whenever an external format command or a
+running, on-save-enabled LSP server already claims the save -- both keep their existing,
+whole-buffer precedence. A rule whose own edit straddles a scope boundary is declined for
+this scoped pass (not approximated) -- it still applies in full via an explicit
+`format-buffer`. Blank-line-run collapsing is not attempted scoped at all (a run beginning
+above the touched region has no honest partial answer) -- it stays available via
+`format-buffer`'s own whole-buffer Hygiene pass and the disk-only
+`set-trim-trailing-whitespace-on-save` mechanism below, unaffected by this toggle.
 
 ## The Hygiene pass
 
