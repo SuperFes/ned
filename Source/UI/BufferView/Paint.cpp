@@ -790,7 +790,7 @@ void BufferView::BeginLineRender(LineRenderState& state, std::size_t line, std::
         }
     }
     if (wrapActive) {
-        state.segments = ComputeWrappedLineSegments(frame.content, lineStart, lineEnd, contentWidth, state.links);
+        state.segments = ComputeWrappedLineSegments(frame.content, lineStart, lineEnd, contentWidth, state.links, mode_.name);
     }
     else {
         state.segments = {WrapSegment{.startByte = lineStart, .endByte = lineEnd}};
@@ -2746,7 +2746,7 @@ std::optional<Point> BufferView::CursorPosition() const {
     int         continuationIndent = 0; // wrap-indent follow-up: 0 unless point lands on an actual continuation row
     if (viewport_.EffectiveWrapLines() && sizeIsKnown) {
         const int                      fullWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
-        const std::vector<WrapSegment> segments  = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
+        const std::vector<WrapSegment> segments  = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks, mode_.name);
         for (std::size_t i = 0; i < segments.size(); ++i) {
             const bool isLast = (i + 1 == segments.size());
             if (point >= segments[i].startByte && (point < segments[i].endByte || (isLast && point == segments[i].endByte))) {
