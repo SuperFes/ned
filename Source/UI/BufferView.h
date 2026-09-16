@@ -61,6 +61,7 @@
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
 #include "Editor/RenameReview.h"
+#include "Editor/SearchEverywhere.h"
 #include "Editor/Snippet.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/TestRun/TestRunner.h"
@@ -1013,6 +1014,21 @@ class BufferView : public Widget {
                            // (M-g g) -- same single-line session shape as
                            // CreateDirectory, no completion.
                            GotoLine,
+                           // search-everywhere follow-up: naming Dispatcher::LastMacro()
+                           // into Editor/MacroRegistry.h, and picking a named macro whose
+                           // ned/register-macro form gets inserted at point -- both plain
+                           // single-line sessions, GotoLine's own shape, no completion.
+                           NameLastMacro,
+                           InsertMacroDefinition,
+                           // search-everywhere follow-up: not a plain text-entry prompt
+                           // (TextEntryPromptFor/CommitTextEntryPrompt) -- the query lives
+                           // in prompt_ the same way, but ranking is heterogeneous
+                           // (Editor/SearchEverywhere.h) and committing dispatches on the
+                           // selected candidate's kind, so this gets its own
+                           // Handle/Refresh pair (HandleSearchEverywhereKey/
+                           // RefreshSearchEverywhereStatus) rather than reusing either
+                           // shared driver.
+                           SearchEverywhere,
                            // external-modification-safety follow-up: save-buffer
                            // found the file changed on disk underneath the
                            // buffer -- y/n before overwriting, mirroring
@@ -2298,6 +2314,22 @@ class BufferView : public Widget {
     [[nodiscard]] bufferview::FuzzyPrompt SelectThemePrompt();
     [[nodiscard]] bufferview::FuzzyPrompt VcsSwitchBranchPrompt();
 
+    // search-everywhere follow-up: deliberately not a FuzzyPrompt -- that
+    // struct and CandidateList are both hardwired to std::vector<std::string>/
+    // FuzzyFilterAndRank, and retrofitting a pluggable ranking function into
+    // shared, heavily-depended-on infrastructure for one consumer would be a
+    // bigger, riskier change than just writing this session's own small
+    // equivalent (a candidate pool built once at session start, reranked via
+    // Editor/SearchEverywhere.h's RankSearchEverywhere -- which keeps each
+    // candidate's kind/detail through the sort, unlike FuzzyFilterAndRank --
+    // plus a selection index and a kind filter cycled by Tab). Still renders
+    // into the same shared candidatePopup every other picker uses, via
+    // onCandidatesChanged_.
+    [[nodiscard]] std::vector<editor::SearchEverywhereCandidate> BuildSearchEverywhereCandidates();
+    void HandleSearchEverywhereKey(const editor::KeyChord& chord);
+    void RefreshSearchEverywhereStatus();
+    void CommitSearchEverywhereCandidate(const editor::SearchEverywhereCandidate& candidate);
+
     void HandleExecuteCommandKey(const editor::KeyChord& chord);
 
     // Refreshes statusMessage_ from the current prompt_ text and
@@ -2452,6 +2484,14 @@ class BufferView : public Widget {
     // feeding them to the wrong place entirely; this leaves that session
     // genuinely live for the user to finish by hand instead.
     void ReplayMacro();
+
+    // search-everywhere follow-up: ReplayMacro()'s exact body,
+    // parameterized on an explicit sequence instead of always reading
+    // dispatcher_.LastMacro() -- what lets a *named* macro (Editor/
+    // MacroRegistry.h) be replayed the same way the anonymous last-recorded
+    // one is. ReplayMacro() itself is now a one-line forward to this
+    // overload with dispatcher_.LastMacro().
+    void ReplayMacro(const std::vector<editor::KeyChord>& macro);
 
     // narrow-to-region/widen follow-up: keeps point confined to a narrowed
     // buffer's own NarrowedRange() -- a no-op if the active buffer isn't
@@ -4596,6 +4636,17 @@ class BufferView : public Widget {
     bufferview::CandidateList bookmarkList_;
     bufferview::CandidateList selectThemeList_;
     bufferview::CandidateList vcsBranchList_;
+
+    // search-everywhere follow-up: this session's own equivalent of the
+    // CandidateList members above -- see BuildSearchEverywhereCandidates'
+    // doc comment for why it isn't one. Candidates are gathered once per
+    // session (project-find-file's own "too expensive to redo per
+    // keystroke" precedent); ranked_/selection_/kindFilter_ change every
+    // keystroke/Tab/arrow.
+    std::vector<editor::SearchEverywhereCandidate>    searchEverywhereCandidates_;
+    std::vector<editor::SearchEverywhereResult>       searchEverywhereRanked_;
+    std::size_t                                       searchEverywhereSelection_ = 0;
+    std::optional<editor::SearchEverywhereKind>       searchEverywhereKindFilter_;
 
     bufferview::EditorContext context_;
 

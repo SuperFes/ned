@@ -32,6 +32,7 @@ add_library(ned_lib STATIC
         Editor/Key.cpp
         Editor/Command.cpp
         Editor/FuzzyMatch.cpp
+        Editor/SearchEverywhere.cpp
         Editor/Keymap.cpp
         Editor/Dispatcher.cpp
         Editor/Commands.cpp
@@ -43,6 +44,7 @@ add_library(ned_lib STATIC
         Editor/RegexPattern.cpp
         Editor/HugeRegexScan.cpp
         Editor/Register.cpp
+        Editor/MacroRegistry.cpp
         Editor/Rectangle.cpp
         Editor/ConflictResolution.cpp
         Editor/AutoPair.cpp

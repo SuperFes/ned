@@ -2653,6 +2653,23 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::EndOrCallKbdMacro;
                       });
+    registry.Register("kmacro-name-last-macro", "Give the most recently recorded keyboard macro a name.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::NameLastMacro;
+                      });
+    registry.Register(
+        "kmacro-insert-macro-definition",
+        "Insert a named macro's (ned/register-macro ...) form at point, for pasting into init.janet.",
+        [](CommandContext& context) {
+            context.interactiveRequest = InteractiveRequest::InsertMacroDefinition;
+        });
+    registry.Register(
+        "search-everywhere",
+        "Fuzzy-search commands, named macros, project files, and open buffers in one merged, ranked list; TAB "
+        "narrows to one kind.",
+        [](CommandContext& context) {
+            context.interactiveRequest = InteractiveRequest::SearchEverywhere;
+        });
 
     // prefix-argument follow-up: starts a multi-keystroke reading session
     // (same shape as isearch, not a one-shot direct action) -- BufferView
@@ -4443,6 +4460,16 @@ Keymap BuildDefaultGlobalKeymap() {
     // equivalent real-Emacs binding to align with instead (ff-find-other-
     // file has no standard default keybinding of its own).
     keymap.Bind(ParseKeySequence("M-o"), "switch-header-source");
+    // search-everywhere follow-up: "M-O" (Alt+Shift+O) was the first choice
+    // -- free in the bind list -- but a live tmux check found it never
+    // fires: "ESC O" is the classic VT100/xterm SS3 introducer (used for
+    // F1-F4 and application-cursor-mode arrows), so a legacy terminal's
+    // fast-Alt-fusion path never produces a fused Meta+O the way it does for
+    // every other letter -- a terminal-protocol conflict, not a keymap bug,
+    // and specific to capital O (lowercase "ESC o" above is not part of any
+    // standard escape sequence, which is why M-o itself works fine). "M-s"
+    // ("search") has no such conflict and is free.
+    keymap.Bind(ParseKeySequence("M-s"), "search-everywhere");
     keymap.Bind(ParseKeySequence("C-c C-M-r"), "rename-symbol"); // C-c C-r is already project-replace
     keymap.Bind(ParseKeySequence("C-c C-b"), "run-task");
     // task-runner follow-up: same "shift/meta variant is the stronger

@@ -60,6 +60,7 @@
 #include "Editor/Lsp/EditApply.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/ServerConfig.h"
+#include "Editor/MacroRegistry.h"
 #include "Editor/MassifOutputParser.h"
 #include "Editor/MassifReportBuffer.h"
 #include "Editor/ModeOverrides.h"
@@ -367,6 +368,106 @@ inline std::optional<std::size_t> ResolveFuzzyCandidateRowIndex(std::size_t rowI
         return std::nullopt; // the "more below" divider row, or past it
     }
     return windowStart + withinWindow;
+}
+
+// search-everywhere follow-up: the short kind tag painted in a row's `left`
+// column -- BuildSearchEverywherePopupModel's own per-kind label, kept
+// separate from that function since HandleSearchEverywhereKey's status text
+// (SearchEverywhereTitle, just below) needs the same mapping independently.
+inline std::string SearchEverywhereKindGlyph(editor::SearchEverywhereKind kind) {
+    switch (kind) {
+        case editor::SearchEverywhereKind::Command:
+            return "cmd";
+        case editor::SearchEverywhereKind::Macro:
+            return "kbd";
+        case editor::SearchEverywhereKind::File:
+            return "file";
+        case editor::SearchEverywhereKind::Buffer:
+            return "buf";
+    }
+    return "";
+}
+
+// search-everywhere follow-up: the popup's title reflects the active kind
+// filter -- there is no tab-strip widget in this codebase (every existing
+// picker keeps its query in the echo area and its results in one
+// non-focusable ListPopup, see FuzzyPrompt.h), so Tab cycling the filter and
+// showing it in the title is the same "type to narrow" idiom rather than a
+// new visual element.
+inline std::string SearchEverywhereTitle(std::optional<editor::SearchEverywhereKind> kindFilter) {
+    if (!kindFilter) {
+        return "Search Everywhere";
+    }
+    switch (*kindFilter) {
+        case editor::SearchEverywhereKind::Command:
+            return "Search Everywhere -- Actions";
+        case editor::SearchEverywhereKind::Macro:
+            return "Search Everywhere -- Macros";
+        case editor::SearchEverywhereKind::File:
+            return "Search Everywhere -- Files";
+        case editor::SearchEverywhereKind::Buffer:
+            return "Search Everywhere -- Buffers";
+    }
+    return "Search Everywhere";
+}
+
+// search-everywhere follow-up: Tab's own cycle order, All -> Command ->
+// Macro -> File -> Buffer -> All -- SearchEverywhereKind's own declaration
+// order, so this and RankSearchEverywhere's tie-break agree on what "the
+// next kind" means.
+inline std::optional<editor::SearchEverywhereKind>
+NextSearchEverywhereKindFilter(std::optional<editor::SearchEverywhereKind> current) {
+    if (!current) {
+        return editor::SearchEverywhereKind::Command;
+    }
+    switch (*current) {
+        case editor::SearchEverywhereKind::Command:
+            return editor::SearchEverywhereKind::Macro;
+        case editor::SearchEverywhereKind::Macro:
+            return editor::SearchEverywhereKind::File;
+        case editor::SearchEverywhereKind::File:
+            return editor::SearchEverywhereKind::Buffer;
+        case editor::SearchEverywhereKind::Buffer:
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+// search-everywhere follow-up: BuildFuzzyCandidatePopupModel's own shape
+// (title, ComputeCandidatePopupWindow, the "N more above/below" synthetic
+// rows), over SearchEverywhereCandidate/Result instead of bare strings --
+// kept separate rather than templating the original, since this also needs
+// to paint the per-kind `left` glyph and the `right` detail column, which
+// no other consumer of that function wants.
+inline ListPopupModel BuildSearchEverywherePopupModel(const std::string&                                    title,
+                                                       const std::vector<editor::SearchEverywhereCandidate>& candidates,
+                                                       const std::vector<editor::SearchEverywhereResult>&    ranked,
+                                                       std::size_t                                           selected) {
+    ListPopupModel model;
+    model.title = title;
+    if (ranked.empty()) {
+        return model;
+    }
+    selected = std::min(selected, ranked.size() - 1);
+
+    const auto [windowStart, windowEnd] = ComputeCandidatePopupWindow(selected, ranked.size());
+
+    model.rows.reserve(windowEnd - windowStart + 2);
+    if (windowStart > 0) {
+        model.rows.push_back({.main = "↑ " + std::to_string(windowStart) + " more above"});
+    }
+    for (std::size_t i = windowStart; i < windowEnd; ++i) {
+        const editor::SearchEverywhereCandidate& candidate = candidates[ranked[i].candidateIndex];
+        model.rows.push_back(
+            {.left = SearchEverywhereKindGlyph(candidate.kind), .main = candidate.label, .right = candidate.detail});
+    }
+    model.selectedIndex = (selected - windowStart) + (windowStart > 0 ? 1 : 0);
+
+    const std::size_t hiddenBelow = ranked.size() - windowEnd;
+    if (hiddenBelow > 0) {
+        model.rows.push_back({.main = "↓ " + std::to_string(hiddenBelow) + " more below"});
+    }
+    return model;
 }
 
 // dropdown-path-completion follow-up: turns an accumulated
