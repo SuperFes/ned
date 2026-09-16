@@ -591,7 +591,7 @@ Move the table row at point up, or the current line otherwise.
 
 ## `markdown-table-align`
 
-Realign the columns of the GFM table at point to their content width, or expand a snippet trigger / insert a tab character otherwise.
+Realign the columns of the GFM table at point to their content width, or otherwise do whatever plain TAB would have done.
 
 ## `markdown-table-delete-column`
 

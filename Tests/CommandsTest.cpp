@@ -8,13 +8,14 @@
 #include <string_view>
 #include <vector>
 
+#include "Editor/AutoFormatOnSave.h"
 #include "Editor/AutoPair.h"
 #include "Editor/Backup.h"
 #include "Editor/BlankLineCleanup.h"
-#include "Editor/AutoFormatOnSave.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/IndentStyle.h"
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/Mode.h"
 #include "Editor/Multibuffer.h"
@@ -42,6 +43,15 @@ struct FormatCommandGuard {
 struct LineEndingPolicyGuard {
     ~LineEndingPolicyGuard() {
         SetLineEndingPolicy({LineEndingPolicyMode::Preserve, ned::text::LineEnding::LF});
+    }
+};
+
+// The process-wide default IndentStyle (see Editor/IndentStyle.h) is global
+// state too; every test that sets it must restore it for the next one --
+// mirrors IndentStyleTest.cpp's own IndentStyleGuard exactly.
+struct IndentStyleGuard {
+    ~IndentStyleGuard() {
+        SetIndentStyle(IndentStyle{});
     }
 };
 
@@ -677,7 +687,29 @@ TEST_CASE("C-x C-x is bound to exchange-point-and-mark", "[Commands]") {
     REQUIRE(fixture.buffer.Mark() == 3);
 }
 
-TEST_CASE("indent-for-tab-command inserts a literal tab", "[Commands]") {
+TEST_CASE("indent-for-tab-command inserts spaces to the next tab stop, matching the default "
+          "(useTabs=false) IndentStyle",
+          "[Commands]") {
+    // tab-fallback-respects-useTabs follow-up: not a literal '\t' -- the
+    // buffer/mode has no per-mode IndentStyle override here, so this falls
+    // back to DefaultIndentStyle() (useTabs=false, width=4 -- see
+    // IndentStyleTest.cpp), and a literal tab byte disagreeing with that
+    // is exactly the bug this fixes.
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    registry.Invoke("indent-for-tab-command", context);
+    REQUIRE(fixture.buffer.Text() == "    "); // 4 spaces -- point started at column 0
+}
+
+TEST_CASE("indent-for-tab-command inserts a literal tab when the mode's own IndentStyle sets useTabs",
+          "[Commands]") {
+    const IndentStyleGuard guard;
+    SetIndentStyle(IndentStyle{.useTabs = true, .width = 4});
+
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);
 
@@ -698,7 +730,7 @@ TEST_CASE("TAB in Normal mode inserts a tab via the global keymap", "[Commands]"
     CommandContext context = fixture.Context();
 
     REQUIRE(dispatcher.Feed(ParseKeyChord("TAB"), context) == Dispatcher::Outcome::Invoked);
-    REQUIRE(fixture.buffer.Text() == "\t");
+    REQUIRE(fixture.buffer.Text() == "    "); // 4 spaces -- DefaultIndentStyle's own useTabs=false, width=4
 }
 
 TEST_CASE("save-buffer writes the file and reports a confirmation message", "[Commands]") {
@@ -2586,16 +2618,50 @@ TEST_CASE("markdown-table-align realigns a GFM table and reports failure off one
 
     // TAB-fallback-outside-table follow-up: off a table, this falls through
     // to indent-for-tab-command's own body (no snippet trigger registered
-    // here, so a literal tab) rather than reporting "Not in a table." --
-    // unlike org-table-align above, which real Org's C-c ' /TAB-in-table
-    // convention keeps a hard stop for.
+    // here, so spaces to the next tab stop -- tab-fallback-respects-
+    // useTabs follow-up, not a literal tab) rather than reporting "Not in
+    // a table." -- unlike org-table-align above, which real Org's C-c ' /
+    // TAB-in-table convention keeps a hard stop for.
     fixture.buffer.SetPoint(fixture.buffer.Size());
     fixture.buffer.InsertAtPoint("\nplain text");
     fixture.buffer.SetPoint(fixture.buffer.Size() - 3);
 
     registry.Invoke("markdown-table-align", context);
     REQUIRE(message.empty());
-    REQUIRE(fixture.buffer.Text().ends_with("plain t\text"));
+    REQUIRE(fixture.buffer.Text().ends_with("plain t ext")); // "plain t" is column 7; one space to column 8
+}
+
+// markdown-table-align-fallback-drift follow-up: this used to hand-copy
+// just the LAST two steps of indent-for-tab-command's own body
+// (TrySnippetTrigger, then a literal tab), silently dropping the FIRST --
+// the mode's own indentColumn-based smart reindent -- so TAB in any
+// Markdown buffer never reindented at all outside a table, only ever
+// inserted a literal tab. Confirmed live, not assumed: a fresh
+// continuation line under a list item, one keystroke after "newline"'s own
+// auto-indent, still needs a correctly-computed column reachable through
+// THIS binding specifically (markdown-mode's own keymap wins TAB over
+// plain indent-for-tab-command -- see "MarkdownMode binds TAB to
+// markdown-table-align" below).
+TEST_CASE("markdown-table-align reindents (not literal-tabs) a blank continuation line under a "
+          "list item, off any table",
+          "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    Mode           markdownMode = MarkdownMode();
+    CommandContext context      = fixture.Context();
+    context.mode                = &markdownMode;
+    std::string message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("- item one\n    "); // "newline"'s own one-step auto-indent, already applied
+    fixture.buffer.SetPoint(fixture.buffer.Size());   // point at the blank line's own end -- within its leading whitespace
+
+    registry.Invoke("markdown-table-align", context);
+    REQUIRE(message.empty());
+    REQUIRE(fixture.buffer.Text() == "- item one\n    "); // unchanged: already correctly hung, not re-collapsed or tabbed
+    REQUIRE(fixture.buffer.Point() == fixture.buffer.Size());
 }
 
 TEST_CASE("BuildDefaultGlobalKeymap binds C-c C-l to open-link-at-point", "[Commands]") {
@@ -3501,7 +3567,7 @@ TEST_CASE("indent-for-tab-command inserts a literal tab when nothing matches", "
     CommandContext context = fixture.Context();
     registry.Invoke("indent-for-tab-command", context);
     REQUIRE(context.interactiveRequest == InteractiveRequest::None);
-    REQUIRE(fixture.buffer.Text() == "while\t");
+    REQUIRE(fixture.buffer.Text() == "while   "); // "while" is column 5; 3 spaces to column 8
 }
 
 TEST_CASE("A snippet trigger only fires with point exactly at the word's end", "[Commands]") {
@@ -3515,7 +3581,7 @@ TEST_CASE("A snippet trigger only fires with point exactly at the word's end", "
     CommandContext context = fixture.Context();
     registry.Invoke("indent-for-tab-command", context);
     REQUIRE(context.interactiveRequest == InteractiveRequest::None);
-    REQUIRE(fixture.buffer.Text() == "fo\tr");
+    REQUIRE(fixture.buffer.Text() == "fo  r"); // "fo" is column 2; 2 spaces to column 4
 }
 
 TEST_CASE("Snippet trigger lookup keys on the buffer's mode language", "[Commands]") {
@@ -3540,7 +3606,7 @@ TEST_CASE("Snippet trigger lookup keys on the buffer's mode language", "[Command
     CommandContext plainContext = plainFixture.Context();
     registry.Invoke("indent-for-tab-command", plainContext);
     REQUIRE(plainContext.interactiveRequest == InteractiveRequest::None);
-    REQUIRE(plainFixture.buffer.Text() == "for\t");
+    REQUIRE(plainFixture.buffer.Text() == "for "); // "for" is column 3; 1 space to column 4
 }
 
 TEST_CASE("expand-snippet reports when no trigger matches", "[Commands]") {
@@ -3591,7 +3657,7 @@ TEST_CASE("indent-for-tab-command falls back to literal-tab/snippet behavior whe
     fixture.buffer.InsertAtPoint("int f(void) {\n");
     registry.Invoke("indent-for-tab-command", context);
 
-    REQUIRE(fixture.buffer.Text() == "int f(void) {\n\t"); // unchanged, pre-existing literal-tab behavior
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n    "); // column 0; a full 4-space step
 }
 
 TEST_CASE("indent-for-tab-command falls back to a literal tab when point is past the line's leading whitespace",
@@ -3610,7 +3676,7 @@ TEST_CASE("indent-for-tab-command falls back to a literal tab when point is past
     // inserting, matching every mode without indentColumn configured.
     registry.Invoke("indent-for-tab-command", context);
 
-    REQUIRE(fixture.buffer.Text() == "int f(void) {\n    return 0;\t");
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n    return 0;   "); // column 13; 3 spaces to column 16
 }
 
 TEST_CASE("newline electric-indents the new line for a mode with indentColumn configured", "[Commands]") {

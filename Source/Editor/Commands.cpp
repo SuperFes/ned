@@ -351,6 +351,108 @@ namespace {
         return true;
     }
 
+    // indent-for-tab-command's own full body, factored out so a mode-
+    // specific TAB override (markdown-table-align, org-cycle, ...) that
+    // wants "my own special case, then whatever plain TAB would have done"
+    // gets the REAL fallback rather than a hand-copied subset of it.
+    // TAB-fallback-outside-table follow-up: markdown-table-align's own
+    // outside-a-table fallback used to reimplement just this function's
+    // LAST two steps (TrySnippetTrigger, then a literal tab) by hand,
+    // silently dropping the FIRST and most important one -- the mode's own
+    // indentColumn-based smart reindent -- so TAB in any Markdown buffer
+    // outside a table never reindented at all, only ever inserted a literal
+    // tab character (or expanded a snippet). Confirmed live: a fresh
+    // continuation line under a list item, Markdown's own indentColumn
+    // computing the correct hang column the whole time, unreachable because
+    // nothing called it. One shared function is what keeps a future TAB
+    // override from repeating the same drift.
+    //
+    // mode-agnostic-rigid-indent follow-up: an active mark routes TAB to a
+    // rigid, mode-agnostic "nudge every selected line one indent width to
+    // the right" instead of the single-line recompute below -- deliberately
+    // a DIFFERENT, simpler operation than indent-region's own tree-sitter
+    // recompute (which stays M-x-only, unbound, keeping its existing
+    // "language-aware reindent" meaning). Works even when the mode has no
+    // indentColumn configured at all -- RigidShiftRegion only ever
+    // reads/writes existing leading whitespace, never consults Mode.
+    // Mirrors indent-region's own region-to-line-range resolution
+    // (Commands.cpp's own "indent-region" command) for consistency. Clears
+    // the mark afterward -- matches every other editing command's own
+    // convention ("Editing commands clear a leftover mark, unlike plain
+    // motion", CommandsTest.cpp), not modern IDEs' own
+    // keep-selection-for-repeated-Tab convention.
+    //
+    // smart-indentation follow-up: when the mode has real indentColumn
+    // support AND point sits at-or-before the end of the current line's own
+    // leading whitespace (i.e. TAB pressed at/near the start of the line,
+    // not deep inside real content), reindent this line to its computed
+    // column in place. Otherwise -- indentColumn unset, or point is past
+    // the leading whitespace -- falls through to the original, unchanged
+    // behavior: snippet expansion first, then a literal-tab insert (Emacs'
+    // own indent-for-tab-command computes indentation for every mode; this
+    // codebase only has that for the modes Editor/Indent.h's engine has
+    // been extended to).
+    void IndentForTabCommandBody(CommandContext& context) {
+        if (context.buffer.HasMark()) {
+            const auto [start, end]     = context.buffer.Region();
+            const auto&       content   = context.buffer.Content();
+            const std::size_t startLine = content.ByteOffsetToLine(start);
+            const std::size_t endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
+            const IndentStyle style     = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
+            context.buffer.ClearMark();
+            RigidShiftRegion(context.buffer, style, startLine, endLine, 1);
+            return;
+        }
+        if (context.mode != nullptr && context.mode->indentColumn) {
+            text::Buffer&     buffer    = context.buffer;
+            const auto&       content   = buffer.Content();
+            const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
+            const std::size_t lineStart = content.LineToByteOffset(line);
+            const std::size_t indentEnd = LineIndentEnd(content, lineStart);
+            if (buffer.Point() <= indentEnd) {
+                std::size_t lineEnd =
+                    (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
+                if (line + 1 < content.LineCount() && lineEnd > lineStart) {
+                    --lineEnd; // exclude the line's own trailing '\n'
+                }
+                if (const std::optional<int> column = IndentColumnForLine(*context.mode, buffer.Text(), lineStart, lineEnd)) {
+                    const IndentStyle style = EffectiveIndentStyle(context.mode->name);
+                    buffer.ClearMark();
+                    SetLineIndent(buffer, lineStart, *column, style);
+                    buffer.SetPoint(lineStart + IndentString(*column, style).size());
+                    return;
+                }
+            }
+        }
+        if (TrySnippetTrigger(context)) {
+            return;
+        }
+        context.buffer.ClearMark();
+        // tab-fallback-respects-useTabs follow-up: a literal '\t' byte here
+        // unconditionally, regardless of the buffer's own configured
+        // IndentStyle, is wrong for the (default, and far more common)
+        // useTabs=false case -- confirmed live, not assumed: a buffer whose
+        // own mode-line reads "Spaces:N" still got a raw tab character on
+        // this fallback (mid-word TAB, or a mode/position indentColumn
+        // doesn't apply to). Mirrors what a REAL tab character would have
+        // done visually -- advance to the next tab-stop column -- using
+        // real space characters instead of tab-expansion, the same
+        // "spaces that render like a tab" translation IndentString already
+        // makes for a full-line reindent's own trailing partial stop.
+        const IndentStyle style = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
+        if (style.useTabs) {
+            context.buffer.InsertAtPoint("\t");
+            return;
+        }
+        const std::size_t width     = static_cast<std::size_t>(std::max(1, style.width));
+        const auto&       content   = context.buffer.Content();
+        const std::size_t line      = content.ByteOffsetToLine(context.buffer.Point());
+        const std::size_t lineStart = content.LineToByteOffset(line);
+        const std::size_t column    = context.buffer.VisualColumnForByteOffset(lineStart, context.buffer.Point(), width);
+        const std::size_t spaces    = width - (column % width);
+        context.buffer.InsertAtPoint(std::string(spaces, ' '));
+    }
+
     // The byte offset where a cursor's selection starts (its region's low
     // end), or its point when it has no mark -- what select-next-occurrence
     // compares candidate matches against so it never re-adds a cursor at an
@@ -1529,79 +1631,18 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.buffer.InsertAtPoint(inserted);
                       }));
 
-    // smart-indentation follow-up: when the mode has real indentColumn
-    // support AND point sits at-or-before the end of the current line's own
-    // leading whitespace (i.e. TAB pressed at/near the start of the line,
-    // not deep inside real content), reindent this line to its computed
-    // column in place. Otherwise -- indentColumn unset, or point is past the
-    // leading whitespace -- falls through to the original, unchanged
-    // behavior: snippet expansion first, then a literal-tab insert (Emacs'
-    // own indent-for-tab-command computes indentation for every mode; this
-    // codebase only has that for the modes Editor/Indent.h's engine has been
-    // extended to). Global, but a mode's own keymap (e.g. org-mode's
-    // org-cycle, markdown-mode's markdown-table-align) still wins via
-    // KeymapStack's priority order, so this only ever fires where nothing
-    // more specific claimed TAB first (snippet expansion in those modes goes
-    // through the expand-snippet command instead).
+    // Global, but a mode's own keymap (e.g. org-mode's org-cycle,
+    // markdown-mode's markdown-table-align) still wins via KeymapStack's
+    // priority order, so this only ever fires where nothing more specific
+    // claimed TAB first (snippet expansion in those modes goes through the
+    // expand-snippet command instead). See IndentForTabCommandBody's own
+    // doc comment above for what it actually does.
     registry.Register(
         "indent-for-tab-command",
         "Reindent the current line to its computed indentation, or -- with an active region -- rigidly indent "
         "every line the region spans by one indent width; otherwise expand the snippet trigger before point, or "
         "insert a tab character.",
-        [](CommandContext& context) {
-            // mode-agnostic-rigid-indent follow-up: an active mark routes
-            // TAB to a rigid, mode-agnostic "nudge every selected line one
-            // indent width to the right" instead of the single-line
-            // recompute below -- deliberately a DIFFERENT, simpler
-            // operation than indent-region's own tree-sitter recompute
-            // (which stays M-x-only, unbound, keeping its existing
-            // "language-aware reindent" meaning). Works even when the mode
-            // has no indentColumn configured at all -- RigidShiftRegion
-            // only ever reads/writes existing leading whitespace, never
-            // consults Mode. Mirrors indent-region's own region-to-line-
-            // range resolution (Commands.cpp's own "indent-region"
-            // command) for consistency. Clears the mark afterward --
-            // matches every other editing command's own convention
-            // ("Editing commands clear a leftover mark, unlike plain
-            // motion", CommandsTest.cpp), not modern IDEs' own
-            // keep-selection-for-repeated-Tab convention.
-            if (context.buffer.HasMark()) {
-                const auto [start, end]     = context.buffer.Region();
-                const auto&       content   = context.buffer.Content();
-                const std::size_t startLine = content.ByteOffsetToLine(start);
-                const std::size_t endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
-                const IndentStyle style     = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
-                context.buffer.ClearMark();
-                RigidShiftRegion(context.buffer, style, startLine, endLine, 1);
-                return;
-            }
-            if (context.mode != nullptr && context.mode->indentColumn) {
-                text::Buffer&     buffer    = context.buffer;
-                const auto&       content   = buffer.Content();
-                const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
-                const std::size_t lineStart = content.LineToByteOffset(line);
-                const std::size_t indentEnd = LineIndentEnd(content, lineStart);
-                if (buffer.Point() <= indentEnd) {
-                    std::size_t lineEnd =
-                        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
-                    if (line + 1 < content.LineCount() && lineEnd > lineStart) {
-                        --lineEnd; // exclude the line's own trailing '\n'
-                    }
-                    if (const std::optional<int> column = IndentColumnForLine(*context.mode, buffer.Text(), lineStart, lineEnd)) {
-                        const IndentStyle style = EffectiveIndentStyle(context.mode->name);
-                        buffer.ClearMark();
-                        SetLineIndent(buffer, lineStart, *column, style);
-                        buffer.SetPoint(lineStart + IndentString(*column, style).size());
-                        return;
-                    }
-                }
-            }
-            if (TrySnippetTrigger(context)) {
-                return;
-            }
-            context.buffer.ClearMark();
-            context.buffer.InsertAtPoint("\t");
-        });
+        IndentForTabCommandBody);
 
     // mode-agnostic-rigid-indent follow-up: S-TAB's own symmetric sibling
     // to indent-for-tab-command's new mark-active branch above -- no
@@ -4160,23 +4201,32 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // in this codebase (org-cycle, indent-for-tab-command), this used to
     // hard-stop on "Not in a table." outside a table -- leaving TAB
     // effectively dead in a markdown buffer whenever point isn't on a GFM
-    // table. Falls through to indent-for-tab-command's own exact body
-    // (TrySnippetTrigger, else a literal tab) the same way
+    // table. Falls through to IndentForTabCommandBody -- the same function
+    // plain TAB (indent-for-tab-command) itself runs -- the same way
     // markdown-metaup/markdown-metadown already fall through to a plain
     // line move outside a table.
+    //
+    // markdown-table-align-fallback-drift follow-up: this used to
+    // hand-copy just the LAST two steps of that body (TrySnippetTrigger,
+    // then a literal tab), silently dropping the FIRST and most important
+    // one -- the mode's own indentColumn-based smart reindent. Confirmed
+    // live: TAB on a fresh continuation line under a Markdown list item
+    // never reindented at all, in any Markdown buffer, because
+    // markdown-mode's own keymap always wins TAB over the global binding
+    // (KeymapStack priority) and this was the command actually running --
+    // Markdown's own indentColumn (Languages/Markdown.cpp) computed the
+    // correct hang column the whole time, just never reached. One shared
+    // function, called from both bindings, is what keeps a future TAB
+    // override from repeating the same drift.
     registry.Register(
         "markdown-table-align",
-        "Realign the columns of the GFM table at point to their content width, or expand a snippet trigger / insert a "
-        "tab character otherwise.",
+        "Realign the columns of the GFM table at point to their content width, or otherwise do whatever plain TAB "
+        "would have done.",
         [](CommandContext& context) {
             if (markdown::AlignTableAtPoint(context.buffer)) {
                 return;
             }
-            if (TrySnippetTrigger(context)) {
-                return;
-            }
-            context.buffer.ClearMark();
-            context.buffer.InsertAtPoint("\t");
+            IndentForTabCommandBody(context);
         });
     // Markdown table editing surface follow-up: the rest of GFM's own
     // table-editing ops, same "context.message on failure" shape as

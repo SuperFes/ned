@@ -14331,9 +14331,11 @@ TEST_CASE("Tab expands a registered snippet and mirrors track typing", "[BufferV
     REQUIRE(fixture.buffer.SnippetRanges().empty());
     REQUIRE(fixture.buffer.Point() == 25);
 
-    // Tab is back to its ordinary literal-tab self afterward.
+    // Tab is back to its ordinary self afterward -- spaces to the next tab
+    // stop (tab-fallback-respects-useTabs follow-up), not a literal tab:
+    // "for (idx; idx < n; ++idx)" is column 25, 3 spaces to column 28.
     view.OnEvent(ned::ui::test::Tab());
-    REQUIRE(fixture.buffer.Text() == "for (idx; idx < n; ++idx)\t");
+    REQUIRE(fixture.buffer.Text() == "for (idx; idx < n; ++idx)   ");
 }
 
 TEST_CASE("Backspace on a pristine placeholder deletes it whole and stays in session", "[BufferView]") {

@@ -48,8 +48,8 @@ indent 71..71  [0]
 indent 72..87  [0]  "- [ ] open task"
 indent 88..103  [0]  "- [x] done task"
 indent 104..116  [0]  "- plain item"
-indent 117..136  [2]  "  continuation line"
-indent 137..137  [2]
+indent 117..136  [4]  "  continuation line"
+indent 137..137  [4]
 indent 138..148  [0]  "### Deeper"
 indent 149..149  [0]
 indent 150..160  [0]  "Setext One"
@@ -61,7 +61,7 @@ indent 195..195  [0]
 indent 196..205  [0]  "```python"
 indent 232..232  [0]
 indent 233..242  [0]  "> a quote"
-indent 243..243  [2]
+indent 243..243  [4]
 symbol 0..243  [Namespace Title]  "# Title\n\nIntro paragraph wit … \n\n> a quote\n"
 symbol 62..243  [Namespace Tasks]  "## Tasks\n\n- [ ] open task\n-  … \n\n> a quote\n"
 symbol 138..243  [Namespace Deeper]  "### Deeper\n\nSetext One\n===== … \n\n> a quote\n"

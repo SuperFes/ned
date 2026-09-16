@@ -519,25 +519,37 @@ TEST_CASE("PythonMode indentColumn aligns a lone closing paren with its call's o
     REQUIRE(*closeColumn == 0); // aligns with "f(a,"'s own level, not "b"'s
 }
 
-TEST_CASE("MarkdownMode indentColumn hangs a nested list item's continuation to its own marker width",
+TEST_CASE("MarkdownMode indentColumn hangs a nested list item's continuation one indent step in, "
+          "not the marker's own literal width",
           "[Indent]") {
+    // checkbox-hang-matches-tab-depth follow-up: one configured step
+    // (EffectiveIndentStyle's own width, 4 by default), not "- "'s own
+    // literal 2-column width -- matches the same document-wide convention
+    // the wrap-indent-hang fix already established for the VISUAL
+    // soft-wrap case.
     const auto mode = MarkdownMode();
     REQUIRE(mode.indentColumn);
     Buffer buffer("test.md");
-    buffer.InsertAtPoint("- item one\n  more text\n");
+    buffer.InsertAtPoint("- item one\n    more text\n");
 
     const auto [markerStart, markerEnd] = LineRange(buffer, 0); // "- item one" -- its own marker line
     const auto markerColumn             = mode.indentColumn(buffer.Text(), markerStart, markerEnd);
     REQUIRE(markerColumn.has_value());
     REQUIRE(*markerColumn == 0);
 
-    const auto [contStart, contEnd] = LineRange(buffer, 1); // "  more text" -- hanging continuation
+    const auto [contStart, contEnd] = LineRange(buffer, 1); // "    more text" -- hanging continuation
     const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
     REQUIRE(contColumn.has_value());
-    REQUIRE(*contColumn == 2); // "- " is 2 columns wide
+    REQUIRE(*contColumn == 4);
 }
 
-TEST_CASE("MarkdownMode indentColumn stacks nested list markers additively", "[Indent]") {
+TEST_CASE("MarkdownMode indentColumn stacks one indent step per nesting level, additively", "[Indent]") {
+    // Written indentation matches the marker's own literal width ("1. " is
+    // 3, "- " is 2), not the new computed step (4) -- what's on the line
+    // only needs to be enough for tree-sitter-markdown to recognize the
+    // real nesting relationship; indentColumn recomputes independently of
+    // whatever's literally written, and using the old widths here keeps
+    // this test's own buffer setup on grammar-verified-correct ground.
     const auto mode = MarkdownMode();
     Buffer     buffer("test.md");
     buffer.InsertAtPoint("1. outer\n   - inner\n     more\n");
@@ -545,15 +557,15 @@ TEST_CASE("MarkdownMode indentColumn stacks nested list markers additively", "[I
     const auto [innerMarkerStart, innerMarkerEnd] = LineRange(buffer, 1); // "   - inner" -- inner item's own marker line
     const auto innerMarkerColumn                  = mode.indentColumn(buffer.Text(), innerMarkerStart, innerMarkerEnd);
     REQUIRE(innerMarkerColumn.has_value());
-    REQUIRE(*innerMarkerColumn == 3); // "1. " is 3 columns -- the outer item's own contribution only
+    REQUIRE(*innerMarkerColumn == 4); // one step -- the outer item's own contribution only
 
     const auto [contStart, contEnd] = LineRange(buffer, 2); // "     more" -- inside the inner item's body
     const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
     REQUIRE(contColumn.has_value());
-    REQUIRE(*contColumn == 5); // "1. " (3) + "- " (2)
+    REQUIRE(*contColumn == 8); // two steps, one per nesting level
 }
 
-TEST_CASE("MarkdownMode indentColumn adds 2 columns per blockquote level", "[Indent]") {
+TEST_CASE("MarkdownMode indentColumn adds one indent step per blockquote level", "[Indent]") {
     const auto mode = MarkdownMode();
     Buffer     buffer("test.md");
     buffer.InsertAtPoint("> quoted\n> more quoted\n");
@@ -566,7 +578,7 @@ TEST_CASE("MarkdownMode indentColumn adds 2 columns per blockquote level", "[Ind
     const auto [secondStart, secondEnd] = LineRange(buffer, 1); // "> more quoted" -- still inside the same blockquote
     const auto secondColumn             = mode.indentColumn(buffer.Text(), secondStart, secondEnd);
     REQUIRE(secondColumn.has_value());
-    REQUIRE(*secondColumn == 2);
+    REQUIRE(*secondColumn == 4);
 }
 
 TEST_CASE("MarkdownMode indentColumn copies a fenced code block's own content indentation verbatim", "[Indent]") {
@@ -610,7 +622,7 @@ TEST_CASE("MarkdownMode indentColumn still hangs a blank continuation on the FIR
     const std::size_t newLinePos = buffer.Content().ByteLength();
     const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
     REQUIRE(column.has_value());
-    REQUIRE(*column == 2);
+    REQUIRE(*column == 4);
 }
 
 TEST_CASE("JavaScriptMode indentColumn indents a nested if-block and aligns its closing brace", "[Indent]") {
@@ -1350,4 +1362,52 @@ TEST_CASE("RigidShiftRegion measures existing tabs via the configured tab width 
     // and the literal tab itself is replaced (IndentString never re-uses
     // useTabs=false's own leftover tab byte).
     REQUIRE(buffer.Text() == std::string(12, ' ') + "a\n");
+}
+
+TEST_CASE("MarkdownMode indentColumn re-affirms a blank continuation's own hang after it's "
+          "already been auto-indented once, instead of collapsing it to column 0",
+          "[Indent]") {
+    // tab-after-newline-blank-line-collapse follow-up: "newline" queries
+    // indentColumn with the zero-width (lineStart == lineEnd) "not-yet-
+    // typed" convention and writes the real spaces itself; a SECOND query
+    // against that SAME now-real blank line (lineStart != lineEnd, 4 real
+    // space bytes already there -- exactly what a subsequent TAB press
+    // asks) used to miss the smart-blank-line rescue entirely (it checked
+    // lineStart == lineEnd specifically) and silently resolve to column 0,
+    // undoing the indent "newline" had just computed one keystroke
+    // earlier. Confirmed live in a real session, not assumed.
+    const auto mode = MarkdownMode();
+    Buffer     buffer("test.md");
+    buffer.InsertAtPoint("- item one\n    "); // "newline"'s own auto-indent (one step), already applied
+
+    const std::size_t lineStart     = buffer.Content().ByteOffsetToLine(buffer.Point());
+    const std::size_t lineStartByte = buffer.Content().LineToByteOffset(lineStart);
+    const std::size_t lineEnd       = buffer.Content().ByteLength();
+    REQUIRE(lineEnd - lineStartByte == 4); // sanity: the 4 real space bytes are there
+
+    const auto column = ned::editor::IndentColumnForLine(mode, buffer.Text(), lineStartByte, lineEnd);
+    REQUIRE(column.has_value());
+    REQUIRE(*column == 4); // not 0
+}
+
+TEST_CASE("MarkdownMode indentColumn re-affirms a checkbox item's own hang after auto-indent, "
+          "the same one indent step a plain bullet gets",
+          "[Indent]") {
+    // checkbox-hang-matches-tab-depth follow-up: a checkbox item ("- [ ] ")
+    // and a plain bullet ("- ") now hang identically -- one configured
+    // step, not either marker's own literal width. Confirms the collapse-
+    // to-0 fix above (same shape: a re-query against an already-auto-
+    // indented blank line) holds for a checkbox item too, now that
+    // marker-width is no longer part of the computation at all.
+    const auto mode = MarkdownMode();
+    Buffer     buffer("test.md");
+    buffer.InsertAtPoint("- [ ] item one\n    ");
+
+    const std::size_t lineStart     = buffer.Content().ByteOffsetToLine(buffer.Point());
+    const std::size_t lineStartByte = buffer.Content().LineToByteOffset(lineStart);
+    const std::size_t lineEnd       = buffer.Content().ByteLength();
+
+    const auto column = ned::editor::IndentColumnForLine(mode, buffer.Text(), lineStartByte, lineEnd);
+    REQUIRE(column.has_value());
+    REQUIRE(*column == 4);
 }
