@@ -274,7 +274,14 @@ TEST_CASE("Surfaces default to what the widget paints today", "[PaintParse]") {
         REQUIRE(current.fill.kind == PaintKind::Gradient);
         REQUIRE(current.fill.axis == ned::ui::PaintAxis::X);
         REQUIRE(current.fill.stops.size() == 2);
-        REQUIRE(current.fill.stops.back().colour.alpha == 0);
+        // dying-fade-quantization-floor follow-up: 1, not a literal 0 --
+        // confirmed live that a true-zero endpoint truncates to zero paint
+        // several columns before a wide pane's actual right edge (8-bit
+        // alpha quantization over a ramp topping out at 40/255), which
+        // reads as a hard dead strip rather than a fade. A minimal nonzero
+        // floor keeps every column tinted, however faintly, all the way to
+        // the true edge.
+        REQUIRE(current.fill.stops.back().colour.alpha == 1);
         // Strictly less ink than the flat wash it replaced, so it cannot
         // cost contrast anywhere.
         REQUIRE(current.fill.stops.back().colour.alpha < current.fill.stops.front().colour.alpha);
