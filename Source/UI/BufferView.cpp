@@ -93,7 +93,7 @@ editor::CommandContext BufferView::MakeContext() {
                 const std::size_t lineEnd = (ln + 1 < totalLines) ? content.LineToByteOffset(ln + 1) - 1 : content.ByteLength();
                 const std::vector<bufferview::RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, point);
                 const int fullWidth = std::max(1, size().width - static_cast<int>(GutterWidth()));
-                return ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
+                return ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks, mode_.name);
             };
             const auto toRow = [](const bufferview::WrapSegment& seg) {
                 return editor::CommandContext::VisualRow{.start = seg.startByte, .end = seg.endByte, .hang = seg.continuationIndent};
