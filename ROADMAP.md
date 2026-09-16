@@ -34,141 +34,12 @@ Notcurses.
 
 ## Open Items
 
-### Release 0.6 — "a stranger can install it, learn it, and get equal language treatment"
+### Release 0.7.1 — "a stranger can install it, learn it, and get equal language treatment"
 
 Version is now real and reported: `project(Ned VERSION 0.5.0)` flows through a generated
 `NedVersion.h` into `ned --version`, and `v0.5.0` is tagged. Before that the CMake version
 was metadata nothing consumed, which is how it came to read 0.5.0 while the only tag read
 v0.1.0 and the binary could report neither.
-
-0.5 is usable *by its author*. The content of 0.6 is being usable by someone who is not —
-which is one coherent claim rather than a pile of features, and is what the items below
-are scoped against. Deliberately **not** in 0.6: the parsing engine and Theme v2. Both are
-1.0-scale and reshape foundations (`Mode`, the whole theme surface); folding either in
-would make the number mean nothing.
-
-- [x] **Split the docs — shipped 2026-09-14.** `Docs/` stays the developer book (design
-      records, capability audits — its own `book.toml`/`SUMMARY.md`, `src` pointed at the
-      directory as-is so none of its existing files had to move or have their many
-      cross-references across `CLAUDE.md`/other docs rewritten); a new top-level
-      `UserGuide/` is the user-facing book (installation, getting started, configuration,
-      key concepts, one chapter per major feature, and per-language setup recipes) —
-      deliberately *not* nested under `Docs/`, since mdBook copies a book's entire `src`
-      tree verbatim into its output and nesting one book's source inside the other's
-      would ship a full copy of it. The generated `Docs/Commands.md`/`Docs/Scripting.md`
-      (and the already-user-facing `LanguageSetup.md`/`Themes.md`) are pulled into the
-      user book via mdBook's `{{#include}}` rather than copied, so the drift guard on the
-      generated pair stays meaningful — there's no second copy to go stale.
-      `.github/workflows/docs.yml` builds both with a pinned mdBook release binary and
-      deploys them as sibling `/user/`/`/dev/` paths on GitHub Pages via the native
-      `actions/deploy-pages` flow, triggered on every push touching either tree. One
-      docstring fix came out of building this for real: `ned/register-language`'s prose
-      used bare `<name>`/`<kind>`/`<grammar>`/`<lang>` placeholders, which a browser's
-      HTML parser (mdBook's stricter Markdown handling, not GitHub's) reads as unclosed
-      tags and silently drops — wrapped in backticks at the `Register<Fn>` call site and
-      re-blessed.
-- [x] **The command and scripting references are generated.** `Docs/Commands.md` (302
-      commands) and `Docs/Scripting.md` (159 `ned/*` bindings), both from the live registry
-      and binding table, both held against it on every build so neither can drift and
-      nothing can arrive undocumented. Every entry already existed — written at the
-      registration site and until now visible only through `M-x` or a REPL's `(doc ...)`.
-      Done as a blessed-and-guarded test rather than the `Tools/` binary originally
-      sketched: it needs no new build target, and the guard *is* the feature, since a
-      hand-maintained list of 302 commands is a list that is wrong.
-      `Environment::RegisteredBindings` was added for it, and the distinction it draws is
-      the interesting part: it reports what C++ registered, not what is *in* the shared
-      Janet environment, because other tests define their own `ned/*` and `envtest/*`
-      symbols there. Reading the environment made the generated page depend on test order
-      — caught only by `./build/ned_tests`, which `ctest -j8` cannot see, which is exactly
-      why both are run.
-- [x] **Ship an install story — from-source bar cleared for 0.6, packaged
-      artifacts deliberately deferred.** The 0.6 bar this item is scoped against is "a
-      stranger can install it," not "a stranger gets a prebuilt binary" — the former now
-      has a real, CI-proven answer: `CMakeLists.txt` resolves every dependency but Janet
-      and Notcurses from system packages (`b3d3949`), every tree-sitter grammar is
-      vendored and checked in (`d308040`, no network beyond the initial clone),
-      `.github/workflows/build-test.yml` actually builds and runs the test suite green on
-      a stock Ubuntu runner (2026-09-14, the first time this repo's CI has ever completed
-      a run), and `UserGuide/installation.md` gives the exact recipe per distro. What's
-      still genuinely missing — a packaged binary, a release workflow producing
-      downloadable artifacts — is real scope, just not *this* item's scope; it's the
-      Gentoo ebuild (drafted, author-side, targets the `v0.6.0` tag this release cuts —
-      still unverified against real release bits until that tag exists) and any future
-      binary-release workflow, tracked as its own follow-up rather than blocking 0.6.
-- [x] **Notcurses as a system library — shipped in `b3d3949`.** `CMakeLists.txt` now
-      resolves `notcurses-core` via `pkg_check_modules` like every other system
-      dependency (`CMake/Dependencies.cmake`) instead of FetchContent-ing and patching a
-      private copy; the old private-libdir install rule is gone with it
-      (`Source/CMakeLists.txt`'s own comment on the `install()` call explains why neither
-      concern applies anymore). `Patches/notcurses/`'s three `git am`-able files are what
-      a system package (or, until one exists carrying them, a hand-built one — see
-      `UserGuide/installation.md`) needs to apply against the pinned v3.0.17 tag; kept
-      as the source of truth for exactly that, not for an in-tree patch step anymore.
-- [x] **Tier A language parity (D2) — closed 2026-09-13.** java/kotlin/csharp/go/rust
-      already carried root markers from the Janet migration; bash/cmake deliberately have
-      none (no fixed marker convention exists for either). The actual remaining gap was
-      documentation, not code — `Docs/LanguageSetup.md` now gives the recommended
-      LSP/DAP/test-runner recipe per language. See `Docs/LanguageCoverage.md`.
-- [x] **Lua, CMake and diff grammars — shipped (2026-09-13).** The first admissions
-      through the post-Phase-4b pipeline, and the engine passed all three upstream
-      corpora (138 cases) untouched. Admission facts: lua
-      `tree-sitter-grammars/tree-sitter-lua` v0.5.0 (ABI 15, scanner 195 LOC, 4 corpus
-      files, upstream highlights+tags vendored — tags gives the symbol gutter and
-      sticky scroll; upstream locals.scm deliberately NOT vendored: it captures a
-      non-`local` assignment as a scoped definition, which is a Lua GLOBAL, so
-      scope-aware rename would over-scope — falls back to LSP/whole-word); cmake
-      `uyha/tree-sitter-cmake` v0.7.5 (ABI 14, scanner 194 LOC, 13 corpus files,
-      `CMakeLists.txt` claimed by filename); diff `tree-sitter-grammars/
-      tree-sitter-diff` v0.2.0 (ABI 15, no scanner, the one grammar the imprint
-      measures ZERO delimited bodies for — recorded in the generated table rather
-      than special-cased). The imprint inferred lua's `function/if/for/while … end`
-      keyword bodies outright (folding + indent from structure, the bash/fish
-      keyword-pair set growing exactly as designed) and cmake's paren bodies. Diff
-      highlighting got three first-class syntax classes — `DiffAdded`/`DiffRemoved`/
-      `DiffChanged` (`diff.plus`/`.minus`/`.delta` captures, `diff_*_foreground`
-      theme keys) — per the Org-classes precedent, since no general-purpose class is
-      honestly red or green. cmake and diff highlights are ned-authored
-      (kotlin-tags precedent): both upstream files use constructs outside
-      QueryMatcher's census scope — see the watch-list entry below.
-- [x] **Add the tree-sitter query language (`.scm`) — closed, won't do.** Mooted
-      2026-09-12 by the mechanism unification: ned authors zero `.scm` files now — every
-      query is `Source/Languages/<name>/<kind>.janet`, which janet-mode already
-      highlights. The one residual case (a foreign `:queries-dir`,
-      `/usr/share/tree-sitter/queries/<lang>`) is read-only and rarely opened in ned —
-      deliberately not worth a highlighting mode of its own; revisit only if that
-      specific gap is ever reported as an actual itch.
-- [x] **Stability gate: don't ship a minor bump with a known-red preset.** Fixed
-      2026-09-08 (commit `14f59fa`) — `[Performance]` budgets scale on `NDEBUG` rather
-      than assuming sanitizer overhead. Re-verified 2026-09-13: `default` preset
-      `ctest -j8` 4427/4427 clean; `sanitize -j8` clean except transient perf-budget
-      misses under genuine machine load, which pass individually every time (the
-      accepted "sanitize -j8 under load" class in the watch list below, not a
-      regression). Re-verified again same day against a fresh `sanitize` build after
-      the parsing-engine imprint fix above: 4427/4427 except one such transient miss
-      (`CppMode full-buffer highlighting and electric indent stay fast on a large
-      file`, 7705ms vs. a 5000ms budget under `-j8` load; passes standalone). A
-      `./build/ned_tests --order rand` sweep (10 seeds) closed a second instance of
-      the exact class `BackgroundActivity`'s own cross-test leak was fixed for
-      (2026-09-13, see git log): seeds 4 and 5 both failed
-      `McpToolRegistryTest.cpp`'s two "no VCS provider registered" tests
-      (`REQUIRE(invoked)` false — the callback never fires, consistent with a
-      leaked provider routing the call down the real async path instead of the
-      synchronous no-provider error path a clean registry takes). Root cause:
-      `ned::editor::vcs::ProviderRegistry` is touched by nine test files, and at
-      least four (`BufferViewDiffGutterTest.cpp`, `BufferViewVcsCommitTest.cpp`,
-      `BufferViewVcsStatusTest.cpp`, `WindowManagerTest.cpp`) call the test-only
-      `ClearRegistry()` as a plain statement at the end of a test body rather than
-      through an RAII guard, so a `REQUIRE` failure earlier in the same test skips
-      it and leaves that test's fake provider registered for the rest of the
-      binary; `McpToolRegistryTest.cpp`'s own "no provider" tests carry no reset of
-      their own, trusting every other file's cleanup unconditionally. Fixed the
-      same way `BackgroundActivity`'s registry was: a global Catch2
-      `EventListenerBase` (`VcsProviderRegistryGlobalFixture` in
-      `Tests/VcsProviderRegistryTest.cpp`) resetting the registry and its
-      resolution cache after every test case, regardless of pass/fail — the
-      individual files' own plain `ClearRegistry()` calls are now redundant but
-      harmless, left as-is. Re-ran seeds 1-10 clean afterward (63345-63371
-      assertions each, 4427/4427 test cases).
 
 **1.0, for context, since branching starts near it.** For a scriptable editor 1.0 is a
 promise about the *Janet surface*, not about features: 160 `Register<>` bindings and 275
@@ -386,54 +257,6 @@ answer to a request for an obscure DSL becomes "yes, next release".
 The concrete near-term grammar and config items this implies — Tier A's D2 gap, Lua and
 CMake, diff, `.scm`, and SQL — are **independent of the engine work** and are tracked
 under "Release 0.6" at the top of this file rather than duplicated here.
-
-- [x] **SQL, D0 core — admitted 2026-09-13.** `DerekStride/tree-sitter-sql` v0.3.11
-      (245★, ABI 15, 412-case corpus, 100% conformance-clean); highlighting adapted from
-      upstream (`Source/Languages/sql/highlights.janet`, one clause dropped for
-      QueryMatcher's census scope — see `Docs/LanguageCoverage.md`); fold/indent free from
-      the Tier 0 imprint (10 delimited bodies). Packaging wrinkle recorded there too: this
-      repo doesn't commit generated `parser.c`/`grammar.json` to `main`/tags, only to a
-      release asset — `CMakeLists.txt` gained `ned_fetch_treesitter_release` for it.
-      **Per-dialect trait deltas remain open** — still the strongest demo of the
-      architecture rather than a line item, since upstream is four grammars for one
-      language family precisely because tree-sitter cannot express "T-SQL is ANSI SQL
-      plus these deltas", so every dialect forks the whole grammar and drifts. One core
-      plus per-dialect trait deltas for Postgres/MySQL/SQLite/T-SQL/PL-pgSQL/BigQuery/
-      Snowflake would be better than anything upstream currently offers — deferred by
-      deliberate scope choice, not difficulty. Graveyarded en route:
-      `dhcmrlchtdj/tree-sitter-sqlite` (archived 2023), `m-novikov/tree-sitter-sql` (stale
-      2024-03).
-
-- [x] **Dockerfile, Make, HCL, Nix, Ruby, gitcommit, gitrebase — admitted
-      2026-09-13.** Seven more D0-core admissions in the same pass as SQL; full
-      admission facts (repo/tag/ABI/scanner/corpus per language) and the two
-      adaptations (nix's dropped string-quantifier clause, gitrebase's
-      flattened multi-pattern group) are recorded in `Docs/LanguageCoverage.md`.
-      Every corpus is 100% clean against conformance, incremental-vs-scratch,
-      MatchCache reconciliation and the red-layer differential; every bundled
-      highlight query passes the QueryMatcher construct census.
-      **Zig researched and parked in Tier D** (not graveyarded — a tooling
-      gap, not a rejection): its only maintained grammar
-      (`tree-sitter-grammars/tree-sitter-zig`) ships no `test/` directory at
-      all (admission policy item 8), and the one alternative with real
-      history (`maxxnino/tree-sitter-zig`, 124★) is archived. Revisit trigger
-      recorded in `Docs/LanguageCoverage.md`'s Tier D. One packaging
-      wrinkle worth knowing before touching either table again: `tree-sitter-
-      make`'s corpus files are `*.mk`, not `*.txt` — `ParseConformanceTest`'s
-      five corpus-discovery call sites now accept both extensions.
-
-- [x] **R, D0+D1(tags) — admitted 2026-09-14.** `r-lib/tree-sitter-r` v1.3.0
-      (the posit/RStudio-maintained official grammar, 155★, ABI 14, 4-file/89-case
-      corpus), 100% clean against all four corpus gates. Highlights and tags vendored
-      from upstream unmodified — no QueryMatcher census adaptation needed this time.
-      Upstream's `locals.scm` deliberately not vendored (scope-aware rename's query set
-      stays a closed, individually-vetted list). **Notable: the imprint measures ZERO
-      delimited bodies for R** — the second grammar after `diff` to do so, and for a
-      different reason — R's `{`/`(`/`[` openers/closers are `ALIAS`es of an *external
-      scanner* symbol rather than plain string literals (needed for R's
-      context-sensitive brace/newline handling), which the imprint's inference doesn't
-      recognize as a bracket. No folding follows; highlighting and the symbol gutter are
-      unaffected. Full facts in `Docs/LanguageCoverage.md`.
 
 - [ ] Admission policy worth knowing before adding any grammar: **prefer
       `tree-sitter-grammars/*` over the original personal repo, and never use star count as
@@ -1350,71 +1173,71 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
 ### Remote Execution & Server Protocol
 
 - [ ] **Design ned's own client/server protocol** (raised 2026-09-08 — unstarted, no
-	design committed yet; this entry records the shape of the problem and what's already
-	known, not a spec). The motivating idea: rather than a remote ned shipping buffers
-	back and forth, send *the operation* to where the files are and return only the
-	result — a project-wide search, a refactor, a script evaluation. Round-trip count,
-    not bandwidth, is what makes remote editing feel bad, so this is likely faster as
-    well as simpler.
+  design committed yet; this entry records the shape of the problem and what's already
+  known, not a spec). The motivating idea: rather than a remote ned shipping buffers
+  back and forth, send *the operation* to where the files are and return only the
+  result — a project-wide search, a refactor, a script evaluation. Round-trip count,
+  not bandwidth, is what makes remote editing feel bad, so this is likely faster as
+  well as simpler.
 
-    **The load-bearing design decision — local is the degenerate case.** The protocol
-    should be the *only* interface, with in-process execution as one transport behind
-    it rather than a bypass around it. Two things follow. It can't rot: every local
-    keystroke exercises the same path a remote session uses, so remote stops being a
-    bolt-on that's broken every time it's picked back up. And it makes "where does
-    this script run" a transport question rather than an architectural one — the same
-    request answered in-process, by a local subprocess, or by a host across a socket.
+  **The load-bearing design decision — local is the degenerate case.** The protocol
+  should be the *only* interface, with in-process execution as one transport behind
+  it rather than a bypass around it. Two things follow. It can't rot: every local
+  keystroke exercises the same path a remote session uses, so remote stops being a
+  bolt-on that's broken every time it's picked back up. And it makes "where does
+  this script run" a transport question rather than an architectural one — the same
+  request answered in-process, by a local subprocess, or by a host across a socket.
 
-    That last point interacts directly with the jank analysis above: if scripts execute
-    where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
-    lives on whichever side actually runs them. A remote session's client could then be
-    genuinely thin — and, per the same analysis, a headless binary already links
-    `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` +
-    `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316
-    objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter
-    *grammar* rather than the runtime, and the whole UI-side coupling is one call
-    (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is
-    already there to be taken.
+  That last point interacts directly with the jank analysis above: if scripts execute
+  where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
+  lives on whichever side actually runs them. A remote session's client could then be
+  genuinely thin — and, per the same analysis, a headless binary already links
+  `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` +
+  `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316
+  objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter
+  *grammar* rather than the runtime, and the whole UI-side coupling is one call
+  (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is
+  already there to be taken.
 
-    **Compression must be negotiated, and "none" must be first-class.** Nothing
-    compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib,
-    lzma or brotli — so any codec is a new dependency, and assuming one is present on
-    both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream,
-    or the encoding can't change after the handshake; advertise available codecs at
-    handshake and fall back to identity. LSP's own `capabilities` exchange is the model,
-    and this codebase already understands it well.
+  **Compression must be negotiated, and "none" must be first-class.** Nothing
+  compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib,
+  lzma or brotli — so any codec is a new dependency, and assuming one is present on
+  both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream,
+  or the encoding can't change after the handshake; advertise available codecs at
+  handshake and fall back to identity. LSP's own `capabilities` exchange is the model,
+  and this codebase already understands it well.
 
-    **This must inherit four protocol bugs already paid for, not rediscover them.** Ned
-    has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type`
-    envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an
-    `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
-    - an unbounded blocking `connect()` froze a live editor when the daemon's backlog
-      filled (`Lsp/BrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
-    - joining a reader thread under a held mutex wedged the daemon for hours;
-    - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the
-      `ctest -j8` timeouts;
-    - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in
-      `LspClient`/`DapClient`/`AcpClient`.
-    A new protocol gets timeouts on every blocking call, a non-blocking connect, an
-    asynchronous write queue, and no lock held across a join — by construction, on day
-    one. `EventLoop::Post` is the existing, proven way results come back to the main
-    thread; the protocol layer should not invent a second one.
+  **This must inherit four protocol bugs already paid for, not rediscover them.** Ned
+  has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type`
+  envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an
+  `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
+  - an unbounded blocking `connect()` froze a live editor when the daemon's backlog
+    filled (`Lsp/BrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
+  - joining a reader thread under a held mutex wedged the daemon for hours;
+  - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the
+    `ctest -j8` timeouts;
+  - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in
+    `LspClient`/`DapClient`/`AcpClient`.
+  A new protocol gets timeouts on every blocking call, a non-blocking connect, an
+  asynchronous write queue, and no lock held across a join — by construction, on day
+  one. `EventLoop::Post` is the existing, proven way results come back to the main
+  thread; the protocol layer should not invent a second one.
 
-    **Open questions worth settling before any code:** framing (length-prefixed binary
-    vs. reusing the `Content-Length` shape already implemented three times); whether
-    requests are JSON (nlohmann is already vendored) or something denser; how a long-
-    running remote operation streams partial results and gets cancelled (LSP's
-    `$/progress` and `$/cancelRequest` are the obvious prior art, already handled in
-    `LspManager`); versioning and forward compatibility; and authentication/transport
-    (bare `AF_UNIX` locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and
-    trust conventions in `BrokerSocketPath.cpp` are the local precedent).
+  **Open questions worth settling before any code:** framing (length-prefixed binary
+  vs. reusing the `Content-Length` shape already implemented three times); whether
+  requests are JSON (nlohmann is already vendored) or something denser; how a long-
+  running remote operation streams partial results and gets cancelled (LSP's
+  `$/progress` and `$/cancelRequest` are the obvious prior art, already handled in
+  `LspManager`); versioning and forward compatibility; and authentication/transport
+  (bare `AF_UNIX` locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and
+  trust conventions in `BrokerSocketPath.cpp` are the local precedent).
 
-    **Security is not a later concern here.** "Execute this script over a socket" is a
-    remote code execution surface by definition. Ned already gates project-local
-    `.ned/init.janet` behind `ProjectTrust`'s content-hash registry precisely because
-    opening a directory shouldn't run arbitrary code; the same discipline has to extend
-    across a transport, where the threat model is strictly worse. Decide the trust model
-    alongside the framing, not after it.
+  **Security is not a later concern here.** "Execute this script over a socket" is a
+  remote code execution surface by definition. Ned already gates project-local
+  `.ned/init.janet` behind `ProjectTrust`'s content-hash registry precisely because
+  opening a directory shouldn't run arbitrary code; the same discipline has to extend
+  across a transport, where the threat model is strictly worse. Decide the trust model
+  alongside the framing, not after it.
 
 - [ ] **One connection class instead of three copies of it** (raised 2026-09-08 —
     prerequisite for the protocol work above, and worth doing on its own merits).
