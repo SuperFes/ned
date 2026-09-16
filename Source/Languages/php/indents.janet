@@ -22,18 +22,34 @@
 # the brace form, which already resolves those header lines correctly with
 # no capture at all (nothing there was ever a container to escape).
 #
-# switch_statement's own colon form (`switch (...): case 1: ... endswitch;`)
-# is NOT covered here. Its body field is always `switch_block` regardless
-# of form (the brace-vs-colon CHOICE is inside switch_block's own rule,
-# not switch_statement's), and while investigating this fix a SEPARATE,
-# pre-existing bug surfaced live: even the already-working BRACE form never
-# gives `case`/`default` bodies their own extra level (`case_statement`/
-# `default_statement` carry no delimiters at all, unlike Go's exactly
-# analogous clauses, so `case 1:\n    echo 1;` and its label land at the
-# same column). Fixing colon-form switch properly needs that same
-# case/default-body question answered for both forms at once, which is
-# more than this fix's scope -- logged in ROADMAP.md's watch list instead
-# of folded in here.
+# ROADMAP.md watch-list entry, closed 2026-09-16: neither `switch` form
+# ever gave `case`/`default` bodies their own extra level -- confirmed via
+# node-types.json, `case_statement`/`default_statement` carry no
+# delimiters at all (just an optional trailing statement list, no literal
+# of their own), unlike Go's exactly analogous clauses. Capturing the
+# whole node is enough with no closer to name: a case's own byte range
+# already ends exactly where the next case/default (or switch_block's own
+# closer) begins -- tree-sitter siblings are contiguous -- and the walk's
+# own self-exclusion (Indent.cpp's `selfOpensHere`) keeps the "case 1:"
+# label line itself from being indented by its own capture, the same way
+# it already excludes a bracket container's own opening line.
+#
+# `switch_block`'s colon form (`switch (...): case 1: ... endswitch;`) was
+# ALSO unindented altogether -- its brace-vs-colon CHOICE lives inside
+# switch_block's own grammar rule (unlike if/while/for/foreach, where the
+# CHOICE is in the outer statement), so the pre-existing kPhp[] imprint
+# entry -- inferred from the brace form's "{"/"}" -- simply finds no
+# opener at all for a colon-form instance and contributes nothing. Same
+# conditioned-on-a-literal-child fix as this file's other entries; the
+# imprint's own bracket-based entry keeps handling the brace form
+# untouched (verified live), since a query capture and the imprint only
+# ever contribute ONE count for the same node no matter how many sources
+# name it (see Indent.cpp's own doc comment).
+(case_statement) @indent
+(default_statement) @indent
+(switch_block "endswitch") @indent
+(switch_block "endswitch" @dedent)
+
 (if_statement "endif") @indent
 (if_statement "endif" @dedent)
 (else_if_clause) @dedent

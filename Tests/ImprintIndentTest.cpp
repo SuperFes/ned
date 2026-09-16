@@ -313,3 +313,42 @@ TEST_CASE("PHP's colon-alternate while/for/foreach indent the same way as if/end
         CHECK(ColumnOf(php, text, 3) == 0); // endforeach;
     }
 }
+
+TEST_CASE("PHP's case/default clauses give their own body a further indent level, in both switch forms",
+          "[Indent][Imprint]") {
+    // ROADMAP.md watch-list entry: case_statement/default_statement carry
+    // no delimiters of their own, so their body statements never got a
+    // level past their own switch -- unlike Go's exactly analogous
+    // clauses (which dedent the LABEL back to switch's level; PHP/PSR-12
+    // wants the opposite shape, indenting the label same as any content
+    // and the body one level further). Fixed via a plain whole-node
+    // @indent on each -- self-excluded from its own "case 1:" line by the
+    // walk's usual bracket-opener self-exclusion, with no closer to name
+    // since a case's own byte range already ends exactly where the next
+    // case/default/closer begins.
+    const Mode php = ned::editor::PhpMode();
+    const int  w   = Width(php);
+    {
+        const std::string text = "<?php\nswitch ($x) {\ncase 1:\necho \"a\";\nbreak;\ndefault:\necho \"b\";\n}\n";
+        CHECK(ColumnOf(php, text, 2) == w);     // case 1: -- same level as any switch_block content
+        CHECK(ColumnOf(php, text, 3) == 2 * w); // echo "a"; -- one further level, inside the case
+        CHECK(ColumnOf(php, text, 4) == 2 * w); // break;
+        CHECK(ColumnOf(php, text, 5) == w);     // default:
+        CHECK(ColumnOf(php, text, 6) == 2 * w); // echo "b";
+        CHECK(ColumnOf(php, text, 7) == 0);     // the switch's own closing "}"
+    }
+    {
+        // The colon form of switch was ALSO entirely unindented before this
+        // fix (switch_block's brace-vs-colon CHOICE lives inside its own
+        // grammar rule, so the pre-existing kPhp[] imprint entry -- brace
+        // literals only -- contributes nothing for a colon-form instance).
+        const std::string text =
+            "<?php\nswitch ($x):\ncase 1:\necho \"a\";\nbreak;\ndefault:\necho \"b\";\nendswitch;\n";
+        CHECK(ColumnOf(php, text, 2) == w);     // case 1:
+        CHECK(ColumnOf(php, text, 3) == 2 * w); // echo "a";
+        CHECK(ColumnOf(php, text, 4) == 2 * w); // break;
+        CHECK(ColumnOf(php, text, 5) == w);     // default:
+        CHECK(ColumnOf(php, text, 6) == 2 * w); // echo "b";
+        CHECK(ColumnOf(php, text, 7) == 0);     // endswitch;
+    }
+}
