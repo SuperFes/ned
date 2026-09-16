@@ -218,3 +218,98 @@ TEST_CASE("A for-loop header's own parens indent a continuation line, without le
     CHECK(ColumnOf(cpp, text, 6) == 2 * w); // "catch (...) {"
     CHECK(ColumnOf(cpp, text, 9) == w);     // the for's own closing "}", aligned with the "for" line itself
 }
+
+TEST_CASE("Lua's repeat_statement body indents from its own hand-authored query",
+          "[Indent][Imprint]") {
+    // ROADMAP.md watch-list entry: repeat_statement's grammar rule is
+    // SEQ["repeat", body, "until", condition] -- "until" is not the rule's
+    // own last member (a required condition follows it), so
+    // MatchKeywordPair's front/back check never finds it the way it finds
+    // do/if/while/for/function's own trailing "end". Fixed via
+    // lua/indents.janet's `(repeat_statement "until")` pair rather than the
+    // static inference tool.
+    const Mode        lua  = ned::editor::LuaMode();
+    const std::string text = "repeat\ni = i + 1\nuntil i >= 3\nprint(i)\n";
+    const int         w    = Width(lua);
+    CHECK(ColumnOf(lua, text, 1) == w); // i = i + 1
+    CHECK(ColumnOf(lua, text, 2) == 0); // until i >= 3 -- aligns with "repeat"
+    CHECK(ColumnOf(lua, text, 3) == 0); // print(i) -- outside the loop entirely
+}
+
+TEST_CASE("Go's switch/select case and default clauses align with their own switch/select",
+          "[Indent][Imprint]") {
+    // ROADMAP.md watch-list entry: expression_case/default_case/type_case/
+    // communication_case carry no delimiters of their own, so every line
+    // starting inside a switch/select body's braces -- including the case
+    // labels themselves -- got the same single container level, one deeper
+    // than gofmt's own convention of aligning a case label back with its
+    // switch. Fixed via go/indents.janet's @dedent on the four clause node
+    // types, mirroring bash/python's own elif_clause/else_clause dedent.
+    const Mode        go   = ned::editor::GoMode();
+    const std::string text = "switch x {\ncase 1:\nfoo()\ndefault:\nbar()\n}\n";
+    const int         w    = Width(go);
+    CHECK(ColumnOf(go, text, 1) == 0);     // case 1: -- aligns with "switch"
+    CHECK(ColumnOf(go, text, 2) == w);     // foo()
+    CHECK(ColumnOf(go, text, 3) == 0);     // default: -- aligns with "switch"
+    CHECK(ColumnOf(go, text, 4) == w);     // bar()
+    CHECK(ColumnOf(go, text, 5) == 0);     // the switch's own closing "}"
+}
+
+TEST_CASE("PHP's colon-alternate if/elseif/else/endif indents like the brace form",
+          "[Indent][Imprint]") {
+    // ROADMAP.md watch-list entry: if_statement's colon-form body
+    // (`colon_block`, closed by a literal "endif" belonging to
+    // if_statement itself) has nothing in ImprintTables.cpp to key off, so
+    // every line -- body content and elseif/else headers alike -- sat at
+    // column 0. Fixed via php/indents.janet's `(if_statement "endif")`
+    // pair (present only on the colon form, so the brace form -- whose
+    // if_statement has no "endif" child -- is untouched) plus an
+    // unconditional @dedent on else_if_clause/else_clause, which is a
+    // no-op for the brace form (verified live) since those header lines
+    // already resolve correctly with no capture at all.
+    const Mode        php  = ned::editor::PhpMode();
+    const std::string text = "<?php\nif ($x):\necho \"a\";\nelseif ($y):\necho \"b\";\nelse:\necho \"c\";\nendif;\n";
+    const int         w    = Width(php);
+    CHECK(ColumnOf(php, text, 2) == w); // echo "a";
+    CHECK(ColumnOf(php, text, 3) == 0); // elseif ($y): -- aligns with "if"
+    CHECK(ColumnOf(php, text, 4) == w); // echo "b";
+    CHECK(ColumnOf(php, text, 5) == 0); // else: -- aligns with "if"
+    CHECK(ColumnOf(php, text, 6) == w); // echo "c";
+    CHECK(ColumnOf(php, text, 7) == 0); // endif;
+
+    // The brace form is untouched by the new else_if_clause/else_clause
+    // @dedent -- it already had nothing over-indenting it.
+    const std::string braceText = "<?php\nif ($x) {\necho \"a\";\n} elseif ($y) {\necho \"b\";\n} else {\necho \"c\";\n}\n";
+    CHECK(ColumnOf(php, braceText, 2) == w); // echo "a";
+    CHECK(ColumnOf(php, braceText, 3) == 0); // } elseif ($y) {
+    CHECK(ColumnOf(php, braceText, 4) == w); // echo "b";
+    CHECK(ColumnOf(php, braceText, 5) == 0); // } else {
+    CHECK(ColumnOf(php, braceText, 6) == w); // echo "c";
+    CHECK(ColumnOf(php, braceText, 7) == 0); // }
+}
+
+TEST_CASE("PHP's colon-alternate while/for/foreach indent the same way as if/endif",
+          "[Indent][Imprint]") {
+    // Same shape and same fix as if_statement's own colon form above --
+    // while_statement/for_statement/foreach_statement each close their
+    // colon-alternate body on a literal ("endwhile"/"endfor"/"endforeach")
+    // belonging to the statement itself, with no elseif/else-shaped
+    // alternative to dedent.
+    const Mode php = ned::editor::PhpMode();
+    const int  w   = Width(php);
+    {
+        const std::string text = "<?php\nwhile ($x):\necho \"a\";\nendwhile;\n";
+        CHECK(ColumnOf(php, text, 2) == w); // echo "a";
+        CHECK(ColumnOf(php, text, 3) == 0); // endwhile;
+    }
+    {
+        const std::string text = "<?php\nfor ($i = 0; $i < 10; $i++):\necho \"a\";\nendfor;\n";
+        CHECK(ColumnOf(php, text, 2) == w); // echo "a";
+        CHECK(ColumnOf(php, text, 3) == 0); // endfor;
+    }
+    {
+        const std::string text = "<?php\nforeach ($xs as $x):\necho \"a\";\nendforeach;\n";
+        CHECK(ColumnOf(php, text, 2) == w); // echo "a";
+        CHECK(ColumnOf(php, text, 3) == 0); // endforeach;
+    }
+}

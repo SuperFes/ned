@@ -446,7 +446,18 @@ install(TARGETS ned RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 # (a package build re-rooting into a fakeroot, for instance). file(REMOVE)
 # first makes a repeated `cmake --install` idempotent -- file(CREATE_LINK)
 # does not overwrite an existing path at its destination.
+#
+# $ENV{DESTDIR} must be prepended by hand here: unlike install(TARGETS)/
+# install(FILES)'s generated file(INSTALL ...) calls (which read DESTDIR
+# automatically -- see this same file's ned/bin install above), a bare
+# file(CREATE_LINK)/file(REMOVE) in install(CODE ...) is an ordinary
+# filesystem operation with no install-time DESTDIR awareness at all. Without
+# this, a staged install (a distro package build, e.g. Gentoo's portage
+# sandbox) tries to write the symlink into the real /usr/bin instead of the
+# staging root and fails loudly (sandbox ACCESS DENIED on the live system
+# path) rather than landing inside the package image like every other
+# installed file.
 install(CODE "
-    file(REMOVE \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\")
-    file(CREATE_LINK \"ned\" \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\" SYMBOLIC)
+    file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\")
+    file(CREATE_LINK \"ned\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\" SYMBOLIC)
 ")
