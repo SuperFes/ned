@@ -1802,49 +1802,35 @@ void BufferView::Paint(Canvas paneCanvas) {
     // huge file that finishes loading and reverts to writable would
     // otherwise still pay a full buffer.Text() copy plus a whole-buffer
     // tree-sitter parse on every edit.
-    // Written once and used for both the check and the store, so the two
-    // cannot drift; a lambda rather than a plain local because the semantic
-    // tokens generation must stay lazily evaluated in the else-if below.
-    const auto highlightStampFor = [&](std::size_t semanticTokensGeneration) {
-        return bufferview::CacheStamp::For(
-            &buffer, {buffer.ContentGeneration(), editor::CaptureClassGeneration(), semanticTokensGeneration});
-    };
+    // window-highlight-cache-collapse follow-up: the window is recomputed
+    // fresh from the live viewport on every single Paint() call (never from
+    // an edit/scroll event -- there is no such hook here at all), so this
+    // is a per-frame invariant check, not something that can fall out of
+    // sync with a scroll or edit it forgot to listen for.
     if (!mode_.highlight || buffer.ReadOnly() || buffer.Size() > editor::MaxHighlightBytes()) {
-        highlightCacheStamp_.Invalidate();
+        highlightCacheRawSpans_.reset();
+        highlightCacheBuffer_ = nullptr;
         highlightCacheSpans_.clear();
     }
-    else if (const std::size_t semanticTokensGeneration = lspManager_ ? lspManager_->SemanticTokensGeneration(buffer) : 0;
-             !highlightCacheStamp_.Matches(highlightStampFor(semanticTokensGeneration))) {
-        // per-buffer-highlight-cache follow-up: persists across a buffer
-        // switch, not just repeated Paint() calls on the same buffer -- see
-        // highlightCacheByBuffer_'s own doc comment in BufferView.h. The
-        // CaptureClassGeneration() check (exhaustive-highlighting
-        // follow-up) and the modeName check (this follow-up) both matter
-        // here for the same reason: either can make a stale entry's spans
-        // wrong even though buffer's content hasn't changed at all --
-        // semanticTokensGeneration (semanticTokens follow-up) is the same
-        // idea again: an LSP response can arrive, and change what should
-        // render, with no buffer edit at all.
-        const auto it = highlightCacheByBuffer_.find(&buffer);
-        if (it == highlightCacheByBuffer_.end() || it->second.contentGeneration != buffer.ContentGeneration() ||
-            it->second.classGeneration != editor::CaptureClassGeneration() || it->second.modeName != mode_.name ||
-            it->second.semanticTokensGeneration != semanticTokensGeneration) {
-            HighlightCacheEntry entry;
-            // Editor/HighlightCache.h, shared with Minimap -- see its header
-            // for why the two kept separate caches and what that cost.
-            //
-            // Only what is on screen, generously padded. Querying the whole
-            // document to paint a screenful was the single biggest cost in
-            // the editor (~70ms per keystroke on a 125 KiB markdown file):
-            // the parse still covers everything, so spans overlapping the
-            // window keep their true extents, but the *query* and any
-            // injected sub-parses are bounded to the region being painted.
-            //
-            // The padding is what keeps scrolling from missing the cache on
-            // every row: the cache serves any request its window contains,
-            // so a screenful of slack each way absorbs ordinary scrolling
-            // before another query is needed.
-            entry.spans = *editor::CachedHighlightSpans(buffer, mode_, VisibleHighlightWindow());
+    else {
+        const std::size_t semanticTokensGeneration = lspManager_ ? lspManager_->SemanticTokensGeneration(buffer) : 0;
+        // Only what is on screen, generously padded. Querying the whole
+        // document to paint a screenful was the single biggest cost in
+        // the editor (~70ms per keystroke on a 125 KiB markdown file):
+        // the parse still covers everything, so spans overlapping the
+        // window keep their true extents, but the *query* and any
+        // injected sub-parses are bounded to the region being painted.
+        //
+        // The padding is what keeps scrolling from missing the cache on
+        // every row: the cache serves any request its window contains, so
+        // a screenful of slack each way absorbs ordinary scrolling before
+        // another query is needed -- and it re-queries automatically the
+        // moment that stops being true, since this call happens every
+        // Paint() regardless of what changed.
+        const std::shared_ptr<const std::vector<editor::HighlightSpan>> rawSpans =
+            editor::CachedHighlightSpans(buffer, mode_, VisibleHighlightWindow());
+        if (rawSpans != highlightCacheRawSpans_ || semanticTokensGeneration != highlightCacheSemanticGeneration_) {
+            highlightCacheSpans_ = *rawSpans;
             // semanticTokens follow-up: appended *after* tree-sitter's own
             // spans so LSP-informed classification wins at overlapping
             // bytes -- the exact "later span wins" convention the
@@ -1854,19 +1840,12 @@ void BufferView::Paint(Canvas paneCanvas) {
             // or no response has landed yet.
             if (lspManager_) {
                 const std::vector<editor::HighlightSpan>& semanticSpans = lspManager_->SemanticTokenSpans(buffer);
-                entry.spans.insert(entry.spans.end(), semanticSpans.begin(), semanticSpans.end());
+                highlightCacheSpans_.insert(highlightCacheSpans_.end(), semanticSpans.begin(), semanticSpans.end());
             }
-            entry.contentGeneration        = buffer.ContentGeneration();
-            entry.classGeneration          = editor::CaptureClassGeneration();
-            entry.semanticTokensGeneration = semanticTokensGeneration;
-            entry.modeName                 = mode_.name;
-            highlightCacheSpans_           = entry.spans;
-            highlightCacheByBuffer_.insert_or_assign(&buffer, std::move(entry));
+            highlightCacheRawSpans_           = rawSpans;
+            highlightCacheSemanticGeneration_ = semanticTokensGeneration;
         }
-        else {
-            highlightCacheSpans_ = it->second.spans;
-        }
-        highlightCacheStamp_ = highlightStampFor(semanticTokensGeneration);
+        highlightCacheBuffer_ = &buffer;
     }
     const std::vector<editor::HighlightSpan>& highlightSpans = highlightCacheSpans_;
 

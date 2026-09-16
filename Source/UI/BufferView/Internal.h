@@ -51,6 +51,7 @@
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HeaderSource.h"
+#include "Editor/HighlightCache.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/ImportResolve.h"

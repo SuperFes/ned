@@ -121,10 +121,11 @@ void BufferView::SetOnPrefixHintChanged(std::function<void(std::optional<WhichKe
 }
 
 void BufferView::ClearBufferCaches(text::Buffer& buffer) {
-    highlightCacheByBuffer_.erase(&buffer);
+    editor::ForgetHighlightCacheBuffer(buffer);
     embeddedDocumentCacheByBuffer_.erase(&buffer);
-    if (highlightCacheStamp_.IsFor(&buffer)) {
-        highlightCacheStamp_.Invalidate();
+    if (highlightCacheBuffer_ == &buffer) {
+        highlightCacheRawSpans_.reset();
+        highlightCacheBuffer_ = nullptr;
         highlightCacheSpans_.clear();
     }
     gutters_.ForgetBuffer(buffer);

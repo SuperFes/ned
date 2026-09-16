@@ -48,6 +48,12 @@ CachedHighlightSpans(const text::Buffer& buffer, const Mode& mode, HighlightWind
 // invalidates highlighting wholesale.
 void ClearHighlightCache();
 
+// Drops any entry for this one buffer, keyed by pointer identity like
+// gutters_.ForgetBuffer/ClearRenameProposals -- called when a buffer closes
+// so a later, unrelated Buffer allocated at the same address can never
+// inherit a stale entry compared only by address.
+void ForgetHighlightCacheBuffer(const text::Buffer& buffer);
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_HIGHLIGHTCACHE_H
