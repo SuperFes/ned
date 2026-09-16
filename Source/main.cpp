@@ -47,6 +47,7 @@
 #include "Editor/FormatBracePlacement.h"
 #include "Editor/FormatConfigParse.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/HugeFileReindent.h"
 #include "Editor/FormatSpacing.h"
 #include "Editor/FormatWrap.h"
 #include "Editor/Indent.h"
@@ -285,7 +286,24 @@ int RunMcpStdioRelay(const std::string& socketPathStr) {
 // only, same reasoning
 // ROADMAP.md gives for the CLI generally: a fresh headless process has no
 // edit history to scope a smaller pass against.
-int RunFormatFiles(const std::vector<std::string>& paths) {
+// huge-file-streaming-sweep follow-up: forceHuge opts a file exceeding
+// text::HugeFileThreshold() into Editor/HugeFileReindent.h's lexical,
+// streaming reindent instead of the ordinary Buffer::FromFile path below,
+// which would otherwise materialize the WHOLE document (buffer.Text(),
+// called repeatedly) -- exactly what a multi-GB file cannot afford. Native
+// reindent only: External and the Space/Break/Wrap/Blank capture-based
+// passes all need either the whole document as one string or a real parse,
+// both of which streaming exists specifically to avoid -- write to an
+// ordinary-sized copy first if those are needed. All-or-nothing per file:
+// a sibling ".ned-tmp" is written and rendered atomically over the
+// original only once the WHOLE sweep resolves cleanly (HugeFileReindent.h's
+// own depth-must-return-to-0 check); any failure removes the temp file and
+// leaves the real file completely untouched. Deliberately a simpler
+// sibling-temp-then-rename than Text/FilePreservation.h's own
+// symlink/hardlink/xattr-preserving dance (Buffer::SaveToFile's own path)
+// -- a documented v1 scope cut for this one CLI-only entry point, not
+// silently missing.
+int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
     if (paths.empty()) {
         std::cerr << "ned: --format: no files given\n";
         return 1;
@@ -326,6 +344,58 @@ int RunFormatFiles(const std::vector<std::string>& paths) {
         if (!std::filesystem::exists(path, existsEc)) {
             std::cerr << "ned: --format: " << pathStr << ": no such file\n";
             exitCode = 1;
+            continue;
+        }
+        std::error_code       sizeEc;
+        const std::uintmax_t  fileSize = std::filesystem::file_size(path, sizeEc);
+        const bool            isHuge   = !sizeEc && fileSize > ned::text::HugeFileThreshold();
+        if (isHuge && !forceHuge) {
+            std::cerr << "ned: --format: " << pathStr << ": file exceeds the huge-file threshold ("
+                      << ned::text::HugeFileThreshold()
+                      << " bytes) -- pass --force-huge to reindent it via the streaming engine (Native reindent "
+                         "only; no external formatter, no space/break/wrap/blank rules)\n";
+            exitCode = 1;
+            continue;
+        }
+        if (isHuge) {
+            try {
+                ned::text::Buffer         buffer = ned::text::Buffer::FromHugeFile(path);
+                const ned::editor::Mode   mode   = ned::editor::ModeForPath(path);
+                const ned::editor::IndentStyle style = ned::editor::EffectiveIndentStyle(mode.name);
+
+                const std::filesystem::path       tmpPath = path.string() + ".ned-tmp";
+                ned::editor::HugeReindentOutcome outcome;
+                {
+                    std::ofstream out(tmpPath, std::ios::binary | std::ios::trunc);
+                    if (!out) {
+                        std::cerr << "ned: --format: " << pathStr << ": could not create a temp file for the streaming reindent\n";
+                        exitCode = 1;
+                        continue;
+                    }
+                    outcome = ned::editor::StreamHugeReindent(buffer.Content(), out, mode.lineCommentPrefix, style);
+                }
+                if (!outcome.success) {
+                    std::filesystem::remove(tmpPath);
+                    std::cerr << "ned: --format: " << pathStr << ": streaming reindent aborted (" << outcome.errorMessage
+                              << ") -- file left untouched\n";
+                    exitCode = 1;
+                    continue;
+                }
+                std::error_code renameEc;
+                std::filesystem::rename(tmpPath, path, renameEc);
+                if (renameEc) {
+                    std::filesystem::remove(tmpPath);
+                    std::cerr << "ned: --format: " << pathStr << ": " << renameEc.message() << '\n';
+                    exitCode = 1;
+                    continue;
+                }
+                std::cout << "Formatted " << pathStr << " (huge-file streaming reindent, " << outcome.linesChanged
+                          << " line(s) changed)\n";
+            }
+            catch (const std::exception& e) {
+                std::cerr << "ned: --format: " << pathStr << ": " << e.what() << '\n';
+                exitCode = 1;
+            }
             continue;
         }
         try {
@@ -3015,6 +3085,7 @@ auto main(int argc, char** argv) -> int {
     bool                     lspBroker     = false;
     bool                     lspBrokerStop = false;
     bool                     format        = false;
+    bool                     forceHuge     = false;
     bool                     forceBinary   = false;
     bool                     noRestore     = false;
     std::string              mcpStdioRelaySocketPath;
@@ -3035,6 +3106,11 @@ auto main(int argc, char** argv) -> int {
                  "per-language reindent -- no LSP tier, no init.janet; format.janet only)")
         ->excludes(lspBrokerOpt)
         ->group("Startup modes");
+    app.add_flag("--force-huge", forceHuge,
+                 "With --format, reindent a file over the huge-file threshold via the lexical streaming engine "
+                 "(Native reindent only -- no external formatter, no space/break/wrap/blank rules) instead of "
+                 "skipping it")
+        ->needs("--format");
     app.add_flag("--force-binary", forceBinary,
                  "Open files that look binary anyway, without an interactive confirmation");
     app.add_flag("--no-restore", noRestore,
@@ -3079,7 +3155,7 @@ auto main(int argc, char** argv) -> int {
     }
 
     if (format) {
-        return RunFormatFiles(paths);
+        return RunFormatFiles(paths, forceHuge);
     }
 
     const int exitCode = RunInteractiveEditor(forceBinary, noRestore, paths);

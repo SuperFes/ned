@@ -39,6 +39,24 @@ capture name; see `Editor/IndentRuleOverride.h`'s own header comment for why):
 (ned/set-indent-rule "access_specifier" "" 0)            # empty policy clears the rule
 ```
 
+`--format --force-huge` reindents a file over the huge-file threshold (default 1GiB --
+fixed for this headless entry point, since `--format` never loads `init.janet` and so
+never sees a `ned/set-huge-file-threshold` call) via a lexical, streaming engine
+(`Editor/HugeFileReindent.h`)
+instead of the ordinary chain above -- a real per-language tree-sitter reindent needs a
+parse, which cannot run over a multi-GB document at all. This engine tracks bracket depth
+(`()`/`{}`/`[]` only, generic `"`/`'` string detection, `Mode::lineCommentPrefix`-aware line
+comments -- see that header's own comment for the exact scope, including why an ordinary
+English contraction inside a real comment is safe but a stray quote in bare code is not) and
+sets every line's indent to depth × width, all-or-nothing: a document whose depth never
+returns to exactly 0 aborts the whole sweep and leaves the file untouched, rather than risk
+writing a wrong result somewhere in a file too large to review by eye. Without
+`--force-huge`, `--format` skips a huge file with a message rather than attempting the
+ordinary whole-buffer chain, which would have to materialize the entire file as one string.
+Native reindent only -- no external formatter, no space/break/wrap/blank rules (those need
+the whole document as one string or a real parse, exactly what streaming exists to avoid).
+Not wired into the interactive `format-buffer` yet -- see `ROADMAP.md`.
+
 `format-buffer`'s own
 chain now includes an LSP tier between External and Native (`textDocument/formatting`,
 used whenever no external command produced output and a server is running for the
