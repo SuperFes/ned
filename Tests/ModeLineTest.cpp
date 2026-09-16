@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
+#include "Editor/IndentStyle.h"
 #include "Editor/Lsp/Client.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/ServerConfig.h"
@@ -180,6 +181,83 @@ TEST_CASE("ModeLine shows the active mode's name", "[ModeLine]") {
     REQUIRE(RowText(screen, 0, 40).find("(c-mode)") != std::string::npos);
 }
 
+// indent-style-indicator follow-up: explicit, deterministic-regardless-of-
+// test-order overrides -- IndentStyle.h's setters are process-wide mutex-
+// guarded statics with no way to clear an override, so a test asserting a
+// specific style must set it itself rather than trust IndentDefaults.cpp's
+// own built-in default staying whatever it happens to be today.
+TEST_CASE("ModeLine shows a mode-matched buffer's effective configured indent style", "[ModeLine][IndentStyle]") {
+    ned::editor::SetIndentStyleForMode("c-mode", ned::editor::IndentStyle{.useTabs = false, .width = 4});
+
+    ned::text::Buffer     buffer("main.c", ned::text::Rope("void f() {\n    return;\n}\n"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::CMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(90, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 89, .y_min = 0, .y_max = 0});
+    modeLine.Paint(canvas);
+
+    const std::string row = RowText(screen, 0, 90);
+    REQUIRE(row.find("Spaces:4") != std::string::npos);
+    REQUIRE(row.find("≠") == std::string::npos); // content matches -- no mismatch flag
+}
+
+TEST_CASE("ModeLine flags a mode-matched buffer whose content disagrees with its configured style",
+          "[ModeLine][IndentStyle]") {
+    ned::editor::SetIndentStyleForMode("c-mode", ned::editor::IndentStyle{.useTabs = false, .width = 4});
+
+    // Every indented line uses a tab -- disagrees with the configured
+    // 4-space style above.
+    ned::text::Buffer     buffer("main.c", ned::text::Rope("void f() {\n\treturn;\n}\n"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::CMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(90, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 89, .y_min = 0, .y_max = 0});
+    modeLine.Paint(canvas);
+
+    const std::string row = RowText(screen, 0, 90);
+    REQUIRE(row.find("Spaces:4") != std::string::npos); // still shows the CONFIGURED style, never overridden
+    REQUIRE(row.find("≠") != std::string::npos);   // and flags the disagreement
+}
+
+TEST_CASE("ModeLine shows the DETECTED indent style for a FundamentalMode buffer, no configured style to fall back on",
+          "[ModeLine][IndentStyle]") {
+    ned::text::Buffer     buffer("fstab", ned::text::Rope("a\n  b\n  c\n"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(90, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 89, .y_min = 0, .y_max = 0});
+    modeLine.Paint(canvas);
+
+    REQUIRE(RowText(screen, 0, 90).find("Spaces:2") != std::string::npos);
+}
+
+TEST_CASE("ModeLine shows nothing extra for a FundamentalMode buffer with no indentation to detect at all",
+          "[ModeLine][IndentStyle]") {
+    ned::text::Buffer     buffer("fstab", ned::text::Rope("a\nb\nc\n"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(90, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 89, .y_min = 0, .y_max = 0});
+    modeLine.Paint(canvas);
+
+    const std::string row = RowText(screen, 0, 90);
+    REQUIRE(row.find("Spaces") == std::string::npos);
+    REQUIRE(row.find("Tabs") == std::string::npos);
+    REQUIRE(row.find("Mixed") == std::string::npos);
+}
+
 TEST_CASE("ModeLine recomputes its text fresh on every paint call", "[ModeLine]") {
     ned::text::Buffer     buffer("scratch", ned::text::Rope("abc"));
     ned::ui::ActiveBuffer activeBuffer(buffer);
@@ -284,23 +362,27 @@ TEST_CASE("ModeLine shows an active background activity with its spinner and det
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ned::ui::Screen screen = MakeScreen(60, 1);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+    // indent-style-indicator follow-up: widened from 60 -- a mode-matched
+    // buffer now always carries its own "  Spaces:N"/"  Tabs" segment
+    // (Editor/IndentStyle.h's EffectiveIndentStyle), which otherwise
+    // truncates the activity text this test asserts on off the row.
+    ned::ui::Screen screen = MakeScreen(90, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 89, .y_min = 0, .y_max = 0});
 
     modeLine.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 60).find("LSP") == std::string::npos); // idle -- no activity text
+    REQUIRE(RowText(screen, 0, 90).find("LSP") == std::string::npos); // idle -- no activity text
 
     ned::editor::BeginBackgroundActivity("LSP");
     ned::editor::SetBackgroundActivityDetail("LSP", "indexing (45%)");
     modeLine.Paint(canvas);
-    const std::string row = RowText(screen, 0, 60);
+    const std::string row = RowText(screen, 0, 90);
     // The spinner frame itself rotates with the wall clock -- assert the
     // stable parts (name, detail) and that a braille frame glyph occupies
     // exactly one cell between them (cells are strings; a multi-byte glyph
     // in one cell makes the row's byte length exceed its column count).
     REQUIRE(row.find("LSP") != std::string::npos);
     REQUIRE(row.find("indexing (45%)") != std::string::npos);
-    REQUIRE(row.size() > 60);
+    REQUIRE(row.size() > 90);
 
     ned::editor::EndBackgroundActivity("LSP");
     modeLine.Paint(canvas);
@@ -312,14 +394,14 @@ TEST_CASE("ModeLine shows an active background activity with its spinner and det
     // BackgroundActivity itself (which keeps reporting empty immediately,
     // unchanged -- see BackgroundActivityTest.cpp), so this still reads
     // "LSP" right after End.
-    REQUIRE(RowText(screen, 0, 60).find("LSP") != std::string::npos);
+    REQUIRE(RowText(screen, 0, 90).find("LSP") != std::string::npos);
 
     // Once the grace window has genuinely elapsed (a real sleep -- ModeLine's
     // hold is measured against the wall clock with no test-side injection
     // point), it's gone.
     std::this_thread::sleep_for(std::chrono::milliseconds(350));
     modeLine.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 60).find("LSP") == std::string::npos);
+    REQUIRE(RowText(screen, 0, 90).find("LSP") == std::string::npos);
 }
 
 TEST_CASE("ModeLine shows a static idle indicator for a running LSP client with no request in flight",

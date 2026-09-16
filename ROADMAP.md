@@ -920,14 +920,30 @@ Real deviations from the design above, found while building it:
 
 - [ ] `ned/set-indent-rule` — capture-scoped indent override, hybrid capture-name/
       grammar-type keying, piloted on C++ first (see above).
-- [ ] Fold LSP into `format-buffer`'s own External/Native chain.
-- [ ] `ned-format` argv[0] dispatch + an `install()` symlink (no precedent for either in
-      this codebase yet).
-- [ ] Mode-line indent-style indicator.
 - [ ] Automatic scoped on-save (`ned/set-auto-format-on-save`) — also where
       `TrimOnSave.h`/`FinalNewline.h`'s disk-only call sites would finally be retired in
       favor of the Hygiene pass, rather than the two coexisting as they do today.
 - [ ] Huge-file streaming sweep for a whole-buffer Native reindent.
+
+**Mode-line indent-style indicator (2026-09-15).** Built. The design bullet's own
+"Content-detection (tabs vs. spaces majority scan)" turned out to never actually exist in
+the codebase despite being assumed by this section -- `Editor/IndentDetect.h`'s
+`DetectIndentStyle` is new: scans every line's own leading-whitespace run (a pure-
+whitespace or unindented line contributes nothing), classifying `Tabs`/`Spaces`
+(width = the smallest nonzero space run seen, VS Code's own `detectIndentation`
+heuristic) /`Mixed` (both conventions appear at genuinely comparable counts, not just one
+stray line) /`Unknown` (nothing to detect at all). `ModeLine.cpp` shows the buffer's
+EFFECTIVE configured style (`IndentStyle.h`'s `EffectiveIndentStyle`) for a mode-matched
+buffer, appending a passive "≠" flag when the same detector disagrees with it -- and the
+raw DETECTED value instead for a `FundamentalMode` buffer, which has no configured style
+to fall back on. Skipped entirely for a huge buffer (no windowed answer worth showing) and
+for a buffer still loading. Display-only throughout -- never read by `format-buffer`/the
+Indent pass. Live-verified in tmux (a tab-indented C file configured for 4-space showed
+"Spaces:4 ≠"). `Tests/IndentDetectTest.cpp` (the pure detector) and four new
+`ModeLineTest.cpp` cases (configured-matches, configured-mismatches, FundamentalMode-
+detected, FundamentalMode-nothing-to-detect) cover it; one pre-existing `ModeLineTest.cpp`
+case needed widening from a 60- to 90-column screen since a mode-matched buffer's mode
+line legitimately grew by one segment.
 
 **Kinds 2-7 status (2026-09-15).** Superseding this section's own "deliberately deferred"
 line above: Space (kind 2), Break/brace-placement (kind 3), Blank lines (kind 6), and Wrap
@@ -943,19 +959,82 @@ five entity kinds are piloted (`function`/`parameter`/`local`/`type`/`namespace`
 `Mode::localScopes`/`Mode::symbolKind` rather than a new query-capture convention) and only
 against cpp's own real locals.janet/tags.janet output.
 
-- [ ] Case: no user-visible surfacing yet -- a `TestResultsBuffer.cpp`-shaped results
-      buffer (violations as `path:line: message` lines, each carrying a
-      `Buffer::Diagnostic`, walkable via `Editor/NextError.h`) is the closest existing
-      template and the natural next step.
-- [ ] Case: no fixer yet -- the capabilities doc's own plan is a rename-based code action
-      (`UI/BufferView/Rename.cpp`'s `ApplyLocalRename` would need its inlined
-      back-to-front rename-application loop extracted into a standalone
-      `RenameBindingOccurrences`-shaped function for a non-interactive caller to reuse).
+**Case surfacing + fixer (2026-09-15).** Both of this section's own former open items
+built: `check-format-conventions` (M-x only, no keybinding, matching `format-buffer`'s own
+precedent) runs `Editor/Project/CaseCheck.h`'s `CollectProjectCaseViolations` -- a
+project-wide walk reusing `Project/Search.cpp`'s own directory-walk filters
+(`GitIgnoreMatcher`, `Text/BinaryDetect.h`'s binary sniff, live-buffer-over-disk for an
+open/modified/non-huge file) but single-threaded and on demand rather than
+multi-threaded, since `ModeForPath`'s own "rebuilt fresh per lookup" cost already
+dominates -- into `Editor/Project/CaseViolationsBuffer.h`'s `"*case violations*"`
+buffer, `TestResultsBuffer.cpp`'s exact shape (each violation line carries a
+`Buffer::Diagnostic`, "path:line:" prefix rides `VisitResultUnderPoint`'s regex fallback
+for Enter/click and next-error/previous-error).
+The fixer (`fix-case-violation-at-point`, also M-x only) turned out NOT to need a
+`RenameBindingOccurrences`-shaped extraction at all -- it re-enters rename-symbol's
+*existing* tiered pipeline (`RequestRenameSymbolAtPoint`) at the violation's own name
+offset, with a new one-shot `pendingRenamePrefillOverride_` member consumed by whichever
+tier opens the new-name prompt (the local fast path in `BufferView/Rename.cpp`, or the
+async LSP `prepareRename` response in `BufferView/Lsp.cpp`) to substitute
+`SuggestNameForConvention`'s own result for the violating name. This reuses 100% of
+rename-symbol's existing machinery (local-binding fast path, LSP fallback,
+review-multibuffer commit) with no new rename-application code at all, and still requires
+Enter (or an edit first) to confirm -- never a silent rewrite, honoring
+`FormattingCapabilities.md`'s "never an automatic reformat step" stance. Live-verified in
+tmux end to end on both tiers: a `parameter`-kind violation and a `function`-kind
+violation (the latter resolving through this session's auto-spawned clangd, since
+`SymbolKind::Callable` isn't a `locals.scm` binding) both pre-filled correctly and
+produced the expected rename-review commit. `Tests/CaseCheckTest.cpp` (the project scan,
+including a live-buffer-over-disk case) and `Tests/BufferViewCaseFixTest.cpp` (the local
+fast-path prefill/apply, and the "nothing at point" refusal) cover the local-tier path;
+the LSP-tier prefill override is the same one-line consume-before-use pattern and was
+verified live rather than with a fake LSP client double, a documented scope cut.
+
 - [ ] Case: full entity-kind catalogue (class/struct/interface/enum/field/global/constant/
       macro/method-vs-function split/template-parameter/...) needs new query authoring --
       `SymbolKind::Callable`/`TypeLike` are confirmed-conflated buckets, not a full set.
 - [ ] Align (kind 5), Arrange (kind 8), Rewrite (kind 9), and File naming conventions
       remain unstarted.
+
+**`ned-format` argv[0] dispatch (2026-09-15).** Built -- the first symlink-dispatch and
+first `install()` symlink precedent in this codebase. `Editor/CliFormatDispatch.h`'s pure
+`InvokedAsNedFormat(argv0)` (a `std::filesystem::path` basename comparison) is checked in
+`main.cpp` right after `CLI::App::parse` returns, forcing `format = true` unless an
+explicit startup-mode flag (`--lsp-broker`/`--lsp-broker-stop`/`--mcp-stdio-relay`) was
+actually given on the command line -- pulled into its own tiny header/source pair
+specifically because `main.cpp` isn't linked into `ned_tests` at all, so the predicate
+needed a home ned_lib could compile and ned_tests could call directly.
+`Source/CMakeLists.txt`'s `install(CODE ...)` creates a *relative* `ned-format -> ned`
+symlink alongside `ned` itself (`file(REMOVE)` first, so a repeat `cmake --install` is
+idempotent -- `file(CREATE_LINK)` does not overwrite an existing destination) --
+relative rather than baking in `CMAKE_INSTALL_PREFIX`, so a relocated install (a package
+build re-rooting into a fakeroot) still resolves correctly. Live-verified: installed to a
+throwaway prefix, ran `ned-format a.cpp` and diffed its output byte-for-byte against
+`ned --format a.cpp` on an identical copy -- identical. `Tests/CliFormatDispatchTest.cpp`
+covers the predicate (bare basename, absolute symlink path, the ordinary `ned` binary,
+and a directory merely spelled `ned-format`).
+
+**Fold LSP into `format-buffer`'s own chain (2026-09-15).** Built -- the interim 2-tier
+chain (External → Native) is now the full 3-tier External → LSP → Native design this
+section always intended. `format-buffer` has no async request/response machinery of its
+own (unchanged), so this mirrors `save-buffer`'s own `shouldDeferToLspFormat`/
+`RequestLspFormatThenSaveBuffer` split exactly: `CommandContext::deferFormatToLsp` (a new
+outbound field, `format-buffer`'s own sibling to `deferSaveForLspFormat`) is set when no
+external `FormatCommand()` produced output and a language server is `Running` for the
+buffer's language, and `BufferView::RunCommandAndHandleOutcome` hands off to a new
+`RequestLspFormatBuffer()` (a `RequestLspFormatThenSaveBuffer` sibling, on its own
+`RequestSlot` so the two async flows can't stale-guard each other) instead of running the
+Native fallback synchronously. Deliberately NOT gated behind
+`ned/set-lsp-format-on-save`'s toggle -- that flag governs whether *saving* auto-triggers
+a format, not whether this explicit, user-invoked command may use LSP when available; using
+External unconditionally already sets that precedent (no toggle gates whether External
+participates in the chain either). Never saves, matching `format-buffer`'s existing
+contract regardless of which tier did the formatting. Live-verified against a real,
+auto-spawned clangd: a one-line `int main(){int x=1;return x;}` reformatted into clangd's
+own multi-line style with `format-buffer` alone, buffer marked modified, disk untouched.
+`Tests/BufferViewTest.cpp` covers both the LSP tier (a `FakeLspServer`, real
+`textDocument/formatting` request/response, one undo step, never saved) and that External
+still wins when both are configured/available.
 
 ### Jupyter Notebooks
 

@@ -35,6 +35,7 @@
 #include "Editor/Acp/PanelConfig.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
+#include "Editor/CliFormatDispatch.h"
 #include "Editor/Bookmark.h"
 #include "Editor/BufferSave.h"
 #include "Editor/BundledSnippets.h"
@@ -3045,6 +3046,18 @@ auto main(int argc, char** argv) -> int {
     }
     catch (const CLI::ParseError& e) {
         return app.exit(e);
+    }
+
+    // ned-format argv[0] dispatch follow-up: `ned-format <paths...>` is
+    // exactly `ned --format <paths...>` (Editor/CliFormatDispatch.h holds
+    // the pure predicate so it's unit-testable outside main.cpp, which
+    // isn't linked into ned_tests at all). An explicit startup-mode flag
+    // actually present on the command line still wins -- `ned-format
+    // --lsp-broker` is unusual but not this dispatch's business to
+    // override or refuse.
+    if (argc > 0 && ned::editor::InvokedAsNedFormat(argv[0]) && !lspBroker && !lspBrokerStop &&
+        mcpStdioRelaySocketPath.empty()) {
+        format = true;
     }
 
     // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see

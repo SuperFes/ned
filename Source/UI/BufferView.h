@@ -2057,6 +2057,17 @@ class BufferView : public Widget {
     // step. Re-resolves first and refuses on any disagreement -- see its own
     // comment in Rename.cpp.
     void ApplyLocalRename(const std::string& newName);
+    // case-kind follow-up (BufferView/Rename.cpp): the Case checker's own
+    // "fixer" -- resolves the Editor::CaseViolation whose name range covers
+    // point (recomputed fresh against the current buffer, current mode),
+    // moves point onto it, and re-enters RequestRenameSymbolAtPoint()'s
+    // existing tiered pipeline with pendingRenamePrefillOverride_ set to the
+    // checker's own SuggestNameForConvention result -- so whichever tier
+    // opens the rename prompt (the local fast path or LSP prepareRename)
+    // pre-fills the suggested name instead of the violating one, still
+    // requiring the user to confirm (Enter) or edit it. Never applies
+    // anything on its own.
+    void RequestFixCaseViolationAtPoint();
     // rename-review follow-up (BufferView/Rename.cpp): stitches every hit
     // into the "*rename*" review multibuffer instead of applying it --
     // classifying each one against its own file's highlighter, adding the
@@ -4253,6 +4264,16 @@ class BufferView : public Widget {
     void                    RequestLspFormatThenSaveBuffer();
     bufferview::RequestSlot lspFormatOnSaveRequest_;
 
+    // format-buffer-lsp-fold-in follow-up: RequestLspFormatThenSaveBuffer's
+    // no-save sibling -- invoked only when Commands.cpp's format-buffer sets
+    // context.deferFormatToLsp (see RunCommandAndHandleOutcome's own branch
+    // for that field). A separate RequestSlot from lspFormatOnSaveRequest_
+    // so the two independent async flows (an explicit format-buffer vs. a
+    // save deferred behind LSP formatting) can never stale-guard each
+    // other out.
+    void                    RequestLspFormatBuffer();
+    bufferview::RequestSlot lspFormatBufferRequest_;
+
     // completion-trigger-characters follow-up: triggerCharacter is the
     // server-declared character whose keystroke armed the debounce that
     // fired this, threaded through to Manager::RequestCompletion as the
@@ -4469,6 +4490,14 @@ class BufferView : public Widget {
     // them rewrites the wrong text rather than merely showing something
     // stale.
     std::optional<editor::locals::LocalBinding> pendingLocalRename_;
+    // case-kind follow-up: set by RequestFixCaseViolationAtPoint immediately
+    // before calling RequestRenameSymbolAtPoint, consumed (and cleared) the
+    // first time either rename tier opens its own new-name prompt -- see
+    // RequestRenameSymbolAtPoint's own local-fast-path prefill and Lsp.cpp's
+    // RequestPrepareRenameAtPoint::openPrompt. nullopt the rest of the time,
+    // so ordinary rename-symbol invocations (no pending case fix) are
+    // unaffected.
+    std::optional<std::string> pendingRenamePrefillOverride_;
     // rename-review follow-up: the rows BuildRenameReview stitched, index-
     // aligned with the review buffer's own ExcerptRanges() (which is why the
     // excerpt cap is applied there rather than left to BuildMultibuffer).

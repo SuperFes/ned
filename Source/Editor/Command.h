@@ -849,6 +849,24 @@ enum class InteractiveRequest { None,
                                 ShowTestResults,
                                 RunTestAtPoint,
                                 RerunFailedTests,
+                                // case-kind follow-up: check-format-conventions is a one-shot
+                                // direct action too, but unlike RunTests it needs no subprocess
+                                // at all -- Editor/FormatCase.h's ComputeCaseViolations is a pure,
+                                // synchronous scan, so this request just runs
+                                // Editor/Project/CaseCheck.h's project-wide walk right here and
+                                // switches to the refreshed "*case violations*" buffer (the same
+                                // ShowTestResults shape, minus a separate Run step since there's
+                                // no background process whose completion a later Show waits for).
+                                // fix-case-violation-at-point resolves the violation nearest point
+                                // in the CURRENT buffer only (not the whole project) and re-enters
+                                // rename-symbol's existing tiered pipeline with the checker's own
+                                // SuggestNameForConvention result pre-filling the new-name prompt --
+                                // still a user-confirmed rename (Enter to accept, or edit first),
+                                // never a silent rewrite; FormattingCapabilities.md's own stance
+                                // ("never an automatic reformat step") is why this reuses the
+                                // interactive rename prompt rather than applying anything directly.
+                                CheckFormatConventions,
+                                FixCaseViolationAtPoint,
                                 // editor-ergonomics follow-up: find-recent-file, same
                                 // "just signal intent" shape as ProjectFindFile -- the
                                 // candidate list (Editor/RecentFiles.h's most-recent-first
@@ -962,6 +980,18 @@ struct CommandContext {
     // skip the ExternallyModified/conflict-marker guards (already checked,
     // for save-buffer, before this was set).
     std::optional<bool> deferSaveForLspFormat;
+    // format-buffer-lsp-fold-in follow-up: set by format-buffer instead of
+    // running its own synchronous Native reindent+Hygiene pass, when no
+    // external FormatCommand() is configured/succeeded at runtime and a
+    // language server is actually running for this buffer's language --
+    // mirrors deferSaveForLspFormat's own shape (an outbound field
+    // BufferView::RunCommandAndHandleOutcome checks), minus the eventual
+    // Save() (format-buffer never saves) and minus a force distinction
+    // (format-buffer has only one form). Deliberately NOT gated behind
+    // Lsp::FormatOnSaveEnabled() -- that toggle is specifically about
+    // whether SAVING auto-triggers a format, not whether this explicit,
+    // user-invoked command may use LSP when available.
+    bool deferFormatToLsp = false;
     // Emacs-keymap-round-2 follow-up (kill-append): set by the zap-to-char
     // command to whether the kill it's about to request (on the character
     // keystroke that follows, once InteractiveRequest::ZapToChar's session

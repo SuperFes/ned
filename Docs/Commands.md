@@ -3,7 +3,7 @@
 Every command reachable from `M-x`, from a keybinding, or from Janet via
 `ned/run-command`.
 
-303 commands.
+305 commands.
 
 ## `acp-rewind`
 
@@ -96,6 +96,10 @@ Cancel the test run started by run-tests.
 ## `capitalize-word`
 
 Capitalize from point to the end of the next word, moving over it.
+
+## `check-format-conventions`
+
+Scan the project for names that don't conform to their configured case convention (see ned/set-format-case-convention), into *case violations*.
 
 ## `clear-coverage-report`
 
@@ -348,6 +352,10 @@ Open a recently-opened file (any project), narrowed by fuzzy matching as you typ
 ## `find-scratch`
 
 Open or create a named scratch note (prompts for its name; not tied to any project, auto-saved).
+
+## `fix-case-violation-at-point`
+
+Rename the case-convention violation at point to Editor/FormatCase.h's suggested conforming name, via rename-symbol's own prompt (pre-filled, not applied silently).
 
 ## `focus-project-sidebar`
 

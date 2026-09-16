@@ -24,6 +24,7 @@ add_executable(ned_tests
             ClassFileSyncTest.cpp
             ImportFixupTest.cpp
             BufferViewRenameSymbolTest.cpp
+            BufferViewCaseFixTest.cpp
             BufferViewClassFileSyncTest.cpp
             BufferViewRenameReviewTest.cpp
             BufferViewImportFixupTest.cpp
@@ -100,6 +101,7 @@ add_executable(ned_tests
             CodeFoldTest.cpp
             IndentStyleTest.cpp
             IndentDefaultsTest.cpp
+            IndentDetectTest.cpp
             MaxConsecutiveBlankLinesTest.cpp
             FormatConfigParseTest.cpp
             FormatRulesTest.cpp
@@ -196,6 +198,7 @@ add_executable(ned_tests
             SearchSettingsTest.cpp
             ProjectSearchTest.cpp
             ProjectAgendaTest.cpp
+            CaseCheckTest.cpp
             ProjectReplaceTest.cpp
             ProjectTreeTest.cpp
             ProjectRootTest.cpp
@@ -208,6 +211,7 @@ add_executable(ned_tests
             ProjectFileOpsTest.cpp
             ScratchPadTest.cpp
             BackupTest.cpp
+            CliFormatDispatchTest.cpp
             PersistentUndoTest.cpp
             ProjectUndoTest.cpp
             DiagnosticsLogTest.cpp
