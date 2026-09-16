@@ -1,6 +1,7 @@
 #include "Buffer.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cstdio>
 #include <fstream>
@@ -301,12 +302,24 @@ namespace {
     // the two snapshots would report one range spanning all of them rather
     // than several -- an accepted over-approximation, not a correctness
     // bug (the true edit sites are always a subset of the reported range).
+    // InstanceId()'s source: a process-wide, thread-safe monotonic counter
+    // (Buffer construction isn't guaranteed main-thread-only -- the async/
+    // huge-file loaders build one off the main thread) -- relaxed ordering
+    // is enough since callers only ever compare two values read from two
+    // Buffer instances for equality, never race to observe a happens-before
+    // relationship through it.
+    std::size_t NextBufferInstanceId() {
+        static std::atomic<std::size_t> next{0};
+        return next.fetch_add(1, std::memory_order_relaxed);
+    }
+
 } // namespace
 
 Buffer::Buffer(std::string name, Rope initialContent) : Name_(std::move(name)),
                                                         Storage_(std::make_unique<RopeStorage>(std::move(initialContent))),
                                                         UndoTree_(Storage_->Clone()),
-                                                        SavedSnapshot_(Storage_->Clone()) {
+                                                        SavedSnapshot_(Storage_->Clone()),
+                                                        InstanceId_(NextBufferInstanceId()) {
 }
 
 Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
@@ -948,6 +961,10 @@ bool Buffer::Modified() const {
 
 std::size_t Buffer::ContentGeneration() const {
     return ContentGeneration_;
+}
+
+std::size_t Buffer::InstanceId() const {
+    return InstanceId_;
 }
 
 std::size_t Buffer::Point() const {
