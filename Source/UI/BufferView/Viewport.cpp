@@ -256,7 +256,7 @@ std::size_t Viewport::RowsForLine(std::size_t line) const {
         EnsureLinks();
         const std::vector<RenderedLink> lineLinks = LinksForLine(links_, lineStart, lineEnd, buffer.Point());
         rowCountPerLine_[line] =
-            ComputeWrappedLineSegments(content, lineStart, lineEnd, rowCountContentWidth_, lineLinks).size();
+            ComputeWrappedLineSegments(content, lineStart, lineEnd, rowCountContentWidth_, lineLinks, context_.mode.name).size();
     }
     return rowCountPerLine_[line] + leadingRows + annotationRows; // memoized value is content rows only -- annotation state changes independently of the wrap cache's keys
 }
@@ -638,7 +638,8 @@ std::size_t Viewport::ByteOffsetForPoint(Point at) const {
     std::size_t clickColumn = column;
     if (EffectiveWrapLines()) {
         const int                      fullWidth      = std::max(1, host_.size().width - static_cast<int>(gutterWidth));
-        const std::vector<WrapSegment> segments       = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
+        const std::vector<WrapSegment> segments =
+            ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks, context_.mode.name);
         const std::size_t              clampedSegment = std::min(segmentInLine, segments.size() - 1);
         segStart                                      = segments[clampedSegment].startByte;
         segEnd                                        = segments[clampedSegment].endByte;

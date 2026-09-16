@@ -12226,7 +12226,7 @@ TEST_CASE("A wrap-enabled buffer hangs a continuation row under its own leading 
 }
 
 TEST_CASE("A wrap-enabled buffer hangs a continuation row under a top-level checkbox list item's "
-          "own text, not flush at the marker's column 0",
+          "own text, one indent step in, not flush at the marker's column 0",
           "[BufferView]") {
     // soft-wrap-list-hang follow-up: a top-level list item ("- [ ] ...")
     // has zero leading whitespace, so the plain leading-whitespace rule
@@ -12234,6 +12234,13 @@ TEST_CASE("A wrap-enabled buffer hangs a continuation row under a top-level chec
     // marker itself, not under the text the marker introduces. Mode-
     // agnostic like Editor/Fill.h's own DetectListMarker: no MarkdownMode
     // needed, the marker syntax is unambiguous in plain text too.
+    //
+    // One indent step (4, DefaultIndentStyle's own default width -- see
+    // IndentStyleTest.cpp), not the marker's own literal width (6, "- [ ] "):
+    // confirmed live against a real document that the marker's own width
+    // made a list item's soft-wrapped rows disagree with that SAME item's
+    // hard-wrapped continuation PARAGRAPHS, which already indent by one
+    // configured step regardless of which marker introduced the item.
     const WrapIndentGuard guard;
     Fixture               fixture;
     fixture.mode.wrapLines = true;
@@ -12248,32 +12255,34 @@ TEST_CASE("A wrap-enabled buffer hangs a continuation row under a top-level chec
 
     // First row: the marker verbatim, unaffected.
     REQUIRE(ContentRowText(screen, 0, 12, 1).starts_with("- [ ] aaaa "));
-    // Continuation row: "bbbb" hangs 6 columns in ("- [ ] "'s own width),
-    // matching where "aaaa" starts on the row above, instead of flush left.
-    REQUIRE(ContentRowText(screen, 1, 12, 1).starts_with("      bbbb"));
+    // Continuation row: "bbbb" hangs 4 columns in (one indent step), not 6
+    // (the marker's own literal width) and not 0 (flush left).
+    REQUIRE(ContentRowText(screen, 1, 12, 1).starts_with("    bbbb"));
 }
 
 TEST_CASE("A wrap-enabled buffer hangs a continuation row under a NESTED list item's own text, "
-          "leading whitespace plus the marker's own width",
+          "leading whitespace plus one indent step",
           "[BufferView]") {
     // Same shape as the top-level case above, but the marker isn't the
     // whole story here -- the line's own 2 columns of real leading
-    // whitespace still count too, composing with the marker's width (2,
-    // "- ") for a combined hang of 4.
+    // whitespace still count too, composing with one indent step (4) for a
+    // combined hang of 6 -- not the marker's own literal width (2, "- "),
+    // which would give 4, indistinguishable from the top-level case's own
+    // hang above despite being a different nesting depth.
     const WrapIndentGuard guard;
     Fixture               fixture;
     fixture.mode.wrapLines = true;
     fixture.buffer.InsertAtPoint("  - aaaa bbbb cccc");
     ned::ui::BufferView view   = fixture.View();
     const int           gutter = GutterWidth(1);
-    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = gutter + 11, .y_min = 0, .y_max = 4});
 
-    ned::ui::Screen screen = ned::ui::Screen(gutter + 10, 5);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(gutter + 12, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = gutter + 11, .y_min = 0, .y_max = 4});
     view.Paint(canvas);
 
-    REQUIRE(ContentRowText(screen, 0, 10, 1).starts_with("  - aaaa "));
-    REQUIRE(ContentRowText(screen, 1, 10, 1).starts_with("    bbbb"));
+    REQUIRE(ContentRowText(screen, 0, 12, 1).starts_with("  - aaaa "));
+    REQUIRE(ContentRowText(screen, 1, 12, 1).starts_with("      bbbb"));
 }
 
 TEST_CASE("ned/set-wrap-indent false restores flush-left continuation rows", "[BufferView]") {
