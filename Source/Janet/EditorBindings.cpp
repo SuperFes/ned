@@ -34,6 +34,7 @@
 #include "Editor/HighlightSettings.h"
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/ImportFixupSettings.h"
+#include "Editor/IndentRuleOverride.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/LanguageRegistry.h"
@@ -216,6 +217,28 @@ namespace {
         }
         else {
             editor::SetIndentStyleForMode(modeName, style);
+        }
+    }
+
+    // ned/set-indent-rule follow-up: key is a grammar node-type string (see
+    // Editor/IndentRuleOverride.h's own header comment for why, not a
+    // capture name), or its language-scoped form ("cpp/access_specifier").
+    // policy empty clears the rule; otherwise "offset" or "absolute",
+    // matching IndentRulePolicy's own two values by name.
+    void NedSetIndentRule(std::string key, std::string policy, std::int64_t value) {
+        if (policy.empty()) {
+            editor::SetIndentRule(key, std::nullopt);
+            return;
+        }
+        if (policy == "offset") {
+            editor::SetIndentRule(key, editor::IndentRuleValue{editor::IndentRulePolicy::Offset, static_cast<int>(value)});
+        }
+        else if (policy == "absolute") {
+            editor::SetIndentRule(key, editor::IndentRuleValue{editor::IndentRulePolicy::Absolute, static_cast<int>(value)});
+        }
+        else {
+            throw std::runtime_error("ned: set-indent-rule: policy must be \"offset\", \"absolute\", or \"\" (to clear), got \"" +
+                                     policy + "\"");
         }
     }
 
@@ -1427,6 +1450,12 @@ void InstallEditorBindings(Environment& env) {
         "Set the indent style smart-indentation (indent-for-tab-command/newline/indent-region/indent-buffer) writes: "
         "(mode-name-or-empty use-tabs? width). An empty mode-name sets the process-wide default (spaces, width 4); "
         "a Mode name (e.g. \"python-mode\") sets a per-mode override, checked first.");
+    env.Register<&NedSetIndentRule>(
+        "ned", "set-indent-rule",
+        "Override the indent of every line whose own leading construct is a given grammar node type (e.g. "
+        "\"access_specifier\", or \"cpp/access_specifier\" for a one-language override): (key policy value), "
+        "policy \"offset\" (add value columns, positive or negative, to whatever the ordinary indent would be) or "
+        "\"absolute\" (value IS the column, ignoring nesting depth entirely); empty policy clears the rule.");
     env.Register<&NedSetFormatSpaceBefore>(
         "ned", "set-format-space-before",
         "Override whether a space is inserted before the given capture name (e.g. \"control.parens\", or "

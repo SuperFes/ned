@@ -918,9 +918,40 @@ Real deviations from the design above, found while building it:
   `RequestLspFormatThenSaveBuffer` path instead — that mechanism is the one to mirror when
   LSP joins `format-buffer`'s own chain.
 
-- [ ] `ned/set-indent-rule` — capture-scoped indent override, hybrid capture-name/
-      grammar-type keying, piloted on C++ first (see above).
 - [ ] Huge-file streaming sweep for a whole-buffer Native reindent.
+
+**`ned/set-indent-rule` (2026-09-15).** Built, but keyed by GRAMMAR NODE TYPE only, not
+the "hybrid capture-name/grammar-type keying" this section's own design sketch called
+for -- both of the sketch's own worked examples (a C++ access specifier's -2 offset, a
+preprocessor directive's absolute column 0) name constructs with no capture at all
+(neither an indents.janet capture -- those are generic kind-labels like `@indent`/
+`@dedent`, never per-construct names -- nor a format.janet one), so true capture-name
+keying would need `mode.formatCaptures` threaded into `BuildIndentFunction`'s own
+construction for a benefit neither example needs; deferred rather than guessed at.
+`Editor/IndentRuleOverride.h`'s `SetIndentRule`/`IndentRuleFor` mirror `FormatRules.h`'s
+own `ScopedRuleFor` shape exactly (`"<language>/<key>"` wins over the bare key,
+`ValidateKey` reusing `FormatRules.cpp`'s own capture-name-shaped guard even though a
+grammar type never has dots) but store a SINGLE combined `{policy, value}` pair per key
+(`Offset` or `Absolute` are mutually exclusive, unlike Space/Break's several
+independently-settable fields). Applied in `Indent.cpp`'s `BuildIndentFunction` closure as
+a small, ADDITIVE final step -- resolving the line's own smallest named node at its first
+non-blank byte (`tree.RootNode().NamedDescendantForByteRange`, the exact same primitive
+`IndentLevelForLine`'s own walk-start resolution already uses, just for a fresh position
+here) and checking the override against its `Node::Type()` -- rather than woven into
+`IndentLevelForLine`'s existing ancestor-counting walk, so that engine's own extensively-
+tested per-language behavior (`Tests/IndentEngineTest.cpp`, `Tests/ImprintIndentTest.cpp`,
+19 languages' own `indents.janet` files) is completely untouched when no rule is
+configured for anything a document's tree actually contains -- confirmed by a full,
+multi-seed `--order rand` suite run with the hook wired in and zero regressions.
+`Tests/IndentRuleOverrideTest.cpp` covers the config storage (unscoped/scoped resolution,
+clearing, key validation) and both worked examples end to end on real `cpp-mode` text via
+`IndentColumnForLine` -- one test-isolation bug (a missing cleanup key in the test's own
+guard, leaking a language-scoped override into a later test) caught by `--order rand`
+itself, the same lesson this rollout has learned repeatedly. Live-verified in tmux:
+`indent-buffer` on a two-access-specifier class reindented them 2 columns left of the
+member lines around them, and the mode line's own indent-style indicator immediately
+flagged the resulting file as "≠" its configured style (confirming the live buffer content
+genuinely diverged, independent of the reindent's own report).
 
 **Automatic scoped on-save (2026-09-15).** Built, but with the "retire TrimOnSave.h/
 FinalNewline.h" half of the original bullet deliberately declined -- see below.
