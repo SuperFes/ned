@@ -1772,20 +1772,6 @@ for closed-issue history.
   earlier) rather than anything about cache invalidation specifically, but not
   root-caused -- logged rather than guessed at.
 
-- **Lua's `repeat_statement` body is never reindented.** Found live during the
-  formatter coverage audit (2026-09-15) while testing the new `repeat`/`until`
-  format capture -- unrelated to that capture itself: `Editor/ImprintTables.cpp`'s
-  `kLua[]` table has entries for `do_statement`/`if_statement`/`while_statement`
-  (each `DelimiterKind::Keyword` plus an `Indent` entry) but none at all for
-  `repeat_statement`, so `repeat\n  body\nuntil cond` reindents its body to column
-  0 regardless of nesting -- confirmed with `ned --format` on a real `.lua` file,
-  no format.janet rules involved. Fix shape: add `{"repeat_statement",
-  DelimiterKind::Keyword, true, true, "repeat", "until"}` plus its own `Indent`
-  entry to `kLua[]`, then regenerate via `NED_BLESS_IMPRINT=1 ./build/ned_tests
-  "[Imprint]"` and review the diff -- same shape the three existing Lua entries
-  already have, this file is generated/checked-in so hand-editing it directly
-  would be overwritten by the next real regeneration.
-
 - **Intermittent shutdown hang blocked on the LSP broker socket.** Found 2026-09-13
   during the Phase 4b live smoke runs: quitting ned a few seconds after opening a C++
   buffer occasionally leaves "Shutting down..." parked with the MAIN thread in a
@@ -1828,41 +1814,35 @@ for closed-issue history.
   `EvaluatePredicateCall`, any-of semantics. Unblocked now that the M3 gate has landed — the change will
   show as a deliberate differential/oracle diff rather than an invisible drift.
 
-- **Go's `switch`/`select` `case`/`default` clauses indent one level too deep.**
-  Found 2026-09-14 during the formatter's Go pilot rollout (unrelated to that work —
-  reproduces with NO `format.janet` at all, plain `indent-buffer`/`ned --format` on
-  ordinary Go source): `switch x {\n\tcase 1:\n\t}` reindents to
-  `switch x {\n\t\tcase 1:\n\t}` -- the `case` line gets two tabs instead of one, while
-  the closing `}` stays correctly aligned with `switch`. `Source/Languages/go/
-  indents.janet` has no `@indent`/`@dedent`/`@aligned` capture naming
-  `expression_case`/`type_case`/`default_case`/`communication_case` at all --
-  `expression_switch_statement`/`type_switch_statement`/`select_statement` are only
-  named for `@align.barrier`, so whatever's adding the extra level is coming from the
-  generic delimiter-imprint walk (`Editor/ImprintIndent.h`) alone, not a query. Not
-  root-caused yet -- worth an `ImprintTest.cpp`-style live probe against
-  `expression_switch_statement`'s own imprint table entry before touching
-  `Indent.cpp`'s walk. Not urgent (cosmetic, one extra tab, `case` lines still land in
-  the right relative order) but real and reproducible.
-
-- **PHP's colon-alternate `if:`/`elseif:`/`else:`/`endif:` body is not indented at
-  all.** Found 2026-09-14 during the formatter's PHP pilot rollout (unrelated to that
-  work -- reproduces with NO `format.janet` at all, plain `indent-buffer`/`ned --format`
-  on ordinary PHP source): `if ($x):\n    return 1;\nendif;` reindents to
-  `if ($x):\nreturn 1;\nendif;` -- the body line loses its indent relative to `if`
-  entirely rather than gaining one, though the result stays syntactically valid PHP
-  (`php -l` clean). Root cause, confirmed rather than guessed:
-  `Source/Languages/php/` has no `indents.janet` at all (PHP is one of the four bundled
-  languages -- json/css/toml/php -- that indent from the delimiter imprint alone, per
-  this file's own "Query files in Janet" note), and `colon_block` (the alternate-syntax
-  body node, grammar.json's own `": " ... "endif"` production) has no bracket pair or
-  recognized keyword-delimiter shape at all for `Editor/Grammar/GrammarImprint.h`'s
-  inference to key off, unlike the brace form's own `compound_statement`. Not urgent
-  (colon syntax is uncommon in modern PHP, and the failure is a missing indent rather
-  than a wrong or corrupting one). Fix shape: either extend the imprint's
-  `DelimiterKind` vocabulary to recognize a colon-opened, keyword-closed body with no
-  bracket at all (a new kind, not `DelimiterKind::Keyword`'s existing bracket-plus-
-  keyword shape), or hand-write a `php/indents.janet` `@indent`/`@dedent` pair naming
-  `colon_block` directly the way JSX's own rules are hand-written by necessity.
+- **PHP's `case`/`default` clause bodies never get their own indent level, in
+  BOTH the brace and colon forms of `switch`.** Found 2026-09-16 while fixing this
+  same file's now-closed `if:`/`elseif:`/`else:`/`endif:` entry: even the
+  already-working brace form (`switch ($x) { case 1: echo 1; }`) reindents to
+  `case 1:` and `echo 1;` at the SAME column, unlike Go's exactly analogous
+  `expression_case`/`default_case` (fixed alongside the same investigation, see
+  `git log --grep=indent-case` -- Go dedents the label back to `switch`'s own
+  level instead, which is the opposite shape of what PHP/PSR-12 wants: PHP's
+  convention indents `case`/`default` one level under `switch`, same as any
+  other body, and it's the STATEMENTS under a case that need a further level
+  PHP never gives them). Root cause: `case_statement`/`default_statement` carry
+  no delimiters of their own (confirmed via node-types.json -- each is just an
+  optional trailing `statement_list`), so nothing in `Source/Languages/php/`
+  (no `indents.janet` existed before this investigation; see the new file's
+  own header) or `Editor/ImprintTables.cpp`'s `kPhp[]` gives their body a
+  container. The colon form (`switch (...): case 1: ... endswitch;`) is
+  additionally unindented altogether, same root shape as the now-fixed `if:`
+  form, but its own `switch_block` node is shared verbatim between both
+  syntaxes (the brace-vs-colon choice is inside `switch_block`'s own grammar
+  rule, not `switch_statement`'s) -- so fixing colon-form `switch` and fixing
+  `case`/`default` body indent are the same piece of work, not two. Fix shape:
+  `(case_statement) @indent` / `(default_statement) @indent`, each keyed off
+  its own trailing `statement_list` field's start (mirroring `@indent.body`'s
+  convention elsewhere, since neither node has a literal closer of its own --
+  the next case or `endswitch`/`}` ends it implicitly) plus
+  `(switch_block "endswitch") @indent` / `(switch_block "endswitch" @dedent)`
+  for the colon form's own container (same conditioned-on-a-literal-child
+  pattern as `php/indents.janet`'s existing `if_statement`/`while_statement`
+  entries).
 
 - **org.indent hangs a headline that directly follows a list item.** Surfaced by (not
   introduced by) the Step 5 oracle corpus: in `Tests/Oracle/expected/sample.org.oracle`,
