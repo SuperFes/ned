@@ -12225,6 +12225,57 @@ TEST_CASE("A wrap-enabled buffer hangs a continuation row under its own leading 
     REQUIRE(ContentRowText(screen, 1, 10, 1).starts_with("    bbbb"));
 }
 
+TEST_CASE("A wrap-enabled buffer hangs a continuation row under a top-level checkbox list item's "
+          "own text, not flush at the marker's column 0",
+          "[BufferView]") {
+    // soft-wrap-list-hang follow-up: a top-level list item ("- [ ] ...")
+    // has zero leading whitespace, so the plain leading-whitespace rule
+    // above hangs its continuation rows at column 0 -- flush with the
+    // marker itself, not under the text the marker introduces. Mode-
+    // agnostic like Editor/Fill.h's own DetectListMarker: no MarkdownMode
+    // needed, the marker syntax is unambiguous in plain text too.
+    const WrapIndentGuard guard;
+    Fixture               fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint("- [ ] aaaa bbbb cccc");
+    ned::ui::BufferView view   = fixture.View();
+    const int           gutter = GutterWidth(1);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = gutter + 11, .y_min = 0, .y_max = 4});
+
+    ned::ui::Screen screen = ned::ui::Screen(gutter + 12, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = gutter + 11, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    // First row: the marker verbatim, unaffected.
+    REQUIRE(ContentRowText(screen, 0, 12, 1).starts_with("- [ ] aaaa "));
+    // Continuation row: "bbbb" hangs 6 columns in ("- [ ] "'s own width),
+    // matching where "aaaa" starts on the row above, instead of flush left.
+    REQUIRE(ContentRowText(screen, 1, 12, 1).starts_with("      bbbb"));
+}
+
+TEST_CASE("A wrap-enabled buffer hangs a continuation row under a NESTED list item's own text, "
+          "leading whitespace plus the marker's own width",
+          "[BufferView]") {
+    // Same shape as the top-level case above, but the marker isn't the
+    // whole story here -- the line's own 2 columns of real leading
+    // whitespace still count too, composing with the marker's width (2,
+    // "- ") for a combined hang of 4.
+    const WrapIndentGuard guard;
+    Fixture               fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint("  - aaaa bbbb cccc");
+    ned::ui::BufferView view   = fixture.View();
+    const int           gutter = GutterWidth(1);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+
+    ned::ui::Screen screen = ned::ui::Screen(gutter + 10, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    REQUIRE(ContentRowText(screen, 0, 10, 1).starts_with("  - aaaa "));
+    REQUIRE(ContentRowText(screen, 1, 10, 1).starts_with("    bbbb"));
+}
+
 TEST_CASE("ned/set-wrap-indent false restores flush-left continuation rows", "[BufferView]") {
     const WrapIndentGuard guard;
     ned::editor::SetWrapIndent(false);

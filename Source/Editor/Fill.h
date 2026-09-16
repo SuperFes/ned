@@ -34,6 +34,23 @@
 
 namespace ned::editor {
 
+// Detects a Markdown/Org/reST-style list marker at the very start of `body`
+// -- a bullet ("-", "*", "+") or an ordinal ("1.", "12)"), always followed
+// by real whitespace, optionally followed by a GFM task checkbox
+// ("[ ]"/"[x]"/"[X]") and ITS own trailing whitespace. Returns the marker's
+// total width (through its final trailing whitespace, where the real
+// content starts), or nullopt if `body` doesn't open with one. Deliberately
+// mode-agnostic, unlike Editor/Languages/Markdown.cpp's own list handling:
+// this syntax is unambiguous wherever it appears -- a real word never
+// starts "- " or "1. " -- so treating it specially is correct in a
+// plain-text paragraph, an Org list, or a Doxygen-style bulleted comment
+// alike. list-aware-fill-paragraph follow-up originally; soft-wrap-list-
+// hang follow-up is its second caller (UI/BufferView/Internal.h's own
+// LeadingIndentColumns) -- one detector, so a marker shape either fails to
+// recognize can't drift between the hard-wrap (M-q) and soft-wrap (word
+// wrap) cases.
+[[nodiscard]] std::optional<std::size_t> DetectListMarker(std::string_view body);
+
 // Greedily packs words (assumed to contain no whitespace themselves) into
 // lines of at most `width` codepoints, one space between words on the same
 // line. Never splits a word -- a single word wider than `width` still gets

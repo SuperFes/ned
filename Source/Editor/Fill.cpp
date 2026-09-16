@@ -50,61 +50,42 @@ namespace {
         }
     }
 
-    // Detects a Markdown/Org/reST-style list marker at the very start of
-    // `body` -- a bullet ("-", "*", "+") or an ordinal ("1.", "12)"),
-    // always followed by real whitespace, optionally followed by a GFM
-    // task checkbox ("[ ]"/"[x]"/"[X]") and ITS own trailing whitespace.
-    // Returns the marker's total width (through its final trailing
-    // whitespace, where the real content starts), or nullopt if `body`
-    // doesn't open with one. Deliberately mode-agnostic, unlike
-    // Editor/Languages/Markdown.cpp's own list handling: this syntax is
-    // unambiguous wherever it appears -- a real word never starts "- " or
-    // "1. " -- so treating it specially is correct in a plain-text
-    // paragraph, an Org list, or a Doxygen-style bulleted comment alike.
-    // list-aware-fill-paragraph follow-up: without this, wrapping a list
-    // item's own first line folded its marker into the ordinary word
-    // stream, so every WRAPPED continuation line lost the marker's hang
-    // width entirely -- confirmed live as the root cause of ROADMAP.md's
-    // own ad hoc paragraphs occasionally drifting to an indentation that
-    // no longer matches their enclosing list item, which is exactly the
-    // "4 spaces relative to nothing" shape that becomes an indented code
-    // block under CommonMark.
-    std::optional<std::size_t> DetectListMarker(std::string_view body) {
-        std::size_t i = 0;
-        if (!body.empty() && (body[0] == '-' || body[0] == '*' || body[0] == '+')) {
-            i = 1;
-        }
-        else {
-            std::size_t digits = 0;
-            while (i < body.size() && std::isdigit(static_cast<unsigned char>(body[i]))) {
-                ++i;
-                ++digits;
-            }
-            if (digits == 0 || i >= body.size() || (body[i] != '.' && body[i] != ')')) {
-                return std::nullopt;
-            }
-            ++i; // the '.' or ')'
-        }
-        if (i >= body.size() || (body[i] != ' ' && body[i] != '\t')) {
-            return std::nullopt; // the glyph alone, with no following space, isn't a list marker
-        }
-        while (i < body.size() && (body[i] == ' ' || body[i] == '\t')) {
-            ++i;
-        }
-        if (i + 2 < body.size() && body[i] == '[' &&
-            (body[i + 1] == ' ' || body[i + 1] == 'x' || body[i + 1] == 'X') && body[i + 2] == ']') {
-            std::size_t afterCheckbox = i + 3;
-            if (afterCheckbox < body.size() && (body[afterCheckbox] == ' ' || body[afterCheckbox] == '\t')) {
-                i = afterCheckbox;
-                while (i < body.size() && (body[i] == ' ' || body[i] == '\t')) {
-                    ++i;
-                }
-            }
-        }
-        return i;
-    }
-
 } // namespace
+
+std::optional<std::size_t> DetectListMarker(std::string_view body) {
+    std::size_t i = 0;
+    if (!body.empty() && (body[0] == '-' || body[0] == '*' || body[0] == '+')) {
+        i = 1;
+    }
+    else {
+        std::size_t digits = 0;
+        while (i < body.size() && std::isdigit(static_cast<unsigned char>(body[i]))) {
+            ++i;
+            ++digits;
+        }
+        if (digits == 0 || i >= body.size() || (body[i] != '.' && body[i] != ')')) {
+            return std::nullopt;
+        }
+        ++i; // the '.' or ')'
+    }
+    if (i >= body.size() || (body[i] != ' ' && body[i] != '\t')) {
+        return std::nullopt; // the glyph alone, with no following space, isn't a list marker
+    }
+    while (i < body.size() && (body[i] == ' ' || body[i] == '\t')) {
+        ++i;
+    }
+    if (i + 2 < body.size() && body[i] == '[' &&
+        (body[i + 1] == ' ' || body[i + 1] == 'x' || body[i + 1] == 'X') && body[i + 2] == ']') {
+        std::size_t afterCheckbox = i + 3;
+        if (afterCheckbox < body.size() && (body[afterCheckbox] == ' ' || body[afterCheckbox] == '\t')) {
+            i = afterCheckbox;
+            while (i < body.size() && (body[i] == ' ' || body[i] == '\t')) {
+                ++i;
+            }
+        }
+    }
+    return i;
+}
 
 std::vector<std::string> WrapWords(const std::vector<std::string>& words, std::size_t width) {
     std::vector<std::string> lines;
