@@ -13,10 +13,15 @@
 //
 // Everything in here preserves Query.cpp's original behavior exactly,
 // including the deliberate quirks: an unrecognized predicate name is inert
-// (never suppresses a match); an unexpected arity is inert -- which today
-// makes the variadic has-parent? spellings real files carry no-ops, see the
-// ROADMAP watch list before "fixing" that; and an operand whose capture
+// (never suppresses a match); #eq?/#match?/#lua-match?/#any-of? are inert at
+// any arity but their own fixed/variadic shape; and an operand whose capture
 // never fired makes the predicate pass rather than false-compare against "".
+// (not-)has-ancestor?/(not-)has-parent? are the one family whose arity is
+// genuinely open-ended -- nvim's own convention accepts one or more type
+// names after the capture, any-of semantics -- so a call with 2+ operands
+// (first a fired capture, at least one trailing non-capture type operand)
+// is evaluated for real; anything else (too few operands, no usable type
+// operand) is the same inert pass-through as everywhere else in this file.
 //
 
 #ifndef NED_EDITOR_GRAMMAR_QUERYPREDICATES_H

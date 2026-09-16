@@ -90,8 +90,8 @@ namespace {
         ChildItem                      root;
         std::vector<CompiledPredicate> predicates;
         // per-subtree-fact-memoization follow-up: true when any predicate on
-        // this pattern is an actually-evaluated (not the arity-inert
-        // variadic spelling -- see PredicateReadsOutsideSubtree)
+        // this pattern is an actually-evaluated (2+ operands, not some
+        // other malformed shape -- see PredicateReadsOutsideSubtree)
         // (not-)has-ancestor?/(not-)has-parent? call, meaning a match of
         // this pattern can read structure OUTSIDE the node it's attached
         // to. Computed once at compile time (CompileTopLevel) and surfaced
