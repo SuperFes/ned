@@ -446,6 +446,57 @@ TEST_CASE("PythonMode indentColumn end-of-block dedent needs no explicit dedent 
     REQUIRE(*afterColumn == 0);
 }
 
+TEST_CASE("PythonMode indentColumn takes a following container's level for a comment as the "
+          "first line of that container's body, not the header's own level",
+          "[Indent]") {
+    // A comment immediately under "def f():" attaches to the grammar as a
+    // SIBLING of "block" (one level short of it), not as a child inside
+    // it -- Python's "block" node has no opening delimiter of its own to
+    // capture, so its range starts at its first real statement, one byte
+    // past where the comment ends (confirmed via a real parse dump). A
+    // naive ancestor walk from the comment therefore never counts "block"
+    // at all and resolves it to column 0, matching neither the header nor
+    // the body it visually precedes. Exactly Tests/Oracle/corpus/
+    // sample.py's own "commented()" function.
+    const auto mode = PythonMode();
+    Buffer     buffer("test.py");
+    buffer.InsertAtPoint("def commented():\n    # a leading comment\n    return 1\n");
+
+    const auto [commentStart, commentEnd] = LineRange(buffer, 1); // "    # a leading comment"
+    const auto commentColumn              = mode.indentColumn(buffer.Text(), commentStart, commentEnd);
+    REQUIRE(commentColumn.has_value());
+    REQUIRE(*commentColumn == 4); // matches "return 1"'s own level, not "def"'s
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "    return 1"
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 4);
+}
+
+TEST_CASE("PythonMode indentColumn takes a following container's level for a comment as the "
+          "first line of a nested if-block's body, two containers deep",
+          "[Indent]") {
+    // Same shape as the top-level case above, but nested inside an
+    // if-block too -- proves the fix isn't a Level==0-only rescue: a
+    // comment's naive walk here resolves to level 1 (only the outer
+    // function body counted; the if's own consequence "block", which
+    // starts after the comment, is never an ancestor of it), one level
+    // short of the correct 2, not 0.
+    const auto mode = PythonMode();
+    Buffer     buffer("test.py");
+    buffer.InsertAtPoint("def f():\n    if True:\n        # a leading comment\n        x = 1\n");
+
+    const auto [commentStart, commentEnd] = LineRange(buffer, 2); // "        # a leading comment"
+    const auto commentColumn              = mode.indentColumn(buffer.Text(), commentStart, commentEnd);
+    REQUIRE(commentColumn.has_value());
+    REQUIRE(*commentColumn == 8); // matches "x = 1"'s own level
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 3); // "        x = 1"
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 8);
+}
+
 TEST_CASE("PythonMode indentColumn indents a multi-line call's continuation line", "[Indent]") {
     const auto mode = PythonMode();
     Buffer     buffer("test.py");
@@ -924,6 +975,27 @@ TEST_CASE("YamlMode indentColumn indents a nested sequence item", "[Indent]") {
 
     const auto [itemStart, itemEnd] = LineRange(buffer, 1); // "  - x"
     REQUIRE(mode.indentColumn(buffer.Text(), itemStart, itemEnd) == 2); // yaml's own built-in default is width 2 (IndentDefaults.h)
+}
+
+TEST_CASE("YamlMode indentColumn takes a following mapping's level for a comment as the "
+          "first line of that mapping, not the parent key's own level",
+          "[Indent]") {
+    // Same shape as the Python "comment as first line of a body" fix
+    // (Editor/Indent.cpp) -- yaml's "block_mapping" is also an
+    // opener-less indentation body (DelimiterKind::Indent,
+    // openerIsFirst=false), so a comment immediately under "a:" attaches
+    // as a sibling one level short of the nested mapping it precedes,
+    // exactly like Python's "block" under "def f():". Proves the fix is
+    // grammar-generic (Node::IsExtra-driven), not Python-specific.
+    const auto mode = YamlMode();
+    Buffer     buffer("test.yaml");
+    buffer.InsertAtPoint("a:\n  # a leading comment\n  b: 1\n");
+
+    const auto [commentStart, commentEnd] = LineRange(buffer, 1);             // "  # a leading comment"
+    REQUIRE(mode.indentColumn(buffer.Text(), commentStart, commentEnd) == 2); // matches "b: 1"'s own level
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "  b: 1"
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2);
 }
 
 TEST_CASE("TomlMode indentColumn indents inside a multi-line array and aligns its closing bracket", "[Indent]") {

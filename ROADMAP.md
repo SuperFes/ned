@@ -1349,12 +1349,7 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
 
 ### Remote Execution & Server Protocol
 
-- [ ] **Design ned's own client/server protocol** (raised 2026-09-08 — unstarted, no design
-      committed yet; this entry records the shape of the problem and what's already known,
-      not a spec). The motivating idea: rather than a remote ned shipping buffers back and
-      forth, send *the operation* to where the files are and return only the result — a
-      project-wide search, a refactor, a script evaluation. Round-trip count, not bandwidth,
-      is what makes remote editing feel bad, so this is likely faster as well as simpler.
+- [ ] **Design ned's own client/server protocol** (raised 2026-09-08 — unstarted, no design committed yet; this entry records the shape of the problem and what's already known, not a spec). The motivating idea: rather than a remote ned shipping buffers back and forth, send *the operation* to where the files are and return only the result — a project-wide search, a refactor, a script evaluation. Round-trip count, not bandwidth, is what makes remote editing feel bad, so this is likely faster as well as simpler.
 
     **The load-bearing design decision — local is the degenerate case.** The protocol should be the *only* interface, with in-process execution as one transport behind it rather than a bypass around it. Two things follow. It can't rot: every local keystroke exercises the same path a remote session uses, so remote stops being a bolt-on that's broken every time it's picked back up. And it makes "where does this script run" a transport question rather than an architectural one — the same request answered in-process, by a local subprocess, or by a host across a socket.
 
@@ -1765,16 +1760,6 @@ for closed-issue history.
   class of bug -- see `ModePrewarmTest.cpp` and the dynamic-mode-race entry closed
   earlier) rather than anything about cache invalidation specifically, but not
   root-caused -- logged rather than guessed at.
-
-- **A comment as the first line of a Python body reindents to column 0.** Found by the
-  corpus addition for the indent-column work (2026-09-12), pre-existing and unrelated to
-  the imprint: a leading `# comment` under `def f():` is an extra node *before* the
-  `block`, not inside it, so the walk finds no container and `indent-buffer` moves it to
-  column 0 (the oracle records `indent … [0]` for it in `sample.py`). The fold anchor
-  now steps over such a line correctly; the indent walk still resolves it as though it
-  were outside the body. The fix is in `Indent.cpp`'s resolution, not in any source: a
-  comment whose next non-blank line is inside a container should take that container's
-  level. Same class as the "smart blank line" rescue that already exists there.
 
 As of 2026-09-08: `ctest -j8` is clean under the `default` preset, and so is the
 single-process `./build/ned_tests` (see the build/test note at the end of this file for
