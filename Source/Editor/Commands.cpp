@@ -11,6 +11,7 @@
 #include <string>
 #include <system_error>
 
+#include "AutoFormatOnSave.h"
 #include "AutoPair.h"
 #include "BlankLineCleanup.h"
 #include "BufferSave.h"
@@ -42,6 +43,7 @@
 #include "Multibuffer.h"
 #include "Org.h"
 #include "PageScroll.h"
+#include "ScopedFormat.h"
 #include "SnippetRegistry.h"
 #include "TabWidth.h"
 #include "Text/Grapheme.h"
@@ -1735,6 +1737,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 else {
                     formatFailed = true;
                 }
+            }
+            // automatic-scoped-on-save follow-up: only reached when External
+            // didn't run above (saveBufferBody itself is only ever reached at
+            // all when shouldDeferToLspFormat's own LSP tier didn't claim this
+            // save either -- see save-buffer/save-buffer-force below), so this
+            // is genuinely the Native tier of the same External -> LSP ->
+            // Native precedence format-buffer's own chain already
+            // establishes, just save-triggered and scoped rather than
+            // whole-buffer.
+            else if (!binarySafeguards && AutoFormatOnSaveEnabled() && context.mode != nullptr) {
+                ApplyScopedFormatOnSave(context.buffer, *context.mode);
             }
 
             WriteBufferToDisk(context.buffer);

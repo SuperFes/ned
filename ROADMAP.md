@@ -920,10 +920,55 @@ Real deviations from the design above, found while building it:
 
 - [ ] `ned/set-indent-rule` — capture-scoped indent override, hybrid capture-name/
       grammar-type keying, piloted on C++ first (see above).
-- [ ] Automatic scoped on-save (`ned/set-auto-format-on-save`) — also where
-      `TrimOnSave.h`/`FinalNewline.h`'s disk-only call sites would finally be retired in
-      favor of the Hygiene pass, rather than the two coexisting as they do today.
 - [ ] Huge-file streaming sweep for a whole-buffer Native reindent.
+
+**Automatic scoped on-save (2026-09-15).** Built, but with the "retire TrimOnSave.h/
+FinalNewline.h" half of the original bullet deliberately declined -- see below.
+`ned/set-auto-format-on-save` (default off, `Editor/AutoFormatOnSave.h`) runs
+`Editor/ScopedFormat.h`'s `ApplyScopedFormatOnSave` from `saveBufferBody` (Commands.cpp),
+in the same `else` branch that already gates External's own on-save formatting -- so this
+is genuinely the Native tier of the same External → LSP → Native precedence chain, just
+save-triggered and scoped rather than whole-buffer. Scope is `Buffer::
+UnsavedChangeRanges()` snapped to whole lines (merged again after snapping, since two
+non-overlapping byte ranges can land on the same or adjacent lines); Indent runs first,
+per region, by LINE index (stable regardless of what an earlier region's own reindent
+shifted in byte terms, since indent never adds/removes a line); Space/Break/Wrap/Blank and
+a scoped trim run per region after that, byte-range based since Wrap/Break CAN add/remove
+lines. Every rule kind here **declines rather than approximates** a construct straddling a
+scope boundary: a Space/Break/Wrap/Blank edit only applies when FULLY CONTAINED in the
+region's own byte range (its start never moves; its end is relocated by the net length
+delta of whichever edits actually applied, from the ones actually retained), tracked
+without needing `Text/OffsetRemap.h`'s single-changed-region model (which assumes ONE
+diff, not several scattered ones) -- containment plus a start-never-moves invariant makes
+the arithmetic exact instead of approximate. Blank-line-run collapse is not attempted
+scoped **at all** (a run beginning above the region has no honest partial answer) --
+still available via `format-buffer`'s own whole-buffer Hygiene pass. Final newline is
+scoped too: only appended when the touched region's own end is genuinely the buffer's
+last line.
+
+**Deliberately NOT done: retiring `TrimOnSave.h`/`FinalNewline.h`'s disk-only call
+sites.** Both are default-ON and apply to the WHOLE file on every save regardless of this
+new toggle; `ned/set-auto-format-on-save` is default-OFF and, by design, only ever touches
+the lines actually edited. Removing the disk-only mechanisms in favor of the new one would
+silently stop cleaning up untouched stale whitespace elsewhere in a file for every user who
+has not opted into the new toggle -- a real default-behavior regression, not a
+consolidation. This needed a judgment call the original design bullet's "coexisting" framing
+undersold, so the two mechanisms deliberately keep coexisting: `TrimOnSave.h`/
+`FinalNewline.h` still run unconditionally (whole-file, disk-only) on every save; the new
+scoped pass is additive, running against the LIVE buffer (visible immediately, not just on
+the written file) only when explicitly enabled.
+
+Live-verified in tmux: a two-function C file, only one function's body edited, saved with
+the toggle on -- the edited function's line came back correctly 4-space indented, the
+untouched function's line (identically misindented from the start) stayed exactly as
+typed. `Tests/ScopedFormatTest.cpp` (7 cases: scoped indent, scoped Space-rule containment,
+scoped trim on/off, scoped final-newline both ways, no-op with no unsaved changes, no-op
+for a huge buffer) plus two `Tests/CommandsTest.cpp` integration cases (the save-buffer
+wiring itself, and External's precedence over this new tier) — three real test bugs
+(wrong byte offset landing on a space instead of a letter; `SetSpaceAfter` where
+`SetSpaceBefore` was needed; `Buffer::FromFile` never chooses `PieceTableStorage` regardless
+of `HugeFileThreshold()`, `Buffer::FromHugeFile` is the explicit huge-loading entry point)
+caught by the tests themselves once run, not by inspection.
 
 **Mode-line indent-style indicator (2026-09-15).** Built. The design bullet's own
 "Content-detection (tabs vs. spaces majority scan)" turned out to never actually exist in
