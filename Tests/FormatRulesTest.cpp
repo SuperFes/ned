@@ -178,6 +178,168 @@ TEST_CASE("WrapPolicyByName throws for an unrecognized name", "[FormatRules]") {
     REQUIRE_THROWS_AS(WrapPolicyByName("not-a-real-policy"), std::runtime_error);
 }
 
+TEST_CASE("A capture with no case override has every field unset", "[FormatRules]") {
+    REQUIRE_FALSE(ned::editor::CaseRuleFor("format-rules-test.unconfigured").convention.has_value());
+}
+
+TEST_CASE("Setting and clearing a case rule round-trips and bumps the generation", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::CaseRuleFor;
+    using ned::editor::SetCaseConvention;
+
+    const std::size_t before = FormatRuleGeneration();
+    SetCaseConvention("format-rules-test.capture", CaseConvention::SnakeCase);
+    REQUIRE(CaseRuleFor("format-rules-test.capture").convention == CaseConvention::SnakeCase);
+    REQUIRE(FormatRuleGeneration() > before);
+
+    SetCaseConvention("format-rules-test.capture", std::nullopt);
+    REQUIRE_FALSE(CaseRuleFor("format-rules-test.capture").convention.has_value());
+}
+
+TEST_CASE("CaseConventionByName/CaseConventionName round-trip for every value", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::CaseConventionByName;
+    using ned::editor::CaseConventionName;
+    for (const CaseConvention convention :
+        {CaseConvention::None, CaseConvention::Lowercase, CaseConvention::Uppercase, CaseConvention::CamelCase,
+         CaseConvention::PascalCase, CaseConvention::SnakeCase, CaseConvention::LeadingSnakeCase,
+         CaseConvention::UpperSnakeCase, CaseConvention::ScreamingSnakeCase, CaseConvention::LispCase}) {
+        REQUIRE(CaseConventionByName(CaseConventionName(convention)) == convention);
+    }
+}
+
+TEST_CASE("CaseConventionByName throws for an unrecognized name", "[FormatRules]") {
+    REQUIRE_THROWS_AS(ned::editor::CaseConventionByName("not-a-real-convention"), std::runtime_error);
+}
+
+TEST_CASE("MatchesCaseConvention: None matches anything, including the empty string", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    REQUIRE(MatchesCaseConvention("", CaseConvention::None));
+    REQUIRE(MatchesCaseConvention("Anything_At-ALL123", CaseConvention::None));
+}
+
+TEST_CASE("MatchesCaseConvention: every other convention rejects the empty string", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    for (const CaseConvention convention :
+        {CaseConvention::Lowercase, CaseConvention::Uppercase, CaseConvention::CamelCase, CaseConvention::PascalCase,
+         CaseConvention::SnakeCase, CaseConvention::LeadingSnakeCase, CaseConvention::UpperSnakeCase,
+         CaseConvention::ScreamingSnakeCase, CaseConvention::LispCase}) {
+        REQUIRE_FALSE(MatchesCaseConvention("", convention));
+    }
+}
+
+TEST_CASE("MatchesCaseConvention: lowercase", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    REQUIRE(MatchesCaseConvention("foo", CaseConvention::Lowercase));
+    REQUIRE(MatchesCaseConvention("foo123", CaseConvention::Lowercase));
+    REQUIRE_FALSE(MatchesCaseConvention("Foo", CaseConvention::Lowercase));
+    REQUIRE_FALSE(MatchesCaseConvention("foo_bar", CaseConvention::Lowercase));
+    REQUIRE_FALSE(MatchesCaseConvention("123foo", CaseConvention::Lowercase));
+}
+
+TEST_CASE("MatchesCaseConvention: uppercase", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    REQUIRE(MatchesCaseConvention("FOO", CaseConvention::Uppercase));
+    REQUIRE(MatchesCaseConvention("FOO123", CaseConvention::Uppercase));
+    REQUIRE_FALSE(MatchesCaseConvention("foo", CaseConvention::Uppercase));
+    REQUIRE_FALSE(MatchesCaseConvention("FOO_BAR", CaseConvention::Uppercase));
+}
+
+TEST_CASE("MatchesCaseConvention: camelCase", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    REQUIRE(MatchesCaseConvention("fooBar", CaseConvention::CamelCase));
+    REQUIRE(MatchesCaseConvention("foo", CaseConvention::CamelCase)); // a bare single word is trivially valid
+    REQUIRE(MatchesCaseConvention("fooBar123", CaseConvention::CamelCase));
+    REQUIRE_FALSE(MatchesCaseConvention("FooBar", CaseConvention::CamelCase));
+    REQUIRE_FALSE(MatchesCaseConvention("foo_bar", CaseConvention::CamelCase));
+}
+
+TEST_CASE("MatchesCaseConvention: PascalCase", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    REQUIRE(MatchesCaseConvention("FooBar", CaseConvention::PascalCase));
+    REQUIRE(MatchesCaseConvention("Foo", CaseConvention::PascalCase));
+    REQUIRE_FALSE(MatchesCaseConvention("fooBar", CaseConvention::PascalCase));
+    REQUIRE_FALSE(MatchesCaseConvention("Foo_Bar", CaseConvention::PascalCase));
+}
+
+TEST_CASE("MatchesCaseConvention: snake_case", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    REQUIRE(MatchesCaseConvention("foo_bar", CaseConvention::SnakeCase));
+    REQUIRE(MatchesCaseConvention("foo", CaseConvention::SnakeCase));
+    REQUIRE(MatchesCaseConvention("foo_bar_baz123", CaseConvention::SnakeCase));
+    REQUIRE_FALSE(MatchesCaseConvention("Foo_bar", CaseConvention::SnakeCase));
+    REQUIRE_FALSE(MatchesCaseConvention("foo_Bar", CaseConvention::SnakeCase));
+    REQUIRE_FALSE(MatchesCaseConvention("FOO_BAR", CaseConvention::SnakeCase));
+    REQUIRE_FALSE(MatchesCaseConvention("_foo", CaseConvention::SnakeCase));  // leading separator
+    REQUIRE_FALSE(MatchesCaseConvention("foo_", CaseConvention::SnakeCase)); // trailing separator
+    REQUIRE_FALSE(MatchesCaseConvention("foo__bar", CaseConvention::SnakeCase)); // doubled separator
+}
+
+TEST_CASE("MatchesCaseConvention: Leading_snake_case", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    REQUIRE(MatchesCaseConvention("Foo_bar", CaseConvention::LeadingSnakeCase));
+    REQUIRE(MatchesCaseConvention("Foo", CaseConvention::LeadingSnakeCase));
+    REQUIRE_FALSE(MatchesCaseConvention("foo_bar", CaseConvention::LeadingSnakeCase));
+    REQUIRE_FALSE(MatchesCaseConvention("Foo_Bar", CaseConvention::LeadingSnakeCase));
+}
+
+TEST_CASE("MatchesCaseConvention: Upper_Snake_Case", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    REQUIRE(MatchesCaseConvention("Foo_Bar", CaseConvention::UpperSnakeCase));
+    REQUIRE(MatchesCaseConvention("Foo", CaseConvention::UpperSnakeCase));
+    REQUIRE_FALSE(MatchesCaseConvention("Foo_bar", CaseConvention::UpperSnakeCase));
+    REQUIRE_FALSE(MatchesCaseConvention("foo_Bar", CaseConvention::UpperSnakeCase));
+}
+
+TEST_CASE("MatchesCaseConvention: SCREAMING_SNAKE_CASE", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    REQUIRE(MatchesCaseConvention("FOO_BAR", CaseConvention::ScreamingSnakeCase));
+    REQUIRE(MatchesCaseConvention("FOO", CaseConvention::ScreamingSnakeCase));
+    REQUIRE(MatchesCaseConvention("MAX_VALUE_123", CaseConvention::ScreamingSnakeCase));
+    REQUIRE_FALSE(MatchesCaseConvention("foo_bar", CaseConvention::ScreamingSnakeCase));
+    REQUIRE_FALSE(MatchesCaseConvention("Foo_Bar", CaseConvention::ScreamingSnakeCase));
+}
+
+TEST_CASE("MatchesCaseConvention: lisp-case", "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::MatchesCaseConvention;
+    REQUIRE(MatchesCaseConvention("foo-bar", CaseConvention::LispCase));
+    REQUIRE(MatchesCaseConvention("foo", CaseConvention::LispCase));
+    REQUIRE_FALSE(MatchesCaseConvention("Foo-bar", CaseConvention::LispCase));
+    REQUIRE_FALSE(MatchesCaseConvention("FOO-BAR", CaseConvention::LispCase));
+    REQUIRE_FALSE(MatchesCaseConvention("foo_bar", CaseConvention::LispCase)); // wrong separator
+}
+
+TEST_CASE("CaseRuleFor(name, language) resolves the language-scoped key first, matching "
+          "every other rule kind's own precedent",
+          "[FormatRules]") {
+    using ned::editor::CaseConvention;
+    using ned::editor::CaseRuleFor;
+    using ned::editor::SetCaseConvention;
+    struct Guard {
+        ~Guard() {
+            SetCaseConvention("format-rules-test.capture", std::nullopt);
+            SetCaseConvention("cpp/format-rules-test.capture", std::nullopt);
+        }
+    } guard;
+
+    SetCaseConvention("format-rules-test.capture", CaseConvention::CamelCase);       // shared rule
+    SetCaseConvention("cpp/format-rules-test.capture", CaseConvention::SnakeCase); // cpp's own override
+
+    REQUIRE(CaseRuleFor("format-rules-test.capture", "cpp").convention == CaseConvention::SnakeCase);
+    REQUIRE(CaseRuleFor("format-rules-test.capture", "python").convention == CaseConvention::CamelCase);
+}
+
 TEST_CASE("An invalid capture name throws for both rule kinds", "[FormatRules]") {
     REQUIRE_THROWS_AS(SetSpaceBefore("", true), std::runtime_error);
     REQUIRE_THROWS_AS(SetSpaceBefore("@leading-at", true), std::runtime_error);

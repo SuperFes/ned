@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-187 bindings.
+189 bindings.
 
 ## `ned/backward-char`
 
@@ -84,6 +84,10 @@ The capture name's own overridden break-after rule, or nil if unset.
 ## `ned/format-break-before`
 
 The capture name's own overridden break-before rule, or nil if unset.
+
+## `ned/format-case-convention`
+
+The entity kind's own overridden case-convention name, or nil if unset.
 
 ## `ned/format-space-after`
 
@@ -328,6 +332,10 @@ Override whether a mandatory newline is forced after the given capture name -- t
 ## `ned/set-format-break-before`
 
 Override whether a mandatory newline is forced before the given capture name -- true/false, nil clears.
+
+## `ned/set-format-case-convention`
+
+Override the naming-case convention for an entity kind ("function", "parameter", "local", "type", "namespace", or "<language>/<entity-kind>" for a language-scoped override): "none", "lowercase", "uppercase", "camel-case", "pascal-case", "snake-case", "leading-snake-case", "upper-snake-case", "screaming-snake-case", or "lisp-case"; empty string clears. This is a CHECKER-only setting -- it is never applied automatically by format-buffer/--format, matching Docs/FormattingCapabilities.md's own stance that renaming on save would be hostile.
 
 ## `ned/set-format-command`
 

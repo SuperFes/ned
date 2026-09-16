@@ -929,6 +929,34 @@ Real deviations from the design above, found while building it:
       favor of the Hygiene pass, rather than the two coexisting as they do today.
 - [ ] Huge-file streaming sweep for a whole-buffer Native reindent.
 
+**Kinds 2-7 status (2026-09-15).** Superseding this section's own "deliberately deferred"
+line above: Space (kind 2), Break/brace-placement (kind 3), Blank lines (kind 6), and Wrap
+(kind 4) all shipped as real `Compute*Edits` passes in the Native chain, rolled out across
+every bundled language (`Docs/FormattingRules.md` has the full per-language story,
+including the real correctness hazards found live -- Go's `case`/`select` clauses, PHP's
+three-way ambiguity, cpp's trailing-comma-after-call syntax error, and more). Case (kind 7)
+landed as a CHECKER ONLY (`Editor/FormatCase.h`'s `ComputeCaseViolations`/
+`SuggestNameForConvention`), deliberately NOT wired into `format-buffer`/`--format` --
+`Docs/FormattingCapabilities.md`'s own stance ("ship the checker first... never an
+automatic reformat step") makes Case structurally different from every kind above it. Only
+five entity kinds are piloted (`function`/`parameter`/`local`/`type`/`namespace`, reusing
+`Mode::localScopes`/`Mode::symbolKind` rather than a new query-capture convention) and only
+against cpp's own real locals.janet/tags.janet output.
+
+- [ ] Case: no user-visible surfacing yet -- a `TestResultsBuffer.cpp`-shaped results
+      buffer (violations as `path:line: message` lines, each carrying a
+      `Buffer::Diagnostic`, walkable via `Editor/NextError.h`) is the closest existing
+      template and the natural next step.
+- [ ] Case: no fixer yet -- the capabilities doc's own plan is a rename-based code action
+      (`UI/BufferView/Rename.cpp`'s `ApplyLocalRename` would need its inlined
+      back-to-front rename-application loop extracted into a standalone
+      `RenameBindingOccurrences`-shaped function for a non-interactive caller to reuse).
+- [ ] Case: full entity-kind catalogue (class/struct/interface/enum/field/global/constant/
+      macro/method-vs-function split/template-parameter/...) needs new query authoring --
+      `SymbolKind::Callable`/`TypeLike` are confirmed-conflated buckets, not a full set.
+- [ ] Align (kind 5), Arrange (kind 8), Rewrite (kind 9), and File naming conventions
+      remain unstarted.
+
 ### Jupyter Notebooks
 
 Feasible, but subsystem-sized — closer in total scope to the LSP and DAP builds

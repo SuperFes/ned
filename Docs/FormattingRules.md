@@ -153,14 +153,17 @@ oversight, and is worth knowing if you `cd` into an unfamiliar repo.
 
 Top-level keys, and the fields inside each `:indent`/`:space`/`:break`/`:blank`/`:wrap`
 entry. `:indent` is keyed by a language key (`python`, `cpp`, the same key the defaults
-table above and `ned/set-lsp-command` both use). This list is held against the real schema
-on every build:
+table above and `ned/set-lsp-command` both use). `:case` has no sub-fields of its own -- its
+values are a case-convention keyword directly (see the Case section below), keyed by a bare
+entity-kind string rather than a capture name. This list is held against the real schema on
+every build:
 
 <!-- format-keys:begin -->
 
-`indent` `space` `break` `blank` `wrap` `trim-trailing-whitespace` `ensure-final-newline`
-`max-consecutive-blank-lines` `tabs` `width` `before` `after` `within` `placement`
-`collapse-empty` `collapse-simple` `min-before` `max-before` `policy` `force-trailing-comma`
+`indent` `space` `break` `blank` `wrap` `case` `trim-trailing-whitespace`
+`ensure-final-newline` `max-consecutive-blank-lines` `tabs` `width` `before` `after`
+`within` `placement` `collapse-empty` `collapse-simple` `min-before` `max-before` `policy`
+`force-trailing-comma`
 
 <!-- format-keys:end -->
 
@@ -1457,6 +1460,55 @@ capture immediately follows it should react to that, not to wherever the delimit
 be. Live-verified end to end via `ned --format` with a real project `.ned/format.janet`,
 output re-checked with a real `g++` compile (the trailing-comma hazard above was caught
 exactly this way, not by inspection). Full suite: 4751 cases (9 new).
+
+## Case, and why it's not wired into the reformat pipeline
+
+`:case` (kind 7 of `Docs/FormattingCapabilities.md`'s nine-rule-kind catalogue) is
+architecturally different from every rule kind above it, per that doc's own stance: "ship
+the checker first (a diagnostic), the fixer second (a code action). Never an automatic
+reformat step -- renaming on save would be hostile." So unlike Indent/Space/Break/Blank/
+Wrap, there is no `Compute*Edits` pass and nothing wired into `format-buffer`/`--format` at
+all -- `Editor/FormatCase.h`'s `ComputeCaseViolations` is a pure, buffer-free checker only,
+the same split `Editor/LocalScopes.h`/`Editor/RenameReview.h` already establish.
+
+It's also the first rule kind keyed by a bare **entity-kind** string
+(`"function"`/`"parameter"`/`"local"`/`"type"`/`"namespace"`, or its language-scoped form
+`"cpp/function"`) rather than a real `*-format.scm` capture name -- deliberately: rather
+than inventing a new query-capture convention, the checker reuses EXISTING infrastructure
+the capabilities doc itself points at ("we are closer to this than it looks"):
+`Mode::localScopes` (locals.janet's own `"parameter"`/`"var"` qualifiers) for
+parameters/locals, and `Mode::symbolKind` (tags.janet's `SymbolMarker::kind`) for
+functions/types/namespaces. Only five entity kinds are piloted this way -- the full
+catalogue (class/struct/interface/enum/field/global/constant/macro/method-vs-function/
+template-parameter/...) needs new query authoring this rollout doesn't attempt, since
+`SymbolKind::Callable` conflates free functions with in-class methods and
+`SymbolKind::TypeLike` conflates class/struct/type-alias/enum -- confirmed against cpp's
+own tags.janet/locals.janet, not assumed.
+
+```janet
+{:case {"function" :camel-case "parameter" :snake-case "cpp/type" :pascal-case}}
+```
+
+Ten conventions, `Docs/FormattingCapabilities.md`'s own catalogue verbatim (`:none`,
+`:lowercase`, `:uppercase`, `:camel-case`, `:pascal-case`, `:snake-case`,
+`:leading-snake-case`, `:upper-snake-case`, `:screaming-snake-case`, `:lisp-case`) --
+interpreted literally from that doc's own naming (each convention's own name IS a real
+example of itself), since there's no external ground truth to check a naming spec against
+the way a grammar/compiler fact would be checked. `MatchesCaseConvention` is the pure test;
+`ComputeCaseViolations` reports one `CaseViolation` (entity kind, name, exact name byte
+range, expected convention, and a best-effort `suggestedName`) per non-conforming name,
+skipping any entity kind with no convention configured -- the same "unconfigured is a total
+no-op" rule every other rule kind here follows. `SuggestNameForConvention` is the rename
+suggestion on its own: it tokenizes on underscore/hyphen separators and camelCase-style
+lower-to-upper transitions, then re-joins per the target convention (an acronym run like
+`"HTMLParser"` tokenizes as `["HTML", "Parser"]`, the same imprecision real naming-
+convention tooling widely accepts rather than solving dictionary-lookup word-splitting).
+
+No results-buffer command, gutter marker, or interactive fixer exists yet -- this rollout
+is the checker primitive only, unit-tested end to end against cpp's own real
+locals.janet/tags.janet output. Surfacing violations (a `TestResultsBuffer.cpp`-shaped
+results buffer is the closest existing template) and the rename-based fixer are open
+follow-ups, not oversights.
 
 ## The `--format` CLI
 
