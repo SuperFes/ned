@@ -408,9 +408,11 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
             // OR ran and failed, never left unset just because it wasn't
             // tried.
             std::optional<std::string> formatted;
+
             if (ned::editor::FormatCommand()) {
                 formatted = ned::editor::RunFormatCommand(buffer.Text());
             }
+
             if (formatted) {
                 buffer.DeleteRange(0, buffer.Size());
                 buffer.InsertAt(0, *formatted);
@@ -427,21 +429,28 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
                     const std::string languageKey = ned::editor::LanguageKeyForMode(mode);
                     const std::vector<ned::editor::FormatTextEdit> blankEdits =
                         ned::editor::ComputeBlankLineEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
+
                     if (!blankEdits.empty()) {
                         ned::editor::ApplyFormatTextEdits(buffer, blankEdits);
                     }
+
                     const std::vector<ned::editor::FormatTextEdit> wrapEdits =
                         ned::editor::ComputeWrapEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
+
                     if (!wrapEdits.empty()) {
                         ned::editor::ApplyFormatTextEdits(buffer, wrapEdits);
                     }
+
                     const std::vector<ned::editor::FormatTextEdit> braceEdits =
                         ned::editor::ComputeBracePlacementEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
+
                     if (!braceEdits.empty()) {
                         ned::editor::ApplyFormatTextEdits(buffer, braceEdits);
                     }
+
                     const std::vector<ned::editor::FormatTextEdit> spaceEdits =
                         ned::editor::ComputeSpaceEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
+
                     if (!spaceEdits.empty()) {
                         ned::editor::ApplyFormatTextEdits(buffer, spaceEdits);
                     }
@@ -454,9 +463,11 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
         }
         catch (const std::exception& e) {
             std::cerr << "ned: --format: " << pathStr << ": " << e.what() << '\n';
+
             exitCode = 1;
         }
     }
+
     return exitCode;
 }
 
