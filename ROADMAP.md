@@ -1766,20 +1766,6 @@ for closed-issue history.
   earlier) rather than anything about cache invalidation specifically, but not
   root-caused -- logged rather than guessed at.
 
-- **Intermittent shutdown hang blocked on the LSP broker socket.** Found 2026-09-13
-  during the Phase 4b live smoke runs: quitting ned a few seconds after opening a C++
-  buffer occasionally leaves "Shutting down..." parked with the MAIN thread in a
-  blocking socket receive (`/proc/<pid>/wchan` = `__skb_wait_for_more_packets` — the
-  broker handoff), one background thread in nanosleep. Roughly 1 hang in 3-4 rapid
-  open-quit cycles; the following run is clean. Ambiguously pre-existing: the pre-swap
-  binary went 4/4 clean in the same harness, but the hang correlates with quitting
-  during cold clangd indexing and with a previous instance having been hard-killed —
-  broker-side state, not the parse engine (the blocked call is the broker socket, and
-  the engine has no sockets or background threads at shutdown). Fix shape: bound the
-  shutdown-side broker handshake read with the same timeout discipline the
-  connect-side already got (see the broker connect-hang fix), and re-run the A/B with
-  the confound controlled (same file, same index state, both binaries).
-
 - **QueryMatcher scope: two upstream constructs the census excludes, now with real
   files attached.** Found at the 2026-09-13 grammar admissions: a multi-pattern
   group nested inside a pattern (`tree-sitter-cmake`'s highlights.scm, the
