@@ -918,8 +918,6 @@ Real deviations from the design above, found while building it:
   `RequestLspFormatThenSaveBuffer` path instead — that mechanism is the one to mirror when
   LSP joins `format-buffer`'s own chain.
 
-- [ ] Huge-file streaming sweep for a whole-buffer Native reindent.
-
 **`ned/set-indent-rule` (2026-09-15).** Built, but keyed by GRAMMAR NODE TYPE only, not
 the "hybrid capture-name/grammar-type keying" this section's own design sketch called
 for -- both of the sketch's own worked examples (a C++ access specifier's -2 offset, a
@@ -952,6 +950,51 @@ itself, the same lesson this rollout has learned repeatedly. Live-verified in tm
 member lines around them, and the mode line's own indent-style indicator immediately
 flagged the resulting file as "≠" its configured style (confirming the live buffer content
 genuinely diverged, independent of the reindent's own report).
+
+**Huge-file streaming sweep (2026-09-15).** Built for the headless CLI
+(`ned --format --force-huge`); the interactive `format-buffer`-on-a-huge-buffer half (a y/n
+confirmation mirroring `ConfirmOverwriteSave`'s shape) is still open -- see below.
+`Editor/HugeFileReindent.h`'s `HugeReindentStream` is a from-scratch, purely LEXICAL
+engine (no tree, no parse) -- a real per-language reindent needs a full parse, which
+cannot run over a multi-GB document at all, and even `IndentRegion`'s own huge-file
+WINDOWING (bounded, re-parsed per call) would cost one re-parse PER LINE if driven across
+a whole huge file rather than a viewport/single-edit's worth. Streamed via
+`ITextStorage::ForEachChunk` (never materializes the document), tracking bracket depth
+over `()`/`{}`/`[]` only (not the full per-language Imprint vocabulary -- sigil-prefixed
+brackets, keyword-delimited bodies -- a documented v1 scope cut, sufficient for the
+overwhelming majority of real bracket-based code) with generic `"`/`'` string detection
+and `Mode::lineCommentPrefix`-aware line comments (block comments are NOT recognized at
+all -- a bracket-like character inside one affects the counter same as real code would).
+One easy-to-get-wrong interaction resolved by the state machine's own ordering rather
+than special-cased: line-comment detection is checked BEFORE string detection and returns
+immediately, so an ordinary English contraction inside a real `// don't do this` comment
+is completely safe from the generic-quote-as-string-opener rule -- only bare, uncommented
+code containing a stray unmatched quote character is exposed at all, confirmed by its own
+regression test rather than assumed. All-or-nothing: depth going negative (an extra
+closer) or never returning to exactly 0 by end of input aborts the WHOLE sweep with the
+real file completely untouched (a sibling `.ned-tmp`, atomically renamed over the original
+only on success -- a deliberately SIMPLER sibling-temp-then-rename than
+`Text/FilePreservation.h`'s own symlink/hardlink/xattr-preserving dance, a documented cut
+for this one CLI-only entry point). `--force-huge` is required to opt in at all; without
+it `--format` skips a huge file with a clear message rather than silently attempting the
+ordinary whole-buffer chain (which would materialize the entire file as one string
+repeatedly). Live-verified against a REAL 1.13 GB synthetic C++ file (400,000 statements,
+randomized pre-existing indentation, comments with contractions, strings containing brace
+characters) -- reindented correctly end to end in ~107 seconds, 12,000,030 lines changed,
+spot-checked nesting up to 8 levels deep and the file's own start/end both correctly
+closing back to depth 0. `Tests/HugeFileReindentTest.cpp` (16 cases) pins the algorithm
+directly, including chunk-boundary insensitivity (the whole test text fed one byte at a
+time produces byte-identical output to feeding it as one chunk -- the exact guarantee
+`ITextStorage::ForEachChunk`'s own contract demands) and every failure mode (extra closer,
+unclosed opener, unterminated string).
+
+- [ ] Huge-file streaming sweep: the interactive half -- `format-buffer` invoked on a huge
+      buffer still has no path to this engine at all (today's Native fallback runs
+      `IndentBuffer`'s own per-line windowed re-parse, which the design above specifically
+      calls out as too slow for a whole huge document). Needs a y/n confirmation
+      (`ConfirmOverwriteSave`'s own shape) since, unlike the CLI's explicit `--force-huge`,
+      an interactive `format-buffer` invocation gives no other signal the user knows this
+      is the lexical engine rather than the real per-language one.
 
 **Automatic scoped on-save (2026-09-15).** Built, but with the "retire TrimOnSave.h/
 FinalNewline.h" half of the original bullet deliberately declined -- see below.
