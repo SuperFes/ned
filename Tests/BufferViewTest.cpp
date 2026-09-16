@@ -53,6 +53,7 @@
 #include "Editor/Vim/GlobalMarks.h"
 #include "Editor/Vim/Settings.h"
 #include "Editor/WhichKeySettings.h"
+#include "Editor/WrapIndent.h"
 #include "Editor/WrapOverrides.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
@@ -12172,6 +12173,80 @@ TEST_CASE("A wrap-enabled buffer hard-breaks a single token wider than the whole
     const std::string secondRow = ContentRowText(screen, 1, 15 - gutter, 1);
     REQUIRE(firstRow.find('x') != std::string::npos);
     REQUIRE(secondRow.find('x') != std::string::npos);
+}
+
+// wrap-indent follow-up: soft-wrapped continuation rows now hang under a
+// line's own leading whitespace by default, the on-screen counterpart to
+// Fill.cpp's own list-marker-aware fill-paragraph. ned::editor::WrapIndent
+// is process-wide state; every test that touches it must restore the
+// default, guaranteed via RAII -- mirrors FinalNewlineTest.cpp's own
+// FinalNewlineGuard exactly.
+struct WrapIndentGuard {
+    ~WrapIndentGuard() {
+        ned::editor::SetWrapIndent(true);
+    }
+};
+
+TEST_CASE("A wrap-enabled buffer hangs a continuation row under its own leading whitespace", "[BufferView]") {
+    const WrapIndentGuard guard;
+    Fixture                fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint("    aaaa bbbb cccc");
+    ned::ui::BufferView view = fixture.View();
+    const int           gutter = GutterWidth(1);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+
+    ned::ui::Screen screen = ned::ui::Screen(gutter + 10, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    // First row: the line's own real leading whitespace, unaffected.
+    REQUIRE(ContentRowText(screen, 0, 10, 1).starts_with("    aaaa "));
+    // Continuation row: "bbbb" hangs 4 columns in, matching the leading
+    // whitespace above it, instead of starting flush at column 0.
+    REQUIRE(ContentRowText(screen, 1, 10, 1).starts_with("    bbbb"));
+}
+
+TEST_CASE("ned/set-wrap-indent false restores flush-left continuation rows", "[BufferView]") {
+    const WrapIndentGuard guard;
+    ned::editor::SetWrapIndent(false);
+    Fixture                fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint("    aaaa bbbb cccc");
+    ned::ui::BufferView view = fixture.View();
+    const int           gutter = GutterWidth(1);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+
+    ned::ui::Screen screen = ned::ui::Screen(gutter + 10, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    REQUIRE(ContentRowText(screen, 1, 10, 1).starts_with("bbbb"));
+}
+
+TEST_CASE("A mouse click in a continuation row's hang-indent region clamps to that row's own start",
+          "[BufferView]") {
+    // Same shape as "A mouse click on a wrapped continuation row resolves
+    // to the correct byte offset" below, but landing IN the reserved hang
+    // region itself (before "bbbb" even starts) -- must clamp to the
+    // continuation row's own first byte, the same way a click inside the
+    // gutter already clamps to column 0.
+    const WrapIndentGuard guard;
+    Fixture                fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint("    aaaa bbbb cccc");
+    ned::ui::BufferView view = fixture.View();
+    const int           gutter = GutterWidth(1);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(gutter + 10, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = gutter + 9, .y_min = 0, .y_max = 4});
+    view.Paint(canvas); // establish the wrap-segment layout the click below expects
+
+    const std::size_t bByteOffset = fixture.buffer.Content().Substring(0, fixture.buffer.Content().ByteLength()).find('b');
+    // Column 1 of row 1 -- inside the 4-column hang, before "bbbb" even starts.
+    view.OnEvent(MousePress(gutter + 1, 1));
+    view.OnEvent(MouseRelease(gutter + 1, 1));
+    REQUIRE(fixture.buffer.Point() == bByteOffset); // clamps to the continuation row's own start (right at "bbbb"'s own 'b')
 }
 
 TEST_CASE("A non-wrap buffer's fold-off gutter shows a line number on every row (no wrapping happening)",

@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-195 bindings.
+196 bindings.
 
 ## `ned/backward-char`
 
@@ -736,6 +736,10 @@ Map a file extension (with or without a leading '.') to whether BufferView shoul
 ## `ned/set-wrap-for-filename`
 
 Map an exact, full filename to a wrap-lines override, the same way ned/set-wrap-for-extension does for an extension -- checked first, before any extension mapping.
+
+## `ned/set-wrap-indent`
+
+Enable/disable hanging a soft-wrapped line's continuation rows under its own leading whitespace, rather than restarting flush at the gutter's own left edge (default true). Purely a rendering choice -- no effect on buffer content, undo, or a hard-wrapped paragraph's own fill-paragraph indentation.
 
 ## `ned/snippet-triggers`
 

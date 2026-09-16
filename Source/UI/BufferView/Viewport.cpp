@@ -635,17 +635,25 @@ std::size_t Viewport::ByteOffsetForPoint(Point at) const {
     // range being searched narrows to this one row.
     std::size_t segStart = lineStart;
     std::size_t segEnd   = lineEnd;
+    std::size_t clickColumn = column;
     if (EffectiveWrapLines()) {
         const int                      fullWidth      = std::max(1, host_.size().width - static_cast<int>(gutterWidth));
         const std::vector<WrapSegment> segments       = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
         const std::size_t              clampedSegment = std::min(segmentInLine, segments.size() - 1);
         segStart                                      = segments[clampedSegment].startByte;
         segEnd                                        = segments[clampedSegment].endByte;
+        // wrap-indent follow-up: a continuation row's own content starts
+        // continuationIndent columns to the right of segStart -- a click
+        // landing in that reserved hang region (before the real text even
+        // begins) clamps to segStart, the same way a click in the gutter
+        // itself already clamps to column 0 above.
+        const auto continuationIndent = static_cast<std::size_t>(segments[clampedSegment].continuationIndent);
+        clickColumn                   = (column > continuationIndent) ? column - continuationIndent : 0;
     }
 
     const std::vector<RenderedInlayHint> lineHints =
         host_.inlayHintsForLine ? host_.inlayHintsForLine(lineStart, lineEnd) : std::vector<RenderedInlayHint>{};
-    return ByteOffsetForColumnInLine(content, segStart, segEnd, column, editor::TabWidth(), lineLinks, lineHints);
+    return ByteOffsetForColumnInLine(content, segStart, segEnd, clickColumn, editor::TabWidth(), lineLinks, lineHints);
 }
 
 const std::vector<std::pair<std::size_t, std::size_t>>& Viewport::HiddenLineRanges() const {

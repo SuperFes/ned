@@ -2005,7 +2005,14 @@ void BufferView::Paint(Canvas paneCanvas) {
                     offset += decoded.byteLength;
                 }
             }
-            int col = static_cast<int>(gutter.totalWidth);
+            // wrap-indent follow-up: currentSegment.continuationIndent is 0
+            // for a line's first row always, and for every row when
+            // Editor::WrapIndent() is off -- the cells between here and
+            // that offset were already washed blank by this row's own
+            // top-of-row blanking pass, so reserving them just means
+            // starting the real content further right, not drawing
+            // anything extra.
+            int col = static_cast<int>(gutter.totalWidth) + currentSegment.continuationIndent;
             while (offset < currentSegment.endByte && col < c.size().width) {
                 if (EmitCollapsedLink(c, row, col, offset, lineState)) {
                     continue; // the link stood in for these bytes
@@ -2734,16 +2741,18 @@ std::optional<Point> BufferView::CursorPosition() const {
     // segment's own boundary belongs to the NEXT segment instead (the
     // start of a new visual row), matching how a real editor's cursor
     // behaves at a wrapped line break.
-    std::size_t rowWithinLine = 0;
-    std::size_t segmentStart  = lineStart;
+    std::size_t rowWithinLine     = 0;
+    std::size_t segmentStart      = lineStart;
+    int         continuationIndent = 0; // wrap-indent follow-up: 0 unless point lands on an actual continuation row
     if (viewport_.EffectiveWrapLines() && sizeIsKnown) {
         const int                      fullWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
         const std::vector<WrapSegment> segments  = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
         for (std::size_t i = 0; i < segments.size(); ++i) {
             const bool isLast = (i + 1 == segments.size());
             if (point >= segments[i].startByte && (point < segments[i].endByte || (isLast && point == segments[i].endByte))) {
-                rowWithinLine = i;
-                segmentStart  = segments[i].startByte;
+                rowWithinLine      = i;
+                segmentStart       = segments[i].startByte;
+                continuationIndent = segments[i].continuationIndent;
                 break;
             }
         }
@@ -2777,7 +2786,8 @@ std::optional<Point> BufferView::CursorPosition() const {
         return std::nullopt; // scrolled off the left edge -- shouldn't happen once viewport_.LeftColumn() is correct, but a safe guard
     }
 
-    const std::size_t col = gutterWidth + static_cast<std::size_t>(*visualCol) - viewport_.LeftColumn();
+    const std::size_t col =
+        gutterWidth + static_cast<std::size_t>(continuationIndent) + static_cast<std::size_t>(*visualCol) - viewport_.LeftColumn();
     if (sizeIsKnown && col >= static_cast<std::size_t>(sizeNow.width)) {
         return std::nullopt; // scrolled off horizontally to the right
     }
