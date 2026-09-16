@@ -126,6 +126,13 @@ class BufferView : public Widget {
     BufferView(const BufferView&)            = delete;
     BufferView& operator=(const BufferView&) = delete;
 
+    // search-everywhere-symbols-and-text follow-up: the one thing this
+    // needs beyond the implicit destructor -- flips searchEverywhereAlive_
+    // so a still-running detached background text-search thread's
+    // Post-marshaled callback (which cannot know otherwise) knows not to
+    // touch a destroyed *this.
+    ~BufferView();
+
     // jump-back-stack follow-up: public so a test can assert the eviction
     // cap without reaching into jumpBackStack_ itself -- same "expose a
     // small, honest introspection point" precedent as MinimapActive()/
@@ -2330,6 +2337,23 @@ class BufferView : public Widget {
     void HandleSearchEverywhereKey(const editor::KeyChord& chord);
     void RefreshSearchEverywhereStatus();
     void CommitSearchEverywhereCandidate(const editor::SearchEverywhereCandidate& candidate);
+
+    // search-everywhere-symbols-and-text follow-up: the two async top-up
+    // categories. Armed from HandleSearchEverywhereKey's own edit branch,
+    // alongside the already-synchronous rerank; each Maybe* both arms (on a
+    // qualifying query) and clears its own previously-appended rows (on a
+    // query too short/empty to qualify) via the shared erase helper.
+    void MaybeArmSearchEverywhereWorkspaceSymbols();
+    void RequestSearchEverywhereWorkspaceSymbols();
+    void MaybeArmSearchEverywhereTextSearch();
+    void RequestSearchEverywhereTextSearch();
+    void ApplySearchEverywhereTextMatches(bufferview::RequestSlot::Token          token,
+                                          const std::vector<editor::SearchMatch>& matches);
+    // Removes only this session's *async* rows of `kind` (remoteLocation
+    // set) -- a Symbol row from the synchronous in-buffer pass never has
+    // remoteLocation set, so this can't touch those even though they share
+    // a kind with the project-wide ones.
+    void EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereKind kind);
 
     void HandleExecuteCommandKey(const editor::KeyChord& chord);
 
@@ -4652,6 +4676,24 @@ class BufferView : public Widget {
     std::vector<editor::SearchEverywhereResult>       searchEverywhereRanked_;
     std::size_t                                       searchEverywhereSelection_ = 0;
     std::optional<editor::SearchEverywhereKind>       searchEverywhereKindFilter_;
+
+    // search-everywhere-symbols-and-text follow-up: the two async top-up
+    // categories, each its own DeadlineTimer/RequestSlot pair --
+    // RequestWorkspaceSymbolsForCurrentQuery's own precedent (never shared
+    // between features, so two simultaneously in-flight requests can't
+    // shadow each other's staleness check).
+    DeadlineTimer            searchEverywhereWorkspaceSymbolTimer_;
+    bufferview::RequestSlot  searchEverywhereWorkspaceSymbolRequest_;
+    DeadlineTimer            searchEverywhereTextSearchTimer_;
+    bufferview::RequestSlot  searchEverywhereTextSearchRequest_;
+    // Copied into the detached background text-search thread and checked
+    // before that thread's Post-marshaled callback touches `this` -- the
+    // one new safety primitive this phase needs, since (unlike every other
+    // async source in this codebase) that thread's own work
+    // (Editor::SearchDirectory) has no stop-token to honor and will run to
+    // completion regardless of whether this BufferView still exists by
+    // then. See ~BufferView().
+    std::shared_ptr<std::atomic<bool>> searchEverywhereAlive_ = std::make_shared<std::atomic<bool>>(true);
 
     bufferview::EditorContext context_;
 

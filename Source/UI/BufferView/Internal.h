@@ -89,6 +89,7 @@
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/RenameReviewSettings.h"
 #include "Editor/SearchEverywhereGestureSettings.h"
+#include "Editor/SearchEverywhereTextSearchSettings.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
@@ -385,6 +386,10 @@ inline std::string SearchEverywhereKindGlyph(editor::SearchEverywhereKind kind) 
             return "file";
         case editor::SearchEverywhereKind::Buffer:
             return "buf";
+        case editor::SearchEverywhereKind::Symbol:
+            return "sym";
+        case editor::SearchEverywhereKind::TextMatch:
+            return "text";
     }
     return "";
 }
@@ -408,6 +413,10 @@ inline std::string SearchEverywhereTitle(std::optional<editor::SearchEverywhereK
             return "Search Everywhere -- Files";
         case editor::SearchEverywhereKind::Buffer:
             return "Search Everywhere -- Buffers";
+        case editor::SearchEverywhereKind::Symbol:
+            return "Search Everywhere -- Symbols";
+        case editor::SearchEverywhereKind::TextMatch:
+            return "Search Everywhere -- Text";
     }
     return "Search Everywhere";
 }
@@ -429,10 +438,43 @@ NextSearchEverywhereKindFilter(std::optional<editor::SearchEverywhereKind> curre
         case editor::SearchEverywhereKind::File:
             return editor::SearchEverywhereKind::Buffer;
         case editor::SearchEverywhereKind::Buffer:
+            return editor::SearchEverywhereKind::Symbol;
+        case editor::SearchEverywhereKind::Symbol:
+            return editor::SearchEverywhereKind::TextMatch;
+        case editor::SearchEverywhereKind::TextMatch:
             return std::nullopt;
     }
     return std::nullopt;
 }
+
+// search-everywhere-symbols-and-text follow-up: an in-buffer Symbol
+// candidate's `detail` column -- what kind of symbol this is, since there's
+// no file path worth showing for something already in the current buffer.
+inline std::string SearchEverywhereSymbolKindLabel(editor::SymbolKind kind) {
+    switch (kind) {
+        case editor::SymbolKind::Callable:
+            return "function";
+        case editor::SymbolKind::TypeLike:
+            return "type";
+        case editor::SymbolKind::Data:
+            return "data";
+        case editor::SymbolKind::Namespace:
+            return "namespace";
+        case editor::SymbolKind::Block:
+            return "block";
+    }
+    return "";
+}
+
+// search-everywhere-symbols-and-text follow-up: the text-search category's
+// own thresholds -- no server-side cost control the way LSP's
+// workspace/symbol has, so this needs its own, stricter minimum query
+// length before it's worth spending a background full-corpus scan on.
+// kMaxSearchEverywhereTextMatches bounds how many rows one batch of results
+// ever appends, the same class of cap ImportFixupSettings.h's own
+// max-files bound is for a different project-wide scan.
+constexpr std::size_t kMinSearchEverywhereTextQueryLength = 3;
+constexpr std::size_t kMaxSearchEverywhereTextMatches     = 200;
 
 // search-everywhere follow-up: BuildFuzzyCandidatePopupModel's own shape
 // (title, ComputeCandidatePopupWindow, the "N more above/below" synthetic

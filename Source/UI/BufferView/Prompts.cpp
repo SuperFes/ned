@@ -8,6 +8,10 @@
 
 #include "UI/BufferView/Internal.h"
 
+#include <thread>
+
+#include <re2/re2.h>
+
 namespace ned::ui {
 
 // The file-local helpers these definitions call live in BufferView/Internal.h
@@ -1984,6 +1988,13 @@ void BufferView::EndInteractiveSession() {
     searchEverywhereRanked_.clear();
     searchEverywhereSelection_ = 0;
     searchEverywhereKindFilter_.reset();
+    // search-everywhere-symbols-and-text follow-up: belt-and-suspenders with
+    // the inputMode_ check each async handler already does on its own --
+    // stops a still-pending debounce from ever firing into an ended session.
+    searchEverywhereWorkspaceSymbolTimer_.Cancel();
+    searchEverywhereWorkspaceSymbolRequest_.Cancel();
+    searchEverywhereTextSearchTimer_.Cancel();
+    searchEverywhereTextSearchRequest_.Cancel();
     // The cancel path re-applies this snapshot *before* calling here; the
     // commit path applies the selected theme instead and lets this drop.
     themeBeforePreview_.reset();
@@ -3873,6 +3884,29 @@ std::vector<editor::SearchEverywhereCandidate> BufferView::BuildSearchEverywhere
         }
         candidates.push_back({.kind = editor::SearchEverywhereKind::Buffer, .label = buffer->Name(), .detail = detail});
     }
+    // search-everywhere-symbols-and-text follow-up: the current buffer's own
+    // symbols, gathered once here the same way -- ClassFileSync.cpp's own
+    // "no tags query for this language" / huge-buffer guard, since an
+    // uncached whole-document symbolKind() call is only safe as a one-shot
+    // action, not something to redo per keystroke or per frame.
+    {
+        text::Buffer& buffer = activeBuffer_.Get();
+        if (mode_.symbolKind && !buffer.Content().IsHuge()) {
+            const std::string text = buffer.Content().Substring(0, buffer.Content().ByteLength());
+            try {
+                for (const editor::SymbolMarker& marker : mode_.symbolKind(text)) {
+                    candidates.push_back({.kind             = editor::SearchEverywhereKind::Symbol,
+                                          .label            = marker.name,
+                                          .detail           = SearchEverywhereSymbolKindLabel(marker.kind),
+                                          .localByteOffset = marker.nameStartByte});
+                }
+            }
+            catch (const std::exception&) {
+                // A query that failed to run is "no symbols", not an error
+                // to report -- ResolveTopLevelTypeInBuffer's own precedent.
+            }
+        }
+    }
 
     return candidates;
 }
@@ -3935,7 +3969,174 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
                 ReportError("Internal error resolving the selected buffer.");
             }
             return;
+        case editor::SearchEverywhereKind::Symbol:
+            if (candidate.localByteOffset) {
+                PushJumpMark();
+                activeBuffer_.Get().SetPoint(*candidate.localByteOffset);
+                viewport_.ScrollToShowPoint();
+                statusMessage_.clear();
+            }
+            else if (candidate.remoteLocation) {
+                JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
+                    .path     = candidate.remoteLocation->path,
+                    .position = {.line = candidate.remoteLocation->line, .character = candidate.remoteLocation->character}});
+            }
+            else {
+                ReportError("Internal error resolving the selected symbol.");
+            }
+            return;
+        case editor::SearchEverywhereKind::TextMatch:
+            if (candidate.remoteLocation) {
+                JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
+                    .path     = candidate.remoteLocation->path,
+                    .position = {.line = candidate.remoteLocation->line, .character = candidate.remoteLocation->character}});
+            }
+            else {
+                ReportError("Internal error resolving the selected match.");
+            }
+            return;
     }
+}
+
+void BufferView::EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereKind kind) {
+    std::erase_if(searchEverywhereCandidates_, [kind](const editor::SearchEverywhereCandidate& candidate) {
+        return candidate.kind == kind && candidate.remoteLocation.has_value();
+    });
+}
+
+void BufferView::MaybeArmSearchEverywhereWorkspaceSymbols() {
+    if (!eventLoop_ || !lspManager_) {
+        return;
+    }
+    if (prompt_->Text().empty()) {
+        // Too short to be worth asking a server about -- drop whatever a
+        // longer query already turned up rather than leave it lingering.
+        EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereKind::Symbol);
+        searchEverywhereWorkspaceSymbolRequest_.Cancel();
+        return;
+    }
+    searchEverywhereWorkspaceSymbolTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::CompletionDebounceMs()),
+                                              [this] { RequestSearchEverywhereWorkspaceSymbols(); });
+}
+
+void BufferView::RequestSearchEverywhereWorkspaceSymbols() {
+    // MaybeScheduleAutoCompletion/RequestWorkspaceSymbolsForCurrentQuery's
+    // own guard shape: the debounce timer that leads here doesn't get
+    // cancelled when the session ends, so this re-checks first.
+    if (inputMode_ != InputMode::SearchEverywhere || !lspManager_) {
+        return;
+    }
+    text::Buffer&                        buffer    = activeBuffer_.Get();
+    text::Buffer* const                  bufferPtr = &buffer;
+    const bufferview::RequestSlot::Token token     = searchEverywhereWorkspaceSymbolRequest_.Begin();
+    const std::string                    serverKey = ResolvedLspServerKey(buffer.Point());
+    const std::string                    query     = prompt_->Text();
+
+    lspManager_->RequestWorkspaceSymbols(
+        buffer, query,
+        [this, bufferPtr, token](std::vector<editor::lsp::Manager::SymbolResult> symbols) {
+            if (searchEverywhereWorkspaceSymbolRequest_.IsStale(token)) {
+                return; // superseded by a newer request
+            }
+            if (inputMode_ != InputMode::SearchEverywhere || bufferPtr != &activeBuffer_.Get()) {
+                return; // session ended, or buffer switched, while this was in flight
+            }
+            EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereKind::Symbol);
+            for (const editor::lsp::Manager::SymbolResult& symbol : symbols) {
+                searchEverywhereCandidates_.push_back(
+                    {.kind   = editor::SearchEverywhereKind::Symbol,
+                     .label  = symbol.name,
+                     .detail = symbol.containerName.empty() ? symbol.path.filename().string() : symbol.containerName,
+                     .remoteLocation =
+                         editor::SearchEverywhereLocation{symbol.path, symbol.position.line, symbol.position.character}});
+            }
+            RefreshSearchEverywhereStatus();
+        },
+        serverKey);
+}
+
+void BufferView::MaybeArmSearchEverywhereTextSearch() {
+    if (!editor::SearchEverywhereTextSearchEnabled() || !eventLoop_) {
+        return;
+    }
+    if (prompt_->Text().size() < kMinSearchEverywhereTextQueryLength) {
+        EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereKind::TextMatch);
+        searchEverywhereTextSearchRequest_.Cancel();
+        return;
+    }
+    searchEverywhereTextSearchTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::CompletionDebounceMs()),
+                                         [this] { RequestSearchEverywhereTextSearch(); });
+}
+
+void BufferView::RequestSearchEverywhereTextSearch() {
+    if (inputMode_ != InputMode::SearchEverywhere) {
+        return;
+    }
+    const bufferview::RequestSlot::Token token = searchEverywhereTextSearchRequest_.Begin();
+    const std::filesystem::path          root  = editor::ProjectRoot();
+    // A literal substring, not a user-authored regex -- isearch's own
+    // literal-only convention. SearchDirectory still takes RE2 syntax, so
+    // this quotes every metacharacter in the typed query first.
+    const std::string pattern = RE2::QuoteMeta(prompt_->Text());
+    EventLoop*         loop   = eventLoop_;
+    // Copied, not captured by reference: this outlives the arming call, and
+    // needs its own stable lifetime independent of *this.
+    std::shared_ptr<std::atomic<bool>> alive = searchEverywhereAlive_;
+    BufferView*                        self  = this;
+
+    // Deliberately detached, not joined anywhere: Editor::SearchDirectory
+    // has no stop-token to honor, so nothing would be gained by keeping a
+    // handle to this thread except the ability to block on it -- and
+    // blocking a tab-close on a full-corpus regex scan finishing is a much
+    // worse tradeoff than the alive-flag/stale-token checks below already
+    // cover. The disk-only overload is deliberate too: the live-buffer-aware
+    // one requires its BufferList snapshot to happen on the *calling*
+    // thread, which would be this background thread here, not the main
+    // thread BufferList is otherwise never touched from.
+    std::thread([loop, alive, self, token, root, pattern] {
+        std::vector<editor::SearchMatch> matches;
+        try {
+            matches = editor::SearchDirectory(root, pattern);
+        }
+        catch (const editor::SearchPatternError&) {
+            return; // can't happen -- RE2::QuoteMeta always produces a valid literal pattern
+        }
+        if (matches.size() > kMaxSearchEverywhereTextMatches) {
+            matches.resize(kMaxSearchEverywhereTextMatches);
+        }
+        loop->Post([self, alive, token, matches = std::move(matches)] {
+            if (!*alive) {
+                return; // *self was destroyed while this search was running
+            }
+            self->ApplySearchEverywhereTextMatches(token, matches);
+        });
+    }).detach();
+}
+
+void BufferView::ApplySearchEverywhereTextMatches(bufferview::RequestSlot::Token                token,
+                                                  const std::vector<editor::SearchMatch>& matches) {
+    if (searchEverywhereTextSearchRequest_.IsStale(token)) {
+        return; // superseded by a newer search
+    }
+    if (inputMode_ != InputMode::SearchEverywhere) {
+        return; // session ended while this was in flight
+    }
+    EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereKind::TextMatch);
+    for (const editor::SearchMatch& match : matches) {
+        std::string label = match.lineText;
+        // Trim leading/trailing whitespace so indentation doesn't eat into
+        // the row's own limited width for no visual benefit.
+        const std::size_t start = label.find_first_not_of(" \t");
+        const std::size_t end   = label.find_last_not_of(" \t");
+        label                   = start == std::string::npos ? std::string{} : label.substr(start, end - start + 1);
+        searchEverywhereCandidates_.push_back(
+            {.kind   = editor::SearchEverywhereKind::TextMatch,
+             .label  = label,
+             .detail = match.file.filename().string() + ":" + std::to_string(match.lineNumber),
+             // SearchMatch::lineNumber is 1-indexed; Position/SearchEverywhereLocation are 0-indexed.
+             .remoteLocation = editor::SearchEverywhereLocation{match.file, match.lineNumber - 1, 0}});
+    }
+    RefreshSearchEverywhereStatus();
 }
 
 void BufferView::HandleSearchEverywhereKey(const editor::KeyChord& chord) {
@@ -3977,6 +4178,8 @@ void BufferView::HandleSearchEverywhereKey(const editor::KeyChord& chord) {
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         searchEverywhereSelection_ = 0;
         RefreshSearchEverywhereStatus();
+        MaybeArmSearchEverywhereWorkspaceSymbols();
+        MaybeArmSearchEverywhereTextSearch();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }

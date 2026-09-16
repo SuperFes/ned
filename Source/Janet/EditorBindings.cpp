@@ -64,6 +64,7 @@
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/RenameReviewSettings.h"
 #include "Editor/SearchEverywhereGestureSettings.h"
+#include "Editor/SearchEverywhereTextSearchSettings.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
@@ -558,6 +559,10 @@ namespace {
 
     void NedSetSearchEverywhereGesture(bool enabled) {
         editor::SetSearchEverywhereGestureEnabled(enabled);
+    }
+
+    void NedSetSearchEverywhereTextSearch(bool enabled) {
+        editor::SetSearchEverywhereTextSearchEnabled(enabled);
     }
 
     void NedSetClassFileSync(bool enabled) {
@@ -1891,6 +1896,12 @@ void InstallEditorBindings(Environment& env) {
         "under the Kitty keyboard protocol, which Notcurses negotiates on its own with no way for ned to check in "
         "advance whether a given terminal/multiplexer supports it; turn this off if an untested one produces a "
         "false trigger.");
+    env.Register<&NedSetSearchEverywhereTextSearch>(
+        "ned", "set-search-everywhere-text-search",
+        "Enable/disable search-everywhere's Text category (default true) -- a debounced, backgrounded full-corpus "
+        "regex-escaped-literal scan of the project. This is the one part of search-everywhere backed by new "
+        "background-threading code rather than reuse of an already-shipped subsystem; the Actions/Macros/Files/"
+        "Buffers/Symbols categories are unaffected by this setting.");
     env.Register<&NedSetImportFixup>(
         "ned", "set-import-fixup",
         "Enable/disable rewriting imports when a file is renamed or moved (default true) -- both the imports in "

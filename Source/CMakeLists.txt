@@ -84,6 +84,7 @@ add_library(ned_lib STATIC
         Editor/ImportFixupSettings.cpp
         Editor/RenameReviewSettings.cpp
         Editor/SearchEverywhereGestureSettings.cpp
+        Editor/SearchEverywhereTextSearchSettings.cpp
         Editor/ClassFileSyncSettings.cpp
         Editor/CodeFoldSettings.cpp
         Editor/StickyScroll.cpp
