@@ -872,6 +872,14 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         return ran;
     }
 
+    // format-buffer-lsp-fold-in follow-up: format-buffer's own equivalent,
+    // set instead of running its synchronous Native fallback -- see
+    // CommandContext::deferFormatToLsp's own comment.
+    if (context.deferFormatToLsp) {
+        RequestLspFormatBuffer();
+        return ran;
+    }
+
     // structural-selection-expansion follow-up: any dispatched command other
     // than expand-selection/shrink-selection themselves invalidates the
     // expansion-history stack -- this is the one choke point every dispatch

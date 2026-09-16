@@ -776,6 +776,21 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             activeBuffer_.Set(editor::testrun::RebuildTestResultsBuffer(bufferList_, *outcome));
             return;
         }
+        // case-kind follow-up: synchronous, no subprocess -- run the scan and
+        // switch to the refreshed results buffer in one step.
+        case editor::InteractiveRequest::CheckFormatConventions: {
+            const std::vector<editor::ProjectCaseViolation> violations =
+                editor::CollectProjectCaseViolations(editor::ProjectRoot(), &bufferList_);
+            editor::SetLastResultsBuffer(editor::CaseViolationsBufferName());
+            activeBuffer_.Set(editor::RebuildCaseViolationsBuffer(bufferList_, violations));
+            statusMessage_ = violations.empty() ? "No case-convention violations found."
+                                                : std::to_string(violations.size()) + " case-convention violation" +
+                                                      (violations.size() == 1 ? "" : "s") + " found.";
+            return;
+        }
+        case editor::InteractiveRequest::FixCaseViolationAtPoint:
+            RequestFixCaseViolationAtPoint();
+            return;
         case editor::InteractiveRequest::RunTestAtPoint: {
             if (!TestRunPreconditionsMet()) {
                 return;

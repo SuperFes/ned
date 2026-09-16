@@ -115,6 +115,7 @@ add_library(ned_lib STATIC
         Editor/TabWidth.cpp
         Editor/IndentStyle.cpp
         Editor/IndentDefaults.cpp
+        Editor/IndentDetect.cpp
         Editor/Indent.cpp
         Editor/BlankLineCleanup.cpp
         Editor/MaxConsecutiveBlankLines.cpp
@@ -133,6 +134,8 @@ add_library(ned_lib STATIC
         Editor/SearchSettings.cpp
         Editor/Project/Search.cpp
         Editor/Project/Agenda.cpp
+        Editor/Project/CaseCheck.cpp
+        Editor/Project/CaseViolationsBuffer.cpp
         Editor/Project/Replace.cpp
         Editor/Project/Tree.cpp
         Editor/Project/Root.cpp
@@ -152,6 +155,7 @@ add_library(ned_lib STATIC
         Editor/RecencyGlow.cpp
         Editor/ScratchPad.cpp
         Editor/Backup.cpp
+        Editor/CliFormatDispatch.cpp
         Editor/BufferSave.cpp
         Editor/PersistentUndo.cpp
         Editor/Project/Undo.cpp
@@ -424,3 +428,16 @@ include(GNUInstallDirs)
 # `ned` links against and finds it exactly the way any other system-library
 # consumer does, with the linker's normal default search path.
 install(TARGETS ned RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
+# ned-format argv[0] dispatch follow-up: a relative symlink (main.cpp
+# dispatches on argv[0]'s own basename, so it doesn't matter whether it was
+# reached via this symlink directly or a bare PATH lookup finding it) --
+# relative rather than an absolute CMAKE_INSTALL_PREFIX-baked path, so it
+# keeps resolving correctly if the whole prefix is relocated after install
+# (a package build re-rooting into a fakeroot, for instance). file(REMOVE)
+# first makes a repeated `cmake --install` idempotent -- file(CREATE_LINK)
+# does not overwrite an existing path at its destination.
+install(CODE "
+    file(REMOVE \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\")
+    file(CREATE_LINK \"ned\" \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\" SYMBOLIC)
+")

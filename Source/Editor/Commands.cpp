@@ -1890,6 +1890,26 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               return;
                           }
 
+                          // format-buffer-lsp-fold-in follow-up: LSP tier,
+                          // between External (above) and Native (below) --
+                          // mirrors save-buffer's own shouldDeferToLspFormat
+                          // gate but without its FormatOnSaveEnabled() check
+                          // (see CommandContext::deferFormatToLsp's own
+                          // comment). format-buffer has no async request/
+                          // response machinery of its own, so this just
+                          // signals BufferView::RunCommandAndHandleOutcome to
+                          // hand off to RequestLspFormatBuffer() instead of
+                          // running the Native fallback synchronously here.
+                          if (context.lspManager != nullptr && context.mode != nullptr) {
+                              const std::string languageKey = LanguageKeyForMode(*context.mode);
+                              if (context.lspManager->StatusForLanguage(
+                                      context.lspManager->ConnectionKeyForBuffer(context.buffer, languageKey)) ==
+                                  lsp::Manager::Status::Running) {
+                                  context.deferFormatToLsp = true;
+                                  return;
+                              }
+                          }
+
                           context.buffer.BeginUndoGroup();
                           bool changed = false;
                           if (context.mode != nullptr && context.mode->indentColumn) {
@@ -3063,6 +3083,23 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       "Re-run every currently-failed test, one filtered run per test, merging the results.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::RerunFailedTests;
+                      });
+
+    // case-kind follow-up: naming-convention checking. See ned/set-format-
+    // case-convention for configuring an entity kind's expected convention
+    // (unconfigured entity kinds are never scanned at all) and
+    // Editor/Project/CaseCheck.h/CaseViolationsBuffer.h for the scan/buffer.
+    registry.Register("check-format-conventions",
+                      "Scan the project for names that don't conform to their configured case convention (see "
+                      "ned/set-format-case-convention), into *case violations*.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::CheckFormatConventions;
+                      });
+    registry.Register("fix-case-violation-at-point",
+                      "Rename the case-convention violation at point to Editor/FormatCase.h's suggested "
+                      "conforming name, via rename-symbol's own prompt (pre-filled, not applied silently).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::FixCaseViolationAtPoint;
                       });
 
     // code-coverage-gutter follow-up: direct actions, no InteractiveRequest

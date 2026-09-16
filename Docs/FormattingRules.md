@@ -10,11 +10,15 @@ role, for the formatter.
 
 Structural indentation, per language, via a compiled-in safe default plus your own
 overrides, and a Hygiene pass (trailing-whitespace strip, blank-line-run collapse, final
-newline). `format-buffer` (`C-c f f`) and the headless `ned --format <files...>` both run
-the same chain: your configured external formatter if one's set
-(`ned/set-format-command`), falling back to ned's own native reindent + Hygiene pass
-whenever no external formatter is configured *or* it fails at runtime -- so `format-buffer`
-always does something useful, never just "nothing configured."
+newline). `format-buffer` (`M-x` only -- no keybinding) and the headless
+`ned --format <files...>` both run the same chain: your configured external formatter if
+one's set (`ned/set-format-command`), falling back to ned's own native reindent + Hygiene
+pass whenever no external formatter is configured *or* it fails at runtime -- so
+`format-buffer` always does something useful, never just "nothing configured." An
+installed `ned-format <files...>` symlink dispatches to the exact same headless
+`--format` chain (argv[0] basename, `Editor/CliFormatDispatch.h`) -- a `cmake --install`
+creates it in the same bindir as `ned` itself, so a build tool can shell out to it as its
+own executable rather than remembering `ned --format`.
 
 Per-capture-name `:space`/`:break` rule *storage and resolution* also exists today
 (`Editor/FormatRules.h`, `format.janet`'s `:space`/`:break` keys, `ned/set-format-*`) --

@@ -13227,6 +13227,114 @@ TEST_CASE("C-x C-s prefers an external format command over lsp-format-on-save wh
     std::filesystem::remove(path);
 }
 
+// format-buffer-lsp-fold-in follow-up: format-buffer's own LSP tier, no
+// LspFormatOnSaveGuard needed at all -- unlike C-x C-s above, this is NOT
+// gated behind Lsp::FormatOnSaveEnabled() (see CommandContext::
+// deferFormatToLsp's own comment: that toggle is specifically about
+// whether saving auto-triggers a format, not whether this explicit command
+// may use LSP).
+TEST_CASE("format-buffer formats via the language server, without saving, when one is running and no external "
+          "formatter is configured",
+          "[BufferView]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_format_buffer_lsp_test.txt";
+    {
+        std::ofstream(path) << "int x=1;";
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(80, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // triggers SyncBuffer -> didOpen
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "format-buffer");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Formatting...");
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/formatting");
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array(
+                       {{{"range", {{"start", {{"line", 0}, {"character", 5}}}, {"end", {{"line", 0}, {"character", 6}}}}}, {"newText", " = "}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(buffer.Text() == "int x = 1;");
+    REQUIRE(fixture.statusMessage.find("Formatted") == 0);
+
+    // Never saved -- format-buffer's own defining contract, unaffected by
+    // which tier actually did the formatting.
+    std::ifstream     in(path);
+    const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    REQUIRE(onDisk == "int x=1;");
+
+    REQUIRE(buffer.CanUndo());
+    buffer.Undo();
+    REQUIRE(buffer.Text() == "int x=1;");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("format-buffer prefers an external format command over LSP when both are available", "[BufferView]") {
+    struct FormatCommandGuard {
+        ~FormatCommandGuard() {
+            ned::editor::SetFormatCommand(std::nullopt);
+        }
+    } guard;
+    ned::editor::SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_format_buffer_lsp_precedence_test.txt";
+    {
+        std::ofstream(path) << "hello";
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(80, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen -- no formatting request should follow
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "format-buffer");
+    view.OnEvent(ned::ui::test::Return());
+
+    // The external formatter ran synchronously -- no LSP formatting request
+    // was ever sent.
+    REQUIRE(buffer.Text() == "HELLO");
+    REQUIRE(fixture.statusMessage.find("Formatted") == 0);
+
+    std::filesystem::remove(path);
+}
+
 namespace {
 // on-type-formatting follow-up: same RAII shape as LspFormatOnSaveGuard
 // above, for the sibling toggle.
