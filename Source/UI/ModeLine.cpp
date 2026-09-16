@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "Editor/BackgroundActivity.h"
+#include "Editor/IndentDetect.h"
+#include "Editor/IndentStyle.h"
 #include "Editor/Org.h"
 #include "Text/LineEnding.h"
 #include "Text/Utf8.h"
@@ -117,10 +119,66 @@ void ModeLine::Paint(Canvas c) {
     // rare per-point case.
     const std::string lineEndingSuffix = std::string("  ") + text::LineEndingName(buffer.LineEndingKind());
 
+    // configurable-formatter follow-up: indent-style indicator. A huge
+    // buffer never gets a whole-content scan here -- same "second-class
+    // throughout" precedent every other whole-document tree-sitter/text
+    // scan in this codebase follows (fold/symbol/test gutters window
+    // instead; this has no windowed answer worth showing, so it shows
+    // nothing at all).
+    std::string indentStyleSuffix;
+    if (!buffer.IsLoading() && !content.IsHuge()) {
+        if (mode_.name == "fundamental-mode") {
+            // No language-specific convention to fall back on at all -- the
+            // detected value IS the only thing worth reporting.
+            const editor::DetectedIndent detected = editor::DetectIndentStyle(buffer.Text());
+            switch (detected.kind) {
+                case editor::DetectedIndentKind::Tabs:
+                    indentStyleSuffix = "  Tabs";
+                    break;
+                case editor::DetectedIndentKind::Spaces:
+                    indentStyleSuffix = "  Spaces:" + std::to_string(detected.spacesWidth);
+                    break;
+                case editor::DetectedIndentKind::Mixed:
+                    indentStyleSuffix = "  Mixed indent";
+                    break;
+                case editor::DetectedIndentKind::Unknown:
+                    break; // nothing to report -- an empty/unindented file
+            }
+        }
+        else {
+            // A mode-matched buffer always shows its EFFECTIVE configured
+            // style (never overridden by content) -- with a passive "≠"
+            // flag when the buffer's own content disagrees, display-only
+            // and never fed back into what format-buffer/the Indent pass
+            // actually does.
+            const editor::IndentStyle style = editor::EffectiveIndentStyle(mode_.name);
+            indentStyleSuffix               = style.useTabs ? "  Tabs" : "  Spaces:" + std::to_string(style.width);
+
+            const editor::DetectedIndent detected = editor::DetectIndentStyle(buffer.Text());
+            bool                          mismatch = false;
+            switch (detected.kind) {
+                case editor::DetectedIndentKind::Tabs:
+                    mismatch = !style.useTabs;
+                    break;
+                case editor::DetectedIndentKind::Spaces:
+                    mismatch = style.useTabs || detected.spacesWidth != style.width;
+                    break;
+                case editor::DetectedIndentKind::Mixed:
+                    mismatch = true;
+                    break;
+                case editor::DetectedIndentKind::Unknown:
+                    break; // no data at all -- nothing to disagree with
+            }
+            if (mismatch) {
+                indentStyleSuffix += " ≠";
+            }
+        }
+    }
+
     const std::string text = buffer.IsLoading() ? "  " + buffer.Name() + loadingText
                                                 : "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
                                                       ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")" + embeddedLanguageSuffix +
-                                                      lineEndingSuffix;
+                                                      indentStyleSuffix + lineEndingSuffix;
 
     // background-activity-spinner follow-up: one column-per-entry cell list
     // instead of the raw byte string above, so the spinner's multi-byte

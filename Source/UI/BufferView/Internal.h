@@ -72,6 +72,8 @@
 #include "Editor/Php.h"
 #include "Editor/PointerGraphNode.h"
 #include "Editor/Project/Agenda.h"
+#include "Editor/Project/CaseCheck.h"
+#include "Editor/Project/CaseViolationsBuffer.h"
 #include "Editor/Project/FileOps.h"
 #include "Editor/Project/Registry.h"
 #include "Editor/Project/Root.h"

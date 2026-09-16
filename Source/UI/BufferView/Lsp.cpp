@@ -1240,6 +1240,33 @@ void BufferView::RequestLspFormatThenSaveBuffer() {
         std::string{});
 }
 
+void BufferView::RequestLspFormatBuffer() {
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   generation = lspFormatBufferRequest_.Begin();
+    statusMessage_                 = "Formatting...";
+    lspManager_->RequestFormatting(
+        buffer,
+        [this, bufferPtr, generation](std::optional<std::vector<editor::lsp::WorkspaceTextEdit>> edits) {
+            if (lspFormatBufferRequest_.IsStale(generation) || bufferPtr != &activeBuffer_.Get()) {
+                return; // superseded, or the active buffer changed under us
+            }
+            text::Buffer& buffer = *bufferPtr;
+            if (!edits) {
+                statusMessage_ = "LSP format failed.";
+                return;
+            }
+            if (edits->empty()) {
+                statusMessage_ = buffer.Name() + " is already formatted.";
+                return;
+            }
+            editor::lsp::ApplyWorkspaceTextEdits(buffer, *edits); // one undo group
+            statusMessage_ = "Formatted " + buffer.Name();
+            viewport_.ScrollToShowPoint();
+        },
+        std::string{});
+}
+
 void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
     if (action.touchesUnsupportedForm) {
         statusMessage_ = "\"" + action.title + "\" uses an unsupported edit form -- not applied.";
@@ -2035,11 +2062,18 @@ void BufferView::OpenHeaderSourceCounterpart(const std::filesystem::path& path) 
 }
 
 void BufferView::RequestPrepareRenameAtPoint() {
+    // case-kind follow-up: a pending fix-case-violation-at-point prefill
+    // (see BufferView/Rename.cpp) wins over whatever this server's own
+    // prepareRename response would have prefilled -- it is consumed here
+    // exactly once, the same way the local-fast-path prefill in
+    // RequestRenameSymbolAtPoint consumes it.
     const auto openPrompt = [this](const std::string& prefill) {
         inputMode_ = InputMode::LspRenameNewName;
         prompt_.emplace("New name: ");
-        if (!prefill.empty()) {
-            prompt_->SetText(prefill);
+        const std::string text = pendingRenamePrefillOverride_.value_or(prefill);
+        pendingRenamePrefillOverride_.reset();
+        if (!text.empty()) {
+            prompt_->SetText(text);
         }
         statusMessage_ = prompt_->StatusText();
     };

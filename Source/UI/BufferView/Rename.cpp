@@ -47,12 +47,53 @@ void BufferView::RequestRenameSymbolAtPoint() {
             pendingLocalRename_ = binding;
             inputMode_          = InputMode::RenameLocalNewName;
             prompt_.emplace("New name: ");
-            prompt_->SetText(binding->name);
+            prompt_->SetText(pendingRenamePrefillOverride_.value_or(binding->name));
+            pendingRenamePrefillOverride_.reset();
             statusMessage_ = prompt_->StatusText();
             return;
         }
     }
     RequestPrepareRenameAtPoint();
+}
+
+void BufferView::RequestFixCaseViolationAtPoint() {
+    pendingRenamePrefillOverride_.reset();
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (buffer.ReadOnly()) {
+        statusMessage_ = "Buffer is read-only.";
+        return;
+    }
+    // Same huge-buffer exclusion ResolveLocalBindingAtPoint/
+    // ResolveTopLevelTypeInBuffer already apply -- a windowed answer here
+    // would silently miss whatever violation sits outside the window.
+    if (buffer.Content().IsHuge()) {
+        statusMessage_ = "Buffer too large for case checking.";
+        return;
+    }
+
+    const std::string       text        = buffer.Content().Substring(0, buffer.Content().ByteLength());
+    const std::string       languageKey = editor::LanguageKeyForMode(mode_);
+    const std::size_t       point       = buffer.Point();
+    const editor::CaseViolation* target = nullptr;
+    std::vector<editor::CaseViolation> violations = editor::ComputeCaseViolations(text, languageKey, mode_);
+    for (const editor::CaseViolation& violation : violations) {
+        if (point >= violation.nameStartByte && point <= violation.nameEndByte) {
+            target = &violation;
+            break;
+        }
+    }
+    if (!target) {
+        statusMessage_ = "No case-convention violation at point.";
+        return;
+    }
+    if (target->suggestedName.empty()) {
+        statusMessage_ = "\"" + target->name + "\" has no usable conforming rename suggestion.";
+        return;
+    }
+
+    buffer.SetPoint(target->nameStartByte);
+    pendingRenamePrefillOverride_ = target->suggestedName;
+    RequestRenameSymbolAtPoint();
 }
 
 std::optional<editor::locals::LocalBinding> BufferView::ResolveLocalBindingAtPoint() {
