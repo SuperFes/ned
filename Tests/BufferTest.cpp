@@ -643,7 +643,7 @@ TEST_CASE("MoveToColumnInRange moves point into the target range at the current 
     Buffer buffer("scratch", ned::text::Rope("abcdefghij"));
     buffer.SetPoint(2); // 'c', visual column 2 within [0,5)
 
-    buffer.MoveToColumnInRange(0, 5, 10);
+    buffer.MoveToColumnInRange(0, 0, 5, 10, 0);
     REQUIRE(buffer.Point() == 7); // 'h': column 2 within [5,10)
 }
 
@@ -652,13 +652,13 @@ TEST_CASE("MoveToColumnInRange captures an unclamped goal column and reuses it, 
     Buffer buffer("scratch", ned::text::Rope("abcdefghij"));
     buffer.SetPoint(7); // 'h', visual column 5 within row B [2,8)
 
-    buffer.MoveToColumnInRange(2, 8, 10); // into row C: column 5 doesn't fit -- clamps to its own end (byte 10)
+    buffer.MoveToColumnInRange(2, 0, 8, 10, 0); // into row C: column 5 doesn't fit -- clamps to its own end (byte 10)
     REQUIRE(buffer.Point() == 10);
 
     // Back into row B: the UNCLAMPED goal (5) is what gets reused, not
     // wherever the clamp actually landed -- same "the un-clamped goal, not
     // necessarily where we landed" rule MoveToLine's own doc comment states.
-    buffer.MoveToColumnInRange(8, 2, 8);
+    buffer.MoveToColumnInRange(8, 0, 2, 8, 0);
     REQUIRE(buffer.Point() == 7); // back on 'h'
 }
 
@@ -666,12 +666,60 @@ TEST_CASE("MoveToColumnInRange resets the goal column like every other mutating 
     Buffer buffer("scratch", ned::text::Rope("abcdefghij"));
     buffer.SetPoint(4); // 'e', visual column 4 within [0,10)
 
-    buffer.MoveToColumnInRange(0, 5, 10); // captures goal column 4 -> 'j' (byte 9, column 4 within [5,10))
+    buffer.MoveToColumnInRange(0, 0, 5, 10, 0); // captures goal column 4 -> 'j' (byte 9, column 4 within [5,10))
     REQUIRE(buffer.Point() == 9);
 
     buffer.SetPoint(1); // an ordinary Buffer mutator -- clears GoalColumn_ like everything else does
-    buffer.MoveToColumnInRange(0, 5, 10); // no stale goal column left -- recaptures from point's OWN new column (1)
-    REQUIRE(buffer.Point() == 6);         // column 1 within [5,10) -> 'g' (byte 6)
+    buffer.MoveToColumnInRange(0, 0, 5, 10, 0); // no stale goal column left -- recaptures from point's OWN new column (1)
+    REQUIRE(buffer.Point() == 6);               // column 1 within [5,10) -> 'g' (byte 6)
+}
+
+// visual-line-motion-hang-fix follow-up: the actual bug a live user report
+// caught -- moving between two rows with DIFFERENT hangs (one a wrapped
+// continuation row under wrap-indent, one a line's own first row with no
+// hang at all) shifted the apparent on-screen column by the hang
+// difference, because the goal column used to be captured/resolved purely
+// "relative to each row's own real content," with no way to tell that a
+// hang had shifted where that content starts on screen. GoalColumn_ now
+// always means the true on-screen column, hang included.
+
+TEST_CASE("MoveToColumnInRange preserves the true on-screen column across rows with different hangs", "[Buffer]") {
+    // Row A [0,10) has hang 4 (its own real content starts 4 columns in,
+    // e.g. under a wrap-indent hang) -- point sits at real-content column 2
+    // within it, i.e. on-screen column 6. Row B [10,20) has NO hang (a
+    // line's own first row) -- landing there must still be on-screen
+    // column 6, i.e. real-content column 6, not 2.
+    Buffer buffer("scratch", ned::text::Rope("xxxxxxxxxxabcdefghij"));
+    buffer.SetPoint(2); // real-content column 2 within row A
+
+    buffer.MoveToColumnInRange(0, 4, 10, 20, 0);
+    REQUIRE(buffer.Point() == 16); // 'g': real-content column 6 within row B (10+6)
+}
+
+TEST_CASE("MoveToColumnInRange clamps to a target row's own start when the goal doesn't clear its hang", "[Buffer]") {
+    // Row A has no hang, point at real-content column 1 (on-screen column
+    // 1). Row B has hang 4 -- on-screen column 1 doesn't even reach past
+    // the hang, so it clamps to row B's own first byte, not a negative
+    // "before its own start" position.
+    Buffer buffer("scratch", ned::text::Rope("abcdefghij"));
+    buffer.SetPoint(1); // on-screen column 1
+
+    buffer.MoveToColumnInRange(0, 0, 5, 10, 4);
+    REQUIRE(buffer.Point() == 5); // row B's own first byte, not shifted at all
+}
+
+TEST_CASE("MoveToColumnInRange's captured goal column survives a hang mismatch and reapplies once it clears again",
+          "[Buffer]") {
+    // Same shape as the clamp case above, but a THIRD row with no hang
+    // confirms the goal (on-screen column 1) was preserved unclamped
+    // through the middle hop, not silently reset to 0 by the clamp.
+    Buffer buffer("scratch", ned::text::Rope("abcdefghijklmno"));
+    buffer.SetPoint(1); // on-screen column 1, row A [0,5) hang 0
+
+    buffer.MoveToColumnInRange(0, 0, 5, 10, 4); // row B [5,10) hang 4 -- clamps to byte 5
+    REQUIRE(buffer.Point() == 5);
+    buffer.MoveToColumnInRange(5, 4, 10, 15, 0); // row C [10,15) hang 0 -- goal (1) still wanted, and now fits
+    REQUIRE(buffer.Point() == 11);               // real-content column 1 within row C
 }
 
 TEST_CASE("Buffer::NewFile is empty and already associated with the given path", "[Buffer]") {
