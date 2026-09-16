@@ -223,6 +223,35 @@ TEST_CASE("QueryMatcher::Captures evaluates #has-parent?/#has-ancestor? -- immed
     REQUIRE(hasAncestorObject.Captures(tree.RootNode(), text).size() == 2);
 }
 
+TEST_CASE("QueryMatcher::Captures evaluates a variadic #has-parent?/#not-has-parent? as any-of "
+          "over its trailing type operands (nvim's own convention, e.g. cpp/highlights.janet:370's "
+          "3-operand (#has-parent? @c template_method function_declarator))",
+          "[Grammar]") {
+    // 1 and 2's immediate parent is "array"; 3's immediate parent is "pair"
+    // (the value half of "b": 3) -- three distinct immediate-parent shapes
+    // to distinguish a real any-of from an accidental "first operand only".
+    const Language    language = *LanguageByName("json");
+    Parser            parser(language);
+    const std::string text = R"({"a": [1, 2], "b": 3})";
+    Tree              tree = parser.Parse(text);
+
+    QueryMatcher hasParentArrayOrPair(language, "((number) @n (#has-parent? @n array pair))");
+    REQUIRE(hasParentArrayOrPair.Captures(tree.RootNode(), text).size() == 3);
+
+    QueryMatcher                    hasParentObjectOrPair(language, "((number) @n (#has-parent? @n object pair))");
+    const std::vector<QueryCapture> objectOrPair = hasParentObjectOrPair.Captures(tree.RootNode(), text);
+    REQUIRE(objectOrPair.size() == 1);
+    REQUIRE(text.substr(objectOrPair[0].startByte, objectOrPair[0].endByte - objectOrPair[0].startByte) == "3");
+
+    QueryMatcher                    notHasParentObjectOrPair(language, "((number) @n (#not-has-parent? @n object pair))");
+    const std::vector<QueryCapture> notObjectOrPair = notHasParentObjectOrPair.Captures(tree.RootNode(), text);
+    REQUIRE(notObjectOrPair.size() == 2);
+    REQUIRE(text.substr(notObjectOrPair[0].startByte, notObjectOrPair[0].endByte - notObjectOrPair[0].startByte) ==
+            "1");
+    REQUIRE(text.substr(notObjectOrPair[1].startByte, notObjectOrPair[1].endByte - notObjectOrPair[1].startByte) ==
+            "2");
+}
+
 TEST_CASE("QueryMatcher::Captures never suppresses a match for a predicate it doesn't recognize", "[Grammar]") {
     // #set! is a real, non-filtering directive query files use for match
     // priority -- and any other unrecognized predicate name gets the same

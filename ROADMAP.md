@@ -1766,18 +1766,6 @@ for closed-issue history.
   earlier) rather than anything about cache invalidation specifically, but not
   root-caused -- logged rather than guessed at.
 
-- **Variadic `has-parent?` predicates are silently inert.** Found by the Phase 4a M0
-  census (2026-09-12): `QueryPredicates.cpp`'s evaluator handles the has-parent/has-ancestor family
-  only at exactly two operands and treats any other arity as pass-through, so
-  `cpp/highlights.janet:370`'s three-operand `(:has-parent? @c … …)` and
-  `c/highlights.janet:181`'s four-operand `(:not-has-parent? …)` never filter anything —
-  the query author's intent (nvim's own definition accepts a type list) is silently
-  dropped, in ned and possibly in whatever engine those upstream files were written
-  against. Not urgent: the failure mode is a slightly over-inclusive highlight match.
-  Fix shape: loop operands[1..] in the has-parent branch of `QueryPredicates.cpp`'s
-  `EvaluatePredicateCall`, any-of semantics. Unblocked now that the M3 gate has landed — the change will
-  show as a deliberate differential/oracle diff rather than an invisible drift.
-
 - **A comment as the first line of a Python body reindents to column 0.** Found by the
   corpus addition for the indent-column work (2026-09-12), pre-existing and unrelated to
   the imprint: a leading `# comment` under `def f():` is an extra node *before* the
