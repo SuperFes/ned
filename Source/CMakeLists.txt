@@ -119,6 +119,7 @@ add_library(ned_lib STATIC
         Editor/IndentDefaults.cpp
         Editor/IndentDetect.cpp
         Editor/Indent.cpp
+        Editor/IndentRuleOverride.cpp
         Editor/BlankLineCleanup.cpp
         Editor/MaxConsecutiveBlankLines.cpp
         Editor/FillColumn.cpp
