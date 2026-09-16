@@ -68,3 +68,33 @@ TEST_CASE("RankSearchEverywhere breaks a cross-kind score tie by kind declaratio
     const std::vector<SearchEverywhereResult> ranked = RankSearchEverywhere(candidates, "ab", std::nullopt);
     REQUIRE(Labels(ranked, candidates) == std::vector<std::string>{"abc", "abd"});
 }
+
+TEST_CASE("RankSearchEverywhere honors a Symbol kind filter regardless of which location field is set",
+          "[SearchEverywhere]") {
+    // search-everywhere-symbols-and-text follow-up: Symbol covers both an
+    // in-buffer jump (localByteOffset) and a project-wide one
+    // (remoteLocation) -- ranking/filtering must not care which.
+    const std::vector<SearchEverywhereCandidate> candidates = {
+        {.kind = SearchEverywhereKind::Symbol, .label = "LocalWidget", .localByteOffset = 42},
+        {.kind = SearchEverywhereKind::Symbol,
+         .label         = "RemoteWidget",
+         .remoteLocation = ned::editor::SearchEverywhereLocation{"/tmp/other.cpp", 3, 0}},
+        {.kind = SearchEverywhereKind::Command, .label = "widget-command"},
+    };
+    const std::vector<SearchEverywhereResult> ranked =
+        RankSearchEverywhere(candidates, "widget", SearchEverywhereKind::Symbol);
+    REQUIRE(Labels(ranked, candidates) == std::vector<std::string>{"LocalWidget", "RemoteWidget"});
+}
+
+TEST_CASE("RankSearchEverywhere ranks TextMatch candidates like any other kind", "[SearchEverywhere]") {
+    const std::vector<SearchEverywhereCandidate> candidates = {
+        {.kind = SearchEverywhereKind::TextMatch,
+         .label         = "TODO: fix this widget",
+         .detail        = "main.cpp:10",
+         .remoteLocation = ned::editor::SearchEverywhereLocation{"/tmp/main.cpp", 9, 0}},
+        {.kind = SearchEverywhereKind::Command, .label = "quit"},
+    };
+    const std::vector<SearchEverywhereResult> ranked =
+        RankSearchEverywhere(candidates, "widget", SearchEverywhereKind::TextMatch);
+    REQUIRE(Labels(ranked, candidates) == std::vector<std::string>{"TODO: fix this widget"});
+}

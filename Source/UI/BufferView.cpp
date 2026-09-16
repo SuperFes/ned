@@ -42,6 +42,10 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
     modeSyncBuffer_ = &activeBuffer_.Get();
 }
 
+BufferView::~BufferView() {
+    *searchEverywhereAlive_ = false;
+}
+
 // The scroll position lives in Viewport now; these stay on BufferView because
 // an externally-owned ScrollBar/Minimap is wired to them by the pane that owns
 // both, and has no business reaching past the widget for it.
