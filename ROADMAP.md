@@ -1712,23 +1712,18 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
-- **`BufferView's highlight cache updates after an edit changes the buffer's content`
-  is intermittently flaky under `--order rand`.** Found 2026-09-15 while stress-testing
-  the new Wrap rule kind's own `--order rand` reruns -- confirmed unrelated to that work
-  (the failure reproduces on its own, in a test file/subsystem the Wrap rollout never
-  touches: `Editor/Mode.cpp`'s `formatCaptures` closure and the Wrap/Rules/Config files
-  are all it changed, none of which this test exercises). Roughly 1 in 10-15
-  `--order rand` runs. The surprising part: it's the test's OWN FIRST assertion that
-  fails (`Tests/BufferViewTest.cpp:1774`, checking that a freshly-painted `"a"` string
-  literal renders with `SyntaxClass::String` on the very first `Paint()` call), not the
-  post-edit one the test's own name is about -- `REQUIRE(CellMatchesBrush(screen.PixelAt
-  (gutter + 0, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String)))` evaluates
-  false, meaning the cell rendered as `Default` instead, as if the JSON mode's highlight
-  query hadn't produced a capture yet at the moment of that first paint. Smells like a
-  mode-construction/parse-readiness race (this codebase already has precedent for that
-  class of bug -- see `ModePrewarmTest.cpp` and the dynamic-mode-race entry closed
-  earlier) rather than anything about cache invalidation specifically, but not
-  root-caused -- logged rather than guessed at.
+- **`Editor/Multibuffer.cpp`'s registry has the same dangling-pointer-collision shape
+  `HighlightCache` did before `Text/Buffer.h`'s `InstanceId()` fix (2026-09-16).**
+  Found while root-causing that flake, not yet confirmed to actually misfire:
+  `MultibufferIndexFor`'s `std::unordered_map<const text::Buffer*, MultibufferIndex>`
+  keys on the raw pointer alone, no generation/instance check at all, so a `Buffer`
+  destroyed with no `ClearMultibufferIndexFor` call and a later, unrelated `Buffer`
+  landing at the same address would silently inherit the dead buffer's index. Lower
+  risk than `HighlightCache` was: `Tests/MultibufferTest.cpp` already wraps itself in
+  `ClearRegistryForTesting()` (unlike `BufferViewTest.cpp`, which had no equivalent
+  guard), so this isn't currently flaking under `--order rand`. If it's ever worth
+  closing outright, `Buffer::InstanceId()` is now available to key on instead of the
+  bare pointer, the same fix shape.
 
 As of 2026-09-08: `ctest -j8` is clean under the `default` preset, and so is the
 single-process `./build/ned_tests` (see the build/test note at the end of this file for

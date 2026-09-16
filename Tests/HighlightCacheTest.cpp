@@ -129,3 +129,48 @@ TEST_CASE("The cache is bounded, and one buffer cannot fill it with its own hist
 // painting a BufferView *and* a Minimap over a 127 KiB markdown buffer costs
 // 80ms per keystroke against 134ms before, i.e. the minimap now adds ~5ms
 // rather than doubling the whole-document highlight.
+
+// dangling-buffer-pointer-collision follow-up: a real bug found while
+// digging into the ROADMAP watch-list's "highlight cache updates flaky
+// under --order rand" entry, not a hypothetical. This cache's Entry keys on
+// `const text::Buffer*` alone plus a handful of generation/name checks --
+// none of which are true LIFETIME facts, so a Buffer with no hook into this
+// cache's invalidation (a stack-local test Fixture, e.g. Tests/
+// BufferViewTest.cpp's) can be destroyed, and an entirely unrelated LATER
+// Buffer can be constructed at the exact same address with the exact same
+// contentGeneration/modeName/window this cache would otherwise accept as a
+// match -- a dangling-pointer cache HIT serving one buffer's spans for
+// another buffer's content. Reproduced here with placement new rather than
+// relying on incidental stack-layout luck, so this is deterministic: A is
+// destroyed and B is placement-constructed at the exact same storage A
+// occupied, matching every one of the old cache-key fields A's entry set.
+TEST_CASE("A buffer destroyed and replaced at the same address never inherits the dead buffer's "
+          "cached spans",
+          "[HighlightCache]") {
+    const CacheGuard        guard;
+    const auto              calls = std::make_shared<int>(0);
+    const ned::editor::Mode mode  = CountingMode(calls);
+
+    alignas(ned::text::Buffer) unsigned char storage[sizeof(ned::text::Buffer)];
+
+    ned::text::Buffer* a = new (storage) ned::text::Buffer("scratch");
+    a->InsertAtPoint("hello"); // contentGeneration -> 1
+    const auto spansA = CachedHighlightSpans(*a, mode);
+    REQUIRE(*calls == 1);
+    REQUIRE(spansA->size() == 1);
+    REQUIRE((*spansA)[0].endByte == 5); // "hello".size()
+    a->~Buffer();
+
+    // B lands at the exact same address A did, same contentGeneration
+    // (also 1, after its own single InsertAtPoint), same mode name, same
+    // default (whole-buffer) window -- everything the old, InstanceId-less
+    // key checked, all matching by coincidence.
+    ned::text::Buffer* b = new (storage) ned::text::Buffer("scratch");
+    b->InsertAtPoint("hi");
+    const auto spansB = CachedHighlightSpans(*b, mode);
+
+    REQUIRE(*calls == 2); // a real miss -- B's own content was actually highlighted
+    REQUIRE(spansB->size() == 1);
+    REQUIRE((*spansB)[0].endByte == 2); // "hi".size(), not "hello"'s 5
+    b->~Buffer();
+}
