@@ -86,6 +86,7 @@
 #include "Editor/Vim/Settings.h"
 #include "Editor/WhichKeySettings.h"
 #include "Editor/WhitespaceSettings.h"
+#include "Editor/WrapIndent.h"
 #include "Editor/WrapOverrides.h"
 #include "JanetVcsProvider.h"
 #include "Text/BufferList.h"
@@ -507,6 +508,10 @@ namespace {
 
     void NedSetTrimTrailingWhitespaceOnSave(bool enabled) {
         editor::SetTrimTrailingWhitespaceOnSave(enabled);
+    }
+
+    void NedSetWrapIndent(bool enabled) {
+        editor::SetWrapIndent(enabled);
     }
 
     // automatic-scoped-on-save follow-up.
@@ -1813,6 +1818,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-ensure-final-newline",
         "Enable/disable appending a trailing newline to a file's written content on save if it's missing one "
         "(default true).");
+    env.Register<&NedSetWrapIndent>(
+        "ned", "set-wrap-indent",
+        "Enable/disable hanging a soft-wrapped line's continuation rows under its own leading whitespace, rather "
+        "than restarting flush at the gutter's own left edge (default true). Purely a rendering choice -- no "
+        "effect on buffer content, undo, or a hard-wrapped paragraph's own fill-paragraph indentation.");
     env.Register<&NedSetTrimTrailingWhitespaceOnSave>(
         "ned", "set-trim-trailing-whitespace-on-save",
         "Enable/disable stripping trailing spaces/tabs from every line and collapsing trailing blank lines at "

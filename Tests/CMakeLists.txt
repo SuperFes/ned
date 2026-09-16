@@ -176,6 +176,7 @@ add_executable(ned_tests
             TabBarTest.cpp
             ScrollArrowButtonTest.cpp
             FinalNewlineTest.cpp
+            WrapIndentTest.cpp
             TrimOnSaveTest.cpp
             FormatOnSaveTest.cpp
             ClipboardTest.cpp
