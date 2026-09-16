@@ -515,6 +515,51 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
                 }
             }
         }
+
+        // comment-as-first-line-of-a-body follow-up: an @extra node (a
+        // comment) isn't really part of a grammar's structural nesting, and
+        // a comment as the very first line of a body commonly attaches as a
+        // SIBLING directly before the body it precedes rather than inside
+        // it -- confirmed via a real parse dump, not assumed: Python's own
+        // "comment" sits directly under "if_statement"/"function_definition",
+        // one level short of that body's own captured "block", because the
+        // block's range (no opening delimiter of its own to capture) starts
+        // at its first real statement, one byte past where the comment
+        // ends. Walking the comment's own ancestors therefore under-counts
+        // by however many containers sit between it and the real content
+        // that follows -- not just to 0, so this can't share the rescue
+        // above's Level==0 gate; a comment nested two containers deep still
+        // resolves one level short, never zero. Re-resolve AS IF for the
+        // next non-blank, non-comment line's own position instead -- the
+        // comment then takes whatever level the code it precedes takes, the
+        // same convention Emacs/vim comment-reindent already follow.
+        // Gated on walkStart.StartByte() == contentStart so a multi-line
+        // block comment's own CONTINUATION lines (C-style /* ... */; never
+        // true for Python's line-only comments) are left exactly as the
+        // ordinary walk above already resolves them -- only a comment's own
+        // first line is a candidate.
+        if (!walkStart.IsNull() && walkStart.IsExtra() && walkStart.StartByte() == contentStart) {
+            std::size_t scan = lineEnd;
+            while (scan < bufferText.size()) {
+                const std::size_t lineEndForScan = bufferText.find('\n', scan);
+                const std::size_t candidateEnd   = lineEndForScan == std::string_view::npos ? bufferText.size() : lineEndForScan;
+                const std::size_t candidateStart = FirstNonBlankByte(bufferText, scan, candidateEnd);
+                if (candidateStart >= candidateEnd) {
+                    scan = candidateEnd + 1; // a blank line -- keep scanning forward
+                    continue;
+                }
+                const grammar::Node followingWalkStart = resolveWalkStart(candidateStart);
+                if (followingWalkStart.IsNull()) {
+                    break;
+                }
+                if (followingWalkStart.IsExtra() && followingWalkStart.StartByte() == candidateStart) {
+                    scan = candidateEnd + 1; // another comment line -- keep looking past it
+                    continue;
+                }
+                result = computeForWalkStart(followingWalkStart, candidateStart);
+                break;
+            }
+        }
     }
     return result;
 }
