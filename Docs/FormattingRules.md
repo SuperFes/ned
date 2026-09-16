@@ -26,8 +26,20 @@ see "Space and Break rules" below. Both rule kinds have a live pilot pass (brace
 and if/while condition-paren spacing), each with two languages (cpp, JavaScript) sharing
 one rule set via a common capture name; every other capture/language is still inert.
 
-A capture-scoped per-construct indent override (`ned/set-indent-rule`) is planned but not
-built yet -- see `Docs/FormattingCapabilities.md` and `ROADMAP.md`. `format-buffer`'s own
+`ned/set-indent-rule` overrides the indent of every line whose own leading construct is a
+given GRAMMAR NODE TYPE (e.g. `"access_specifier"` -- not a highlight or format-rule
+capture name; see `Editor/IndentRuleOverride.h`'s own header comment for why):
+
+```janet
+(ned/set-indent-rule "access_specifier" "offset" -2)     # a C++ access specifier sits 2 columns
+                                                          # LEFT of its class body
+(ned/set-indent-rule "cpp/access_specifier" "offset" -2) # same, scoped to cpp alone
+(ned/set-indent-rule "preproc_def" "absolute" 0)         # a #define always sits at column 0,
+                                                          # regardless of surrounding nesting
+(ned/set-indent-rule "access_specifier" "" 0)            # empty policy clears the rule
+```
+
+`format-buffer`'s own
 chain now includes an LSP tier between External and Native (`textDocument/formatting`,
 used whenever no external command produced output and a server is running for the
 buffer's language) -- `save-buffer`'s own, separate LSP-format-on-save path

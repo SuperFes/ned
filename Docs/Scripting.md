@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-190 bindings.
+191 bindings.
 
 ## `ned/backward-char`
 
@@ -400,6 +400,10 @@ Enable/disable cycling each indent guide's color by its own nesting level (Theme
 ## `ned/set-indent-guides-enabled`
 
 Enable/disable vertical indentation guide glyphs at each indent-width column within a line's own leading whitespace. Default false, same opt-in reasoning as set-trailing-whitespace-highlight-enabled.
+
+## `ned/set-indent-rule`
+
+Override the indent of every line whose own leading construct is a given grammar node type (e.g. "access_specifier", or "cpp/access_specifier" for a one-language override): (key policy value), policy "offset" (add value columns, positive or negative, to whatever the ordinary indent would be) or "absolute" (value IS the column, ignoring nesting depth entirely); empty policy clears the rule.
 
 ## `ned/set-indent-style`
 

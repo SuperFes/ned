@@ -9,6 +9,7 @@
 
 #include "HugeStructuralWindow.h"
 #include "ImprintIndent.h"
+#include "IndentRuleOverride.h"
 #include "TabWidth.h"
 #include "Grammar/MatchCache.h"
 #include "Grammar/Node.h"
@@ -582,10 +583,29 @@ IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser> parser, std:
         if (!result) {
             return std::nullopt;
         }
-        if (result->kind == IndentComputation::Kind::Column) {
-            return result->value;
+        const int column =
+            (result->kind == IndentComputation::Kind::Column) ? result->value : IndentColumnForLevel(result->value, style);
+
+        // ned/set-indent-rule follow-up: an additive final step, applied
+        // fresh on every call (never cached alongside capturesCache above,
+        // so a live config change takes effect immediately) -- see
+        // IndentRuleOverride.h's own header comment for why this resolves
+        // the line's own smallest named node rather than threading anything
+        // into IndentLevelForLine's existing walk. !tree.IsNull() already
+        // guaranteed above (IndentLevelForLine returns nullopt otherwise, an
+        // early return already taken).
+        const std::size_t     contentStart = FirstNonBlankByte(bufferText, lineStart, lineEnd);
+        const grammar::Node   leadingNode  = tree.RootNode().NamedDescendantForByteRange(contentStart, contentStart);
+        if (!leadingNode.IsNull()) {
+            const IndentRuleValue rule = IndentRuleFor(leadingNode.Type(), languageKey);
+            if (rule.policy == IndentRulePolicy::Absolute) {
+                return rule.value;
+            }
+            if (rule.policy == IndentRulePolicy::Offset) {
+                return column + rule.value;
+            }
         }
-        return IndentColumnForLevel(result->value, style);
+        return column;
     };
 }
 
