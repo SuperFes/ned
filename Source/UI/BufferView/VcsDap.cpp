@@ -378,7 +378,7 @@ void BufferView::RefreshVcsStatusBuffer() {
         [this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false); });
 }
 
-void BufferView::BeginVcsCommitMessage() {
+void BufferView::BeginVcsCommitMessage(bool amend) {
     if (!vcsRunner_) {
         statusMessage_ = "no vcs runner configured";
         return;
@@ -386,21 +386,50 @@ void BufferView::BeginVcsCommitMessage() {
     const std::filesystem::path path = editor::vcs::CommitMessagePath();
     // FindByPath, not the OpenOrCreateFile call below, decides whether this
     // is a genuinely fresh commit (seed the template) or the user re-running
-    // vcs-commit while one is already mid-composition (switch to it as-is,
-    // preserving whatever they've already typed) -- OpenOrCreateFile itself
-    // always returns *some* buffer either way.
-    const bool    alreadyOpen  = bufferList_.FindByPath(path) != nullptr;
-    text::Buffer& commitBuffer = bufferList_.OpenOrCreateFile(path);
-    if (!alreadyOpen) {
+    // vcs-commit/vcs-commit-amend while one is already mid-composition
+    // (switch to it as-is, preserving whatever they've already typed) --
+    // OpenOrCreateFile itself always returns *some* buffer either way. Only
+    // the amend flag itself is updated on that path -- a user who started a
+    // plain commit and then decides to amend instead (or the reverse)
+    // shouldn't have to abort and start over.
+    if (bufferList_.FindByPath(path) != nullptr) {
+        pendingCommitAmend_ = amend;
+        activeBuffer_.Set(*bufferList_.FindByPath(path));
+        return;
+    }
+    if (!amend) {
+        text::Buffer& commitBuffer = bufferList_.OpenOrCreateFile(path);
         commitBuffer.InsertAtPoint(editor::vcs::kVcsCommitMessageTemplate);
         commitBuffer.SetPoint(0);
+        pendingCommitAmend_ = false;
+        activeBuffer_.Set(commitBuffer);
+        return;
     }
-    activeBuffer_.Set(commitBuffer);
+    // Amend: seed with the previous commit's own message first (async --
+    // see Runner::RequestPreviousCommitMessage's own doc comment), the same
+    // "message, then the comment block" shape git's own --amend $EDITOR
+    // content has.
+    statusMessage_ = "Fetching previous commit message...";
+    vcsRunner_->RequestPreviousCommitMessage(
+        [this, path](std::string message) {
+            while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) {
+                message.pop_back();
+            }
+            text::Buffer& commitBuffer = bufferList_.OpenOrCreateFile(path);
+            commitBuffer.InsertAtPoint(message + "\n" + std::string(editor::vcs::kVcsAmendCommitMessageTemplate));
+            commitBuffer.SetPoint(0);
+            pendingCommitAmend_ = true;
+            activeBuffer_.Set(commitBuffer);
+            statusMessage_ = "Amending the previous commit.";
+        },
+        [this](std::string error) { statusMessage_ = "vcs commit amend: " + error; });
 }
 
 void BufferView::FinishVcsCommitMessage() {
     text::Buffer&     commitBuffer = activeBuffer_.Get();
     const std::string message      = editor::vcs::ExtractCommitMessage(commitBuffer.Text());
+    const bool        amend        = pendingCommitAmend_;
+    pendingCommitAmend_             = false;
     CloseVcsCommitMessageBuffer(commitBuffer);
     if (message.empty()) {
         statusMessage_ = "Empty commit message -- not committing.";
@@ -412,21 +441,26 @@ void BufferView::FinishVcsCommitMessage() {
         // Fire-and-forget, DapEvaluate's shape: the buffer's already closed
         // by the time this fires, the summary lands in statusMessage_ from
         // the callback.
-        statusMessage_ = "Committing...";
-        vcsRunner_->RequestCommit(
-            message,
-            [this](std::string summary) {
-                statusMessage_ = summary.empty() ? "Committed." : summary;
-                RefreshVcsStatusBuffer();
-                // The comparison point (HEAD for git) just moved, so the
-                // current buffer's markers are stale now.
-                RequestDiffForCurrentBuffer();
-            },
-            [this](std::string error) { statusMessage_ = "vcs commit: " + error; });
+        statusMessage_ = amend ? "Amending..." : "Committing...";
+        auto onSuccess = [this](std::string summary) {
+            statusMessage_ = summary.empty() ? "Committed." : summary;
+            RefreshVcsStatusBuffer();
+            // The comparison point (HEAD for git) just moved, so the
+            // current buffer's markers are stale now.
+            RequestDiffForCurrentBuffer();
+        };
+        auto onError = [this](std::string error) { statusMessage_ = "vcs commit: " + error; };
+        if (amend) {
+            vcsRunner_->RequestAmendCommit(message, onSuccess, onError);
+        }
+        else {
+            vcsRunner_->RequestCommit(message, onSuccess, onError);
+        }
     }
 }
 
 void BufferView::AbortVcsCommitMessage() {
+    pendingCommitAmend_ = false;
     CloseVcsCommitMessageBuffer(activeBuffer_.Get());
     statusMessage_ = "Commit aborted.";
 }
@@ -549,8 +583,8 @@ void BufferView::RequestPointerGraphAtPointForTesting() {
     RequestPointerGraphAtPoint();
 }
 
-void BufferView::BeginVcsCommitMessageForTesting() {
-    BeginVcsCommitMessage();
+void BufferView::BeginVcsCommitMessageForTesting(bool amend) {
+    BeginVcsCommitMessage(amend);
 }
 
 void BufferView::FinishVcsCommitMessageForTesting() {
@@ -1737,6 +1771,9 @@ void BufferView::RequestVcsAction(VcsPanelAction action) {
     switch (action) {
         case VcsPanelAction::Commit:
             BeginVcsCommitMessage();
+            return;
+        case VcsPanelAction::AmendCommit:
+            BeginVcsCommitMessage(/*amend=*/true);
             return;
         case VcsPanelAction::SwitchBranch:
             BeginVcsSwitchBranchPrompt();

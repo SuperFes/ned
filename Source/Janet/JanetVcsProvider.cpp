@@ -31,6 +31,8 @@ namespace {
         "unstage-patch-argv",
         "revert-patch-argv",
         "commit-argv",
+        "amend-commit-argv",
+        "previous-commit-message-argv",
         "branch-list-argv",
         "parse-branch-list",
         "branch-switch-argv",
@@ -409,6 +411,23 @@ editor::vcs::CommandSpec JanetVcsProvider::CommitArgv(const std::filesystem::pat
         return Provider::CommitArgv(root, message);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), message));
+}
+
+editor::vcs::CommandSpec JanetVcsProvider::AmendCommitArgv(const std::filesystem::path& root,
+                                                              const std::string&           message) const {
+    const std::string* fn = InternalName("amend-commit-argv");
+    if (!fn) {
+        return Provider::AmendCommitArgv(root, message);
+    }
+    return ParseCommandSpec(CallWithStrings(*fn, root.string(), message));
+}
+
+editor::vcs::CommandSpec JanetVcsProvider::PreviousCommitMessageArgv(const std::filesystem::path& root) const {
+    const std::string* fn = InternalName("previous-commit-message-argv");
+    if (!fn) {
+        return Provider::PreviousCommitMessageArgv(root);
+    }
+    return ParseCommandSpec(CallWithString(*fn, root.string()));
 }
 
 editor::vcs::CommandSpec JanetVcsProvider::BranchListArgv(const std::filesystem::path& root) const {

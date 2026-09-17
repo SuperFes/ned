@@ -45,6 +45,8 @@ TEST_CASE("ned/vcs-register-provider registers a provider resolvable via ActiveP
          :stage-argv (fn [path] ["fake-vcs" "stage" path])
          :unstage-argv (fn [path] ["fake-vcs" "unstage" path])
          :commit-argv (fn [root message] ["fake-vcs" "commit" root message])
+         :amend-commit-argv (fn [root message] ["fake-vcs" "amend-commit" root message])
+         :previous-commit-message-argv (fn [root] ["fake-vcs" "previous-commit-message" root])
          :branch-list-argv (fn [root] ["fake-vcs" "branches" root])
          :parse-branch-list (fn [stdout] [{:name "main" :current true} {:name "dev" :current false}])
          :branch-switch-argv (fn [root name] ["fake-vcs" "switch" root name])
@@ -103,6 +105,12 @@ TEST_CASE("ned/vcs-register-provider registers a provider resolvable via ActiveP
 
     REQUIRE(provider->CommitArgv("/repo", "a \"quoted\" message").argv ==
             std::vector<std::string>{"fake-vcs", "commit", "/repo", "a \"quoted\" message"});
+
+    // VcsPanel amend follow-up.
+    REQUIRE(provider->AmendCommitArgv("/repo", "amended message").argv ==
+            std::vector<std::string>{"fake-vcs", "amend-commit", "/repo", "amended message"});
+    REQUIRE(provider->PreviousCommitMessageArgv("/repo").argv ==
+            std::vector<std::string>{"fake-vcs", "previous-commit-message", "/repo"});
 
     REQUIRE(provider->BranchListArgv("/repo").argv == std::vector<std::string>{"fake-vcs", "branches", "/repo"});
 
@@ -211,6 +219,8 @@ TEST_CASE("a provider registered without an operation's callbacks reports it as 
     REQUIRE_THROWS_WITH(provider->StageArgv("x"), "stage not supported by this provider");
     REQUIRE_THROWS_WITH(provider->UnstageArgv("x"), "unstage not supported by this provider");
     REQUIRE_THROWS_WITH(provider->CommitArgv("/root", "msg"), "commit not supported by this provider");
+    REQUIRE_THROWS_WITH(provider->AmendCommitArgv("/root", "msg"), "amend commit not supported by this provider");
+    REQUIRE_THROWS_WITH(provider->PreviousCommitMessageArgv("/root"), "previous commit message not supported by this provider");
     REQUIRE_THROWS_WITH(provider->BranchListArgv("/root"), "branch listing not supported by this provider");
     REQUIRE_THROWS_WITH(provider->BranchSwitchArgv("/root", "dev"), "branch switching not supported by this provider");
     REQUIRE_THROWS_WITH(provider->BranchCreateArgv("/root", "dev"), "branch creation not supported by this provider");

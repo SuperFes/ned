@@ -3581,6 +3581,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::VcsCommit;
                       });
+    registry.Register("vcs-commit-amend",
+                      "Amend the previous commit -- opens a *vcs commit message* buffer pre-filled with its message.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsCommitAmend;
+                      });
     // multi-line-commit-message follow-up: only ever reachable via the
     // commit-message buffer's own Mode-local keymap (see this function's
     // ned::editor::RegisterMode/SetModeForFilename calls below), so these
@@ -4664,6 +4669,9 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c v a"), "vcs-stage-file");
     keymap.Bind(ParseKeySequence("C-c v u"), "vcs-unstage-file");
     keymap.Bind(ParseKeySequence("C-c v c"), "vcs-commit");
+    // VcsPanel amend follow-up: shifted twin of "C-c v c", same convention
+    // as the hunk-staging pair's own uppercase-reverse binding.
+    keymap.Bind(ParseKeySequence("C-c v C"), "vcs-commit-amend");
     keymap.Bind(ParseKeySequence("C-c v w"), "vcs-switch-branch");
     keymap.Bind(ParseKeySequence("C-c v n"), "vcs-create-branch");
     // Hunk-staging follow-up: "h" for hunk, its shifted twin for the

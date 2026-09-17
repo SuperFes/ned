@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <memory>
 #include <string>
 
 #include "Editor/Commands.h"
@@ -20,6 +21,7 @@
 #include "Editor/Project/Root.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "Editor/Vcs/Provider.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"
@@ -88,6 +90,19 @@ struct CommitTempFileGuard {
     ~CommitTempFileGuard() {
         std::error_code ec;
         std::filesystem::remove(ned::editor::vcs::CommitMessagePath(), ec);
+    }
+};
+
+// VcsPanel amend follow-up: Detect-only, otherwise default-throwing --
+// CommitArgv/AmendCommitArgv's own distinct default error text ("commit
+// not supported"/"amend commit not supported") is what lets the tests
+// below tell RequestCommit and RequestAmendCommit apart synchronously,
+// without a live EventLoop (same technique JanetVcsProviderTest.cpp's own
+// "not supported" tests and VcsRunnerTest.cpp already use).
+class DetectOnlyProvider : public ned::editor::vcs::Provider {
+  public:
+    [[nodiscard]] bool Detect(const std::filesystem::path&) const override {
+        return true;
     }
 };
 
@@ -215,4 +230,105 @@ TEST_CASE("AbortVcsCommitMessage discards the buffer without committing", "[Buff
     REQUIRE(fixture.statusMessage == "Commit aborted.");
     REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
     REQUIRE(&fixture.activeBuffer.Get() == &fixture.original);
+}
+
+// VcsPanel amend follow-up: BeginVcsCommitMessage(amend=true)'s own
+// synchronous guard paths, mirroring the plain-commit cases above. The real
+// async previous-commit-message fetch (seeding the buffer) needs a live
+// EventLoop -- exercised end to end against real git in
+// GitVcsPluginTest.cpp instead, matching this file's own header comment on
+// why *ForTesting seams don't try to cover the async tail.
+
+TEST_CASE("BeginVcsCommitMessage(amend) without a wired Runner reports and creates nothing", "[BufferView][Vcs]") {
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    BufferView          view = fixture.View();
+
+    view.BeginVcsCommitMessageForTesting(/*amend=*/true);
+
+    REQUIRE(fixture.statusMessage == "no vcs runner configured");
+    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
+}
+
+TEST_CASE("BeginVcsCommitMessage(amend) with no vcs provider reports the runner's error and creates no buffer",
+          "[BufferView][Vcs]") {
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
+    ned::editor::vcs::ClearRegistry(); // no provider registered at all
+    ned::ui::EventLoop          eventLoop;
+    ned::editor::vcs::Runner runner(eventLoop);
+    BufferView                  view = fixture.View();
+    view.SetVcsRunner(&runner);
+
+    view.BeginVcsCommitMessageForTesting(/*amend=*/true);
+
+    REQUIRE(fixture.statusMessage == "vcs commit amend: no vcs provider registered for this project");
+    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
+}
+
+TEST_CASE("Re-running vcs-commit-amend on an already-open commit buffer just marks it for amend, "
+          "without re-fetching or touching its content",
+          "[BufferView][Vcs]") {
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
+    ned::editor::vcs::ClearRegistry();
+    ned::ui::EventLoop          eventLoop;
+    ned::editor::vcs::Runner runner(eventLoop);
+    BufferView                  view = fixture.View();
+    view.SetVcsRunner(&runner);
+
+    view.BeginVcsCommitMessageForTesting(/*amend=*/false);
+    ned::text::Buffer* firstOpen = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
+    REQUIRE(firstOpen != nullptr);
+    firstOpen->SetPoint(0);
+    firstOpen->InsertAtPoint("My in-progress message\n");
+
+    fixture.activeBuffer.Set(fixture.original);              // simulate switching away
+    view.BeginVcsCommitMessageForTesting(/*amend=*/true);     // re-run as vcs-commit-amend instead
+
+    // Already open -- no fetch attempted (statusMessage_ never became
+    // "Fetching previous commit message..."), content untouched, just
+    // switched back to it.
+    ned::text::Buffer* secondOpen = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
+    REQUIRE(secondOpen == firstOpen);
+    REQUIRE(secondOpen->Text().find("My in-progress message") != std::string::npos);
+    REQUIRE(&fixture.activeBuffer.Get() == secondOpen);
+
+    // The pending amend flag itself only shows up in which Provider method
+    // FinishVcsCommitMessage calls -- DetectOnlyProvider's CommitArgv and
+    // AmendCommitArgv default-throw distinct text, so this proves
+    // RequestAmendCommit fired, not RequestCommit.
+    ned::editor::vcs::RegisterProvider("fake", std::make_unique<DetectOnlyProvider>());
+    view.FinishVcsCommitMessageForTesting();
+    REQUIRE(fixture.statusMessage == "vcs commit: amend commit not supported by this provider");
+}
+
+TEST_CASE("AbortVcsCommitMessage clears the pending amend flag for the next plain vcs-commit",
+          "[BufferView][Vcs]") {
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
+    ned::editor::vcs::ClearRegistry();
+    ned::ui::EventLoop          eventLoop;
+    ned::editor::vcs::Runner runner(eventLoop);
+    BufferView                  view = fixture.View();
+    view.SetVcsRunner(&runner);
+
+    view.BeginVcsCommitMessageForTesting(/*amend=*/false);
+    view.BeginVcsCommitMessageForTesting(/*amend=*/true); // already open -- just marks pending amend
+    view.AbortVcsCommitMessageForTesting();
+
+    // A fresh vcs-commit (not amend) after the abort must not still carry
+    // the aborted session's amend flag.
+    view.BeginVcsCommitMessageForTesting(/*amend=*/false);
+    ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
+    REQUIRE(commitBuffer != nullptr);
+    commitBuffer->SetPoint(0);
+    commitBuffer->InsertAtPoint("Fix the thing\n");
+
+    ned::editor::vcs::RegisterProvider("fake", std::make_unique<DetectOnlyProvider>());
+    view.FinishVcsCommitMessageForTesting();
+    REQUIRE(fixture.statusMessage == "vcs commit: commit not supported by this provider");
 }

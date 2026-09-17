@@ -68,6 +68,19 @@ inline constexpr std::string_view kVcsCommitMessageTemplate =
     "#\n"
     "# C-c C-c to commit, C-c C-k to abort.\n";
 
+// VcsPanel amend follow-up: vcs-commit-amend's own seed, appended straight
+// after the previous commit's own message (fetched via
+// Runner::RequestPreviousCommitMessage) rather than starting from a blank
+// line -- mirrors git's own `commit --amend` $EDITOR content (message
+// first, comment block after), point still landing at byte 0 so the
+// previous message is what the user edits, not what they type above.
+inline constexpr std::string_view kVcsAmendCommitMessageTemplate =
+    "\n"
+    "# Amending the previous commit. Lines starting with '#' will be\n"
+    "# ignored.\n"
+    "#\n"
+    "# C-c C-c to amend, C-c C-k to abort.\n";
+
 class Runner {
   public:
     // eventLoop must outlive this Runner, same requirement
@@ -168,6 +181,16 @@ class Runner {
     // what makes this safe to call, not anything here.
     void RequestHunkRevert(const text::Buffer& buffer, std::size_t targetLine, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestCommit(const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    // VcsPanel amend follow-up: RequestCommit's own sibling (Provider::
+    // AmendCommitArgv instead of CommitArgv), same "first output line is
+    // the summary" contract. Shares RequestCommit's own "commit:" +root
+    // guard key -- an amend and a plain commit against the same root are
+    // still mutually exclusive, not two independent operations.
+    void RequestAmendCommit(const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    // VcsPanel amend follow-up: the previous commit's own message, for
+    // pre-filling the amend buffer -- RequestFullDiff's own "no parse
+    // half, hand back raw stdout" shape, root-scoped like RequestCommit.
+    void RequestPreviousCommitMessage(std::function<void(std::string message)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchList(std::function<void(std::vector<BranchEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchCreate(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
