@@ -86,6 +86,7 @@
 #include "Editor/ThemeSetting.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/Runner.h"
+#include "Editor/Vim/Settings.h"
 
 #include "Editor/LanguageRegistry.h"
 #include "Janet/EditorBindings.h"
@@ -499,7 +500,7 @@ int MinimapOverlayReserve() {
 // what actually calls ~EventLoop() (notcurses_stop) and tears down every
 // child process, and it can only happen once this function returns, not
 // from inside it.
-int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std::string>& paths) {
+int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const std::vector<std::string>& paths) {
     std::setlocale(LC_ALL, "");
 
     Ned::Application::SetTitle("Ned");
@@ -793,6 +794,17 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             }
         }
         ned::editor::SaveProjectTrust();
+    }
+
+    // --vim: applied after every trusted init.janet/project-plugin load above
+    // (same "explicit invocation-time flag wins over config" precedent as
+    // --force-binary/--no-restore, just later here since this one has a real
+    // config-file equivalent -- ned/set-vim-mode -- to actually override).
+    // An untrusted project init.janet's own call, approved later via its
+    // deferred y/n/a prompt once the UI exists, still wins after that --
+    // deliberately: trusting a file is a decision this flag shouldn't preempt.
+    if (vimMode) {
+        ned::editor::vim::SetModeEnabled(true);
     }
 
     // session-persistence slice 1: deliberately after LoadInitFile, not
@@ -3100,6 +3112,7 @@ auto main(int argc, char** argv) -> int {
     bool                     forceHuge     = false;
     bool                     forceBinary   = false;
     bool                     noRestore     = false;
+    bool                     vimMode       = false;
     std::string              mcpStdioRelaySocketPath;
     std::vector<std::string> paths;
 
@@ -3127,6 +3140,9 @@ auto main(int argc, char** argv) -> int {
                  "Open files that look binary anyway, without an interactive confirmation");
     app.add_flag("--no-restore", noRestore,
                  "Don't restore the project's saved session (open buffers, breakpoints, sidebar state)");
+    app.add_flag("--vim", vimMode,
+                 "Start with Vim emulation on (the same setting ned/set-vim-mode controls; applied after "
+                 "init.janet loads, so this flag wins over any ned/set-vim-mode call there)");
     app.add_option("paths", paths, "Files or directories to open");
 
     try {
@@ -3170,7 +3186,7 @@ auto main(int argc, char** argv) -> int {
         return RunFormatFiles(paths, forceHuge);
     }
 
-    const int exitCode = RunInteractiveEditor(forceBinary, noRestore, paths);
+    const int exitCode = RunInteractiveEditor(forceBinary, noRestore, vimMode, paths);
 
     // named-projects follow-up: PendingReExec is a plain process-wide global
     // (Editor/PendingReExec.h) set deep inside RunInteractiveEditor's own
