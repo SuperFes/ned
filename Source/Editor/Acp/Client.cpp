@@ -1,190 +1,50 @@
 #include "Client.h"
 
-#include <cerrno>
 #include <utility>
-
-#include <unistd.h>
 
 #include "Editor/DiagnosticsLog.h"
 
 namespace ned::editor::acp {
 
-Client::~Client() {
-    // lsp-use-after-free follow-up: must be the first statement -- see
-    // Client.h's own header comment on alive_.
-    *alive_ = false;
-}
+namespace {
 
-Client::Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
-    StartReadLoop();
-    StartStderrReadLoop();
-}
+    protocol::FramedConnection<Transport>::Options MakeConnectionOptions() {
+        // acp-stderr-severity follow-up: Info, not Warning -- a real agent's
+        // stderr is routinely just informational chatter (a startup banner, a
+        // "session started" line), not necessarily a warning. Unlike Lsp
+        // (which defaults to a hidden log category specifically because its
+        // stderr is noisy), Acp defaults visible, so a Warning-severity entry
+        // here tripped BufferView's unsolicited "New warning -- see
+        // *Messages*" echo message for completely benign agent startup text
+        // -- reported live. Genuine ACP-level problems (agent exited,
+        // malformed frame, request timeout, a real disconnect) are logged at
+        // Warning from their own call sites in DispatchFrame/SendRequest and
+        // are unaffected.
+        return {LogCategory::Acp, "agent", LogSeverity::Info};
+    }
 
-Client::Client(Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
-    StartReadLoop();
-    StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
-    StartWriteLoop();
-}
+} // namespace
 
-void Client::StartWriteLoop() {
-    // async-write-queue follow-up -- identical to Client::StartWriteLoop,
-    // including the drain-on-stop policy -- see header comment.
-    writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
-        while (true) {
-            std::string frame;
-            {
-                std::unique_lock<std::mutex> lock(writeMutex_);
-                writeCv_.wait(lock, stopToken, [&] { return !writeQueue_.empty() || stopToken.stop_requested(); });
-                if (writeQueue_.empty()) {
-                    return; // nothing left -- clean stop
-                }
-                if (stopToken.stop_requested() && !drainQueueOnStop_.load()) {
-                    return; // ordinary teardown: don't attempt stale writes against a dying/dead connection
-                }
-                frame = std::move(writeQueue_.front());
-                writeQueue_.pop_front();
-            }
-            try {
-                transport_.WriteMessage(frame);
-            }
-            catch (const std::exception&) {
-                return; // pipe's gone -- the read loop's own EOF/error path already reports this
-            }
+Client::Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : connection_(std::move(argv), /*captureStderr=*/true, eventLoop, MakeConnectionOptions()) {
+    connection_.SetOnFrame([this](std::string frame) { DispatchFrame(frame); });
+    connection_.SetOnDisconnected([this](std::string reason) {
+        if (onDisconnected_) {
+            onDisconnected_(reason);
         }
     });
 }
 
-void Client::EnqueueWrite(std::string frame) {
-    {
-        std::lock_guard<std::mutex> lock(writeMutex_);
-        writeQueue_.push_back(std::move(frame));
-    }
-    writeCv_.notify_one();
+Client::Client(Transport transport, ned::ui::EventLoop& eventLoop) : connection_(std::move(transport), eventLoop, MakeConnectionOptions()) {
+    connection_.SetOnFrame([this](std::string frame) { DispatchFrame(frame); });
+    connection_.SetOnDisconnected([this](std::string reason) {
+        if (onDisconnected_) {
+            onDisconnected_(reason);
+        }
+    });
 }
 
 void Client::PrepareForGracefulShutdown() {
-    drainQueueOnStop_ = true;
-}
-
-void Client::StartReadLoop() {
-    // transport_ is already fully constructed by the time this runs (called
-    // from the constructor *body*) -- see Client.cpp's identical comment
-    // for why readThread_ has to start out empty rather than being given
-    // real work directly in the initializer list.
-    // closed-connection-never-parks follow-up: the stop token is genuinely
-    // consulted rather than ignored. std::jthread's destructor requests a
-    // stop before it joins, so a read thread the scheduler has not yet run
-    // by the time its owner is destroyed exits here instead of entering a
-    // read against an already-torn-down transport_ -- the deadlock's common
-    // window. ChildProcess::WaitReadable's own closed-fd guard is what
-    // covers the remainder (stop requested after this check, before the
-    // poll); the two together are what make the join below always return.
-    readThread_ = std::jthread([this](const std::stop_token& stopToken) {
-        while (!stopToken.stop_requested()) {
-            std::optional<std::string> message;
-            try {
-                message = transport_.ReadMessage(); // blocks
-            }
-            catch (const std::exception& e) {
-                // Malformed message, or (subprocess-hang-protection
-                // follow-up) a mid-message stall -- see Client.cpp's
-                // identical comment.
-                eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
-                    if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this Client is gone
-                    }
-                    LogMessage(LogCategory::Acp, LogSeverity::Warning, reason);
-                    if (onDisconnected_) {
-                        onDisconnected_(reason);
-                    }
-                });
-                return;
-            }
-            if (!message) {
-                // EOF -- agent exited (or this Client is being destroyed,
-                // see header comment: Transport's destructor closing this
-                // end's fds is exactly what makes the blocking ReadMessage()
-                // call above finally return). alive_ (see header comment) is
-                // what makes that safe, not an assumption about when this
-                // callback runs relative to destruction.
-                eventLoop_.Post([this, alive = alive_] {
-                    if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this Client is gone
-                    }
-                    LogMessage(LogCategory::Acp, LogSeverity::Warning, "agent exited (EOF)");
-                    if (onDisconnected_) {
-                        onDisconnected_("agent exited (EOF)");
-                    }
-                });
-                return;
-            }
-            if (message->empty()) {
-                continue; // a bare blank line -- see Transport::ReadMessage's own doc comment
-            }
-            eventLoop_.Post([this, alive = alive_, frameText = std::move(*message)]() mutable {
-                if (!*alive) {
-                    return; // lsp-use-after-free follow-up -- this Client is gone
-                }
-                DispatchFrame(frameText);
-            });
-        }
-    });
-}
-
-void Client::StartStderrReadLoop() {
-    // Identical to Client::StartStderrReadLoop -- see that function's own
-    // doc comment for the full reasoning; only the log category differs.
-    const int fd = transport_.StderrFd();
-    if (fd < 0) {
-        return; // not captured -- see header comment
-    }
-    std::string label = transport_.ProcessLabel();
-
-    stderrThread_ = std::jthread([this, fd, label = std::move(label)](std::stop_token) {
-        std::string buffered;
-        char        chunk[4096];
-        while (true) {
-            const ssize_t result = ::read(fd, chunk, sizeof(chunk));
-            if (result < 0) {
-                if (errno == EINTR) {
-                    continue;
-                }
-                return;
-            }
-            if (result == 0) {
-                return; // EOF -- agent exited, or this Client is being destroyed
-            }
-            buffered.append(chunk, static_cast<std::size_t>(result));
-
-            std::size_t newline;
-            while ((newline = buffered.find('\n')) != std::string::npos) {
-                std::string line = buffered.substr(0, newline);
-                buffered.erase(0, newline + 1);
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-                if (line.empty()) {
-                    continue;
-                }
-                eventLoop_.Post([label, line = std::move(line)] {
-                    // acp-stderr-severity follow-up: Info, not Warning -- a
-                    // real agent's stderr is routinely just informational
-                    // chatter (a startup banner, a "session started" line),
-                    // not necessarily a warning. Unlike Lsp (which defaults
-                    // to a hidden log category specifically because its
-                    // stderr is noisy), Acp defaults visible, so a
-                    // Warning-severity entry here tripped BufferView's
-                    // unsolicited "New warning -- see *Messages*" echo
-                    // message for completely benign agent startup text --
-                    // reported live. Genuine ACP-level problems (agent
-                    // exited, malformed frame, request timeout, a real
-                    // disconnect) are logged at Warning from their own call
-                    // sites elsewhere in this file and are unaffected.
-                    LogMessage(LogCategory::Acp, LogSeverity::Info, label.empty() ? line : label + ": " + line);
-                });
-            }
-        }
-    });
+    connection_.PrepareForGracefulShutdown();
 }
 
 void Client::DispatchFrame(const std::string& frameText) {
@@ -235,7 +95,7 @@ void Client::DispatchFrame(const std::string& frameText) {
                 const Json response = {{"jsonrpc", "2.0"},
                                        {"id", requestId},
                                        {"error", {{"code", -32601}, {"message", "method not found: " + method}}}};
-                EnqueueWrite(response.dump());
+                connection_.SendFrame(response.dump());
                 return;
             }
             it->second(params, [this, requestId](std::optional<Json> result, std::optional<Json> error) {
@@ -246,7 +106,7 @@ void Client::DispatchFrame(const std::string& frameText) {
                 else {
                     response["result"] = result.value_or(Json(nullptr));
                 }
-                EnqueueWrite(response.dump());
+                connection_.SendFrame(response.dump());
             });
             return;
         }
@@ -267,12 +127,13 @@ void Client::SendRequest(const std::string& method, Json params, ResponseCallbac
         {"method", method},
         {"params", std::move(params)},
     };
-    EnqueueWrite(message.dump());
+    connection_.SendFrame(message.dump());
 }
 
 void Client::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
-    // subprocess-hang-protection follow-up -- see Client::ExpireStaleRequests's
-    // identical reasoning/collect-then-invoke shape.
+    // subprocess-hang-protection follow-up -- see
+    // Lsp::Client::ExpireStaleRequests's identical reasoning/collect-then-
+    // invoke shape.
     const std::chrono::steady_clock::time_point now    = std::chrono::steady_clock::now();
     const std::chrono::steady_clock::time_point cutoff = now - maxAge;
     // A request is only truly stale if it's old AND nothing at all has been
@@ -304,7 +165,7 @@ void Client::SendNotification(const std::string& method, Json params) {
         {"method", method},
         {"params", std::move(params)},
     };
-    EnqueueWrite(message.dump());
+    connection_.SendFrame(message.dump());
 }
 
 void Client::SetNotificationHandler(std::string method, NotificationHandler handler) {

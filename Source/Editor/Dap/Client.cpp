@@ -1,166 +1,39 @@
 #include "Client.h"
 
-#include <cerrno>
 #include <utility>
-
-#include <unistd.h>
 
 #include "Editor/DiagnosticsLog.h"
 
 namespace ned::editor::dap {
 
-Client::~Client() {
-    // lsp-use-after-free follow-up: must be the first statement -- see
-    // Client.h's own header comment on alive_.
-    *alive_ = false;
-}
+namespace {
 
-Client::Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
-    StartReadLoop();
-    StartStderrReadLoop();
-}
+    protocol::FramedConnection<lsp::Transport>::Options MakeConnectionOptions() {
+        return {LogCategory::Dap, "adapter"};
+    }
 
-Client::Client(lsp::Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
-    StartReadLoop();
-    StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
-    StartWriteLoop();
-}
+} // namespace
 
-void Client::StartWriteLoop() {
-    // async-write-queue follow-up -- identical to Client::StartWriteLoop,
-    // including the drain-on-stop policy -- see header comment.
-    writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
-        while (true) {
-            std::string frame;
-            {
-                std::unique_lock<std::mutex> lock(writeMutex_);
-                writeCv_.wait(lock, stopToken, [&] { return !writeQueue_.empty() || stopToken.stop_requested(); });
-                if (writeQueue_.empty()) {
-                    return; // nothing left -- clean stop
-                }
-                if (stopToken.stop_requested() && !drainQueueOnStop_.load()) {
-                    return; // ordinary teardown: don't attempt stale writes against a dying/dead connection
-                }
-                frame = std::move(writeQueue_.front());
-                writeQueue_.pop_front();
-            }
-            try {
-                transport_.WriteFrame(frame);
-            }
-            catch (const std::exception&) {
-                return; // pipe's gone -- the read loop's own EOF/error path already reports this
-            }
+Client::Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : connection_(std::move(argv), /*captureStderr=*/true, eventLoop, MakeConnectionOptions()) {
+    connection_.SetOnFrame([this](std::string frame) { DispatchFrame(frame); });
+    connection_.SetOnDisconnected([this](std::string reason) {
+        if (onDisconnected_) {
+            onDisconnected_(reason);
         }
     });
 }
 
-void Client::EnqueueWrite(std::string frame) {
-    {
-        std::lock_guard<std::mutex> lock(writeMutex_);
-        writeQueue_.push_back(std::move(frame));
-    }
-    writeCv_.notify_one();
+Client::Client(lsp::Transport transport, ned::ui::EventLoop& eventLoop) : connection_(std::move(transport), eventLoop, MakeConnectionOptions()) {
+    connection_.SetOnFrame([this](std::string frame) { DispatchFrame(frame); });
+    connection_.SetOnDisconnected([this](std::string reason) {
+        if (onDisconnected_) {
+            onDisconnected_(reason);
+        }
+    });
 }
 
 void Client::PrepareForGracefulShutdown() {
-    drainQueueOnStop_ = true;
-}
-
-void Client::StartReadLoop() {
-    // Identical loop to Client::StartReadLoop — see that function (and
-    // Client.h's header comment) for the reasoning behind every branch;
-    // only the dispatch target differs.
-    // closed-connection-never-parks follow-up: the stop token is genuinely
-    // consulted rather than ignored. std::jthread's destructor requests a
-    // stop before it joins, so a read thread the scheduler has not yet run
-    // by the time its owner is destroyed exits here instead of entering a
-    // read against an already-torn-down transport_ -- the deadlock's common
-    // window. ChildProcess::WaitReadable's own closed-fd guard is what
-    // covers the remainder (stop requested after this check, before the
-    // poll); the two together are what make the join below always return.
-    readThread_ = std::jthread([this](const std::stop_token& stopToken) {
-        while (!stopToken.stop_requested()) {
-            std::optional<std::string> frame;
-            try {
-                frame = transport_.ReadFrame(); // blocks
-            }
-            catch (const std::exception& e) {
-                // Malformed frame, or (subprocess-hang-protection follow-up)
-                // a mid-frame stall -- see Client.cpp's identical comment.
-                eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
-                    if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this Client is gone
-                    }
-                    LogMessage(LogCategory::Dap, LogSeverity::Warning, reason);
-                    if (onDisconnected_) {
-                        onDisconnected_(reason);
-                    }
-                });
-                return;
-            }
-            if (!frame) {
-                eventLoop_.Post([this, alive = alive_] {
-                    if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this Client is gone
-                    }
-                    LogMessage(LogCategory::Dap, LogSeverity::Warning, "adapter exited (EOF)");
-                    if (onDisconnected_) {
-                        onDisconnected_("adapter exited (EOF)");
-                    }
-                });
-                return;
-            }
-            eventLoop_.Post([this, alive = alive_, frameText = std::move(*frame)]() mutable {
-                if (!*alive) {
-                    return; // lsp-use-after-free follow-up -- this Client is gone
-                }
-                DispatchFrame(frameText);
-            });
-        }
-    });
-}
-
-void Client::StartStderrReadLoop() {
-    // Identical to Client::StartStderrReadLoop -- see that function's own
-    // doc comment for the full reasoning; only the log category differs.
-    const int fd = transport_.StderrFd();
-    if (fd < 0) {
-        return; // not captured -- see header comment
-    }
-    std::string label = transport_.ProcessLabel();
-
-    stderrThread_ = std::jthread([this, fd, label = std::move(label)](std::stop_token) {
-        std::string buffered;
-        char        chunk[4096];
-        while (true) {
-            const ssize_t result = ::read(fd, chunk, sizeof(chunk));
-            if (result < 0) {
-                if (errno == EINTR) {
-                    continue;
-                }
-                return;
-            }
-            if (result == 0) {
-                return; // EOF -- adapter exited, or this Client is being destroyed
-            }
-            buffered.append(chunk, static_cast<std::size_t>(result));
-
-            std::size_t newline;
-            while ((newline = buffered.find('\n')) != std::string::npos) {
-                std::string line = buffered.substr(0, newline);
-                buffered.erase(0, newline + 1);
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-                if (line.empty()) {
-                    continue;
-                }
-                eventLoop_.Post([label, line = std::move(line)] {
-                    LogMessage(LogCategory::Dap, LogSeverity::Warning, label.empty() ? line : label + ": " + line);
-                });
-            }
-        }
-    });
+    connection_.PrepareForGracefulShutdown();
 }
 
 void Client::DispatchFrame(const std::string& frameText) {
@@ -220,12 +93,13 @@ void Client::SendRequest(const std::string& command, Json arguments, ResponseCal
         {"command", command},
         {"arguments", std::move(arguments)},
     };
-    EnqueueWrite(message.dump());
+    connection_.SendFrame(message.dump());
 }
 
 void Client::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
-    // subprocess-hang-protection follow-up -- see Client::ExpireStaleRequests's
-    // identical reasoning/collect-then-invoke shape.
+    // subprocess-hang-protection follow-up -- see
+    // Lsp::Client::ExpireStaleRequests's identical reasoning/collect-then-
+    // invoke shape.
     const std::chrono::steady_clock::time_point   now = std::chrono::steady_clock::now();
     std::vector<std::pair<int, ResponseCallback>> expired;
     for (auto it = pending_.begin(); it != pending_.end();) {

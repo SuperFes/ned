@@ -1,9 +1,6 @@
 #include "Client.h"
 
-#include <cerrno>
 #include <utility>
-
-#include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
 #include "Editor/DiagnosticsLog.h"
@@ -16,199 +13,40 @@ namespace {
     // std::string; build it from the shared string_view constant once.
     const std::string kLspActivity{kLspActivityName};
 
+    protocol::FramedConnection<Transport>::Options MakeConnectionOptions() {
+        return {LogCategory::Lsp, "server"};
+    }
+
 } // namespace
 
 Client::~Client() {
-    // lsp-use-after-free follow-up: must be the first statement -- see this
-    // file's own header comment on alive_. Every already-posted callback
-    // capturing `this` also holds its own reference to this same bool, so
-    // this flip is visible to them regardless of when they actually run.
-    *alive_ = false;
     for (std::size_t i = 0; i < pending_.size(); ++i) {
         EndBackgroundActivity(kLspActivity); // see the header's destructor comment
     }
 }
 
-Client::Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop), handshakeComplete_(false) {
-    StartReadLoop();
-    StartStderrReadLoop();
-    StartWriteLoop();
-}
-
-Client::Client(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete) : transport_(std::move(transport)), eventLoop_(eventLoop), handshakeComplete_(startHandshakeComplete) {
-    StartReadLoop();
-    StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
-    StartWriteLoop();
-}
-
-void Client::StartWriteLoop() {
-    // async-write-queue follow-up -- see header comment.
-    writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
-        while (true) {
-            std::string frame;
-            {
-                std::unique_lock<std::mutex> lock(writeMutex_);
-                writeCv_.wait(lock, stopToken, [&] { return !writeQueue_.empty() || stopToken.stop_requested(); });
-                if (writeQueue_.empty()) {
-                    return; // nothing left -- clean stop
-                }
-                if (stopToken.stop_requested() && !drainQueueOnStop_.load()) {
-                    return; // ordinary teardown: don't attempt stale writes against a dying/dead connection
-                }
-                frame = std::move(writeQueue_.front());
-                writeQueue_.pop_front();
-            }
-            try {
-                transport_.WriteFrame(frame);
-            }
-            catch (const std::exception&) {
-                return; // pipe's gone -- the read loop's own EOF/error path already reports this
-            }
+Client::Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : connection_(std::move(argv), /*captureStderr=*/true, eventLoop, MakeConnectionOptions()), handshakeComplete_(false) {
+    connection_.SetOnFrame([this](std::string frame) { DispatchFrame(frame); });
+    connection_.SetOnDisconnected([this](std::string reason) {
+        LogMessage(LogCategory::Lsp, LogSeverity::Warning, reason);
+        if (onDisconnected_) {
+            onDisconnected_(reason);
         }
     });
 }
 
-void Client::EnqueueWrite(std::string frame) {
-    {
-        std::lock_guard<std::mutex> lock(writeMutex_);
-        writeQueue_.push_back(std::move(frame));
-    }
-    writeCv_.notify_one();
+Client::Client(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete) : connection_(std::move(transport), eventLoop, MakeConnectionOptions()), handshakeComplete_(startHandshakeComplete) {
+    connection_.SetOnFrame([this](std::string frame) { DispatchFrame(frame); });
+    connection_.SetOnDisconnected([this](std::string reason) {
+        LogMessage(LogCategory::Lsp, LogSeverity::Warning, reason);
+        if (onDisconnected_) {
+            onDisconnected_(reason);
+        }
+    });
 }
 
 void Client::PrepareForGracefulShutdown() {
-    drainQueueOnStop_ = true;
-}
-
-void Client::StartReadLoop() {
-    // transport_ is already fully constructed by the time this runs (called
-    // from the constructor *body*, after the member-initializer-list has
-    // run) -- see Client.h's header comment for why readThread_ has to
-    // start out empty (default-constructed) rather than being given real
-    // work directly in the initializer list.
-    // closed-connection-never-parks follow-up: the stop token is genuinely
-    // consulted rather than ignored. std::jthread's destructor requests a
-    // stop before it joins, so a read thread the scheduler has not yet run
-    // by the time its owner is destroyed exits here instead of entering a
-    // read against an already-torn-down transport_ -- the deadlock's common
-    // window. ChildProcess::WaitReadable's own closed-fd guard is what
-    // covers the remainder (stop requested after this check, before the
-    // poll); the two together are what make the join below always return.
-    readThread_ = std::jthread([this](const std::stop_token& stopToken) {
-        while (!stopToken.stop_requested()) {
-            std::optional<std::string> frame;
-            try {
-                frame = transport_.ReadFrame(); // blocks
-            }
-            catch (const std::exception& e) {
-                // malformed frame, or (subprocess-hang-protection follow-up)
-                // a mid-frame stall Transport::ReadFrame detected -- stop
-                // this connection's read loop rather than looping on a
-                // corrupt/stuck stream. error-visibility follow-up:
-                // previously a silent return; now reported via
-                // onDisconnected_, same Post-marshaling reasoning as the
-                // real-frame case below. The exception's own message (not a
-                // fixed string) is what's reported, so a stall and a
-                // genuinely malformed frame are distinguishable in
-                // *Messages*.
-                eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
-                    if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this Client is gone
-                    }
-                    LogMessage(LogCategory::Lsp, LogSeverity::Warning, reason);
-                    if (onDisconnected_) {
-                        onDisconnected_(reason);
-                    }
-                });
-                return;
-            }
-            if (!frame) {
-                // EOF -- server exited (or this Client is being
-                // destroyed, see header comment). error-visibility
-                // follow-up: previously silent -- now reported the same way
-                // as the malformed-frame case above. A disconnect during
-                // this Client's own destruction is a real possibility
-                // (Transport's destructor closing this end's fds is exactly
-                // what makes the blocking ReadFrame() call above finally
-                // return -- see header comment); alive_ (see header comment)
-                // is what makes that safe, not an assumption about when this
-                // callback runs relative to destruction.
-                eventLoop_.Post([this, alive = alive_] {
-                    if (!*alive) {
-                        return; // lsp-use-after-free follow-up -- this Client is gone
-                    }
-                    LogMessage(LogCategory::Lsp, LogSeverity::Warning, "server exited (EOF)");
-                    if (onDisconnected_) {
-                        onDisconnected_("server exited (EOF)");
-                    }
-                });
-                return;
-            }
-            // ned::ui::EventLoop::Run's own loop drains any Post()ed work
-            // unconditionally and that alone earns the next iteration a
-            // repaint (see EventLoop.cpp's own comment on needsRepaint), so
-            // a diagnostic/hover/completion/code-action response arriving
-            // here and updating real state (e.g. Buffer::SetDiagnostics) is
-            // shown without needing an explicit "force a frame" call.
-            eventLoop_.Post([this, alive = alive_, frameText = std::move(*frame)]() mutable {
-                if (!*alive) {
-                    return; // lsp-use-after-free follow-up -- this Client is gone
-                }
-                DispatchFrame(frameText);
-            });
-        }
-    });
-}
-
-void Client::StartStderrReadLoop() {
-    const int fd = transport_.StderrFd();
-    if (fd < 0) {
-        return; // not captured -- see header comment
-    }
-
-    // Captured by value below rather than read from transport_ inside the
-    // background thread's own lambda -- transport_'s public methods are
-    // main-thread-only by this class's own threading contract (see header
-    // comment); a raw fd and a plain string carry no such restriction.
-    std::string label = transport_.ProcessLabel();
-
-    stderrThread_ = std::jthread([this, fd, label = std::move(label)](std::stop_token) {
-        std::string buffered;
-        char        chunk[4096];
-        while (true) {
-            const ssize_t result = ::read(fd, chunk, sizeof(chunk));
-            if (result < 0) {
-                if (errno == EINTR) {
-                    continue;
-                }
-                return; // a genuine read error here is rare and non-actionable -- the stdout loop's own EOF/malformed-frame path is what reports the real disconnect
-            }
-            if (result == 0) {
-                return; // EOF -- server exited, or this Client is being destroyed (see header comment)
-            }
-            buffered.append(chunk, static_cast<std::size_t>(result));
-
-            std::size_t newline;
-            while ((newline = buffered.find('\n')) != std::string::npos) {
-                std::string line = buffered.substr(0, newline);
-                buffered.erase(0, newline + 1);
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-                if (line.empty()) {
-                    continue; // a blank line between real diagnostic output isn't worth a log entry
-                }
-                eventLoop_.Post([label, line = std::move(line)] {
-                    // diagnostics-log-rollup follow-up: LogMessage itself
-                    // coalesces this against the immediately preceding entry
-                    // when it repeats verbatim (a server that logs the same
-                    // warning on every request, say) rather than flooding
-                    // *Messages* with one line per occurrence.
-                    LogMessage(LogCategory::Lsp, LogSeverity::Warning, label.empty() ? line : label + ": " + line);
-                });
-            }
-        }
-    });
+    connection_.PrepareForGracefulShutdown();
 }
 
 void Client::DispatchFrame(const std::string& frameText) {
@@ -263,7 +101,7 @@ void Client::DispatchFrame(const std::string& frameText) {
                                 {"id", message["id"]},
                                 {"error", {{"code", -32601}, {"message", "method not found: " + method}}}};
             }
-            EnqueueWrite(response.dump());
+            connection_.SendFrame(response.dump());
             return;
         }
 
@@ -293,7 +131,7 @@ void Client::SendRequest(const std::string& method, Json params, ResponseCallbac
         {"method", method},
         {"params", std::move(params)},
     };
-    EnqueueWrite(message.dump());
+    connection_.SendFrame(message.dump());
 }
 
 void Client::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
@@ -335,7 +173,7 @@ void Client::SendNotification(const std::string& method, Json params) {
         {"method", method},
         {"params", std::move(params)},
     };
-    EnqueueWrite(message.dump());
+    connection_.SendFrame(message.dump());
 
     if (method == "initialized") {
         handshakeComplete_                              = true;

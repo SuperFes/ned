@@ -334,9 +334,10 @@ TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an alread
 // Tests/ChildProcessTest.cpp's own "WaitReadable returns immediately on a
 // closed connection" pair, and the direct regression test for the flaky
 // protocol-client timeouts under `ctest -j8` (root-caused 2026-09-08 from a
-// core dump of a wedged run of the MethodNotFound case above): ~Client
-// destroys transport_ before joining readThread_ by design -- that fd close
-// is what unblocks an in-flight ReadMessage() -- but a read thread the
+// core dump of a wedged run of the MethodNotFound case above): ~Client's own
+// connection_ member (Editor/Protocol/FramedConnection.h, one-connection-
+// class follow-up) destroys transport_ before joining readThread_ by design
+// -- that fd close is what unblocks an in-flight ReadFrame() -- but a read thread the
 // scheduler hasn't run *at all* yet reaches its first read only after that
 // teardown, and used to park forever in poll() on the resulting -1 fd, so
 // the join never returned. Hammering construct-then-immediately-destroy is

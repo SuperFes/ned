@@ -3,36 +3,27 @@
 // process (see Transport.h for the raw process/newline-framing layer this
 // sits on top of).
 //
-// Threading, lifetime, and member-declaration order all mirror
-// Lsp/Client.h exactly (background jthread read loop marshaling onto the
-// main thread via ned::ui::EventLoop::Post; transport_ declared after
-// readThread_ so its destructor's fd close is what unblocks the background
-// thread's in-flight blocking Transport::ReadMessage()) -- see that file's
-// own header comment for the full reasoning, none of which differs here and
-// none of which is repeated.
-//
-// lsp-use-after-free follow-up: that includes alive_ (see Client.h's own
-// header comment, corrected 2026-08-26) -- the earlier claim that this class
-// is "only ever destroyed after EventLoop::Run() has returned" was false for
-// Client's mid-session respawn path, confirmed live via ASan, and nothing
-// about Manager's own single-session model makes Client immune to the
-// same hazard (a Post()ed callback from readThread_/stderrThread_ that
-// outlives the object, freed by Manager::EndSession, whether immediately
-// or after some delay -- no delay is actually safe, only alive_ is).
-//
-// Two real differences from Client:
+// one-connection-class follow-up: the threading/lifetime machinery this
+// class used to hand-roll (background read loop, stderr loop, async write
+// queue, the alive_ use-after-free guard, and the load-bearing member-
+// declaration order all three of Lsp/Dap/Acp Client once carried) now lives
+// once, in Editor/Protocol/FramedConnection.h, which connection_ below owns
+// as a single member — see that file's own header comment for the full
+// reasoning. This class keeps only what's genuinely protocol-specific:
+// JSON-RPC envelope construction/correlation, and two real differences from
+// Lsp::Client that predate this refactor and are unaffected by it:
 //
 //   - No handshake-ordering gate. LSP has a hard rule (nothing but
 //     "initialize" itself may be sent before "initialized" goes out) that
-//     bit a real server (harper-ls) in practice, which is why Client
+//     bit a real server (harper-ls) in practice, which is why Lsp::Client
 //     queues calls until that gate opens. ACP's "initialize" has no such
 //     restriction on this client's own subsequent calls, so there is nothing
 //     to gate.
 //
 //   - RequestHandler is async-capable. LSP's server-initiated requests
 //     (window/workDoneProgress/create, the only one this codebase answers)
-//     always resolve synchronously, so Client::RequestHandler is a plain
-//     Json(const Json&). ACP's agent-initiated requests include
+//     always resolve synchronously, so Lsp::Client::RequestHandler is a
+//     plain Json(const Json&). ACP's agent-initiated requests include
 //     session/request_permission, which genuinely needs to wait on a live
 //     user keystroke (a whole InteractiveRequest round-trip through
 //     BufferView) before it has an answer -- so this RequestHandler instead
@@ -42,52 +33,21 @@
 //     later": a `respond` continuation must never be invoked after the
 //     Client that handed it out has been destroyed.
 //
-// lsp-stderr-capture follow-up (extended to ACP): stderrThread_ mirrors
-// Client's own stderrThread_ exactly -- a second blocking read loop over
-// Transport::StderrFd(), declared alongside readThread_ before transport_
-// for the same destruction-order reason. The real-subprocess constructor
-// passes captureStderr=true; the Transport-taking test constructor never
-// captures (StartStderrReadLoop is a no-op when StderrFd() < 0).
-//
-// async-write-queue follow-up (extended to ACP, for consistency -- no live
-// freeze reported against this client specifically): mirrors Client's own
-// writeThread_/EnqueueWrite/PrepareForGracefulShutdown exactly -- see
-// Client.h's own header comment for the full reasoning. Manager::
-// StopSession sends a best-effort "session/close" request immediately
-// before EndSession destroys the client (mirroring Manager::Shutdown's
-// own "shutdown"+"exit" courtesy pair) -- confirmed live by a real
-// DapManagerTest.cpp test failure during this transplant (Client hit the
-// identical race first): without PrepareForGracefulShutdown, that
-// SendRequest-then-immediately-destroy sequence races the destructor's
-// implicit request_stop() against writeThread_ actually writing the queued
-// frame, silently dropping it more often than not. Four call sites move
-// onto the queue: SendRequest, SendNotification, and DispatchFrame's two
-// response writes (the MethodNotFound error for an unhandled
-// agent-initiated request, and the `respond` continuation's own write --
-// the latter may run synchronously inline or much later, per this class's
-// own RequestHandler contract above; either way it now enqueues instead of
-// writing directly).
-//
 
 #ifndef NED_EDITOR_ACP_CLIENT_H
 #define NED_EDITOR_ACP_CLIENT_H
 
-#include <atomic>
 #include <chrono>
-#include <condition_variable> // condition_variable_any -- see Client.h's own comment on writeCv_
-#include <deque>
 #include <functional>
-#include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "Editor/ProcessTimeouts.h"
+#include "Editor/Protocol/FramedConnection.h"
 #include "UI/EventLoop.h"
 
 #include "Transport.h"
@@ -111,30 +71,23 @@ using RequestHandler = std::function<void(const Json& params, RespondFn respond)
 class Client {
   public:
     // Spawns argv as a new agent process. eventLoop must outlive this
-    // Client (see header comment).
+    // Client (see FramedConnection.h's own lifetime contract).
     Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop);
 
     // Takes ownership of an already-open Transport directly -- for tests
-    // driving a raw pipe pair with no real subprocess involved, mirroring
-    // Client's own test constructor.
+    // driving a raw pipe pair with no real subprocess involved.
     Client(Transport transport, ned::ui::EventLoop& eventLoop);
 
-    // lsp-use-after-free follow-up: no longer = default -- the body flips
-    // alive_ to false as its first statement (see Client.h's own header
-    // comment); member destruction order still does the rest of the real
-    // teardown work, same as before.
-    ~Client();
+    ~Client() = default; // connection_'s own destructor does the real teardown work — see FramedConnection.h
 
     Client(const Client&)            = delete;
     Client& operator=(const Client&) = delete;
-    // Not movable: the background thread's lambda captures `this` directly.
-    Client(Client&&)            = delete;
-    Client& operator=(Client&&) = delete;
+    Client(Client&&)                 = delete;
+    Client& operator=(Client&&)      = delete;
 
     // Sends a JSON-RPC request with a freshly allocated id. callback runs on
     // the main thread once the matching response arrives; if this Client
-    // is destroyed first, callback is simply dropped, uninvoked -- matches
-    // Client::SendRequest's own "abandoned at shutdown" convention.
+    // is destroyed first, callback is simply dropped, uninvoked.
     void SendRequest(const std::string& method, Json params, ResponseCallback callback);
 
     // Sends a JSON-RPC notification (no "id", no response expected) -- e.g.
@@ -157,23 +110,18 @@ class Client {
     // client supports; Manager is what actually makes that declaration).
     void SetRequestHandler(std::string method, RequestHandler handler);
 
-    // Invoked exactly once, on the main thread, the moment the background
-    // read loop stops running for any reason -- clean EOF (the agent process
-    // exited) or a malformed message. reason is a short, human-readable
-    // cause. Unset by default, a safe no-op -- mirrors
-    // Client::SetOnDisconnected exactly.
+    // Invoked exactly once, on the main thread, when the connection stops
+    // running for any reason.
     void SetOnDisconnected(std::function<void(std::string reason)> handler);
 
-    // Public primarily for tests -- mirrors Client::DispatchFrame's own
-    // "public primarily for tests" precedent (see that method's doc comment)
-    // for exactly the same reason: EventLoop::Post only enqueues, so a test
-    // with no running EventLoop::Run() loop calls this directly instead.
+    // Public primarily for tests -- FramedConnection's own SetOnFrame
+    // callback reaches this via EventLoop::Post; calling it directly
+    // exercises the same correlation/dispatch logic without needing a
+    // running Run() loop.
     void DispatchFrame(const std::string& frameText);
 
-    // subprocess-hang-protection follow-up -- see Client::ExpireStaleRequests's
-    // identical doc comment. Real callers take ProcessTimeouts.h's
-    // ProtocolRequestTimeoutMs() as their default (ChildProcess-hang-
-    // protection-round-2 follow-up).
+    // subprocess-hang-protection follow-up -- see
+    // Lsp::Client::ExpireStaleRequests's identical doc comment.
     //
     // ACP round-1-live-validation follow-up: unlike LSP/DAP's one-shot
     // request/response calls, a "session/prompt" request can legitimately sit
@@ -184,44 +132,14 @@ class Client {
     // been outstanding that long -- see lastActivityAt_/DispatchFrame.
     void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
-    // async-write-queue follow-up: see Client::PrepareForGracefulShutdown's
-    // identical doc comment -- call this immediately before a best-effort
-    // courtesy request (e.g. Manager::StopSession's "session/close") that
-    // must actually reach the wire before this Client is destroyed.
+    // async-write-queue follow-up: see FramedConnection::PrepareForGracefulShutdown's
+    // doc comment -- call this immediately before a best-effort courtesy
+    // request (e.g. Manager::StopSession's "session/close") that must
+    // actually reach the wire before this Client is destroyed.
     void PrepareForGracefulShutdown();
 
   private:
-    void StartReadLoop();
-    void StartStderrReadLoop(); // lsp-stderr-capture follow-up -- see header comment
-    void StartWriteLoop();      // async-write-queue follow-up -- see header comment
-
-    // async-write-queue follow-up: enqueues frame for writeThread_ to send,
-    // returning immediately -- replaces every direct transport_.WriteMessage
-    // call. All four call sites (SendRequest, SendNotification, and
-    // DispatchFrame's two response writes) run on the main thread only, so
-    // enqueue order is call order is on-wire order.
-    void EnqueueWrite(std::string frame);
-
-    // lsp-use-after-free follow-up: see Client.h's own header comment on
-    // alive_ and this file's header comment above.
-    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
-
-    std::jthread readThread_;   // declared before transport_ -- see header comment
-    std::jthread stderrThread_; // ditto -- lsp-stderr-capture follow-up
-    Transport    transport_;
-
-    ned::ui::EventLoop& eventLoop_;
-
-    // async-write-queue follow-up: writeThread_ is declared *after*
-    // transport_ (opposite of readThread_/stderrThread_ above) so it
-    // destructs *before* transport_ -- see Client.h's own header comment.
-    // writeMutex_/writeCv_/writeQueue_ must outlive writeThread_, so they're
-    // declared ahead of it here.
-    std::mutex                  writeMutex_;
-    std::condition_variable_any writeCv_;
-    std::deque<std::string>     writeQueue_;
-    std::atomic<bool>           drainQueueOnStop_ = false; // see PrepareForGracefulShutdown
-    std::jthread                writeThread_;
+    protocol::FramedConnection<Transport> connection_;
 
     struct PendingRequest {
         ResponseCallback                      callback;
