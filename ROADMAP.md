@@ -88,28 +88,17 @@ measurement said "fine" while typing felt bad.
       layer-vs-upstream gate caught 20 real "named descendant mismatch" failures across
       bash/css/fish before it shipped, which is exactly what that gate is for.
 
-- [ ] **Dirty-region flush, and the animation question behind it.** `Screen::Flush` writes
-      *every* cell of both planes every frame -- 14,400 `ncplane_putstr_yx` calls at 160x45
-      -- and Notcurses then diffs that to decide what to emit. Fine for an editor that
-      repaints when something happens, which is what ned was until the recency glow asked
-      it to repaint on a clock: an animation frame is a full-screen redraw, ~36 a second,
-      on the thread that also handles input. Reported live as an editor that felt slow to
-      type in -- three times, across three different fixes, which is the point. Each was real: a
-      per-cell mutex and clock read; a thread spawned *and joined* per animation tick, then
-      per *keystroke* once start/stop straddled the 200ms effect; a background wash
-      repainting a whole row per frame. None of them was the last one.
-      What makes that hard to catch: the editor's own CPU stays *low* (forty keystrokes at
-      160x45 measures two ticks). Every CPU measurement said "fine" while typing felt bad,
-      which sent the investigation through three wrong culprits before
-      `Tests/KeystrokeBench.cpp` timed the keystroke path itself and found the 45ms
-      highlight above -- a cost the glow never contributed to and could not have.
-      The lesson is about instruments, not about animation: measure the latency of the
-      thing being complained about, not the CPU of the process containing it.
-      Writing only cells that changed since the last frame would fix it at the source, let
-      the glow default back on, and speed up every ordinary repaint too. Two known traps:
-      the backing plane is cleared wholesale each frame (`ClearBacking`), so it needs the
-      same treatment or it defeats the point; and a `Screen` is reconstructed on resize, so
-      the first frame after one must write everything.
+Shipped, one slug for `git log --grep=`: `dirty-region-flush` (`Screen::Flush` now diffs
+every cell against what it last actually wrote to the real planes and skips any that are
+unchanged, instead of rewriting all 14,400 `ncplane_putstr_yx`/state calls every frame --
+both known traps handled: the backing plane still gets diffed post-`ClearBacking`, so a
+wash that moved or disappeared still repaints correctly, and a freshly reconstructed
+`Screen` always forces one full write on its first `Flush`, covering resize). The other
+half of this entry -- the recency glow defaulting back on -- had already shipped
+independently on 2026-09-10 (`git log --grep=recency-glow`): the real per-keystroke cost
+was unbounded whole-document highlighting, not the glow, which the entry above already
+tracks.
+
 ### Language Intelligence
 
 - [ ] **Android device tooling** (the one part of the Java/Kotlin work below that
