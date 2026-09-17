@@ -998,6 +998,171 @@ TEST_CASE(":qa! requests QuitForced", "[Engine]") {
     REQUIRE(engine.TakePendingIntent() == PendingIntent::QuitForced);
 }
 
+// vim-window-commands follow-up: ":sp"/":split", ":vs"/":vsp"/":vsplit", ":clo"/
+// ":close" and ":on"/":only" -- the ex-command equivalents of ned's own Emacs-style
+// C-x 2/C-x 3/C-x 0/C-x 1, unreachable under Vim mode because C-x is vim's own
+// decrement-number binding there.
+TEST_CASE(":sp requests SplitBelow", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":sp\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::SplitBelow);
+}
+
+TEST_CASE(":split requests SplitBelow", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":split\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::SplitBelow);
+}
+
+TEST_CASE(":vs requests SplitRight", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":vs\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::SplitRight);
+}
+
+TEST_CASE(":vsp requests SplitRight", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":vsp\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::SplitRight);
+}
+
+TEST_CASE(":vsplit requests SplitRight", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":vsplit\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::SplitRight);
+}
+
+TEST_CASE(":close requests CloseWindow, same as :q", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":close\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindow);
+}
+
+TEST_CASE(":clo! requests CloseWindowForced, same as :q!", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":clo!\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindowForced);
+}
+
+TEST_CASE(":on requests CloseOtherWindows", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":on\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseOtherWindows);
+}
+
+TEST_CASE(":only requests CloseOtherWindows", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":only\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseOtherWindows);
+}
+
+// vim-window-commands follow-up: C-w s/v/c/o/w -- real vim's own window-command
+// prefix, the native (non-ex-command) path to the same operations. Each letter's own
+// Ctrl-chord form is accepted as an alias, matching real vim (C-w C-s == C-w s).
+TEST_CASE("C-w s requests SplitBelow", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    (void)engine.HandleKey(buffer, Ctrl(U'w'));
+    (void)engine.HandleKey(buffer, Ch(U's'));
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::SplitBelow);
+}
+
+TEST_CASE("C-w C-s also requests SplitBelow", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    (void)engine.HandleKey(buffer, Ctrl(U'w'));
+    (void)engine.HandleKey(buffer, Ctrl(U's'));
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::SplitBelow);
+}
+
+TEST_CASE("C-w v requests SplitRight", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    (void)engine.HandleKey(buffer, Ctrl(U'w'));
+    (void)engine.HandleKey(buffer, Ch(U'v'));
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::SplitRight);
+}
+
+TEST_CASE("C-w c requests CloseWindow", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    (void)engine.HandleKey(buffer, Ctrl(U'w'));
+    (void)engine.HandleKey(buffer, Ch(U'c'));
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindow);
+}
+
+TEST_CASE("C-w o requests CloseOtherWindows", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    (void)engine.HandleKey(buffer, Ctrl(U'w'));
+    (void)engine.HandleKey(buffer, Ch(U'o'));
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseOtherWindows);
+}
+
+TEST_CASE("C-w w requests OtherWindow", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    (void)engine.HandleKey(buffer, Ctrl(U'w'));
+    (void)engine.HandleKey(buffer, Ch(U'w'));
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::OtherWindow);
+}
+
+TEST_CASE("C-w C-w also requests OtherWindow", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    (void)engine.HandleKey(buffer, Ctrl(U'w'));
+    (void)engine.HandleKey(buffer, Ctrl(U'w'));
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::OtherWindow);
+}
+
+// An unrecognized C-w suffix is a silent no-op, matching HandleGPrefixed/
+// HandleZPrefixed/HandleBracketPrefixed's own fall-through.
+TEST_CASE("C-w x (an unrecognized window-prefix suffix) requests nothing", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    (void)engine.HandleKey(buffer, Ctrl(U'w'));
+    (void)engine.HandleKey(buffer, Ch(U'x'));
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::None);
+}
+
+// C-w no longer falls through to ned's global "kill-region" binding under Vim mode --
+// real vim's own meaning (the window-command prefix) wins, matching every other
+// Control chord Engine::HandleAction/HandleVisualSpecific already claim outright
+// (vim-keymap-fallthrough's own fallthrough only ever applies to a chord NEITHER side
+// recognizes).
+TEST_CASE("C-w does not fall through to the global keymap under Vim mode", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    REQUIRE(engine.HandleKey(buffer, Ctrl(U'w')));
+}
+
 TEST_CASE("gJ joins without inserting a space", "[Engine]") {
     Buffer    buffer = MakeBuffer("foo\nbar\n");
     Engine engine;
