@@ -11,9 +11,10 @@
 using ned::editor::KeyChord;
 using ned::editor::SpecialKey;
 using ned::editor::vim::ClearGlobalMarksForTesting;
+using ned::editor::vim::Engine;
+using ned::editor::vim::HunkDirection;
 using ned::editor::vim::Mode;
 using ned::editor::vim::PendingIntent;
-using ned::editor::vim::Engine;
 using ned::text::Buffer;
 
 namespace {
@@ -885,6 +886,49 @@ TEST_CASE("C-e/C-y scroll the viewport without moving point", "[Engine]") {
     (void)engine.HandleKey(buffer, Ctrl(U'y'));
     REQUIRE(engine.TakePendingTopLine() == std::optional<std::size_t>(4));
     REQUIRE(PointLine(buffer) == 7);
+}
+
+// vim-hunk-nav follow-up: "]c"/"[c" (gitsigns' own convention, not real vim's) --
+// Engine can't reach BufferView's own live VCS diff, so it only signals a direction;
+// BufferView::JumpToNextHunk/JumpToPreviousHunk do the actual navigation (see
+// BufferViewHunkNavigationTest.cpp for that half).
+TEST_CASE("]c requests HunkDirection::Next", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, "]c");
+    REQUIRE(engine.TakePendingHunkNavigation() == std::optional<HunkDirection>(HunkDirection::Next));
+    REQUIRE_FALSE(engine.TakePendingHunkNavigation().has_value()); // one-shot -- already consumed
+}
+
+TEST_CASE("[c requests HunkDirection::Previous", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, "[c");
+    REQUIRE(engine.TakePendingHunkNavigation() == std::optional<HunkDirection>(HunkDirection::Previous));
+}
+
+// No other bracket-suffix command exists yet -- anything but 'c' is a silent no-op,
+// matching HandleGPrefixed/HandleZPrefixed's own fall-through for an unrecognized
+// suffix rather than reporting an error.
+TEST_CASE("]x (an unrecognized bracket suffix) does not request hunk navigation", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, "]x");
+    REQUIRE_FALSE(engine.TakePendingHunkNavigation().has_value());
+}
+
+// A pending operator ("d") never enters the bracket-prefix state at all -- "]c" is a
+// plain Normal-mode jump here, not an operator-pending motion (see
+// Engine::HandleNormalOrVisualKey's own doc comment on that gate).
+TEST_CASE("d]c does not request hunk navigation (not an operator-pending motion)", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, "d]c");
+    REQUIRE_FALSE(engine.TakePendingHunkNavigation().has_value());
 }
 
 TEST_CASE("ZZ saves and requests CloseWindow", "[Engine]") {

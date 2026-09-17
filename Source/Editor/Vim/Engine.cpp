@@ -233,6 +233,12 @@ std::optional<Engine::PendingBufferJump> Engine::TakePendingBufferJump() {
     return jump;
 }
 
+std::optional<HunkDirection> Engine::TakePendingHunkNavigation() {
+    const std::optional<HunkDirection> direction = pendingHunkNavigation_;
+    pendingHunkNavigation_                       = std::nullopt;
+    return direction;
+}
+
 std::string Engine::ModeIndicator() const {
     switch (mode_) {
         case Mode::Normal:
@@ -712,6 +718,17 @@ void Engine::HandleNormalOrVisualKey(text::Buffer& buffer, const KeyChord& chord
 
     if (mode_ == Mode::Normal && IsPlainChar(chord, U'Z')) {
         pendingCharHandler_ = [this](text::Buffer& buf, const KeyChord& c) { HandleCapitalZPrefixed(buf, c); };
+        return;
+    }
+
+    // "]c"/"[c" (HandleBracketPrefixed) -- gated on !pendingOperator_ unlike the g/z/Z
+    // prefixes above, since neither is a motion real vim (or gitsigns) makes available
+    // as an operator target -- keeping this a plain Normal-mode jump, matching
+    // "vcs-next-hunk"/"vcs-previous-hunk" (C-c v N/P), is enough scope for a native
+    // trigger key and avoids inventing operator-pending semantics nothing asked for.
+    if (mode_ == Mode::Normal && !pendingOperator_ && (IsPlainChar(chord, U'[') || IsPlainChar(chord, U']'))) {
+        const bool opening  = chord.Codepoint == U'[';
+        pendingCharHandler_ = [this, opening](text::Buffer& buf, const KeyChord& c) { HandleBracketPrefixed(buf, c, opening); };
         return;
     }
 
@@ -1216,6 +1233,19 @@ void Engine::HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& chord)
     }
     else if (IsPlainChar(chord, U'Q')) { // ZQ -- force-close without saving, same body as :q!
         pendingIntent_ = PendingIntent::CloseWindowForced;
+    }
+    FinishCommand(buffer);
+}
+
+// "]c"/"[c" -- gitsigns' own convention, not real vim's, for next/previous
+// VCS-changed hunk (already reachable as "vcs-next-hunk"/"vcs-previous-hunk" on
+// C-c v N/P; this is just a native trigger for the same navigation). No other
+// bracket-suffix command exists yet, so anything but 'c' is a silent no-op, matching
+// how HandleGPrefixed/HandleZPrefixed fall through to FinishCommand for an
+// unrecognized suffix rather than reporting an error.
+void Engine::HandleBracketPrefixed(text::Buffer& buffer, const KeyChord& chord, bool opening) {
+    if (IsPlainChar(chord, U'c')) {
+        pendingHunkNavigation_ = opening ? HunkDirection::Previous : HunkDirection::Next;
     }
     FinishCommand(buffer);
 }

@@ -503,10 +503,14 @@ Fixed generally rather than by hand-wiring `]c`/`[c`: an unrecognized Control ch
 arriving at the start of a fresh Normal/Visual command — never Meta, never mid a pending
 operator/count — now returns unconsumed from `HandleKey`, and `BufferView` feeds it to
 ned's own `Dispatcher` exactly as it would with Vim mode off, routing every further chord
-straight to `Dispatcher` too, skipping vim entirely, until that sequence resolves).
-- [ ] `]c`/`[c` (gitsigns' own convention) as *native* Vim-mode bindings for
-      `vcs-next-hunk`/`vcs-previous-hunk`, now that `C-c v N`/`P` genuinely works under
-      Vim mode (`vim-keymap-fallthrough`) — pure remaining polish, not a functional gap.
+straight to `Dispatcher` too, skipping vim entirely, until that sequence resolves), and
+`vim-hunk-nav` (`]c`/`[c` as native Vim Normal-mode triggers for the same
+`vcs-next-hunk`/`vcs-previous-hunk` navigation `C-c v N`/`P` already perform —
+`Engine::HandleBracketPrefixed` gates on `!pendingOperator_`, deliberately scoped as a
+plain jump rather than an operator-pending motion real vim/gitsigns also support, since
+nothing asked for that; `Engine::TakePendingHunkNavigation` hands the direction to
+`BufferView::HandleVimKey`, which calls the same `JumpToNextHunk`/`JumpToPreviousHunk`
+already covered above).
 - [ ] Excerpt-scoped search covers isearch and query-replace only. A multibuffer's
       chrome is also visible to `next-error`, dabbrev completion and Vim-mode `/`
       search, none of which consult `multibuffer::ExcerptBodyRanges`
