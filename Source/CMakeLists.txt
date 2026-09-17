@@ -115,6 +115,7 @@ add_library(ned_lib STATIC
         Editor/FormatBlankLines.cpp
         Editor/FormatWrap.cpp
         Editor/FormatCase.cpp
+        Editor/FileNaming.cpp
         Editor/Format.cpp
         Editor/AutoFormatOnSave.cpp
         Editor/ScopedFormat.cpp

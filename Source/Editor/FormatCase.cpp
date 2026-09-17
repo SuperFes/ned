@@ -175,6 +175,53 @@ namespace {
         return "";
     }
 
+    // case-catalogue follow-up: derives the naming entity kind straight from
+    // marker.definitionKind (the tags query's own capture suffix, e.g.
+    // "struct"/"enum_member"/"macro") rather than the coarse SymbolKind
+    // bucket -- see FormatCase.h's own header comment on why this file no
+    // longer has to conflate class/struct/enum or function/method the way
+    // it used to. Three renames below give the tags.scm/ctags vocabulary a
+    // more legible entity-kind name than its own raw word; everything else
+    // passes through unchanged, so a language that starts emitting a new
+    // "@definition.whatever" capture Mode.cpp itself doesn't recognize yet
+    // still surfaces here as soon as Mode.cpp does, no FormatCase.cpp change
+    // required.
+    std::string_view EntityKindForMarker(const SymbolMarker& marker) {
+        if (marker.definitionKind == "var" || marker.definitionKind == "variable") {
+            // tags.scm's own free-standing-variable vocabulary -- distinct
+            // from locals.janet's "local", which only ever covers a
+            // function-local binding (see the localScopes branch above).
+            return "global";
+        }
+        if (marker.definitionKind == "property") {
+            // Needs real semantics to split further (a getter/setter pair
+            // vs. a plain field) -- FormattingCapabilities.md's own C1
+            // section. Folding into "field" is honest about that, not a
+            // silent conflation: both are "a named piece of data on a type."
+            return "field";
+        }
+        if (marker.definitionKind == "module") {
+            return "namespace"; // already folded into SymbolKind::Namespace upstream; same rename here
+        }
+        if (!marker.definitionKind.empty()) {
+            return marker.definitionKind; // class/struct/interface/enum/enum_member/field/constant/macro/function/method/namespace/template_parameter/type, verbatim
+        }
+        // Defensive fallback for a marker built by hand rather than through
+        // SymbolKindFromCaptureName (no real tags-query build does this) --
+        // keeps the old coarse-only behavior alive rather than dropping the
+        // marker outright.
+        switch (marker.kind) {
+            case SymbolKind::Callable:
+                return "function";
+            case SymbolKind::TypeLike:
+                return "type";
+            case SymbolKind::Namespace:
+                return "namespace";
+            default:
+                return {};
+        }
+    }
+
 } // namespace
 
 std::string SuggestNameForConvention(std::string_view name, CaseConvention convention) {
@@ -226,22 +273,12 @@ std::vector<CaseViolation> ComputeCaseViolations(std::string_view text, std::str
 
     if (mode.symbolKind) {
         for (const SymbolMarker& marker : mode.symbolKind(text)) {
-            std::string_view entityKind;
-            switch (marker.kind) {
-                case SymbolKind::Callable:
-                    entityKind = "function"; // conflates free functions with in-class methods -- see this file's own header comment
-                    break;
-                case SymbolKind::TypeLike:
-                    entityKind = "type"; // conflates class/struct/type-alias/enum
-                    break;
-                case SymbolKind::Namespace:
-                    entityKind = "namespace";
-                    break;
-                default:
-                    continue; // Data/Block -- not this pilot's entity-kind set
-            }
             if (marker.name.empty()) {
                 continue; // no "@name" capture in the matched pattern -- nothing to check
+            }
+            const std::string_view entityKind = EntityKindForMarker(marker);
+            if (entityKind.empty()) {
+                continue; // Block, or a hand-built marker with no definitionKind at all
             }
             check(entityKind, marker.name, marker.nameStartByte, marker.nameStartByte + marker.name.size());
         }

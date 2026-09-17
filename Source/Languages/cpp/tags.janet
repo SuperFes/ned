@@ -10,10 +10,32 @@
 # reference_declarator-wrapped variant below covers a reference-returning
 # function (`int& foo(...)`); pointer_declarator wrapping mirrors
 # c-tags.scm's own pointer/pointer-to-pointer coverage.
+#
+# case-catalogue follow-up: everything below this point (struct split out of
+# @definition.class, @definition.enum split out of @definition.type, the
+# in-class-method captures renamed @definition.function -> @definition.method,
+# and the entirely new field/macro/enum_member/template_parameter patterns)
+# is ned's own addition -- checked directly against
+# ThirdParty/tree-sitter-grammars/tree-sitter-cpp/src/node-types.json, not
+# guessed, then confirmed live via Tests/ModeTest.cpp/Tests/FormatCaseTest.cpp
+# parses of real snippets. Deliberately NOT covered: a const/constexpr-
+# qualified "constant" bucket (distinguishing it from a plain field needs a
+# #match?/#eq? predicate against an unnamed type_qualifier child -- real,
+# just not attempted this pass), and a top-level "global" entity kind
+# (`(translation_unit (declaration declarator: (identifier) @name)))
+# @definition.var` -- tried, reverted: a source file with many top-level
+# declarations -- Tests/BufferViewTest.cpp's own "Fold header glyphs still
+# render after scrolling past an earlier foldable block" regression test
+# uses 60 -- flooded the symbol-kind gutter's per-line marker stream and
+# broke both that test and StickyScrollTest.cpp's viewport-exit case,
+# neither of which this follow-up's own scope covers fixing. A named-
+# namespace-scoped global was always going to be excluded anyway, for the
+# same reason c-tags.scm's own header comment gives for pointer-returning
+# functions: a curated subset, not exhaustive).
 
-(struct_specifier name: (type_identifier) @name body:(_)) @definition.class
+(struct_specifier name: (type_identifier) @name body:(_)) @definition.struct
 
-(declaration type: (union_specifier name: (type_identifier) @name)) @definition.class
+(declaration type: (union_specifier name: (type_identifier) @name)) @definition.struct
 
 (function_definition
   declarator: (function_declarator
@@ -48,21 +70,31 @@
 # with the correct, wider range; Mode.cpp's symbolKind builder dedupes the
 # resulting narrow/wide overlap for a with-body definition (same name+kind,
 # one range nested in the other) down to the wider one.
+#
+# case-catalogue follow-up: both @definition.function -> @definition.method
+# below (the field_identifier-declarator variants) -- a function_declarator
+# whose OWN declarator is a field_identifier, rather than a plain identifier,
+# only ever occurs inside a class/struct body (a free top-level function's
+# name parses as a plain `identifier`, never a `field_identifier` -- checked
+# against node-types.json). So these were always methods, in-class inline or
+# bodyless prototype alike; the old @definition.function tag on them was
+# itself the "conflates free functions with in-class methods" gap
+# FormatCase.cpp's own comment used to call out, not a deliberate choice.
 (function_definition
   declarator: (function_declarator
-    declarator: (field_identifier) @name)) @definition.function
+    declarator: (field_identifier) @name)) @definition.method
 
 (function_definition
   declarator: (function_declarator
     declarator: (qualified_identifier scope: (namespace_identifier) @local.scope name: (identifier) @name))) @definition.method
 
-(function_declarator declarator: (field_identifier) @name) @definition.function
+(function_declarator declarator: (field_identifier) @name) @definition.method
 
 (function_declarator declarator: (qualified_identifier scope: (namespace_identifier) @local.scope name: (identifier) @name)) @definition.method
 
 (type_definition declarator: (type_identifier) @name) @definition.type
 
-(enum_specifier name: (type_identifier) @name) @definition.type
+(enum_specifier name: (type_identifier) @name) @definition.enum
 
 (class_specifier name: (type_identifier) @name) @definition.class
 
@@ -72,3 +104,19 @@
 # Anonymous namespaces (no `name:` field) simply don't match, which is
 # correct: there's no name to show in a breadcrumb for one.
 (namespace_definition name: (namespace_identifier) @name) @definition.namespace
+
+# case-catalogue follow-up: a plain data member -- declarator is a bare (or
+# pointer-to) field_identifier, never a function_declarator, so this can't
+# overlap the method patterns above (`int x;`/`int* x;`, not `int f();`).
+(field_declaration declarator: (field_identifier) @name) @definition.field
+
+(field_declaration declarator: (pointer_declarator declarator: (field_identifier) @name)) @definition.field
+
+# `#define NAME ...` and `#define NAME(...) ...` alike.
+(preproc_def name: (identifier) @name) @definition.macro
+
+(preproc_function_def name: (identifier) @name) @definition.macro
+
+(enumerator name: (identifier) @name) @definition.enum_member
+
+(type_parameter_declaration (type_identifier) @name) @definition.template_parameter

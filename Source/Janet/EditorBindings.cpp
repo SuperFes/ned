@@ -29,6 +29,7 @@
 #include "Editor/FileWatch.h"
 #include "Editor/FillColumn.h"
 #include "Editor/FinalNewline.h"
+#include "Editor/FileNaming.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/FormatRules.h"
 #include "Editor/HighlightSettings.h"
@@ -1184,6 +1185,19 @@ namespace {
         return static_cast<int>(FromJanet<std::int64_t>(value));
     }
 
+    // file-naming-conventions follow-up: a header-guard template needs THREE
+    // states (nil clears an override back to the built-in default; an
+    // explicit "" turns a built-in default off; any other string overrides
+    // it), which the "empty string clears" convention every other string
+    // setting in this file uses can't express -- nil is the clear signal
+    // here instead, same as JanetToOptionalBool/Int above.
+    std::optional<std::string> JanetToOptionalString(Janet value) {
+        if (janet_checktype(value, JANET_NIL)) {
+            return std::nullopt;
+        }
+        return FromJanet<std::string>(value);
+    }
+
     void NedSetSyntaxBold(std::string className, Janet value) {
         editor::SetSyntaxBold(editor::SyntaxClassByName(className), JanetToOptionalBool(value));
     }
@@ -1427,6 +1441,36 @@ namespace {
         return convention ? std::optional(editor::CaseConventionName(*convention)) : std::nullopt;
     }
 
+    // file-naming-conventions follow-up: same empty-string-clears convention
+    // NedSetFormatCaseConvention uses above -- `language` is a bare language
+    // name ("cpp"), not an entity kind, so there's no cross-language scoping
+    // to worry about here.
+    void NedSetFileNamingCaseConvention(std::string language, std::string convention) {
+        editor::SetFileNamingCaseConvention(
+            language, convention.empty() ? std::nullopt : std::optional(editor::CaseConventionByName(convention)));
+    }
+
+    std::optional<std::string> NedFileNamingCaseConvention(std::string language) {
+        const auto convention = editor::FileNamingRuleFor(language).caseConvention;
+        return convention ? std::optional(editor::CaseConventionName(*convention)) : std::nullopt;
+    }
+
+    void NedSetHeaderGuardTemplate(std::string language, Janet value) {
+        editor::SetHeaderGuardTemplate(language, JanetToOptionalString(value));
+    }
+
+    std::optional<std::string> NedHeaderGuardTemplate(std::string language) {
+        return editor::FileNamingRuleFor(language).headerGuardTemplate;
+    }
+
+    void NedSetAutoHeaderGuard(bool enabled) {
+        editor::SetAutoHeaderGuard(enabled);
+    }
+
+    bool NedAutoHeaderGuardEnabled() {
+        return editor::AutoHeaderGuardEnabled();
+    }
+
     void NedSetFormatBlankMinBefore(std::string captureName, Janet value) {
         editor::SetBlankMinBefore(captureName, JanetToOptionalInt(value));
     }
@@ -1567,6 +1611,29 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedFormatCaseConvention>(
         "ned", "format-case-convention",
         "The entity kind's own overridden case-convention name, or nil if unset.");
+    env.Register<&NedSetFileNamingCaseConvention>(
+        "ned", "set-file-naming-case-convention",
+        "Override the case convention for a NEW file's own basename in the given language (\"cpp\", \"python\", "
+        "...) -- same convention-name set as ned/set-format-case-convention, empty string clears. A CHECKER only: "
+        "surfaced as a status-line note when a new file's name doesn't conform, never a rename.");
+    env.Register<&NedFileNamingCaseConvention>(
+        "ned", "file-naming-case-convention",
+        "The language's own overridden new-file case-convention name, or nil if unset.");
+    env.Register<&NedSetHeaderGuardTemplate>(
+        "ned", "set-header-guard-template",
+        "Override the header-guard macro-name template for a language (\"cpp\", \"c\") -- substitutes "
+        "${PROJECT_NAME}/${FILE_NAME}/${EXT}, each uppercased and sanitized to a valid identifier fragment. nil "
+        "clears an override back to that language's built-in default (cpp/c ship "
+        "\"${PROJECT_NAME}_${FILE_NAME}_${EXT}\"); an explicit empty string turns a built-in default off entirely.");
+    env.Register<&NedHeaderGuardTemplate>(
+        "ned", "header-guard-template",
+        "The language's own effective header-guard template (including any built-in default), or nil if none.");
+    env.Register<&NedSetAutoHeaderGuard>(
+        "ned", "set-auto-header-guard",
+        "Whether creating a new header file auto-populates it with the expanded #ifndef/#define/#endif guard "
+        "skeleton. Default off.");
+    env.Register<&NedAutoHeaderGuardEnabled>("ned", "auto-header-guard-enabled",
+                                             "Whether ned/set-auto-header-guard is currently on.");
     env.Register<&NedSetFormatBlankMinBefore>(
         "ned", "set-format-blank-min-before",
         "Override the minimum blank lines required immediately before the given capture name -- an integer, nil "

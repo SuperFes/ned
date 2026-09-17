@@ -975,8 +975,11 @@ TEST_CASE("CMode's symbolKind classifies a function definition and a struct defi
     const auto mode = CMode();
     REQUIRE(static_cast<bool>(mode.symbolKind));
 
+    // case-catalogue follow-up: struct's two fields now get their own Data
+    // markers too (c-tags.janet's new @definition.field pattern).
     const auto markers = mode.symbolKind("int add(int a, int b) { return a + b; }\nstruct Point { int x; int y; };\n");
-    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::Callable, SymbolKind::TypeLike});
+    REQUIRE(KindsInOrder(markers) ==
+            std::vector{SymbolKind::Callable, SymbolKind::TypeLike, SymbolKind::Data, SymbolKind::Data});
 }
 
 TEST_CASE("CppMode's symbolKind classifies a class definition and one of its methods", "[Mode]") {

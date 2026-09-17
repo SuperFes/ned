@@ -44,7 +44,7 @@ applied to node types a query names:
 | 4 | **Wrap** | A policy over a *list* when it exceeds the margin: never / if-long / chop-down / always | Partial (never/always only, no margin-aware if-long/chop-down-if-long yet; cpp's own call-argument-list pilot only) |
 | 5 | **Align** | A shared column across sibling lines | Partial |
 | 6 | **Blank** | Min/max blank lines around a node | **Have** (19 languages) |
-| 7 | **Case** | A token's own text case | Need |
+| 7 | **Case** | A token's own text case | **Have** (checker-only; full entity-kind catalogue for cpp/c, whatever a language's own upstream tags.scm already distinguishes for everyone else) |
 | 8 | **Arrange** | Reorder siblings by a key | Need |
 | 9 | **Rewrite** | Replace a construct with an equivalent one | Need |
 
@@ -85,8 +85,12 @@ That covered rule kind 1 completely and kind 5 partially when this doc was first
 `Docs/FormattingRules.md` -- across every bundled language with a real brace/keyword/Lisp
 shape (19 language keys). Kind 4 (Wrap) followed the same "one pilot construct" pattern
 one level further out; see that doc's own Wrap section for what's still open (margin-aware
-policies, more languages/constructs). Case/Arrange/Rewrite (kinds 7-9) are still genuinely
-new -- everything in this doc about them is unstarted design, not stale.
+policies, more languages/constructs). Kind 7 (Case) shipped as a checker (`Editor/FormatCase.h`,
+`Editor/FileNaming.h` for the file-naming-conventions half of B1 below) -- full entity-kind
+catalogue for cpp/c, whatever each other bundled language's own upstream tags.scm already
+distinguishes elsewhere, see ROADMAP.md's Configurable Formatter section for exactly what's
+still conflated per language. Arrange/Rewrite (kinds 8-9) are still genuinely new --
+everything in this doc about them is unstarted design, not stale.
 
 ---
 
@@ -150,23 +154,35 @@ Ned has `FillColumn` and `fill-paragraph` but no automatic hard wrap while typin
 on-save/on-format step, toggleable, with a "not on the line I'm editing" exception (Emacs'
 own behaviour) so it never fights the cursor.
 
-**Naming conventions (kind 7 + rename).** Per entity kind — class, struct, interface,
-enum, enum member, function, method, field, public field, parameter, local, global,
-constant, macro, namespace, type alias, lambda, property, event, template parameter — each
-carrying a case convention (`<none>`, `lowercase`, `UPPERCASE`, `camelCase`, `PascalCase`,
-`snake_case`, `Leading_snake_case`, `Upper_Snake_Case`, `SCREAMING_SNAKE_CASE`,
-`lisp-case`), plus prefix/suffix and an abbreviations list.
-- **We are closer to this than it looks.** `Editor/LocalScopes.h` already resolves a name
-  to its binding and every occurrence, and `rename-symbol` already rewrites them all as
-  one undo group with no LSP. A naming *checker* is `tags.scm`/`locals.scm` + a case test;
-  a naming *fixer* is that plus the rename we have.
-- Ship the checker first (a diagnostic), the fixer second (a code action). Never an
+**Naming conventions (kind 7 + rename) — shipped 2026-09-15/17.** Per entity kind — class,
+struct, interface, enum, enum member, function, method, field, parameter, local, global,
+macro, namespace, template parameter (cpp/c: full split; every other bundled language: what
+its own upstream tags.scm already distinguishes, e.g. Python's/JavaScript's own `constant`,
+Rust's own `macro`) — each carrying a case convention (`<none>`, `lowercase`, `UPPERCASE`,
+`camelCase`, `PascalCase`, `snake_case`, `Leading_snake_case`, `Upper_Snake_Case`,
+`SCREAMING_SNAKE_CASE`, `lisp-case`). Prefix/suffix and an abbreviations list, plus a
+public-vs-private field split and a genuine property/event distinction (needs semantics —
+Tier C1 below), remain unstarted.
+- **We are closer to this than it looks** turned out to be right. `Editor/LocalScopes.h`
+  already resolved a name to its binding and every occurrence, and `rename-symbol` already
+  rewrote them all as one undo group with no LSP -- the fixer
+  (`fix-case-violation-at-point`) reuses that pipeline wholesale with a prefilled suggested
+  name. The checker (`Editor/FormatCase.h`, `Editor/Project/CaseCheck.h`'s project-wide
+  scan, the `*case violations*` buffer) reads `Mode::symbolKind`'s own
+  `SymbolMarker::definitionKind` (the tags query's own capture suffix, verbatim) directly.
+- Shipped the checker first (a diagnostic), the fixer second (a code action). Never an
   automatic reformat step — renaming on save would be hostile.
 
-**File naming conventions.** Not code formatting at all, and cheap: a per-language
-source/header extension pair and a case convention for new-file names, plus the C/C++
-header-guard template (`${PROJECT_NAME}_${FILE_NAME}_${EXT}`). Pure string work over
-`ProjectRoot()` and the mode table, no parsing.
+**File naming conventions — shipped 2026-09-17.** Not code formatting at all, and cheap: a
+per-language case convention for new-file names (`Editor/FileNaming.h`,
+`ned/set-file-naming-case-convention`, checker only — a status-line note, never a rename),
+plus the C/C++ header-guard template (`${PROJECT_NAME}_${FILE_NAME}_${EXT}`,
+`ned/set-header-guard-template`, gated by `ned/set-auto-header-guard`, default off). Pure
+string work over `ProjectRoot()` and `Editor/HeaderSource.h`'s existing header/source
+extension classification, no parsing. A per-language source/header *extension pair*
+(letting a project declare ".cc"/".cxx" as its own canonical pair instead of ".cpp"/".hpp")
+did not ship with this pass — `language.janet`'s own `:extensions` list doesn't tag which
+entry is canonical vs. an alternate spelling, and that's a separate, smaller follow-up.
 
 ## B2 — Maybe
 
