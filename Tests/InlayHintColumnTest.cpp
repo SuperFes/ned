@@ -46,10 +46,13 @@ TEST_CASE("VisualColumn counts the hints to point's left", "[InlayHint]") {
         REQUIRE(VisualColumn(content, 0, 13, 1000) == 13);
     }
 
-    SECTION("a hint anchored at point does not count -- it renders after the cursor") {
-        // Point sits immediately before "std_plane"; the hint renders to its
-        // right, exactly where VS Code puts it, so the cursor stays put.
-        REQUIRE(VisualColumn(content, 0, 4, 1000, {}, Hints()) == 4);
+    SECTION("a hint anchored at point counts too -- it renders before the real character") {
+        // Point sits immediately before "std_plane". EmitInlayHint draws the
+        // "plane:" hint first and only then the real byte still at this same
+        // offset, so the real character's own column sits past the hint --
+        // and the cursor has to land there too, or it draws on top of the
+        // hint's own glyphs instead of the character it's actually on.
+        REQUIRE(VisualColumn(content, 0, 4, 1000, {}, Hints()) == 10);
     }
 
     SECTION("a hint before point pushes it right by the hint's width") {
