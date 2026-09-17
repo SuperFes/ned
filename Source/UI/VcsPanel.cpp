@@ -1234,8 +1234,8 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
             RunRemoteAction(RemoteAction::Push);
             return true;
         }
-        if (chord->Codepoint == U'c' || chord->Codepoint == U'C' || chord->Codepoint == U'e' || chord->Codepoint == U'w' ||
-            chord->Codepoint == U'n') {
+        if (chord->Codepoint == U'c' || chord->Codepoint == U'C' || chord->Codepoint == U'e' || chord->Codepoint == U'r' ||
+            chord->Codepoint == U'w' || chord->Codepoint == U'n') {
             // ReturnFocus() *before* firing onAction_ -- WindowManager::
             // RequestVcsPanelAction resolves "the focused pane"
             // (RequestOpenBinaryFile's own shape), and while this widget
@@ -1251,6 +1251,7 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
                 onAction_(chord->Codepoint == U'c'   ? VcsPanelAction::Commit
                           : chord->Codepoint == U'C' ? VcsPanelAction::AmendCommit
                           : chord->Codepoint == U'e' ? VcsPanelAction::ExtendCommit
+                          : chord->Codepoint == U'r' ? VcsPanelAction::RewordCommit
                           : chord->Codepoint == U'w' ? VcsPanelAction::SwitchBranch
                                                      : VcsPanelAction::CreateBranch);
             }

@@ -81,6 +81,16 @@ inline constexpr std::string_view kVcsAmendCommitMessageTemplate =
     "#\n"
     "# C-c C-c to amend, C-c C-k to abort.\n";
 
+// Reword follow-up: kVcsAmendCommitMessageTemplate's own sibling -- same
+// "previous message, then the comment block" seed, worded to say what
+// reword actually does (the tree is untouched, only the message changes).
+inline constexpr std::string_view kVcsRewordCommitMessageTemplate =
+    "\n"
+    "# Rewording the previous commit -- its tree is left exactly as-is.\n"
+    "# Lines starting with '#' will be ignored.\n"
+    "#\n"
+    "# C-c C-c to reword, C-c C-k to abort.\n";
+
 class Runner {
   public:
     // eventLoop must outlive this Runner, same requirement
@@ -197,6 +207,11 @@ class Runner {
     // RequestAmendCommit (still mutually exclusive against either), same
     // "first output line is the summary" contract.
     void RequestExtendCommit(std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    // Reword follow-up: RequestAmendCommit's own sibling (Provider::
+    // RewordCommitArgv instead of AmendCommitArgv) -- same "first output
+    // line is the summary" contract and the same "commit:" +root guard key,
+    // still mutually exclusive against a plain commit/amend/extend.
+    void RequestRewordCommit(const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchList(std::function<void(std::vector<BranchEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchCreate(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});

@@ -48,6 +48,7 @@ TEST_CASE("ned/vcs-register-provider registers a provider resolvable via ActiveP
          :amend-commit-argv (fn [root message] ["fake-vcs" "amend-commit" root message])
          :previous-commit-message-argv (fn [root] ["fake-vcs" "previous-commit-message" root])
          :extend-commit-argv (fn [root] ["fake-vcs" "extend-commit" root])
+         :reword-commit-argv (fn [root message] ["fake-vcs" "reword-commit" root message])
          :branch-list-argv (fn [root] ["fake-vcs" "branches" root])
          :parse-branch-list (fn [stdout] [{:name "main" :current true} {:name "dev" :current false}])
          :branch-switch-argv (fn [root name] ["fake-vcs" "switch" root name])
@@ -113,6 +114,8 @@ TEST_CASE("ned/vcs-register-provider registers a provider resolvable via ActiveP
     REQUIRE(provider->PreviousCommitMessageArgv("/repo").argv ==
             std::vector<std::string>{"fake-vcs", "previous-commit-message", "/repo"});
     REQUIRE(provider->ExtendCommitArgv("/repo").argv == std::vector<std::string>{"fake-vcs", "extend-commit", "/repo"});
+    REQUIRE(provider->RewordCommitArgv("/repo", "reworded message").argv ==
+            std::vector<std::string>{"fake-vcs", "reword-commit", "/repo", "reworded message"});
 
     REQUIRE(provider->BranchListArgv("/repo").argv == std::vector<std::string>{"fake-vcs", "branches", "/repo"});
 
@@ -224,6 +227,7 @@ TEST_CASE("a provider registered without an operation's callbacks reports it as 
     REQUIRE_THROWS_WITH(provider->AmendCommitArgv("/root", "msg"), "amend commit not supported by this provider");
     REQUIRE_THROWS_WITH(provider->PreviousCommitMessageArgv("/root"), "previous commit message not supported by this provider");
     REQUIRE_THROWS_WITH(provider->ExtendCommitArgv("/root"), "extend commit not supported by this provider");
+    REQUIRE_THROWS_WITH(provider->RewordCommitArgv("/root", "msg"), "reword commit not supported by this provider");
     REQUIRE_THROWS_WITH(provider->BranchListArgv("/root"), "branch listing not supported by this provider");
     REQUIRE_THROWS_WITH(provider->BranchSwitchArgv("/root", "dev"), "branch switching not supported by this provider");
     REQUIRE_THROWS_WITH(provider->BranchCreateArgv("/root", "dev"), "branch creation not supported by this provider");

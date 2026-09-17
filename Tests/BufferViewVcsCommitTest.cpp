@@ -244,7 +244,7 @@ TEST_CASE("BeginVcsCommitMessage(amend) without a wired Runner reports and creat
     CommitTempFileGuard tempGuard;
     BufferView          view = fixture.View();
 
-    view.BeginVcsCommitMessageForTesting(/*amend=*/true);
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Amend);
 
     REQUIRE(fixture.statusMessage == "no vcs runner configured");
     REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
@@ -261,7 +261,7 @@ TEST_CASE("BeginVcsCommitMessage(amend) with no vcs provider reports the runner'
     BufferView                  view = fixture.View();
     view.SetVcsRunner(&runner);
 
-    view.BeginVcsCommitMessageForTesting(/*amend=*/true);
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Amend);
 
     REQUIRE(fixture.statusMessage == "vcs commit amend: no vcs provider registered for this project");
     REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
@@ -279,14 +279,14 @@ TEST_CASE("Re-running vcs-commit-amend on an already-open commit buffer just mar
     BufferView                  view = fixture.View();
     view.SetVcsRunner(&runner);
 
-    view.BeginVcsCommitMessageForTesting(/*amend=*/false);
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Commit);
     ned::text::Buffer* firstOpen = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
     REQUIRE(firstOpen != nullptr);
     firstOpen->SetPoint(0);
     firstOpen->InsertAtPoint("My in-progress message\n");
 
-    fixture.activeBuffer.Set(fixture.original);              // simulate switching away
-    view.BeginVcsCommitMessageForTesting(/*amend=*/true);     // re-run as vcs-commit-amend instead
+    fixture.activeBuffer.Set(fixture.original); // simulate switching away
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Amend); // re-run as vcs-commit-amend instead
 
     // Already open -- no fetch attempted (statusMessage_ never became
     // "Fetching previous commit message..."), content untouched, just
@@ -316,13 +316,13 @@ TEST_CASE("AbortVcsCommitMessage clears the pending amend flag for the next plai
     BufferView                  view = fixture.View();
     view.SetVcsRunner(&runner);
 
-    view.BeginVcsCommitMessageForTesting(/*amend=*/false);
-    view.BeginVcsCommitMessageForTesting(/*amend=*/true); // already open -- just marks pending amend
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Commit);
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Amend); // already open -- just marks pending amend
     view.AbortVcsCommitMessageForTesting();
 
     // A fresh vcs-commit (not amend) after the abort must not still carry
     // the aborted session's amend flag.
-    view.BeginVcsCommitMessageForTesting(/*amend=*/false);
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Commit);
     ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
     REQUIRE(commitBuffer != nullptr);
     commitBuffer->SetPoint(0);
@@ -331,6 +331,72 @@ TEST_CASE("AbortVcsCommitMessage clears the pending amend flag for the next plai
     ned::editor::vcs::RegisterProvider("fake", std::make_unique<DetectOnlyProvider>());
     view.FinishVcsCommitMessageForTesting();
     REQUIRE(fixture.statusMessage == "vcs commit: commit not supported by this provider");
+}
+
+// Reword follow-up: BeginVcsCommitMessage(VcsCommitMode::Reword)'s own
+// synchronous guard paths, mirroring the amend cases above.
+
+TEST_CASE("BeginVcsCommitMessage(reword) without a wired Runner reports and creates nothing", "[BufferView][Vcs]") {
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    BufferView          view = fixture.View();
+
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Reword);
+
+    REQUIRE(fixture.statusMessage == "no vcs runner configured");
+    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
+}
+
+TEST_CASE("BeginVcsCommitMessage(reword) with no vcs provider reports the runner's error and creates no buffer",
+          "[BufferView][Vcs]") {
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
+    ned::editor::vcs::ClearRegistry(); // no provider registered at all
+    ned::ui::EventLoop          eventLoop;
+    ned::editor::vcs::Runner runner(eventLoop);
+    BufferView                  view = fixture.View();
+    view.SetVcsRunner(&runner);
+
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Reword);
+
+    REQUIRE(fixture.statusMessage == "vcs commit reword: no vcs provider registered for this project");
+    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
+}
+
+TEST_CASE("Re-running vcs-commit as vcs-reword-commit on an already-open commit buffer just marks it for "
+          "reword, without re-fetching or touching its content",
+          "[BufferView][Vcs]") {
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
+    ned::editor::vcs::ClearRegistry();
+    ned::ui::EventLoop          eventLoop;
+    ned::editor::vcs::Runner runner(eventLoop);
+    BufferView                  view = fixture.View();
+    view.SetVcsRunner(&runner);
+
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Commit);
+    ned::text::Buffer* firstOpen = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
+    REQUIRE(firstOpen != nullptr);
+    firstOpen->SetPoint(0);
+    firstOpen->InsertAtPoint("My in-progress message\n");
+
+    fixture.activeBuffer.Set(fixture.original);                              // simulate switching away
+    view.BeginVcsCommitMessageForTesting(BufferView::VcsCommitMode::Reword); // re-run as vcs-reword-commit instead
+
+    ned::text::Buffer* secondOpen = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
+    REQUIRE(secondOpen == firstOpen);
+    REQUIRE(secondOpen->Text().find("My in-progress message") != std::string::npos);
+    REQUIRE(&fixture.activeBuffer.Get() == secondOpen);
+
+    // The pending mode itself only shows up in which Provider method
+    // FinishVcsCommitMessage calls -- DetectOnlyProvider's CommitArgv and
+    // RewordCommitArgv default-throw distinct text, so this proves
+    // RequestRewordCommit fired, not RequestCommit.
+    ned::editor::vcs::RegisterProvider("fake", std::make_unique<DetectOnlyProvider>());
+    view.FinishVcsCommitMessageForTesting();
+    REQUIRE(fixture.statusMessage == "vcs commit: reword commit not supported by this provider");
 }
 
 // VcsPanel commit-variants follow-up: ExtendCommit's own synchronous guard

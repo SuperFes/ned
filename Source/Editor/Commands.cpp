@@ -3591,6 +3591,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::VcsExtendCommit;
                       });
+    registry.Register("vcs-reword-commit",
+                      "Reword the previous commit's message, leaving its tree exactly as-is -- opens a "
+                      "*vcs commit message* buffer pre-filled with its message.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsRewordCommit;
+                      });
     // multi-line-commit-message follow-up: only ever reachable via the
     // commit-message buffer's own Mode-local keymap (see this function's
     // ned::editor::RegisterMode/SetModeForFilename calls below), so these
@@ -4680,6 +4686,9 @@ Keymap BuildDefaultGlobalKeymap() {
     // VcsPanel commit-variants follow-up: "e" for extend, next to "C" --
     // matches the panel's own key.
     keymap.Bind(ParseKeySequence("C-c v e"), "vcs-extend-commit");
+    // Reword follow-up: "r" for reword, next to "e" -- matches the panel's
+    // own key.
+    keymap.Bind(ParseKeySequence("C-c v r"), "vcs-reword-commit");
     keymap.Bind(ParseKeySequence("C-c v w"), "vcs-switch-branch");
     keymap.Bind(ParseKeySequence("C-c v n"), "vcs-create-branch");
     // Hunk-staging follow-up: "h" for hunk, its shifted twin for the

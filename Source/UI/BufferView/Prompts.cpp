@@ -1390,13 +1390,16 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             RequestProjectFindReferences();
             return;
         case editor::InteractiveRequest::VcsCommit:
-            BeginVcsCommitMessage();
+            BeginVcsCommitMessage(VcsCommitMode::Commit);
             return;
         case editor::InteractiveRequest::VcsCommitAmend:
-            BeginVcsCommitMessage(/*amend=*/true);
+            BeginVcsCommitMessage(VcsCommitMode::Amend);
             return;
         case editor::InteractiveRequest::VcsExtendCommit:
             ExtendCommit();
+            return;
+        case editor::InteractiveRequest::VcsRewordCommit:
+            BeginVcsCommitMessage(VcsCommitMode::Reword);
             return;
         case editor::InteractiveRequest::CommitFinish:
             FinishVcsCommitMessage();

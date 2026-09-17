@@ -340,6 +340,27 @@ TEST_CASE("bundled git plugin runs status/stage/unstage/commit/branch against a 
     REQUIRE(statusAfterExtend.size() == 1); // only the still-untracked new.txt remains
     REQUIRE(statusAfterExtend[0].state == "??");
 
+    // Reword follow-up: reword-commit-argv replaces HEAD's message without
+    // touching its tree -- unlike amend/extend above, it must leave a
+    // concurrently staged change alone entirely (still staged afterward,
+    // not folded into the commit and not lost).
+    {
+        std::ofstream(filePath, std::ios::app) << "a staged-but-not-committed line\n";
+    }
+    RunToCompletion(provider->StageArgv(filePath).argv);
+    RunToCompletion(provider->RewordCommitArgv(repoRoot, "second commit, reworded").argv);
+    const auto logAfterReword = provider->ParseLog(RunToCompletion(provider->LogArgv(filePath).argv));
+    REQUIRE(logAfterReword.size() == 2); // still two commits total, not three
+    REQUIRE(logAfterReword[0].summary == "second commit, reworded");
+    const auto statusAfterReword = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
+    REQUIRE(statusAfterReword.size() == 2); // the staged change survived untouched
+    REQUIRE(statusAfterReword[0].state == "M "); // still staged, not committed
+    REQUIRE(statusAfterReword[0].path == "file.txt");
+    REQUIRE(statusAfterReword[1].state == "??");
+    REQUIRE(statusAfterReword[1].path == "new.txt");
+    RunToCompletion(provider->UnstageArgv(filePath).argv); // leave a clean slate for the branch assertions below
+    RunToCompletion({"git", "-C", root, "checkout", "--", "file.txt"});
+
     // Branches: create one, confirm it's current, switch back.
     auto branches = provider->ParseBranchList(RunToCompletion(provider->BranchListArgv(repoRoot).argv));
     REQUIRE(branches.size() == 1);

@@ -96,6 +96,9 @@ class JanetVcsProvider : public editor::vcs::Provider {
     [[nodiscard]] editor::vcs::CommandSpec PreviousCommitMessageArgv(const std::filesystem::path& root) const override;
     // VcsPanel commit-variants follow-up.
     [[nodiscard]] editor::vcs::CommandSpec ExtendCommitArgv(const std::filesystem::path& root) const override;
+    // Reword follow-up.
+    [[nodiscard]] editor::vcs::CommandSpec RewordCommitArgv(const std::filesystem::path& root,
+                                                               const std::string&           message) const override;
 
     [[nodiscard]] editor::vcs::CommandSpec              BranchListArgv(const std::filesystem::path& root) const override;
     [[nodiscard]] std::vector<editor::vcs::BranchEntry> ParseBranchList(const std::string& stdout_) const override;
