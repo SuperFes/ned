@@ -119,6 +119,14 @@
 (defn extend-commit-argv [root]
   ["git" "-C" root "commit" "--amend" "--no-edit"])
 
+## Reword follow-up: Magit's own "reword" -- replace HEAD's message without
+## touching its tree, even if something is currently staged. `--only` with
+## no pathspec is what does that: it builds the amended commit from only the
+## paths named on the command line (none here), rather than amend-commit-argv's
+## default of folding in the whole index.
+(defn reword-commit-argv [root message]
+  ["git" "-C" root "commit" "--amend" "--only" "-m" message])
+
 (defn branch-list-argv [root]
   ["git" "-C" root "branch" "--list" "--no-color"])
 
@@ -375,6 +383,7 @@
    :amend-commit-argv amend-commit-argv
    :previous-commit-message-argv previous-commit-message-argv
    :extend-commit-argv extend-commit-argv
+   :reword-commit-argv reword-commit-argv
    :branch-list-argv branch-list-argv
    :parse-branch-list parse-branch-list
    :branch-switch-argv branch-switch-argv

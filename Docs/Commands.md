@@ -3,7 +3,7 @@
 Every command reachable from `M-x`, from a keybinding, or from Janet via
 `ned/run-command`.
 
-311 commands.
+312 commands.
 
 ## `acp-rewind`
 
@@ -1192,6 +1192,10 @@ Move point to the previous changed hunk in this buffer.
 ## `vcs-revert-hunk`
 
 Discard the change hunk covering the line at point from the working tree.
+
+## `vcs-reword-commit`
+
+Reword the previous commit's message, leaving its tree exactly as-is -- opens a *vcs commit message* buffer pre-filled with its message.
 
 ## `vcs-show-blame`
 

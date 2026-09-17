@@ -718,6 +718,12 @@ enum class InteractiveRequest { None,
                                 // same shape as VcsFullDiffBuffer/DiagnosticsBuffer -- unlike
                                 // VcsCommit/VcsCommitAmend it never opens a compose buffer at all.
                                 VcsExtendCommit,
+                                // Reword follow-up: Magit's own "reword" --
+                                // BeginVcsCommitMessage(VcsCommitMode::Reword)'s entry point. Opens
+                                // a compose buffer pre-filled with HEAD's own message, same as
+                                // VcsCommitAmend, but commits via `commit --amend --only` on
+                                // CommitFinish, which never re-stages anything.
+                                VcsRewordCommit,
                                 CommitFinish,
                                 VcsCommitAbort,
                                 VcsBranches,

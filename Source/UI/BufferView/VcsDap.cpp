@@ -378,7 +378,7 @@ void BufferView::RefreshVcsStatusBuffer() {
         [this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false); });
 }
 
-void BufferView::BeginVcsCommitMessage(bool amend) {
+void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
     if (!vcsRunner_) {
         statusMessage_ = "no vcs runner configured";
         return;
@@ -386,50 +386,56 @@ void BufferView::BeginVcsCommitMessage(bool amend) {
     const std::filesystem::path path = editor::vcs::CommitMessagePath();
     // FindByPath, not the OpenOrCreateFile call below, decides whether this
     // is a genuinely fresh commit (seed the template) or the user re-running
-    // vcs-commit/vcs-commit-amend while one is already mid-composition
-    // (switch to it as-is, preserving whatever they've already typed) --
-    // OpenOrCreateFile itself always returns *some* buffer either way. Only
-    // the amend flag itself is updated on that path -- a user who started a
-    // plain commit and then decides to amend instead (or the reverse)
-    // shouldn't have to abort and start over.
+    // vcs-commit/vcs-commit-amend/vcs-reword-commit while one is already
+    // mid-composition (switch to it as-is, preserving whatever they've
+    // already typed) -- OpenOrCreateFile itself always returns *some*
+    // buffer either way. Only the mode itself is updated on that path -- a
+    // user who started a plain commit and then decides to amend/reword
+    // instead (or the reverse) shouldn't have to abort and start over.
     if (bufferList_.FindByPath(path) != nullptr) {
-        pendingCommitAmend_ = amend;
+        pendingCommitMode_ = mode;
         activeBuffer_.Set(*bufferList_.FindByPath(path));
         return;
     }
-    if (!amend) {
+    if (mode == VcsCommitMode::Commit) {
         text::Buffer& commitBuffer = bufferList_.OpenOrCreateFile(path);
         commitBuffer.InsertAtPoint(editor::vcs::kVcsCommitMessageTemplate);
         commitBuffer.SetPoint(0);
-        pendingCommitAmend_ = false;
+        pendingCommitMode_ = VcsCommitMode::Commit;
         activeBuffer_.Set(commitBuffer);
         return;
     }
-    // Amend: seed with the previous commit's own message first (async --
-    // see Runner::RequestPreviousCommitMessage's own doc comment), the same
-    // "message, then the comment block" shape git's own --amend $EDITOR
-    // content has.
-    statusMessage_ = "Fetching previous commit message...";
+    // Amend/Reword: seed with the previous commit's own message first
+    // (async -- see Runner::RequestPreviousCommitMessage's own doc
+    // comment), the same "message, then the comment block" shape git's own
+    // --amend $EDITOR content has.
+    const bool reword = (mode == VcsCommitMode::Reword);
+    statusMessage_    = "Fetching previous commit message...";
     vcsRunner_->RequestPreviousCommitMessage(
-        [this, path](std::string message) {
+        [this, path, mode, reword](std::string message) {
             while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) {
                 message.pop_back();
             }
-            text::Buffer& commitBuffer = bufferList_.OpenOrCreateFile(path);
-            commitBuffer.InsertAtPoint(message + "\n" + std::string(editor::vcs::kVcsAmendCommitMessageTemplate));
+            text::Buffer&     commitBuffer = bufferList_.OpenOrCreateFile(path);
+            const std::string templateText =
+                reword ? std::string(editor::vcs::kVcsRewordCommitMessageTemplate)
+                       : std::string(editor::vcs::kVcsAmendCommitMessageTemplate);
+            commitBuffer.InsertAtPoint(message + "\n" + templateText);
             commitBuffer.SetPoint(0);
-            pendingCommitAmend_ = true;
+            pendingCommitMode_ = mode;
             activeBuffer_.Set(commitBuffer);
-            statusMessage_ = "Amending the previous commit.";
+            statusMessage_ = reword ? "Rewording the previous commit." : "Amending the previous commit.";
         },
-        [this](std::string error) { statusMessage_ = "vcs commit amend: " + error; });
+        [this, reword](std::string error) {
+            statusMessage_ = (reword ? "vcs commit reword: " : "vcs commit amend: ") + error;
+        });
 }
 
 void BufferView::FinishVcsCommitMessage() {
-    text::Buffer&     commitBuffer = activeBuffer_.Get();
-    const std::string message      = editor::vcs::ExtractCommitMessage(commitBuffer.Text());
-    const bool        amend        = pendingCommitAmend_;
-    pendingCommitAmend_             = false;
+    text::Buffer&       commitBuffer = activeBuffer_.Get();
+    const std::string   message      = editor::vcs::ExtractCommitMessage(commitBuffer.Text());
+    const VcsCommitMode mode         = pendingCommitMode_;
+    pendingCommitMode_               = VcsCommitMode::Commit;
     CloseVcsCommitMessageBuffer(commitBuffer);
     if (message.empty()) {
         statusMessage_ = "Empty commit message -- not committing.";
@@ -441,7 +447,9 @@ void BufferView::FinishVcsCommitMessage() {
         // Fire-and-forget, DapEvaluate's shape: the buffer's already closed
         // by the time this fires, the summary lands in statusMessage_ from
         // the callback.
-        statusMessage_ = amend ? "Amending..." : "Committing...";
+        statusMessage_ = mode == VcsCommitMode::Amend    ? "Amending..."
+                          : mode == VcsCommitMode::Reword ? "Rewording..."
+                                                           : "Committing...";
         auto onSuccess = [this](std::string summary) {
             statusMessage_ = summary.empty() ? "Committed." : summary;
             RefreshVcsStatusBuffer();
@@ -450,17 +458,22 @@ void BufferView::FinishVcsCommitMessage() {
             RequestDiffForCurrentBuffer();
         };
         auto onError = [this](std::string error) { statusMessage_ = "vcs commit: " + error; };
-        if (amend) {
-            vcsRunner_->RequestAmendCommit(message, onSuccess, onError);
-        }
-        else {
-            vcsRunner_->RequestCommit(message, onSuccess, onError);
+        switch (mode) {
+            case VcsCommitMode::Commit:
+                vcsRunner_->RequestCommit(message, onSuccess, onError);
+                break;
+            case VcsCommitMode::Amend:
+                vcsRunner_->RequestAmendCommit(message, onSuccess, onError);
+                break;
+            case VcsCommitMode::Reword:
+                vcsRunner_->RequestRewordCommit(message, onSuccess, onError);
+                break;
         }
     }
 }
 
 void BufferView::AbortVcsCommitMessage() {
-    pendingCommitAmend_ = false;
+    pendingCommitMode_ = VcsCommitMode::Commit;
     CloseVcsCommitMessageBuffer(activeBuffer_.Get());
     statusMessage_ = "Commit aborted.";
 }
@@ -601,8 +614,8 @@ void BufferView::RequestPointerGraphAtPointForTesting() {
     RequestPointerGraphAtPoint();
 }
 
-void BufferView::BeginVcsCommitMessageForTesting(bool amend) {
-    BeginVcsCommitMessage(amend);
+void BufferView::BeginVcsCommitMessageForTesting(VcsCommitMode mode) {
+    BeginVcsCommitMessage(mode);
 }
 
 void BufferView::ExtendCommitForTesting() {
@@ -1795,10 +1808,13 @@ void BufferView::RequestVcsAction(VcsPanelAction action) {
             BeginVcsCommitMessage();
             return;
         case VcsPanelAction::AmendCommit:
-            BeginVcsCommitMessage(/*amend=*/true);
+            BeginVcsCommitMessage(VcsCommitMode::Amend);
             return;
         case VcsPanelAction::ExtendCommit:
             ExtendCommit();
+            return;
+        case VcsPanelAction::RewordCommit:
+            BeginVcsCommitMessage(VcsCommitMode::Reword);
             return;
         case VcsPanelAction::SwitchBranch:
             BeginVcsSwitchBranchPrompt();
