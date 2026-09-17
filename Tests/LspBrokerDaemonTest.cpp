@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -56,14 +57,15 @@ std::filesystem::path SocketPathFor(const std::string& suffix) {
     return std::filesystem::path("/tmp") / ("ned-brokerd-test-" + std::to_string(::getpid()) + "-" + suffix + ".sock");
 }
 
-BrokerDaemonOptions TestOptions(const std::filesystem::path& socketPath) {
+BrokerDaemonOptions TestOptions(const std::filesystem::path& socketPath,
+                                std::chrono::milliseconds     wholeDaemonIdleTimeout = std::chrono::seconds(1)) {
     return BrokerDaemonOptions{
         .maxConcurrentServers = 4,
         // Fast enough to keep a test to a few seconds, slow enough that
         // the sweep isn't spinning on the mutex the whole time.
         .idleSweepInterval      = std::chrono::milliseconds(100),
         .perEntryIdleTimeout    = std::chrono::milliseconds(300),
-        .wholeDaemonIdleTimeout = std::chrono::seconds(1),
+        .wholeDaemonIdleTimeout = wholeDaemonIdleTimeout,
         .socketPath             = socketPath,
         // The test binary is itself a build artifact that may be
         // rebuilt while a test runs; this check has nothing to do with
@@ -87,13 +89,14 @@ struct DaemonHarness {
     std::stringstream             capturedLog;
     std::streambuf*               previousCerr = nullptr;
 
-    explicit DaemonHarness(const std::string& suffix) : socketPath(SocketPathFor(suffix)) {
+    explicit DaemonHarness(const std::string& suffix, std::chrono::milliseconds wholeDaemonIdleTimeout = std::chrono::seconds(1))
+        : socketPath(SocketPathFor(suffix)) {
         ::unlink(socketPath.c_str());
         // The daemon logs to stderr by design; capture it so the test
         // output stays readable *and* so the assertions below can be
         // about what the daemon actually did, not just that it exited.
         previousCerr = std::cerr.rdbuf(capturedLog.rdbuf());
-        daemon       = std::make_shared<BrokerDaemon>(TestOptions(socketPath));
+        daemon       = std::make_shared<BrokerDaemon>(TestOptions(socketPath, wholeDaemonIdleTimeout));
         thread       = std::thread([this, held = daemon] {
             exitCode = held->Run();
             finished = true;
@@ -262,5 +265,58 @@ TEST_CASE("The broker daemon shuts down promptly on a ned/broker-shutdown contro
     const std::string log = harness.Log();
     INFO(log);
     REQUIRE(LogContains(log, "received ned/broker-shutdown"));
+    REQUIRE(LogContains(log, "daemon exiting"));
+}
+
+TEST_CASE("A whole-daemon idle timeout of zero never fires", "[BrokerDaemon]") {
+    // foreground-mode follow-up: --foreground passes wholeDaemonIdleTimeout
+    // = 0 for a deliberately always-on instance. Confirms that's really
+    // "never," not just "a very long timeout" -- the daemon sits with zero
+    // connections for several multiples of what would otherwise be an
+    // immediate exit (the harness's own default is 1 second; this waits 10x
+    // that) and must still be running, then a control-frame shutdown is
+    // used to end the test cleanly.
+    DaemonHarness harness("never-idle", std::chrono::milliseconds::zero());
+    REQUIRE_FALSE(harness.WaitForExit(std::chrono::seconds(10)));
+
+    {
+        ClientConnection control(harness.socketPath);
+        control.RequestShutdown();
+        REQUIRE(harness.WaitForExit(std::chrono::seconds(20)));
+    }
+    REQUIRE(harness.exitCode.load() == 0);
+
+    const std::string log = harness.Log();
+    INFO(log);
+    REQUIRE_FALSE(LogContains(log, "whole-daemon idle timeout reached"));
+    REQUIRE(LogContains(log, "received ned/broker-shutdown"));
+}
+
+TEST_CASE("The broker daemon shuts down promptly on SIGTERM, the same way as a control-frame shutdown", "[BrokerDaemon]") {
+    // foreground-mode follow-up: systemd's own stop signal (and Ctrl-C
+    // under a manually-run --foreground/--lsp-broker) must run the exact
+    // same graceful router_.Shutdown() sequence the ned/broker-shutdown
+    // control frame already does, not just terminate the process outright.
+    // wholeDaemonIdleTimeout is disabled here so only the signal can end
+    // the run -- proves the signal path on its own, not a race with the
+    // idle timeout.
+    DaemonHarness harness("sigterm", std::chrono::milliseconds::zero());
+    {
+        ClientConnection client(harness.socketPath);
+        client.Attach("/tmp/ned-brokerd-test-root", "cpp");
+        std::this_thread::sleep_for(std::chrono::milliseconds(400)); // let the spawn settle
+
+        // The client is still attached when the signal lands -- proves
+        // router_.Shutdown() really does tear down a *live* entry (real
+        // LSP shutdown/exit, close the client) rather than only handling
+        // the already-idle case.
+        REQUIRE(::kill(::getpid(), SIGTERM) == 0);
+        REQUIRE(harness.WaitForExit(std::chrono::seconds(20)));
+    }
+    REQUIRE(harness.exitCode.load() == 0);
+
+    const std::string log = harness.Log();
+    INFO(log);
+    REQUIRE(LogContains(log, "received shutdown signal"));
     REQUIRE(LogContains(log, "daemon exiting"));
 }

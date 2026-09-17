@@ -1851,23 +1851,26 @@ these accumulate detail in place.
         Collaboration/multi-client synced debugging (a bespoke sketch-annotation,
         synced-viewing feature seen in some existing GDB frontends) doesn't fit ned's
         single-user terminal model — considered and set aside, not planned.
-- [ ] **LSP broker "server mode"** (raised 2026-09-06, following the fileOperations
-      capabilities fix and its live fallout) — today's `Editor/Lsp/LspBroker*` daemon
-      always self-terminates ~1 minute after its last attached client disconnects
-      (`Lsp/BrokerMain.cpp`'s `kWholeDaemonIdleTimeout`), specifically so a stale process
-      never outlives a `ned` binary rebuild for long: `BrokerRouter` caches one real
-      `initialize` handshake result — success *or* failure — per `(root, language)` key
-      for its own process lifetime, and a live bug showed this can otherwise strand every
-      future attacher on a failure cached from a client-capabilities bug that was already
-      fixed and rebuilt. A real "server mode" (deliberately kept warm regardless of
-      client presence — e.g. a systemd user service, so a fresh `ned` launch never pays
-      even the broker's own startup cost) would disable or greatly lengthen that idle
-      timeout, which reopens exactly this staleness risk on a much longer timescale.
-      The prerequisite this entry used to list — the daemon noticing its own on-disk
-      executable changed and restarting itself — is **already built** (`/proc/self/exe`
-      device/inode/mtime, re-checked on the idle sweep; watched firing live 2026-09-07),
-      so server mode no longer needs it designed, only kept working. Not scoped further
-      than that; no server-mode design exists yet.
+- LSP broker "server mode" shipped 2026-09-16 as `ned --foreground` (git log --grep=
+  `foreground-mode`) — see the pre-warming follow-up below for the one piece split out
+  of it.
+
+- [ ] **LSP broker pre-warming** (split out from "LSP broker server mode" above,
+      2026-09-16) — warm the N most-recently-used projects' language servers when
+      `ned --foreground` starts, using `Editor/ProjectRegistry.h`'s existing
+      `lastUsed`-ordered `ListProjects()` as the recency source (no new tracking
+      needed for that half). Blocked on argv, not on root detection: root-marker
+      detection (`Editor/Lsp/RootResolver.h`, finding `compile_commands.json`/
+      `Cargo.toml`/etc.) is pure filesystem logic and could run headlessly today, but
+      the per-language server *command* (`Editor/Lsp/ServerConfig.h`) is populated only
+      by a live interactive `ned` process's `ned/set-lsp-command` Janet calls, and that
+      file states as deliberate policy that nothing is bundled/auto-detected for any
+      language (same convention as `TaskConfig.h`/`DapConfig.h`) — a prewarm-only bundled
+      table would be a real, called-out exception to that policy, not a small addition.
+      Needs a `(root, language) -> argv` persistence mechanism (each real interactive
+      attach writing its resolved config to a small state file the daemon can read at
+      its own startup) before this can be built without either violating that policy or
+      guessing.
 
 Also shipped, one slug each for `git log --grep=`: `broker-reader-deadlock` (that same
 daemon deadlocking in its own idle sweep — the bug is why `Tests/LspBrokerDaemonTest.cpp`

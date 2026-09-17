@@ -52,8 +52,15 @@ struct BrokerDaemonOptions {
     std::chrono::milliseconds perEntryIdleTimeout = std::chrono::minutes(30);
 
     // How long the whole daemon may sit with no connections at all before
-    // it exits -- see BrokerMain.cpp's own historical note on why this is
-    // about a minute rather than hours.
+    // it exits -- tuned to a minute for the ephemeral auto-spawn case (see
+    // ROADMAP.md's "LSP broker server mode" entry), so a stale process
+    // never lingers long after the `ned` that spawned it is gone. Zero
+    // disables this entirely -- what `--foreground` (main.cpp) passes for
+    // a deliberately always-on instance (e.g. a systemd --user service):
+    // safe now that a zero-client `(root, language)` entry still self-heals
+    // via perEntryIdleTimeout above regardless of this value, and the
+    // executable-staleness check below still restarts the process on a
+    // rebuild either way.
     std::chrono::milliseconds wholeDaemonIdleTimeout = std::chrono::minutes(1);
 
     // Empty means BrokerSocketPath() (and the matching
@@ -127,9 +134,13 @@ class BrokerDaemon {
     BrokerDaemon& operator=(const BrokerDaemon&) = delete;
 
     // Binds the socket, accepts connections, and relays until a
-    // ned/broker-shutdown control message or one of the idle timeouts ends
-    // it. Returns a process exit code: 0 on a clean shutdown, nonzero on a
-    // fatal bind/listen failure (reported to stderr before returning).
+    // ned/broker-shutdown control message, a SIGTERM/SIGINT (installed for
+    // the duration of this call and restored to whatever they were before
+    // on return -- systemd's own stop signal and Ctrl-C both route through
+    // this, running the exact same router_.Shutdown() sequence the control
+    // message does), or one of the idle timeouts ends it. Returns a
+    // process exit code: 0 on a clean shutdown, nonzero on a fatal
+    // bind/listen failure (reported to stderr before returning).
     [[nodiscard]] int Run();
 
   private:

@@ -1,11 +1,13 @@
 #include "BrokerDaemon.h"
 
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <ctime>
 #include <iostream>
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -109,6 +111,24 @@ namespace {
     // idleSweepInterval is the production 10s.
     constexpr auto kSweepWaitGranularity = std::chrono::milliseconds(200);
 
+    // foreground-mode follow-up. A process-wide flag rather than a member:
+    // a signal handler has no way to reach `this`, and exactly one
+    // BrokerDaemon is ever running (i.e. inside its own Run() call) in a
+    // given process at a time -- production has one daemon per process by
+    // construction, and the test harness (Tests/LspBrokerDaemonTest.cpp)
+    // runs its daemons one at a time within one Catch2 process. Reset at
+    // the top of every Run() so a later, unrelated Run() in the same
+    // process (tests only) never inherits an earlier call's signal.
+    std::atomic<bool> g_shutdownSignalReceived{false};
+
+    void HandleShutdownSignal(int /*signum*/) {
+        // Async-signal-safe: an atomic store, nothing else. The real
+        // shutdown work happens on IdleSweepLoop's own thread, which polls
+        // this flag at the same granularity it already polls for a stop
+        // request.
+        g_shutdownSignalReceived.store(true, std::memory_order_relaxed);
+    }
+
 } // namespace
 
 BrokerDaemon::BrokerDaemon(BrokerDaemonOptions options) : options_(std::move(options)), router_(options_.maxConcurrentServers) {
@@ -198,7 +218,26 @@ int BrokerDaemon::Run() {
         ::close(listenFd_);
         return 1;
     }
+    // Belt-and-suspenders: EnsureBrokerRuntimeDirectory() already restricts
+    // the containing directory to 0700 (the real security boundary -- no
+    // other local user can even stat into it to find this socket), this
+    // just stops the socket file's own mode from depending on the caller's
+    // umask.
+    ::chmod(socketPathStr.c_str(), 0600);
     Log("daemon started, listening at " + socketPathStr);
+
+    // foreground-mode follow-up: SIGTERM (systemd's own stop signal) and
+    // SIGINT (Ctrl-C, for a manually-run --foreground/--lsp-broker in a
+    // terminal) both route into the same graceful router_.Shutdown()
+    // sequence the ned/broker-shutdown control message already triggers --
+    // see IdleSweepLoop's own handling of g_shutdownSignalReceived below.
+    // Scoped to this call: the previous disposition is restored before
+    // returning, so this process's signal handling outside a live Run()
+    // call is never affected (matters for the test harness, which runs
+    // several daemons one after another in a single process).
+    g_shutdownSignalReceived.store(false, std::memory_order_relaxed);
+    void (*previousTermHandler)(int) = std::signal(SIGTERM, HandleShutdownSignal);
+    void (*previousIntHandler)(int)  = std::signal(SIGINT, HandleShutdownSignal);
 
     std::jthread idleThread([this](std::stop_token stopToken) { IdleSweepLoop(stopToken); });
 
@@ -228,6 +267,8 @@ int BrokerDaemon::Run() {
     // applied in order before ShutdownProcess is ever reached) or will
     // shortly.
     ::unlink(socketPathStr.c_str()); // tidiness only -- the next daemon startup already unlinks a stale socket unconditionally before binding
+    std::signal(SIGTERM, previousTermHandler);
+    std::signal(SIGINT, previousIntHandler);
     Log("daemon exiting");
     return 0;
 }
@@ -599,11 +640,29 @@ void BrokerDaemon::IdleSweepLoop(std::stop_token stopToken) {
     auto       lastActivitySeen = std::chrono::steady_clock::now();
     const auto tick             = std::min(options_.idleSweepInterval, kSweepWaitGranularity);
     while (!stopToken.stop_requested()) {
-        for (auto waited = std::chrono::milliseconds(0); waited < options_.idleSweepInterval && !stopToken.stop_requested();
+        bool signaled = g_shutdownSignalReceived.load(std::memory_order_relaxed);
+        for (auto waited = std::chrono::milliseconds(0); !signaled && waited < options_.idleSweepInterval && !stopToken.stop_requested();
              waited += tick) {
             std::this_thread::sleep_for(tick);
+            signaled = g_shutdownSignalReceived.load(std::memory_order_relaxed);
         }
         if (stopToken.stop_requested()) {
+            break;
+        }
+        // foreground-mode follow-up: checked at kSweepWaitGranularity
+        // resolution regardless of idleSweepInterval (production 10s),
+        // so SIGTERM/SIGINT/ned/broker-shutdown all get a comparably
+        // prompt response -- a systemd unit's TimeoutStopSec shouldn't
+        // have to be tuned around this loop's own polling interval.
+        if (signaled) {
+            Log("received shutdown signal -- shutting down");
+            std::vector<BrokerAction> shutdownActions;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                shutdownActions = router_.Shutdown();
+            }
+            LogShutdownEta(shutdownActions);
+            ApplyActions(std::move(shutdownActions));
             break;
         }
 
@@ -623,7 +682,7 @@ void BrokerDaemon::IdleSweepLoop(std::stop_token stopToken) {
         ApplyActions(std::move(actions));
         ReapFinishedThreads();
 
-        if (now - lastActivitySeen > options_.wholeDaemonIdleTimeout) {
+        if (options_.wholeDaemonIdleTimeout.count() > 0 && now - lastActivitySeen > options_.wholeDaemonIdleTimeout) {
             Log("whole-daemon idle timeout reached (no connections for " +
                 std::to_string(std::chrono::duration_cast<std::chrono::seconds>(options_.wholeDaemonIdleTimeout).count()) +
                 "s) -- shutting down");
