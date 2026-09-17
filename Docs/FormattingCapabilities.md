@@ -41,12 +41,12 @@ applied to node types a query names:
 | 1 | **Indent** | Leading whitespace on a line | **Have** |
 | 2 | **Space** | A space between two adjacent tokens, or inside a delimiter pair | **Have** (19 languages) |
 | 3 | **Break** | A mandatory or forbidden newline at one point | **Have** (19 languages) |
-| 4 | **Wrap** | A policy over a *list* when it exceeds the margin: never / if-long / chop-down / always | Partial (never/always only, no margin-aware if-long/chop-down-if-long yet; cpp's own call-argument-list pilot only) |
-| 5 | **Align** | A shared column across sibling lines | Partial (column-alignment engine shipped -- cpp's own consecutive-assignment pilot only, see below) |
+| 4 | **Wrap** | A policy over a *list* when it exceeds the margin: never / if-long / chop-down / always | Partial (never/always only, no margin-aware if-long/chop-down-if-long yet; cpp's own call-argument-list and function-parameter-list constructs only) |
+| 5 | **Align** | A shared column across sibling lines | Partial (column-alignment engine shipped -- cpp/JS assignment plus cpp enum-initializer constructs only, see below) |
 | 6 | **Blank** | Min/max blank lines around a node | **Have** (19 languages) |
 | 7 | **Case** | A token's own text case | **Have** (checker-only; full entity-kind catalogue for cpp/c, whatever a language's own upstream tags.scm already distinguishes for everyone else) |
-| 8 | **Arrange** | Reorder siblings by a key | Partial (import-sort pilot shipped -- cpp `#include`/JS-TS-TSX `import`; member arrangement still Need) |
-| 9 | **Rewrite** | Replace a construct with an equivalent one | Partial (quote-style pilot shipped -- JS/TS/TSX string literals; every other equivalence rewrite still Need) |
+| 8 | **Arrange** | Reorder siblings by a key | Partial (import-sort pilot shipped -- cpp `#include`/JS-TS-TSX/Python `import`; member arrangement still Need) |
+| 9 | **Rewrite** | Replace a construct with an equivalent one | Partial (quote-style and PHP `elseif`→`else if` shipped; every other equivalence rewrite still Need) |
 
 Every JetBrains row in the appendix is one of these nine, pointed at a node. That is what
 makes the scope tractable: the engine is nine passes, the per-language cost is one
@@ -84,17 +84,18 @@ That covered rule kind 1 completely and kind 5 partially when this doc was first
 `Editor/FormatSpacing.h`/`FormatBracePlacement.h`/`FormatBlankLines.h`, and
 `Docs/FormattingRules.md` -- across every bundled language with a real brace/keyword/Lisp
 shape (19 language keys). Kind 4 (Wrap) followed the same "one pilot construct" pattern
-one level further out; see that doc's own Wrap section for what's still open (margin-aware
-policies, more languages/constructs). Kind 7 (Case) shipped as a checker (`Editor/FormatCase.h`,
+one level further out, then widened to a second cpp construct (`wrap.params`, function
+parameter lists); see that doc's own Wrap section for what's still open (margin-aware
+policies, more languages, more constructs). Kind 7 (Case) shipped as a checker (`Editor/FormatCase.h`,
 `Editor/FileNaming.h` for the file-naming-conventions half of B1 below) -- full entity-kind
 catalogue for cpp/c, whatever each other bundled language's own upstream tags.scm already
-distinguishes elsewhere, see ROADMAP.md's Configurable Formatter section for exactly what's
-still conflated per language. Align/Arrange/Rewrite (kinds 5/8-9) each shipped a first pilot
-pass since -- see `Editor/FormatAlign.h`/`FormatArrange.h`/`FormatRewrite.h` and
-`Docs/FormattingRules.md`'s own sections for each. Kind 5's own B2 "Align similar code in
-columns" entry, kind 8's Import-organisation half, and kind 9's quote-style entry are what
-shipped; kind 8's Member-arrangement half and everything else kind 9 lists remain unstarted
-design, not stale.
+distinguishes elsewhere. Align/Arrange/Rewrite (kinds 5/8-9) each shipped a first pilot pass,
+then a widening pass adding one more construct/language each -- see
+`Editor/FormatAlign.h`/`FormatArrange.h`/`FormatRewrite.h` and `Docs/FormattingRules.md`'s
+own sections for each. Kind 5's own B2 "Align similar code in columns" entry, kind 8's
+Import-organisation half, and kind 9's quote-style/`elseif` entries are what shipped; kind
+8's Member-arrangement half and everything else kind 9 lists remain unstarted design, not
+stale.
 
 ---
 
@@ -193,37 +194,46 @@ entry is canonical vs. an alternate spelling, and that's a separate, smaller fol
 Real, wanted, but second-order: mostly they inherit from something in B1 or are one
 language's take on a rule already covered.
 
-**Alignment in columns (kind 5) — pilot shipped 2026-09-17.** Consecutive assignments,
-declaration names, enum initialisers, designated initialisers, bit-field sizes, end-of-line
-comments, PHP class property/constant groups, SQL's several. Wanted — this is the single most
-"opinionated codebase" feature in the list — but it is also the one that fights
+**Alignment in columns (kind 5) — pilot shipped 2026-09-17, widened 2026-09-17.** Consecutive
+assignments, declaration names, enum initialisers, designated initialisers, bit-field sizes,
+end-of-line comments, PHP class property/constant groups, SQL's several. Wanted — this is the
+single most "opinionated codebase" feature in the list — but it is also the one that fights
 `Keep existing line breaks` hardest, and it needed a notion of "adjacent lines forming a
 group" that nothing else in the engine had, done *after* B1 as this section originally
 planned so the group-detection rule was designed against a working engine rather than
 guessed. `Editor/FormatAlign.h`'s own grouping rule: a maximal run of same-name captures
 where each next one sits on the line immediately following the previous one's own line, at
 the same leading-indent text -- a tree-free, conservative proxy for "same nesting depth,
-same immediate parent". Only cpp's own consecutive-assignment-statement pilot capture
-(`align.assignment`, a plain reassignment's own operator token) exists today -- declaration
-names, enum/designated initialisers, bit-field sizes, and end-of-line comments are all open
-follow-ups, the same "one pilot construct" discipline every rule kind's own first capture in
-this codebase follows. Tab-width-aware column counting (this pilot counts raw bytes from a
-line's own start) is a known, declared gap, not a silent one -- see `Editor/FormatAlign.h`'s
-own header comment.
+same immediate parent". Two captures exist today, both needing zero `FormatAlign.cpp`
+changes since the pass is already fully generic over capture name: cpp/JS's own
+consecutive-assignment-statement pilot (`align.assignment`, a plain reassignment's own
+operator token) and cpp's own enum-member initializer (`align.enumerator`, an
+`enumerator`'s own `=` -- its `value` field is optional in the grammar, so a bare
+enumerator with no initializer simply produces no match, no predicate needed).
+Declaration-name alignment was deliberately NOT added as the second capture: `int a, b;`'s
+own multiple-declarators-per-line shape would put two anchors on one source line, which the
+grouping rule above assumes never happens. Designated initialisers, bit-field sizes, and
+end-of-line comments are all still open follow-ups, the same "one pilot construct at a time"
+discipline every rule kind's own captures in this codebase follow. Tab-width-aware column
+counting (this pilot counts raw bytes from a line's own start) is a known, declared gap, not
+a silent one -- see `Editor/FormatAlign.h`'s own header comment.
 
-**Import organisation (kind 8) — sort pilot shipped 2026-09-17.** Sort imports, sort names
-within an import, group plain vs `from` separately, case-insensitive sort, merge same-module
-imports, split/join. Tree-sitter handles all of it — the sort half does, at least;
-`Editor/FormatArrange.h`'s own pilot captures a whole import/include STATEMENT as one node
-(`arrange.import` -- cpp's `preproc_include`, JavaScript/TypeScript/TSX's own
-`import_statement`, shared via the same `javascript/format.janet` file every other kind
-already reuses across those three) and reorders a run of adjacent ones by the captured text
+**Import organisation (kind 8) — sort pilot shipped 2026-09-17, widened 2026-09-17.** Sort
+imports, sort names within an import, group plain vs `from` separately, case-insensitive
+sort, merge same-module imports, split/join. Tree-sitter handles all of it — the sort half
+does, at least; `Editor/FormatArrange.h`'s own pilot captures a whole import/include
+STATEMENT as one node (`arrange.import` -- cpp's `preproc_include`, JavaScript/TypeScript/
+TSX's own `import_statement`, shared via the same `javascript/format.janet` file every
+other kind already reuses across those three, and now Python's own `import_statement`/
+`import_from_statement`, added as a query-file-only widening since the pass is already
+fully generic over capture name) and reorders a run of adjacent ones by the captured text
 itself, `:case-insensitive` toggle included. A blank line between two imports is a real group
 boundary (an approximation of "group plain vs. from separately", not a real from/plain
 classification), a multi-line import is declined outright rather than approximated, and the
 sort key is the whole captured line's own text, not a resolved module path -- sorting by
 name/within-an-import, merging same-module imports, and split/join all remain open
-follow-ups. What it still *cannot* do is the resolution half (below, Tier C).
+follow-ups, along with every language besides cpp/JS/TS/TSX/Python. What it still *cannot*
+do is the resolution half (below, Tier C).
 
 **Member arrangement (kind 8).** The Arrangement tab: an ordered list of matching rules
 (`const`, `field`+static, `constructor`, `property`, `method`+static, `trait`,
@@ -241,18 +251,25 @@ Ned would want anyway for `comment.documentation.*` highlighting (see
 `HighlightCapabilities.md` §1). **Same work, two payoffs — that pairing is the reason to
 do it.**
 
-**Equivalence rewrites (kind 9) — quote-style pilot shipped 2026-09-17.** Quote style,
-semicolon insertion/removal, trailing comma (keep/add/remove), `elseif`→`else if`,
-`array()`→`[]`, short closures, keyword case, `True`/`False`/`Null` case. Each is a tiny
-local edit on a captured node. Individually trivial; collectively the thing that makes a
-formatter feel opinionated. The risk is that some are *not* semantics-preserving in every
-dialect, so each ships off by default. `Editor/FormatRewrite.h`'s own pilot (JS/TS/TSX
+**Equivalence rewrites (kind 9) — quote-style pilot shipped 2026-09-17, widened 2026-09-17.**
+Quote style, semicolon insertion/removal, trailing comma (keep/add/remove), `elseif`→
+`else if`, `array()`→`[]`, short closures, keyword case, `True`/`False`/`Null` case. Each is
+a tiny local edit on a captured node. Individually trivial; collectively the thing that
+makes a formatter feel opinionated. The risk is that some are *not* semantics-preserving in
+every dialect, so each ships off by default. `Editor/FormatRewrite.h`'s own pilot (JS/TS/TSX
 string literals, `rewrite.quote`, `template_string` naturally excluded by node type) is a
 pure delimiter swap, and only when it can stay pure: any backslash in the string's own
 interior, or an unescaped occurrence of the target quote character, declines the rewrite
-outright rather than attempting to (un)escape anything. Every other row here -- semicolon
-insertion/removal, trailing comma, `elseif`→`else if`, `array()`→`[]`, short closures,
-keyword/boolean-literal case -- remains an open follow-up.
+outright rather than attempting to (un)escape anything. `elseif`→`else if` (PHP,
+`rewrite.elseif`) shipped as a second, structurally different rewrite family alongside it --
+the one construct in this rollout that needed real `ComputeRewriteEdits` changes rather than
+a query-file-only addition, since it was one function hardcoded to the quote-swap algorithm
+until now; it now checks each optional `RewriteRuleValue` field (`quoteStyle`/
+`expandElseif`) independently per capture. The new algorithm is exactly as narrow as
+quote-swap's own: only a capture spanning the literal `elseif` token (confirmed against
+`tree-sitter-php`'s own grammar that it's a distinct anonymous token, not `else`+`if`) is
+rewritten. Every other row here -- semicolon insertion/removal, trailing comma, `array()`→
+`[]`, short closures, keyword/boolean-literal case -- remains an open follow-up.
 
 **Markdown/prose formatting.** Wrap long text, wrap inside block quotes, insert block-quote
 arrows, format tables (have), force one space after header/list/blockquote markers, blank

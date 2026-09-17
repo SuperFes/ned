@@ -214,7 +214,7 @@ every build:
 `trim-trailing-whitespace` `ensure-final-newline` `max-consecutive-blank-lines` `tabs`
 `width` `before` `after` `within` `placement` `collapse-empty` `collapse-simple`
 `min-before` `max-before` `policy` `force-trailing-comma` `enabled` `case-insensitive`
-`quote-style`
+`quote-style` `expand-elseif`
 
 <!-- format-keys:end -->
 
@@ -1496,12 +1496,19 @@ wrong the moment a second language's own `wrap.args` is added. The chop-down LAY
 (one argument per line, no trailing comma) is unaffected and confirmed live it compiles
 clean.
 
-**Only cpp, and only its own call-argument list, has a `:wrap` capture today** -- the same
-"one pilot construct, full chain end to end" discipline every other rule kind's own first
-capture in this codebase followed (`Source/Languages/cpp/format.janet`'s own header
-comment on `wrap.args` has the full story). More constructs (declaration parameter lists,
-array/object literals) and more languages are open follow-ups, same as every rule kind's
-own rollout before it.
+**Only cpp, and only two constructs, have a `:wrap` capture today** -- `wrap.args` (a
+call's own argument list, the original pilot) and `wrap.params` (a function's own
+parameter list, widened in afterward), the same "one pilot construct, full chain end to
+end" discipline every other rule kind's own first capture in this codebase followed
+(`Source/Languages/cpp/format.janet`'s own header comments on both have the full story).
+`parameter_list` has the identical anonymous-`(`/`)`-plus-named-children shape
+`argument_list` does, so the same `.open`/`.item`/`.close` convention carried over
+unchanged -- but the trailing-comma hazard did NOT carry over automatically:
+`TrailingCommaUnsafeForLanguage` needed its own separately-verified `("cpp", "wrap.params")`
+entry (a real `g++` compile: "expected identifier before ')' token" -- a different
+grammar construct from the call-argument case, not something safe to assume). More
+constructs (array/object literals, base-class lists) and more languages are still open
+follow-ups, same as every rule kind's own rollout before it.
 
 Wrap runs in the Native chain right after Blank, before Break/Space: a wrap decision
 rewrites a list's own interior line layout wholesale, which is exactly the kind of
@@ -1550,15 +1557,22 @@ tab-width-aware -- a real, declared gap (a mid-line tab before the anchor would 
 logged rather than guessed at, the same honesty Wrap's own "no margin-aware policy yet" note
 above models.
 
-**Only cpp, and only a plain reassignment statement's own operator token, has an `:align`
-capture today** -- the same "one pilot construct, full chain end to end" discipline every
-other rule kind's own first capture in this codebase follows.
+**`align.assignment` (cpp, JavaScript/TypeScript/TSX) and `align.enumerator` (cpp only) are
+the only `:align` captures today** -- the same "one pilot construct, full chain end to end"
+discipline every other rule kind's own first capture in this codebase follows.
 `(expression_statement (assignment_expression operator: _ @align.assignment))` deliberately
 scopes to a *statement-level* assignment, not any `assignment_expression` anywhere (a
 for-loop's own update clause, a chained `a = b = 1`, one nested inside a call argument) --
 `FormatAlign.h`'s own grouping rule only ever needs ONE anchor per line to mean anything, and
-narrowing to top-level statement assignments is what keeps that anchor unambiguous. Kind
-5's own B2 list is otherwise untouched: declaration names, enum/designated initialisers,
+narrowing to top-level statement assignments is what keeps that anchor unambiguous.
+`align.enumerator` (`(enumerator name: (identifier) "=" @align.enumerator value: (_))`,
+widened in afterward) needed no `FormatAlign.cpp` changes at all -- it's already fully
+generic over capture name -- and gets its own "one clean anchor" property for free from the
+grammar: `enumerator`'s own `value` field is optional, so a bare enumerator with no
+initializer simply produces no match rather than needing a predicate to exclude it.
+Deliberately not "declaration-name alignment" (`int a, b;`'s own multiple-declarators-per-
+line shape would put two anchors on one source line, which the grouping rule above assumes
+never happens). Kind 5's own B2 list is otherwise untouched: designated initialisers,
 bit-field sizes, end-of-line comments, and every SQL row remain open follow-ups.
 
 Settable live from `init.janet` too, the same per-field shape every other kind here uses:
@@ -1616,7 +1630,17 @@ newline) -- not a resolved module path, not the specifier alone, so aliasing syn
 the module string still participates in the sort. `:case-insensitive` (default off, ordinal
 byte compare) folds ASCII case before comparing, matching JetBrains' own toggle. Sorting by
 name-within-an-import, merging same-module imports, and split/join all remain open
-follow-ups, along with every language besides cpp/JS/TS/TSX.
+follow-ups, along with every language besides cpp/JS/TS/TSX/Python.
+
+**Python widened the pilot to a second language** (`(import_statement) @arrange.import` and
+`(import_from_statement) @arrange.import`, Python's own two import shapes, each a distinct
+top-level node type) -- purely a `python/format.janet` addition, no `FormatArrange.cpp`
+change, since the pass is already fully generic over capture name. Verified live (not
+assumed from cpp's own quirk) that neither Python node includes its own trailing newline in
+its span, the same shape JavaScript's `import_statement` already has -- `WithoutOneTrailingNewline`
+handles either shape generically either way. A multi-line `from x import (a, b, c)` is
+declined outright by the same embedded-newline check every other language's pilot already
+uses.
 
 Settable live from `init.janet`: `(ned/set-format-arrange-enabled "arrange.import" true)`,
 `(ned/set-format-arrange-case-insensitive "arrange.import" true)`.
@@ -1652,11 +1676,28 @@ legal). Decline rather than guess, the same discipline every prior rule kind's o
 (Go's ASI, PHP's three-way body, Kotlin's fieldless grammar) already established for this
 codebase.
 
-Only quote style, and only for JS/TS/TSX string literals, is implemented -- semicolon
-insertion/removal, trailing comma, `elseif`→`else if`, `array()`→`[]`, short closures, and
+Quote style (JS/TS/TSX string literals) and `elseif`→`else if` (PHP) are implemented --
+semicolon insertion/removal, trailing comma, `array()`→`[]`, short closures, and
 keyword/boolean-literal case all remain open follow-ups, per the capabilities doc's own list.
 
-Settable live from `init.janet`: `(ned/set-format-rewrite-quote-style "rewrite.quote" "double")`.
+**`rewrite.elseif` widened `RewriteRuleValue` to a second, structurally unrelated field**
+(`:expand-elseif`, a plain boolean, alongside `:quote-style`) -- this is the one construct
+in this rollout that could NOT ship as a query-file-only addition, since `ComputeRewriteEdits`
+was, until now, one function hardcoded to the quote-swap algorithm. It now checks each
+optional field independently per capture (`rule.quoteStyle` / `rule.expandElseif`), the same
+"every optional field its own lever" shape `WrapRuleValue`'s two fields already model. The
+new algorithm itself stays just as narrow as quote-swap's own: the capture must span EXACTLY
+the literal `elseif` keyword token (confirmed against `tree-sitter-php`'s own
+`node-types.json` that `elseif` is its own distinct anonymous token, never `else`+`if`
+glued together) or it's declined, never guessed at. The keyword capture
+(`(else_if_clause "elseif" @rewrite.elseif)`) sits ahead of `else_if_clause`'s own body
+field entirely, so PHP's own three-way brace/colon-alternate/bare-statement body-shape
+concern (this file's own `brace.control` discussion) never enters into it -- the same
+`elseif` keyword precedes all three shapes alike.
+
+Settable live from `init.janet`:
+`(ned/set-format-rewrite-quote-style "rewrite.quote" "double")`,
+`(ned/set-format-rewrite-expand-elseif "rewrite.elseif" true)`.
 
 Rewrite runs FIRST in the Native chain, ahead of every other kind here -- a pure in-place
 content swap that never changes line layout or length in any way another pass would need to

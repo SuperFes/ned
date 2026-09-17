@@ -287,17 +287,21 @@ namespace {
     // :rewrite's own entry -- FormatRules.h's RewriteRuleValue.
     RewriteRuleValue ParseRewriteEntry(const std::string& path, const std::string& captureKey, const Value& entryValue) {
         if (!entryValue.IsStruct()) {
-            Fail(path, entryValue.line, "\"" + captureKey + "\"'s :rewrite entry must be {:quote-style .. }");
+            Fail(path, entryValue.line,
+                 "\"" + captureKey + "\"'s :rewrite entry must be {:quote-style .. :expand-elseif ..}");
         }
         RewriteRuleValue entry;
         for (std::size_t k = 0; k + 1 < entryValue.pairs.size(); k += 2) {
             const Value& fieldKey   = entryValue.pairs[k];
             const Value& fieldValue = entryValue.pairs[k + 1];
             if (!fieldKey.IsKeyword()) {
-                Fail(path, fieldKey.line, ":rewrite entries are keyed by :quote-style");
+                Fail(path, fieldKey.line, ":rewrite entries are keyed by :quote-style/:expand-elseif");
             }
             if (fieldKey.text == "quote-style") {
                 entry.quoteStyle = ExpectQuoteStyle(path, fieldValue, "\"" + captureKey + "\"'s :quote-style");
+            }
+            else if (fieldKey.text == "expand-elseif") {
+                entry.expandElseif = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :expand-elseif");
             }
             else {
                 Fail(path, fieldKey.line, "unknown :rewrite entry key :" + fieldKey.text);
@@ -437,7 +441,7 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
         }
         else if (key == "rewrite") {
             if (!value.IsStruct()) {
-                Fail(path, value.line, ":rewrite is {\"<capture>\" {:quote-style ..} ...}");
+                Fail(path, value.line, ":rewrite is {\"<capture>\" {:quote-style .. :expand-elseif ..} ...}");
             }
             for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
                 const Value&      captureKey = value.pairs[j];
@@ -549,6 +553,9 @@ void ApplyFormatConfig(const FormatConfig& config) {
         if (entry.quoteStyle) {
             SetRewriteQuoteStyle(captureKey, entry.quoteStyle);
         }
+        if (entry.expandElseif) {
+            SetRewriteExpandElseif(captureKey, entry.expandElseif);
+        }
     }
     for (const auto& [entityKey, entry] : config.caseRules) {
         if (entry.convention) {
@@ -614,7 +621,7 @@ std::vector<std::string> FormatConfigArrangeEntryKeys() {
 }
 
 std::vector<std::string> FormatConfigRewriteEntryKeys() {
-    return {"quote-style"};
+    return {"expand-elseif", "quote-style"};
 }
 
 void LoadFormatConfigFile(const std::filesystem::path& path) {

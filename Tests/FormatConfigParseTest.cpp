@@ -129,6 +129,7 @@ struct FormatRulesGuard {
         SetArrangeEnabled("format-config-test.capture", std::nullopt);
         SetArrangeCaseInsensitive("format-config-test.capture", std::nullopt);
         SetRewriteQuoteStyle("format-config-test.capture", std::nullopt);
+        SetRewriteExpandElseif("format-config-test.capture", std::nullopt);
     }
 };
 
@@ -282,10 +283,22 @@ TEST_CASE("ParseFormatConfig reads :rewrite entries", "[FormatConfigParse]") {
     REQUIRE(config.rewrite.at("rewrite.quote").quoteStyle == QuoteStyle::Double);
 }
 
+TEST_CASE("ParseFormatConfig reads :rewrite's own :expand-elseif field, independently of "
+          ":quote-style",
+          "[FormatConfigParse]") {
+    const FormatConfig config =
+        ParseFormatConfig("{:rewrite {\"rewrite.elseif\" {:expand-elseif true}}}", "test.janet");
+
+    REQUIRE(config.rewrite.size() == 1);
+    REQUIRE(config.rewrite.at("rewrite.elseif").expandElseif == true);
+    REQUIRE_FALSE(config.rewrite.at("rewrite.elseif").quoteStyle.has_value());
+}
+
 TEST_CASE("ParseFormatConfig rejects a malformed :rewrite shape", "[FormatConfigParse]") {
     REQUIRE_THROWS_AS(ParseFormatConfig("{:rewrite \"not a struct\"}", "test.janet"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseFormatConfig("{:rewrite {\"x\" {:unknown-field true}}}", "test.janet"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseFormatConfig("{:rewrite {\"x\" {:quote-style :sideways}}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:rewrite {\"x\" {:expand-elseif \"yes\"}}}", "test.janet"), std::runtime_error);
 }
 
 TEST_CASE("ApplyFormatConfig sets only the :rewrite fields a config touches", "[FormatConfigParse]") {
@@ -296,6 +309,18 @@ TEST_CASE("ApplyFormatConfig sets only the :rewrite fields a config touches", "[
     ApplyFormatConfig(config);
 
     REQUIRE(RewriteRuleFor("format-config-test.capture").quoteStyle == QuoteStyle::Single);
+    REQUIRE_FALSE(RewriteRuleFor("format-config-test.capture").expandElseif.has_value());
+}
+
+TEST_CASE("ApplyFormatConfig sets :rewrite's own :expand-elseif field", "[FormatConfigParse]") {
+    const FormatRulesGuard guard;
+
+    FormatConfig config;
+    config.rewrite["format-config-test.capture"] = {.expandElseif = true};
+    ApplyFormatConfig(config);
+
+    REQUIRE(RewriteRuleFor("format-config-test.capture").expandElseif == true);
+    REQUIRE_FALSE(RewriteRuleFor("format-config-test.capture").quoteStyle.has_value());
 }
 
 TEST_CASE("ParseFormatConfig reads :case entries", "[FormatConfigParse]") {
