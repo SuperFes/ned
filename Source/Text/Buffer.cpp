@@ -822,7 +822,18 @@ void Buffer::Revert() {
     if (!Path_) {
         throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no associated file path");
     }
-    Buffer fresh = FromFile(*Path_); // throws on any read failure, leaving this buffer untouched
+    // huge-file-streaming-sweep follow-up: FromFile fully materializes the
+    // file into one std::string -- fine for an ordinary revert, but exactly
+    // the multi-GB-RAM-spike this class exists to avoid for a huge file (the
+    // same threshold check BufferList::OpenFile already makes when first
+    // opening one). Stat the CURRENT on-disk size, not Storage_->IsHuge():
+    // the caller may be reverting after something (this format-buffer's own
+    // huge path included) rewrote the file at a different size than what
+    // originally made this buffer huge.
+    std::error_code       sizeError;
+    const std::uintmax_t  diskSize = std::filesystem::file_size(*Path_, sizeError);
+    const bool             reloadAsHuge = !sizeError && diskSize > HugeFileThreshold();
+    Buffer fresh = reloadAsHuge ? FromHugeFile(*Path_) : FromFile(*Path_); // throws on any read failure, leaving this buffer untouched
 
     Storage_ = std::move(fresh.Storage_);
     Point_   = SnapToGraphemeBoundary(*Storage_, std::min(Point_, Storage_->ByteLength()));

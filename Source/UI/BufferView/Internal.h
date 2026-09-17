@@ -54,6 +54,7 @@
 #include "Editor/HeaderSource.h"
 #include "Editor/HighlightCache.h"
 #include "Editor/HighlightSettings.h"
+#include "Editor/HugeFileReindent.h"
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/ImportResolve.h"
 #include "Editor/IndentStyle.h"

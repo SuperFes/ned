@@ -2029,6 +2029,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               }
                           }
 
+                          // huge-file-streaming-sweep follow-up: checked ahead of the Native
+                          // tier below -- IndentBuffer's huge-file windowing is still a
+                          // per-line bounded re-parse (Indent.cpp), and the capture/Hygiene
+                          // passes after it are whole-buffer materializations, both too slow
+                          // or too unsafe for a multi-GB document. Needs an explicit y/n
+                          // confirmation (mirroring ConfirmOverwriteSave) since, unlike the
+                          // CLI's explicit --force-huge flag, an interactive format-buffer
+                          // invocation gives no other signal the user knows this routes to
+                          // the lexical streaming engine rather than the real per-language one.
+                          if (context.buffer.Content().IsHuge()) {
+                              context.interactiveRequest = InteractiveRequest::ConfirmHugeFormat;
+                              return;
+                          }
+
                           context.buffer.BeginUndoGroup();
                           bool changed = false;
                           if (context.mode != nullptr && context.mode->indentColumn) {

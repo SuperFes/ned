@@ -797,6 +797,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             inputMode_     = InputMode::ConfirmRevertHunk;
             statusMessage_ = "Discard this hunk's uncommitted change? This cannot be undone. (y/n)";
             return;
+        case editor::InteractiveRequest::ConfirmHugeFormat:
+            inputMode_     = InputMode::ConfirmHugeFormat;
+            statusMessage_ = activeBuffer_.Get().Name() +
+                             " is huge -- format using ned's lexical streaming reindent, rewriting the file on disk? (y/n)";
+            return;
         case editor::InteractiveRequest::CreateDirectory:
             inputMode_ = InputMode::CreateDirectory;
             prompt_.emplace("Create directory: ");
@@ -3372,6 +3377,73 @@ void BufferView::HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord) {
 
 void BufferView::HandleConfirmSaveWithConflictsKey(const editor::KeyChord& chord) {
     HandleConfirmPromptKey(ConfirmSaveWithConflictsPrompt(), chord);
+}
+
+bool BufferView::RunHugeFormat() {
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (!buffer.Path()) {
+        statusMessage_ = "no file associated with this buffer";
+        return false;
+    }
+    if (buffer.Modified()) {
+        // Streaming Content() to a sibling temp file and renaming it over
+        // the original IS a save -- unlike the ordinary Native fallback
+        // (which only ever edits the in-memory buffer, leaving Modified()
+        // for a later explicit save-buffer), this path has no in-memory-only
+        // mode to fall back to: holding a whole huge document in RAM is
+        // exactly what it exists to avoid. Same "works from the file on
+        // disk" guard RevertHunkAtPoint already uses, and for the same
+        // reason.
+        statusMessage_ = "Buffer has unsaved changes -- save first, huge-file format works from the file on disk.";
+        return false;
+    }
+
+    const std::filesystem::path path    = *buffer.Path();
+    const std::filesystem::path tmpPath = path.string() + ".ned-tmp";
+    editor::HugeReindentOutcome outcome;
+    {
+        std::ofstream out(tmpPath, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            statusMessage_ = "format-buffer: cannot create " + tmpPath.string();
+            return false;
+        }
+        const editor::IndentStyle style = editor::EffectiveIndentStyle(context_.mode.name);
+        outcome = editor::StreamHugeReindent(buffer.Content(), out, context_.mode.lineCommentPrefix, style);
+    }
+    if (!outcome.success) {
+        std::filesystem::remove(tmpPath);
+        statusMessage_ = "format-buffer: " + outcome.errorMessage;
+        return false;
+    }
+
+    std::error_code renameError;
+    std::filesystem::rename(tmpPath, path, renameError);
+    if (renameError) {
+        std::filesystem::remove(tmpPath);
+        statusMessage_ = "format-buffer: failed to replace " + path.string() + ": " + renameError.message();
+        return false;
+    }
+
+    try {
+        buffer.Revert(); // huge-aware -- see Buffer::Revert's own doc comment
+    }
+    catch (const std::exception& e) {
+        ReportError(std::string("format-buffer: reformatted on disk but failed to reload: ") + e.what());
+        return false;
+    }
+    statusMessage_ = outcome.linesChanged > 0
+                          ? "Formatted " + buffer.Name() + " (" + std::to_string(outcome.linesChanged) +
+                                (outcome.linesChanged == 1 ? " line changed)." : " lines changed).")
+                          : "\"" + buffer.Name() + "\" is already formatted.";
+    return true;
+}
+
+bufferview::ConfirmPrompt BufferView::ConfirmHugeFormatPrompt() {
+    return {.cancelMessage = "Format cancelled.", .onConfirm = [this] { RunHugeFormat(); }};
+}
+
+void BufferView::HandleConfirmHugeFormatKey(const editor::KeyChord& chord) {
+    HandleConfirmPromptKey(ConfirmHugeFormatPrompt(), chord);
 }
 
 void BufferView::RequestOpenBinaryFile(const std::filesystem::path& path) {
