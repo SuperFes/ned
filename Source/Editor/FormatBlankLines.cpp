@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "FormatEdit.h"
 #include "FormatRules.h"
 
 namespace ned::editor {
@@ -10,14 +11,6 @@ namespace {
 
     bool IsBlankLineChar(char c) {
         return c == ' ' || c == '\t' || c == '\r';
-    }
-
-    std::size_t LineStartOf(std::string_view text, std::size_t at) {
-        if (at == 0) {
-            return 0;
-        }
-        const std::size_t found = text.rfind('\n', at - 1);
-        return found == std::string_view::npos ? std::size_t{0} : found + 1;
     }
 
     // Walks upward from `lineStart` (the start of a known line -- here,
@@ -31,8 +24,8 @@ namespace {
         std::size_t cursor = lineStart;
         while (cursor > 0) {
             // text[cursor - 1] is the '\n' terminating the line just above `cursor`.
-            const std::size_t prevLineStart = LineStartOf(text, cursor - 1);
-            const std::string_view prevLine = text.substr(prevLineStart, (cursor - 1) - prevLineStart);
+            const std::size_t      prevLineStart = LineStartOf(text, cursor - 1);
+            const std::string_view prevLine      = text.substr(prevLineStart, (cursor - 1) - prevLineStart);
             if (!std::all_of(prevLine.begin(), prevLine.end(), IsBlankLineChar)) {
                 break;
             }
@@ -46,7 +39,7 @@ namespace {
 } // namespace
 
 std::vector<FormatTextEdit> ComputeBlankLineEdits(std::string_view text, std::string_view languageKey,
-                                                   const std::vector<FormatCapture>& captures) {
+                                                  const std::vector<FormatCapture>& captures) {
     std::vector<FormatTextEdit> edits;
 
     for (const FormatCapture& capture : captures) {
@@ -60,7 +53,7 @@ std::vector<FormatTextEdit> ComputeBlankLineEdits(std::string_view text, std::st
 
         const std::size_t lineStart = LineStartOf(text, capture.startByte);
         std::size_t       blankRegionStart{};
-        const int          blankCount = CountBlankLinesBefore(text, lineStart, blankRegionStart);
+        const int         blankCount = CountBlankLinesBefore(text, lineStart, blankRegionStart);
 
         int desired = blankCount;
         if (rule.minBefore && !capture.isFirst) {

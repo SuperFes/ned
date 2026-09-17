@@ -63,7 +63,7 @@ namespace {
     BracePlacement ExpectBracePlacement(const std::string& path, const Value& value, std::string_view what) {
         if (!value.IsKeyword()) {
             Fail(path, value.line,
-                std::string(what) + " must be a keyword (:same-line, :next-line, or :next-line-indented)");
+                 std::string(what) + " must be a keyword (:same-line, :next-line, or :next-line-indented)");
         }
         try {
             return BracePlacementByName(value.text);
@@ -89,8 +89,8 @@ namespace {
         if (!value.IsKeyword()) {
             Fail(path, value.line,
                  std::string(what) + " must be a keyword (:none, :lowercase, :uppercase, :camel-case, "
-                                      ":pascal-case, :snake-case, :leading-snake-case, :upper-snake-case, "
-                                      ":screaming-snake-case, or :lisp-case)");
+                                     ":pascal-case, :snake-case, :leading-snake-case, :upper-snake-case, "
+                                     ":screaming-snake-case, or :lisp-case)");
         }
         try {
             return CaseConventionByName(value.text);
@@ -136,9 +136,9 @@ namespace {
     BreakRuleValue ParseBreakEntry(const std::string& path, const std::string& captureKey, const Value& entryValue) {
         if (!entryValue.IsStruct()) {
             Fail(path, entryValue.line,
-                "\"" + captureKey +
-                    "\"'s :break entry must be {:before .. :after .. :placement .. :collapse-empty .. "
-                    ":collapse-simple ..}");
+                 "\"" + captureKey +
+                     "\"'s :break entry must be {:before .. :after .. :placement .. :collapse-empty .. "
+                     ":collapse-simple ..}");
         }
         BreakRuleValue entry;
         for (std::size_t k = 0; k + 1 < entryValue.pairs.size(); k += 2) {
@@ -146,7 +146,7 @@ namespace {
             const Value& fieldValue = entryValue.pairs[k + 1];
             if (!fieldKey.IsKeyword()) {
                 Fail(path, fieldKey.line,
-                    ":break entries are keyed by :before/:after/:placement/:collapse-empty/:collapse-simple");
+                     ":break entries are keyed by :before/:after/:placement/:collapse-empty/:collapse-simple");
             }
             if (fieldKey.text == "before") {
                 entry.before = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :before");
@@ -224,6 +224,88 @@ namespace {
         return entry;
     }
 
+    QuoteStyle ExpectQuoteStyle(const std::string& path, const Value& value, std::string_view what) {
+        if (!value.IsKeyword()) {
+            Fail(path, value.line, std::string(what) + " must be a keyword (:single or :double)");
+        }
+        try {
+            return QuoteStyleByName(value.text);
+        }
+        catch (const std::runtime_error&) {
+            Fail(path, value.line, std::string(what) + " must be :single or :double");
+        }
+    }
+
+    // :align's own entry -- FormatRules.h's AlignRuleValue.
+    AlignRuleValue ParseAlignEntry(const std::string& path, const std::string& captureKey, const Value& entryValue) {
+        if (!entryValue.IsStruct()) {
+            Fail(path, entryValue.line, "\"" + captureKey + "\"'s :align entry must be {:enabled true/false}");
+        }
+        AlignRuleValue entry;
+        for (std::size_t k = 0; k + 1 < entryValue.pairs.size(); k += 2) {
+            const Value& fieldKey   = entryValue.pairs[k];
+            const Value& fieldValue = entryValue.pairs[k + 1];
+            if (!fieldKey.IsKeyword()) {
+                Fail(path, fieldKey.line, ":align entries are keyed by :enabled");
+            }
+            if (fieldKey.text == "enabled") {
+                entry.enabled = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :enabled");
+            }
+            else {
+                Fail(path, fieldKey.line, "unknown :align entry key :" + fieldKey.text);
+            }
+        }
+        return entry;
+    }
+
+    // :arrange's own entry -- FormatRules.h's ArrangeRuleValue.
+    ArrangeRuleValue ParseArrangeEntry(const std::string& path, const std::string& captureKey, const Value& entryValue) {
+        if (!entryValue.IsStruct()) {
+            Fail(path, entryValue.line,
+                 "\"" + captureKey + "\"'s :arrange entry must be {:enabled .. :case-insensitive ..}");
+        }
+        ArrangeRuleValue entry;
+        for (std::size_t k = 0; k + 1 < entryValue.pairs.size(); k += 2) {
+            const Value& fieldKey   = entryValue.pairs[k];
+            const Value& fieldValue = entryValue.pairs[k + 1];
+            if (!fieldKey.IsKeyword()) {
+                Fail(path, fieldKey.line, ":arrange entries are keyed by :enabled/:case-insensitive");
+            }
+            if (fieldKey.text == "enabled") {
+                entry.enabled = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :enabled");
+            }
+            else if (fieldKey.text == "case-insensitive") {
+                entry.caseInsensitive = ExpectBool(path, fieldValue, "\"" + captureKey + "\"'s :case-insensitive");
+            }
+            else {
+                Fail(path, fieldKey.line, "unknown :arrange entry key :" + fieldKey.text);
+            }
+        }
+        return entry;
+    }
+
+    // :rewrite's own entry -- FormatRules.h's RewriteRuleValue.
+    RewriteRuleValue ParseRewriteEntry(const std::string& path, const std::string& captureKey, const Value& entryValue) {
+        if (!entryValue.IsStruct()) {
+            Fail(path, entryValue.line, "\"" + captureKey + "\"'s :rewrite entry must be {:quote-style .. }");
+        }
+        RewriteRuleValue entry;
+        for (std::size_t k = 0; k + 1 < entryValue.pairs.size(); k += 2) {
+            const Value& fieldKey   = entryValue.pairs[k];
+            const Value& fieldValue = entryValue.pairs[k + 1];
+            if (!fieldKey.IsKeyword()) {
+                Fail(path, fieldKey.line, ":rewrite entries are keyed by :quote-style");
+            }
+            if (fieldKey.text == "quote-style") {
+                entry.quoteStyle = ExpectQuoteStyle(path, fieldValue, "\"" + captureKey + "\"'s :quote-style");
+            }
+            else {
+                Fail(path, fieldKey.line, "unknown :rewrite entry key :" + fieldKey.text);
+            }
+        }
+        return entry;
+    }
+
 } // namespace
 
 FormatConfig ParseFormatConfig(std::string_view source, const std::string& path) {
@@ -286,8 +368,8 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
                 Fail(path, value.line, ":space is {\"<capture>\" {:before .. :after .. :within ..} ...}");
             }
             for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
-                const Value& captureKey = value.pairs[j];
-                const Value& entryValue = value.pairs[j + 1];
+                const Value&      captureKey = value.pairs[j];
+                const Value&      entryValue = value.pairs[j + 1];
                 const std::string capture =
                     ExpectString(path, captureKey, ":space's own keys are capture-name strings, e.g. \"control.parens\"");
                 config.space[capture] = ParseSpaceEntry(path, capture, entryValue);
@@ -298,8 +380,8 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
                 Fail(path, value.line, ":break is {\"<capture>\" {:before .. :after .. :placement ..} ...}");
             }
             for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
-                const Value& captureKey = value.pairs[j];
-                const Value& entryValue = value.pairs[j + 1];
+                const Value&      captureKey = value.pairs[j];
+                const Value&      entryValue = value.pairs[j + 1];
                 const std::string capture =
                     ExpectString(path, captureKey, ":break's own keys are capture-name strings, e.g. \"brace.function\"");
                 config.breakRules[capture] = ParseBreakEntry(path, capture, entryValue);
@@ -310,8 +392,8 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
                 Fail(path, value.line, ":blank is {\"<capture>\" {:min-before N :max-before N} ...}");
             }
             for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
-                const Value& captureKey = value.pairs[j];
-                const Value& entryValue = value.pairs[j + 1];
+                const Value&      captureKey = value.pairs[j];
+                const Value&      entryValue = value.pairs[j + 1];
                 const std::string capture =
                     ExpectString(path, captureKey, ":blank's own keys are capture-name strings, e.g. \"def.toplevel\"");
                 config.blank[capture] = ParseBlankEntry(path, capture, entryValue);
@@ -327,6 +409,42 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
                 const std::string capture =
                     ExpectString(path, captureKey, ":wrap's own keys are capture-name strings, e.g. \"wrap.args\"");
                 config.wrap[capture] = ParseWrapEntry(path, capture, entryValue);
+            }
+        }
+        else if (key == "align") {
+            if (!value.IsStruct()) {
+                Fail(path, value.line, ":align is {\"<capture>\" {:enabled true/false} ...}");
+            }
+            for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
+                const Value&      captureKey = value.pairs[j];
+                const Value&      entryValue = value.pairs[j + 1];
+                const std::string capture =
+                    ExpectString(path, captureKey, ":align's own keys are capture-name strings, e.g. \"align.assignment\"");
+                config.align[capture] = ParseAlignEntry(path, capture, entryValue);
+            }
+        }
+        else if (key == "arrange") {
+            if (!value.IsStruct()) {
+                Fail(path, value.line, ":arrange is {\"<capture>\" {:enabled .. :case-insensitive ..} ...}");
+            }
+            for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
+                const Value&      captureKey = value.pairs[j];
+                const Value&      entryValue = value.pairs[j + 1];
+                const std::string capture =
+                    ExpectString(path, captureKey, ":arrange's own keys are capture-name strings, e.g. \"arrange.import\"");
+                config.arrange[capture] = ParseArrangeEntry(path, capture, entryValue);
+            }
+        }
+        else if (key == "rewrite") {
+            if (!value.IsStruct()) {
+                Fail(path, value.line, ":rewrite is {\"<capture>\" {:quote-style ..} ...}");
+            }
+            for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
+                const Value&      captureKey = value.pairs[j];
+                const Value&      entryValue = value.pairs[j + 1];
+                const std::string capture =
+                    ExpectString(path, captureKey, ":rewrite's own keys are capture-name strings, e.g. \"rewrite.quote\"");
+                config.rewrite[capture] = ParseRewriteEntry(path, capture, entryValue);
             }
         }
         else if (key == "case") {
@@ -414,6 +532,24 @@ void ApplyFormatConfig(const FormatConfig& config) {
             SetWrapForceTrailingComma(captureKey, entry.forceTrailingComma);
         }
     }
+    for (const auto& [captureKey, entry] : config.align) {
+        if (entry.enabled) {
+            SetAlignEnabled(captureKey, entry.enabled);
+        }
+    }
+    for (const auto& [captureKey, entry] : config.arrange) {
+        if (entry.enabled) {
+            SetArrangeEnabled(captureKey, entry.enabled);
+        }
+        if (entry.caseInsensitive) {
+            SetArrangeCaseInsensitive(captureKey, entry.caseInsensitive);
+        }
+    }
+    for (const auto& [captureKey, entry] : config.rewrite) {
+        if (entry.quoteStyle) {
+            SetRewriteQuoteStyle(captureKey, entry.quoteStyle);
+        }
+    }
     for (const auto& [entityKey, entry] : config.caseRules) {
         if (entry.convention) {
             SetCaseConvention(entityKey, entry.convention);
@@ -445,8 +581,8 @@ std::filesystem::path ProjectFormatConfigPath(const std::filesystem::path& proje
 }
 
 std::vector<std::string> FormatConfigKeys() {
-    return {"blank", "break", "case", "ensure-final-newline", "indent", "max-consecutive-blank-lines",
-            "space", "trim-trailing-whitespace", "wrap"};
+    return {"align", "arrange", "blank", "break", "case", "ensure-final-newline",
+            "indent", "max-consecutive-blank-lines", "rewrite", "space", "trim-trailing-whitespace", "wrap"};
 }
 
 std::vector<std::string> FormatConfigIndentEntryKeys() {
@@ -467,6 +603,18 @@ std::vector<std::string> FormatConfigBreakEntryKeys() {
 
 std::vector<std::string> FormatConfigWrapEntryKeys() {
     return {"force-trailing-comma", "policy"};
+}
+
+std::vector<std::string> FormatConfigAlignEntryKeys() {
+    return {"enabled"};
+}
+
+std::vector<std::string> FormatConfigArrangeEntryKeys() {
+    return {"case-insensitive", "enabled"};
+}
+
+std::vector<std::string> FormatConfigRewriteEntryKeys() {
+    return {"quote-style"};
 }
 
 void LoadFormatConfigFile(const std::filesystem::path& path) {

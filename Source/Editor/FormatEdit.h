@@ -55,6 +55,14 @@ bool IsFormatWhitespace(char c);
 // contract rather than a from-scratch column recomputation.
 std::string_view LineIndentOf(std::string_view text, std::size_t at);
 
+// align/arrange-kind follow-up: the byte offset the line containing `at`
+// itself starts at -- lifted out of FormatBlankLines.cpp's own private copy
+// once a THIRD consumer (FormatAlign.h, then FormatArrange.h) needed the
+// exact same one-liner, the same "extract once a real second [here, third]
+// use shows up" precedent this file's own header comment already set for
+// IsWordByte/FormatTextEdit.
+std::size_t LineStartOf(std::string_view text, std::size_t at);
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_FORMATEDIT_H

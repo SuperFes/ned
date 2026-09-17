@@ -6,20 +6,21 @@
 #include <stdexcept>
 #include <string>
 
+#include "Editor/FinalNewline.h"
 #include "Editor/FormatConfigParse.h"
 #include "Editor/FormatRules.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/MaxConsecutiveBlankLines.h"
 #include "Editor/TrimOnSave.h"
-#include "Editor/FinalNewline.h"
 
+using ned::editor::AlignRuleFor;
 using ned::editor::ApplyFormatConfig;
+using ned::editor::ArrangeRuleFor;
 using ned::editor::BlankRuleFor;
 using ned::editor::BracePlacement;
 using ned::editor::BreakRuleFor;
 using ned::editor::CaseConvention;
 using ned::editor::CaseRuleFor;
-using ned::editor::SetCaseConvention;
 using ned::editor::EffectiveIndentStyle;
 using ned::editor::EnsureFinalNewline;
 using ned::editor::FormatConfig;
@@ -29,12 +30,19 @@ using ned::editor::MaxConsecutiveBlankLines;
 using ned::editor::ParseFormatConfig;
 using ned::editor::PersonalFormatConfigPath;
 using ned::editor::ProjectFormatConfigPath;
+using ned::editor::QuoteStyle;
+using ned::editor::RewriteRuleFor;
+using ned::editor::SetAlignEnabled;
+using ned::editor::SetArrangeCaseInsensitive;
+using ned::editor::SetArrangeEnabled;
 using ned::editor::SetBlankMaxBefore;
 using ned::editor::SetBlankMinBefore;
+using ned::editor::SetCaseConvention;
 using ned::editor::SetEnsureFinalNewline;
 using ned::editor::SetIndentStyle;
 using ned::editor::SetIndentStyleForMode;
 using ned::editor::SetMaxConsecutiveBlankLines;
+using ned::editor::SetRewriteQuoteStyle;
 using ned::editor::SetTrimTrailingWhitespaceOnSave;
 using ned::editor::SetWrapForceTrailingComma;
 using ned::editor::SetWrapPolicy;
@@ -117,6 +125,10 @@ struct FormatRulesGuard {
         SetWrapPolicy("format-config-test.capture", std::nullopt);
         SetWrapForceTrailingComma("format-config-test.capture", std::nullopt);
         SetCaseConvention("format-config-test.entity", std::nullopt);
+        SetAlignEnabled("format-config-test.capture", std::nullopt);
+        SetArrangeEnabled("format-config-test.capture", std::nullopt);
+        SetArrangeCaseInsensitive("format-config-test.capture", std::nullopt);
+        SetRewriteQuoteStyle("format-config-test.capture", std::nullopt);
     }
 };
 
@@ -214,6 +226,78 @@ TEST_CASE("ApplyFormatConfig sets only the :wrap fields a config touches", "[For
     REQUIRE_FALSE(WrapRuleFor("format-config-test.capture").forceTrailingComma.has_value());
 }
 
+TEST_CASE("ParseFormatConfig reads :align entries", "[FormatConfigParse]") {
+    const FormatConfig config = ParseFormatConfig("{:align {\"align.assignment\" {:enabled true}}}", "test.janet");
+
+    REQUIRE(config.align.size() == 1);
+    REQUIRE(config.align.at("align.assignment").enabled == true);
+}
+
+TEST_CASE("ParseFormatConfig rejects a malformed :align shape", "[FormatConfigParse]") {
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:align \"not a struct\"}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:align {\"x\" {:unknown-field true}}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:align {\"x\" {:enabled \"yes\"}}}", "test.janet"), std::runtime_error);
+}
+
+TEST_CASE("ApplyFormatConfig sets only the :align fields a config touches", "[FormatConfigParse]") {
+    const FormatRulesGuard guard;
+
+    FormatConfig config;
+    config.align["format-config-test.capture"] = {.enabled = true};
+    ApplyFormatConfig(config);
+
+    REQUIRE(AlignRuleFor("format-config-test.capture").enabled == true);
+}
+
+TEST_CASE("ParseFormatConfig reads :arrange entries", "[FormatConfigParse]") {
+    const FormatConfig config =
+        ParseFormatConfig("{:arrange {\"arrange.import\" {:enabled true :case-insensitive true}}}", "test.janet");
+
+    REQUIRE(config.arrange.size() == 1);
+    REQUIRE(config.arrange.at("arrange.import").enabled == true);
+    REQUIRE(config.arrange.at("arrange.import").caseInsensitive == true);
+}
+
+TEST_CASE("ParseFormatConfig rejects a malformed :arrange shape", "[FormatConfigParse]") {
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:arrange \"not a struct\"}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:arrange {\"x\" {:unknown-field true}}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:arrange {\"x\" {:case-insensitive \"yes\"}}}", "test.janet"), std::runtime_error);
+}
+
+TEST_CASE("ApplyFormatConfig sets only the :arrange fields a config touches", "[FormatConfigParse]") {
+    const FormatRulesGuard guard;
+
+    FormatConfig config;
+    config.arrange["format-config-test.capture"] = {.enabled = true};
+    ApplyFormatConfig(config);
+
+    REQUIRE(ArrangeRuleFor("format-config-test.capture").enabled == true);
+    REQUIRE_FALSE(ArrangeRuleFor("format-config-test.capture").caseInsensitive.has_value());
+}
+
+TEST_CASE("ParseFormatConfig reads :rewrite entries", "[FormatConfigParse]") {
+    const FormatConfig config = ParseFormatConfig("{:rewrite {\"rewrite.quote\" {:quote-style :double}}}", "test.janet");
+
+    REQUIRE(config.rewrite.size() == 1);
+    REQUIRE(config.rewrite.at("rewrite.quote").quoteStyle == QuoteStyle::Double);
+}
+
+TEST_CASE("ParseFormatConfig rejects a malformed :rewrite shape", "[FormatConfigParse]") {
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:rewrite \"not a struct\"}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:rewrite {\"x\" {:unknown-field true}}}", "test.janet"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:rewrite {\"x\" {:quote-style :sideways}}}", "test.janet"), std::runtime_error);
+}
+
+TEST_CASE("ApplyFormatConfig sets only the :rewrite fields a config touches", "[FormatConfigParse]") {
+    const FormatRulesGuard guard;
+
+    FormatConfig config;
+    config.rewrite["format-config-test.capture"] = {.quoteStyle = QuoteStyle::Single};
+    ApplyFormatConfig(config);
+
+    REQUIRE(RewriteRuleFor("format-config-test.capture").quoteStyle == QuoteStyle::Single);
+}
+
 TEST_CASE("ParseFormatConfig reads :case entries", "[FormatConfigParse]") {
     const FormatConfig config = ParseFormatConfig(
         "{:case {\"function\" :camel-case\n"
@@ -258,9 +342,9 @@ TEST_CASE("ApplyFormatConfig sets only the :space/:break fields a config touches
     const FormatRulesGuard guard;
 
     FormatConfig config;
-    config.space["format-config-test.capture"] = {.before = true};
+    config.space["format-config-test.capture"]      = {.before = true};
     config.breakRules["format-config-test.capture"] = {.placement = BracePlacement::SameLine};
-    config.blank["format-config-test.capture"] = {.minBefore = 2};
+    config.blank["format-config-test.capture"]      = {.minBefore = 2};
     ApplyFormatConfig(config);
 
     REQUIRE(SpaceRuleFor("format-config-test.capture").before == true);
@@ -293,9 +377,9 @@ TEST_CASE("ParseFormatConfig rejects what it does not know or a wrong-typed valu
     REQUIRE_THROWS_AS(ParseFormatConfig("{:indent \"not a struct\"}", "test.janet"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseFormatConfig("{:indent {:python \"not a struct\"}}", "test.janet"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseFormatConfig("{:indent {:python {:unknown-field true}}}", "test.janet"), std::runtime_error);
-    REQUIRE_THROWS_AS(ParseFormatConfig("{:indent {:python {:tabs 4}}}", "test.janet"), std::runtime_error); // :tabs wants a bool
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:indent {:python {:tabs 4}}}", "test.janet"), std::runtime_error);     // :tabs wants a bool
     REQUIRE_THROWS_AS(ParseFormatConfig("{:indent {:python {:width true}}}", "test.janet"), std::runtime_error); // :width wants an int
-    REQUIRE_THROWS_AS(ParseFormatConfig("{:indent {:python {:width 4.5}}}", "test.janet"), std::runtime_error); // no fractional widths
+    REQUIRE_THROWS_AS(ParseFormatConfig("{:indent {:python {:width 4.5}}}", "test.janet"), std::runtime_error);  // no fractional widths
     REQUIRE_THROWS_AS(ParseFormatConfig("{:trim-trailing-whitespace \"yes\"}", "test.janet"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseFormatConfig("{:max-consecutive-blank-lines true}", "test.janet"), std::runtime_error);
 }
@@ -313,8 +397,8 @@ TEST_CASE("ParseFormatConfig error messages carry the path and line", "[FormatCo
 }
 
 TEST_CASE("ApplyFormatConfig sets only the fields a config touches", "[FormatConfigParse]") {
-    const TrimOnSaveGuard    trimGuard;
-    const FinalNewlineGuard  finalNewlineGuard;
+    const TrimOnSaveGuard   trimGuard;
+    const FinalNewlineGuard finalNewlineGuard;
     SetEnsureFinalNewline(true); // known starting value, so "untouched" below is meaningful
 
     FormatConfig config;
@@ -357,7 +441,7 @@ TEST_CASE("ApplyFormatConfig cascades per field: a later config overrides only w
     ApplyFormatConfig(project);
 
     const IndentStyle afterProject = EffectiveIndentStyle("format-config-test-lang-mode");
-    REQUIRE(afterProject.useTabs); // preserved from the personal layer
+    REQUIRE(afterProject.useTabs);    // preserved from the personal layer
     REQUIRE(afterProject.width == 2); // overridden by the project layer
 }
 
@@ -397,7 +481,7 @@ TEST_CASE("LoadFormatConfigFile is a no-op when the file doesn't exist", "[Forma
 
 TEST_CASE("LoadFormatConfigFile reads, applies, and reports a schema error with the real file path",
           "[FormatConfigParse]") {
-    const IndentStyleGuard guard;
+    const IndentStyleGuard      guard;
     const std::filesystem::path dir  = std::filesystem::temp_directory_path() / "ned_format_config_test_present";
     const std::filesystem::path path = dir / "format.janet";
     std::filesystem::create_directories(dir);

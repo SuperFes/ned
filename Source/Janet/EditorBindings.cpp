@@ -26,10 +26,10 @@
 #include "Editor/Dap/Config.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
+#include "Editor/FileNaming.h"
 #include "Editor/FileWatch.h"
 #include "Editor/FillColumn.h"
 #include "Editor/FinalNewline.h"
-#include "Editor/FileNaming.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/FormatRules.h"
 #include "Editor/HighlightSettings.h"
@@ -1373,8 +1373,8 @@ namespace {
     // for an enum-valued field.
     void NedSetFormatBracePlacement(std::string captureName, std::string placement) {
         editor::SetBracePlacement(captureName, placement.empty()
-                                                    ? std::nullopt
-                                                    : std::optional(editor::BracePlacementByName(placement)));
+                                                   ? std::nullopt
+                                                   : std::optional(editor::BracePlacementByName(placement)));
     }
 
     void NedSetFormatBraceCollapseEmpty(std::string captureName, Janet value) {
@@ -1485,6 +1485,45 @@ namespace {
 
     std::optional<int> NedFormatBlankMaxBefore(std::string captureName) {
         return editor::BlankRuleFor(captureName).maxBefore;
+    }
+
+    // align/arrange/rewrite-kind rollout: same nil-clears-a-field /
+    // empty-string-clears-an-enum shape every prior rule kind's own binding
+    // above already uses.
+    void NedSetFormatAlignEnabled(std::string captureName, Janet value) {
+        editor::SetAlignEnabled(captureName, JanetToOptionalBool(value));
+    }
+
+    std::optional<bool> NedFormatAlignEnabled(std::string captureName) {
+        return editor::AlignRuleFor(captureName).enabled;
+    }
+
+    void NedSetFormatArrangeEnabled(std::string captureName, Janet value) {
+        editor::SetArrangeEnabled(captureName, JanetToOptionalBool(value));
+    }
+
+    void NedSetFormatArrangeCaseInsensitive(std::string captureName, Janet value) {
+        editor::SetArrangeCaseInsensitive(captureName, JanetToOptionalBool(value));
+    }
+
+    std::optional<bool> NedFormatArrangeEnabled(std::string captureName) {
+        return editor::ArrangeRuleFor(captureName).enabled;
+    }
+
+    std::optional<bool> NedFormatArrangeCaseInsensitive(std::string captureName) {
+        return editor::ArrangeRuleFor(captureName).caseInsensitive;
+    }
+
+    // Empty string clears, same convention NedSetFormatWrapPolicy uses for
+    // its own enum-valued field.
+    void NedSetFormatRewriteQuoteStyle(std::string captureName, std::string style) {
+        editor::SetRewriteQuoteStyle(captureName,
+                                     style.empty() ? std::nullopt : std::optional(editor::QuoteStyleByName(style)));
+    }
+
+    std::optional<std::string> NedFormatRewriteQuoteStyle(std::string captureName) {
+        const auto style = editor::RewriteRuleFor(captureName).quoteStyle;
+        return style ? std::optional(editor::QuoteStyleName(*style)) : std::nullopt;
     }
 
     // Registers a VCS-agnostic plugin from one struct/table of callbacks
@@ -1647,6 +1686,32 @@ void InstallEditorBindings(Environment& env) {
         "ned", "format-blank-min-before", "The capture name's own overridden blank-min-before rule, or nil if unset.");
     env.Register<&NedFormatBlankMaxBefore>(
         "ned", "format-blank-max-before", "The capture name's own overridden blank-max-before rule, or nil if unset.");
+    env.Register<&NedSetFormatAlignEnabled>(
+        "ned", "set-format-align-enabled",
+        "Override whether a run of adjacent, same-indent lines sharing the given capture name gets their anchor "
+        "tokens padded to a shared column (kind 5, Align) -- true/false, nil clears.");
+    env.Register<&NedFormatAlignEnabled>(
+        "ned", "format-align-enabled", "The capture name's own overridden align-enabled rule, or nil if unset.");
+    env.Register<&NedSetFormatArrangeEnabled>(
+        "ned", "set-format-arrange-enabled",
+        "Override whether a run of adjacent sibling captures sharing the given capture name gets reordered by "
+        "sort key (kind 8, Arrange) -- true/false, nil clears.");
+    env.Register<&NedSetFormatArrangeCaseInsensitive>(
+        "ned", "set-format-arrange-case-insensitive",
+        "Override whether the given capture name's own Arrange sort folds ASCII case before comparing -- "
+        "true/false, nil clears (unset behaves as an ordinary case-sensitive ordinal compare).");
+    env.Register<&NedFormatArrangeEnabled>(
+        "ned", "format-arrange-enabled", "The capture name's own overridden arrange-enabled rule, or nil if unset.");
+    env.Register<&NedFormatArrangeCaseInsensitive>(
+        "ned", "format-arrange-case-insensitive",
+        "The capture name's own overridden arrange-case-insensitive rule, or nil if unset.");
+    env.Register<&NedSetFormatRewriteQuoteStyle>(
+        "ned", "set-format-rewrite-quote-style",
+        "Override the quote-style rewrite for a string-literal capture name (kind 9, Rewrite): \"single\" or "
+        "\"double\"; empty string clears. Declined per-string whenever a pure delimiter swap isn't safe -- see "
+        "Editor/FormatRewrite.h's own header comment.");
+    env.Register<&NedFormatRewriteQuoteStyle>(
+        "ned", "format-rewrite-quote-style", "The capture name's own overridden rewrite-quote-style name, or nil if unset.");
     env.Register<&NedSetFillColumn>(
         "ned", "set-fill-column",
         "Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comments to (default 70).");

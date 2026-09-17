@@ -34,6 +34,9 @@
 //                           :collapse-empty true/false :collapse-simple true/false} ...}
 //    :blank  {"<capture>" {:min-before N :max-before N} ...}
 //    :wrap   {"<capture>" {:policy :never/:always :force-trailing-comma true/false} ...}
+//    :align  {"<capture>" {:enabled true/false} ...}
+//    :arrange {"<capture>" {:enabled true/false :case-insensitive true/false} ...}
+//    :rewrite {"<capture>" {:quote-style :single/:double} ...}
 //    :case   {"<entity-kind>" :none/:lowercase/:uppercase/:camel-case/:pascal-case/
 //                              :snake-case/:leading-snake-case/:upper-snake-case/
 //                              :screaming-snake-case/:lisp-case ...}
@@ -91,18 +94,21 @@ struct FormatConfig {
     // reused directly rather than a parser-local entry struct: both are
     // already "every field optional" structs shaped exactly like what the
     // schema accepts.
-    std::unordered_map<std::string, SpaceRuleValue> space;
-    std::unordered_map<std::string, BreakRuleValue> breakRules; // "break" is a C++ keyword
-    std::unordered_map<std::string, BlankRuleValue> blank;
-    std::unordered_map<std::string, WrapRuleValue>            wrap;
+    std::unordered_map<std::string, SpaceRuleValue>   space;
+    std::unordered_map<std::string, BreakRuleValue>   breakRules; // "break" is a C++ keyword
+    std::unordered_map<std::string, BlankRuleValue>   blank;
+    std::unordered_map<std::string, WrapRuleValue>    wrap;
+    std::unordered_map<std::string, AlignRuleValue>   align;
+    std::unordered_map<std::string, ArrangeRuleValue> arrange;
+    std::unordered_map<std::string, RewriteRuleValue> rewrite;
     // Kind 7 (Case) -- keyed by a bare entity-kind string ("function",
     // "parameter", ...) or its language-scoped form ("cpp/function"),
     // FormatRules.h's own CaseRuleFor key convention (see its header
     // comment for why this is NOT a real query-capture name the way
     // :space/:break/:blank/:wrap's keys are).
-    std::unordered_map<std::string, CaseRuleValue>            caseRules;
-    std::optional<bool>                                       trimTrailingWhitespaceOnSave;
-    std::optional<bool>                                       ensureFinalNewline;
+    std::unordered_map<std::string, CaseRuleValue> caseRules;
+    std::optional<bool>                            trimTrailingWhitespaceOnSave;
+    std::optional<bool>                            ensureFinalNewline;
     // A negative value means "no limit", the same sentinel
     // ned/set-max-consecutive-blank-lines uses (MaxConsecutiveBlankLines.h).
     std::optional<int> maxConsecutiveBlankLines;
@@ -156,6 +162,9 @@ void LoadFormatConfigFile(const std::filesystem::path& path);
 [[nodiscard]] std::vector<std::string> FormatConfigBreakEntryKeys();
 [[nodiscard]] std::vector<std::string> FormatConfigBlankEntryKeys();
 [[nodiscard]] std::vector<std::string> FormatConfigWrapEntryKeys();
+[[nodiscard]] std::vector<std::string> FormatConfigAlignEntryKeys();
+[[nodiscard]] std::vector<std::string> FormatConfigArrangeEntryKeys();
+[[nodiscard]] std::vector<std::string> FormatConfigRewriteEntryKeys();
 
 } // namespace ned::editor
 

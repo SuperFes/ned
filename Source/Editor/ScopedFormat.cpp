@@ -6,9 +6,12 @@
 #include <vector>
 
 #include "FinalNewline.h"
+#include "FormatAlign.h"
+#include "FormatArrange.h"
 #include "FormatBlankLines.h"
 #include "FormatBracePlacement.h"
 #include "FormatEdit.h"
+#include "FormatRewrite.h"
 #include "FormatSpacing.h"
 #include "FormatWrap.h"
 #include "Indent.h"
@@ -31,7 +34,7 @@ namespace {
             const std::size_t startLine = content.ByteOffsetToLine(start);
             // end is exclusive; a zero-length range (start == end) still
             // names the line it sits on.
-            const std::size_t lastTouchedByte = (end > start) ? end - 1 : start;
+            const std::size_t lastTouchedByte  = (end > start) ? end - 1 : start;
             const std::size_t endLineExclusive = content.ByteOffsetToLine(lastTouchedByte) + 1;
             if (!ranges.empty() && startLine <= ranges.back().second) {
                 ranges.back().second = std::max(ranges.back().second, endLineExclusive);
@@ -125,37 +128,64 @@ bool ApplyScopedFormatOnSave(text::Buffer& buffer, const Mode& mode) {
         }
     }
 
-    // Space/Break/Wrap/Blank and the scoped trim, per region, in
-    // format-buffer's own pass order -- byte-range based from here on,
+    // Rewrite/Arrange/Blank/Wrap/Break/Space/Align and the scoped trim, per
+    // region, in format-buffer's own pass order -- byte-range based from
+    // here on,
     // since Wrap/Break can add or remove lines. Re-derived fresh per
     // region from the (still-stable) line indices, since Indent above may
     // have shifted byte offsets within earlier regions' own lines.
     for (const auto& [startLine, endLineExclusive] : lineRanges) {
         const text::ITextStorage& contentBeforeRegion = buffer.Content();
         std::size_t               scopeStart          = contentBeforeRegion.LineToByteOffset(startLine);
-        std::size_t               scopeEnd = (endLineExclusive < contentBeforeRegion.LineCount())
-                                                 ? contentBeforeRegion.LineToByteOffset(endLineExclusive)
-                                                 : contentBeforeRegion.ByteLength();
+        std::size_t               scopeEnd            = (endLineExclusive < contentBeforeRegion.LineCount())
+                                                            ? contentBeforeRegion.LineToByteOffset(endLineExclusive)
+                                                            : contentBeforeRegion.ByteLength();
 
+        // align/arrange/rewrite-kind follow-up: same pass order as
+        // format-buffer's own whole-buffer chain (Commands.cpp's own header
+        // comment on that chain has the full reasoning) -- Rewrite, then
+        // Arrange, then Blank/Wrap/Break/Space, then Align last. Arrange and
+        // Align both compute over a capture GROUP that can span lines
+        // outside this region; ApplyContainedEdits' own containment check
+        // is what keeps that safe here -- a group-spanning edit that
+        // straddles the scope boundary is declined outright (not
+        // approximated), the same as every other rule kind's own scoped
+        // edit already is, and still applies in full via an explicit
+        // format-buffer.
         if (mode.formatCaptures) {
             const std::string text = buffer.Text();
-            scopeEnd = ApplyContainedEdits(buffer, ComputeBlankLineEdits(text, languageKey, mode.formatCaptures(text)),
-                                           scopeStart, scopeEnd, changed);
+            scopeEnd               = ApplyContainedEdits(buffer, ComputeRewriteEdits(text, languageKey, mode.formatCaptures(text)),
+                                                         scopeStart, scopeEnd, changed);
         }
         if (mode.formatCaptures) {
             const std::string text = buffer.Text();
-            scopeEnd = ApplyContainedEdits(buffer, ComputeWrapEdits(text, languageKey, mode.formatCaptures(text)),
-                                           scopeStart, scopeEnd, changed);
+            scopeEnd               = ApplyContainedEdits(buffer, ComputeArrangeEdits(text, languageKey, mode.formatCaptures(text)),
+                                                         scopeStart, scopeEnd, changed);
         }
         if (mode.formatCaptures) {
             const std::string text = buffer.Text();
-            scopeEnd = ApplyContainedEdits(buffer, ComputeBracePlacementEdits(text, languageKey, mode.formatCaptures(text)),
-                                           scopeStart, scopeEnd, changed);
+            scopeEnd               = ApplyContainedEdits(buffer, ComputeBlankLineEdits(text, languageKey, mode.formatCaptures(text)),
+                                                         scopeStart, scopeEnd, changed);
         }
         if (mode.formatCaptures) {
             const std::string text = buffer.Text();
-            scopeEnd = ApplyContainedEdits(buffer, ComputeSpaceEdits(text, languageKey, mode.formatCaptures(text)),
-                                           scopeStart, scopeEnd, changed);
+            scopeEnd               = ApplyContainedEdits(buffer, ComputeWrapEdits(text, languageKey, mode.formatCaptures(text)),
+                                                         scopeStart, scopeEnd, changed);
+        }
+        if (mode.formatCaptures) {
+            const std::string text = buffer.Text();
+            scopeEnd               = ApplyContainedEdits(buffer, ComputeBracePlacementEdits(text, languageKey, mode.formatCaptures(text)),
+                                                         scopeStart, scopeEnd, changed);
+        }
+        if (mode.formatCaptures) {
+            const std::string text = buffer.Text();
+            scopeEnd               = ApplyContainedEdits(buffer, ComputeSpaceEdits(text, languageKey, mode.formatCaptures(text)),
+                                                         scopeStart, scopeEnd, changed);
+        }
+        if (mode.formatCaptures) {
+            const std::string text = buffer.Text();
+            scopeEnd               = ApplyContainedEdits(buffer, ComputeAlignEdits(text, languageKey, mode.formatCaptures(text)),
+                                                         scopeStart, scopeEnd, changed);
         }
 
         // Scoped Hygiene: trim per-line, computed fresh against the
@@ -169,8 +199,8 @@ bool ApplyScopedFormatOnSave(text::Buffer& buffer, const Mode& mode) {
             const std::string         textBeforeTrim = buffer.Text();
             const text::ITextStorage& content        = buffer.Content();
             const std::size_t         currentEndLine = content.ByteOffsetToLine(scopeEnd > scopeStart ? scopeEnd - 1 : scopeEnd) + 1;
-            scopeEnd = ApplyContainedEdits(buffer, ScopedTrimEdits(textBeforeTrim, buffer, startLine, currentEndLine),
-                                           scopeStart, scopeEnd, changed);
+            scopeEnd                                 = ApplyContainedEdits(buffer, ScopedTrimEdits(textBeforeTrim, buffer, startLine, currentEndLine),
+                                                                           scopeStart, scopeEnd, changed);
 
             // Final newline: only when this region's own end is genuinely
             // the buffer's last line -- FinalNewline.h's own disk-only
