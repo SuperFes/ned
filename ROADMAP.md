@@ -87,29 +87,6 @@ measurement said "fine" while typing felt bad.
       hidden — with unfiltered byte positions. Tried it anyway; `ParseConformanceTest`'s red-
       layer-vs-upstream gate caught 20 real "named descendant mismatch" failures across
       bash/css/fish before it shipped, which is exactly what that gate is for.
-- [x] `ParseConflictHunks` gutter cost — closed `conflict-hunk-cache-guard`: `GutterModel::
-      EnsureConflictHunks` now checks `Buffer::HasConflictMarkers()` (the existing windowed
-      scanner) before ever calling `buffer.Text()`/`ParseConflictHunks`, so a buffer with no
-      markers — nearly all of them — skips both the full-buffer materialization and the scan
-      on every content-generation change; the per-buffer `CacheStamp` gate already meant this
-      only ran once per edit rather than once per `Paint()`, contrary to this entry's own
-      original description.
-- [x] **`mode.symbolKind` is O(document) per keystroke — closed by the Phase 4b engine
-      (2026-09-13), and NOT the way this entry predicted.** The split-the-consumers plan
-      below assumed ts_query's range semantics, where a ranged run filters emitted
-      captures and an enclosing definition's own `@name` above the window is lost. Ned's
-      matcher defines the sane contract instead: `QueryMatcher::MatchesInRange` prunes
-      by pattern-ROOT intersection and emits every intersecting match WHOLE — and since
-      an enclosing definition's range contains the viewport, it intersects, so ONE
-      viewport-sized query serves both consumers with no split at all. Shipped as
-      `Mode::symbolKindInWindow` (set beside `symbolKind` for tags-backed modes;
-      `Languages/Org.cpp`'s outline escape clears it when overriding), consumed by
-      `GutterModel::EnsureSymbolMarkers` through `Viewport::SymbolQueryWindow`
-      (viewport ± an 8KB quantized margin over the FULL text — range-bound, never
-      substring-fed, so coordinates stay absolute and none of HugeStructuralWindow's
-      corrections apply; small documents run whole). Sticky scroll reads the same cache:
-      the enclosing chain is a subset of the intersecting set. Whole-document callers
-      (class-file sync, the oracle) keep `symbolKind` unchanged.
 
 - [ ] **Dirty-region flush, and the animation question behind it.** `Screen::Flush` writes
       *every* cell of both planes every frame -- 14,400 `ncplane_putstr_yx` calls at 160x45
@@ -516,7 +493,20 @@ then). Deliberately disk-only, not live-buffer-aware: `SearchDirectory`'s live o
 requires its `BufferList` snapshot to happen on the *calling* thread, which would be this
 background thread rather than the main thread `BufferList` is otherwise never touched
 from — the same class of scope cut huge-file search already makes elsewhere for the
-identical reason).
+identical reason), and `vim-keymap-fallthrough` (corrects a false premise this file
+carried: a live `BufferView` test showed `C-c v p` doing nothing at all under Vim mode,
+not "working via the shared keymap-stack fallthrough" as previously claimed here —
+`vim::Engine::HandleKey`'s own header comment already said Dispatcher::Feed is never
+reached from Normal/Visual/Replace/CommandLine mode, and tracing confirmed every
+`C-c`/`C-x`-prefixed global command was unreachable with Vim mode on, not just hunk nav.
+Fixed generally rather than by hand-wiring `]c`/`[c`: an unrecognized Control chord
+arriving at the start of a fresh Normal/Visual command — never Meta, never mid a pending
+operator/count — now returns unconsumed from `HandleKey`, and `BufferView` feeds it to
+ned's own `Dispatcher` exactly as it would with Vim mode off, routing every further chord
+straight to `Dispatcher` too, skipping vim entirely, until that sequence resolves).
+- [ ] `]c`/`[c` (gitsigns' own convention) as *native* Vim-mode bindings for
+      `vcs-next-hunk`/`vcs-previous-hunk`, now that `C-c v N`/`P` genuinely works under
+      Vim mode (`vim-keymap-fallthrough`) — pure remaining polish, not a functional gap.
 - [ ] Excerpt-scoped search covers isearch and query-replace only. A multibuffer's
       chrome is also visible to `next-error`, dabbrev completion and Vim-mode `/`
       search, none of which consult `multibuffer::ExcerptBodyRanges`
@@ -528,10 +518,6 @@ identical reason).
       not a visual diff — see "Merge Conflict Resolution Mode" below, which scopes a
       chord/mouse-driven *resolution* workflow over these same markers without needing
       this visual diff first.
-- [ ] Native Vim-mode `]c`/`[c` binding (gitsigns' own convention) for
-      `vcs-next-hunk`/`vcs-previous-hunk` — the global `C-c v N`/`P` binding already
-      works under Vim mode via the shared keymap-stack fallthrough, so this is polish,
-      not a functional gap.
 
 ### Editor Ergonomics
 
@@ -846,12 +832,12 @@ time produces byte-identical output to feeding it as one chunk -- the exact guar
 unclosed opener, unterminated string).
 
 - [ ] Huge-file streaming sweep: the interactive half -- `format-buffer` invoked on a huge
-      buffer still has no path to this engine at all (today's Native fallback runs
-      `IndentBuffer`'s own per-line windowed re-parse, which the design above specifically
-      calls out as too slow for a whole huge document). Needs a y/n confirmation
-      (`ConfirmOverwriteSave`'s own shape) since, unlike the CLI's explicit `--force-huge`,
-      an interactive `format-buffer` invocation gives no other signal the user knows this
-      is the lexical engine rather than the real per-language one.
+  buffer still has no path to this engine at all (today's Native fallback runs
+  `IndentBuffer`'s own per-line windowed re-parse, which the design above specifically
+  calls out as too slow for a whole huge document). Needs a y/n confirmation
+  (`ConfirmOverwriteSave`'s own shape) since, unlike the CLI's explicit `--force-huge`,
+  an interactive `format-buffer` invocation gives no other signal the user knows this
+  is the lexical engine rather than the real per-language one.
 
 **Automatic scoped on-save (2026-09-15).** Built, but with the "retire TrimOnSave.h/
 FinalNewline.h" half of the original bullet deliberately declined -- see below.
@@ -1921,6 +1907,3 @@ build on), `code-coverage-gutter`.
   needs the same treatment — add a switch and a guard rather than fixing it at each call
   site, since a test that legitimately re-enables the feature locally would otherwise
   reintroduce the escape.
-- When you finish an item above, delete it (or replace it with a one-line pointer) in
-  the same commit — don't leave a `[x]` writeup behind. Keeping this file short is the
-  point.
