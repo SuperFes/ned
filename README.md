@@ -24,7 +24,7 @@ dives and capability audits), both built from this repository on every push.
 - **Buffers, kill-ring, undo tree, isearch, query-replace, registers, rectangles,
   multiple cursors** — the core Emacs-class editing vocabulary.
 - **Janet scripting throughout** — commands, keybindings, modes, and most editor
-  settings are reachable from a `~/.config/ned/init.janet`, not a fixed config format.
+  settings are reachable from a `~/.config/ned/init.janet`.
 - **Tree-sitter syntax highlighting, folding, and smart indentation** for 24 bundled
   languages — see [Language Support](https://superfes.github.io/ned/user/language-support.html)
   — with per-capture-name theming.
