@@ -586,23 +586,27 @@ TEST_CASE("ByteOffsetForLineAndColumn with the default tabWidth treats a tab as 
 
 TEST_CASE("ByteOffsetForLineAndColumn expands tabs when tabWidth > 1", "[Buffer]") {
     Buffer buffer("scratch", ned::text::Rope("a\tbc"));
-    // Visual columns with tabWidth=4: 'a'=0, tab spans [1,5), 'b'=5, 'c'=6.
+    // Real tab-stop semantics: a tab advances to the next COLUMN THAT IS A
+    // MULTIPLE OF tabWidth, not a flat +tabWidth. With tabWidth=4: 'a'=0,
+    // the tab starts at column 1 (right after 'a') and spans [1,4) -- only
+    // 3 columns, since column 4 is already a tab stop -- 'b'=4, 'c'=5.
 
     REQUIRE(buffer.ByteOffsetForLineAndColumn(0, 0, 4) == 0); // 'a'
     REQUIRE(buffer.ByteOffsetForLineAndColumn(0, 1, 4) == 1); // start of the tab
-    REQUIRE(buffer.ByteOffsetForLineAndColumn(0, 3, 4) == 2); // inside the tab's span -- snaps past it
-    REQUIRE(buffer.ByteOffsetForLineAndColumn(0, 5, 4) == 2); // 'b', right where the tab ends
-    REQUIRE(buffer.ByteOffsetForLineAndColumn(0, 6, 4) == 3); // 'c'
+    REQUIRE(buffer.ByteOffsetForLineAndColumn(0, 3, 4) == 1); // inside the tab's span -- lands on the tab itself
+    REQUIRE(buffer.ByteOffsetForLineAndColumn(0, 4, 4) == 2); // 'b', right where the tab ends
+    REQUIRE(buffer.ByteOffsetForLineAndColumn(0, 5, 4) == 3); // 'c'
 }
 
 TEST_CASE("Vertical motion tracks the visual column across tab-containing lines when tabWidth > 1", "[Buffer]") {
     Buffer buffer("scratch", ned::text::Rope("x\ty\nabcdef"));
-    // Visual columns (tabWidth=4): line 0 -- 'x'=0, tab spans [1,5), 'y'=5.
-    //                              line 1 -- plain, "abcdef" columns 0..5.
+    // Real tab-stop semantics (tabWidth=4): line 0 -- 'x'=0, the tab starts
+    // at column 1 and spans [1,4) (3 columns, since 4 is already a stop),
+    // 'y'=4. Line 1 -- plain, "abcdef" columns 0..5.
 
-    buffer.SetPoint(2); // 'y' on line 0, visual column 5
+    buffer.SetPoint(2); // 'y' on line 0, visual column 4
     buffer.MoveToNextLine(4);
-    REQUIRE(buffer.Point() == 9); // line 1 starts at byte 4; column 5 -> 'f' (byte 9)
+    REQUIRE(buffer.Point() == 8); // line 1 starts at byte 4; column 4 -> 'e' (byte 8)
 
     buffer.MoveToPreviousLine(4);
     REQUIRE(buffer.Point() == 2); // back to 'y', not off by the tab's width

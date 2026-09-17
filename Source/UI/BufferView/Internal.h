@@ -666,14 +666,19 @@ inline char32_t HexDigit(char32_t nibble) {
     return (nibble < 10) ? (U'0' + nibble) : (U'A' + (nibble - 10));
 }
 
-// Columns a single codepoint occupies when rendered: editor::TabWidth()
-// for a tab, 4 (open bracket + 2 hex digits + close bracket) for a
-// binary placeholder, 1 for every ordinary glyph. Shared by Paint()'s
-// render loop and VisualColumn below so the two can never disagree
-// about column math.
-inline int CodepointColumns(char32_t cp) {
+// Columns a single codepoint occupies when rendered, starting at
+// `currentColumn` (the visual column, from whatever start byte the caller
+// is measuring against, that this codepoint would land at): a tab advances
+// to the next tab-stop multiple of editor::TabWidth() -- real terminal
+// semantics, a variable-width jump depending on currentColumn, not a flat
+// editor::TabWidth() every time -- 4 (open bracket + 2 hex digits + close
+// bracket) for a binary placeholder, 1 for every ordinary glyph. Shared by
+// Paint()'s render loop and VisualColumn below so the two can never
+// disagree about column math.
+inline int CodepointColumns(char32_t cp, int currentColumn) {
     if (cp == U'\t') {
-        return editor::TabWidth();
+        const int tabWidth = editor::TabWidth();
+        return tabWidth - (currentColumn % tabWidth);
     }
     if (IsUnprintableControl(cp)) {
         return 4;
@@ -682,24 +687,27 @@ inline int CodepointColumns(char32_t cp) {
 }
 
 // Links follow-up: sum of CodepointColumns() over text's own codepoints
-// -- the column width a collapsed link's own displayText renders at.
-// Shared by Paint()'s render loop, VisualColumn, and
+// -- the column width a collapsed link's own displayText renders at,
+// starting at `startColumn` (matching CodepointColumns' own tab-stop
+// dependency on where the text begins -- a realistic edge case for a raw
+// tab inside a link's own displayText or an inlay hint's own label, not
+// assumed impossible). Shared by Paint()'s render loop, VisualColumn, and
 // ByteOffsetForColumnInLine below so none of them can disagree about how
 // wide a given displayText actually is on screen. Decodes via a
 // throwaway text::Rope (cheap for the short strings a link's own
 // description/target realistically is) rather than a second, parallel
 // UTF-8 decoder -- Rope::CodepointAt is already this file's single
 // source of truth for "how many bytes/columns does this codepoint take."
-inline int DisplayColumns(const std::string& text) {
+inline int DisplayColumns(const std::string& text, int startColumn = 0) {
     const text::Rope decoded(text);
-    int              columns = 0;
-    std::size_t      offset  = 0;
+    int              column = startColumn;
+    std::size_t      offset = 0;
     while (offset < decoded.ByteLength()) {
         const auto cp = decoded.CodepointAt(offset);
-        columns += CodepointColumns(cp.codepoint);
+        column += CodepointColumns(cp.codepoint, column);
         offset += cp.byteLength;
     }
-    return columns;
+    return column - startColumn;
 }
 
 
@@ -807,15 +815,15 @@ inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::s
         // horizontal-scroll decision under-estimated how far right point
         // really was.
         if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, offset)) {
-            col += DisplayColumns(hint->label);
+            col += DisplayColumns(hint->label, col);
         }
         if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
-            col += DisplayColumns(link->displayText);
+            col += DisplayColumns(link->displayText, col);
             offset = link->endByte;
             continue;
         }
         const auto decoded = content.CodepointAt(offset);
-        col += CodepointColumns(decoded.codepoint);
+        col += CodepointColumns(decoded.codepoint, col);
         offset += decoded.byteLength;
     }
     return col;
@@ -849,7 +857,7 @@ inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, 
         // click lands on a different character than the one under the mouse
         // by the total width of the hints to its left.
         if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, offset)) {
-            const std::size_t hintColumns = static_cast<std::size_t>(DisplayColumns(hint->label));
+            const std::size_t hintColumns = static_cast<std::size_t>(DisplayColumns(hint->label, static_cast<int>(visualColumn)));
             if (targetColumn < visualColumn + hintColumns) {
                 return offset; // the click landed on the hint itself -- the real character it annotates
             }
@@ -863,7 +871,7 @@ inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, 
             return content.CodepointOffsetToByteOffset(landingCodepoint);
         }
         if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
-            const int linkColumns = DisplayColumns(link->displayText);
+            const int linkColumns = DisplayColumns(link->displayText, static_cast<int>(visualColumn));
             if (targetColumn < visualColumn + static_cast<std::size_t>(linkColumns)) {
                 return link->startByte;
             }
@@ -873,7 +881,17 @@ inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, 
             continue;
         }
         const auto decoded = content.CodepointAt(offset);
-        visualColumn += (decoded.codepoint == U'\t') ? static_cast<std::size_t>(tabWidth) : 1;
+        if (decoded.codepoint == U'\t') {
+            const std::size_t nextStop = (visualColumn / static_cast<std::size_t>(tabWidth) + 1) *
+                                          static_cast<std::size_t>(tabWidth);
+            if (targetColumn < nextStop) {
+                return offset; // the click landed inside this tab's own span -- land on the tab itself
+            }
+            visualColumn = nextStop;
+        }
+        else {
+            ++visualColumn;
+        }
         offset += decoded.byteLength;
         ++steps;
     }
@@ -946,12 +964,12 @@ inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& co
         bool        isWhitespace = false;
         if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
             unitEnd   = link->endByte;
-            unitWidth = DisplayColumns(link->displayText);
+            unitWidth = DisplayColumns(link->displayText, col);
         }
         else {
             const auto decoded = content.CodepointAt(offset);
             unitEnd            = offset + decoded.byteLength;
-            unitWidth          = CodepointColumns(decoded.codepoint);
+            unitWidth          = CodepointColumns(decoded.codepoint, col);
             isWhitespace       = IsWrapBreakWhitespace(decoded.codepoint);
         }
 
@@ -1039,7 +1057,7 @@ inline int LeadingIndentColumns(const text::ITextStorage& content, std::size_t l
         if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
             break;
         }
-        columns += CodepointColumns(decoded.codepoint);
+        columns += CodepointColumns(decoded.codepoint, columns);
         offset += decoded.byteLength;
     }
     if (offset < lineEnd) {

@@ -266,6 +266,13 @@ namespace {
     // vertical-motion test to multiple seconds before it was caught.
     constexpr std::size_t kMaxTabAwareColumnScan = 512;
 
+    // A literal tab advances to the next multiple of tabWidth -- real
+    // terminal tab-stop semantics, not a fixed-width block -- so the same
+    // byte covers a variable number of columns depending on where it starts.
+    std::size_t NextTabStop(std::size_t column, std::size_t tabWidth) {
+        return (column / tabWidth + 1) * tabWidth;
+    }
+
     // status-gutter unsaved-change-indicator follow-up: merges [start, end)
     // into ranges, which must stay sorted by .first -- a plain linear scan
     // for the merge point, not a binary search, matching this codebase's
@@ -1906,7 +1913,16 @@ std::size_t Buffer::ByteOffsetForRangeAndColumn(std::size_t rangeStart, std::siz
             return Storage_->CodepointOffsetToByteOffset(landingCodepoint);
         }
         const auto decoded = Storage_->CodepointAt(offset);
-        visualColumn += (decoded.codepoint == U'\t') ? tabWidth : 1;
+        if (decoded.codepoint == U'\t') {
+            const std::size_t nextStop = NextTabStop(visualColumn, tabWidth);
+            if (column < nextStop) {
+                return offset; // target column lands inside this tab's own span -- land on the tab itself
+            }
+            visualColumn = nextStop;
+        }
+        else {
+            ++visualColumn;
+        }
         offset += decoded.byteLength;
         ++steps;
     }
@@ -1938,7 +1954,7 @@ std::size_t Buffer::VisualColumnForByteOffset(std::size_t lineStart, std::size_t
             return column + (Storage_->ByteOffsetToCodepointOffset(byteOffset) - Storage_->ByteOffsetToCodepointOffset(offset));
         }
         const auto decoded = Storage_->CodepointAt(offset);
-        column += (decoded.codepoint == U'\t') ? tabWidth : 1;
+        column              = (decoded.codepoint == U'\t') ? NextTabStop(column, tabWidth) : column + 1;
         offset += decoded.byteLength;
         ++steps;
     }

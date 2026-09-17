@@ -683,10 +683,12 @@ class Buffer {
     // so e.g. a page-up near the top of the buffer still moves as far as it
     // can instead of doing nothing.
     //
-    // tabWidth (tab-rendering-fix follow-up, default 1) is how many columns a
-    // literal tab codepoint should count as when computing/matching the goal
-    // column -- 1 preserves the old plain-codepoint-count behavior exactly
-    // (a tab counts the same as any other single codepoint), so every
+    // tabWidth (tab-rendering-fix follow-up, default 1) is the tab-stop width
+    // a literal tab codepoint advances to (real terminal semantics: to the
+    // next multiple of tabWidth, a variable-width jump, not a flat +tabWidth)
+    // when computing/matching the goal column -- 1 preserves the old
+    // plain-codepoint-count behavior exactly (a tab counts the same as any
+    // other single codepoint), so every
     // existing caller that doesn't pass one is unaffected. Buffer has no
     // dependency on Editor/TabWidth.h -- callers that care about the real
     // configured tab width (BufferView, via Commands.cpp) pass it in
