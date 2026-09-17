@@ -313,6 +313,18 @@ TEST_CASE("bundled git plugin runs status/stage/unstage/commit/branch against a 
     REQUIRE(logEntries.size() == 2);
     REQUIRE(logEntries[0].summary == "second commit");
 
+    // VcsPanel amend follow-up: previous-commit-message reads HEAD's own
+    // message verbatim, and amend-commit-argv replaces it in place --
+    // still one commit afterward, not two, and the log's own summary
+    // picks up the amended text.
+    const std::string previousMessage = RunToCompletion(provider->PreviousCommitMessageArgv(repoRoot).argv);
+    REQUIRE(previousMessage.find("second commit") != std::string::npos);
+
+    RunToCompletion(provider->AmendCommitArgv(repoRoot, "second commit, amended").argv);
+    const auto logAfterAmend = provider->ParseLog(RunToCompletion(provider->LogArgv(filePath).argv));
+    REQUIRE(logAfterAmend.size() == 2); // still two commits total, not three
+    REQUIRE(logAfterAmend[0].summary == "second commit, amended");
+
     // Branches: create one, confirm it's current, switch back.
     auto branches = provider->ParseBranchList(RunToCompletion(provider->BranchListArgv(repoRoot).argv));
     REQUIRE(branches.size() == 1);

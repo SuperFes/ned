@@ -102,6 +102,18 @@
 (defn commit-argv [root message]
   ["git" "-C" root "commit" "-m" message])
 
+## VcsPanel amend follow-up: CommitArgv's own sibling rather than a
+## boolean argument, matching every other paired operation in this file
+## (stage-argv/unstage-argv, push/pull/fetch-argv). previous-commit-message
+## reads HEAD's own message verbatim (%B -- subject and body both, unlike
+## %s which is subject-only) to pre-fill the amend buffer the way `git
+## commit --amend`'s own $EDITOR invocation would.
+(defn amend-commit-argv [root message]
+  ["git" "-C" root "commit" "--amend" "-m" message])
+
+(defn previous-commit-message-argv [root]
+  ["git" "-C" root "log" "-1" "--pretty=%B" "HEAD"])
+
 (defn branch-list-argv [root]
   ["git" "-C" root "branch" "--list" "--no-color"])
 
@@ -355,6 +367,8 @@
    :unstage-patch-argv unstage-patch-argv
    :revert-patch-argv revert-patch-argv
    :commit-argv commit-argv
+   :amend-commit-argv amend-commit-argv
+   :previous-commit-message-argv previous-commit-message-argv
    :branch-list-argv branch-list-argv
    :parse-branch-list parse-branch-list
    :branch-switch-argv branch-switch-argv
