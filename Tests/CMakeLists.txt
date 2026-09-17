@@ -247,6 +247,7 @@ add_executable(ned_tests
             AcpConfigTest.cpp
             AcpManagerTest.cpp
             AcpPanelTest.cpp
+            FramedConnectionTest.cpp
             LspTransportTest.cpp
             LspClientTest.cpp
             LspServerConfigTest.cpp

@@ -13,7 +13,7 @@ using ned::editor::acp::Transport;
 namespace {
 
 // A connected pipe pair wrapped as two Transports facing each other --
-// writeEnd's WriteMessage is what readEnd's ReadMessage sees, and vice
+// writeEnd's WriteFrame is what readEnd's ReadFrame sees, and vice
 // versa. No subprocess involved at all, exercising the framing logic in
 // isolation. Mirrors Tests/LspTransportTest.cpp's own TransportPair exactly.
 struct TransportPair {
@@ -35,8 +35,8 @@ struct TransportPair {
 TEST_CASE("Transport round-trips a simple message through a real pipe pair", "[Acp]") {
     TransportPair pair = TransportPair::Create();
 
-    pair.a.WriteMessage(R"({"jsonrpc":"2.0","id":1,"method":"initialize"})");
-    const auto received = pair.b.ReadMessage();
+    pair.a.WriteFrame(R"({"jsonrpc":"2.0","id":1,"method":"initialize"})");
+    const auto received = pair.b.ReadFrame();
 
     REQUIRE(received.has_value());
     REQUIRE(*received == R"({"jsonrpc":"2.0","id":1,"method":"initialize"})");
@@ -51,8 +51,8 @@ TEST_CASE("Transport round-trips a message body containing an escaped newline", 
     // This test writes that escaped form directly (not via dump(), so it
     // stays a framing-layer test, not a JSON-serialization one).
     const std::string payload = R"({"text":"line one\nline two\nline three"})";
-    pair.a.WriteMessage(payload);
-    const auto received = pair.b.ReadMessage();
+    pair.a.WriteFrame(payload);
+    const auto received = pair.b.ReadFrame();
 
     REQUIRE(received.has_value());
     REQUIRE(*received == payload);
@@ -61,32 +61,32 @@ TEST_CASE("Transport round-trips a message body containing an escaped newline", 
 TEST_CASE("Transport reads multiple messages sent back to back", "[Acp]") {
     TransportPair pair = TransportPair::Create();
 
-    pair.a.WriteMessage("first");
-    pair.a.WriteMessage("second");
+    pair.a.WriteFrame("first");
+    pair.a.WriteFrame("second");
 
-    const auto first  = pair.b.ReadMessage();
-    const auto second = pair.b.ReadMessage();
+    const auto first  = pair.b.ReadFrame();
+    const auto second = pair.b.ReadFrame();
 
     REQUIRE(first == "first");
     REQUIRE(second == "second");
 }
 
-TEST_CASE("Transport::ReadMessage returns nullopt on a clean EOF between messages", "[Acp]") {
+TEST_CASE("Transport::ReadFrame returns nullopt on a clean EOF between messages", "[Acp]") {
     int toB[2];
     REQUIRE(::pipe(toB) == 0);
     Transport reader(toB[0], -1);
     {
         Transport writer(-1, toB[1]);
-        writer.WriteMessage("only message");
-        REQUIRE(reader.ReadMessage() == "only message");
+        writer.WriteFrame("only message");
+        REQUIRE(reader.ReadFrame() == "only message");
         // writer goes out of scope here -- its destructor closes the write
-        // end, which is what should make the next ReadMessage see a clean EOF.
+        // end, which is what should make the next ReadFrame see a clean EOF.
     }
 
-    REQUIRE_FALSE(reader.ReadMessage().has_value());
+    REQUIRE_FALSE(reader.ReadFrame().has_value());
 }
 
-TEST_CASE("Transport::ReadMessage throws on EOF mid-message", "[Acp]") {
+TEST_CASE("Transport::ReadFrame throws on EOF mid-message", "[Acp]") {
     int toB[2];
     REQUIRE(::pipe(toB) == 0);
     Transport reader(toB[0], -1);
@@ -95,7 +95,7 @@ TEST_CASE("Transport::ReadMessage throws on EOF mid-message", "[Acp]") {
         // Write bytes with no trailing newline, then let writer go out of
         // scope -- its destructor closes the write end, so EOF arrives
         // after some bytes were already read for this line, which
-        // ReadMessage treats as a malformed final message rather than a
+        // ReadFrame treats as a malformed final message rather than a
         // clean disconnect.
         const std::string partial = "{\"incomplete";
         std::size_t       written = 0;
@@ -106,21 +106,21 @@ TEST_CASE("Transport::ReadMessage throws on EOF mid-message", "[Acp]") {
         }
     }
 
-    REQUIRE_THROWS_AS(reader.ReadMessage(), std::runtime_error);
+    REQUIRE_THROWS_AS(reader.ReadFrame(), std::runtime_error);
 }
 
-TEST_CASE("Transport::ReadMessage does not stall on ordinary idle silence between messages", "[Acp]") {
+TEST_CASE("Transport::ReadFrame does not stall on ordinary idle silence between messages", "[Acp]") {
     // subprocess-hang-protection follow-up: a very short stallTimeout must
     // never fire while genuinely waiting for a fresh message's first byte.
     TransportPair pair = TransportPair::Create();
 
-    pair.a.WriteMessage("hello");
-    const auto received = pair.b.ReadMessage(std::chrono::milliseconds(1));
+    pair.a.WriteFrame("hello");
+    const auto received = pair.b.ReadFrame(std::chrono::milliseconds(1));
 
     REQUIRE(received == "hello");
 }
 
-TEST_CASE("Transport::ReadMessage throws when a message stalls mid-line", "[Acp]") {
+TEST_CASE("Transport::ReadFrame throws when a message stalls mid-line", "[Acp]") {
     // subprocess-hang-protection follow-up.
     int toB[2];
     REQUIRE(::pipe(toB) == 0);
@@ -135,7 +135,7 @@ TEST_CASE("Transport::ReadMessage throws when a message stalls mid-line", "[Acp]
         written += static_cast<std::size_t>(result);
     }
 
-    REQUIRE_THROWS_AS(reader.ReadMessage(std::chrono::milliseconds(50)), std::runtime_error);
+    REQUIRE_THROWS_AS(reader.ReadFrame(std::chrono::milliseconds(50)), std::runtime_error);
 }
 
 TEST_CASE("Transport constructor throws for an executable that can't be found on $PATH", "[Acp]") {
@@ -152,8 +152,8 @@ TEST_CASE("Transport spawns a real process and exchanges data with it over pipes
     // stdbuf -o0 is what makes it flush a small payload back promptly.
     Transport transport({"stdbuf", "-o0", "/bin/cat"});
 
-    transport.WriteMessage("hello from a test");
-    const auto echoed = transport.ReadMessage();
+    transport.WriteFrame("hello from a test");
+    const auto echoed = transport.ReadFrame();
 
     REQUIRE(echoed.has_value());
     REQUIRE(*echoed == "hello from a test");
@@ -180,5 +180,5 @@ TEST_CASE("Transport captures stderr on its own pipe, separate from stdout, when
     }
     REQUIRE(collected == "err line 1\nerr line 2\n");
 
-    REQUIRE_FALSE(transport.ReadMessage().has_value()); // stdout stays a clean channel -- nothing leaked across
+    REQUIRE_FALSE(transport.ReadFrame().has_value()); // stdout stays a clean channel -- nothing leaked across
 }

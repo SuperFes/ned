@@ -72,9 +72,16 @@ class Transport {
     // std::runtime_error on a write failure (e.g. the child already exited
     // and closed its stdin -- EPIPE) or (write-side-hang-protection
     // follow-up) if the child stops draining its stdin for longer than
-    // stallTimeout -- same rationale/default as ReadMessage's own
+    // stallTimeout -- same rationale/default as ReadFrame's own
     // stallTimeout parameter below.
-    void WriteMessage(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolWriteStallTimeoutMs()) const;
+    //
+    // one-connection-class follow-up: named ReadFrame/WriteFrame (not
+    // ReadMessage/WriteMessage, this class's own original names) so this
+    // class satisfies the same shape Lsp::Transport already does --
+    // Editor/Protocol/FramedConnection.h's TransportT parameter calls
+    // through either one uniformly. Pure rename; the framing itself
+    // (newline-delimited, no Content-Length header) is unchanged.
+    void WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolWriteStallTimeoutMs()) const;
 
     // Blocks until one full line has been read from the child's stdout,
     // returning it with the trailing newline stripped. Returns std::nullopt
@@ -88,7 +95,7 @@ class Transport {
     // hardcoded sleep, purely so tests can shorten it; real callers always
     // take the ProtocolReadStallTimeoutMs() default (see this file's own
     // header comment).
-    [[nodiscard]] std::optional<std::string> ReadMessage(std::chrono::milliseconds stallTimeout = ProtocolReadStallTimeoutMs()) const;
+    [[nodiscard]] std::optional<std::string> ReadFrame(std::chrono::milliseconds stallTimeout = ProtocolReadStallTimeoutMs()) const;
 
     [[nodiscard]] pid_t Pid() const noexcept;
 

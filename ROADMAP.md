@@ -1245,62 +1245,25 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
   across a transport, where the threat model is strictly worse. Decide the trust model
   alongside the framing, not after it.
 
-- [ ] **One connection class instead of three copies of it** (raised 2026-09-08 —
-    prerequisite for the protocol work above, and worth doing on its own merits).
-    `LspClient`, `DapClient` and `AcpClient` each hand-roll the same machine, and the
-    headers say so outright: *"Threading, lifetime, and member-declaration order all
-    mirror LspClient"* (`Dap/Client.h`), *"mirrors LspClient's own stderrThread_ exactly"*
-    (both), *"see LspClient.h's own comment on writeCv_"* (both). All three carry the
-    identical member set — `readThread_`/`stderrThread_` declared *before* `transport_`
-    so its destructor's fd close unblocks them, then `writeThread_` with
-    `writeMutex_`/`writeCv_`/`writeQueue_`/`drainQueueOnStop_` declared *after* it for
-    the mirror-image reason. That ordering is a load-bearing correctness invariant
-    currently defended by a comment repeated in three files: reorder two members in one
-    of them and you get a hang, not a compile error.
-
-    **The seam is clean, because only the top of the stack actually differs.** Framing
-    differs (LSP and DAP share `Content-Length` via `Lsp/Transport.h`; ACP is
-    newline-delimited with its own). Envelope and dispatch differ (JSON-RPC id matching;
-    DAP's `seq`/`type` request-response-event; ACP's genuinely bidirectional,
-    async-capable handlers). Handshake gating differs (LSP queues until `initialized`).
-    Everything *below* "turn bytes into one frame" — process spawn, the read loop, the
-    stderr loop, the write queue and its thread, `EventLoop::Post` marshalling, shutdown
-    ordering — is byte-for-byte the same idea three times.
-
-    **Shape — composition, not an interface, and for a design reason rather than a cost
-    one.** Nothing here ever holds a heterogeneous collection of clients: each one knows
-    its framing at compile time and is named concretely at every call site, so there is
-    no runtime type choice for a vtable to express (unlike `ITextStorage`, where `Buffer`
-    genuinely cannot know whether it holds a `Rope` or a `PieceTable`, or `Widget::Paint`,
-    or `VcsProvider`, whose implementation set is opened at runtime by Janet plugins).
-    An abstract `ProtocolClient` base with a virtual `DispatchFrame` would be paying for
-    a decision that is never made. So: `std::function` callables, which is also already
-    the house idiom — the whole `Set*`/register-then-connect convention across `UI/` and
-    the managers works exactly this way.
-    - `Transport` becomes a concept with concrete implementations rather than one class:
-      child-process pipes (today's `Process/ChildProcess`), `AF_UNIX`
-      (`Lsp/BrokerConnect.cpp`'s non-blocking-connect + `poll` dance, currently 326 lines
-      living alone), and later TCP/stdio-over-ssh for the remote protocol.
-    - `FramedConnection` owns the threads, the queue, the member order and the shutdown
-      sequence exactly once, parameterized by a read-a-frame callable and an on-frame
-      callable. `LspClient`/`DapClient`/`AcpClient` each *own one* instead of
-      reimplementing it, keeping only their envelope, dispatch and handshake logic.
-
-    **The payoff compounds with the protocol item above.** The four bugs already paid for
-    — unbounded blocking `connect()`, join-under-mutex, `poll(-1, -1)` parking forever,
-    unbounded `WriteAll` — get fixed in one place, and any new client (the server
-    protocol, a future MCP or nREPL endpoint) inherits all four by construction instead
-    of re-earning them. It also deletes the "reorder these members and it hangs" hazard
-    from two of the three files.
-
-    **Honest risk:** this is a pure refactor of the most concurrency-sensitive and most
-    historically bug-prone code in the tree, all of which currently works. It is only
-    worth doing behaviour-preserving, one client at a time, leaning on the existing
-    safety net — `LspClientTest`/`DapClientTest`/`AcpClientTest`/`LspTransportTest`/
-    `AcpTransportTest`/`ChildProcessTest`/`TaskProcessTest`/the three broker tests, ~4000
-    assertions across the three clients — kept green at every step, and re-run under the
-    `sanitize` preset rather than just `default`. Do it *before* the server protocol, so
-    the new protocol is the first consumer rather than a fourth copy.
+Shipped, one slug for `git log --grep=`: `one-connection-class` (`LspClient`/
+`DapClient`/`AcpClient`'s triplicated background-read-loop/stderr-loop/async-write-queue/
+`alive_`-guard/member-order machinery now lives once, in `Editor/Protocol/
+FramedConnection.h` — a class template over the concrete transport type
+(`lsp::Transport`, shared verbatim by LSP and DAP, or `acp::Transport`, renamed
+`ReadMessage`/`WriteMessage` → `ReadFrame`/`WriteFrame` to satisfy the same shape), owning
+`TransportT` by value rather than type-erased read/write-a-frame callables so the
+load-bearing destruction-order invariant stays enforced by one class's member layout
+instead of being re-derived per protocol. Each `Client` keeps only its own envelope/
+dispatch/handshake logic and a `connection_` member; `DispatchFrame` and every existing
+test seam (`SetClientForTesting`, the pipe-pair `ClientFixture` pattern) are untouched, so
+every pre-existing `LspClientTest.cpp`/`DapClientTest.cpp`/`AcpClientTest.cpp`/
+`*ManagerTest.cpp`/`BufferView`/panel test needed no edits. New
+`Tests/FramedConnectionTest.cpp` is the class's own direct safety net. Migrated one client at a time (Dap, then Acp, then Lsp) per this entry's own stated
+risk stance, `ctest`/single-process/`sanitize`-preset all clean at every step and at the
+end — 4948 tests, zero ASan/UBSan findings). The `Transport`-becomes-a-concept-over-
+`AF_UNIX`/TCP half of the original sketch here was deliberately NOT part of this — that's
+raw-byte-transport work tied to the not-yet-started remote protocol below, independent of
+the connection-orchestration layer this shipped.
 
 ### Remote Development (SSH Remote Editing)
 
@@ -1857,7 +1820,7 @@ these accumulate detail in place.
 
 - [ ] **LSP broker pre-warming** (split out from "LSP broker server mode" above,
       2026-09-16) — warm the N most-recently-used projects' language servers when
-      `ned --foreground` starts, using `Editor/ProjectRegistry.h`'s existing
+      `ned --foreground` starts, using `Editor/Project/Registry.h`'s existing
       `lastUsed`-ordered `ListProjects()` as the recency source (no new tracking
       needed for that half). Blocked on argv, not on root detection: root-marker
       detection (`Editor/Lsp/RootResolver.h`, finding `compile_commands.json`/
@@ -1865,7 +1828,7 @@ these accumulate detail in place.
       the per-language server *command* (`Editor/Lsp/ServerConfig.h`) is populated only
       by a live interactive `ned` process's `ned/set-lsp-command` Janet calls, and that
       file states as deliberate policy that nothing is bundled/auto-detected for any
-      language (same convention as `TaskConfig.h`/`DapConfig.h`) — a prewarm-only bundled
+      language (same convention as `TaskConfig.h`/`Dap/Config.h`) — a prewarm-only bundled
       table would be a real, called-out exception to that policy, not a small addition.
       Needs a `(root, language) -> argv` persistence mechanism (each real interactive
       attach writing its resolved config to a small state file the daemon can read at
