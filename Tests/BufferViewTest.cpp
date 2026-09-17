@@ -4929,6 +4929,7 @@ TEST_CASE("Replacing a scrolled-deep preview with a new, not-yet-open, much shor
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 19});
 
     sidebar.OnEvent(MousePress(0, 1)); // "large.txt" -- opens as a preview (row 0 is the sidebar's own header)
+    sidebar.OnEvent(MouseRelease(0, 1)); // sidebar-drag-drop-double-open fix: the open itself fires on release
     ned::text::Buffer* largeBuffer = fixture.bufferList.FindByPath(dir / "large.txt");
     REQUIRE(largeBuffer != nullptr);
     REQUIRE(&fixture.activeBuffer.Get() == largeBuffer);
@@ -4938,6 +4939,7 @@ TEST_CASE("Replacing a scrolled-deep preview with a new, not-yet-open, much shor
     REQUIRE(view.TopLine() > 400); // sanity check: genuinely scrolled down first
 
     sidebar.OnEvent(MousePress(0, 2)); // "short.txt" -- not yet open, replaces the preview
+    sidebar.OnEvent(MouseRelease(0, 2));
     ned::text::Buffer* shortBuffer = fixture.bufferList.FindByPath(dir / "short.txt");
     REQUIRE(shortBuffer != nullptr);
     REQUIRE(&fixture.activeBuffer.Get() == shortBuffer);
@@ -6644,8 +6646,13 @@ TEST_CASE("A file dragged from ProjectSidebar and released over BufferView opens
     view.SetProjectSidebar(&sidebar);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 10});
 
-    sidebar.OnEvent(MousePress(0, 1)); // "target.txt" -- also opens it as the sidebar's own preview
+    // sidebar-drag-drop-double-open fix: the press only arms the drag now
+    // -- it opens nothing on its own, so no separate "already focused"
+    // pane is disturbed by a press that turns out to be a drag (see the
+    // dedicated regression test for that below).
+    sidebar.OnEvent(MousePress(0, 1)); // "target.txt"
     REQUIRE(sidebar.DraggingFilePath().has_value());
+    REQUIRE(&fixture.activeBuffer.Get() == &fixture.buffer); // not opened yet
 
     // A Moved event mid-drag must not disturb this pane's own selection --
     // dragAnchor_/mark stay whatever they already were.
@@ -6715,6 +6722,62 @@ TEST_CASE("Only the pane whose box actually contains the drop opens the dragged 
     REQUIRE(&activeBufferB.Get() != &fixture.buffer);
     REQUIRE(activeBufferB.Get().Text() == "dragged content");
     REQUIRE_FALSE(sidebar.DraggingFilePath().has_value());
+
+    std::filesystem::remove_all(dir);
+}
+
+// sidebar-drag-drop-double-open fix: locks in a real reported bug --
+// ProjectSidebar::OpenFileEntry used to fire unconditionally at press
+// time, through activeBufferProvider_ (real app: whichever pane currently
+// has focus), so dragging a file onto a *different* pane opened it there
+// via BufferView::ForwardMouseWhileSiblingDrags AND left it open in the
+// already-focused pane too. The open is now deferred to whichever
+// Released event actually claims the press -- this widget's own (an
+// ordinary click) or a sibling pane's (a real drop) -- never both.
+TEST_CASE("Dragging a file onto another pane does not also open it in whichever pane was already focused",
+          "[BufferView]") {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_dragdrop_no_double_open";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "target.txt") << "dragged content";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture fixture;
+
+    // paneA is "already focused" -- the sidebar's activeBufferProvider_
+    // resolves to paneA's own ActiveBuffer, mirroring how main.cpp/
+    // WindowManager wire a real ProjectSidebar to FocusedActiveBuffer().
+    ned::ui::ActiveBuffer activeBufferA(fixture.buffer);
+    ned::ui::BufferView   paneA(activeBufferA, fixture.killRing, fixture.registers, fixture.promptHistory,
+                                fixture.bufferList, fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+    paneA.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 10});
+
+    ned::ui::ActiveBuffer activeBufferB(fixture.buffer);
+    ned::ui::BufferView   paneB(activeBufferB, fixture.killRing, fixture.registers, fixture.promptHistory,
+                                fixture.bufferList, fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+    paneB.SetBox_(ned::ui::Box{.x_min = 20, .x_max = 39, .y_min = 0, .y_max = 10});
+
+    ned::ui::ProjectSidebar sidebar(
+        [&activeBufferA]() -> ned::ui::ActiveBuffer& { return activeBufferA; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    sidebar.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    paneA.SetProjectSidebar(&sidebar);
+    paneB.SetProjectSidebar(&sidebar);
+
+    sidebar.OnEvent(MousePress(0, 1)); // "target.txt" -- arms the drag only
+    REQUIRE(&activeBufferA.Get() == &fixture.buffer); // NOT opened into the focused pane
+
+    // Dropped at column 30 -- inside paneB's box only.
+    const ned::ui::Event release = MouseRelease(30, 5);
+    paneA.OnEvent(release);
+    paneB.OnEvent(release);
+
+    REQUIRE(&activeBufferB.Get() != &fixture.buffer);
+    REQUIRE(activeBufferB.Get().Text() == "dragged content");
+    REQUIRE(&activeBufferA.Get() == &fixture.buffer); // still untouched -- the bug this locks in
 
     std::filesystem::remove_all(dir);
 }

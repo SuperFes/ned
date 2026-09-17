@@ -421,13 +421,15 @@ Shipped here, one slug each for `git log --grep=`: `context-menu` (the right-cli
 across `BufferView` content+gutter, `TabBar`, `ProjectSidebar`, `VcsPanel`, plus
 double/triple-click select, gutter click, middle-click paste, scrollback click-drag),
 `mouse-hover` (hover tooltips), `hunk-context-menu` (hunk stage/unstage/revert, and
-`vcs-revert-hunk` as a genuinely new capability), `sidebar-drag-drop`.
-
-- [ ] Sidebar drag-and-drop leaves the dragged file open in whichever pane was already
-      focused, in addition to the drop target — the row's own press-time preview-open
-      fires before any drag is known to be one. Fixing it means moving long-tested
-      click-vs-double-click timing off Pressed and onto Released, which is why it was
-      accepted as a v1 trade-off rather than restructured (`sidebar-drag-drop`).
+`vcs-revert-hunk` as a genuinely new capability), `sidebar-drag-drop` and
+`sidebar-drag-drop-double-open` (the row's own press-time preview-open used to fire
+unconditionally through `activeBufferProvider_` — the currently-focused pane in the real
+app — before a drag was known to be one, so dropping onto a different pane opened the
+file there too, leaving it open in whichever pane was already focused as well. Fixed by
+moving click-vs-double-click timing off Pressed and onto Released: a press now only arms
+`dragPath_`/records the single-vs-double classification, and the open itself fires
+exactly once, on whichever Released event actually claims it — this widget's own (an
+ordinary click) or `BufferView::ForwardMouseWhileSiblingDrags` (a real drop)).
 
 ### Navigation & Search
 

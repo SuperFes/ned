@@ -527,15 +527,19 @@ bool ProjectSidebar::OnEvent(const Event& event) {
         return true;
     }
 
-    // project-sidebar-drag-drop follow-up: a release landing back on this
-    // widget's own bounds is just an ordinary click (the press-time open
-    // above already handled it) -- clear the armed drag with no drop
-    // action. A release landing on a BufferView pane instead is handled
-    // there (see that widget's own OnMouseEvent, checked ahead of its
-    // LocalMouseEvent gate the same way it already checks
-    // LeftDock::IsResizing()).
+    // sidebar-drag-drop-double-open fix: a release landing back on this
+    // widget's own bounds is what actually turns an armed press into an
+    // ordinary click -- the open itself was deliberately deferred from
+    // press time (see the press-time block below) precisely so it happens
+    // exactly once, here or over on a BufferView pane, never both. A
+    // release landing on a BufferView pane instead is handled there (see
+    // that widget's own OnMouseEvent, checked ahead of its LocalMouseEvent
+    // gate the same way it already checks LeftDock::IsResizing()).
     if (dragPath_ && mouse->motion == MouseEvent::Motion::Released) {
+        const std::filesystem::path path          = *dragPath_;
+        const bool                  isDoubleClick = dragIsDoubleClick_;
         dragPath_.reset();
+        OpenFileEntry(path, isDoubleClick);
         return true;
     }
 
@@ -625,13 +629,17 @@ bool ProjectSidebar::OnEvent(const Event& event) {
     lastFileClickPath_ = entry.path;
     lastFileClickTime_ = now;
 
-    // project-sidebar-drag-drop follow-up: armed alongside the existing
-    // open-preview behavior below, not instead of it -- see DraggingFilePath's
-    // own doc comment for the cross-widget cooperation this enables and the
-    // "opens here too" side effect this deliberately accepts for a real drag.
-    dragPath_ = entry.path;
-
-    OpenFileEntry(entry.path, isDoubleClick);
+    // sidebar-drag-drop-double-open fix: arm the drag and remember the
+    // click classification, but don't open anything yet -- opening here
+    // unconditionally meant a real drag onto another pane opened the file
+    // *there* AND left it open in whatever pane already had focus, since
+    // this fired regardless of whether the press turned into a drag or an
+    // ordinary click (reported live). The actual open now happens exactly
+    // once, on whichever Released event claims this press: either back
+    // here (an ordinary click -- see the Released handling above) or over
+    // in BufferView::ForwardMouseWhileSiblingDrags (a genuine drop).
+    dragPath_          = entry.path;
+    dragIsDoubleClick_ = isDoubleClick;
     return true;
 }
 

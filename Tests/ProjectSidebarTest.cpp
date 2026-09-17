@@ -61,6 +61,19 @@ ned::ui::Event MouseWheel(int x, int y, ned::ui::MouseEvent::Button button) {
     return ned::ui::test::Mouse(x, y, button, ned::ui::MouseEvent::Motion::Pressed);
 }
 
+// sidebar-drag-drop-double-open fix: a file row's open no longer fires on
+// Pressed alone -- it's deferred to the matching Released so that a real
+// drag onto another pane (BufferView::ForwardMouseWhileSiblingDrags) is
+// what opens it there instead, exactly once. Every ordinary-click test
+// below drives a full press-then-release at the same spot to get that one
+// open; directory rows are unaffected (toggling still happens on Pressed,
+// since a directory is never a drag source -- see
+// "Pressing a directory entry never arms DraggingFilePath").
+void Click(ned::ui::ProjectSidebar& sidebar, int x, int y) {
+    sidebar.OnEvent(MousePress(x, y));
+    sidebar.OnEvent(MouseRelease(x, y));
+}
+
 // ProjectSidebar reads ned::editor::ProjectRoot() (project-root-detection
 // follow-up; previously std::filesystem::current_path() directly), so tests
 // need to temporarily relocate both the process's cwd and the project root
@@ -249,7 +262,7 @@ TEST_CASE("Clicking a file entry opens it and switches the active buffer", "[Pro
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 1)); // row 0 is the header
+    Click(sidebar, 0, 1); // row 0 is the header
 
     REQUIRE(&activeBuffer.Get() != &scratch);
     REQUIRE(activeBuffer.Get().Text() == "hello from disk");
@@ -281,7 +294,8 @@ TEST_CASE("Pressing a file entry arms DraggingFilePath, and a release back on th
     REQUIRE(sidebar.DraggingFilePath()->filename() == "target.txt");
 
     // A plain click's release lands back on this widget's own bounds --
-    // BufferView never gets involved, this alone clears the armed drag.
+    // BufferView never gets involved; this is also what actually opens
+    // the file now (sidebar-drag-drop-double-open fix), not the press.
     sidebar.OnEvent(MouseRelease(0, 1));
     REQUIRE_FALSE(sidebar.DraggingFilePath().has_value());
 
@@ -325,7 +339,7 @@ TEST_CASE("Single-clicking a file marks it as the preview buffer", "[ProjectSide
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 1)); // row 0 is the header
+    Click(sidebar, 0, 1); // row 0 is the header
 
     REQUIRE(list.PreviewBuffer() == &activeBuffer.Get());
 
@@ -353,11 +367,11 @@ TEST_CASE("A second single click on a different file replaces the preview, closi
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 1)); // "a.txt" (row 0 is the header)
+    Click(sidebar, 0, 1); // "a.txt" (row 0 is the header)
     REQUIRE(list.PreviewBuffer() != nullptr);
     REQUIRE(list.Count() == 2); // scratch + a.txt
 
-    sidebar.OnEvent(MousePress(0, 2)); // "b.txt"
+    Click(sidebar, 0, 2); // "b.txt"
 
     REQUIRE(list.Count() == 2);             // scratch + b.txt -- a.txt's preview was closed, not kept
     REQUIRE(list.Find("a.txt") == nullptr); // the old preview is gone
@@ -384,10 +398,10 @@ TEST_CASE("Double-clicking (two clicks on the same file) promotes the preview in
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 1)); // row 0 is the header
+    Click(sidebar, 0, 1); // row 0 is the header
     REQUIRE(list.PreviewBuffer() != nullptr);
 
-    sidebar.OnEvent(MousePress(0, 1)); // same file, rapid second click
+    Click(sidebar, 0, 1); // same file, rapid second click
 
     REQUIRE(list.PreviewBuffer() == nullptr); // promoted -- no longer just a preview
     REQUIRE(list.Count() == 2);               // scratch + target.txt, never duplicated
@@ -413,7 +427,7 @@ TEST_CASE("Re-clicking a still-preview file resets point to the top instead of c
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 1)); // single click -- opens target.txt as a preview (row 0 is the header)
+    Click(sidebar, 0, 1); // single click -- opens target.txt as a preview (row 0 is the header)
     REQUIRE(list.PreviewBuffer() == &activeBuffer.Get());
 
     // "Tooling around" -- point moves away from the top without ever
@@ -424,7 +438,7 @@ TEST_CASE("Re-clicking a still-preview file resets point to the top instead of c
     // A genuinely separate click, not a rapid double click -- past
     // kDoubleClickWindow, so this must not promote the preview.
     std::this_thread::sleep_for(std::chrono::milliseconds(450));
-    sidebar.OnEvent(MousePress(0, 1));
+    Click(sidebar, 0, 1);
 
     REQUIRE(list.PreviewBuffer() == &activeBuffer.Get()); // still just a preview, not promoted
     REQUIRE(activeBuffer.Get().Point() == 0);             // back to the top, not wherever it was left
@@ -451,7 +465,7 @@ TEST_CASE("Clicking an already-open, non-preview buffer switches to it without d
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 1)); // row 0 is the header
+    Click(sidebar, 0, 1); // row 0 is the header
 
     REQUIRE(&activeBuffer.Get() == &already);
     REQUIRE(list.Count() == 2); // no duplicate buffer created
@@ -709,7 +723,7 @@ TEST_CASE("A failed open reports an error via statusMessage without crashing", "
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 1)); // must not crash (row 0 is the header)
+    Click(sidebar, 0, 1); // must not crash (row 0 is the header)
 
     REQUIRE(&activeBuffer.Get() == &scratch);
     REQUIRE_FALSE(statusMessage.empty());
@@ -738,7 +752,7 @@ TEST_CASE("Clicking a binary file reports a message when no open-request handler
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 1)); // row 0 is the header
+    Click(sidebar, 0, 1); // row 0 is the header
 
     REQUIRE(&activeBuffer.Get() == &scratch); // never opened
     REQUIRE(statusMessage.find("binary") != std::string::npos);
@@ -907,7 +921,7 @@ TEST_CASE("Clicking a binary file hands off to the open-request handler when one
     std::optional<std::filesystem::path> requestedPath;
     sidebar.SetOnBinaryFileOpenRequest([&](const std::filesystem::path& path) { requestedPath = path; });
 
-    sidebar.OnEvent(MousePress(0, 1));
+    Click(sidebar, 0, 1);
 
     REQUIRE(&activeBuffer.Get() == &scratch); // handler is responsible for actually opening it, not this widget
     REQUIRE(requestedPath.has_value());
