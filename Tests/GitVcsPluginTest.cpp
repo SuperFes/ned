@@ -325,6 +325,21 @@ TEST_CASE("bundled git plugin runs status/stage/unstage/commit/branch against a 
     REQUIRE(logAfterAmend.size() == 2); // still two commits total, not three
     REQUIRE(logAfterAmend[0].summary == "second commit, amended");
 
+    // VcsPanel commit-variants follow-up: extend-commit-argv folds a fresh
+    // staged change into HEAD, keeping the (now-amended) message verbatim
+    // -- still two commits total, and the log's summary is untouched.
+    {
+        std::ofstream(filePath, std::ios::app) << "more content\n";
+    }
+    RunToCompletion(provider->StageArgv(filePath).argv);
+    RunToCompletion(provider->ExtendCommitArgv(repoRoot).argv);
+    const auto logAfterExtend = provider->ParseLog(RunToCompletion(provider->LogArgv(filePath).argv));
+    REQUIRE(logAfterExtend.size() == 2); // still two commits total
+    REQUIRE(logAfterExtend[0].summary == "second commit, amended"); // message untouched
+    const auto statusAfterExtend = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
+    REQUIRE(statusAfterExtend.size() == 1); // only the still-untracked new.txt remains
+    REQUIRE(statusAfterExtend[0].state == "??");
+
     // Branches: create one, confirm it's current, switch back.
     auto branches = provider->ParseBranchList(RunToCompletion(provider->BranchListArgv(repoRoot).argv));
     REQUIRE(branches.size() == 1);

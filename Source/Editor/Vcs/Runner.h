@@ -191,6 +191,12 @@ class Runner {
     // pre-filling the amend buffer -- RequestFullDiff's own "no parse
     // half, hand back raw stdout" shape, root-scoped like RequestCommit.
     void RequestPreviousCommitMessage(std::function<void(std::string message)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    // VcsPanel commit-variants follow-up: Magit's own "extend" -- folds
+    // whatever's staged into HEAD keeping its message, no buffer/message
+    // argument at all. Same "commit:" +root guard key as RequestCommit/
+    // RequestAmendCommit (still mutually exclusive against either), same
+    // "first output line is the summary" contract.
+    void RequestExtendCommit(std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchList(std::function<void(std::vector<BranchEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchCreate(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});

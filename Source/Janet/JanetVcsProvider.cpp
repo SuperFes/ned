@@ -33,6 +33,7 @@ namespace {
         "commit-argv",
         "amend-commit-argv",
         "previous-commit-message-argv",
+        "extend-commit-argv",
         "branch-list-argv",
         "parse-branch-list",
         "branch-switch-argv",
@@ -426,6 +427,14 @@ editor::vcs::CommandSpec JanetVcsProvider::PreviousCommitMessageArgv(const std::
     const std::string* fn = InternalName("previous-commit-message-argv");
     if (!fn) {
         return Provider::PreviousCommitMessageArgv(root);
+    }
+    return ParseCommandSpec(CallWithString(*fn, root.string()));
+}
+
+editor::vcs::CommandSpec JanetVcsProvider::ExtendCommitArgv(const std::filesystem::path& root) const {
+    const std::string* fn = InternalName("extend-commit-argv");
+    if (!fn) {
+        return Provider::ExtendCommitArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
 }

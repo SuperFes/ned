@@ -296,6 +296,16 @@ class Provider {
         throw std::runtime_error("previous commit message not supported by this provider");
     }
 
+    // VcsPanel commit-variants follow-up: Magit's own "extend" -- folds
+    // whatever's currently staged into HEAD, keeping its message verbatim
+    // (git: `commit --amend --no-edit`) -- no message argument at all,
+    // unlike CommitArgv/AmendCommitArgv, since there's no round trip
+    // through a buffer to carry one.
+    [[nodiscard]] virtual CommandSpec ExtendCommitArgv(const std::filesystem::path& root) const {
+        (void)root;
+        throw std::runtime_error("extend commit not supported by this provider");
+    }
+
     [[nodiscard]] virtual CommandSpec BranchListArgv(const std::filesystem::path& root) const {
         (void)root;
         throw std::runtime_error("branch listing not supported by this provider");

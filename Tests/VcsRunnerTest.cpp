@@ -187,6 +187,13 @@ TEST_CASE("Runner root-scoped requests report an error when no provider is regis
         [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
+    // VcsPanel commit-variants follow-up.
+    error.clear();
+    runner.RequestExtendCommit(
+        [](std::string) { FAIL("onSuccess should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
+
     error.clear();
     runner.RequestBranchList(
         [](std::vector<ned::editor::vcs::BranchEntry>) { FAIL("onComplete should not be called"); },
@@ -270,6 +277,13 @@ TEST_CASE("Runner surfaces the provider's own 'not supported' answer for unimple
         [](std::string) { FAIL("onComplete should not be called"); },
         [&error](std::string message) { error = message; });
     REQUIRE(error == "previous commit message not supported by this provider");
+
+    // VcsPanel commit-variants follow-up.
+    error.clear();
+    runner.RequestExtendCommit(
+        [](std::string) { FAIL("onSuccess should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE(error == "extend commit not supported by this provider");
 
     error.clear();
     runner.RequestBranchList(
@@ -397,6 +411,25 @@ TEST_CASE("Runner refuses a second concurrent status/commit for the same root", 
     runner.RequestCommit(
         "a message", [](std::string) {}, [&commitErrored](std::string) { commitErrored = true; });
     REQUIRE_FALSE(commitErrored);
+
+    // VcsPanel amend/commit-variants follow-ups: RequestAmendCommit/
+    // RequestExtendCommit deliberately share RequestCommit's own "commit:"
+    // +root guard key -- a commit, an amend and an extend against the same
+    // root are still mutually exclusive, not three independent operations.
+    // The guard fires before FakeVocabProvider's own (unoverridden, so
+    // default-throwing) AmendCommitArgv/ExtendCommitArgv would ever be
+    // called, so this proves the shared key, not a coincidental error.
+    std::string amendError;
+    runner.RequestAmendCommit(
+        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
+        [&amendError](std::string message) { amendError = message; });
+    REQUIRE(amendError == "amend commit is already running");
+
+    std::string extendError;
+    runner.RequestExtendCommit(
+        [](std::string) { FAIL("onSuccess should not be called"); },
+        [&extendError](std::string message) { extendError = message; });
+    REQUIRE(extendError == "extend commit is already running");
 }
 
 // Hunk-staging follow-up: RequestHunkApply's synchronous guard paths. The
