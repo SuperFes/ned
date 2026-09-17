@@ -62,10 +62,10 @@ KeyChord CtrlV() {
 void Feed(Engine& engine, Buffer& buffer, const std::string& keys) {
     for (char c : keys) {
         if (c == '\x1b') {
-            engine.HandleKey(buffer, Special(SpecialKey::Escape));
+            (void)engine.HandleKey(buffer, Special(SpecialKey::Escape));
         }
         else if (c == '\n' && engine.CurrentMode() != Mode::Insert) {
-            engine.HandleKey(buffer, Special(SpecialKey::Enter));
+            (void)engine.HandleKey(buffer, Special(SpecialKey::Enter));
         }
         else if (engine.CurrentMode() == Mode::Insert) {
             // Live typing bypasses Engine::HandleKey in real BufferView usage;
@@ -79,7 +79,7 @@ void Feed(Engine& engine, Buffer& buffer, const std::string& keys) {
             engine.RecordInsertKey(Ch(static_cast<unsigned char>(c)));
         }
         else {
-            engine.HandleKey(buffer, Ch(static_cast<unsigned char>(c)));
+            (void)engine.HandleKey(buffer, Ch(static_cast<unsigned char>(c)));
         }
     }
 }
@@ -499,8 +499,8 @@ TEST_CASE("An uppercase mark set in one file signals a pending buffer jump when 
     Buffer bufferB = Buffer::NewFile(pathB);
     bufferB.InsertAtPoint("something else");
     bufferB.SetPoint(0);
-    engine.HandleKey(bufferB, Ch(U'`'));
-    engine.HandleKey(bufferB, Ch(U'B'));
+    (void)engine.HandleKey(bufferB, Ch(U'`'));
+    (void)engine.HandleKey(bufferB, Ch(U'B'));
 
     REQUIRE(bufferB.Point() == 0); // unaffected -- not resolved in this buffer
     const auto jump = engine.TakePendingBufferJump();
@@ -528,8 +528,8 @@ TEST_CASE("Lowercase marks don't leak across a buffer switch in the same pane", 
     Feed(engine, bufferA, "llma"); // mark 'a' at point 2 in bufferA
 
     Buffer bufferB = MakeBuffer("0123456789012345");
-    engine.HandleKey(bufferB, Ch(U'`'));
-    engine.HandleKey(bufferB, Ch(U'a'));
+    (void)engine.HandleKey(bufferB, Ch(U'`'));
+    (void)engine.HandleKey(bufferB, Ch(U'a'));
 
     REQUIRE(engine.StatusText() == "E20: Mark not set");
     REQUIRE(bufferB.Point() == 0); // the stale mark from bufferA must not silently apply here
@@ -586,18 +586,18 @@ TEST_CASE("C-o/C-i walk the jumplist back and forward through G/gg jumps", "[Eng
     Feed(engine, buffer, "gg"); // jump back to the first line
     REQUIRE(buffer.Point() == start);
 
-    engine.HandleKey(buffer, Ctrl(U'o')); // back to the position before "gg" (afterG)
+    (void)engine.HandleKey(buffer, Ctrl(U'o')); // back to the position before "gg" (afterG)
     REQUIRE(buffer.Point() == afterG);
-    engine.HandleKey(buffer, Ctrl(U'o')); // back to the position before "G" (start)
+    (void)engine.HandleKey(buffer, Ctrl(U'o')); // back to the position before "G" (start)
     REQUIRE(buffer.Point() == start);
-    engine.HandleKey(buffer, Ctrl(U'o')); // nothing earlier -- silent no-op
+    (void)engine.HandleKey(buffer, Ctrl(U'o')); // nothing earlier -- silent no-op
     REQUIRE(buffer.Point() == start);
 
-    engine.HandleKey(buffer, Ctrl(U'i')); // forward to afterG
+    (void)engine.HandleKey(buffer, Ctrl(U'i')); // forward to afterG
     REQUIRE(buffer.Point() == afterG);
-    engine.HandleKey(buffer, Ctrl(U'i')); // forward to the live position "gg" left off at (start)
+    (void)engine.HandleKey(buffer, Ctrl(U'i')); // forward to the live position "gg" left off at (start)
     REQUIRE(buffer.Point() == start);
-    engine.HandleKey(buffer, Ctrl(U'i')); // nothing further -- silent no-op
+    (void)engine.HandleKey(buffer, Ctrl(U'i')); // nothing further -- silent no-op
     REQUIRE(buffer.Point() == start);
 }
 
@@ -611,9 +611,9 @@ TEST_CASE("C-o records the live position on first use, like ``'s own toggle", "[
     const std::size_t liveBeforeJump = buffer.Point();
     REQUIRE(liveBeforeJump != afterG);
 
-    engine.HandleKey(buffer, Ctrl(U'o')); // first C-o: records the live position, jumps to 0
+    (void)engine.HandleKey(buffer, Ctrl(U'o')); // first C-o: records the live position, jumps to 0
     REQUIRE(buffer.Point() == 0);
-    engine.HandleKey(buffer, Ctrl(U'i')); // returns to the position C-o recorded
+    (void)engine.HandleKey(buffer, Ctrl(U'i')); // returns to the position C-o recorded
     REQUIRE(buffer.Point() == liveBeforeJump);
 }
 
@@ -627,18 +627,18 @@ TEST_CASE("A new jump after C-o truncates the jumplist's forward history", "[Eng
     Feed(engine, buffer, "`a`b`c"); // jumpList_ becomes [0, 1, 2], landing on mark c (3)
     REQUIRE(buffer.Point() == 3);
 
-    engine.HandleKey(buffer, Ctrl(U'o')); // -> 2
-    engine.HandleKey(buffer, Ctrl(U'o')); // -> 1
+    (void)engine.HandleKey(buffer, Ctrl(U'o')); // -> 2
+    (void)engine.HandleKey(buffer, Ctrl(U'o')); // -> 1
     REQUIRE(buffer.Point() == 1);
 
     Feed(engine, buffer, "`d"); // a fresh jump from here discards the [2, 3] entries ahead of us
     REQUIRE(buffer.Point() == 4);
 
-    engine.HandleKey(buffer, Ctrl(U'o')); // -> 1 (the live position just before "`d")
+    (void)engine.HandleKey(buffer, Ctrl(U'o')); // -> 1 (the live position just before "`d")
     REQUIRE(buffer.Point() == 1);
-    engine.HandleKey(buffer, Ctrl(U'o')); // -> 0 (the very first recorded position)
+    (void)engine.HandleKey(buffer, Ctrl(U'o')); // -> 0 (the very first recorded position)
     REQUIRE(buffer.Point() == 0);
-    engine.HandleKey(buffer, Ctrl(U'o')); // nothing earlier -- the discarded 2/3 never resurface
+    (void)engine.HandleKey(buffer, Ctrl(U'o')); // nothing earlier -- the discarded 2/3 never resurface
     REQUIRE(buffer.Point() == 0);
 }
 
@@ -701,7 +701,7 @@ TEST_CASE("Visual block > shifts every touched line", "[Engine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
     Engine engine;
 
-    engine.HandleKey(buffer, CtrlV()); // enter Visual Block at line 0
+    (void)engine.HandleKey(buffer, CtrlV()); // enter Visual Block at line 0
     Feed(engine, buffer, "j>");        // extend down one line, shift right
     const std::string indent = std::string(static_cast<std::size_t>(ned::editor::TabWidth()), ' ');
     REQUIRE(buffer.Text() == indent + "one\n" + indent + "two\nthree\n"); // third line untouched
@@ -712,7 +712,7 @@ TEST_CASE("Visual block U uppercases the selected columns only", "[Engine]") {
     Engine engine;
 
     Feed(engine, buffer, "l");         // col 1
-    engine.HandleKey(buffer, CtrlV()); // enter Visual Block at (line 0, col 1)
+    (void)engine.HandleKey(buffer, CtrlV()); // enter Visual Block at (line 0, col 1)
     Feed(engine, buffer, "jlU");       // extend down+right to (line 1, col 2), uppercase
     REQUIRE(buffer.Text() == "aBCdef\ngHIjkl\n");
 }
@@ -832,13 +832,13 @@ TEST_CASE("C-d/C-u scroll point by a half page", "[Engine]") {
     Engine engine;
     engine.SetViewport(0, 10); // half page == 5 lines
 
-    engine.HandleKey(buffer, Ctrl(U'd'));
+    (void)engine.HandleKey(buffer, Ctrl(U'd'));
     REQUIRE(PointLine(buffer) == 5);
 
-    engine.HandleKey(buffer, Ctrl(U'd'));
+    (void)engine.HandleKey(buffer, Ctrl(U'd'));
     REQUIRE(PointLine(buffer) == 10);
 
-    engine.HandleKey(buffer, Ctrl(U'u'));
+    (void)engine.HandleKey(buffer, Ctrl(U'u'));
     REQUIRE(PointLine(buffer) == 5);
 }
 
@@ -847,10 +847,10 @@ TEST_CASE("C-f/C-b scroll point by a full page", "[Engine]") {
     Engine engine;
     engine.SetViewport(0, 10);
 
-    engine.HandleKey(buffer, Ctrl(U'f'));
+    (void)engine.HandleKey(buffer, Ctrl(U'f'));
     REQUIRE(PointLine(buffer) == 10);
 
-    engine.HandleKey(buffer, Ctrl(U'b'));
+    (void)engine.HandleKey(buffer, Ctrl(U'b'));
     REQUIRE(PointLine(buffer) == 0);
 }
 
@@ -877,33 +877,81 @@ TEST_CASE("C-e/C-y scroll the viewport without moving point", "[Engine]") {
     engine.SetViewport(5, 10);
     buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(7, 0, 1));
 
-    engine.HandleKey(buffer, Ctrl(U'e'));
+    (void)engine.HandleKey(buffer, Ctrl(U'e'));
     REQUIRE(engine.TakePendingTopLine() == std::optional<std::size_t>(6));
     REQUIRE(PointLine(buffer) == 7); // point untouched
 
     engine.SetViewport(5, 10);
-    engine.HandleKey(buffer, Ctrl(U'y'));
+    (void)engine.HandleKey(buffer, Ctrl(U'y'));
     REQUIRE(engine.TakePendingTopLine() == std::optional<std::size_t>(4));
     REQUIRE(PointLine(buffer) == 7);
 }
 
-TEST_CASE("ZZ saves and requests CloseBuffer", "[Engine]") {
+TEST_CASE("ZZ saves and requests CloseWindow", "[Engine]") {
     Buffer    buffer = MakeBuffer("content\n");
     Engine engine;
     buffer.SetPath(std::filesystem::temp_directory_path() / "ned_vimengine_test_zz.txt");
 
     Feed(engine, buffer, "ZZ");
-    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseBuffer);
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindow);
     REQUIRE_FALSE(buffer.Modified());
     std::filesystem::remove(*buffer.Path());
 }
 
-TEST_CASE("ZQ requests CloseBuffer without saving", "[Engine]") {
+TEST_CASE("ZQ requests CloseWindowForced without saving", "[Engine]") {
     Buffer    buffer = MakeBuffer("content\n");
     Engine engine;
 
     Feed(engine, buffer, "ZQ");
-    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseBuffer);
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindowForced);
+}
+
+// vim-quit-window-semantics follow-up: ":q" is real vim's window-close, not Emacs'
+// kill-buffer -- BufferView resolves CloseWindow/CloseWindowForced into "close this
+// pane" or "quit the app" depending on whether it's the last window, but that decision
+// is entirely BufferView's; this engine's own contract is just "which intent, forced or
+// not" for each spelling.
+TEST_CASE(":q requests CloseWindow", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":q\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindow);
+}
+
+TEST_CASE(":q! requests CloseWindowForced", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":q!\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindowForced);
+}
+
+TEST_CASE(":wq saves and requests CloseWindow, never forced", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+    buffer.SetPath(std::filesystem::temp_directory_path() / "ned_vimengine_test_wq.txt");
+
+    Feed(engine, buffer, ":wq\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindow);
+    REQUIRE_FALSE(buffer.Modified());
+    std::filesystem::remove(*buffer.Path());
+}
+
+TEST_CASE(":qa requests Quit", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":qa\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::Quit);
+}
+
+TEST_CASE(":qa! requests QuitForced", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":qa!\n");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::QuitForced);
 }
 
 TEST_CASE("gJ joins without inserting a space", "[Engine]") {
@@ -911,7 +959,7 @@ TEST_CASE("gJ joins without inserting a space", "[Engine]") {
     Engine engine;
 
     Feed(engine, buffer, "g");
-    engine.HandleKey(buffer, Ch(U'J'));
+    (void)engine.HandleKey(buffer, Ch(U'J'));
     REQUIRE(buffer.Text() == "foobar\n");
 }
 
@@ -927,7 +975,7 @@ TEST_CASE("gi resumes Insert where it was last exited", "[Engine]") {
 
     Feed(engine, buffer, "0"); // move point away
     Feed(engine, buffer, "g");
-    engine.HandleKey(buffer, Ch(U'i'));
+    (void)engine.HandleKey(buffer, Ch(U'i'));
     REQUIRE(engine.CurrentMode() == Mode::Insert);
     REQUIRE(buffer.Point() == 6); // right after "XYZ", where Insert was left
 }
@@ -936,7 +984,7 @@ TEST_CASE("C-a increments the number under/after point", "[Engine]") {
     Buffer    buffer = MakeBuffer("count: 41");
     Engine engine;
 
-    engine.HandleKey(buffer, Ctrl(U'a'));
+    (void)engine.HandleKey(buffer, Ctrl(U'a'));
     REQUIRE(buffer.Text() == "count: 42");
 }
 
@@ -944,25 +992,25 @@ TEST_CASE("C-x decrements the number under/after point", "[Engine]") {
     Buffer    buffer = MakeBuffer("count: 41");
     Engine engine;
 
-    engine.HandleKey(buffer, Ctrl(U'x'));
+    (void)engine.HandleKey(buffer, Ctrl(U'x'));
     REQUIRE(buffer.Text() == "count: 40");
 }
 
 TEST_CASE("C-a/C-x preserve zero-padded width and handle sign crossing", "[Engine]") {
     Buffer    buffer1 = MakeBuffer("id 007");
     Engine engine1;
-    engine1.HandleKey(buffer1, Ctrl(U'a'));
+    (void)engine1.HandleKey(buffer1, Ctrl(U'a'));
     REQUIRE(buffer1.Text() == "id 008");
 
     Buffer    buffer2 = MakeBuffer("x = -3");
     Engine engine2;
-    engine2.HandleKey(buffer2, Ctrl(U'a'));
+    (void)engine2.HandleKey(buffer2, Ctrl(U'a'));
     REQUIRE(buffer2.Text() == "x = -2");
 
     Buffer    buffer3 = MakeBuffer("y = 2");
     Engine engine3;
     Feed(engine3, buffer3, "5"); // count = 5
-    engine3.HandleKey(buffer3, Ctrl(U'x'));
+    (void)engine3.HandleKey(buffer3, Ctrl(U'x'));
     REQUIRE(buffer3.Text() == "y = -3"); // crosses zero, sign gets added
 }
 
@@ -971,7 +1019,7 @@ TEST_CASE("count applies to C-a/C-x", "[Engine]") {
     Engine engine;
 
     Feed(engine, buffer, "5");
-    engine.HandleKey(buffer, Ctrl(U'a'));
+    (void)engine.HandleKey(buffer, Ctrl(U'a'));
     REQUIRE(buffer.Text() == "n=15");
 }
 
@@ -1187,7 +1235,7 @@ TEST_CASE("Insert-mode C-o executes one Normal command then resumes Insert", "[E
     REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U'o')));
     REQUIRE(engine.CurrentMode() == Mode::Normal);
 
-    engine.HandleKey(buffer, Ch(U'0')); // the one Normal command: move to line start
+    (void)engine.HandleKey(buffer, Ch(U'0')); // the one Normal command: move to line start
     REQUIRE(engine.CurrentMode() == Mode::Insert);
     REQUIRE(buffer.Point() == 0);
 }
@@ -1201,9 +1249,9 @@ TEST_CASE("Insert-mode C-o supports a full operator+motion before resuming", "[E
     REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U'o')));
     REQUIRE(engine.CurrentMode() == Mode::Normal);
 
-    engine.HandleKey(buffer, Ch(U'd'));
+    (void)engine.HandleKey(buffer, Ch(U'd'));
     REQUIRE(engine.CurrentMode() == Mode::Normal); // operator pending, not yet resolved
-    engine.HandleKey(buffer, Ch(U'w'));
+    (void)engine.HandleKey(buffer, Ch(U'w'));
     REQUIRE(engine.CurrentMode() == Mode::Insert); // motion completed the operator, now resumed
     REQUIRE(buffer.Text() == "bar");
 }
@@ -1215,7 +1263,7 @@ TEST_CASE("Insert-mode C-o followed by a mode-entering command doesn't corrupt l
     Feed(engine, buffer, "i"); // Insert at point 0 on line "ab"
     engine.RecordInsertKey(Ctrl(U'o'));
     REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U'o')));
-    engine.HandleKey(buffer, Ch(U'A')); // one-shot command itself re-enters Insert at EOL
+    (void)engine.HandleKey(buffer, Ch(U'A')); // one-shot command itself re-enters Insert at EOL
     REQUIRE(engine.CurrentMode() == Mode::Insert);
 
     Feed(engine, buffer, "X\x1b"); // finish this insert session normally
@@ -1234,8 +1282,8 @@ TEST_CASE("Dot-repeat replays an Insert session that used C-o", "[Engine]") {
     Feed(engine, buffer, "i");
     engine.RecordInsertKey(Ctrl(U'o'));
     REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U'o')));
-    engine.HandleKey(buffer, Ch(U'd'));
-    engine.HandleKey(buffer, Ch(U'w')); // deletes "foo " via the one-shot excursion, resumes Insert
+    (void)engine.HandleKey(buffer, Ch(U'd'));
+    (void)engine.HandleKey(buffer, Ch(U'w')); // deletes "foo " via the one-shot excursion, resumes Insert
     Feed(engine, buffer, "X\x1b");      // types "X" then exits Insert
 
     REQUIRE(buffer.Text() == "Xbar\nfoo bar\n");

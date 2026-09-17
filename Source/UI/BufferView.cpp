@@ -135,6 +135,10 @@ void BufferView::SetOnWindowRequest(std::function<void(editor::InteractiveReques
     onWindowRequest_ = std::move(handler);
 }
 
+void BufferView::SetIsOnlyWindowQuery(std::function<bool()> query) {
+    isOnlyWindowQuery_ = std::move(query);
+}
+
 void BufferView::SetSplitResizeQuery(std::function<bool()> query) {
     splitResizeQuery_ = std::move(query);
 }
@@ -633,6 +637,16 @@ bool BufferView::OnKeyEvent(const Event& event) {
         return true;
     }
     if (editor::vim::ModeEnabled()) {
+        // vim-keymap-fallthrough follow-up: an unrecognized Control chord
+        // (HandleVimKey's own doc comment) leaves dispatcher_ itself mid a
+        // multi-chord global sequence (e.g. "C-c" awaiting "v" for "C-c v N") --
+        // every chord until that sequence resolves must keep going straight to
+        // Dispatcher, not back into vimEngine_, or a vim-meaningful continuation
+        // key ("v" enters Visual mode, "N" repeats the last search) would be
+        // reinterpreted as a vim command instead of completing the sequence.
+        if (!dispatcher_.Pending().empty()) {
+            return DispatchChordNormally(*chord);
+        }
         return HandleVimKey(*chord);
     }
     return DispatchChordNormally(*chord);
