@@ -124,7 +124,13 @@ void GutterModel::EnsureConflictHunks() const {
         return;
     }
 
-    conflictHunks_     = text::ParseConflictHunks(buffer.Text());
+    // HasConflictMarkers is the cheap windowed guard (Buffer.cpp) -- most
+    // buffers never contain "<<<<<<< " at all, and skipping straight to it
+    // avoids both materializing the whole buffer via Text() and running
+    // ParseConflictHunks's own full scan on every content-generation change
+    // (i.e. every keystroke) for the overwhelming common case.
+    conflictHunks_ = buffer.HasConflictMarkers() ? text::ParseConflictHunks(buffer.Text())
+                                                  : std::vector<text::ConflictHunk>{};
     conflictHunkStamp_ = stamp;
 }
 

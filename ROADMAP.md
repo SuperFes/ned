@@ -87,12 +87,13 @@ measurement said "fine" while typing felt bad.
       hidden — with unfiltered byte positions. Tried it anyway; `ParseConformanceTest`'s red-
       layer-vs-upstream gate caught 20 real "named descendant mismatch" failures across
       bash/css/fish before it shipped, which is exactly what that gate is for.
-- [ ] **`ned::text::ParseConflictHunks` runs on every `Paint()`, unconditionally, over the
-      full buffer text** — noticed as measurable self-time in the same profiling pass, on
-      a buffer with no conflict markers at all. Worth gating behind a cheap
-      "does the text contain `<<<<<<<`" check (or a content-generation cache) before ever
-      compiling the regex executor's own state machine; not investigated further since it's
-      orthogonal to the parsing engine.
+- [x] `ParseConflictHunks` gutter cost — closed `conflict-hunk-cache-guard`: `GutterModel::
+      EnsureConflictHunks` now checks `Buffer::HasConflictMarkers()` (the existing windowed
+      scanner) before ever calling `buffer.Text()`/`ParseConflictHunks`, so a buffer with no
+      markers — nearly all of them — skips both the full-buffer materialization and the scan
+      on every content-generation change; the per-buffer `CacheStamp` gate already meant this
+      only ran once per edit rather than once per `Paint()`, contrary to this entry's own
+      original description.
 - [x] **`mode.symbolKind` is O(document) per keystroke — closed by the Phase 4b engine
       (2026-09-13), and NOT the way this entry predicted.** The split-the-consumers plan
       below assumed ts_query's range semantics, where a ranged run filters emitted
