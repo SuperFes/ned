@@ -16,7 +16,7 @@
 
 #include "Editor/CaptureClassifiers.h"
 #include "Janet/EditorBindings.h"
-#include "Janet/Plugins.h"
+#include "Janet/PluginLoader.h"
 
 #include <catch2/reporters/catch_reporter_event_listener.hpp>
 #include <catch2/reporters/catch_reporter_registrars.hpp>
@@ -33,7 +33,7 @@ ned::janet::Environment& TestEnvironment() {
 
 void RestoreBundledCaptureClassifiers() {
     ned::editor::ClearCaptureClassifiers();
-    g_environment->DoString(ned::janet::plugins::kLanguages, "languages.janet");
+    g_environment->DoString(ned::janet::ReadBundledPlugin("languages"), "languages.janet");
 }
 
 namespace {
@@ -52,7 +52,7 @@ namespace {
             // Deliberately NOT LoadBundledPlugins: vcs-git registers a live
             // VCS provider, which the provider-registry tests assume absent.
             ned::janet::InstallEditorBindings(*g_environment);
-            g_environment->DoString(ned::janet::plugins::kLanguages, "languages.janet");
+            g_environment->DoString(ned::janet::ReadBundledPlugin("languages"), "languages.janet");
         }
 
         void testRunEnded(const Catch::TestRunStats&) override {

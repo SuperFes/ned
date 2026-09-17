@@ -14,7 +14,9 @@ What gets vendored per grammar, and no more: the whole `src/` directory
 scanner splits out -- e.g. tree-sitter-html's scanner.c#include`s a sibling
 tag.h -- `tree_sitter/*.h`, and `grammar.json`/`node-types.json`, the latter
 two read by Tests/ImprintTest.cpp's live-inference check, not by the build
-itself), and `test/corpus/` (read by Tests/ParseConformanceTest.cpp). A few grammars
+itself) and `queries/` (kept for diffing against Source/Languages/<name>/
+upstream/ by hand). A grammar's test corpus is NOT vendored here: it lives in
+Source/Languages/<name>/corpus/ as ned's own, imported once. A few grammars
 (typescript/tsx, php, xml) share a `common/scanner.h` one level above their
 own `src/`, included via a relative `#include "../../common/scanner.h"` --
 this script detects that by scanning the fetched scanner for `#include "../`
@@ -57,14 +59,11 @@ class Grammar:
     subdirs: tuple[str, ...] = ("",)  # "" = repo root is the grammar dir
     release_url: str = ""  # alternative to org_repo+ref: a direct tarball URL
     release_sha256: str = ""
-    corpus_only: bool = False  # only vendor test/corpus (see tree-sitter-sql-corpus)
-    corpus_subdir: str = "test/corpus"  # non-standard layouts override this (see tree-sitter-nix)
 
 
 # Mirrors CMakeLists.txt's tree-sitter section 1:1 -- keep the two in sync.
 # fmt: off
 MANIFEST: list[Grammar] = [
-    Grammar("tree-sitter-core", "tree-sitter/tree-sitter", "v0.25.10", subdirs=("lib",)),
 
     Grammar("tree-sitter-json", "tree-sitter/tree-sitter-json", "v0.24.8"),
     Grammar("tree-sitter-c", "tree-sitter/tree-sitter-c", "v0.24.2"),
@@ -97,15 +96,11 @@ MANIFEST: list[Grammar] = [
     Grammar("tree-sitter-sql",
             release_url="https://github.com/DerekStride/tree-sitter-sql/releases/download/v0.3.11/tree-sitter-sql-v0.3.11.tar.gz",
             release_sha256="a97a324eae9c81ed68f6e162b9b33f8911fc6442caa2950e57c498e2460d1387"),
-    Grammar("tree-sitter-sql-corpus", "DerekStride/tree-sitter-sql", "v0.3.11", corpus_only=True),
 
     Grammar("tree-sitter-dockerfile", "camdencheek/tree-sitter-dockerfile", "v0.2.0"),
     Grammar("tree-sitter-make", "tree-sitter-grammars/tree-sitter-make", "v1.1.1"),
     Grammar("tree-sitter-hcl", "tree-sitter-grammars/tree-sitter-hcl", "v1.2.0"),
-    # Non-standard layout: the only grammar here whose corpus lives at the
-    # repo root ("corpus/") rather than under "test/corpus/" -- see
-    # Tests/ParseConformanceTest.cpp's own CorpusSources() comment.
-    Grammar("tree-sitter-nix", "nix-community/tree-sitter-nix", "v0.3.0", corpus_subdir="corpus"),
+    Grammar("tree-sitter-nix", "nix-community/tree-sitter-nix", "v0.3.0"),
     Grammar("tree-sitter-ruby", "tree-sitter/tree-sitter-ruby", "v0.23.1"),
     Grammar("tree-sitter-gitcommit", "gbprod/tree-sitter-gitcommit", "v0.5.0"),
     Grammar("tree-sitter-gitrebase", "the-mikedavis/tree-sitter-git-rebase", "v1.0.0"),
@@ -178,7 +173,7 @@ def find_relative_escapes(scanner_file: Path) -> list[str]:
     return sorted(escapes)
 
 
-def copy_grammar_subtree(src_root: Path, extracted_root: Path, dest: Path, corpus_subdir: str = "test/corpus") -> None:
+def copy_grammar_subtree(src_root: Path, extracted_root: Path, dest: Path) -> None:
     # The whole src/ dir, whatever it holds -- parser.c/scanner.c(.cc),
     # grammar.json/node-types.json, tree_sitter/*.h, and any local helper
     # header a hand-written scanner splits out (e.g. tree-sitter-html's own
@@ -190,26 +185,12 @@ def copy_grammar_subtree(src_root: Path, extracted_root: Path, dest: Path, corpu
     dest_src = dest / "src"
     shutil.copytree(src_dir, dest_src, dirs_exist_ok=True)
 
-    # Not a build input -- read only by Tests/ParseConformanceTest.cpp. Same
-    # split as queries/ below: markdown/markdown-inline each carry their own
-    # corpus inside the subdir; php/xml/typescript share one at the repo
-    # root instead (see ParseConformanceTest.cpp's CorpusSource table).
-    # corpus_subdir is "test/corpus" for every grammar except tree-sitter-nix.
-    local_corpus = src_root / corpus_subdir
-    if local_corpus.is_dir():
-        shutil.copytree(local_corpus, dest / corpus_subdir, dirs_exist_ok=True)
-    if extracted_root != src_root:
-        root_corpus = extracted_root / corpus_subdir
-        if root_corpus.is_dir():
-            root_dest = extracted_root_dest_for(dest, src_root, extracted_root)
-            shutil.copytree(root_corpus, root_dest / corpus_subdir, dirs_exist_ok=True)
-
-    # Not a build input -- read only by Tests/QueryDataTest.cpp's drift check
-    # (a vendored Source/Languages/*.janet query held against its upstream
-    # .scm source). Some repos keep queries/ inside each grammar subdir
-    # (markdown/markdown-inline); most keep one shared queries/ at the repo
-    # root sitting *beside* the grammar subdir (php, xml, typescript) -- so
-    # check both locations.
+    # Not a build input -- kept beside the tables so a grammar bump can be
+    # diffed against Source/Languages/<name>/upstream/*.janet by hand. Some
+    # repos keep queries/ inside each grammar subdir (markdown/markdown-
+    # inline); most keep one shared queries/ at the repo root sitting
+    # *beside* the grammar subdir (php, xml, typescript) -- so check both
+    # locations.
     local_queries = src_root / "queries"
     if local_queries.is_dir():
         shutil.copytree(local_queries, dest / "queries", dirs_exist_ok=True)
@@ -244,40 +225,7 @@ def extracted_root_dest_for(dest: Path, src_root: Path, extracted_root: Path) ->
     return up
 
 
-def vendor_core(g: Grammar) -> None:
-    extracted = fetch_github_ref(g.org_repo, g.ref)
-    lib = extracted / g.subdirs[0]
-    dest = DEST_ROOT / g.name
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.mkdir(parents=True)
-    shutil.copytree(lib / "include", dest / "include")
-    shutil.copytree(lib / "src", dest / "src")
-    log(f"vendored {g.name} -> {dest.relative_to(REPO_ROOT)}")
-
-
-def vendor_corpus_only(g: Grammar) -> None:
-    extracted = fetch_github_ref(g.org_repo, g.ref)
-    dest = DEST_ROOT / g.name
-    if dest.exists():
-        shutil.rmtree(dest)
-    corpus = extracted / "test" / "corpus"
-    if not corpus.is_dir():
-        raise SystemExit(f"{g.name}: no test/corpus in {g.org_repo}@{g.ref}")
-    dest_corpus = dest / "test" / "corpus"
-    dest_corpus.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(corpus, dest_corpus)
-    log(f"vendored {g.name} (corpus only) -> {dest.relative_to(REPO_ROOT)}")
-
-
 def vendor_grammar(g: Grammar) -> None:
-    if g.name == "tree-sitter-core":
-        vendor_core(g)
-        return
-    if g.corpus_only:
-        vendor_corpus_only(g)
-        return
-
     if g.release_url:
         extracted = extract_tarball(fetch_tarball_bytes(g.release_url, g.release_sha256))
     else:
@@ -291,7 +239,7 @@ def vendor_grammar(g: Grammar) -> None:
     for sub in g.subdirs:
         src_root = extracted / sub if sub else extracted
         sub_dest = dest / sub if sub else dest
-        copy_grammar_subtree(src_root, extracted, sub_dest, g.corpus_subdir)
+        copy_grammar_subtree(src_root, extracted, sub_dest)
 
     log(f"vendored {g.name} -> {dest.relative_to(REPO_ROOT)}")
 

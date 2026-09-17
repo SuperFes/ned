@@ -10,12 +10,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # version; this is what makes it reachable from C++ (`ned --version`). Without
 # it the CMake version was metadata nothing consumed, which is how it came to
 # read 0.5.0 while the only git tag read v0.1.0 and the binary could report
-# neither. Generated into ned_generated/ alongside the embedded-query sources,
-# and added to ned_lib's PUBLIC include path in Source/CMakeLists.txt, so the
-# `ned` executable picks it up through the link. configure_file (rather than
-# the file(WRITE) the query embedders use) leaves the output's timestamp alone
-# when nothing changed, so a reconfigure doesn't rebuild every translation
-# unit that includes it.
+# neither. Generated into ned_generated/, which is on ned_lib's PUBLIC include
+# path in Source/CMakeLists.txt, so the `ned` executable picks it up through
+# the link. configure_file leaves the output's timestamp alone when nothing
+# changed, so a reconfigure doesn't rebuild every translation unit that
+# includes it.
 configure_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/Source/Version.h.in"
         "${CMAKE_BINARY_DIR}/ned_generated/NedVersion.h"
@@ -42,16 +41,14 @@ include(FindPkgConfig)
 # header comment.
 include(CMake/Dependencies.cmake)
 
-# tree-sitter core (test-only conformance reference) plus every bundled
-# grammar -- see CMake/Grammars.cmake's own header comment. Must run before
-# add_subdirectory(Source), which links ned_lib against the grammar targets
-# this creates.
+# Every bundled grammar's tables -- see CMake/Grammars.cmake's own header
+# comment. Must run before add_subdirectory(Source), which links ned_lib
+# against the grammar targets this creates.
 include(CMake/Grammars.cmake)
 
-# Embeds bundled Janet plugin/language-query source as C++ constants -- see
-# CMake/EmbedGenerated.cmake's own header comment. Populates
-# NED_GENERATED_QUERY_SOURCES, which Source/CMakeLists.txt adds to ned_lib.
-include(CMake/EmbedGenerated.cmake)
+# The share/ned data tree (bundled languages and Janet plugins, read from
+# disk at runtime) -- see CMake/DataTree.cmake's own header comment.
+include(CMake/DataTree.cmake)
 
 # ned_lib (everything except main()) and the ned executable.
 add_subdirectory(Source)

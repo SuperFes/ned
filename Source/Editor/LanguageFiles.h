@@ -1,14 +1,14 @@
 //
-// A language's files -- its query data (Editor/QueryData.h) and, soon, its
+// A language's files -- its query data (Editor/QueryData.h) and its
 // `language.janet` -- addressed by path and read from one of two places: the
-// table compiled into the binary from `Source/Languages/` (a relative path,
-// "cpp/highlights.janet"), or the filesystem (an absolute path, a user's or a
+// bundled data tree (a path relative to `DataDir()/languages`,
+// "cpp/highlights.janet") or the filesystem (an absolute path, a user's or a
 // project's own language directory). One reader for both, so a bundled
 // language and a runtime-loaded one go through exactly the same code.
 //
-// CompileQueryFiles is the step between a query file and tree-sitter: the
+// CompileQueryFiles is the step between a query file and the matcher: the
 // Janet-syntax data read, then emitted as query text, cached per path. Its
-// result remembers which file each byte came from, so a tree-sitter error
+// result remembers which file each byte came from, so a compile error
 // -- which is a byte offset into the concatenated text -- can be reported as
 // `path:line`.
 //
@@ -17,26 +17,27 @@
 #define NED_EDITOR_LANGUAGEFILES_H
 
 #include <cstddef>
-#include <optional>
-#include <span>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace ned::editor {
 
-struct EmbeddedLanguageFile {
-    std::string_view path; // relative to Source/Languages, e.g. "cpp/highlights.janet"
-    std::string_view content;
+// DataDir()/languages -- the root every relative language path counts from.
+[[nodiscard]] const std::filesystem::path& BundledLanguagesRoot();
+
+struct BundledLanguageFile {
+    std::string path; // relative to BundledLanguagesRoot(), e.g. "cpp/highlights.janet"
+    std::string content;
 };
 
-// Generated at configure time by CMake's ned_embed_language_files from every
-// *.janet under Source/Languages -- see CMakeLists.txt.
-[[nodiscard]] std::span<const EmbeddedLanguageFile> EmbeddedLanguageFiles();
+// Every *.janet under the bundled root, sorted by path.
+[[nodiscard]] std::vector<BundledLanguageFile> BundledLanguageFiles();
 
-[[nodiscard]] std::optional<std::string_view> FindEmbeddedLanguageFile(std::string_view path);
+[[nodiscard]] bool BundledLanguageFileExists(std::string_view path);
 
-// Embedded (relative path) or filesystem (absolute path). Throws
+// Bundled (relative path) or filesystem (absolute path). Throws
 // std::runtime_error naming the path when neither has it.
 [[nodiscard]] std::string ReadLanguageFile(std::string_view path);
 

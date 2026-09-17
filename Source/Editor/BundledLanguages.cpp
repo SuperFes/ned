@@ -1,36 +1,28 @@
 #include "BundledLanguages.h"
 
 #include <algorithm>
-#include <stdexcept>
 
 #include "LanguageFiles.h"
 #include "LanguageParse.h"
+#include "LanguageRegistry.h"
 #include "Languages/Escapes.h"
 
 namespace ned::editor {
 
 namespace {
 
-    // Every embedded <name>/language.janet, parsed and query-discovered.
-    // Built once; a parse error here is a build regression in a bundled
-    // definition, and throwing (which aborts at first use) beats shipping a
-    // silently missing language.
+    // Every <name>/language.janet under the bundled root, parsed and
+    // query-discovered with paths relative to that root. Built once; a
+    // parse error here is a build regression in a bundled definition, and
+    // throwing (which aborts at first use) beats shipping a silently
+    // missing language.
     std::vector<LanguageDefinition> Build() {
         languages::RegisterBundledEscapes();
         std::vector<LanguageDefinition> out;
-        for (const EmbeddedLanguageFile& file : EmbeddedLanguageFiles()) {
-            const std::string_view     path    = file.path;
-            constexpr std::string_view kSuffix = "/language.janet";
-            if (!path.ends_with(kSuffix)) {
-                continue;
-            }
-            const std::string_view directory = path.substr(0, path.size() - kSuffix.size());
-            if (directory.find('/') != std::string_view::npos) {
-                throw std::runtime_error("language.janet nested too deep: " + std::string(path));
-            }
-            LanguageDefinition definition = ParseLanguageDefinition(directory, file.content);
-            DiscoverQueryFiles(definition,
-                               [](std::string_view candidate) { return FindEmbeddedLanguageFile(candidate).has_value(); });
+        for (const std::filesystem::path& directory : LanguageDirectories(BundledLanguagesRoot())) {
+            const std::string  name       = directory.filename().string();
+            LanguageDefinition definition = ParseLanguageDefinition(name, ReadLanguageFile(name + "/language.janet"));
+            DiscoverQueryFiles(definition, BundledLanguageFileExists);
             out.push_back(std::move(definition));
         }
         std::sort(out.begin(), out.end(),

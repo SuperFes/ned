@@ -35,7 +35,7 @@
 
 using ned::editor::BundledLanguages;
 using ned::editor::CompileQueryFiles;
-using ned::editor::EmbeddedLanguageFiles;
+using ned::editor::BundledLanguageFiles;
 using ned::editor::LanguageDefinition;
 using ned::editor::QueryFiles;
 using ned::editor::querydata::Form;
@@ -283,7 +283,7 @@ TEST_CASE("query construct census: every bundled query file uses only the enumer
     Census census;
     int    filesWalked = 0;
 
-    for (const auto& file : EmbeddedLanguageFiles()) {
+    for (const auto& file : BundledLanguageFiles()) {
         if (!QueryKinds().contains(std::string(KindOfPath(file.path)))) {
             continue;
         }

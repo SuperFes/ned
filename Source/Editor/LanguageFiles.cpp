@@ -1,12 +1,13 @@
 #include "LanguageFiles.h"
 
-#include <filesystem>
+#include <algorithm>
 #include <fstream>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 
+#include "DataDir.h"
 #include "QueryData.h"
 
 namespace ned::editor {
@@ -36,29 +37,58 @@ namespace {
         return g_compiled.emplace(path, std::move(text)).first->second;
     }
 
+    bool ReadWholeFile(const std::filesystem::path& path, std::string& out) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            return false;
+        }
+        std::ostringstream buffer;
+        buffer << in.rdbuf();
+        out = buffer.str();
+        return true;
+    }
+
+    std::filesystem::path Resolve(std::string_view path) {
+        const std::filesystem::path fsPath(path);
+        return fsPath.is_absolute() ? fsPath : BundledLanguagesRoot() / fsPath;
+    }
+
 } // namespace
 
-std::optional<std::string_view> FindEmbeddedLanguageFile(std::string_view path) {
-    for (const EmbeddedLanguageFile& file : EmbeddedLanguageFiles()) {
-        if (file.path == path) {
-            return file.content;
+const std::filesystem::path& BundledLanguagesRoot() {
+    static const std::filesystem::path kRoot = DataDir() / "languages";
+    return kRoot;
+}
+
+std::vector<BundledLanguageFile> BundledLanguageFiles() {
+    std::vector<BundledLanguageFile> out;
+    const std::filesystem::path&     root = BundledLanguagesRoot();
+    std::error_code                  ec;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(root, ec)) {
+        std::error_code entryEc;
+        if (!entry.is_regular_file(entryEc) || entryEc || entry.path().extension() != ".janet") {
+            continue;
         }
+        BundledLanguageFile file{.path = entry.path().lexically_relative(root).generic_string()};
+        if (!ReadWholeFile(entry.path(), file.content)) {
+            throw std::runtime_error("cannot read bundled language file: " + entry.path().string());
+        }
+        out.push_back(std::move(file));
     }
-    return std::nullopt;
+    std::sort(out.begin(), out.end(),
+              [](const BundledLanguageFile& a, const BundledLanguageFile& b) { return a.path < b.path; });
+    return out;
+}
+
+bool BundledLanguageFileExists(std::string_view path) {
+    std::error_code ec;
+    return std::filesystem::is_regular_file(BundledLanguagesRoot() / std::filesystem::path(path), ec);
 }
 
 std::string ReadLanguageFile(std::string_view path) {
-    if (const std::optional<std::string_view> embedded = FindEmbeddedLanguageFile(path)) {
-        return std::string(*embedded);
-    }
-    const std::filesystem::path fsPath(path);
-    if (fsPath.is_absolute()) {
-        std::ifstream in(fsPath, std::ios::binary);
-        if (in) {
-            std::ostringstream buffer;
-            buffer << in.rdbuf();
-            return buffer.str();
-        }
+    std::string content;
+    if (ReadWholeFile(Resolve(path), content)) {
+        return content;
     }
     throw std::runtime_error("language file not found: " + std::string(path));
 }

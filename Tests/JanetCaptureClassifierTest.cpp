@@ -28,7 +28,7 @@ struct ClassifierGuard {
 Mode JsonMode() {
     ned::editor::LanguageDefinition definition = ned::editor::ParseLanguageDefinition("json", "{:name \"json\"}");
     ned::editor::DiscoverQueryFiles(
-        definition, [](std::string_view path) { return ned::editor::FindEmbeddedLanguageFile(path).has_value(); });
+        definition, ned::editor::BundledLanguageFileExists);
     return ned::editor::ModeFromDefinition(definition);
 }
 
