@@ -287,6 +287,15 @@ namespace {
 } // namespace
 
 void Screen::Flush(ncplane* plane, ncplane* backingPlane) {
+    // Only cells that actually changed since the last Flush() need a real
+    // ncplane_put*_yx call -- notcurses_render() still diffs the plane
+    // against the terminal itself below this, but building that full plane
+    // state every frame is its own real cost (14,400 calls at 160x45; see
+    // ROADMAP.md's "Dirty-region flush" entry). `dirty_` overrides the
+    // comparison the one time it would be wrong: the first Flush() against a
+    // brand-new Screen/plane pair, where `previousCells_`/`previousBacking_`
+    // don't reflect what (if anything) is actually on the real planes yet.
+    const bool fullRepaint = dirty_;
 
     // The backing layer first, so the text plane above has something to defer
     // to. Only its background is meaningful -- the glyph always comes from
@@ -294,8 +303,12 @@ void Screen::Flush(ncplane* plane, ncplane* backingPlane) {
     if (backingPlane != nullptr) {
         for (int y = 0; y < height_; ++y) {
             for (int x = 0; x < width_; ++x) {
-                const Cell& cell = backing_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) +
-                                            static_cast<std::size_t>(x)];
+                const std::size_t idx  = static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) +
+                                         static_cast<std::size_t>(x);
+                const Cell&       cell = backing_[idx];
+                if (!fullRepaint && cell == previousBacking_[idx]) {
+                    continue;
+                }
                 if (cell.background_color.kind == Color::Kind::Default) {
                     // Nothing here: stay out of the way entirely, so the
                     // terminal's own background still reaches a transparent
@@ -321,7 +334,11 @@ void Screen::Flush(ncplane* plane, ncplane* backingPlane) {
 
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
-            const Cell& cell = cells_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)];
+            const std::size_t idx  = static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x);
+            const Cell&       cell = cells_[idx];
+            if (!fullRepaint && cell == previousCells_[idx]) {
+                continue;
+            }
 
             // `inverted` swaps which Color goes to which Notcurses channel
             // rather than relying on a style bit -- Notcurses does have
@@ -360,6 +377,10 @@ void Screen::Flush(ncplane* plane, ncplane* backingPlane) {
             ncplane_putstr_yx(plane, y, x, cell.character.c_str());
         }
     }
+
+    previousCells_   = cells_;
+    previousBacking_ = backing_;
+    dirty_           = false;
 }
 
 } // namespace ned::ui
