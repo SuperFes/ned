@@ -462,14 +462,14 @@ ordinary click) or `BufferView::ForwardMouseWhileSiblingDrags` (a real drop)).
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
-- [ ] **A real transient menu** — reword shipped (`git log --grep=vcs-reword-commit`:
-      `vcs-reword-commit`/`C-c v r`/`VcsPanelAction::RewordCommit`, `commit --amend --only`
-      so it never re-stages, unlike amend). Still open: `c` stops committing immediately and
-      instead pops a small lettered menu (create/amend/extend/reword); closest to real
-      Magit, but changes `c`'s existing behavior (`VcsPanelTest.cpp`'s own `'c'` test) and
-      needs a new small popup/menu mechanism this panel doesn't have today (it has no
-      `OverlayHost`/`ListPopup` access — see `VcsPanel::SetOnContextMenuRequest`'s own doc
-      comment on why that's routed out to `main.cpp` instead).
+
+Shipped, two slugs for `git log --grep=`: `vcs-reword-commit` (`commit --amend --only`,
+never re-stages, unlike amend) and the transient commit menu (`VcsPanel::
+SetOnCommitMenuRequest`, mirroring `SetOnContextMenuRequest`'s own "no `OverlayHost`/
+`ListPopup` access, report to `main.cpp`" shape -- `c` now opens a small numbered menu
+over create/amend/extend/reword instead of committing directly; `C`/`e`/`r`/`w`/`n` are
+untouched quick keys for the non-default cases).
+
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up
