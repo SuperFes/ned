@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-196 bindings.
+198 bindings.
 
 ## `ned/backward-char`
 
@@ -620,6 +620,14 @@ Enable/disable handing a rename's edits to an editable review multibuffer before
 ## `ned/set-repl-command`
 
 Set the command run-repl spawns (on a real pty, its own interactive CLI REPL shown as-is) for a REPL name: (name argv), e.g. (ned/set-repl-command "python" ["python3" "-i"]) or (ned/set-repl-command "php" ["php" "-a"]). Same argv shape as ned/set-task-command; an empty argv clears the configured command for name. The built-in Janet REPL (toggle-janet-repl, C-c j) needs no configuration -- it evaluates in-process against the running editor's own environment, not a subprocess.
+
+## `ned/set-ruler-column`
+
+Set which 0-indexed buffer column the ruler marks (default 80). Has no effect while the ruler is disabled (ned/set-ruler-enabled).
+
+## `ned/set-ruler-enabled`
+
+Enable/disable the print-margin/fill-column ruler: a single-column background wash spanning every visible row, marking ned/set-ruler-column's own column. Default true. Themed via the "buffer.ruler" surface (ned/theme-surface).
 
 ## `ned/set-save-place`
 

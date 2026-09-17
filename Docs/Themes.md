@@ -382,7 +382,7 @@ it falls outside the widget's own box, and it never darkens the cells the overla
 covers. `radius` softens its edge; `0` is a hard-edged offset block. The colour goes through
 the same parser paint stops do, so `$slot` references and `#rrggbbaa` both work -- a shadow
 tinted toward the theme's own background reads better than flat black on some themes. Names: `buffer`, `buffer.current_line`,
-`buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab.strip`, `tab`,
+`buffer.ruler`, `buffer.selection`, `buffer.search`, `modeline`, `modeline.focused`, `tab.strip`, `tab`,
 `tab.active`, `tab.active.focused`, `modeline.activity`, `echo`, `scrollbar`, `panel`,
 `popup`, `scrim`.
 
@@ -419,6 +419,15 @@ a snippet field, a diff tint and a conflict wash all still win against it, and t
 current-line tint composites on top of it rather than instead of it. Its derived default is
 a flat theme background, so leaving it alone changes nothing; a gradient here is a body
 wash the whole viewport is normalised against, not one ramp per line.
+
+`buffer.ruler` is the print-margin/fill-column indicator: a single-column background wash
+spanning every visible row, marking `ned/set-ruler-column`'s own buffer column (default 80,
+on by default -- `ned/set-ruler-enabled` turns it off). It composites the same way
+`buffer.current_line` does -- behind the glyphs, yielding to anything louder that already
+owns a cell -- and the two stack where a row and the ruler's column cross rather than one
+clobbering the other. Its default fill is the theme's own `indent_guide_foreground` at a
+modest alpha: a structural reference mark in the same visual register as an indent guide,
+not a "something is happening here" signal like the current line or a diff tint.
 
 `buffer.selection` and `buffer.search` are sampled across the whole viewport rather than
 across each run of matching cells, so a gradient one reads as a single wash that the

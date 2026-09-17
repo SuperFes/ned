@@ -41,6 +41,7 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/RenameReviewSettings.h"
+#include "Editor/RulerSettings.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/SearchEverywhereGestureSettings.h"
 #include "Editor/SearchEverywhereTextSearchSettings.h"
@@ -14866,6 +14867,85 @@ TEST_CASE("The current line still reads on top of a themed buffer fill", "[Buffe
     // works out to, the two must not be the same colour -- that difference IS
     // the current-line highlight.
     REQUIRE(shownAt(15, 0) != shownAt(15, 1));
+}
+
+// print-margin-fill-column-indicator follow-up.
+TEST_CASE("The ruler marks its configured column across every visible row", "[BufferView]") {
+    struct SurfaceGuard {
+        ~SurfaceGuard() {
+            ned::ui::ClearSurfaceOverrides();
+            ned::editor::SetRulerEnabled(true);
+            ned::editor::SetRulerColumn(80);
+        }
+    } const guard;
+
+    ned::ui::Surface ruler;
+    ruler.fill = ned::ui::SolidPaint(ned::ui::Color::RGB(0x804020));
+    ned::ui::SetSurfaceOverride("buffer.ruler", ruler);
+    ned::editor::SetRulerColumn(10);
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("short\nlines\nhere\n");
+
+    ned::ui::BufferView view   = fixture.View();
+    const int           gutter = GutterWidth(3);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = gutter + 19, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(gutter + 20, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = gutter + 19, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    const auto shownAt = [&](int x, int y) {
+        const ned::ui::Color text = screen.PixelAt(x, y).background_color;
+        return text.kind == ned::ui::Color::Kind::Default ? screen.BackingAt(x, y).background_color : text;
+    };
+
+    // Every row (including one whose own real content is shorter than
+    // column 10 -- the ruler doesn't need real text under it) carries the
+    // ruler at the same screen column, distinct from its own neighbours.
+    for (int row = 0; row < 3; ++row) {
+        INFO("row " << row);
+        REQUIRE(shownAt(gutter + 9, row) != shownAt(gutter + 10, row));
+        REQUIRE(shownAt(gutter + 11, row) != shownAt(gutter + 10, row));
+    }
+    // And the same colour at every row -- one continuous line, not a
+    // per-row recompute that happens to differ.
+    REQUIRE(shownAt(gutter + 10, 0) == shownAt(gutter + 10, 1));
+    REQUIRE(shownAt(gutter + 10, 1) == shownAt(gutter + 10, 2));
+}
+
+TEST_CASE("The ruler is a no-op when disabled", "[BufferView]") {
+    struct SurfaceGuard {
+        ~SurfaceGuard() {
+            ned::ui::ClearSurfaceOverrides();
+            ned::editor::SetRulerEnabled(true);
+            ned::editor::SetRulerColumn(80);
+        }
+    } const guard;
+
+    ned::ui::Surface ruler;
+    ruler.fill = ned::ui::SolidPaint(ned::ui::Color::RGB(0x804020));
+    ned::ui::SetSurfaceOverride("buffer.ruler", ruler);
+    ned::editor::SetRulerColumn(10);
+    ned::editor::SetRulerEnabled(false);
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("short\n");
+
+    ned::ui::BufferView view   = fixture.View();
+    const int           gutter = GutterWidth(1);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = gutter + 19, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(gutter + 20, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = gutter + 19, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    const auto shownAt = [&](int x, int y) {
+        const ned::ui::Color text = screen.PixelAt(x, y).background_color;
+        return text.kind == ned::ui::Color::Kind::Default ? screen.BackingAt(x, y).background_color : text;
+    };
+    // Disabled: the configured column reads the same as its own
+    // neighbours -- no distinct ruler tint applied anywhere.
+    REQUIRE(shownAt(gutter + 10, 0) == shownAt(gutter + 9, 0));
+    REQUIRE(shownAt(gutter + 10, 0) == shownAt(gutter + 11, 0));
 }
 
 TEST_CASE("The current-line highlight covers every row a wrapped line occupies", "[BufferView]") {
