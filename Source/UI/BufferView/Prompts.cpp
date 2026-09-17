@@ -1395,6 +1395,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::VcsCommitAmend:
             BeginVcsCommitMessage(/*amend=*/true);
             return;
+        case editor::InteractiveRequest::VcsExtendCommit:
+            ExtendCommit();
+            return;
         case editor::InteractiveRequest::CommitFinish:
             FinishVcsCommitMessage();
             return;

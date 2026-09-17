@@ -332,3 +332,48 @@ TEST_CASE("AbortVcsCommitMessage clears the pending amend flag for the next plai
     view.FinishVcsCommitMessageForTesting();
     REQUIRE(fixture.statusMessage == "vcs commit: commit not supported by this provider");
 }
+
+// VcsPanel commit-variants follow-up: ExtendCommit's own synchronous guard
+// paths -- unlike Commit/AmendCommit it never opens a buffer at all, so
+// there's no *ForTesting seam split into Begin/Finish, just one call.
+
+TEST_CASE("ExtendCommit without a wired Runner reports and touches no buffer", "[BufferView][Vcs]") {
+    Fixture    fixture;
+    BufferView view = fixture.View();
+
+    view.ExtendCommitForTesting();
+
+    REQUIRE(fixture.statusMessage == "no vcs runner configured");
+    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr);
+}
+
+TEST_CASE("ExtendCommit with no vcs provider reports the runner's own error", "[BufferView][Vcs]") {
+    Fixture          fixture;
+    ProjectRootGuard rootGuard("/repo");
+    ned::editor::vcs::ClearRegistry(); // no provider registered at all
+    ned::ui::EventLoop          eventLoop;
+    ned::editor::vcs::Runner runner(eventLoop);
+    BufferView                  view = fixture.View();
+    view.SetVcsRunner(&runner);
+
+    view.ExtendCommitForTesting();
+
+    REQUIRE(fixture.statusMessage == "vcs extend commit: no vcs provider registered for this project");
+    REQUIRE(fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath()) == nullptr); // no buffer, ever
+}
+
+TEST_CASE("ExtendCommit with a provider missing extend-commit reports its own 'not supported' answer",
+          "[BufferView][Vcs]") {
+    Fixture          fixture;
+    ProjectRootGuard rootGuard("/repo");
+    ned::editor::vcs::ClearRegistry();
+    ned::editor::vcs::RegisterProvider("fake", std::make_unique<DetectOnlyProvider>());
+    ned::ui::EventLoop          eventLoop;
+    ned::editor::vcs::Runner runner(eventLoop);
+    BufferView                  view = fixture.View();
+    view.SetVcsRunner(&runner);
+
+    view.ExtendCommitForTesting();
+
+    REQUIRE(fixture.statusMessage == "vcs extend commit: extend commit not supported by this provider");
+}

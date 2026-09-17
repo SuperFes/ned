@@ -114,6 +114,11 @@
 (defn previous-commit-message-argv [root]
   ["git" "-C" root "log" "-1" "--pretty=%B" "HEAD"])
 
+## VcsPanel commit-variants follow-up: Magit's own "extend" -- fold whatever
+## is staged into HEAD, keeping its message verbatim, no buffer at all.
+(defn extend-commit-argv [root]
+  ["git" "-C" root "commit" "--amend" "--no-edit"])
+
 (defn branch-list-argv [root]
   ["git" "-C" root "branch" "--list" "--no-color"])
 
@@ -369,6 +374,7 @@
    :commit-argv commit-argv
    :amend-commit-argv amend-commit-argv
    :previous-commit-message-argv previous-commit-message-argv
+   :extend-commit-argv extend-commit-argv
    :branch-list-argv branch-list-argv
    :parse-branch-list parse-branch-list
    :branch-switch-argv branch-switch-argv

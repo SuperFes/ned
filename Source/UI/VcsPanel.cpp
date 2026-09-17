@@ -43,10 +43,10 @@ namespace {
     // resizes as the user arrows between rows of different kinds or as
     // ahead/behind changes underneath them. kRowFooterLines(4) is a file
     // entry's own worst case (open/mark/stage-or-unstage/discard);
-    // kRootFooterLines(8) is pull+push+commit+amend+stash+switch+
+    // kRootFooterLines(9) is pull+push+commit+amend+extend+stash+switch+
     // new-branch+fetch.
     constexpr int kRowFooterLines  = 4;
-    constexpr int kRootFooterLines = 8;
+    constexpr int kRootFooterLines = 9;
     constexpr int kFooterLines     = kRowFooterLines + 1 /* separator */ + kRootFooterLines;
 
     constexpr char32_t kCollapsedTriangle = U'▸'; // matches ProjectSidebar's own collapsed-strip hint glyph
@@ -572,14 +572,17 @@ std::vector<std::string> VcsPanel::RootFooterLines() const {
     // commit -- the same capital-letter-variant precedent pull/push (F/P
     // below) and hunk-staging's own uppercase-reverse already establish.
     lines[3] = "C amend";
-    lines[4] = "z stash";
-    lines[5] = "w switch";
-    lines[6] = "n new branch";
+    // VcsPanel commit-variants follow-up: "e" for extend, Magit's own
+    // mnemonic for the same operation.
+    lines[4] = "e extend";
+    lines[5] = "z stash";
+    lines[6] = "w switch";
+    lines[7] = "n new branch";
     // Fetch has no matching "is there something to fetch" fact this panel
     // tracks (unlike push/pull, it needs no upstream to mean something --
     // it just refreshes the remote-tracking refs), so it's always offered,
-    // like commit/amend/stash/switch/new-branch above.
-    lines[7] = "f fetch";
+    // like commit/amend/extend/stash/switch/new-branch above.
+    lines[8] = "f fetch";
     return lines;
 }
 
@@ -1231,7 +1234,8 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
             RunRemoteAction(RemoteAction::Push);
             return true;
         }
-        if (chord->Codepoint == U'c' || chord->Codepoint == U'C' || chord->Codepoint == U'w' || chord->Codepoint == U'n') {
+        if (chord->Codepoint == U'c' || chord->Codepoint == U'C' || chord->Codepoint == U'e' || chord->Codepoint == U'w' ||
+            chord->Codepoint == U'n') {
             // ReturnFocus() *before* firing onAction_ -- WindowManager::
             // RequestVcsPanelAction resolves "the focused pane"
             // (RequestOpenBinaryFile's own shape), and while this widget
@@ -1246,6 +1250,7 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
             if (onAction_) {
                 onAction_(chord->Codepoint == U'c'   ? VcsPanelAction::Commit
                           : chord->Codepoint == U'C' ? VcsPanelAction::AmendCommit
+                          : chord->Codepoint == U'e' ? VcsPanelAction::ExtendCommit
                           : chord->Codepoint == U'w' ? VcsPanelAction::SwitchBranch
                                                      : VcsPanelAction::CreateBranch);
             }

@@ -455,6 +455,10 @@ class BufferView : public Widget {
     void BeginVcsCommitMessageForTesting(bool amend = false);
     void FinishVcsCommitMessageForTesting();
     void AbortVcsCommitMessageForTesting();
+    // VcsPanel commit-variants follow-up: ExtendCommit is already fully
+    // synchronous for its own guard paths (no runner/no provider), same
+    // reasoning as the trio above.
+    void ExtendCommitForTesting();
     // Hunk-navigation follow-up: same seam again, for JumpToNextHunk/
     // JumpToPreviousHunk -- both are fully synchronous (a plain search over
     // diffHunkStartLines_, no Runner round trip), so these wrappers need
@@ -2921,6 +2925,12 @@ class BufferView : public Widget {
     // CloseVcsCommitMessageBuffer below.
     void FinishVcsCommitMessage();
     void AbortVcsCommitMessage();
+    // VcsPanel commit-variants follow-up: Magit's own "extend" --
+    // InteractiveRequest::VcsExtendCommit's entry point. No buffer at all
+    // (unlike Commit/AmendCommit): fires Runner::RequestExtendCommit
+    // directly and reports its summary/error on the status line, same
+    // fire-and-forget shape FinishVcsCommitMessage's own onSuccess uses.
+    void ExtendCommit();
     // Shared by both: closes the commit-message buffer via CloseBufferNow
     // (bypassing RequestCloseBuffer's "unsaved changes?" prompt -- finishing
     // or aborting the commit already IS the user's confirmation) and
