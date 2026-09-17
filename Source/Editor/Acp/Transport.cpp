@@ -87,12 +87,12 @@ Transport::Transport(const std::vector<std::string>& argv, bool captureStderr) :
 Transport::Transport(int readFd, int writeFd, pid_t pid) noexcept : child_(readFd, writeFd, pid) {
 }
 
-void Transport::WriteMessage(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {
+void Transport::WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {
     child_.WriteAll(jsonPayload, stallTimeout);
     child_.WriteAll("\n", stallTimeout);
 }
 
-std::optional<std::string> Transport::ReadMessage(std::chrono::milliseconds stallTimeout) const {
+std::optional<std::string> Transport::ReadFrame(std::chrono::milliseconds stallTimeout) const {
     std::string line;
     if (!ReadLine(child_, line, stallTimeout)) {
         return std::nullopt;
