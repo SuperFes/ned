@@ -88,7 +88,7 @@ void Feed(Engine& engine, Buffer& buffer, const std::string& keys) {
 } // namespace
 
 TEST_CASE("h/j/k/l move point through the engine", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abc\ndef\n");
+    Buffer buffer = MakeBuffer("abc\ndef\n");
     Engine engine;
 
     Feed(engine, buffer, "ll");
@@ -98,7 +98,7 @@ TEST_CASE("h/j/k/l move point through the engine", "[Engine]") {
 }
 
 TEST_CASE("dw deletes a word and stores it in the unnamed register", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar baz");
+    Buffer buffer = MakeBuffer("foo bar baz");
     Engine engine;
 
     Feed(engine, buffer, "dw");
@@ -107,7 +107,7 @@ TEST_CASE("dw deletes a word and stores it in the unnamed register", "[Engine]")
 }
 
 TEST_CASE("dd deletes the whole current line, linewise", "[Engine]") {
-    Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
+    Buffer buffer = MakeBuffer("one\ntwo\nthree\n");
     Engine engine;
 
     Feed(engine, buffer, "jdd");
@@ -115,7 +115,7 @@ TEST_CASE("dd deletes the whole current line, linewise", "[Engine]") {
 }
 
 TEST_CASE("3dd deletes three lines", "[Engine]") {
-    Buffer    buffer = MakeBuffer("one\ntwo\nthree\nfour\n");
+    Buffer buffer = MakeBuffer("one\ntwo\nthree\nfour\n");
     Engine engine;
 
     Feed(engine, buffer, "3dd");
@@ -123,7 +123,7 @@ TEST_CASE("3dd deletes three lines", "[Engine]") {
 }
 
 TEST_CASE("ciw changes the word under point and enters Insert mode", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar baz");
+    Buffer buffer = MakeBuffer("foo bar baz");
     Engine engine;
 
     buffer.SetPoint(5); // inside "bar"
@@ -136,7 +136,7 @@ TEST_CASE("ciw changes the word under point and enters Insert mode", "[Engine]")
 }
 
 TEST_CASE("di( deletes inside parens", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo(bar(baz)qux)end");
+    Buffer buffer = MakeBuffer("foo(bar(baz)qux)end");
     Engine engine;
 
     buffer.SetPoint(9); // inside "baz"
@@ -145,7 +145,7 @@ TEST_CASE("di( deletes inside parens", "[Engine]") {
 }
 
 TEST_CASE("ds strips an enclosing delimiter pair", "[Engine]") {
-    Buffer    buffer = MakeBuffer("x = \"hello\" + 1");
+    Buffer buffer = MakeBuffer("x = \"hello\" + 1");
     Engine engine;
 
     buffer.SetPoint(6); // inside "hello"
@@ -155,7 +155,7 @@ TEST_CASE("ds strips an enclosing delimiter pair", "[Engine]") {
 }
 
 TEST_CASE("cs changes an enclosing delimiter pair and pads an opening-bracket target", "[Engine]") {
-    Buffer    buffer = MakeBuffer("say \"hi\" now");
+    Buffer buffer = MakeBuffer("say \"hi\" now");
     Engine engine;
 
     buffer.SetPoint(6);
@@ -164,7 +164,7 @@ TEST_CASE("cs changes an enclosing delimiter pair and pads an opening-bracket ta
 }
 
 TEST_CASE("ysiw surrounds the word under point with the given delimiter", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar baz");
+    Buffer buffer = MakeBuffer("foo bar baz");
     Engine engine;
 
     buffer.SetPoint(5); // inside "bar"
@@ -174,7 +174,7 @@ TEST_CASE("ysiw surrounds the word under point with the given delimiter", "[Engi
 }
 
 TEST_CASE("yss surrounds the current line's content, skipping only leading indentation", "[Engine]") {
-    Buffer    buffer = MakeBuffer("  hello world  \n");
+    Buffer buffer = MakeBuffer("  hello world  \n");
     Engine engine;
 
     buffer.SetPoint(2);
@@ -183,7 +183,7 @@ TEST_CASE("yss surrounds the current line's content, skipping only leading inden
 }
 
 TEST_CASE("Visual S surrounds the selected charwise range, padding an opening-bracket target", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abcdef");
+    Buffer buffer = MakeBuffer("abcdef");
     Engine engine;
 
     Feed(engine, buffer, "vllS(");
@@ -192,7 +192,7 @@ TEST_CASE("Visual S surrounds the selected charwise range, padding an opening-br
 }
 
 TEST_CASE("yy then p yanks and pastes a whole line below", "[Engine]") {
-    Buffer    buffer = MakeBuffer("one\ntwo\n");
+    Buffer buffer = MakeBuffer("one\ntwo\n");
     Engine engine;
 
     Feed(engine, buffer, "yyp");
@@ -200,7 +200,7 @@ TEST_CASE("yy then p yanks and pastes a whole line below", "[Engine]") {
 }
 
 TEST_CASE("yw then P pastes charwise text before point", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar");
+    Buffer buffer = MakeBuffer("foo bar");
     Engine engine;
 
     Feed(engine, buffer, "yw");
@@ -210,7 +210,7 @@ TEST_CASE("yw then P pastes charwise text before point", "[Engine]") {
 }
 
 TEST_CASE("x deletes a character forward and u undoes it", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abc");
+    Buffer buffer = MakeBuffer("abc");
     Engine engine;
 
     Feed(engine, buffer, "x");
@@ -220,7 +220,7 @@ TEST_CASE("x deletes a character forward and u undoes it", "[Engine]") {
 }
 
 TEST_CASE("A appends at end of line and o opens a new line below", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abc");
+    Buffer buffer = MakeBuffer("abc");
     Engine engine;
 
     Feed(engine, buffer, "A123\x1b");
@@ -231,7 +231,7 @@ TEST_CASE("A appends at end of line and o opens a new line below", "[Engine]") {
 }
 
 TEST_CASE("O opens a new line above", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abc");
+    Buffer buffer = MakeBuffer("abc");
     Engine engine;
 
     Feed(engine, buffer, "Onew\x1b");
@@ -239,7 +239,7 @@ TEST_CASE("O opens a new line above", "[Engine]") {
 }
 
 TEST_CASE("Dot repeats the last change", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar baz qux");
+    Buffer buffer = MakeBuffer("foo bar baz qux");
     Engine engine;
 
     Feed(engine, buffer, "dw");
@@ -249,7 +249,7 @@ TEST_CASE("Dot repeats the last change", "[Engine]") {
 }
 
 TEST_CASE("A count typed before dot overrides the recorded change's own count", "[Engine]") {
-    Buffer    buffer = MakeBuffer("aaaa bbbb cccc dddd eeee ffff");
+    Buffer buffer = MakeBuffer("aaaa bbbb cccc dddd eeee ffff");
     Engine engine;
 
     Feed(engine, buffer, "dw"); // deletes one word ("aaaa ")
@@ -259,7 +259,7 @@ TEST_CASE("A count typed before dot overrides the recorded change's own count", 
 }
 
 TEST_CASE("An override count typed before dot becomes the new recorded count for a later bare dot", "[Engine]") {
-    Buffer    buffer = MakeBuffer("a b c d e f g h i j");
+    Buffer buffer = MakeBuffer("a b c d e f g h i j");
     Engine engine;
 
     Feed(engine, buffer, "dw"); // deletes "a "
@@ -270,7 +270,7 @@ TEST_CASE("An override count typed before dot becomes the new recorded count for
 }
 
 TEST_CASE("Dot repeats an insert-causing change verbatim", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo\nbar\n");
+    Buffer buffer = MakeBuffer("foo\nbar\n");
     Engine engine;
 
     Feed(engine, buffer, "AX\x1b");
@@ -280,7 +280,7 @@ TEST_CASE("Dot repeats an insert-causing change verbatim", "[Engine]") {
 }
 
 TEST_CASE("Visual mode d deletes the selected inclusive range", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abcdef");
+    Buffer buffer = MakeBuffer("abcdef");
     Engine engine;
 
     Feed(engine, buffer, "vlld"); // select 'a','b','c' then delete
@@ -289,7 +289,7 @@ TEST_CASE("Visual mode d deletes the selected inclusive range", "[Engine]") {
 }
 
 TEST_CASE("Visual line mode d deletes whole lines", "[Engine]") {
-    Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
+    Buffer buffer = MakeBuffer("one\ntwo\nthree\n");
     Engine engine;
 
     Feed(engine, buffer, "Vjd");
@@ -297,7 +297,7 @@ TEST_CASE("Visual line mode d deletes whole lines", "[Engine]") {
 }
 
 TEST_CASE("Named register a stores and pastes independently of unnamed", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar");
+    Buffer buffer = MakeBuffer("foo bar");
     Engine engine;
 
     Feed(engine, buffer, "\"ayw"); // yank "foo " into register a
@@ -308,7 +308,7 @@ TEST_CASE("Named register a stores and pastes independently of unnamed", "[Engin
 }
 
 TEST_CASE("Search with / finds the next match and n repeats", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar foo baz foo");
+    Buffer buffer = MakeBuffer("foo bar foo baz foo");
     Engine engine;
 
     Feed(engine, buffer, "/foo\n");
@@ -322,7 +322,7 @@ TEST_CASE("Search with / finds the next match and n repeats", "[Engine]") {
 }
 
 TEST_CASE("Search with / accepts vim's own default-magic escaping for grouping/quantifiers", "[Engine]") {
-    Buffer    buffer = MakeBuffer("xx foobar yy foobarbar zz");
+    Buffer buffer = MakeBuffer("xx foobar yy foobarbar zz");
     Engine engine;
 
     // \(foo\|baz\)\(bar\)\+ -- vim-magic source; real PCRE2 spelling would be
@@ -334,7 +334,7 @@ TEST_CASE("Search with / accepts vim's own default-magic escaping for grouping/q
 }
 
 TEST_CASE(":s accepts vim's own default-magic escaping for grouping/quantifiers", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foobar\n");
+    Buffer buffer = MakeBuffer("foobar\n");
     Engine engine;
 
     Feed(engine, buffer, ":s/\\(foo\\)\\(bar\\)/\\2\\1/\n");
@@ -342,7 +342,7 @@ TEST_CASE(":s accepts vim's own default-magic escaping for grouping/quantifiers"
 }
 
 TEST_CASE(":g accepts vim's own default-magic escaping for grouping/quantifiers", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo\nbar\nfoobar\nbaz\n");
+    Buffer buffer = MakeBuffer("foo\nbar\nfoobar\nbaz\n");
     Engine engine;
 
     Feed(engine, buffer, ":g/foo\\|baz/d\n");
@@ -350,7 +350,7 @@ TEST_CASE(":g accepts vim's own default-magic escaping for grouping/quantifiers"
 }
 
 TEST_CASE(":s accepts vim's own \\{n,m} interval quantifier", "[Engine]") {
-    Buffer    buffer = MakeBuffer("aaaa\n");
+    Buffer buffer = MakeBuffer("aaaa\n");
     Engine engine;
 
     Feed(engine, buffer, ":s/a\\{2,3}/X/\n");
@@ -358,7 +358,7 @@ TEST_CASE(":s accepts vim's own \\{n,m} interval quantifier", "[Engine]") {
 }
 
 TEST_CASE(":d deletes the addressed range", "[Engine]") {
-    Buffer    buffer = MakeBuffer("one\ntwo\nthree\nfour\n");
+    Buffer buffer = MakeBuffer("one\ntwo\nthree\nfour\n");
     Engine engine;
 
     Feed(engine, buffer, ":2,3d\n");
@@ -366,7 +366,7 @@ TEST_CASE(":d deletes the addressed range", "[Engine]") {
 }
 
 TEST_CASE(":s substitutes the first match per line without /g", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo foo\nfoo foo\n");
+    Buffer buffer = MakeBuffer("foo foo\nfoo foo\n");
     Engine engine;
 
     Feed(engine, buffer, ":%s/foo/bar/\n");
@@ -374,7 +374,7 @@ TEST_CASE(":s substitutes the first match per line without /g", "[Engine]") {
 }
 
 TEST_CASE(":%s with /g substitutes every match", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo foo\n");
+    Buffer buffer = MakeBuffer("foo foo\n");
     Engine engine;
 
     Feed(engine, buffer, ":%s/foo/bar/g\n");
@@ -382,7 +382,7 @@ TEST_CASE(":%s with /g substitutes every match", "[Engine]") {
 }
 
 TEST_CASE("A bare :42 jumps to that line", "[Engine]") {
-    Buffer    buffer = MakeBuffer("a\nb\nc\nd\ne\n");
+    Buffer buffer = MakeBuffer("a\nb\nc\nd\ne\n");
     Engine engine;
 
     Feed(engine, buffer, ":3\n");
@@ -390,7 +390,7 @@ TEST_CASE("A bare :42 jumps to that line", "[Engine]") {
 }
 
 TEST_CASE("Macro recording and playback via qX ... q and @X", "[Engine]") {
-    Buffer    buffer = MakeBuffer("a\na\na\n");
+    Buffer buffer = MakeBuffer("a\na\na\n");
     Engine engine;
 
     Feed(engine, buffer, "qaA!\x1bjq"); // record: append "!" to line, move down
@@ -402,7 +402,7 @@ TEST_CASE("Macro recording and playback via qX ... q and @X", "[Engine]") {
 }
 
 TEST_CASE("Hand-edited register text drives @ playback, not just qX...q's own recording", "[Engine]") {
-    Buffer    buffer = MakeBuffer("a\nA ? ESC\n");
+    Buffer buffer = MakeBuffer("a\nA ? ESC\n");
     Engine engine;
 
     // Yanks the second line's own literal text ("A ? ESC", valid Emacs kbd notation for
@@ -415,7 +415,7 @@ TEST_CASE("Hand-edited register text drives @ playback, not just qX...q's own re
 }
 
 TEST_CASE("Uppercase-name recording appends onto the register's existing text", "[Engine]") {
-    Buffer    buffer = MakeBuffer("a\n");
+    Buffer buffer = MakeBuffer("a\n");
     Engine engine;
 
     Feed(engine, buffer, "qaA1\x1bq"); // record 'a': append "1"
@@ -428,7 +428,7 @@ TEST_CASE("Uppercase-name recording appends onto the register's existing text", 
 }
 
 TEST_CASE("Playing a register that isn't valid kbd notation reports an error instead of crashing", "[Engine]") {
-    Buffer    buffer = MakeBuffer("<not valid!\n");
+    Buffer buffer = MakeBuffer("<not valid!\n");
     Engine engine;
 
     Feed(engine, buffer, "\"ayy"); // yank a line that can't parse as a chord sequence
@@ -438,7 +438,7 @@ TEST_CASE("Playing a register that isn't valid kbd notation reports an error ins
 }
 
 TEST_CASE("gUU uppercases the current line", "[Engine]") {
-    Buffer    buffer = MakeBuffer("hello world");
+    Buffer buffer = MakeBuffer("hello world");
     Engine engine;
 
     Feed(engine, buffer, "gUU");
@@ -446,7 +446,7 @@ TEST_CASE("gUU uppercases the current line", "[Engine]") {
 }
 
 TEST_CASE("Marks: ma ... `a jumps back", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abcdefghij");
+    Buffer buffer = MakeBuffer("abcdefghij");
     Engine engine;
 
     Feed(engine, buffer, "llma");
@@ -457,7 +457,7 @@ TEST_CASE("Marks: ma ... `a jumps back", "[Engine]") {
 }
 
 TEST_CASE("`` toggles between the last two jump positions", "[Engine]") {
-    Buffer    buffer = MakeBuffer("a\nb\nc\nd\ne\n");
+    Buffer buffer = MakeBuffer("a\nb\nc\nd\ne\n");
     Engine engine;
 
     Feed(engine, buffer, "G"); // jump to the last line, recording the jump-back mark at 0
@@ -514,7 +514,7 @@ TEST_CASE("An uppercase mark set in one file signals a pending buffer jump when 
 
 TEST_CASE("An unset uppercase mark reports E20 like any other unset mark", "[Engine]") {
     ClearGlobalMarksForTesting();
-    Buffer    buffer = MakeBuffer("abcdefghij");
+    Buffer buffer = MakeBuffer("abcdefghij");
     Engine engine;
 
     Feed(engine, buffer, "`Z");
@@ -524,7 +524,7 @@ TEST_CASE("An unset uppercase mark reports E20 like any other unset mark", "[Eng
 }
 
 TEST_CASE("Lowercase marks don't leak across a buffer switch in the same pane", "[Engine]") {
-    Buffer    bufferA = MakeBuffer("abcdefghij");
+    Buffer bufferA = MakeBuffer("abcdefghij");
     Engine engine;
     Feed(engine, bufferA, "llma"); // mark 'a' at point 2 in bufferA
 
@@ -537,7 +537,7 @@ TEST_CASE("Lowercase marks don't leak across a buffer switch in the same pane", 
 }
 
 TEST_CASE("g; and g, walk the changelist back and forward through edit positions", "[Engine]") {
-    Buffer    buffer = MakeBuffer("aaaa\nbbbb\ncccc\ndddd\n");
+    Buffer buffer = MakeBuffer("aaaa\nbbbb\ncccc\ndddd\n");
     Engine engine;
 
     Feed(engine, buffer, "x");  // edit on line 0
@@ -563,7 +563,7 @@ TEST_CASE("g; and g, walk the changelist back and forward through edit positions
 }
 
 TEST_CASE("Consecutive edits on the same line collapse into one changelist entry", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abcabc\ndef\n");
+    Buffer buffer = MakeBuffer("abcabc\ndef\n");
     Engine engine;
 
     Feed(engine, buffer, "x");   // edit on line 0 at byte 0
@@ -577,7 +577,7 @@ TEST_CASE("Consecutive edits on the same line collapse into one changelist entry
 }
 
 TEST_CASE("C-o/C-i walk the jumplist back and forward through G/gg jumps", "[Engine]") {
-    Buffer    buffer = MakeBuffer("a\nb\nc\nd\ne\n");
+    Buffer buffer = MakeBuffer("a\nb\nc\nd\ne\n");
     Engine engine;
 
     const std::size_t start = buffer.Point();
@@ -603,7 +603,7 @@ TEST_CASE("C-o/C-i walk the jumplist back and forward through G/gg jumps", "[Eng
 }
 
 TEST_CASE("C-o records the live position on first use, like ``'s own toggle", "[Engine]") {
-    Buffer    buffer = MakeBuffer("a\nb\nc\nd\ne\n");
+    Buffer buffer = MakeBuffer("a\nb\nc\nd\ne\n");
     Engine engine;
 
     Feed(engine, buffer, "G");
@@ -619,7 +619,7 @@ TEST_CASE("C-o records the live position on first use, like ``'s own toggle", "[
 }
 
 TEST_CASE("A new jump after C-o truncates the jumplist's forward history", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abcdefghij");
+    Buffer buffer = MakeBuffer("abcdefghij");
     Engine engine;
 
     // marks a=1, b=2, c=3, d=4; back to point 0 to jump from.
@@ -644,7 +644,7 @@ TEST_CASE("A new jump after C-o truncates the jumplist's forward history", "[Eng
 }
 
 TEST_CASE("ge moves to the end of the previous word", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abc def");
+    Buffer buffer = MakeBuffer("abc def");
     Engine engine;
 
     Feed(engine, buffer, "$"); // land on 'f', end of "def"
@@ -654,7 +654,7 @@ TEST_CASE("ge moves to the end of the previous word", "[Engine]") {
 }
 
 TEST_CASE("dge deletes back to the end of the previous word", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abc def");
+    Buffer buffer = MakeBuffer("abc def");
     Engine engine;
 
     Feed(engine, buffer, "$dge");
@@ -662,7 +662,7 @@ TEST_CASE("dge deletes back to the end of the previous word", "[Engine]") {
 }
 
 TEST_CASE("gv reselects the last visual selection", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abcdef");
+    Buffer buffer = MakeBuffer("abcdef");
     Engine engine;
 
     Feed(engine, buffer, "vll\x1b"); // select 'a','b','c' then leave Visual via Escape
@@ -675,7 +675,7 @@ TEST_CASE("gv reselects the last visual selection", "[Engine]") {
 }
 
 TEST_CASE(":g/pat/d deletes every matching line", "[Engine]") {
-    Buffer    buffer = MakeBuffer("keep\nDROP\nkeep\nDROP\n");
+    Buffer buffer = MakeBuffer("keep\nDROP\nkeep\nDROP\n");
     Engine engine;
 
     Feed(engine, buffer, ":g/DROP/d\n");
@@ -683,7 +683,7 @@ TEST_CASE(":g/pat/d deletes every matching line", "[Engine]") {
 }
 
 TEST_CASE(":g!/pat/d deletes every non-matching line", "[Engine]") {
-    Buffer    buffer = MakeBuffer("keep\nDROP\nkeep\nDROP\n");
+    Buffer buffer = MakeBuffer("keep\nDROP\nkeep\nDROP\n");
     Engine engine;
 
     Feed(engine, buffer, ":g!/DROP/d\n");
@@ -691,7 +691,7 @@ TEST_CASE(":g!/pat/d deletes every non-matching line", "[Engine]") {
 }
 
 TEST_CASE(":g/pat/s applies a substitute on every matching line", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo one\nbar two\nfoo three\n");
+    Buffer buffer = MakeBuffer("foo one\nbar two\nfoo three\n");
     Engine engine;
 
     Feed(engine, buffer, ":g/foo/s/foo/baz/\n");
@@ -699,27 +699,27 @@ TEST_CASE(":g/pat/s applies a substitute on every matching line", "[Engine]") {
 }
 
 TEST_CASE("Visual block > shifts every touched line", "[Engine]") {
-    Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
+    Buffer buffer = MakeBuffer("one\ntwo\nthree\n");
     Engine engine;
 
     (void)engine.HandleKey(buffer, CtrlV()); // enter Visual Block at line 0
-    Feed(engine, buffer, "j>");        // extend down one line, shift right
+    Feed(engine, buffer, "j>");              // extend down one line, shift right
     const std::string indent = std::string(static_cast<std::size_t>(ned::editor::TabWidth()), ' ');
     REQUIRE(buffer.Text() == indent + "one\n" + indent + "two\nthree\n"); // third line untouched
 }
 
 TEST_CASE("Visual block U uppercases the selected columns only", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abcdef\nghijkl\n");
+    Buffer buffer = MakeBuffer("abcdef\nghijkl\n");
     Engine engine;
 
-    Feed(engine, buffer, "l");         // col 1
+    Feed(engine, buffer, "l");               // col 1
     (void)engine.HandleKey(buffer, CtrlV()); // enter Visual Block at (line 0, col 1)
-    Feed(engine, buffer, "jlU");       // extend down+right to (line 1, col 2), uppercase
+    Feed(engine, buffer, "jlU");             // extend down+right to (line 1, col 2), uppercase
     REQUIRE(buffer.Text() == "aBCdef\ngHIjkl\n");
 }
 
 TEST_CASE("tilde toggles case of count characters and advances", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abcDEF");
+    Buffer buffer = MakeBuffer("abcDEF");
     Engine engine;
 
     Feed(engine, buffer, "~");
@@ -731,7 +731,7 @@ TEST_CASE("tilde toggles case of count characters and advances", "[Engine]") {
 }
 
 TEST_CASE("tilde at end of line does not advance past the last character", "[Engine]") {
-    Buffer    buffer = MakeBuffer("ab");
+    Buffer buffer = MakeBuffer("ab");
     Engine engine;
 
     Feed(engine, buffer, "$~");
@@ -740,7 +740,7 @@ TEST_CASE("tilde at end of line does not advance past the last character", "[Eng
 }
 
 TEST_CASE("R enters Replace mode and overtypes characters", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abcdef");
+    Buffer buffer = MakeBuffer("abcdef");
     Engine engine;
 
     Feed(engine, buffer, "RXY");
@@ -752,7 +752,7 @@ TEST_CASE("R enters Replace mode and overtypes characters", "[Engine]") {
 }
 
 TEST_CASE("Insert-mode C-w deletes the word before point", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar");
+    Buffer buffer = MakeBuffer("foo bar");
     Engine engine;
 
     Feed(engine, buffer, "A"); // point at end of line, Insert mode
@@ -762,7 +762,7 @@ TEST_CASE("Insert-mode C-w deletes the word before point", "[Engine]") {
 }
 
 TEST_CASE("Insert-mode C-u deletes back to the start of the line", "[Engine]") {
-    Buffer    buffer = MakeBuffer("  indented text");
+    Buffer buffer = MakeBuffer("  indented text");
     Engine engine;
 
     Feed(engine, buffer, "A");
@@ -771,7 +771,7 @@ TEST_CASE("Insert-mode C-u deletes back to the start of the line", "[Engine]") {
 }
 
 TEST_CASE("Insert-mode C-t/C-d indent and outdent the current line", "[Engine]") {
-    Buffer    buffer = MakeBuffer("line");
+    Buffer buffer = MakeBuffer("line");
     Engine engine;
 
     Feed(engine, buffer, "i"); // point at 0, Insert mode
@@ -786,7 +786,7 @@ TEST_CASE("Insert-mode C-t/C-d indent and outdent the current line", "[Engine]")
 }
 
 TEST_CASE("Insert-mode C-r inserts a register's contents and stays in Insert mode", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar");
+    Buffer buffer = MakeBuffer("foo bar");
     Engine engine;
 
     Feed(engine, buffer, "\"ayw"); // yank "foo " into register a
@@ -804,7 +804,7 @@ TEST_CASE("Insert-mode Ctrl-chords don't leak into ordinary typing/replay", "[En
     // session is live -- HandleInsertModeChord returning false is the caller's (real
     // BufferView's) cue to fall through, but a chord with no vim-insert binding at all
     // (like C-a) should still just return false here, unconsumed and unmutating.
-    Buffer    buffer = MakeBuffer("text");
+    Buffer buffer = MakeBuffer("text");
     Engine engine;
 
     Feed(engine, buffer, "A");
@@ -829,7 +829,7 @@ std::size_t PointLine(Buffer& buffer) {
 } // namespace
 
 TEST_CASE("C-d/C-u scroll point by a half page", "[Engine]") {
-    Buffer    buffer = MakeNumberedLineBuffer(40);
+    Buffer buffer = MakeNumberedLineBuffer(40);
     Engine engine;
     engine.SetViewport(0, 10); // half page == 5 lines
 
@@ -844,7 +844,7 @@ TEST_CASE("C-d/C-u scroll point by a half page", "[Engine]") {
 }
 
 TEST_CASE("C-f/C-b scroll point by a full page", "[Engine]") {
-    Buffer    buffer = MakeNumberedLineBuffer(40);
+    Buffer buffer = MakeNumberedLineBuffer(40);
     Engine engine;
     engine.SetViewport(0, 10);
 
@@ -856,7 +856,7 @@ TEST_CASE("C-f/C-b scroll point by a full page", "[Engine]") {
 }
 
 TEST_CASE("zz/zt/zb request an explicit topLine_ recenter", "[Engine]") {
-    Buffer    buffer = MakeNumberedLineBuffer(40);
+    Buffer buffer = MakeNumberedLineBuffer(40);
     Engine engine;
     engine.SetViewport(0, 10);
     buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(20, 0, 1));
@@ -873,7 +873,7 @@ TEST_CASE("zz/zt/zb request an explicit topLine_ recenter", "[Engine]") {
 }
 
 TEST_CASE("C-e/C-y scroll the viewport without moving point", "[Engine]") {
-    Buffer    buffer = MakeNumberedLineBuffer(40);
+    Buffer buffer = MakeNumberedLineBuffer(40);
     Engine engine;
     engine.SetViewport(5, 10);
     buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(7, 0, 1));
@@ -932,7 +932,7 @@ TEST_CASE("d]c does not request hunk navigation (not an operator-pending motion)
 }
 
 TEST_CASE("ZZ saves and requests CloseWindow", "[Engine]") {
-    Buffer    buffer = MakeBuffer("content\n");
+    Buffer buffer = MakeBuffer("content\n");
     Engine engine;
     buffer.SetPath(std::filesystem::temp_directory_path() / "ned_vimengine_test_zz.txt");
 
@@ -943,7 +943,7 @@ TEST_CASE("ZZ saves and requests CloseWindow", "[Engine]") {
 }
 
 TEST_CASE("ZQ requests CloseWindowForced without saving", "[Engine]") {
-    Buffer    buffer = MakeBuffer("content\n");
+    Buffer buffer = MakeBuffer("content\n");
     Engine engine;
 
     Feed(engine, buffer, "ZQ");
@@ -1164,7 +1164,7 @@ TEST_CASE("C-w does not fall through to the global keymap under Vim mode", "[Eng
 }
 
 TEST_CASE("gJ joins without inserting a space", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo\nbar\n");
+    Buffer buffer = MakeBuffer("foo\nbar\n");
     Engine engine;
 
     Feed(engine, buffer, "g");
@@ -1173,7 +1173,7 @@ TEST_CASE("gJ joins without inserting a space", "[Engine]") {
 }
 
 TEST_CASE("gi resumes Insert where it was last exited", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abcdef");
+    Buffer buffer = MakeBuffer("abcdef");
     Engine engine;
 
     Feed(engine, buffer, "llli"); // point at 3, enter Insert
@@ -1190,7 +1190,7 @@ TEST_CASE("gi resumes Insert where it was last exited", "[Engine]") {
 }
 
 TEST_CASE("C-a increments the number under/after point", "[Engine]") {
-    Buffer    buffer = MakeBuffer("count: 41");
+    Buffer buffer = MakeBuffer("count: 41");
     Engine engine;
 
     (void)engine.HandleKey(buffer, Ctrl(U'a'));
@@ -1198,7 +1198,7 @@ TEST_CASE("C-a increments the number under/after point", "[Engine]") {
 }
 
 TEST_CASE("C-x decrements the number under/after point", "[Engine]") {
-    Buffer    buffer = MakeBuffer("count: 41");
+    Buffer buffer = MakeBuffer("count: 41");
     Engine engine;
 
     (void)engine.HandleKey(buffer, Ctrl(U'x'));
@@ -1206,17 +1206,17 @@ TEST_CASE("C-x decrements the number under/after point", "[Engine]") {
 }
 
 TEST_CASE("C-a/C-x preserve zero-padded width and handle sign crossing", "[Engine]") {
-    Buffer    buffer1 = MakeBuffer("id 007");
+    Buffer buffer1 = MakeBuffer("id 007");
     Engine engine1;
     (void)engine1.HandleKey(buffer1, Ctrl(U'a'));
     REQUIRE(buffer1.Text() == "id 008");
 
-    Buffer    buffer2 = MakeBuffer("x = -3");
+    Buffer buffer2 = MakeBuffer("x = -3");
     Engine engine2;
     (void)engine2.HandleKey(buffer2, Ctrl(U'a'));
     REQUIRE(buffer2.Text() == "x = -2");
 
-    Buffer    buffer3 = MakeBuffer("y = 2");
+    Buffer buffer3 = MakeBuffer("y = 2");
     Engine engine3;
     Feed(engine3, buffer3, "5"); // count = 5
     (void)engine3.HandleKey(buffer3, Ctrl(U'x'));
@@ -1224,7 +1224,7 @@ TEST_CASE("C-a/C-x preserve zero-padded width and handle sign crossing", "[Engin
 }
 
 TEST_CASE("count applies to C-a/C-x", "[Engine]") {
-    Buffer    buffer = MakeBuffer("n=10");
+    Buffer buffer = MakeBuffer("n=10");
     Engine engine;
 
     Feed(engine, buffer, "5");
@@ -1233,7 +1233,7 @@ TEST_CASE("count applies to C-a/C-x", "[Engine]") {
 }
 
 TEST_CASE(":j joins a range of lines", "[Engine]") {
-    Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
+    Buffer buffer = MakeBuffer("one\ntwo\nthree\n");
     Engine engine;
 
     Feed(engine, buffer, ":1,2j\n");
@@ -1241,7 +1241,7 @@ TEST_CASE(":j joins a range of lines", "[Engine]") {
 }
 
 TEST_CASE(":y yanks a range into a named register", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo\nbar\n");
+    Buffer buffer = MakeBuffer("foo\nbar\n");
     Engine engine;
 
     Feed(engine, buffer, ":y a\n");
@@ -1250,7 +1250,7 @@ TEST_CASE(":y yanks a range into a named register", "[Engine]") {
 }
 
 TEST_CASE(":pu pastes the unnamed register as lines after the target", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo\nbar\n");
+    Buffer buffer = MakeBuffer("foo\nbar\n");
     Engine engine;
 
     Feed(engine, buffer, "yy"); // yank "foo" into the unnamed register
@@ -1260,7 +1260,7 @@ TEST_CASE(":pu pastes the unnamed register as lines after the target", "[Engine]
 }
 
 TEST_CASE(":put! pastes before the target line", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo\nbar\n");
+    Buffer buffer = MakeBuffer("foo\nbar\n");
     Engine engine;
 
     Feed(engine, buffer, "yy");
@@ -1271,7 +1271,7 @@ TEST_CASE(":put! pastes before the target line", "[Engine]") {
 
 TEST_CASE(":> and :< shift a range of lines", "[Engine]") {
     Buffer            buffer = MakeBuffer("a\nb\nc\n");
-    Engine         engine;
+    Engine            engine;
     const std::string indent = std::string(static_cast<std::size_t>(ned::editor::TabWidth()), ' ');
 
     Feed(engine, buffer, ":2>\n");
@@ -1282,7 +1282,7 @@ TEST_CASE(":> and :< shift a range of lines", "[Engine]") {
 }
 
 TEST_CASE(":m moves a line to after the destination address", "[Engine]") {
-    Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
+    Buffer buffer = MakeBuffer("one\ntwo\nthree\n");
     Engine engine;
 
     Feed(engine, buffer, ":1m$\n");
@@ -1290,7 +1290,7 @@ TEST_CASE(":m moves a line to after the destination address", "[Engine]") {
 }
 
 TEST_CASE(":t/:copy duplicates a line after the destination address", "[Engine]") {
-    Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
+    Buffer buffer = MakeBuffer("one\ntwo\nthree\n");
     Engine engine;
 
     Feed(engine, buffer, ":1t$\n");
@@ -1298,7 +1298,7 @@ TEST_CASE(":t/:copy duplicates a line after the destination address", "[Engine]"
 }
 
 TEST_CASE(":sort sorts lines lexicographically, :sort! reverses", "[Engine]") {
-    Buffer    buffer = MakeBuffer("banana\napple\ncherry\n");
+    Buffer buffer = MakeBuffer("banana\napple\ncherry\n");
     Engine engine;
 
     Feed(engine, buffer, ":sort\n");
@@ -1314,7 +1314,7 @@ TEST_CASE(":r reads a file's contents in after the target line", "[Engine]") {
         std::ofstream out(path, std::ios::binary);
         out << "inserted\n";
     }
-    Buffer    buffer = MakeBuffer("one\ntwo\n");
+    Buffer buffer = MakeBuffer("one\ntwo\n");
     Engine engine;
 
     Feed(engine, buffer, ":r " + path.string() + "\n");
@@ -1323,7 +1323,7 @@ TEST_CASE(":r reads a file's contents in after the target line", "[Engine]") {
 }
 
 TEST_CASE("& repeats the last :s on the current line only", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo\nfoo\nfoo\n");
+    Buffer buffer = MakeBuffer("foo\nfoo\nfoo\n");
     Engine engine;
 
     Feed(engine, buffer, ":s/foo/bar/\n");
@@ -1337,7 +1337,7 @@ TEST_CASE("& repeats the last :s on the current line only", "[Engine]") {
 }
 
 TEST_CASE("dis deletes just the sentence, leaving surrounding whitespace intact", "[Engine]") {
-    Buffer    buffer = MakeBuffer("One. Two. Three.");
+    Buffer buffer = MakeBuffer("One. Two. Three.");
     Engine engine;
 
     buffer.SetPoint(6); // inside "Two."
@@ -1346,7 +1346,7 @@ TEST_CASE("dis deletes just the sentence, leaving surrounding whitespace intact"
 }
 
 TEST_CASE("das also deletes the sentence's own trailing whitespace", "[Engine]") {
-    Buffer    buffer = MakeBuffer("One. Two. Three.");
+    Buffer buffer = MakeBuffer("One. Two. Three.");
     Engine engine;
 
     buffer.SetPoint(6);
@@ -1358,7 +1358,7 @@ TEST_CASE("das also deletes the sentence's own trailing whitespace", "[Engine]")
 }
 
 TEST_CASE("dit/dat delete tag content, with/without the tags themselves", "[Engine]") {
-    Buffer    buffer = MakeBuffer("<div>hello</div>");
+    Buffer buffer = MakeBuffer("<div>hello</div>");
     Engine engine;
 
     buffer.SetPoint(7); // inside "hello"
@@ -1373,7 +1373,7 @@ TEST_CASE("dit/dat delete tag content, with/without the tags themselves", "[Engi
 }
 
 TEST_CASE("2diw deletes two words (a word plus the whitespace/word run after it)", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar baz");
+    Buffer buffer = MakeBuffer("foo bar baz");
     Engine engine;
 
     Feed(engine, buffer, "2diw");
@@ -1381,7 +1381,7 @@ TEST_CASE("2diw deletes two words (a word plus the whitespace/word run after it)
 }
 
 TEST_CASE("d2iw behaves the same as 2diw", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar baz");
+    Buffer buffer = MakeBuffer("foo bar baz");
     Engine engine;
 
     Feed(engine, buffer, "d2iw");
@@ -1389,7 +1389,7 @@ TEST_CASE("d2iw behaves the same as 2diw", "[Engine]") {
 }
 
 TEST_CASE("The / register holds the last search pattern", "[Engine]") {
-    Buffer    buffer = MakeBuffer("hello world");
+    Buffer buffer = MakeBuffer("hello world");
     Engine engine;
 
     Feed(engine, buffer, "/world\n");
@@ -1398,7 +1398,7 @@ TEST_CASE("The / register holds the last search pattern", "[Engine]") {
 }
 
 TEST_CASE("The : register holds the last ex command's raw text", "[Engine]") {
-    Buffer    buffer = MakeBuffer("hello");
+    Buffer buffer = MakeBuffer("hello");
     Engine engine;
 
     Feed(engine, buffer, ":s/hello/hi/\n");
@@ -1408,7 +1408,7 @@ TEST_CASE("The : register holds the last ex command's raw text", "[Engine]") {
 }
 
 TEST_CASE("The . register holds the last inserted text", "[Engine]") {
-    Buffer    buffer = MakeBuffer("world");
+    Buffer buffer = MakeBuffer("world");
     Engine engine;
 
     Feed(engine, buffer, "iHello\x1b");
@@ -1418,7 +1418,7 @@ TEST_CASE("The . register holds the last inserted text", "[Engine]") {
 }
 
 TEST_CASE("The % register holds the buffer's own file path", "[Engine]") {
-    Buffer    buffer = MakeBuffer("x");
+    Buffer buffer = MakeBuffer("x");
     Engine engine;
     buffer.SetPath("/tmp/ned_vimengine_test_percent.txt");
 
@@ -1427,7 +1427,7 @@ TEST_CASE("The % register holds the buffer's own file path", "[Engine]") {
 }
 
 TEST_CASE("Special registers fall through to ordinary named storage for other names", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar");
+    Buffer buffer = MakeBuffer("foo bar");
     Engine engine;
 
     Feed(engine, buffer, "\"ayw"); // yank "foo " into register a
@@ -1436,7 +1436,7 @@ TEST_CASE("Special registers fall through to ordinary named storage for other na
 }
 
 TEST_CASE("Insert-mode C-o executes one Normal command then resumes Insert", "[Engine]") {
-    Buffer    buffer = MakeBuffer("abc");
+    Buffer buffer = MakeBuffer("abc");
     Engine engine;
 
     Feed(engine, buffer, "A"); // point at end (3), Insert mode
@@ -1450,7 +1450,7 @@ TEST_CASE("Insert-mode C-o executes one Normal command then resumes Insert", "[E
 }
 
 TEST_CASE("Insert-mode C-o supports a full operator+motion before resuming", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar");
+    Buffer buffer = MakeBuffer("foo bar");
     Engine engine;
 
     Feed(engine, buffer, "i"); // Insert mode at point 0
@@ -1466,7 +1466,7 @@ TEST_CASE("Insert-mode C-o supports a full operator+motion before resuming", "[E
 }
 
 TEST_CASE("Insert-mode C-o followed by a mode-entering command doesn't corrupt later commands", "[Engine]") {
-    Buffer    buffer = MakeBuffer("ab\ncd\n");
+    Buffer buffer = MakeBuffer("ab\ncd\n");
     Engine engine;
 
     Feed(engine, buffer, "i"); // Insert at point 0 on line "ab"
@@ -1485,7 +1485,7 @@ TEST_CASE("Insert-mode C-o followed by a mode-entering command doesn't corrupt l
 }
 
 TEST_CASE("Dot-repeat replays an Insert session that used C-o", "[Engine]") {
-    Buffer    buffer = MakeBuffer("foo bar\nfoo bar\n");
+    Buffer buffer = MakeBuffer("foo bar\nfoo bar\n");
     Engine engine;
 
     Feed(engine, buffer, "i");
@@ -1493,7 +1493,7 @@ TEST_CASE("Dot-repeat replays an Insert session that used C-o", "[Engine]") {
     REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U'o')));
     (void)engine.HandleKey(buffer, Ch(U'd'));
     (void)engine.HandleKey(buffer, Ch(U'w')); // deletes "foo " via the one-shot excursion, resumes Insert
-    Feed(engine, buffer, "X\x1b");      // types "X" then exits Insert
+    Feed(engine, buffer, "X\x1b");            // types "X" then exits Insert
 
     REQUIRE(buffer.Text() == "Xbar\nfoo bar\n");
 
