@@ -804,10 +804,7 @@ inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::s
         }
         // An inlay hint renders as extra cells *before* the real character
         // still at this offset, so every hint strictly before byteOffset
-        // pushes point that much further right. A hint anchored exactly at
-        // byteOffset does not: it renders after the cursor, which is why the
-        // loop condition stops before it (matching where the painter puts
-        // the cursor, and where VS Code puts it too).
+        // pushes point that much further right.
         //
         // Leaving this out was a real bug: the cursor drew N columns left of
         // the character it was on, N being the width of every hint earlier
@@ -825,6 +822,19 @@ inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::s
         const auto decoded = content.CodepointAt(offset);
         col += CodepointColumns(decoded.codepoint, col);
         offset += decoded.byteLength;
+    }
+    // A hint anchored exactly at byteOffset still renders *before* the real
+    // character there (EmitInlayHint advances col past the hint, then falls
+    // through to draw the real byte at the same offset right after) -- so
+    // byteOffset's own real column sits past it too. Excluding it here was
+    // the actual bug behind the cursor drawing on top of the hint's own
+    // glyphs instead of on the real character following it: every other
+    // consumer of this offset (the per-cell paint loop, a secondary
+    // cursor's inverted cell, a selection wash) already lands past the
+    // hint, and only this computation -- which is what places the native
+    // terminal cursor -- disagreed with them.
+    if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, byteOffset)) {
+        col += DisplayColumns(hint->label, col);
     }
     return col;
 }
@@ -862,6 +872,14 @@ inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, 
                 return offset; // the click landed on the hint itself -- the real character it annotates
             }
             visualColumn += hintColumns;
+            // A target column landing exactly on the hint/real-character
+            // boundary (guaranteed <= targetColumn by the check above) IS
+            // this character's own column -- stop here rather than falling
+            // through to decode it too, which returned the NEXT character's
+            // offset instead of this one's.
+            if (visualColumn == targetColumn) {
+                return offset;
+            }
         }
         if (steps >= kMaxTabAwareColumnScan) {
             const std::size_t remainingColumns = targetColumn - visualColumn;
