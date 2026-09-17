@@ -1,13 +1,12 @@
 //
 // Runtime-registered languages -- the same LanguageDefinition the bundled
-// set uses, loaded from a directory on disk instead of the embedded table.
-// One loader for every source: a user's own `$XDG_CONFIG_HOME/ned/
-// languages/<name>/`, a project's `.ned/languages/<name>/` (trust-gated in
-// main.cpp exactly like `.ned/init.janet` -- a definition may dlopen a
-// grammar library, which is code by any measure), the `ned/register-language`
-// Janet binding, and -- when packaging happens -- a system data directory
-// (`/usr/share/ned/languages`); the loader is path-parameterized precisely
-// so that last one is a search-path entry, not new machinery.
+// set uses, loaded from a directory outside the bundled data tree
+// (`DataDir()/languages`, Editor/DataDir.h). One loader for every source: a
+// user's own `$XDG_CONFIG_HOME/ned/languages/<name>/`, a project's
+// `.ned/languages/<name>/` (trust-gated in main.cpp exactly like
+// `.ned/init.janet` -- a definition may dlopen a grammar library, which is
+// code by any measure) and the `ned/register-language` Janet binding; the
+// bundled set itself is enumerated with this file's LanguageDirectories.
 //
 // A directory is the bundled layout: `<name>/language.janet` plus query
 // files discovered by the same convention (LanguageParse.h). Two extra

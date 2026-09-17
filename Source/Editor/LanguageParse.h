@@ -25,7 +25,7 @@
 
 namespace ned::editor {
 
-// True when a query file exists at `path` -- FindEmbeddedLanguageFile for
+// True when a query file exists at `path` -- BundledLanguageFileExists for
 // the bundled set, a filesystem check for a user's language directory.
 using QueryFileExists = std::function<bool(std::string_view path)>;
 
@@ -34,7 +34,7 @@ using QueryFileExists = std::function<bool(std::string_view path)>;
 [[nodiscard]] LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::string_view source);
 
 // Fills definition.queries by the discovery rule above. `prefix` is
-// prepended to discovered relative paths ("" for the embedded set, the
+// prepended to discovered relative paths ("" for the bundled set, the
 // user directory's own absolute parent for a filesystem one).
 void DiscoverQueryFiles(LanguageDefinition& definition, const QueryFileExists& exists, std::string_view prefix = {});
 

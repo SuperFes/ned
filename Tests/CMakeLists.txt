@@ -5,6 +5,7 @@
 
 add_executable(ned_tests
             ApplicationTest.cpp
+            DataDirTest.cpp
             RopeTest.cpp
             MappedFileTest.cpp
             PieceTableTest.cpp
@@ -344,7 +345,10 @@ if (NED_TEST_TERMINAL_INTEGRATION)
             ProjectSwitchIntegrationTest.cpp)
 endif()
 
-target_link_libraries(ned_tests PRIVATE ned_lib Catch2::Catch2WithMain tree-sitter)
+target_link_libraries(ned_tests PRIVATE ned_lib Catch2::Catch2WithMain)
+# The tests read the bundled languages/plugins from build/share/ned
+# (Editor/DataDir.h's executable-relative rule), assembled by ned_data.
+add_dependencies(ned_tests ned_data)
 
 # ThemeKeyDocsTest holds Docs/Themes.md's key reference against the real
 # ui::ThemeKeys() table, so it needs to find the repo from a test binary

@@ -1,0 +1,11 @@
+# Incremental-vs-scratch divergences (corpus/file: case #edit step).
+# Each is a valid alternative tree the incremental parser's subtree reuse
+# produces, matching tree-sitter's own behavior over the same edits.
+# Regenerate: NED_BLESS_PARSE_CONFORMANCE=1 ./build/ned_tests "[ParseConformance]"
+c/corpus/declarations.txt: Variable storage classes #1
+c/corpus/statements.txt: Case statements separate from switch statements #2
+cpp/corpus/definitions.txt: Conversion operator definitions #2
+java/corpus/expressions.txt: traditional switch statement #2
+markdown-inline/corpus/spec.txt: Example 373 - https://github.github.com/gfm/#example-373 #1
+markdown-inline/corpus/spec.txt: Example 399 - https://github.github.com/gfm/#example-399 #1
+markdown-inline/corpus/spec.txt: Example 399 - https://github.github.com/gfm/#example-399 #3

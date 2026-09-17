@@ -56,7 +56,7 @@ TEST_CASE("A classifier reclassifies a capture's spans from their text", "[Captu
     const ClassifierGuard guard;
     LanguageDefinition    definition = JsonDefinition();
     ned::editor::DiscoverQueryFiles(definition,
-                                    [](std::string_view path) { return ned::editor::FindEmbeddedLanguageFile(path).has_value(); });
+                                    ned::editor::BundledLanguageFileExists);
 
     // Keys named "todo" become TodoKeyword; every other key falls through.
     RegisterCaptureClassifier("json", "string.special.key",
@@ -82,7 +82,7 @@ TEST_CASE("A classifier can suppress a span outright", "[CaptureClassifier]") {
     const ClassifierGuard guard;
     LanguageDefinition    definition = JsonDefinition();
     ned::editor::DiscoverQueryFiles(definition,
-                                    [](std::string_view path) { return ned::editor::FindEmbeddedLanguageFile(path).has_value(); });
+                                    ned::editor::BundledLanguageFileExists);
 
     RegisterCaptureClassifier("json", "string.special.key", [](std::span<const std::string_view> texts) {
         return std::vector<CaptureClassification>(texts.size(), CaptureClassification::Suppressed());
@@ -102,7 +102,7 @@ TEST_CASE("A wrong-sized classifier result is all-Fallthrough, not a crash or mi
     const ClassifierGuard guard;
     LanguageDefinition    definition = JsonDefinition();
     ned::editor::DiscoverQueryFiles(definition,
-                                    [](std::string_view path) { return ned::editor::FindEmbeddedLanguageFile(path).has_value(); });
+                                    ned::editor::BundledLanguageFileExists);
 
     RegisterCaptureClassifier("json", "string.special.key", [](std::span<const std::string_view>) {
         return std::vector<CaptureClassification>{CaptureClassification::Suppressed()}; // always size 1
@@ -119,7 +119,7 @@ TEST_CASE(":capture-spans :line-end widens a capture's span through its line", "
     const ClassifierGuard guard;
     LanguageDefinition    definition = JsonDefinition(" :capture-spans {\"string.special.key\" :line-end}");
     ned::editor::DiscoverQueryFiles(definition,
-                                    [](std::string_view path) { return ned::editor::FindEmbeddedLanguageFile(path).has_value(); });
+                                    ned::editor::BundledLanguageFileExists);
 
     const Mode        mode    = ModeFromDefinition(definition);
     const std::string text    = "{\"key\": 1,\n \"next\": 2}";
@@ -145,7 +145,7 @@ TEST_CASE("Classification sees the original range, widening happens after", "[Ca
     const ClassifierGuard guard;
     LanguageDefinition    definition = JsonDefinition(" :capture-spans {\"string.special.key\" :line-end}");
     ned::editor::DiscoverQueryFiles(definition,
-                                    [](std::string_view path) { return ned::editor::FindEmbeddedLanguageFile(path).has_value(); });
+                                    ned::editor::BundledLanguageFileExists);
 
     std::vector<std::string> seen;
     RegisterCaptureClassifier("json", "string.special.key", [&seen](std::span<const std::string_view> texts) {

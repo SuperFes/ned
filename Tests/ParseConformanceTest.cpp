@@ -14,8 +14,6 @@
 #include <string_view>
 #include <vector>
 
-#include <tree_sitter/api.h>
-
 #include "Editor/BundledLanguages.h"
 #include "Editor/LanguageFiles.h"
 #include "Editor/Parse/Cursor.h"
@@ -29,20 +27,16 @@
 #include "Editor/Grammar/Tree.h"
 #include "Text/OffsetRemap.h"
 
-// Phase 4b M0: the conformance bar for the parsing-engine replacement.
+// The conformance bar for the parsing engine.
 //
-// Runs every upstream grammar's own test corpus
-// (ThirdParty/tree-sitter-grammars/*/test/corpus -- vendored by
-// Tools/vendor-grammars.py, see CMakeLists.txt's tree-sitter section)
-// against the production parser and holds the per-corpus scorecard as a
-// golden file. Today the production parser is the tree-sitter runtime, so
-// this pins the baseline the ned engine must meet; at M5 the same harness
-// holds the swapped engine to byte-identical results.
+// Runs every bundled language's corpus (Source/Languages/<name>/corpus/,
+// imported from the grammar's upstream test corpus and owned here since;
+// read from the build tree's data copy, Editor/LanguageFiles.h) against the
+// production parser and holds the per-corpus scorecard as a golden file.
 //
-// The corpus format and comparison rules are a faithful port of upstream's
-// own runner (tree-sitter/tree-sitter's cli/src/test.rs -- not itself
-// vendored here, since ned only needs the runtime's lib/ for the Phase 4b
-// conformance reference, not its Rust CLI):
+// The corpus format and comparison rules are a faithful port of
+// tree-sitter's own runner (cli/src/test.rs), so imported corpora run
+// unchanged:
 //  - a header is  ===fence [suffix] / name+marker lines / ===fence [suffix];
 //    the FIRST header's suffix becomes mandatory on every later header and
 //    divider line, which is how corpora whose sources contain `===`/`---`
@@ -69,12 +63,8 @@ using ned::editor::grammar::LanguageByName;
 using ned::editor::grammar::Parser;
 using ned::editor::grammar::Tree;
 
-fs::path DepsDir() {
-    return fs::path(NED_REPO_ROOT) / "ThirdParty" / "tree-sitter-grammars";
-}
-
-fs::path GoldenPath() {
-    return fs::path(NED_REPO_ROOT) / "Tests" / "ParseConformance" / "baseline.txt";
+fs::path GoldenDir() {
+    return fs::path(NED_REPO_ROOT) / "Tests" / "ParseConformance";
 }
 
 bool Blessing() {
@@ -87,57 +77,71 @@ struct DialectMapping {
 };
 
 struct CorpusSource {
-    std::string_view            directory;       // relative to DepsDir()
+    std::string_view            directory;       // relative to BundledLanguagesRoot()
     std::string_view            defaultLanguage; // for cases with no :language attribute
     std::vector<DialectMapping> dialects{};
 };
 
-// One entry per corpus directory on disk. The markdown repo carries two
-// grammars (block and inline) with separate corpora; it is fetched twice
-// (markdown / markdown-inline FetchContent names) but both clones are the
-// same repo, so only one clone's two corpora are listed.
+// One entry per corpus directory. A corpus imported from a multi-grammar
+// repo routes its :language(...) cases through `dialects` (typescript's
+// corpus carries the tsx cases; php's and xml's name grammars ned doesn't
+// bundle, which skip).
 const std::vector<CorpusSource>& CorpusSources() {
     static const std::vector<CorpusSource> sources = {
-        {"tree-sitter-bash/test/corpus", "bash"},
-        {"tree-sitter-c/test/corpus", "c"},
-        {"tree-sitter-c-sharp/test/corpus", "csharp"},
-        {"tree-sitter-clojure/test/corpus", "clojure"},
-        {"tree-sitter-cmake/test/corpus", "cmake"},
-        {"tree-sitter-cpp/test/corpus", "cpp"},
-        {"tree-sitter-css/test/corpus", "css"},
-        {"tree-sitter-diff/test/corpus", "diff"},
-        {"tree-sitter-fish/test/corpus", "fish"},
-        {"tree-sitter-go/test/corpus", "go"},
-        {"tree-sitter-html/test/corpus", "html"},
-        {"tree-sitter-janet-simple/test/corpus", "janet"},
-        {"tree-sitter-java/test/corpus", "java"},
-        {"tree-sitter-javascript/test/corpus", "javascript"},
-        {"tree-sitter-json/test/corpus", "json"},
-        {"tree-sitter-kotlin/test/corpus", "kotlin"},
-        {"tree-sitter-lua/test/corpus", "lua"},
-        {"tree-sitter-markdown/tree-sitter-markdown/test/corpus", "markdown"},
-        {"tree-sitter-markdown/tree-sitter-markdown-inline/test/corpus", "markdown-inline"},
-        {"tree-sitter-org/test/corpus", "org"},
-        {"tree-sitter-php/test/corpus", "php", {{"php", "php"}, {"php_only", ""}}},
-        {"tree-sitter-python/test/corpus", "python"},
-        {"tree-sitter-rust/test/corpus", "rust"},
-        {"tree-sitter-sql-corpus/test/corpus", "sql"},
-        {"tree-sitter-toml/test/corpus", "toml"},
-        {"tree-sitter-typescript-src/test/corpus", "typescript", {{"typescript", "typescript"}, {"tsx", "tsx"}}},
-        {"tree-sitter-xml/test/corpus", "xml", {{"xml", "xml"}, {"dtd", ""}}},
-        {"tree-sitter-yaml/test/corpus", "yaml"},
-        {"tree-sitter-dockerfile/test/corpus", "dockerfile"},
-        {"tree-sitter-make/test/corpus", "make"},
-        {"tree-sitter-hcl/test/corpus", "hcl"},
-        // Non-standard layout: the only grammar in this table whose corpus
-        // lives at the repo root rather than under test/corpus.
-        {"tree-sitter-nix/corpus", "nix"},
-        {"tree-sitter-ruby/test/corpus", "ruby"},
-        {"tree-sitter-gitcommit/test/corpus", "gitcommit"},
-        {"tree-sitter-gitrebase/test/corpus", "gitrebase"},
-        {"tree-sitter-r/test/corpus", "r"},
+        {"bash/corpus", "bash"},
+        {"c/corpus", "c"},
+        {"csharp/corpus", "csharp"},
+        {"clojure/corpus", "clojure"},
+        {"cmake/corpus", "cmake"},
+        {"cpp/corpus", "cpp"},
+        {"css/corpus", "css"},
+        {"diff/corpus", "diff"},
+        {"fish/corpus", "fish"},
+        {"go/corpus", "go"},
+        {"html/corpus", "html"},
+        {"janet/corpus", "janet"},
+        {"java/corpus", "java"},
+        {"javascript/corpus", "javascript"},
+        {"json/corpus", "json"},
+        {"kotlin/corpus", "kotlin"},
+        {"lua/corpus", "lua"},
+        {"markdown/corpus", "markdown"},
+        {"markdown-inline/corpus", "markdown-inline"},
+        {"org/corpus", "org"},
+        {"php/corpus", "php", {{"php", "php"}, {"php_only", ""}}},
+        {"python/corpus", "python"},
+        {"rust/corpus", "rust"},
+        {"sql/corpus", "sql"},
+        {"toml/corpus", "toml"},
+        {"typescript/corpus", "typescript", {{"typescript", "typescript"}, {"tsx", "tsx"}}},
+        {"xml/corpus", "xml", {{"xml", "xml"}, {"dtd", ""}}},
+        {"yaml/corpus", "yaml"},
+        {"dockerfile/corpus", "dockerfile"},
+        {"make/corpus", "make"},
+        {"hcl/corpus", "hcl"},
+        {"nix/corpus", "nix"},
+        {"ruby/corpus", "ruby"},
+        {"gitcommit/corpus", "gitcommit"},
+        {"gitrebase/corpus", "gitrebase"},
+        {"r/corpus", "r"},
     };
     return sources;
+}
+
+// The corpus files under one source, sorted. tree-sitter-make is the one
+// grammar whose corpus files end in .mk, not .txt.
+std::vector<fs::path> CorpusFiles(const CorpusSource& source) {
+    const fs::path        corpusDir = ned::editor::BundledLanguagesRoot() / source.directory;
+    std::vector<fs::path> files;
+    for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
+        if (entry.is_regular_file() && (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
+            files.push_back(entry.path());
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
+std::string CorpusLabel(const CorpusSource& source, const fs::path& file) {
+    return fs::relative(file, ned::editor::BundledLanguagesRoot() / source.directory).string();
 }
 
 std::string ReadFile(const fs::path& path) {
@@ -463,57 +467,21 @@ std::string ActualSexp(const Tree& tree, bool keepFields) {
     return sexp;
 }
 
-// Raw tree-sitter runtime handles: the C engine stays linked purely as the
-// differential reference for the engine gates (dropped at M6).
-struct TsParserHandle {
-    TSParser* parser;
-    explicit TsParserHandle(const TSLanguage* language) : parser(ts_parser_new()) {
-        REQUIRE(ts_parser_set_language(parser, language));
+// Holds `rendered` against the golden file `name` under Tests/ParseConformance/,
+// or rewrites it when blessing.
+void HoldAgainstGolden(const char* name, const std::string& rendered) {
+    const fs::path golden = GoldenDir() / name;
+    if (Blessing()) {
+        fs::create_directories(golden.parent_path());
+        std::ofstream out(golden, std::ios::binary | std::ios::trunc);
+        REQUIRE(out);
+        out << rendered;
+        SUCCEED("blessed " + golden.string());
+        return;
     }
-    ~TsParserHandle() {
-        ts_parser_delete(parser);
-    }
-    TsParserHandle(const TsParserHandle&)            = delete;
-    TsParserHandle& operator=(const TsParserHandle&) = delete;
-};
-
-struct TsTreeHandle {
-    TSTree* tree   = nullptr;
-    TsTreeHandle() = default;
-    explicit TsTreeHandle(TSTree* t) : tree(t) {
-    }
-    ~TsTreeHandle() {
-        if (tree != nullptr)
-            ts_tree_delete(tree);
-    }
-    TsTreeHandle(TsTreeHandle&& other) noexcept : tree(other.tree) {
-        other.tree = nullptr;
-    }
-    TsTreeHandle& operator=(TsTreeHandle&& other) noexcept {
-        if (this != &other) {
-            if (tree != nullptr)
-                ts_tree_delete(tree);
-            tree       = other.tree;
-            other.tree = nullptr;
-        }
-        return *this;
-    }
-    TsTreeHandle(const TsTreeHandle&)            = delete;
-    TsTreeHandle& operator=(const TsTreeHandle&) = delete;
-};
-
-TsTreeHandle TsParse(TsParserHandle& parser, const std::string& text, const TSTree* oldTree = nullptr) {
-    return TsTreeHandle(
-        ts_parser_parse_string(parser.parser, oldTree, text.data(), static_cast<std::uint32_t>(text.size())));
-}
-
-std::string TsSexpOf(const TsTreeHandle& tree, bool keepFields) {
-    char*       raw = ts_node_string(ts_tree_root_node(tree.tree));
-    std::string sexp(raw);
-    std::free(raw);
-    if (!keepFields)
-        sexp = StripSexpFields(sexp);
-    return sexp;
+    INFO("golden: " << golden.string() << "  (regenerate: NED_BLESS_PARSE_CONFORMANCE=1 ./build/ned_tests \"[ParseConformance]\")");
+    REQUIRE(fs::exists(golden));
+    CHECK(ReadFile(golden) == rendered);
 }
 
 struct CorpusScore {
@@ -527,17 +495,10 @@ struct CorpusScore {
 
 } // namespace
 
-TEST_CASE("Upstream corpora conformance scorecard matches the blessed baseline", "[ParseConformance][Corpus]") {
-    if (!fs::exists(DepsDir())) {
-        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
-        return;
-    }
+TEST_CASE("Bundled corpora conformance scorecard matches the blessed baseline", "[ParseConformance][Corpus]") {
     for (const CorpusSource& source : CorpusSources()) {
-        if (!fs::exists(DepsDir() / source.directory)) {
-            WARN("missing corpus directory: " << source.directory << " -- skipping the scorecard entirely so the golden stays comparable");
-            SUCCEED();
-            return;
-        }
+        INFO("corpus directory: " << source.directory);
+        REQUIRE(fs::is_directory(ned::editor::BundledLanguagesRoot() / source.directory));
     }
 
     std::map<std::string, std::unique_ptr<Parser>, std::less<>> parsers;
@@ -552,25 +513,15 @@ TEST_CASE("Upstream corpora conformance scorecard matches the blessed baseline",
     };
 
     std::ostringstream rendered;
-    rendered << "# Parse conformance scorecard: upstream grammar corpora vs the production engine.\n"
+    rendered << "# Parse conformance scorecard: bundled corpora vs the production engine.\n"
              << "# Regenerate: NED_BLESS_PARSE_CONFORMANCE=1 ./build/ned_tests \"[ParseConformance]\"\n";
 
     CorpusScore total;
     for (const CorpusSource& source : CorpusSources()) {
-        const fs::path        corpusDir = DepsDir() / source.directory;
-        std::vector<fs::path> files;
-        for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
-            if (entry.is_regular_file() &&
-                // tree-sitter-make is the one grammar in this table whose
-                // corpus files end in .mk, not .txt.
-                (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
-                files.push_back(entry.path());
-        std::sort(files.begin(), files.end());
-
         CorpusScore score;
-        for (const fs::path& file : files) {
+        for (const fs::path& file : CorpusFiles(source)) {
             const std::string content = ReadFile(file);
-            const std::string label   = fs::relative(file, corpusDir).string();
+            const std::string label   = CorpusLabel(source, file);
             for (CorpusCase& item : ParseCorpusFile(content, label)) {
                 ++score.cases;
                 if (item.skip || !item.platformMatches) {
@@ -640,41 +591,21 @@ TEST_CASE("Upstream corpora conformance scorecard matches the blessed baseline",
     // the corpus vanished.
     CHECK(total.cases > 2000);
     CHECK(total.runs > 2000);
-
-    const fs::path golden = GoldenPath();
-    if (Blessing()) {
-        fs::create_directories(golden.parent_path());
-        std::ofstream out(golden, std::ios::binary | std::ios::trunc);
-        REQUIRE(out);
-        out << rendered.str();
-        SUCCEED("blessed " + golden.string());
-        return;
-    }
-    INFO("golden: " << golden.string() << "  (regenerate: NED_BLESS_PARSE_CONFORMANCE=1 ./build/ned_tests \"[ParseConformance]\")");
-    REQUIRE(fs::exists(golden));
-    CHECK(ReadFile(golden) == rendered.str());
+    HoldAgainstGolden("baseline.txt", rendered.str());
 }
 
-// --- M1: the ned engine against the scanner-free grammars' corpora ----------
+// --- The engine against every corpus, case by case ---------------------------
 //
-// The go/no-go gate on ABI-15 table interpretation: json, c, go, java and
-// clojure carry no external scanner, so every corpus case exercises only the
-// generated lexer + parse tables + ned's runtime. Expected-sexp comparison
-// uses exactly the scorecard's rules; a differential against the tree-sitter
-// runtime's own rendering backs it up for the :error cases the corpus
-// doesn't pin structurally.
+// Expected-sexp comparison uses exactly the scorecard's rules; unlike the
+// scorecard this names each failing case, so a regression reads as "this
+// case broke" rather than "a count changed".
 
-TEST_CASE("Ned parse engine matches upstream corpora", "[ParseEngine][Corpus]") {
-    if (!fs::exists(DepsDir())) {
-        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
-        return;
-    }
-
-    // The markdown-inline grammar cannot parse the extension cases the
-    // shipped artifacts weren't generated with; the M0 baseline records the
-    // same 8 failures for the tree-sitter runtime.
+TEST_CASE("Ned parse engine matches the bundled corpora", "[ParseEngine][Corpus]") {
+    // The markdown-inline grammar's shipped tables were not generated with
+    // the extensions these three files exercise; the scorecard baseline pins
+    // the same 8 failures.
     const auto isKnownBaselineFailure = [](std::string_view corpus, std::string_view file) {
-        return corpus == "tree-sitter-markdown/tree-sitter-markdown-inline/test/corpus" &&
+        return corpus == "markdown-inline/corpus" &&
                (file == "extension_wikilink.txt" || file == "tags.txt" || file == "spec.txt");
     };
 
@@ -682,36 +613,20 @@ TEST_CASE("Ned parse engine matches upstream corpora", "[ParseEngine][Corpus]") 
     std::vector<std::string>                                   failures;
     std::map<std::string, std::pair<std::size_t, std::size_t>> perCorpus; // {failed, run}
     for (const CorpusSource& source : CorpusSources()) {
-        const fs::path corpusDir = DepsDir() / source.directory;
-        if (!fs::exists(corpusDir))
-            continue;
-
         std::map<std::string, std::unique_ptr<ned::editor::parse::Engine>, std::less<>> engines;
-        std::map<std::string, std::unique_ptr<TsParserHandle>, std::less<>>             tsParsers;
         const auto                                                                      engineFor = [&](std::string_view languageName) -> ned::editor::parse::Engine* {
             auto found = engines.find(languageName);
             if (found != engines.end())
                 return found->second.get();
             const std::optional<Language> language = LanguageByName(languageName);
             REQUIRE(language.has_value());
-            tsParsers.emplace(std::string(languageName),
-                              std::make_unique<TsParserHandle>(reinterpret_cast<const TSLanguage*>(language->Raw())));
             return engines.emplace(std::string(languageName), std::make_unique<ned::editor::parse::Engine>(language->Raw()))
                 .first->second.get();
         };
 
-        std::vector<fs::path> files;
-        for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
-            if (entry.is_regular_file() &&
-                // tree-sitter-make is the one grammar in this table whose
-                // corpus files end in .mk, not .txt.
-                (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
-                files.push_back(entry.path());
-        std::sort(files.begin(), files.end());
-
-        for (const fs::path& file : files) {
+        for (const fs::path& file : CorpusFiles(source)) {
             const std::string content = ReadFile(file);
-            const std::string label   = fs::relative(file, corpusDir).string();
+            const std::string label   = CorpusLabel(source, file);
             for (CorpusCase& item : ParseCorpusFile(content, label)) {
                 if (item.skip || !item.platformMatches)
                     continue;
@@ -752,25 +667,11 @@ TEST_CASE("Ned parse engine matches upstream corpora", "[ParseEngine][Corpus]") 
                     if (!item.hasFields)
                         actual = StripSexpFields(actual);
                     if (actual != item.expected) {
-                        // A case the shipped artifacts can't pass must still
-                        // yield the same tree tree-sitter produces from those
-                        // artifacts — both engines run the same tables.
-                        if (isKnownBaselineFailure(source.directory, item.file)) {
-                            const TsTreeHandle tsTree   = TsParse(*tsParsers.find(languageName)->second, item.input);
-                            std::string        tsActual = TsSexpOf(tsTree, item.hasFields);
-                            if (actual != tsActual)
-                                failures.push_back(std::string(source.directory) + "/" + item.file + ": " + item.name +
-                                                   " -- diverges from the ts runtime");
-                            ++perCorpus[std::string(source.directory)].first;
-                            continue;
-                        }
                         recordFailure("");
                         if (std::getenv("NED_PARSE_CONFORMANCE_VERBOSE") != nullptr) {
-                            const TsTreeHandle tsTree = TsParse(*tsParsers.find(languageName)->second, item.input);
                             std::cerr << "case:     " << source.directory << "/" << item.file << ": " << item.name << "\n"
                                       << "expected: " << item.expected << "\n"
-                                      << "ned:      " << actual << "\n"
-                                      << "ts:       " << TsSexpOf(tsTree, item.hasFields) << "\n\n";
+                                      << "ned:      " << actual << "\n\n";
                         }
                     }
                 }
@@ -793,18 +694,21 @@ TEST_CASE("Ned parse engine matches upstream corpora", "[ParseEngine][Corpus]") 
     CHECK(failures.size() == 0);
 }
 
-// --- M4: incremental reparse ------------------------------------------------
+// --- Incremental reparse ------------------------------------------------------
 //
 // For every corpus input of a representative grammar set (the scanner-free
 // five plus the scanner-heavy proving load), apply a chain of scripted edits;
 // after each step the incremental reparse must equal a from-scratch parse of
-// the same text, and equal the tree-sitter runtime's own incremental result
-// over the identical edit sequence.
+// the same text. A handful of steps legitimately differ -- the incremental
+// parser reuses subtrees into a different (equally valid) tree, exactly as
+// tree-sitter's own does over the same edits (verified against it when the
+// engine landed) -- and those are pinned BY NAME in a golden so the set can
+// neither grow nor drift silently.
 
 namespace {
 
-TSPoint PointAtOffset(std::string_view text, std::size_t offset) {
-    TSPoint point = {0, 0};
+ned::editor::parse::abi::Point PointAtOffset(std::string_view text, std::size_t offset) {
+    ned::editor::parse::abi::Point point = {0, 0};
     for (std::size_t i = 0; i < offset && i < text.size(); i++) {
         if (text[i] == '\n') {
             point.row++;
@@ -823,31 +727,25 @@ struct ScriptedEdit {
     std::string insertedText;
 };
 
-TSInputEdit MakeTsEdit(std::string_view oldText, std::string_view newText, const ScriptedEdit& edit) {
-    TSInputEdit result;
-    result.start_byte    = static_cast<std::uint32_t>(edit.position);
-    result.old_end_byte  = static_cast<std::uint32_t>(edit.position + edit.deletedLength);
-    result.new_end_byte  = static_cast<std::uint32_t>(edit.position + edit.insertedText.size());
-    result.start_point   = PointAtOffset(oldText, edit.position);
-    result.old_end_point = PointAtOffset(oldText, edit.position + edit.deletedLength);
-    result.new_end_point = PointAtOffset(newText, edit.position + edit.insertedText.size());
-    return result;
+ned::editor::parse::InputEdit MakeEdit(std::string_view oldText, std::string_view newText, const ScriptedEdit& edit) {
+    return {
+        .startByte   = static_cast<std::uint32_t>(edit.position),
+        .oldEndByte  = static_cast<std::uint32_t>(edit.position + edit.deletedLength),
+        .newEndByte  = static_cast<std::uint32_t>(edit.position + edit.insertedText.size()),
+        .startPoint  = PointAtOffset(oldText, edit.position),
+        .oldEndPoint = PointAtOffset(oldText, edit.position + edit.deletedLength),
+        .newEndPoint = PointAtOffset(newText, edit.position + edit.insertedText.size()),
+    };
 }
 
 } // namespace
 
-TEST_CASE("Ned parse engine incremental reparses match from-scratch and the ts runtime", "[ParseEngineIncremental][Corpus]") {
-    if (!fs::exists(DepsDir())) {
-        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
-        return;
-    }
-
+TEST_CASE("Ned parse engine incremental reparses match from-scratch parses", "[ParseEngineIncremental][ParseConformance][Corpus]") {
     const std::vector<std::string_view> grammars = {"json", "c", "go", "java", "clojure", "markdown",
                                                     "yaml", "bash", "python", "cpp", "rust", "markdown-inline"};
 
-    std::size_t              totalSteps         = 0;
-    std::size_t              scratchDivergences = 0;
-    std::vector<std::string> failures;
+    std::size_t              totalSteps = 0;
+    std::vector<std::string> divergences;
     for (const CorpusSource& source : CorpusSources()) {
         bool included = false;
         for (const std::string_view grammar : grammars)
@@ -855,27 +753,13 @@ TEST_CASE("Ned parse engine incremental reparses match from-scratch and the ts r
         if (!included)
             continue;
 
-        const fs::path corpusDir = DepsDir() / source.directory;
-        if (!fs::exists(corpusDir))
-            continue;
-
         const std::optional<Language> language = LanguageByName(source.defaultLanguage);
         REQUIRE(language.has_value());
         ned::editor::parse::Engine engine(language->Raw());
-        TsParserHandle             tsParser(reinterpret_cast<const TSLanguage*>(language->Raw()));
 
-        std::vector<fs::path> files;
-        for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
-            if (entry.is_regular_file() &&
-                // tree-sitter-make is the one grammar in this table whose
-                // corpus files end in .mk, not .txt.
-                (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
-                files.push_back(entry.path());
-        std::sort(files.begin(), files.end());
-
-        for (const fs::path& file : files) {
+        for (const fs::path& file : CorpusFiles(source)) {
             const std::string content = ReadFile(file);
-            const std::string label   = fs::relative(file, corpusDir).string();
+            const std::string label   = CorpusLabel(source, file);
             for (CorpusCase& item : ParseCorpusFile(content, label)) {
                 if (item.skip || !item.platformMatches || !item.languages.front().empty())
                     continue;
@@ -884,72 +768,46 @@ TEST_CASE("Ned parse engine incremental reparses match from-scratch and the ts r
 
                 std::string                   text    = item.input;
                 ned::editor::parse::GreenTree nedTree = engine.Parse(text);
-                TsTreeHandle                  tsTree  = TsParse(tsParser, text);
 
                 const std::vector<ScriptedEdit> edits = {
                     {text.size() / 2, 0, "x"},
                     {text.size() / 3, 1, ""},
                     {(text.size() * 2) / 3, 0, "\n"},
                 };
+                std::size_t step = 0;
                 for (const ScriptedEdit& edit : edits) {
+                    ++step;
                     std::string newText = text;
                     newText.erase(edit.position, edit.deletedLength);
                     newText.insert(edit.position, edit.insertedText);
-                    const TSInputEdit tsEdit = MakeTsEdit(text, newText, edit);
 
-                    const ned::editor::parse::InputEdit nedEdit = {
-                        .startByte   = tsEdit.start_byte,
-                        .oldEndByte  = tsEdit.old_end_byte,
-                        .newEndByte  = tsEdit.new_end_byte,
-                        .startPoint  = {tsEdit.start_point.row, tsEdit.start_point.column},
-                        .oldEndPoint = {tsEdit.old_end_point.row, tsEdit.old_end_point.column},
-                        .newEndPoint = {tsEdit.new_end_point.row, tsEdit.new_end_point.column},
-                    };
-
-                    const ned::editor::parse::GreenTree edited      = nedTree.WithEdit(nedEdit);
+                    const ned::editor::parse::GreenTree edited      = nedTree.WithEdit(MakeEdit(text, newText, edit));
                     ned::editor::parse::GreenTree       incremental = engine.Parse(newText, edited);
                     const ned::editor::parse::GreenTree scratch     = engine.Parse(newText);
 
-                    ts_tree_edit(tsTree.tree, &tsEdit);
-                    TsTreeHandle tsIncremental = TsParse(tsParser, newText, tsTree.tree);
-
-                    const std::string incrementalSexp =
-                        ned::editor::parse::SubtreeToSexp(incremental.Root(), incremental.Language());
-                    const std::string scratchSexp =
-                        ned::editor::parse::SubtreeToSexp(scratch.Root(), scratch.Language());
-                    const std::string tsSexp = TsSexpOf(tsIncremental, true);
-
                     ++totalSteps;
-                    // The hard invariant is agreement with the ts runtime's
-                    // incremental result over the identical edit sequence. A
-                    // handful of steps legitimately differ from a scratch
-                    // parse — upstream's own incremental parser produces a
-                    // different (equally valid) tree there, and ned inherits
-                    // that behavior; the count is pinned below.
-                    if (incrementalSexp != tsSexp)
-                        failures.push_back(std::string(source.directory) + "/" + item.file + ": " + item.name +
-                                           " -- incremental != ts");
-                    else if (incrementalSexp != scratchSexp)
-                        ++scratchDivergences;
+                    if (ned::editor::parse::SubtreeToSexp(incremental.Root(), incremental.Language()) !=
+                        ned::editor::parse::SubtreeToSexp(scratch.Root(), scratch.Language()))
+                        divergences.push_back(std::string(source.directory) + "/" + item.file + ": " + item.name +
+                                              " #" + std::to_string(step));
 
                     text    = std::move(newText);
                     nedTree = std::move(incremental);
-                    tsTree  = std::move(tsIncremental);
                 }
             }
         }
     }
 
     CHECK(totalSteps > 4000);
-    CHECK(scratchDivergences == 7); // both engines' incremental trees, verified identical, vs scratch
 
-    INFO("first failures: " << [&] {
-        std::string joined;
-        for (std::size_t i = 0; i < failures.size() && i < 20; i++)
-            joined += "\n  " + failures[i];
-        return joined;
-    }());
-    CHECK(failures.size() == 0);
+    std::sort(divergences.begin(), divergences.end());
+    std::string rendered = "# Incremental-vs-scratch divergences (corpus/file: case #edit step).\n"
+                           "# Each is a valid alternative tree the incremental parser's subtree reuse\n"
+                           "# produces, matching tree-sitter's own behavior over the same edits.\n"
+                           "# Regenerate: NED_BLESS_PARSE_CONFORMANCE=1 ./build/ned_tests \"[ParseConformance]\"\n";
+    for (const std::string& divergence : divergences)
+        rendered += divergence + "\n";
+    HoldAgainstGolden("incremental-divergences.txt", rendered);
 }
 
 // --- per-subtree-fact-memoization follow-up: MatchCache differential -------
@@ -1002,13 +860,8 @@ std::vector<std::string> DescribeMatchCacheMatches(const std::vector<ned::editor
 
 } // namespace
 
-TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the upstream corpus's scripted edits",
+TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the bundled corpora's scripted edits",
           "[MatchCache][Corpus]") {
-    if (!fs::exists(DepsDir())) {
-        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
-        return;
-    }
-
     const std::vector<std::string_view> grammars = {"json", "c", "go",     "java", "clojure", "markdown",
                                                      "yaml", "bash", "python", "cpp",  "rust"};
 
@@ -1021,10 +874,6 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the u
         if (!included)
             continue;
 
-        const fs::path corpusDir = DepsDir() / source.directory;
-        if (!fs::exists(corpusDir))
-            continue;
-
         const std::optional<Language> language = LanguageByName(source.defaultLanguage);
         REQUIRE(language.has_value());
         const std::optional<std::string> highlightsText = HighlightsQueryTextFor(source.defaultLanguage);
@@ -1033,18 +882,9 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the u
         }
         const ned::editor::grammar::QueryMatcher matcher(*language, *highlightsText);
 
-        std::vector<fs::path> files;
-        for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
-            if (entry.is_regular_file() &&
-                // tree-sitter-make is the one grammar in this table whose
-                // corpus files end in .mk, not .txt.
-                (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
-                files.push_back(entry.path());
-        std::sort(files.begin(), files.end());
-
-        for (const fs::path& file : files) {
+        for (const fs::path& file : CorpusFiles(source)) {
             const std::string content = ReadFile(file);
-            const std::string label   = fs::relative(file, corpusDir).string();
+            const std::string label   = CorpusLabel(source, file);
             for (CorpusCase& item : ParseCorpusFile(content, label)) {
                 if (item.skip || !item.platformMatches || !item.languages.front().empty())
                     continue;
@@ -1161,179 +1001,271 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the u
     CHECK(failures.size() == 0);
 }
 
-// --- M5 prerequisite: the red layer (Node/Cursor) against the ts runtime ----
+// --- The red layer: node operations against a cursor walk -------------------
 //
-// Dual preorder walks over every corpus tree, ned cursor beside TSTreeCursor,
-// comparing each visited node's identity facts and the node-level operations
-// QueryMatcher and the editor wrapper consume (parent, named siblings, field
-// id, descendant-for-byte-range).
+// Node.cpp (the node.c port) and Cursor.cpp (the tree_cursor.c port) are two
+// independent routes to the same facts. A full cursor walk over every corpus
+// tree builds an explicit reference tree -- each node's visible children in
+// order, with the field id the cursor reports -- and every node-level
+// operation QueryMatcher and the editor wrapper consume is then held against
+// it: parent, child by index, named children, siblings, child by field id,
+// child-with-descendant, and descendant-for-byte-range (the reference applies
+// node.c's own descent rule over the explicit children). Positions are held
+// against the source text itself: a node's start/end point must be the
+// row/column its byte offset lands on.
 
-TEST_CASE("Ned red layer matches the ts runtime over upstream corpora", "[ParseEngineRedLayer][Corpus]") {
-    if (!fs::exists(DepsDir())) {
-        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
-        return;
+namespace {
+
+struct RefNode {
+    ned::editor::parse::RedNode      node;
+    ned::editor::parse::abi::FieldId field;
+    std::vector<RefNode>             children;
+};
+
+RefNode CollectSubtree(ned::editor::parse::TreeCursor& cursor) {
+    RefNode ref{cursor.CurrentNode(), cursor.CurrentFieldId(), {}};
+    if (cursor.GotoFirstChild()) {
+        do {
+            ref.children.push_back(CollectSubtree(cursor));
+        }
+        while (cursor.GotoNextSibling());
+        cursor.GotoParent();
     }
+    return ref;
+}
 
-    std::size_t              comparedNodes = 0;
-    std::vector<std::string> failures;
-    const auto               fail = [&failures](const CorpusSource& source, const CorpusCase& item, const std::string& what) {
-        if (failures.size() < 50)
-            failures.push_back(std::string(source.directory) + "/" + item.file + ": " + item.name + " -- " + what);
+bool SameNode(ned::editor::parse::RedNode a, ned::editor::parse::RedNode b) {
+    const bool aNull = ned::editor::parse::NodeIsNull(a);
+    if (aNull != ned::editor::parse::NodeIsNull(b))
+        return false;
+    if (aNull)
+        return true;
+    return ned::editor::parse::NodeEq(a, b) &&
+           std::string_view(ned::editor::parse::NodeType(a)) == ned::editor::parse::NodeType(b) &&
+           ned::editor::parse::NodeStartByte(a) == ned::editor::parse::NodeStartByte(b) &&
+           ned::editor::parse::NodeEndByte(a) == ned::editor::parse::NodeEndByte(b);
+}
+
+// The path node.c's descent rule takes through the reference tree's visible
+// children: at each level, into the first child whose end reaches the range
+// (an empty child may merely touch its start) and whose start does not pass
+// it. A zero-width child sitting exactly at the range is ambiguous from the
+// cursor's flattened view -- when it is the trailing child of a hidden node
+// ending there, node.c skips that hidden node and never sees it -- so
+// `skipEmpty` computes the other legitimate answer.
+std::vector<const RefNode*> RefDescentPath(const RefNode& root, std::uint32_t rangeStart, std::uint32_t rangeEnd, bool skipEmpty) {
+    std::vector<const RefNode*> path{&root};
+    bool                        didDescend = true;
+    while (didDescend) {
+        didDescend = false;
+        for (const RefNode& child : path.back()->children) {
+            const std::uint32_t childStart = ned::editor::parse::NodeStartByte(child.node);
+            const std::uint32_t childEnd   = ned::editor::parse::NodeEndByte(child.node);
+            if (childEnd < rangeEnd)
+                continue;
+            if (childStart == childEnd ? (skipEmpty || childEnd < rangeStart) : childEnd <= rangeStart)
+                continue;
+            if (rangeStart < childStart)
+                break;
+            path.push_back(&child);
+            didDescend = true;
+            break;
+        }
+    }
+    return path;
+}
+
+// True when `actual` is what node.c's rule reaches for [mid, mid]: the last
+// relevant node on the path -- or, tree-sitter's own quirk, an earlier
+// relevant node the descent stopped at because a zero-width HIDDEN token
+// (bash's `_concat`, say) sits exactly at `mid`. The cursor never shows such
+// a token, but the stop can only happen where the next node on the path
+// starts at `mid`, so that is the one place an earlier answer is accepted.
+bool DescendantMatches(const std::vector<const RefNode*>& path, std::uint32_t mid, bool namedOnly, ned::editor::parse::RedNode actual) {
+    const auto     relevant = [namedOnly](const RefNode* node) { return !namedOnly || ned::editor::parse::NodeIsNamed(node->node); };
+    const RefNode* expected = path.front();
+    for (const RefNode* node : path)
+        if (relevant(node))
+            expected = node;
+    if (SameNode(actual, expected->node))
+        return true;
+    const RefNode* lastRelevant = path.front();
+    for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+        if (relevant(path[i]))
+            lastRelevant = path[i];
+        if (ned::editor::parse::NodeStartByte(path[i + 1]->node) == mid && SameNode(actual, lastRelevant->node))
+            return true;
+    }
+    return false;
+}
+
+bool SamePoint(ned::editor::parse::abi::Point a, ned::editor::parse::abi::Point b) {
+    return a.row == b.row && a.column == b.column;
+}
+
+struct RedLayerTally {
+    std::size_t compared     = 0;
+    std::size_t fieldLookups = 0;
+    std::size_t fieldNulls   = 0;
+};
+
+// Checks `ref` (child `index` of `parent`, null for the root) and its
+// subtree; `what` names the first mismatch.
+bool CheckRefNode(const RefNode& ref, const RefNode* parent, std::size_t index, std::string_view text, RedLayerTally& tally, std::string& what) {
+    using namespace ned::editor::parse;
+    const RedNode node = ref.node;
+    ++tally.compared;
+
+    const std::uint32_t start    = NodeStartByte(node);
+    const std::uint32_t end      = NodeEndByte(node);
+    const auto          describe = [](RedNode n) {
+        return NodeIsNull(n) ? std::string("null")
+                             : std::string(NodeType(n)) + "[" + std::to_string(NodeStartByte(n)) + "," + std::to_string(NodeEndByte(n)) + ")";
+    };
+    const auto fail = [&](const std::string& op, RedNode actual, RedNode expected) {
+        what = op + " of " + describe(node) + ": ned " + describe(actual) + ", cursor " + describe(expected);
+        return false;
+    };
+    const auto check = [&](const char* op, RedNode actual, RedNode expected) {
+        return SameNode(actual, expected) || fail(op, actual, expected);
     };
 
-    for (const CorpusSource& source : CorpusSources()) {
-        const fs::path corpusDir = DepsDir() / source.directory;
-        if (!fs::exists(corpusDir))
-            continue;
+    if (!SamePoint(NodeStartPoint(node), PointAtOffset(text, start)) || !SamePoint(NodeEndPoint(node), PointAtOffset(text, end)))
+        return fail("point vs text", node, node);
+    if (!check("parent", NodeParent(node), parent != nullptr ? parent->node : NodeNull()))
+        return false;
+    if (parent != nullptr) {
+        const std::vector<RefNode>& siblings = parent->children;
+        // node.c's next-sibling search skips every later child ending at or
+        // before this node's end, so a zero-width sibling sitting exactly at
+        // this node's end is passed over; modelled exactly.
+        const auto nextAfter = [&](bool namedOnly) {
+            for (std::size_t j = index + 1; j < siblings.size(); ++j)
+                if (NodeEndByte(siblings[j].node) > end && (!namedOnly || NodeIsNamed(siblings[j].node)))
+                    return siblings[j].node;
+            return NodeNull();
+        };
+        if (!check("next sibling", NodeNextSibling(node), nextAfter(false)))
+            return false;
+        if (!check("next named sibling", NodeNextNamedSibling(node), nextAfter(true)))
+            return false;
+        // The previous-sibling search is a byte-position heuristic that can
+        // give up (null) when this node itself is zero-width; exact otherwise.
+        const auto prevBefore = [&](bool namedOnly) {
+            for (std::size_t j = index; j-- > 0;)
+                if (!namedOnly || NodeIsNamed(siblings[j].node))
+                    return siblings[j].node;
+            return NodeNull();
+        };
+        const auto checkPrev = [&](const char* op, RedNode actual, RedNode expected) {
+            return (start == end && NodeIsNull(actual)) || check(op, actual, expected);
+        };
+        if (!checkPrev("prev sibling", NodePrevSibling(node), prevBefore(false)))
+            return false;
+        if (!checkPrev("prev named sibling", NodePrevNamedSibling(node), prevBefore(true)))
+            return false;
+    }
 
+    if (NodeChildCount(node) != ref.children.size())
+        return fail("child count " + std::to_string(NodeChildCount(node)) + " vs " + std::to_string(ref.children.size()), node, node);
+    std::uint32_t named = 0;
+    for (std::size_t i = 0; i < ref.children.size(); ++i) {
+        const RefNode& child = ref.children[i];
+        if (!check("child by index", NodeChild(node, static_cast<std::uint32_t>(i)), child.node))
+            return false;
+        if (NodeIsNamed(child.node)) {
+            if (!check("named child by index", NodeNamedChild(node, named), child.node))
+                return false;
+            ++named;
+        }
+        if (!check("child with descendant (child)", NodeChildWithDescendant(node, child.node), child.node))
+            return false;
+        for (const RefNode& grandchild : child.children)
+            if (!check("child with descendant (grandchild)", NodeChildWithDescendant(node, grandchild.node), child.node))
+                return false;
+    }
+    if (NodeNamedChildCount(node) != named)
+        return fail("named child count", node, node);
+    for (std::size_t i = 0; i < ref.children.size(); ++i) {
+        const abi::FieldId field = ref.children[i].field;
+        if (field == 0)
+            continue;
+        bool first = true;
+        for (std::size_t j = 0; j < i; ++j)
+            first = first && ref.children[j].field != field;
+        if (!first)
+            continue;
+        // A field declared inside a hidden wrapper (a supertype or repeat
+        // node, lua's `statement`) is reported by the cursor but is not
+        // reachable through the parent's inherited field map, so node.c
+        // answers null there; anything non-null must be the cursor's child.
+        const RedNode actual = NodeChildByFieldId(node, field);
+        ++tally.fieldLookups;
+        if (NodeIsNull(actual))
+            ++tally.fieldNulls;
+        else if (!check(("child by field id " + std::to_string(field)).c_str(), actual, ref.children[i].node))
+            return false;
+    }
+
+    for (std::size_t i = 0; i < ref.children.size(); ++i)
+        if (!CheckRefNode(ref.children[i], &ref, i, text, tally, what))
+            return false;
+
+    const std::uint32_t               mid             = start + (end - start) / 2;
+    const std::vector<const RefNode*> path            = RefDescentPath(ref, mid, mid, false);
+    const std::vector<const RefNode*> pathNoEmpties   = RefDescentPath(ref, mid, mid, true);
+    const auto                        checkDescendant = [&](const char* op, bool namedOnly, RedNode actual) {
+        if (DescendantMatches(path, mid, namedOnly, actual) || DescendantMatches(pathNoEmpties, mid, namedOnly, actual))
+            return true;
+        std::string pathText;
+        for (const RefNode* step : path)
+            pathText += " " + describe(step->node);
+        what = std::string(op) + " at mid " + std::to_string(mid) + ": ned " + describe(actual) + ", path" + pathText;
+        return false;
+    };
+    if (!checkDescendant("descendant for byte range", false, NodeDescendantForByteRange(node, mid, mid)))
+        return false;
+    if (!checkDescendant("named descendant for byte range", true, NodeNamedDescendantForByteRange(node, mid, mid)))
+        return false;
+    return true;
+}
+
+} // namespace
+
+TEST_CASE("Ned red layer: node operations agree with a cursor walk over the bundled corpora", "[ParseEngineRedLayer][Corpus]") {
+    RedLayerTally            tally;
+    std::vector<std::string> failures;
+
+    for (const CorpusSource& source : CorpusSources()) {
         const std::optional<Language> language = LanguageByName(source.defaultLanguage);
         REQUIRE(language.has_value());
         ned::editor::parse::Engine engine(language->Raw());
-        TsParserHandle             tsParser(reinterpret_cast<const TSLanguage*>(language->Raw()));
 
-        std::vector<fs::path> files;
-        for (const auto& entry : fs::recursive_directory_iterator(corpusDir))
-            if (entry.is_regular_file() &&
-                // tree-sitter-make is the one grammar in this table whose
-                // corpus files end in .mk, not .txt.
-                (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
-                files.push_back(entry.path());
-        std::sort(files.begin(), files.end());
-
-        for (const fs::path& file : files) {
+        for (const fs::path& file : CorpusFiles(source)) {
             const std::string content = ReadFile(file);
-            const std::string label   = fs::relative(file, corpusDir).string();
+            const std::string label   = CorpusLabel(source, file);
             for (CorpusCase& item : ParseCorpusFile(content, label)) {
                 if (item.skip || !item.platformMatches || !item.languages.front().empty())
                     continue;
 
-                const ned::editor::parse::GreenTree nedTree = engine.Parse(item.input);
-                const TsTreeHandle                  tsTree  = TsParse(tsParser, item.input);
-                REQUIRE_FALSE(nedTree.IsNull());
+                const ned::editor::parse::GreenTree tree = engine.Parse(item.input);
+                REQUIRE_FALSE(tree.IsNull());
+                ned::editor::parse::TreeCursor cursor(tree.RootNode());
+                const RefNode                  root = CollectSubtree(cursor);
 
-                const ned::editor::parse::RedNode nedRoot = nedTree.RootNode();
-                const TSNode                      tsRoot  = ts_tree_root_node(tsTree.tree);
-
-                ned::editor::parse::TreeCursor nedCursor(nedRoot);
-                TSTreeCursor                   tsCursor = ts_tree_cursor_new(tsRoot);
-
-                bool mismatch = false;
-                for (;;) {
-                    const ned::editor::parse::RedNode nedNode = nedCursor.CurrentNode();
-                    const TSNode                      tsNode  = ts_tree_cursor_current_node(&tsCursor);
-
-                    ++comparedNodes;
-                    const bool same =
-                        std::string_view(ned::editor::parse::NodeType(nedNode)) == ts_node_type(tsNode) &&
-                        ned::editor::parse::NodeStartByte(nedNode) == ts_node_start_byte(tsNode) &&
-                        ned::editor::parse::NodeEndByte(nedNode) == ts_node_end_byte(tsNode) &&
-                        ned::editor::parse::NodeSymbol(nedNode) == ts_node_symbol(tsNode) &&
-                        ned::editor::parse::NodeIsNamed(nedNode) == ts_node_is_named(tsNode) &&
-                        ned::editor::parse::NodeIsExtra(nedNode) == ts_node_is_extra(tsNode) &&
-                        ned::editor::parse::NodeIsMissing(nedNode) == ts_node_is_missing(tsNode) &&
-                        nedCursor.CurrentFieldId() == ts_tree_cursor_current_field_id(&tsCursor) &&
-                        ned::editor::parse::NodeStartPoint(nedNode).row == ts_node_start_point(tsNode).row &&
-                        ned::editor::parse::NodeStartPoint(nedNode).column == ts_node_start_point(tsNode).column;
-                    if (!same) {
-                        fail(source, item, std::string("node mismatch at byte ") + std::to_string(ts_node_start_byte(tsNode)) + " (" + ts_node_type(tsNode) + " vs " + ned::editor::parse::NodeType(nedNode) + ")");
-                        mismatch = true;
-                        break;
-                    }
-
-                    // Node-level operations, compared by identity facts.
-                    const auto sameNode = [](ned::editor::parse::RedNode a, TSNode b) {
-                        const bool aNull = ned::editor::parse::NodeIsNull(a);
-                        if (aNull != ts_node_is_null(b))
-                            return false;
-                        if (aNull)
-                            return true;
-                        return std::string_view(ned::editor::parse::NodeType(a)) == ts_node_type(b) &&
-                               ned::editor::parse::NodeStartByte(a) == ts_node_start_byte(b) &&
-                               ned::editor::parse::NodeEndByte(a) == ts_node_end_byte(b);
-                    };
-
-                    if (!sameNode(ned::editor::parse::NodeParent(nedNode), ts_node_parent(tsNode))) {
-                        fail(source, item, "parent mismatch");
-                        mismatch = true;
-                        break;
-                    }
-                    if (!sameNode(ned::editor::parse::NodeNextNamedSibling(nedNode), ts_node_next_named_sibling(tsNode))) {
-                        fail(source, item, "next named sibling mismatch");
-                        mismatch = true;
-                        break;
-                    }
-                    if (!sameNode(ned::editor::parse::NodePrevNamedSibling(nedNode), ts_node_prev_named_sibling(tsNode))) {
-                        fail(source, item, "prev named sibling mismatch");
-                        mismatch = true;
-                        break;
-                    }
-                    if (ned::editor::parse::NodeChildCount(nedNode) != ts_node_child_count(tsNode)) {
-                        fail(source, item, "child count mismatch");
-                        mismatch = true;
-                        break;
-                    }
-                    const std::uint32_t start = ned::editor::parse::NodeStartByte(nedNode);
-                    const std::uint32_t end   = ned::editor::parse::NodeEndByte(nedNode);
-                    const std::uint32_t mid   = start + (end - start) / 2;
-                    if (!sameNode(ned::editor::parse::NodeNamedDescendantForByteRange(nedNode, mid, mid),
-                                  ts_node_named_descendant_for_byte_range(tsNode, mid, mid))) {
-                        fail(source, item, "named descendant mismatch");
-                        mismatch = true;
-                        break;
-                    }
-                    if (!sameNode(ned::editor::parse::NodeDescendantForByteRange(nedNode, mid, mid),
-                                  ts_node_descendant_for_byte_range(tsNode, mid, mid))) {
-                        fail(source, item, "descendant mismatch");
-                        mismatch = true;
-                        break;
-                    }
-
-                    // Advance both cursors in lockstep preorder.
-                    const bool nedDown = nedCursor.GotoFirstChild();
-                    const bool tsDown  = ts_tree_cursor_goto_first_child(&tsCursor);
-                    if (nedDown != tsDown) {
-                        fail(source, item, "goto_first_child mismatch");
-                        mismatch = true;
-                        break;
-                    }
-                    if (nedDown)
-                        continue;
-
-                    bool done = false;
-                    for (;;) {
-                        const bool nedNext = nedCursor.GotoNextSibling();
-                        const bool tsNext  = ts_tree_cursor_goto_next_sibling(&tsCursor);
-                        if (nedNext != tsNext) {
-                            fail(source, item, "goto_next_sibling mismatch");
-                            mismatch = true;
-                            break;
-                        }
-                        if (nedNext)
-                            break;
-                        const bool nedUp = nedCursor.GotoParent();
-                        const bool tsUp  = ts_tree_cursor_goto_parent(&tsCursor);
-                        if (nedUp != tsUp) {
-                            fail(source, item, "goto_parent mismatch");
-                            mismatch = true;
-                            break;
-                        }
-                        if (!nedUp) {
-                            done = true;
-                            break;
-                        }
-                    }
-                    if (mismatch || done)
-                        break;
-                }
-
-                ts_tree_cursor_delete(&tsCursor);
-                if (mismatch && failures.size() >= 50)
-                    break;
+                std::string what;
+                if (!CheckRefNode(root, nullptr, 0, item.input, tally, what) && failures.size() < 50)
+                    failures.push_back(std::string(source.directory) + "/" + item.file + ": " + item.name + " -- " + what);
             }
         }
     }
 
-    CHECK(comparedNodes > 90000);
+    CHECK(tally.compared > 90000);
+    // The null tolerance above must stay the rare exception, or a lookup that
+    // always answered null would pass.
+    INFO("field lookups: " << tally.fieldLookups << ", null: " << tally.fieldNulls);
+    CHECK(tally.fieldLookups > 5000);
+    CHECK(tally.fieldNulls * 100 < tally.fieldLookups);
     INFO("first failures: " << [&] {
         std::string joined;
         for (std::size_t i = 0; i < failures.size() && i < 20; i++)
