@@ -528,8 +528,27 @@ Shipped here, one slug each for `git log --grep=`: `terminal-panel-scrollback`,
 `multiple-terminal-tabs`, `unified-left-dock`, `test-runner-gaps` (gutter-click
 run-this-test plus a pre-run `▸` affordance, the failures-only degradation surfaced
 instead of silently degrading, and go's basename-only `file:line` resolved through the
-import path it already reports).
+import path it already reports), and `vim-quit-window-semantics` (`:q`/`ZZ`/`ZQ` used to
+route into Emacs' own kill-buffer, whose "no buffers left" fallback conjures a fresh
+`*scratch*` instead of exiting — reported live as "`:q` won't exit, it closes buffers and
+opens a scratch." `PendingIntent` split into `Quit`/`QuitForced` (`:qa`/`:qa!`) and
+`CloseWindow`/`CloseWindowForced` (`:q`/`:q!`, `ZZ`/`ZQ`, matching real vim's own
+window-vs-buffer distinction); a new `BufferView::SetIsOnlyWindowQuery` (wired by
+`WindowManager::MakePane`, `SetSplitResizeQuery`'s own shape) answers "is this the last
+window" — not-last forwards to the same `InteractiveRequest::DeleteWindow`
+`delete-window`/`C-x 0` already uses, last falls through to the existing `"quit"`
+command (`C-x C-c`) for its unsaved-changes-across-every-buffer confirmation rather than
+a second copy of that check. Fixed as a side effect: `ZQ` used to still confirm-prompt
+despite its own comment calling it force-quit, and `:qa`/`:qa!` had no unsaved-changes
+check of any kind).
 
+- [ ] **`C-x` is vim's own "decrement number under point" in Normal mode**
+      (`Engine::HandleAction`'s Control-chord block), so ned's Emacs-style `C-x 2`/
+      `C-x 0`/`C-x o` window-split/-close/-cycle prefix has no way to reach `Dispatcher`
+      under Vim mode — confirmed live (`vim-keymap-fallthrough`'s own fallthrough
+      deliberately leaves every Control chord vim already recognizes, `C-x` included,
+      alone). No `:sp`/`:vs`/`:vsp` ex-command equivalent exists either
+      (`vim-quit-window-semantics`, found while testing it).
 - [ ] **A determinate progress bar, and a huge save that can paint one.** The mode line's
       spinner is the right answer for indeterminate work and stays; what has no answer at
       all is a long operation whose end *is* knowable. Saving a multi-GB buffer is the

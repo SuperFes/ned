@@ -49,6 +49,32 @@ namespace {
         return IsPlainCharChord(chord) && chord.Codepoint >= U'0' && chord.Codepoint <= U'9';
     }
 
+    // vim-keymap-fallthrough follow-up: the exact set of Control-chord codepoints
+    // Engine::HandleAction's own Control-chord block (r/v/o/i/d/u/f/b/e/y/a/x) and
+    // Engine::HandleVisualSpecific's C-v (VisualBlock toggle) already bind in Normal/
+    // Visual mode -- kept here, beside Engine::HandleKey's own fallthrough check, rather
+    // than duplicated inline so the two lists can't silently drift apart. Update this
+    // alongside either of those if a new Control-chord binding is ever added.
+    bool IsRecognizedNormalOrVisualControlChord(char32_t codepoint) {
+        switch (codepoint) {
+            case U'r':
+            case U'v':
+            case U'o':
+            case U'i':
+            case U'd':
+            case U'u':
+            case U'f':
+            case U'b':
+            case U'e':
+            case U'y':
+            case U'a':
+            case U'x':
+                return true;
+            default:
+                return false;
+        }
+    }
+
     // vim-macro-register follow-up: ParseKeySequence's own tokenizer only splits on a
     // literal space -- a linewise-yanked register's Joined() text (RegisterEntry's own
     // "every piece newline-joined, with a trailing newline" contract) would otherwise
@@ -274,7 +300,7 @@ void Engine::UpdateGoalColumn(const text::Buffer& buffer) {
 // Top-level dispatch
 // ---------------------------------------------------------------------------------
 
-void Engine::HandleKey(text::Buffer& buffer, const KeyChord& chord) {
+bool Engine::HandleKey(text::Buffer& buffer, const KeyChord& chord) {
     statusText_.clear();
 
     // buffer-scoped-marks follow-up: see currentBufferIdentity_'s own doc comment --
@@ -297,12 +323,35 @@ void Engine::HandleKey(text::Buffer& buffer, const KeyChord& chord) {
         CharHandler handler = std::move(pendingCharHandler_);
         pendingCharHandler_ = nullptr;
         handler(buffer, chord);
-        return;
+        return true;
+    }
+
+    // vim-keymap-fallthrough follow-up: real vim has no C-c/C-x-prefixed command set of
+    // its own to preempt, but ned does (VCS, LSP, project search, tasks, ...) -- without
+    // this, every one of those becomes permanently unreachable the instant vim mode is
+    // on, which is what a live BufferView test confirmed ("C-c v p" silently doing
+    // nothing under vim mode, versus switching the VCS dock with it off). Scoped
+    // narrowly: a Control chord (never Meta -- vim uses that too little for this to
+    // matter, and Meta already reaches nothing in Normal mode today) that isn't part of
+    // the small, explicit set Engine::HandleAction/HandleVisualSpecific already bind,
+    // arriving at the very start of a fresh command (no pending operator/count -- an
+    // in-progress "d"+motion swallowing an unbound chord to cancel itself is still
+    // correct vim behavior and must not instead fire a global command mid-sequence) is
+    // handed back unconsumed. The caller (BufferView::HandleVimKey) feeds it to ned's
+    // own Dispatcher exactly as it would with vim mode off, and -- since a bound global
+    // prefix leaves Dispatcher itself mid-sequence -- routes every following chord
+    // straight to Dispatcher too, skipping vim entirely, until that sequence resolves.
+    // No state above is touched before this returns, so a later, genuine vim command
+    // starts clean.
+    if ((mode_ == Mode::Normal || mode_ == Mode::Visual || mode_ == Mode::VisualLine || mode_ == Mode::VisualBlock) &&
+        !pendingOperator_ && !hasCount_ && chord.Control && !chord.Meta && chord.Special == SpecialKey::None &&
+        !IsRecognizedNormalOrVisualControlChord(chord.Codepoint)) {
+        return false;
     }
 
     if (isRecordingMacro_ && mode_ == Mode::Normal && !pendingOperator_ && IsPlainChar(chord, U'q')) {
         StopMacroRecording();
-        return;
+        return true;
     }
     if (isRecordingMacro_) {
         macroRecordingBuffer_.push_back(chord);
@@ -311,20 +360,21 @@ void Engine::HandleKey(text::Buffer& buffer, const KeyChord& chord) {
     switch (mode_) {
         case Mode::CommandLine:
             HandleCommandLineKey(buffer, chord);
-            return;
+            return true;
         case Mode::Insert:
             HandleInsertKeyDirectly(buffer, chord);
-            return;
+            return true;
         case Mode::Replace:
             HandleReplaceKey(buffer, chord);
-            return;
+            return true;
         case Mode::Normal:
         case Mode::Visual:
         case Mode::VisualLine:
         case Mode::VisualBlock:
             HandleNormalOrVisualKey(buffer, chord);
-            return;
+            return true;
     }
+    return true; // unreachable -- every Mode enumerator is handled above
 }
 
 void Engine::RecordInsertKey(const KeyChord& chord) {
@@ -1162,10 +1212,10 @@ void Engine::HandleZPrefixed(text::Buffer& buffer, const KeyChord& chord) {
 void Engine::HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& chord) {
     if (IsPlainChar(chord, U'Z')) { // ZZ -- save and close, same body as :wq
         buffer.Save();
-        pendingIntent_ = PendingIntent::CloseBuffer;
+        pendingIntent_ = PendingIntent::CloseWindow;
     }
-    else if (IsPlainChar(chord, U'Q')) { // ZQ -- close, same body as :q (still confirm-prompts if modified)
-        pendingIntent_ = PendingIntent::CloseBuffer;
+    else if (IsPlainChar(chord, U'Q')) { // ZQ -- force-close without saving, same body as :q!
+        pendingIntent_ = PendingIntent::CloseWindowForced;
     }
     FinishCommand(buffer);
 }
@@ -2041,7 +2091,7 @@ void Engine::RepeatLastChange(text::Buffer& buffer) {
     }
     ++replayDepth_;
     for (const KeyChord& c : chords) {
-        HandleKey(buffer, c);
+        (void)HandleKey(buffer, c); // dot-repeat replay -- a chord vim doesn't recognize here has nowhere to fall through to
     }
     --replayDepth_;
 }
@@ -2299,7 +2349,7 @@ void Engine::PlayMacro(text::Buffer& buffer, char32_t name, long count) {
     ++replayDepth_;
     for (long i = 0; i < std::max<long>(1, count); ++i) {
         for (const KeyChord& c : chords) {
-            HandleKey(buffer, c);
+            (void)HandleKey(buffer, c); // macro replay -- same reasoning as RepeatLastChange above
         }
     }
     --replayDepth_;
@@ -2498,18 +2548,18 @@ void Engine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) {
         return;
     }
     if (cmd->name == "q" || cmd->name == "quit") {
-        pendingIntent_ = PendingIntent::CloseBuffer;
+        pendingIntent_ = cmd->bang ? PendingIntent::CloseWindowForced : PendingIntent::CloseWindow;
         FinishCommand(buffer);
         return;
     }
     if (cmd->name == "wq" || cmd->name == "x" || cmd->name == "xit") {
         buffer.Save();
-        pendingIntent_ = PendingIntent::CloseBuffer;
+        pendingIntent_ = PendingIntent::CloseWindow;
         FinishCommand(buffer);
         return;
     }
     if (cmd->name == "qa" || cmd->name == "qall" || cmd->name == "quitall") {
-        pendingIntent_ = PendingIntent::Quit;
+        pendingIntent_ = cmd->bang ? PendingIntent::QuitForced : PendingIntent::Quit;
         FinishCommand(buffer);
         return;
     }
@@ -2603,7 +2653,7 @@ void Engine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) {
         for (const char c : keys) {
             KeyChord kc;
             kc.Codepoint = static_cast<unsigned char>(c);
-            HandleKey(buffer, kc);
+            (void)HandleKey(buffer, kc); // ":normal" replay -- same reasoning as RepeatLastChange above
         }
         FinishCommand(buffer);
         return;

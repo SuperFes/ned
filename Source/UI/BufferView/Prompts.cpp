@@ -186,18 +186,67 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
     }
     else {
         vimEngine_.SetViewport(viewport_.TopLine(), size().height > 0 ? static_cast<std::size_t>(size().height) : 0);
-        vimEngine_.HandleKey(activeBuffer_.Get(), chord);
+        // vim-keymap-fallthrough follow-up: Engine::HandleKey returns false only for an
+        // unrecognized Control chord at the start of a fresh vim command (see its own
+        // doc comment) -- hand it to ned's own global keymap exactly as this chord would
+        // get if vim mode were off, so C-c/C-x-prefixed commands stay reachable. Nothing
+        // in vimEngine_ changed on a false return, so there's no vim-side state below
+        // worth reading afterward; return this call's own result directly rather than
+        // falling into the vim-specific post-processing beneath (status text, pending
+        // jump/top-line, ...), none of which applies.
+        if (!vimEngine_.HandleKey(activeBuffer_.Get(), chord)) {
+            return DispatchChordNormally(chord);
+        }
     }
 
+    // vim-quit-window-semantics follow-up: real vim's ":q"/"ZZ"/"ZQ" close the current
+    // WINDOW, not a buffer -- routing them through RequestCloseBuffer's Emacs-style
+    // kill-buffer (whose own "no buffers left" fallback conjures a fresh *scratch*, see
+    // its doc comment) is exactly why plain ":q" used to never exit ned at all: closing
+    // the last buffer just replaced it with another one, forever. A forced variant
+    // (":q!"/"ZQ", ":qa!") skips confirmation outright; the unforced ones reuse the
+    // "quit" command (C-x C-c) so a hidden, unsaved buffer elsewhere still blocks it.
     const editor::vim::PendingIntent intent = vimEngine_.TakePendingIntent();
-    if (intent == editor::vim::PendingIntent::Quit) {
+    const auto                       quitApp = [this] {
+        editor::CommandContext quitContext = MakeContext();
+        RunCommandAndHandleOutcome(quitContext, [&] {
+            dispatcher_.Registry().Invoke("quit", quitContext);
+            return true;
+        });
+    };
+    // Same "Shutting down..." final-frame message ConfirmQuitPrompt's own onConfirm
+    // leaves -- EventLoop::Run's post-Exit() repaint is what shows it (see that
+    // prompt's doc comment); the forced paths bypass "quit" entirely, so nothing else
+    // would set it.
+    const auto forceQuitApp = [this] {
+        statusMessage_ = "Shutting down...";
         if (eventLoop_) {
             eventLoop_->Exit();
         }
+    };
+    if (intent == editor::vim::PendingIntent::Quit || intent == editor::vim::PendingIntent::QuitForced) {
+        if (intent == editor::vim::PendingIntent::QuitForced) {
+            forceQuitApp();
+        }
+        else {
+            quitApp();
+        }
         return true;
     }
-    if (intent == editor::vim::PendingIntent::CloseBuffer) {
-        RequestCloseBuffer(activeBuffer_.Get()); // may destroy *this* -- nothing after
+    if (intent == editor::vim::PendingIntent::CloseWindow || intent == editor::vim::PendingIntent::CloseWindowForced) {
+        const bool onlyWindow = !isOnlyWindowQuery_ || isOnlyWindowQuery_();
+        if (!onlyWindow) {
+            if (onWindowRequest_) {
+                onWindowRequest_(editor::InteractiveRequest::DeleteWindow); // may destroy *this* -- nothing after
+            }
+            return true;
+        }
+        if (intent == editor::vim::PendingIntent::CloseWindowForced) {
+            forceQuitApp();
+        }
+        else {
+            quitApp();
+        }
         return true;
     }
 

@@ -1104,6 +1104,113 @@ TEST_CASE("Quit leaves a shutting-down status message for the final frame", "[Bu
     REQUIRE(fixture.statusMessage == "Shutting down...");
 }
 
+// vim-quit-window-semantics follow-up: ":q" is real vim's window-close, which quits the
+// whole process once it's the last window -- not Emacs' kill-buffer (RequestCloseBuffer,
+// whose "no buffers left" fallback conjures a fresh *scratch* rather than exiting, is
+// exactly why plain ":q" used to never exit ned at all under vim mode). No
+// SetIsOnlyWindowQuery wiring here -- a bare BufferView with none defaults to "yes, the
+// only window", matching the single-pane case these tests exercise.
+TEST_CASE(":q on an unmodified buffer with no other window quits the app, like real vim", "[BufferView]") {
+    VimModeGuard         vimGuard;
+    Fixture              fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    for (const char c : std::string(":q")) {
+        view.OnEvent(ned::ui::test::Character(c));
+    }
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.statusMessage == "Shutting down...");
+}
+
+TEST_CASE(":q on a modified buffer with no other window prompts, same as C-x C-c", "[BufferView]") {
+    // Same "build off fixture.bufferList.CreateBuffer, not fixture.View()" shape as the
+    // C-x C-c quit-confirmation tests just above -- the "quit" command's own
+    // anyModified check reads context.bufferList, and fixture.buffer is never actually a
+    // member of fixture.bufferList.
+    VimModeGuard        vimGuard;
+    Fixture             fixture;
+    ned::text::Buffer&  buffer = fixture.bufferList.CreateBuffer("scratch");
+    buffer.InsertAtPoint("unsaved");
+
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    for (const char c : std::string(":q")) {
+        view.OnEvent(ned::ui::test::Character(c));
+    }
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Unsaved changes in: scratch -- quit anyway? (y/n)");
+
+    view.OnEvent(ned::ui::test::Character('n'));
+    REQUIRE(fixture.statusMessage == "Quit cancelled.");
+    REQUIRE(buffer.Modified()); // still there -- nothing was discarded
+
+    for (const char c : std::string(":q")) {
+        view.OnEvent(ned::ui::test::Character(c));
+    }
+    view.OnEvent(ned::ui::test::Return());
+    view.OnEvent(ned::ui::test::Character('y'));
+    REQUIRE(fixture.statusMessage == "Shutting down...");
+}
+
+TEST_CASE(":q! on a modified buffer with no other window quits without prompting", "[BufferView]") {
+    VimModeGuard         vimGuard;
+    Fixture              fixture;
+    fixture.buffer.InsertAtPoint("unsaved");
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    for (const char c : std::string(":q!")) {
+        view.OnEvent(ned::ui::test::Character(c));
+    }
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.statusMessage == "Shutting down...");
+}
+
+TEST_CASE("ZZ saves then quits the app with no other window", "[BufferView]") {
+    VimModeGuard         vimGuard;
+    Fixture              fixture;
+    fixture.buffer.SetPath(std::filesystem::temp_directory_path() / "ned_bufferview_test_zz.txt");
+    fixture.buffer.InsertAtPoint("content");
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Character('Z'));
+    view.OnEvent(ned::ui::test::Character('Z'));
+
+    REQUIRE_FALSE(fixture.buffer.Modified()); // ZZ saved before quitting
+    REQUIRE(fixture.statusMessage == "Shutting down...");
+    std::filesystem::remove(*fixture.buffer.Path());
+}
+
+// The window-tree half: SetIsOnlyWindowQuery says "no" and onWindowRequest_ is wired
+// (WindowManager's own MakePane precedent) -- ":q" must close just this window, the same
+// InteractiveRequest::DeleteWindow real delete-window (C-x 0) already uses, and never
+// touch eventLoop_ or the buffer at all.
+TEST_CASE(":q with another window open closes only this window, not the app", "[BufferView]") {
+    VimModeGuard         vimGuard;
+    Fixture              fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.SetIsOnlyWindowQuery([] { return false; });
+    std::optional<ned::editor::InteractiveRequest> requested;
+    view.SetOnWindowRequest([&requested](ned::editor::InteractiveRequest r) { requested = r; });
+
+    for (const char c : std::string(":q")) {
+        view.OnEvent(ned::ui::test::Character(c));
+    }
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(requested == std::optional(ned::editor::InteractiveRequest::DeleteWindow));
+    REQUIRE(fixture.statusMessage != "Shutting down...");
+}
+
 TEST_CASE("Isearch: C-s enters search mode, typing narrows the match, RET accepts", "[BufferView]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("the quick brown fox");
@@ -6393,6 +6500,92 @@ TEST_CASE("C-c v p switches the dock to the VCS panel and hands it the keyboard 
     REQUIRE_FALSE(dock.Collapsed());
     REQUIRE(dock.ActivePanel() == vcsId); // switched from Files to VCS
     REQUIRE(vcsPanel.Focused());
+}
+
+// vim-keymap-fallthrough follow-up: without Engine::HandleKey's own fallthrough check,
+// this reproduces exactly what a live test first confirmed the bug with -- "C-c v p"
+// silently doing nothing under vim mode (dock never leaves Files, never uncollapses)
+// where the same chords work fine with vim mode off, above.
+TEST_CASE("C-c v p still switches the dock to the VCS panel with vim mode enabled", "[BufferView]") {
+    VimModeGuard         vimGuard;
+    Fixture              fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    ned::ui::ProjectSidebar sidebar(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    ned::ui::VcsPanel vcsPanel(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    ned::ui::LeftDock dock(fixture.theme);
+    const std::size_t filesId = dock.AddPanel(U'F', "Files", sidebar);
+    const std::size_t vcsId   = dock.AddPanel(U'V', "VCS", vcsPanel);
+    dock.SetCollapsed(true);
+    view.SetProjectSidebar(&sidebar);
+    view.SetVcsPanel(&vcsPanel);
+    view.SetLeftDock(&dock);
+    view.TakeFocus();
+
+    REQUIRE(dock.ActivePanel() == filesId); // Files is the default active panel
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character("v"));
+    view.OnEvent(ned::ui::test::Character("p"));
+
+    REQUIRE_FALSE(dock.Collapsed());
+    REQUIRE(dock.ActivePanel() == vcsId); // switched from Files to VCS, same as vim mode off
+    REQUIRE(vcsPanel.Focused());
+
+    // The fallthrough only ever fires for a chord vim doesn't itself recognize -- "v" on
+    // its own (no C-c first) must still enter vim's own Visual mode rather than being
+    // mistaken for a leftover piece of the global sequence above. "vld" (enter Visual at
+    // point 0, extend one char right, delete the inclusive charwise selection) only
+    // deletes "ab" if "v" genuinely started a Visual selection.
+    ned::text::Buffer& buffer = fixture.buffer;
+    buffer.InsertAtPoint("abc");
+    buffer.SetPoint(0);
+    view.OnEvent(ned::ui::test::Character("v"));
+    view.OnEvent(ned::ui::test::Character("l"));
+    view.OnEvent(ned::ui::test::Character("d"));
+    REQUIRE(buffer.Text() == "c");
+}
+
+// A chord vim's own grammar doesn't recognize but that arrives *mid* a pending vim
+// sequence (here, right after the "d" operator) must still cancel that sequence the way
+// real vim would, not escape to ned's global keymap -- HandleKey's fallthrough check is
+// deliberately scoped to a fresh command only. Same fixture shape as the test above.
+TEST_CASE("An unbound Control chord mid an operator-pending vim sequence does not leak to the global keymap", "[BufferView]") {
+    VimModeGuard         vimGuard;
+    Fixture              fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    ned::ui::ProjectSidebar sidebar(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    ned::ui::VcsPanel vcsPanel(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    ned::ui::LeftDock dock(fixture.theme);
+    const std::size_t filesId = dock.AddPanel(U'F', "Files", sidebar);
+    dock.AddPanel(U'V', "VCS", vcsPanel);
+    dock.SetCollapsed(true);
+    view.SetProjectSidebar(&sidebar);
+    view.SetVcsPanel(&vcsPanel);
+    view.SetLeftDock(&dock);
+    view.TakeFocus();
+
+    ned::text::Buffer& buffer = fixture.buffer;
+    buffer.InsertAtPoint("foo bar");
+    buffer.SetPoint(0);
+
+    view.OnEvent(ned::ui::test::Character("d")); // begin "dw"-shaped operator-pending state
+    view.OnEvent(ned::ui::test::Ctrl('c'));      // unbound mid-sequence -- must cancel, not open the VCS dock
+
+    REQUIRE(dock.ActivePanel() == filesId);
+    REQUIRE(dock.Collapsed());
+    REQUIRE(buffer.Text() == "foo bar"); // the cancelled "d" made no edit
 }
 
 TEST_CASE("A growing sidebar resize drag hands off to BufferView's mouse_move/mouse_release", "[BufferView]") {
