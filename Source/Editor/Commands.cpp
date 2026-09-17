@@ -54,6 +54,7 @@
 #include "Text/Utf8.h"
 #include "ToolchainIncludePaths.h"
 #include "Vcs/Runner.h"
+#include "WhitespaceSettings.h"
 
 namespace ned::editor {
 
@@ -3078,6 +3079,41 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           SetInlineDiagnosticsEnabled(enabled);
                           if (context.message) {
                               *context.message = enabled ? "Inline diagnostics on." : "Inline diagnostics off.";
+                          }
+                      });
+
+    // Whitespace-visualization follow-up: same "plain process-wide toggle,
+    // actable right here" shape as toggle-inline-diagnostics just above --
+    // WhitespaceSettings.h's three settings had been Janet-only until now.
+    registry.Register("toggle-tab-glyphs",
+                      "Show or hide a glyph marking the first cell of every real (literal) tab byte.",
+                      [](CommandContext& context) {
+                          const bool enabled = !TabGlyphsEnabled();
+                          SetTabGlyphsEnabled(enabled);
+                          if (context.message) {
+                              *context.message = enabled ? "Tab glyphs on." : "Tab glyphs off.";
+                          }
+                      });
+
+    registry.Register("toggle-indent-guides",
+                      "Show or hide vertical indentation guide glyphs within each line's own leading whitespace.",
+                      [](CommandContext& context) {
+                          const bool enabled = !IndentGuidesEnabled();
+                          SetIndentGuidesEnabled(enabled);
+                          if (context.message) {
+                              *context.message = enabled ? "Indent guides on." : "Indent guides off.";
+                          }
+                      });
+
+    registry.Register("toggle-trailing-whitespace-highlight",
+                      "Show or hide a background highlight on trailing whitespace (spaces/tabs after the last "
+                      "non-whitespace character on a line).",
+                      [](CommandContext& context) {
+                          const bool enabled = !TrailingWhitespaceHighlightEnabled();
+                          SetTrailingWhitespaceHighlightEnabled(enabled);
+                          if (context.message) {
+                              *context.message =
+                                  enabled ? "Trailing whitespace highlight on." : "Trailing whitespace highlight off.";
                           }
                       });
 
