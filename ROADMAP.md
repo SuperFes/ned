@@ -3,7 +3,7 @@
 What's still open. Completed work is deliberately not tracked here — the detailed
 per-feature design/decision records this file used to carry were pruned 2026-08-20,
 2026-08-25, 2026-09-06, and again 2026-09-07; full history lives in git
-(`git log --follow ROADMAP.md`, `git show <rev>:ROADMAP.md`, or `git log --grep=<slug>`
+(`it log --follow ROADMAP.md`, `git show <rev>:ROADMAP.md`, or `git log --grep=<slug>`
 for a specific feature — most shipped items below name the slug to search for). Current
 architecture is documented in `CLAUDE.md`. When an item here ships, replace its entry
 with a one-line pointer to the shipping commit (or delete it outright) rather than
@@ -39,7 +39,8 @@ Notcurses.
 Version is now real and reported: `project(Ned VERSION 0.5.0)` flows through a generated
 `NedVersion.h` into `ned --version`, and `v0.5.0` is tagged. Before that the CMake version
 was metadata nothing consumed, which is how it came to read 0.5.0 while the only tag read
-v0.1.0 and the binary could report neither.
+v0.1.0 and the binary could
+report neither.
 
 **1.0, for context, since branching starts near it.** For a scriptable editor 1.0 is a
 promise about the *Janet surface*, not about features: 160 `Register<>` bindings and 275
@@ -51,7 +52,6 @@ frozen · parsing-engine decision made either way · no known data-loss paths ·
 artifacts · the mdBook docs site.
 
 ### Rendering & Keystroke Performance
-
 What is left of the translucency/theme-v2 work is performance, not appearance: the
 compositor and theme engine shipped, and these are the costs that surfaced while building
 them. Compositing design and the measurements behind it: `Docs/Translucency.md`,
@@ -88,17 +88,6 @@ measurement said "fine" while typing felt bad.
       layer-vs-upstream gate caught 20 real "named descendant mismatch" failures across
       bash/css/fish before it shipped, which is exactly what that gate is for.
 
-Shipped, one slug for `git log --grep=`: `dirty-region-flush` (`Screen::Flush` now diffs
-every cell against what it last actually wrote to the real planes and skips any that are
-unchanged, instead of rewriting all 14,400 `ncplane_putstr_yx`/state calls every frame --
-both known traps handled: the backing plane still gets diffed post-`ClearBacking`, so a
-wash that moved or disappeared still repaints correctly, and a freshly reconstructed
-`Screen` always forces one full write on its first `Flush`, covering resize). The other
-half of this entry -- the recency glow defaulting back on -- had already shipped
-independently on 2026-09-10 (`git log --grep=recency-glow`): the real per-keystroke cost
-was unbounded whole-document highlighting, not the glow, which the entry above already
-tracks.
-
 ### Language Intelligence
 
 - [ ] **Android device tooling** (the one part of the Java/Kotlin work below that
@@ -120,25 +109,7 @@ tracks.
       so it was left alone deliberately rather than overlooked. Revisit if a project path
       with a space/`#`/`?` in it ever misbehaves.
 
-**LSP completion fidelity** (scoped 2026-09-07 from a full survey of the path).
-Shipped since, one slug each for `git log --grep=`: `completion-fidelity` (honor
-`textEdit` — per-item replace ranges, both the TextEdit and InsertReplaceEdit shapes,
-`itemDefaults`, and one replace-`[replaceStart, point)` accept rule for every source,
-which also fixed a real line-corrupting bug against servers that fuzzy-match
-server-side; plus incremental narrowing — `sortText`/`filterText`/`isIncomplete`
-parsed, the item set kept across keystrokes and refiltered locally via `FuzzyMatch.h`,
-the server re-asked only when it said `isIncomplete` or point left the word) and
-`completion-popup-scroll`. Both live in `Editor/CompletionSession.h`, not the
-`Source/UI/CompletionController.*` this file originally proposed — none of that logic
-needs a terminal, so it follows `IncrementalSearch`/`SnippetSession`'s precedent
-instead and is unit-tested without a `Screen`.
-
-`completion-resolve` closed the rest of the wire surface:
-`completionItem/resolve` (debounced on selection change, merging
-`documentation`/`detail`/`additionalTextEdits` back into the live session),
-`additionalTextEdits` (an accepted `std::vector` adds its `#include`, in the accept's
-own single undo step), server-declared `triggerCharacters` with a real `triggerKind: 2`,
-plus `preselect` and `commitCharacters`.
+**LSP completion fidelity**
 
 - [ ] `commitCharacters` and `preselect` are honored only where a server actually
       declares them — no default set is ever substituted. That turned out to be
@@ -204,10 +175,6 @@ The reframe that makes it affordable: **a tier is a commitment to a depth, not a
 about whether a language works at all** — D0 falls out of Tier 0 inference for free, so
 "basically every known language" becomes a real target rather than a boast, and the honest
 answer to a request for an obscure DSL becomes "yes, next release".
-
-The concrete near-term grammar and config items this implies — Tier A's D2 gap, Lua and
-CMake, diff, `.scm`, and SQL — are **independent of the engine work** and are tracked
-under "Release 0.6" at the top of this file rather than duplicated here.
 
 - [ ] Admission policy worth knowing before adding any grammar: **prefer
       `tree-sitter-grammars/*` over the original personal repo, and never use star count as
@@ -435,14 +402,6 @@ ordinary click) or `BufferView::ForwardMouseWhileSiblingDrags` (a real drop)).
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
-
-Shipped, two slugs for `git log --grep=`: `vcs-reword-commit` (`commit --amend --only`,
-never re-stages, unlike amend) and the transient commit menu (`VcsPanel::
-SetOnCommitMenuRequest`, mirroring `SetOnContextMenuRequest`'s own "no `OverlayHost`/
-`ListPopup` access, report to `main.cpp`" shape -- `c` now opens a small numbered menu
-over create/amend/extend/reword instead of committing directly; `C`/`e`/`r`/`w`/`n` are
-untouched quick keys for the non-default cases).
-
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up
