@@ -12,12 +12,52 @@
 
 #include <re2/re2.h>
 
+#include "Editor/FileNaming.h"
+#include "Editor/FormatCase.h"
+#include "Editor/FormatRules.h"
+#include "Editor/HeaderSource.h"
+#include "Editor/ModeOverrides.h"
+
 namespace ned::ui {
 
 // The file-local helpers these definitions call live in BufferView/Internal.h
 // now that several parts share them -- see that header. This using-directive is
 // what let the split leave every call site untouched.
 using namespace detail;
+
+namespace {
+
+    // file-naming-conventions follow-up: applied once, right after
+    // CommitTextEntryPrompt's own OpenOrCreateFile call creates a brand-new,
+    // empty buffer -- never on an existing file, never re-run later. Both
+    // halves are opt-in/checker-only, matching FormatCase.h's own "never an
+    // automatic reformat step" stance for identifiers: the case check only
+    // ever appends a note to the status line (never renames the file on
+    // disk), and the header-guard insert only fires when
+    // ned/set-auto-header-guard is explicitly on.
+    std::string ApplyFileNamingConventions(text::Buffer& buffer, const std::filesystem::path& path) {
+        const editor::Mode               mode        = editor::ModeForPath(path);
+        const std::string                languageKey = editor::LanguageKeyForMode(mode);
+        const editor::FileNamingRuleValue rule        = editor::FileNamingRuleFor(languageKey);
+
+        std::string note;
+        if (rule.caseConvention && !editor::MatchesCaseConvention(path.stem().string(), *rule.caseConvention)) {
+            const std::string suggested = editor::SuggestNameForConvention(path.stem().string(), *rule.caseConvention);
+            note = " (expected " + editor::CaseConventionName(*rule.caseConvention) +
+                   (suggested.empty() ? "" : ", e.g. \"" + suggested + path.extension().string() + "\"") + ")";
+        }
+
+        if (editor::AutoHeaderGuardEnabled() && rule.headerGuardTemplate && !rule.headerGuardTemplate->empty() &&
+            editor::headersource::IsHeaderExtension(path.extension().string()) && buffer.Content().ByteLength() == 0) {
+            const std::string macro = editor::ExpandHeaderGuardTemplate(*rule.headerGuardTemplate, path);
+            const std::string defineLinesPrefix = "#ifndef " + macro + "\n#define " + macro + "\n\n";
+            buffer.InsertAtPoint(defineLinesPrefix + "#endif // " + macro + "\n");
+            buffer.SetPoint(defineLinesPrefix.size());
+        }
+        return note;
+    }
+
+} // namespace
 
 void BufferView::SetOnAcpPanelToggle(std::function<void()> handler) {
     onAcpPanelToggle_ = std::move(handler);
@@ -2452,6 +2492,9 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             text::Buffer& opened = bufferList_.OpenOrCreateFile(input);
             activeBuffer_.Set(opened);
             statusMessage_ = isNewFile ? "(New file)" : ("Opened " + opened.Name());
+            if (isNewFile) {
+                statusMessage_ += ApplyFileNamingConventions(opened, input);
+            }
         }
         catch (const text::BinaryFileError&) {
             // Ask whether to open it anyway rather than just reporting the

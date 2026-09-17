@@ -1,5 +1,5 @@
 # sample.cpp  (cpp-mode)
-# 187 facts
+# 188 facts
 fold 52..673  "{\n\n// A type the oracle shou … rn sum;\n}\n\n}"
 fold 113..299  "{\n  public:\n    explicit Wid … ing name_;\n}"
 fold 188..195  "{\n    }"
@@ -185,5 +185,6 @@ symbol 37..673  [Namespace demo]  "namespace demo {\n\n// A type  … rn sum;\n}
 symbol 100..299  [TypeLike Widget]  "class Widget {\n  public:\n    … ing name_;\n}"
 symbol 129..195  [Callable Widget]  "explicit Widget(std::string  … me)) {\n    }"
 symbol 220..232  [Callable Name]  "Name() const"
+symbol 279..297  [Data name_]  "std::string name_;"
 symbol 302..539  [Callable Usage]  "const char* Usage() {\n    // … dented\n)\";\n}"
 symbol 541..670  [Callable Total]  "int Total(const std::vector< … eturn sum;\n}"

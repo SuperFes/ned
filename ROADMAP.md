@@ -541,11 +541,67 @@ Architecture:
   `ConfirmHugeFormat`, never touches the buffer), `Tests/BufferHugeFileTest.cpp`
   (`Revert()`'s dispatch), `Tests/BufferViewTest.cpp` (full y/n key-chord flow, n leaves disk
   untouched, y round-trips through disk and reload).
-- [ ] Case: full entity-kind catalogue (class/struct/interface/enum/field/global/constant/
-      macro/method-vs-function split/template-parameter/...) needs new query authoring --
-      `SymbolKind::Callable`/`TypeLike` are confirmed-conflated buckets, not a full set.
-- [ ] Align (kind 5), Arrange (kind 8), Rewrite (kind 9), and File naming conventions
-      remain unstarted.
+- [x] Case entity-kind catalogue (cpp/c) -- shipped 2026-09-17. `SymbolKindFromCaptureName`
+      (`Editor/Mode.h`/`.cpp`) gained a second, optional `rawKind` out-param carrying the
+      matched `@definition.*` capture's own suffix verbatim, threaded onto a new
+      `SymbolMarker::definitionKind` field -- `SymbolKind` itself stays exactly as coarse as
+      before (gutter/breadcrumb consumers untouched), the finer word lives alongside it.
+      `Editor/FormatCase.cpp`'s `EntityKindForMarker` reads that field directly instead of
+      switching on the coarse bucket, so `class`/`struct`/`enum`/`enum_member`/`field`/
+      `macro`/`function`/`method`/`namespace`/`template_parameter` are now each their own
+      entity kind (`var`/`variable` rename to the more legible `global`, `property` folds
+      into `field`, both unchanged in spirit from before). `Languages/cpp/tags.janet` and
+      `Languages/c/tags.janet` were widened to actually emit the new capture names (struct
+      split out of `class`, enum split out of `type`, new field/macro/enum_member/
+      template_parameter patterns, in-class-method captures correctly renamed
+      `@definition.function` -> `@definition.method`) -- every new query checked directly
+      against `ThirdParty/tree-sitter-grammars/tree-sitter-{c,cpp}/src/node-types.json`, not
+      guessed. A top-level "global" entity kind (a `translation_unit`-level
+      `@definition.var` pattern) was tried and reverted: a file with many top-level
+      declarations flooded the symbol-kind gutter's marker stream and broke
+      `BufferViewTest.cpp`'s own fold-glyph-streaming-cursor regression test plus
+      `StickyScrollTest.cpp`'s viewport-exit case -- see `Languages/cpp/tags.janet`'s own
+      header comment. Other bundled languages (Python/JavaScript's own `constant`, Rust's
+      own `macro`, PHP's own `field`, Kotlin's own `var`) get the wider catalogue for free
+      from their existing upstream `tags.scm`, zero new query authoring, since
+      `EntityKindForMarker` passes any capture suffix it has no specific rename for straight
+      through. Remaining, deliberately out of this pass's scope: a const/constexpr-qualified
+      `constant` bucket for cpp/c (needs a `#match?`/`#eq?` predicate against an unnamed
+      `type_qualifier` child), the same catalogue widening for every OTHER bundled language
+      that ships its own local `tags.janet` (php/csharp/java/kotlin/markdown), and wiring
+      `tags.janet` at all for a language that has none today. Tests: `Tests/FormatCaseTest.cpp`
+      (one violation per new entity kind, method vs. function non-cross-application),
+      `Tests/ModeTest.cpp` (`CMode`'s own struct-with-fields regression), Oracle golden files
+      (`Tests/Oracle/expected/sample.{c,cpp}.oracle`, regenerated and hand-reviewed).
+- [x] File naming conventions -- shipped 2026-09-17. New `Editor/FileNaming.h`/`.cpp`,
+      following `FormatRules.h`'s exact three-layer shape (mutex-guarded per-language map,
+      Janet bindings, no format-config-file schema yet -- see below): a per-language
+      `CaseConvention` for a NEW file's own basename (checker only, surfaced as a status-line
+      note on `find-file`/`StartCreateFileAt` creation, e.g. `(New file) (expected
+      snake-case, e.g. "widget.hpp")` -- never renames anything, matching Case kind 7's own
+      "never an automatic reformat step" stance), plus a per-language header-guard
+      macro-name template (`${PROJECT_NAME}/${FILE_NAME}/${EXT}` placeholders, each
+      uppercased and sanitized to a valid identifier fragment; cpp/c ship the literal
+      `${PROJECT_NAME}_${FILE_NAME}_${EXT}` example this section used to give, as a
+      built-in default overridable/clearable per language). A new `ned/set-auto-header-guard`
+      toggle (default off, mirroring `ned/set-auto-format-on-save`'s own opt-in stance) gates
+      whether creating a new file whose extension `Editor/HeaderSource.h::IsHeaderExtension`
+      classifies as a header actually auto-populates it with the expanded
+      `#ifndef`/`#define`/`#endif` skeleton, cursor left on the blank line -- both hooked
+      into `BufferView::CommitTextEntryPrompt`'s existing `isNewFile` branch
+      (`UI/BufferView/Prompts.cpp`), the same commit path `StartCreateFileAt`'s sidebar
+      "new file" action already falls through to. `ned/set-file-naming-case-convention`,
+      `ned/set-header-guard-template` (nil clears an override back to the built-in default;
+      an explicit empty string turns a built-in default off entirely -- a real third state,
+      not reachable through the empty-string-clears convention every OTHER `ned/set-format-*`
+      setting uses) round out the Janet surface. No format-config-file (`.ned/format.janet`)
+      schema key yet -- v1 is Janet-only configuration, same scope cut the original design
+      left implicit. Tests: `Tests/FileNamingTest.cpp` (config round-trips, template
+      expansion/sanitization, built-in-default-vs-override-vs-explicit-off three-state
+      lookup), `Tests/BufferViewTest.cpp` (auto-header-guard off by default leaves a new
+      header empty, on inserts and positions point correctly, a non-conforming new
+      filename appends the expected note).
+- [ ] Align (kind 5), Arrange (kind 8), and Rewrite (kind 9) remain unstarted.
 
 ### Jupyter Notebooks
 

@@ -1,5 +1,5 @@
 # sample.c  (c-mode)
-# 100 facts
+# 102 facts
 fold 33..58  "{\n    int x;\n    int y;\n}"
 fold 101..207  "{\n    int sum = 0;\n    for ( … eturn sum;\n}"
 fold 156..189  "{\n        sum += values[i];\n    }"
@@ -99,4 +99,6 @@ local 173..179  [Reference]  "values"
 local 180..181  [Reference]  "i"
 local 201..204  [Reference]  "sum"
 symbol 20..58  [TypeLike Point]  "struct Point {\n    int x;\n    int y;\n}"
+symbol 39..45  [Data x]  "int x;"
+symbol 50..56  [Data y]  "int y;"
 symbol 61..207  [Callable total]  "int total(const int* values, … eturn sum;\n}"

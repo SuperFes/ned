@@ -27,6 +27,14 @@ struct FormatRulesGuard {
         SetCaseConvention("local", std::nullopt);
         SetCaseConvention("function", std::nullopt);
         SetCaseConvention("type", std::nullopt);
+        SetCaseConvention("class", std::nullopt);
+        SetCaseConvention("struct", std::nullopt);
+        SetCaseConvention("enum", std::nullopt);
+        SetCaseConvention("enum_member", std::nullopt);
+        SetCaseConvention("field", std::nullopt);
+        SetCaseConvention("macro", std::nullopt);
+        SetCaseConvention("method", std::nullopt);
+        SetCaseConvention("template_parameter", std::nullopt);
         SetCaseConvention("namespace", std::nullopt);
         SetCaseConvention("cpp/function", std::nullopt);
     }
@@ -103,7 +111,10 @@ TEST_CASE("End to end: a badly-named class and namespace are both reported again
           "PascalCase and snake_case respectively",
           "[FormatCase]") {
     const FormatRulesGuard guard;
-    SetCaseConvention("type", CaseConvention::PascalCase);
+    // case-catalogue follow-up: "class", not "type" -- cpp's own tags.janet
+    // now splits class/struct/enum into their own entity kinds instead of
+    // conflating them all as "type" (see FormatCase.h's own header comment).
+    SetCaseConvention("class", CaseConvention::PascalCase);
     SetCaseConvention("namespace", CaseConvention::SnakeCase);
 
     const Mode        mode   = CppMode();
@@ -117,8 +128,90 @@ TEST_CASE("End to end: a badly-named class and namespace are both reported again
 
     const CaseViolation* badClass = FindViolation(violations, "bad_class");
     REQUIRE(badClass);
-    REQUIRE(badClass->entityKind == "type");
+    REQUIRE(badClass->entityKind == "class");
     REQUIRE(badClass->suggestedName == "BadClass");
+}
+
+// case-catalogue follow-up: the entity kinds cpp/tags.janet's own widening
+// added -- struct/enum/enum_member/field/macro/method/template_parameter --
+// each gets its own violation, correctly kept apart from every sibling kind
+// even when only ONE of them is configured.
+TEST_CASE("End to end: struct/enum/enum_member/field/macro/method/template_parameter each "
+          "reports under its own entity kind",
+          "[FormatCase]") {
+    const FormatRulesGuard guard;
+    SetCaseConvention("struct", CaseConvention::PascalCase);
+    SetCaseConvention("enum", CaseConvention::PascalCase);
+    SetCaseConvention("enum_member", CaseConvention::ScreamingSnakeCase);
+    SetCaseConvention("field", CaseConvention::SnakeCase);
+    SetCaseConvention("macro", CaseConvention::ScreamingSnakeCase);
+    SetCaseConvention("method", CaseConvention::CamelCase);
+    SetCaseConvention("template_parameter", CaseConvention::PascalCase);
+
+    const Mode        mode   = CppMode();
+    const std::string source = "#define bad_macro 1\n"
+                               "template <typename bad_param>\n"
+                               "struct bad_struct {\n"
+                               "    int Bad_Field;\n"
+                               "    void Bad_Method() {}\n"
+                               "};\n"
+                               "enum bad_enum { bad_enumerator };\n";
+    const auto violations = ComputeCaseViolations(source, "cpp", mode);
+
+    const CaseViolation* badMacro = FindViolation(violations, "bad_macro");
+    REQUIRE(badMacro);
+    REQUIRE(badMacro->entityKind == "macro");
+    REQUIRE(badMacro->suggestedName == "BAD_MACRO");
+
+    const CaseViolation* badParam = FindViolation(violations, "bad_param");
+    REQUIRE(badParam);
+    REQUIRE(badParam->entityKind == "template_parameter");
+    REQUIRE(badParam->suggestedName == "BadParam");
+
+    const CaseViolation* badStruct = FindViolation(violations, "bad_struct");
+    REQUIRE(badStruct);
+    REQUIRE(badStruct->entityKind == "struct");
+    REQUIRE(badStruct->suggestedName == "BadStruct");
+
+    const CaseViolation* badField = FindViolation(violations, "Bad_Field");
+    REQUIRE(badField);
+    REQUIRE(badField->entityKind == "field");
+    REQUIRE(badField->suggestedName == "bad_field");
+
+    const CaseViolation* badMethod = FindViolation(violations, "Bad_Method");
+    REQUIRE(badMethod);
+    REQUIRE(badMethod->entityKind == "method");
+    REQUIRE(badMethod->suggestedName == "badMethod");
+
+    const CaseViolation* badEnum = FindViolation(violations, "bad_enum");
+    REQUIRE(badEnum);
+    REQUIRE(badEnum->entityKind == "enum");
+    REQUIRE(badEnum->suggestedName == "BadEnum");
+
+    const CaseViolation* badEnumerator = FindViolation(violations, "bad_enumerator");
+    REQUIRE(badEnumerator);
+    REQUIRE(badEnumerator->entityKind == "enum_member");
+    REQUIRE(badEnumerator->suggestedName == "BAD_ENUMERATOR");
+}
+
+// case-catalogue follow-up: an in-class inline method used to be tagged
+// "function" (the same entity kind as a free function) -- cpp/tags.janet's
+// own field_identifier-declarator patterns now tag it "method" instead, so
+// a "function" rule no longer touches it and a "method" rule does.
+TEST_CASE("An in-class inline method is a 'method', not a 'function' -- the two rules don't "
+          "cross-apply",
+          "[FormatCase]") {
+    const FormatRulesGuard guard;
+    SetCaseConvention("function", CaseConvention::SnakeCase);
+
+    const Mode        mode   = CppMode();
+    const std::string source = "class Widget {\n"
+                               "public:\n"
+                               "    void BadMethodName() {}\n"
+                               "};\n";
+    const auto violations = ComputeCaseViolations(source, "cpp", mode);
+
+    REQUIRE_FALSE(FindViolation(violations, "BadMethodName")); // "function" rule, "method" entity -- no cross-apply
 }
 
 TEST_CASE("CaseViolation's byte range points at exactly the name, not the whole declaration",

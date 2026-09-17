@@ -624,7 +624,10 @@ SyntaxClass SyntaxClassFor(SymbolKind kind) {
     return SyntaxClass::Default; // unreachable, same convention as SyntaxClassForCapture's own default
 }
 
-std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName) {
+std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName, std::string* rawKind) {
+    if (rawKind != nullptr) {
+        rawKind->clear();
+    }
     // The ctags/nvim-treesitter tags.scm convention -- checked directly
     // against every bundled grammar that ships one (C/C++/PHP/JavaScript/
     // TypeScript/Python/Rust/Go/C#/Java/Kotlin), not assumed; a few extra
@@ -634,18 +637,23 @@ std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName
     // "definition." (a "@reference.*" capture, or a nested "@name"/"@doc"/
     // "@local.scope" from the same pattern match) is deliberately not a
     // match here -- see this function's own doc comment in Mode.h.
-    if (captureName == "definition.function" || captureName == "definition.method") {
-        return SymbolKind::Callable;
+    constexpr std::string_view kPrefix = "definition.";
+    if (!captureName.starts_with(kPrefix)) {
+        return std::nullopt;
     }
-    if (captureName == "definition.class" || captureName == "definition.interface" ||
-        captureName == "definition.type" || captureName == "definition.struct" ||
-        captureName == "definition.enum") {
-        return SymbolKind::TypeLike;
+    const std::string_view suffix = captureName.substr(kPrefix.size());
+
+    std::optional<SymbolKind> kind;
+    if (suffix == "function" || suffix == "method") {
+        kind = SymbolKind::Callable;
     }
-    if (captureName == "definition.constant" || captureName == "definition.var" ||
-        captureName == "definition.variable" || captureName == "definition.field" ||
-        captureName == "definition.property") {
-        return SymbolKind::Data;
+    else if (suffix == "class" || suffix == "interface" || suffix == "type" || suffix == "struct" ||
+             suffix == "enum") {
+        kind = SymbolKind::TypeLike;
+    }
+    else if (suffix == "constant" || suffix == "var" || suffix == "variable" || suffix == "field" ||
+             suffix == "property") {
+        kind = SymbolKind::Data;
     }
     // main-editor-sticky-scroll follow-up: a distinct capture name, not
     // folded into the TypeLike bucket above -- see SymbolKind::Namespace's
@@ -663,10 +671,25 @@ std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName
     // statement-form "namespace App;" is a SIBLING of the class that follows
     // it rather than a parent, so a file holding one class inside a
     // namespace read as two top-level types.
-    if (captureName == "definition.namespace" || captureName == "definition.module") {
-        return SymbolKind::Namespace;
+    else if (suffix == "namespace" || suffix == "module") {
+        kind = SymbolKind::Namespace;
     }
-    return std::nullopt;
+    // case-catalogue follow-up: three more capture words, none observed in
+    // any UPSTREAM tags.scm this codebase vendors -- they exist so a
+    // language's own local tags.janet (cpp's, so far) can name what
+    // upstream's ctags convention never distinguished at all, not because
+    // some other bundled grammar already emits them.
+    else if (suffix == "enum_member" || suffix == "macro") {
+        kind = SymbolKind::Data;
+    }
+    else if (suffix == "template_parameter") {
+        kind = SymbolKind::TypeLike;
+    }
+
+    if (kind && rawKind != nullptr) {
+        *rawKind = std::string(suffix);
+    }
+    return kind;
 }
 
 std::optional<LocalCaptureKind> LocalCaptureKindFromCaptureName(std::string_view captureName, std::string* qualifier) {
@@ -1000,11 +1023,13 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     : symbolKindQuery->MatchesInRange(tree.RootNode(), bufferText, window.startByte, window.endByte);
             for (const grammar::QueryMatch& match : matches) {
                 std::optional<SymbolKind>                    kind;
+                std::string                                rawDefinitionKind;
                 std::optional<grammar::QueryMatchCapture> definitionCapture;
                 std::optional<grammar::QueryMatchCapture> nameCapture;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (!kind) {
-                        if (const std::optional<SymbolKind> capturedKind = SymbolKindFromCaptureName(capture.name)) {
+                        if (const std::optional<SymbolKind> capturedKind =
+                                SymbolKindFromCaptureName(capture.name, &rawDefinitionKind)) {
                             kind              = capturedKind;
                             definitionCapture = capture;
                         }
@@ -1020,11 +1045,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 if (nameCapture) {
                     name = std::string(bufferText.substr(nameCapture->startByte, nameCapture->endByte - nameCapture->startByte));
                 }
-                markers.push_back({.startByte     = definitionCapture->startByte,
-                                   .endByte       = definitionCapture->endByte,
-                                   .kind          = *kind,
-                                   .name          = std::move(name),
-                                   .nameStartByte = nameCapture ? nameCapture->startByte : definitionCapture->startByte});
+                markers.push_back({.startByte      = definitionCapture->startByte,
+                                   .endByte        = definitionCapture->endByte,
+                                   .kind           = *kind,
+                                   .name           = std::move(name),
+                                   .nameStartByte  = nameCapture ? nameCapture->startByte : definitionCapture->startByte,
+                                   .definitionKind = std::move(rawDefinitionKind)});
             }
             // resolver-gaps follow-up (Rust bundling): a query can also
             // double-match one definition onto the exact same range, not
@@ -1041,7 +1067,16 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             // since that pass's own last clause deliberately excludes an
             // exact-range pair (by design, for the cpp-tags.scm case right
             // below) and would otherwise keep both.
-            std::sort(markers.begin(), markers.end(), [](const SymbolMarker& a, const SymbolMarker& b) {
+            //
+            // case-catalogue follow-up: stable_sort, not sort -- the
+            // comparator below doesn't look at definitionKind, so two
+            // markers tying on (start, end, kind, name) but disagreeing on
+            // it (Rust's own function/method double-match above) need a
+            // deterministic winner. Stable sort keeps match order, i.e.
+            // whichever pattern appears first in the .janet file; std::unique
+            // below always keeps the FIRST of a run, so that's the one that
+            // survives.
+            std::stable_sort(markers.begin(), markers.end(), [](const SymbolMarker& a, const SymbolMarker& b) {
                 return std::tie(a.startByte, a.endByte, a.kind, a.name) < std::tie(b.startByte, b.endByte, b.kind, b.name);
             });
             markers.erase(std::unique(markers.begin(), markers.end(),

@@ -17,10 +17,18 @@
 # a pointer- or pointer-to-pointer-returning function (`int* foo(...)`,
 # `char** foo(...)`) -- deeper wrapping is left uncovered, the same "curated
 # subset, not exhaustive" tradeoff this codebase already makes elsewhere.
+#
+# case-catalogue follow-up: struct/union split out of @definition.class,
+# @definition.enum split out of @definition.type, and the new field/macro/
+# enum_member patterns below are ned's own addition -- same shapes, same
+# node-types.json-checked verification, as cpp/tags.janet's own matching
+# header comment (see that file, including why a top-level "global" entity
+# kind was tried and reverted). No method/template-parameter equivalent
+# here: plain C has neither.
 
-(struct_specifier name: (type_identifier) @name body:(_)) @definition.class
+(struct_specifier name: (type_identifier) @name body:(_)) @definition.struct
 
-(declaration type: (union_specifier name: (type_identifier) @name)) @definition.class
+(declaration type: (union_specifier name: (type_identifier) @name)) @definition.struct
 
 (function_definition
   declarator: (function_declarator
@@ -39,4 +47,16 @@
 
 (type_definition declarator: (type_identifier) @name) @definition.type
 
-(enum_specifier name: (type_identifier) @name) @definition.type
+(enum_specifier name: (type_identifier) @name) @definition.enum
+
+# A plain data member -- declarator is a bare (or pointer-to) field_identifier.
+(field_declaration declarator: (field_identifier) @name) @definition.field
+
+(field_declaration declarator: (pointer_declarator declarator: (field_identifier) @name)) @definition.field
+
+# `#define NAME ...` and `#define NAME(...) ...` alike.
+(preproc_def name: (identifier) @name) @definition.macro
+
+(preproc_function_def name: (identifier) @name) @definition.macro
+
+(enumerator name: (identifier) @name) @definition.enum_member

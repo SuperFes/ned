@@ -14,24 +14,37 @@
 // capture convention: FormattingCapabilities.md's own words, "we are
 // closer to this than it looks" -- `Mode::localScopes` (locals.janet,
 // already resolves parameter/local bindings) and `Mode::symbolKind`
-// (tags.janet, already resolves function/type/namespace declarations)
-// between them cover a real, if partial, entity-kind set with zero new
-// query authoring. `Editor/LocalScopes.h`'s own `LocalCapture` and
-// `Mode.h`'s own `SymbolMarker` are read directly here -- no new
-// per-language format.janet capture is needed for this rule kind at all.
+// (tags.janet, already resolves definition-site declarations) between
+// them cover the entity-kind set below. `Editor/LocalScopes.h`'s own
+// `LocalCapture` and `Mode.h`'s own `SymbolMarker` are read directly here
+// -- no new per-language *format.janet* capture convention is needed for
+// this rule kind at all (a language's tags.janet/locals.janet may still
+// gain new patterns, as cpp's did, but that's the existing tags.scm
+// convention, not something invented for this file).
 //
-// Entity-kind granularity today is coarser than FormattingCapabilities.md's
-// own full catalogue (class/struct/interface/enum/function/method/field/
-// parameter/local/global/constant/macro/namespace/type-alias/...):
-// `SymbolKind::Callable` conflates free functions with in-class methods,
-// and `SymbolKind::TypeLike` conflates class/struct/type-alias/enum --
-// confirmed via a real background investigation of cpp's own tags.janet/
-// locals.janet before writing this, not assumed. Five entity kinds are
-// piloted here: "parameter"/"local" (locals.janet), "function"/"type"/
-// "namespace" (tags.janet, at SymbolMarker's own bucketing). Field/
-// global/constant/macro/enum-member/template-parameter/a function-vs-
-// method split all need new query authoring this file does not attempt --
-// a real, documented scope cut, not silently missing.
+// case-catalogue follow-up: entity-kind granularity now tracks
+// SymbolMarker::definitionKind (the tags query's own "@definition.*"
+// capture suffix, verbatim) rather than SymbolKind's coarse 3-4-bucket
+// grouping -- see Mode.h's own doc comments on both. What actually reaches
+// this file's entity-kind set is still bounded by what a language's own
+// tags.janet/locals.janet distinguishes: "parameter"/"local" (locals.janet)
+// plus whatever "@definition.*" words a language's tags.janet emits.
+// cpp's own tags.janet was widened alongside this file to emit "class"/
+// "struct"/"enum"/"enum_member"/"field"/"macro"/"function"/"method"/
+// "namespace"/"template_parameter" -- see Languages/cpp/tags.janet's own
+// header comment for exactly which grammar shapes each pattern covers and
+// which it deliberately doesn't (a const/constexpr-qualified "constant"
+// bucket, a top-level "global" entity kind -- tried, reverted, see that
+// file's own comment on why). Other bundled languages get whatever their
+// own upstream tags.scm already emitted verbatim, at zero new query-
+// authoring cost -- e.g. Python's/JavaScript's own "constant", Rust's own
+// "macro", PHP's own "field", Kotlin's own "var" (renamed "global" here,
+// same as any future language's own free-standing-variable capture would
+// be) -- since EntityKindForMarker (FormatCase.cpp) passes any capture
+// suffix it doesn't have a specific rename for straight through unchanged.
+// A language with no tags.janet at all, or one nobody has widened yet,
+// only ever surfaces what it already did before this follow-up -- strictly
+// additive, never a regression for a language nobody's touched.
 //
 
 #ifndef NED_EDITOR_FORMATCASE_H
@@ -48,9 +61,12 @@
 namespace ned::editor {
 
 // One name that doesn't conform to its entity kind's configured
-// CaseRuleFor(entityKind, languageKey).convention. `entityKind` is one of
-// "parameter"/"local"/"function"/"type"/"namespace" today (see this
-// file's own header comment on why not the full catalogue).
+// CaseRuleFor(entityKind, languageKey).convention. `entityKind` is
+// "parameter"/"local" (from locals.janet) or whatever "@definition.*"
+// word a language's own tags.janet emits, e.g. "class"/"struct"/"enum"/
+// "enum_member"/"field"/"global"/"macro"/"function"/"method"/"namespace"/
+// "template_parameter"/"type" (see this file's own header comment for
+// which languages emit which today).
 // `suggestedName` is a best-effort conforming rewrite (empty only if the
 // name tokenizes to nothing usable, e.g. an all-punctuation operator
 // name) -- computed here, not left for a caller/fixer to guess, since a

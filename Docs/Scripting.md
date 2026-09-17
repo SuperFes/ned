@@ -3,7 +3,11 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-198 bindings.
+204 bindings.
+
+## `ned/auto-header-guard-enabled`
+
+Whether ned/set-auto-header-guard is currently on.
 
 ## `ned/backward-char`
 
@@ -56,6 +60,10 @@ Bind a key sequence (e.g. "C-c C-j") to a command name.
 ## `ned/delete-char`
 
 Delete the grapheme cluster at point.
+
+## `ned/file-naming-case-convention`
+
+The language's own overridden new-file case-convention name, or nil if unset.
 
 ## `ned/format-blank-max-before`
 
@@ -112,6 +120,10 @@ The capture name's own overridden wrap-policy name, or nil if unset.
 ## `ned/forward-char`
 
 Move point forward one grapheme cluster.
+
+## `ned/header-guard-template`
+
+The language's own effective header-guard template (including any built-in default), or nil if none.
 
 ## `ned/insert`
 
@@ -196,6 +208,10 @@ Enable/disable walking upward from an opened file for a VCS marker directory to 
 ## `ned/set-auto-format-on-save`
 
 Enable/disable running the Native reindent/space/break/wrap/blank-line rules and a scoped Hygiene trim, restricted to the lines touched since the buffer was last loaded/saved, before every save-buffer (default false). Skipped entirely whenever an external format-command or a running LSP server already formats this save (see set-format-command/set-lsp-format-on-save) -- those keep their existing whole-buffer precedence.
+
+## `ned/set-auto-header-guard`
+
+Whether creating a new header file auto-populates it with the expanded #ifndef/#define/#endif guard skeleton. Default off.
 
 ## `ned/set-auto-merge`
 
@@ -305,6 +321,10 @@ Enable/disable appending a trailing newline to a file's written content on save 
 
 Enable/disable periodic crash-recovery snapshots of modified file buffers into the backup store (default true). Snapshots never touch the file itself and are dropped by a real save.
 
+## `ned/set-file-naming-case-convention`
+
+Override the case convention for a NEW file's own basename in the given language ("cpp", "python", ...) -- same convention-name set as ned/set-format-case-convention, empty string clears. A CHECKER only: surfaced as a status-line note when a new file's name doesn't conform, never a rename.
+
 ## `ned/set-file-watch`
 
 Enable/disable the inotify file watcher that triggers auto-revert/auto-merge near-instantly when an open buffer's file changes on disk (default true). The periodic 5s sweep keeps running either way (the safety net for filesystems inotify can't see, e.g. NFS); disabling this just falls back to that sweep alone. A flip takes effect at the next sweep tick (within ~5s).
@@ -372,6 +392,10 @@ Override whether a wrapped (multi-line) list gets a trailing separator after its
 ## `ned/set-format-wrap-policy`
 
 Override the wrap policy for a delimited-list capture name: "never" (always collapse to one line) or "always" (always one item per line); empty string clears.
+
+## `ned/set-header-guard-template`
+
+Override the header-guard macro-name template for a language ("cpp", "c") -- substitutes ${PROJECT_NAME}/${FILE_NAME}/${EXT}, each uppercased and sanitized to a valid identifier fragment. nil clears an override back to that language's built-in default (cpp/c ship "${PROJECT_NAME}_${FILE_NAME}_${EXT}"); an explicit empty string turns a built-in default off entirely.
 
 ## `ned/set-huge-file-disk-space-check-enabled`
 
