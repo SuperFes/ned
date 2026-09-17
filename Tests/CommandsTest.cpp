@@ -1255,6 +1255,49 @@ TEST_CASE("format-buffer's Native fallback reports explicitly when the buffer is
     REQUIRE(fixture.buffer.Text().empty());
 }
 
+TEST_CASE("format-buffer on a huge buffer asks for confirmation instead of running the Native fallback",
+          "[Commands][HugeFile]") {
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            ned::text::SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } thresholdGuard;
+    const FormatCommandGuard guard;
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_commands_test_format_buffer_huge.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "if True:\n        x = 1\n";
+    }
+
+    ned::text::SetHugeFileThreshold(1); // well under this file's real size
+    ned::text::Buffer buffer = ned::text::Buffer::FromHugeFile(path);
+    REQUIRE(buffer.Content().IsHuge());
+
+    const Mode pyMode = PythonMode();
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+    context.mode = &pyMode;
+
+    registry.Invoke("format-buffer", context);
+
+    REQUIRE(context.interactiveRequest == InteractiveRequest::ConfirmHugeFormat);
+    // Never touched the buffer -- IndentBuffer's per-line windowed reparse
+    // (the huge-file-unsafe path this guards against) would have brought
+    // "x = 1" back down to one indent level here.
+    REQUIRE(buffer.Text() == "if True:\n        x = 1\n");
+    REQUIRE(message.empty()); // ConfirmHugeFormat's prompt text is BufferView's job, not the command's
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("save-buffer's own chain is unaffected by format-buffer's Native fallback", "[Commands]") {
     const FormatCommandGuard guard;
 

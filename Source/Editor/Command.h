@@ -958,7 +958,17 @@ enum class InteractiveRequest { None,
                                 // alongside whatever's already open (never replacing them) and
                                 // switch to it. Distinct from ToggleTerminal, which always
                                 // targets a single existing/most-recently-used terminal tab.
-                                NewTerminal };
+                                NewTerminal,
+                                // huge-file-streaming-sweep follow-up: format-buffer on a huge
+                                // (ITextStorage::IsHuge()) buffer can't safely run the Native
+                                // tier's own per-line windowed reindent (IndentBuffer) or any of
+                                // the whole-buffer capture/Hygiene passes -- it instead needs
+                                // Editor/HugeFileReindent.h's StreamHugeReindent, the same
+                                // lexical streaming engine the CLI's `--format --force-huge`
+                                // already uses, writing to a sibling temp file and atomically
+                                // renaming over the original. Same shape as ConfirmOverwriteSave,
+                                // "y" runs BufferView's own RunHugeFormat.
+                                ConfirmHugeFormat };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

@@ -523,13 +523,24 @@ Architecture:
   configured style" flag elsewhere — display-only, never changes what `format-buffer`
   actually does).
 
-- [ ] Huge-file streaming sweep: the interactive half -- `format-buffer` invoked on a huge
-  buffer still has no path to this engine at all (today's Native fallback runs
-  `IndentBuffer`'s own per-line windowed re-parse, which the design above specifically
-  calls out as too slow for a whole huge document). Needs a y/n confirmation
-  (`ConfirmOverwriteSave`'s own shape) since, unlike the CLI's explicit `--force-huge`,
-  an interactive `format-buffer` invocation gives no other signal the user knows this
-  is the lexical engine rather than the real per-language one.
+- [x] Huge-file streaming sweep: the interactive half -- shipped 2026-09-17.
+  `format-buffer` on a huge (`ITextStorage::IsHuge()`) buffer now short-circuits ahead of
+  the Native tier (`Editor/Commands.cpp`'s `format-buffer` registration) into a new
+  `InteractiveRequest::ConfirmHugeFormat`/`InputMode::ConfirmHugeFormat` y/n session
+  (`ConfirmOverwriteSave`'s own shape, "y" runs `BufferView::RunHugeFormat`) rather than
+  ever reaching `IndentBuffer`'s per-line windowed re-parse. `RunHugeFormat`
+  (`UI/BufferView/Prompts.cpp`) shares the same `StreamHugeReindent` engine the CLI's
+  `--force-huge` already used: refuses a `Modified()` buffer (this path writes straight to
+  disk, so it needs to "work from the file on disk" the same way `RevertHunkAtPoint`
+  already does), streams to a sibling `.ned-tmp`, atomically renames over the original, then
+  reloads via `Buffer::Revert()`. `Revert()` itself gained a huge-file dispatch (checks the
+  file's current on-disk size against `HugeFileThreshold()` and calls `FromHugeFile` instead
+  of `FromFile` when it's over) -- a pre-existing gap (`AutoRevertBuffers` would have fully
+  materialized a huge file) that this path's own post-format reload needed fixed to stay
+  huge-file-safe end to end. Tests: `Tests/CommandsTest.cpp` (huge buffer routes to
+  `ConfirmHugeFormat`, never touches the buffer), `Tests/BufferHugeFileTest.cpp`
+  (`Revert()`'s dispatch), `Tests/BufferViewTest.cpp` (full y/n key-chord flow, n leaves disk
+  untouched, y round-trips through disk and reload).
 - [ ] Case: full entity-kind catalogue (class/struct/interface/enum/field/global/constant/
       macro/method-vs-function split/template-parameter/...) needs new query authoring --
       `SymbolKind::Callable`/`TypeLike` are confirmed-conflated buckets, not a full set.

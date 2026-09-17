@@ -240,8 +240,13 @@ class Buffer {
     // clamped into the new content; mark, secondary cursors, narrowing,
     // and fold markers are cleared (all positioned against content that no
     // longer exists). Clears Modified() -- the buffer now matches disk by
-    // definition. Throws like FromFile on any read failure (including the
-    // file having turned binary), leaving the buffer untouched.
+    // definition. Dispatches to FromHugeFile rather than FromFile when the
+    // file on disk now exceeds HugeFileThreshold() -- same reasoning as
+    // BufferList::OpenFile's own threshold check, so reverting a huge buffer
+    // (or one a huge-file-aware rewrite just grew past the threshold) never
+    // fully materializes it into memory. Throws like FromFile/FromHugeFile on
+    // any read failure (including the file having turned binary), leaving
+    // the buffer untouched.
     void Revert();
 
     // external-modification-round-2 follow-up: unlike Revert() (which
