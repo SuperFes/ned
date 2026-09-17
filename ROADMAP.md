@@ -120,22 +120,6 @@ measurement said "fine" while typing felt bad.
       "install + run on device/emulator" flow. Deliberately left unscoped — worth
       building only if plain shelled-out `adb`/`gradlew` tasks prove too manual in
       practice, not speculatively.
-
-Shipped here, one slug each for `git log --grep=`: `go-bundled-language`,
-`csharp-bundled-language`, `java-kotlin-bundled-language` (all via `FetchContent` like
-every bundled grammar — a system-installed `.so` never carries its own `queries/*.scm`,
-which is why leaning on one is never the shortcut it looks like; Kotlin is the one
-language whose grammar choice needed recording, see `CMakeLists.txt` beside
-`ned_add_treesitter_grammar(tree-sitter-kotlin ...)`. Java/Kotlin LSP, test running and
-debugging all fell out of existing machinery: jdtls and `kotlin-language-server` are
-configured the ordinary `ned/set-lsp-command` way with new Maven/Gradle entries in
-`RootResolver.cpp`, `TestOutputParser`'s existing `junit-xml` parser already reads
-Surefire/Gradle reports, and `java-debug` needs no new `DapManager` work),
-`resolver-gaps` and `lsp-document-link`
-(go-to-file-at-point, LSP-first via `textDocument/documentLink`),
-`protocol-stall-timeout-split`, `lsp-multiroot` + `lsp-multiroot-cache-scoping` +
-`lsp-workspace-folders`, `listpopup-scroll`.
-
 - [ ] Whether Markdown fenced code blocks / Org `#+BEGIN_SRC` blocks should get the same
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
