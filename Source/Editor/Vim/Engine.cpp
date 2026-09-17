@@ -11,13 +11,13 @@
 #include "Editor/Keymap.h"
 #include "Editor/RegexPattern.h"
 #include "Editor/TabWidth.h"
-#include "Text/Grapheme.h"
-#include "Text/Utf8.h"
 #include "GlobalMarks.h"
 #include "LineUtil.h"
 #include "Magic.h"
 #include "Motion.h"
 #include "Surround.h"
+#include "Text/Grapheme.h"
+#include "Text/Utf8.h"
 #include "TextObject.h"
 
 namespace ned::editor::vim {
@@ -942,7 +942,7 @@ void Engine::ResolveMotionAndAct(text::Buffer& buffer, const MotionResult& motio
 }
 
 void Engine::ApplyOperatorRange(text::Buffer& buffer, char32_t op, std::size_t anchor, std::size_t target, bool linewise,
-                                   bool inclusive) {
+                                bool inclusive) {
     std::size_t start = std::min(anchor, target);
     std::size_t end   = std::max(anchor, target);
     if (inclusive && end < buffer.Content().ByteLength()) {

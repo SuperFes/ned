@@ -206,7 +206,7 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
     // the last buffer just replaced it with another one, forever. A forced variant
     // (":q!"/"ZQ", ":qa!") skips confirmation outright; the unforced ones reuse the
     // "quit" command (C-x C-c) so a hidden, unsaved buffer elsewhere still blocks it.
-    const editor::vim::PendingIntent intent = vimEngine_.TakePendingIntent();
+    const editor::vim::PendingIntent intent  = vimEngine_.TakePendingIntent();
     const auto                       quitApp = [this] {
         editor::CommandContext quitContext = MakeContext();
         RunCommandAndHandleOutcome(quitContext, [&] {
@@ -259,16 +259,11 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
     if (intent == editor::vim::PendingIntent::SplitBelow || intent == editor::vim::PendingIntent::SplitRight ||
         intent == editor::vim::PendingIntent::CloseOtherWindows || intent == editor::vim::PendingIntent::OtherWindow) {
         if (onWindowRequest_) {
-            editor::InteractiveRequest request = editor::InteractiveRequest::OtherWindow;
-            if (intent == editor::vim::PendingIntent::SplitBelow) {
-                request = editor::InteractiveRequest::SplitBelow;
-            }
-            else if (intent == editor::vim::PendingIntent::SplitRight) {
-                request = editor::InteractiveRequest::SplitRight;
-            }
-            else if (intent == editor::vim::PendingIntent::CloseOtherWindows) {
-                request = editor::InteractiveRequest::DeleteOtherWindows;
-            }
+            const editor::InteractiveRequest request = intent == editor::vim::PendingIntent::SplitBelow   ? editor::InteractiveRequest::SplitBelow
+                                                       : intent == editor::vim::PendingIntent::SplitRight ? editor::InteractiveRequest::SplitRight
+                                                       : intent == editor::vim::PendingIntent::CloseOtherWindows
+                                                           ? editor::InteractiveRequest::DeleteOtherWindows
+                                                           : editor::InteractiveRequest::OtherWindow;
             onWindowRequest_(request);
         }
         return true;
@@ -780,7 +775,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // query, ExecuteCommand's own "there's a meaningful top" precedent
         // (every command/macro/file/buffer, kind-grouped).
         case editor::InteractiveRequest::SearchEverywhere:
-            inputMode_                  = InputMode::SearchEverywhere;
+            inputMode_ = InputMode::SearchEverywhere;
             prompt_.emplace("Search: ");
             searchEverywhereCandidates_ = BuildSearchEverywhereCandidates();
             searchEverywhereKindFilter_.reset();
@@ -3985,9 +3980,9 @@ std::vector<editor::SearchEverywhereCandidate> BufferView::BuildSearchEverywhere
             const std::string text = buffer.Content().Substring(0, buffer.Content().ByteLength());
             try {
                 for (const editor::SymbolMarker& marker : mode_.symbolKind(text)) {
-                    candidates.push_back({.kind             = editor::SearchEverywhereKind::Symbol,
-                                          .label            = marker.name,
-                                          .detail           = SearchEverywhereSymbolKindLabel(marker.kind),
+                    candidates.push_back({.kind            = editor::SearchEverywhereKind::Symbol,
+                                          .label           = marker.name,
+                                          .detail          = SearchEverywhereSymbolKindLabel(marker.kind),
                                           .localByteOffset = marker.nameStartByte});
                 }
             }
@@ -4014,10 +4009,10 @@ void BufferView::RefreshSearchEverywhereStatus() {
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(searchEverywhereRanked_.empty()
-                                ? std::nullopt
-                                : std::optional(BuildSearchEverywherePopupModel(
-                                      SearchEverywhereTitle(searchEverywhereKindFilter_), searchEverywhereCandidates_,
-                                      searchEverywhereRanked_, searchEverywhereSelection_)));
+                                 ? std::nullopt
+                                 : std::optional(BuildSearchEverywherePopupModel(
+                                       SearchEverywhereTitle(searchEverywhereKindFilter_), searchEverywhereCandidates_,
+                                       searchEverywhereRanked_, searchEverywhereSelection_)));
     }
 }
 
@@ -4168,7 +4163,7 @@ void BufferView::RequestSearchEverywhereTextSearch() {
     // literal-only convention. SearchDirectory still takes RE2 syntax, so
     // this quotes every metacharacter in the typed query first.
     const std::string pattern = RE2::QuoteMeta(prompt_->Text());
-    EventLoop*         loop   = eventLoop_;
+    EventLoop*        loop    = eventLoop_;
     // Copied, not captured by reference: this outlives the arming call, and
     // needs its own stable lifetime independent of *this.
     std::shared_ptr<std::atomic<bool>> alive = searchEverywhereAlive_;
@@ -4203,7 +4198,7 @@ void BufferView::RequestSearchEverywhereTextSearch() {
     }).detach();
 }
 
-void BufferView::ApplySearchEverywhereTextMatches(bufferview::RequestSlot::Token                token,
+void BufferView::ApplySearchEverywhereTextMatches(bufferview::RequestSlot::Token          token,
                                                   const std::vector<editor::SearchMatch>& matches) {
     if (searchEverywhereTextSearchRequest_.IsStale(token)) {
         return; // superseded by a newer search
@@ -4256,9 +4251,9 @@ void BufferView::HandleSearchEverywhereKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
         if (!searchEverywhereRanked_.empty()) {
             searchEverywhereSelection_ = chord.Special == editor::SpecialKey::Down
-                                            ? (searchEverywhereSelection_ + 1) % searchEverywhereRanked_.size()
-                                            : (searchEverywhereSelection_ + searchEverywhereRanked_.size() - 1) %
-                                                  searchEverywhereRanked_.size();
+                                             ? (searchEverywhereSelection_ + 1) % searchEverywhereRanked_.size()
+                                             : (searchEverywhereSelection_ + searchEverywhereRanked_.size() - 1) %
+                                                   searchEverywhereRanked_.size();
         }
         RefreshSearchEverywhereStatus();
         return;
