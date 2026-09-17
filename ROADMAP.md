@@ -633,32 +633,39 @@ binding under Vim mode, which a vim user typing `C-w` never meant.).
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
-**`VcsPanel` commit variants**, "Amend only" tier shipped 2026-09-17 (`git log --grep=vcs-commit-amend`):
-`C` in the panel (and `C-c v C`/`vcs-commit-amend` on `M-x`, matching `c`'s own three entry
-points) opens the *vcs commit message* buffer pre-filled with the previous commit's own
-message (`Provider::PreviousCommitMessageArgv`, git: `log -1 --pretty=%B HEAD`) and commits
-with `--amend` on `C-c C-c` (`Provider::AmendCommitArgv`, CommitArgv's own sibling method
-rather than a boolean flag on it, matching every other paired operation in this vocabulary —
-a deliberate deviation from this entry's own original sketch, which proposed a flag).
+**`VcsPanel` commit variants**, "Amend" and "Extend" tiers shipped 2026-09-17 (`git log
+--grep=vcs-commit-amend`, `--grep=vcs-extend-commit`): `C` in the panel (and `C-c v
+C`/`vcs-commit-amend` on `M-x`, matching `c`'s own three entry points) opens the *vcs commit
+message* buffer pre-filled with the previous commit's own message
+(`Provider::PreviousCommitMessageArgv`, git: `log -1 --pretty=%B HEAD`) and commits with
+`--amend` on `C-c C-c` (`Provider::AmendCommitArgv`, CommitArgv's own sibling method rather
+than a boolean flag on it, matching every other paired operation in this vocabulary — a
+deliberate deviation from this entry's own original sketch, which proposed a flag).
 Re-running `vcs-commit`/`vcs-commit-amend` while a commit is already mid-composition just
 flips `BufferView::pendingCommitAmend_` and switches to the existing buffer, preserving
 whatever's typed, the same "don't clobber in-progress edits" precedent the plain-commit path
-already had. A bare-`HEAD` repository (no previous commit to amend) is not specially gated —
-`git log`'s own "does not have any commits yet" failure surfaces through the ordinary
-onError status-line path, same as every other unsupported-precondition case in this
-vocabulary, rather than a proactive check before offering the key at all.
+already had. `e` (and `C-c v e`/`vcs-extend-commit`) folds whatever's staged into HEAD
+keeping its message verbatim (`Provider::ExtendCommitArgv`, git: `commit --amend --no-edit`)
+with no buffer at all — `BufferView::ExtendCommit` fires straight through to
+`Runner::RequestExtendCommit`, which deliberately shares `RequestCommit`/`RequestAmendCommit`'s
+own `"commit:"+root` guard key, so a commit/amend/extend against the same root stay mutually
+exclusive rather than three independent in-flight operations. A bare-`HEAD` repository (no
+previous commit to amend/extend) is not specially gated for either tier — `git log`'s own
+"does not have any commits yet" failure surfaces through the ordinary onError status-line
+path, same as every other unsupported-precondition case in this vocabulary, rather than a
+proactive check before offering the key at all.
 
-- [ ] **Extend and reword, plus a real transient menu** — the two remaining candidate
-      scopes this entry originally sketched, still open. **Amend + Extend**: a one-key
-      "fold staged changes into HEAD, keep its message, no buffer at all" action (Magit's
-      `e`) — `git commit --amend --no-edit`, no message round-trip needed, so no
-      `PreviousCommitMessageArgv` round-trip either. **Full transient**: `c` stops
-      committing immediately and instead pops a small lettered menu (create/amend/extend/
-      reword); closest to real Magit, but changes `c`'s existing behavior (`VcsPanelTest.cpp`'s
-      own `'c'` test) and needs a new small popup/menu mechanism this panel doesn't have
-      today (it has no `OverlayHost`/`ListPopup` access — see `VcsPanel::
-      SetOnContextMenuRequest`'s own doc comment on why that's routed out to `main.cpp`
-      instead).
+- [ ] **Reword, plus a real transient menu** — the one remaining candidate scope this entry
+      originally sketched, still open. **Reword**: keep HEAD's tree exactly as-is, open the
+      commit buffer pre-filled with its message (the same `PreviousCommitMessageArgv` round
+      trip amend already does), and commit via `--amend --only` (or a provider-specific
+      equivalent) on `C-c C-c` — never re-stages anything, unlike amend. **Full transient**:
+      `c` stops committing immediately and instead pops a small lettered menu
+      (create/amend/extend/reword); closest to real Magit, but changes `c`'s existing
+      behavior (`VcsPanelTest.cpp`'s own `'c'` test) and needs a new small popup/menu
+      mechanism this panel doesn't have today (it has no `OverlayHost`/`ListPopup` access —
+      see `VcsPanel::SetOnContextMenuRequest`'s own doc comment on why that's routed out to
+      `main.cpp` instead).
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up

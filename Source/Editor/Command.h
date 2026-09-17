@@ -713,6 +713,11 @@ enum class InteractiveRequest { None,
                                 // the previous commit's own message (fetched async) instead of
                                 // the blank template, and commits via `--amend` on CommitFinish.
                                 VcsCommitAmend,
+                                // VcsPanel commit-variants follow-up: Magit's own "extend" --
+                                // BufferView::ExtendCommit's entry point. A one-shot direct action,
+                                // same shape as VcsFullDiffBuffer/DiagnosticsBuffer -- unlike
+                                // VcsCommit/VcsCommitAmend it never opens a compose buffer at all.
+                                VcsExtendCommit,
                                 CommitFinish,
                                 VcsCommitAbort,
                                 VcsBranches,

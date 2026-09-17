@@ -3,7 +3,7 @@
 Every command reachable from `M-x`, from a keybinding, or from Janet via
 `ned/run-command`.
 
-310 commands.
+311 commands.
 
 ## `acp-rewind`
 
@@ -1172,6 +1172,10 @@ Finish composing and commit (bound C-c C-c in *vcs commit message*).
 ## `vcs-create-branch`
 
 Create and switch to a new branch, prompting for its name.
+
+## `vcs-extend-commit`
+
+Fold the staged changes into the previous commit, keeping its message unchanged.
 
 ## `vcs-full-diff-buffer`
 

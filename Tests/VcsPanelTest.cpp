@@ -310,7 +310,7 @@ TEST_CASE("Staging targets the selection set when non-empty, else falls back to 
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("'c'/'C'/'w'/'n' fire SetOnAction with Commit/AmendCommit/SwitchBranch/CreateBranch and return focus", "[VcsPanel]") {
+TEST_CASE("'c'/'C'/'e'/'w'/'n' fire SetOnAction with Commit/AmendCommit/ExtendCommit/SwitchBranch/CreateBranch and return focus", "[VcsPanel]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_actions";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -337,15 +337,18 @@ TEST_CASE("'c'/'C'/'w'/'n' fire SetOnAction with Commit/AmendCommit/SwitchBranch
     panel.TakeFocus();
     panel.OnEvent(ned::ui::test::Character('C'));
     panel.TakeFocus();
+    panel.OnEvent(ned::ui::test::Character('e'));
+    panel.TakeFocus();
     panel.OnEvent(ned::ui::test::Character('w'));
     panel.TakeFocus();
     panel.OnEvent(ned::ui::test::Character('n'));
 
-    REQUIRE(firedActions.size() == 4);
+    REQUIRE(firedActions.size() == 5);
     REQUIRE(firedActions[0] == ned::ui::VcsPanelAction::Commit);
     REQUIRE(firedActions[1] == ned::ui::VcsPanelAction::AmendCommit);
-    REQUIRE(firedActions[2] == ned::ui::VcsPanelAction::SwitchBranch);
-    REQUIRE(firedActions[3] == ned::ui::VcsPanelAction::CreateBranch);
+    REQUIRE(firedActions[2] == ned::ui::VcsPanelAction::ExtendCommit);
+    REQUIRE(firedActions[3] == ned::ui::VcsPanelAction::SwitchBranch);
+    REQUIRE(firedActions[4] == ned::ui::VcsPanelAction::CreateBranch);
 
     std::filesystem::remove_all(dir);
 }
@@ -557,7 +560,7 @@ TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 18); // contentHeight == 4 (18 - kHeaderHeight(1) - kFooterLines(13))
+    PlacePanel(panel, 30, 19); // contentHeight == 4 (19 - kHeaderHeight(1) - kFooterLines(14))
 
     // Rows: "Staged (5)" header, a..e.txt (5 files), "Unstaged (0)" header,
     // "Untracked (0)" header -- 8 rows total, more than fits in 4.
@@ -574,8 +577,8 @@ TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]
     panel.OnEvent(MousePress(1, 2)); // arbitrary non-resize x, content y
     panel.OnEvent(ned::ui::test::Mouse(1, 2, ned::ui::MouseEvent::Button::WheelDown, ned::ui::MouseEvent::Motion::Pressed));
 
-    ned::ui::Screen screen = ned::ui::Screen(30, 18);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 17});
+    ned::ui::Screen screen = ned::ui::Screen(30, 19);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 18});
     panel.Paint(canvas);
 
     // Row 0 is the border; row 1 is the pinned "Staged (5)" header even
@@ -594,8 +597,8 @@ TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]
     // 3 rows total, and scrollOffset_ clamping on a shrunk row count is a
     // pre-existing, unrelated concern this test isn't after.
     panel.OnEvent(ned::ui::test::Mouse(1, 2, ned::ui::MouseEvent::Button::WheelUp, ned::ui::MouseEvent::Motion::Pressed));
-    ned::ui::Screen afterClick = ned::ui::Screen(30, 18);
-    ned::ui::Canvas afterCanvas(afterClick, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 17});
+    ned::ui::Screen afterClick = ned::ui::Screen(30, 19);
+    ned::ui::Canvas afterCanvas(afterClick, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 18});
     panel.Paint(afterCanvas);
     REQUIRE(RowText(afterClick, 1, 30).find("Staged (5)") != std::string::npos);
     REQUIRE(RowText(afterClick, 2, 30).find("Unstaged") != std::string::npos); // files hidden, section collapsed
@@ -831,12 +834,12 @@ TEST_CASE("Footer legend names the key that actually moves the focused file, not
 
     ned::ui::Screen screen = ned::ui::Screen(60, 22);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 21});
-    // height 22, available 21, kFooterLines(13): the fixed footer block
-    // starts at row 22-13=9. RowFooterLines' own 4 fixed slots come first.
-    const int kOpenOrToggleRow  = 9;
-    const int kMarkRow          = 10;
-    const int kStageUnstageRow  = 11;
-    const int kDiscardRow       = 12;
+    // height 22, available 21, kFooterLines(14): the fixed footer block
+    // starts at row 22-14=8. RowFooterLines' own 4 fixed slots come first.
+    const int kOpenOrToggleRow  = 8;
+    const int kMarkRow          = 9;
+    const int kStageUnstageRow  = 10;
+    const int kDiscardRow       = 11;
 
     // Rows: 0 "Staged (1)" header, 1 a.txt, 2 "Unstaged (1)" header,
     // 3 b.txt, 4 "Untracked (1)" header, 5 c.txt.
@@ -882,15 +885,16 @@ TEST_CASE("Footer legend adds 'stage marked'/'unstage marked' only once somethin
 
     ned::ui::Screen screen = ned::ui::Screen(60, 22);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 21});
-    // Fixed footer block starts at row 22-13=9: RowFooterLines' 4 slots
-    // (9-12), 1 blank separator (13), then RootFooterLines' 8 slots
-    // (pull=14, push=15, commit=16, amend=17, stash=18, switch=19,
-    // new-branch=20, fetch=21).
-    const int kOpenOrToggleRow = 9;
-    const int kMarkOrMarkedRow = 10;
-    const int kUnstageMarkedRow = 11;
-    const int kCommitRow        = 16;
-    const int kAmendRow         = 17;
+    // Fixed footer block starts at row 22-14=8: RowFooterLines' 4 slots
+    // (8-11), 1 blank separator (12), then RootFooterLines' 9 slots
+    // (pull=13, push=14, commit=15, amend=16, extend=17, stash=18,
+    // switch=19, new-branch=20, fetch=21).
+    const int kOpenOrToggleRow = 8;
+    const int kMarkOrMarkedRow = 9;
+    const int kUnstageMarkedRow = 10;
+    const int kCommitRow        = 15;
+    const int kAmendRow         = 16;
+    const int kExtendRow        = 17;
     const int kStashRow         = 18;
     const int kSwitchRow        = 19;
     const int kNewBranchRow     = 20;
@@ -905,6 +909,7 @@ TEST_CASE("Footer legend adds 'stage marked'/'unstage marked' only once somethin
     panel.Paint(canvas);
     REQUIRE(RowText(screen, kCommitRow, 60).find("c commit") != std::string::npos);
     REQUIRE(RowText(screen, kAmendRow, 60).find("C amend") != std::string::npos);
+    REQUIRE(RowText(screen, kExtendRow, 60).find("e extend") != std::string::npos);
     REQUIRE(RowText(screen, kStashRow, 60).find("z stash") != std::string::npos);
     REQUIRE(RowText(screen, kSwitchRow, 60).find("w switch") != std::string::npos);
     REQUIRE(RowText(screen, kNewBranchRow, 60).find("n new branch") != std::string::npos);
@@ -949,10 +954,10 @@ TEST_CASE("Push/pull only appear in the root-scoped footer row when there's actu
 
     ned::ui::Screen screen = ned::ui::Screen(60, 22);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 21});
-    // Fixed footer block starts at row 22-13=9; pull/push own dedicated
-    // slots 14/15 (RowFooterLines' 4 slots at 9-12, 1 separator at 13).
-    const int kPullRow = 14;
-    const int kPushRow = 15;
+    // Fixed footer block starts at row 22-14=8; pull/push own dedicated
+    // slots 13/14 (RowFooterLines' 4 slots at 8-11, 1 separator at 12).
+    const int kPullRow = 13;
+    const int kPushRow = 14;
 
     // No upstream configured at all (nullopt) -- neither key means anything
     // without one (both need a tracking branch), so both slots stay blank.

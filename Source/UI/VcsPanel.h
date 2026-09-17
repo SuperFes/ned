@@ -46,14 +46,18 @@ namespace ned::ui {
 
 // What a panel-triggered action asks the focused pane's BufferView to do --
 // see VcsPanel::SetOnAction's own doc comment. Commit/AmendCommit/
-// SwitchBranch/CreateBranch all reuse an existing BufferView interactive
-// flow verbatim (BeginVcsCommitMessage/BeginVcsSwitchBranchPrompt/the
-// vcs-create-branch prompt) -- this panel adds no new commit/branch
-// primitive of its own, just a second entry point into flows that already
-// work from C-c v c/C/w/n. AmendCommit is the VcsPanel amend follow-up:
-// BeginVcsCommitMessage(amend=true).
+// ExtendCommit/SwitchBranch/CreateBranch all reuse an existing BufferView
+// interactive flow verbatim (BeginVcsCommitMessage/ExtendCommit/
+// BeginVcsSwitchBranchPrompt/the vcs-create-branch prompt) -- this panel
+// adds no new commit/branch primitive of its own, just a second entry
+// point into flows that already work from C-c v c/C/e/w/n. AmendCommit is
+// the VcsPanel amend follow-up (BeginVcsCommitMessage(amend=true));
+// ExtendCommit is the commit-variants follow-up's "extend" -- unlike the
+// other two, it needs no compose buffer at all (BufferView::ExtendCommit
+// fires straight through to Runner::RequestExtendCommit).
 enum class VcsPanelAction { Commit,
                             AmendCommit,
+                            ExtendCommit,
                             SwitchBranch,
                             CreateBranch };
 

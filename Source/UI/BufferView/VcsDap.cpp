@@ -465,6 +465,24 @@ void BufferView::AbortVcsCommitMessage() {
     statusMessage_ = "Commit aborted.";
 }
 
+void BufferView::ExtendCommit() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    statusMessage_ = "Extending...";
+    vcsRunner_->RequestExtendCommit(
+        [this](std::string summary) {
+            statusMessage_ = summary.empty() ? "Committed." : summary;
+            RefreshVcsStatusBuffer();
+            // The comparison point (HEAD for git) just moved, so the
+            // current buffer's markers are stale now -- same reasoning
+            // FinishVcsCommitMessage's own onSuccess has.
+            RequestDiffForCurrentBuffer();
+        },
+        [this](std::string error) { statusMessage_ = "vcs extend commit: " + error; });
+}
+
 void BufferView::CloseVcsCommitMessageBuffer(text::Buffer& commitBuffer) {
     CloseBufferNow(commitBuffer);
     std::error_code ec;
@@ -585,6 +603,10 @@ void BufferView::RequestPointerGraphAtPointForTesting() {
 
 void BufferView::BeginVcsCommitMessageForTesting(bool amend) {
     BeginVcsCommitMessage(amend);
+}
+
+void BufferView::ExtendCommitForTesting() {
+    ExtendCommit();
 }
 
 void BufferView::FinishVcsCommitMessageForTesting() {
@@ -1774,6 +1796,9 @@ void BufferView::RequestVcsAction(VcsPanelAction action) {
             return;
         case VcsPanelAction::AmendCommit:
             BeginVcsCommitMessage(/*amend=*/true);
+            return;
+        case VcsPanelAction::ExtendCommit:
+            ExtendCommit();
             return;
         case VcsPanelAction::SwitchBranch:
             BeginVcsSwitchBranchPrompt();
