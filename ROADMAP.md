@@ -1400,8 +1400,8 @@ build on), `code-coverage-gutter`.
 ## Notes for Whoever Builds Next
 
 - Build/test: `cmake --preset default && cmake --build build`, then
-  `ctest --test-dir build`. Sanitizer opt-in: `-DNED_ENABLE_SANITIZERS=ON` with
-  `-DCMAKE_BUILD_TYPE=Debug` — the suite is expected clean; a finding is a real bug.
+    `ctest --test-dir build`. Sanitizer opt-in: `-DNED_ENABLE_SANITIZERS=ON` with
+    `-DCMAKE_BUILD_TYPE=Debug` — the suite is expected clean; a finding is a real bug.
 - `ctest` and `./build/ned_tests` are two genuinely different checks, not a convenience
   pair — run both before calling a change clean. `ctest` gives each case its own process
   (isolation, plus `--timeout N` names a hang instead of wedging the run, and `-j8`
