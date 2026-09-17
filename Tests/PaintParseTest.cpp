@@ -324,6 +324,7 @@ TEST_CASE("Every surface a widget actually paints is one a theme can discover", 
     const std::vector<std::string> paintedByWidgets = {
         "buffer",              // BufferView/Paint.cpp
         "buffer.current_line", // BufferView/Paint.cpp
+        "buffer.ruler",        // BufferView/Paint.cpp
         "modeline",            // ModeLine.cpp
         "modeline.focused",    // ModeLine.cpp
         "modeline.activity",   // ModeLine.cpp

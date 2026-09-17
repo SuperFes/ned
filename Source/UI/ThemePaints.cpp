@@ -54,6 +54,14 @@ namespace {
     // because it must never look like one.
     constexpr std::uint8_t kRecencyGlowAlpha = 70;
 
+    // The ruler's own single-column wash. A deliberate reference line the
+    // user asked to see at a glance, not an ambient structural hint like an
+    // indent guide -- so a bit stronger than the current line's 40 (which
+    // is up the whole time and has to lose to everything else), but well
+    // under a selection's 110, since it must never read as content the way
+    // a selected/highlighted run does.
+    constexpr std::uint8_t kRulerAlpha = 48;
+
     // The left dock's edge falloff, in percent of the way toward white. See
     // the "panel" branch of DerivedSurface for why this exists and why it
     // runs on the panel's own side.
@@ -305,6 +313,19 @@ namespace {
             const Color accent = DetectedAccent().value_or(theme.modeLineFocusedGradientStart);
             surface.fill       = GradientPaint(PaintAxis::X, {ColorStop{.colour = accent.WithAlpha(kCurrentLineAlpha)},
                                                               ColorStop{.colour = accent.WithAlpha(kCurrentLineFadeFloorAlpha)}});
+            return surface;
+        }
+        if (name == "buffer.ruler") {
+            // The print-margin/fill-column indicator: a single-column wash
+            // spanning every visible row, painted the same "backing layer,
+            // behind the glyphs" way as buffer.current_line, so it never
+            // has to choose between marking the column and keeping the
+            // syntax colour underneath. indentGuideForeground, not the
+            // desktop accent -- this is a structural reference mark, the
+            // same visual register as an indent guide (see that field's
+            // own "deliberately low-contrast" doc comment in Theme.h),
+            // not a "something is happening here" signal.
+            surface.fill = SolidOrNothing(theme.indentGuideForeground.WithAlpha(kRulerAlpha));
             return surface;
         }
         if (name == "buffer.selection") {
@@ -609,7 +630,7 @@ std::vector<std::string> SurfaceNames() {
     // while being absent from here, which made it invisible to both
     // M-x theme-gallery and Docs/Themes.md despite working perfectly if you
     // already knew the name.
-    return {"buffer", "buffer.current_line", "buffer.selection", "buffer.search",
+    return {"buffer", "buffer.current_line", "buffer.ruler", "buffer.selection", "buffer.search",
             "buffer.recency", "modeline", "modeline.focused", "modeline.activity", "tab.strip", "tab", "tab.active",
             "tab.active.focused", "echo", "scrollbar", "panel",
             "popup", "scrim"};

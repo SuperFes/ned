@@ -8,6 +8,7 @@
 
 #include "Editor/HighlightCache.h"
 #include "Editor/RecencyGlow.h"
+#include "Editor/RulerSettings.h"
 #include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
@@ -2199,6 +2200,8 @@ void BufferView::Paint(Canvas paneCanvas) {
 
     PaintCurrentLineHighlight(c, rowLine);
 
+    PaintRuler(c, gutter.totalWidth);
+
     PaintEndOfLineDiagnostics(c, rowLine, rowContentEndColumn, gutter.totalWidth);
 
     PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutter.totalWidth);
@@ -2505,6 +2508,49 @@ void BufferView::PaintCurrentLineHighlight(Canvas& c, const std::vector<std::siz
             // indicator. The current line is up the whole time you are
             // typing, so it yields to all of them rather than muddying them.
         }
+    }
+}
+
+// Print-margin/fill-column-indicator follow-up: PaintCurrentLineHighlight's
+// exact three-way compositing rule above, rotated 90 degrees -- one
+// BUFFER column, every visible row, instead of one row, every column. Runs
+// after PaintCurrentLineHighlight so the two stack (BlendOver against
+// whatever the backing already holds) rather than one clobbering the
+// other at the row/column the two cross.
+void BufferView::PaintRuler(Canvas& c, std::size_t gutterWidth) const {
+    if (!editor::RulerEnabled()) {
+        return;
+    }
+    const Surface surface = SurfaceFor(theme_, "buffer.ruler");
+    if (!PaintsColour(surface.fill)) {
+        return;
+    }
+
+    const int col = static_cast<int>(gutterWidth) + editor::RulerColumn() - static_cast<int>(viewport_.LeftColumn());
+    if (col < 0 || col >= c.size().width) {
+        return; // off the pane's own edge -- scrolled away, or narrower than the configured column
+    }
+
+    const Point   origin      = c.Origin();
+    const Surface bodySurface = SurfaceFor(theme_, "buffer");
+    const Color   colour      = PaintColourAt(surface.fill, 0.0, 0.0, origin.x + col, origin.y);
+    if (colour.alpha == 0) {
+        return;
+    }
+
+    for (int row = 0; row < c.size().height; ++row) {
+        Cell& cell = c[{.x = col, .y = row}];
+        if (cell.background_color.kind == Color::Kind::Default) {
+            Cell& backing            = c.Backing({.x = col, .y = row});
+            backing.background_color = backing.background_color.kind == Color::Kind::Default
+                                           ? OverlayBackground(theme_, colour)
+                                           : BlendOver(backing.background_color, colour);
+        }
+        else if (cell.background_color == BaseBackgroundAt(bodySurface, c, col, row)) {
+            cell.background_color = BlendOver(cell.background_color, colour);
+        }
+        // Any other background (selection, search hit, diff tint, ...) already
+        // owns this cell -- same yield-to-louder rule as the current line.
     }
 }
 

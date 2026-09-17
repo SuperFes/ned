@@ -138,6 +138,7 @@ add_library(ned_lib STATIC
         Editor/HighlightSettings.cpp
         Editor/HugeStructuralWindow.cpp
         Editor/MinimapSettings.cpp
+        Editor/RulerSettings.cpp
         Editor/WhitespaceSettings.cpp
         Editor/GitIgnore.cpp
         Editor/SearchSettings.cpp
