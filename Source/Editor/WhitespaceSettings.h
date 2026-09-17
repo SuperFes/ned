@@ -36,6 +36,12 @@ void               SetIndentGuidesEnabled(bool enabled);
 void               SetIndentGuideDepthColorsEnabled(bool enabled);
 [[nodiscard]] bool IndentGuideDepthColorsEnabled();
 
+// A glyph at a real tab byte's first rendered cell, distinguishing it from
+// the space cells the rest of its expansion still renders as. Default
+// false, same reasoning as SetTrailingWhitespaceHighlightEnabled above.
+void               SetTabGlyphsEnabled(bool enabled);
+[[nodiscard]] bool TabGlyphsEnabled();
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_WHITESPACESETTINGS_H

@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-214 bindings.
+215 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -752,6 +752,10 @@ Override a syntax class's strikethrough trait (true/false) -- nil clears the ove
 ## `ned/set-syntax-underlined`
 
 Override a syntax class's underlined trait (true/false) -- nil clears the override.
+
+## `ned/set-tab-glyphs-enabled`
+
+Enable/disable a glyph at the first cell of every expanded real tab byte, distinguishing it from the space cells the rest of its expansion still renders as. Default false, same opt-in reasoning as set-trailing-whitespace-highlight-enabled.
 
 ## `ned/set-tab-width`
 
