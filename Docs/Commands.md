@@ -3,7 +3,7 @@
 Every command reachable from `M-x`, from a keybinding, or from Janet via
 `ned/run-command`.
 
-312 commands.
+315 commands.
 
 ## `acp-rewind`
 
@@ -1077,6 +1077,10 @@ Show every themed surface and named paint as a live swatch, with a contrast read
 
 Toggle whether a binary-detected buffer's format/line-ending/final-newline safeguards apply.
 
+## `toggle-indent-guides`
+
+Show or hide vertical indentation guide glyphs within each line's own leading whitespace.
+
 ## `toggle-inline-diagnostics`
 
 Show or hide inline diagnostic annotation rows (carets + message under a line with a diagnostic).
@@ -1101,9 +1105,17 @@ Show or hide the left-side project tree.
 
 Toggle whether the current buffer accepts edits.
 
+## `toggle-tab-glyphs`
+
+Show or hide a glyph marking the first cell of every real (literal) tab byte.
+
 ## `toggle-terminal`
 
 Show and focus the built-in terminal drawer; hide it if it is already focused.
+
+## `toggle-trailing-whitespace-highlight`
+
+Show or hide a background highlight on trailing whitespace (spaces/tabs after the last non-whitespace character on a line).
 
 ## `toggle-vcs-panel`
 
