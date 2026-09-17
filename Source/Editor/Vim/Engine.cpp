@@ -55,6 +55,12 @@ namespace {
     // Visual mode -- kept here, beside Engine::HandleKey's own fallthrough check, rather
     // than duplicated inline so the two lists can't silently drift apart. Update this
     // alongside either of those if a new Control-chord binding is ever added.
+    //
+    // vim-window-commands follow-up: 'w' joined this list once C-w became the window-
+    // command prefix (HandleWindowPrefixed) -- real vim's own binding, and deliberately
+    // NOT the ned global keymap's C-w ("kill-region", Commands.cpp) leaking through
+    // under Vim mode via this same fallthrough the way it did before: a vim user typing
+    // C-w in Normal mode means "window command," never Emacs' kill-region.
     bool IsRecognizedNormalOrVisualControlChord(char32_t codepoint) {
         switch (codepoint) {
             case U'r':
@@ -69,6 +75,7 @@ namespace {
             case U'y':
             case U'a':
             case U'x':
+            case U'w':
                 return true;
             default:
                 return false;
@@ -732,6 +739,18 @@ void Engine::HandleNormalOrVisualKey(text::Buffer& buffer, const KeyChord& chord
         return;
     }
 
+    // Real vim's own window-command prefix (vim-window-commands follow-up) -- gated on
+    // !pendingOperator_ like the bracket prefix above, since C-w is not a motion any
+    // operator would take. Doesn't touch the C-x window-split-prefix reachability gap
+    // (Engine::HandleAction's own C-x is vim's decrement-number binding, a separate,
+    // harder conflict) -- this is real vim's own idiomatic path to the same window
+    // operations instead, needing no resolution of that conflict at all.
+    if (mode_ == Mode::Normal && !pendingOperator_ && chord.Control && !chord.Meta && chord.Special == SpecialKey::None &&
+        chord.Codepoint == U'w') {
+        pendingCharHandler_ = [this](text::Buffer& buf, const KeyChord& c) { HandleWindowPrefixed(buf, c); };
+        return;
+    }
+
     if (mode_ != Mode::Normal && HandleVisualSpecific(buffer, chord, EffectiveCount())) {
         return;
     }
@@ -1246,6 +1265,36 @@ void Engine::HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& chord)
 void Engine::HandleBracketPrefixed(text::Buffer& buffer, const KeyChord& chord, bool opening) {
     if (IsPlainChar(chord, U'c')) {
         pendingHunkNavigation_ = opening ? HunkDirection::Previous : HunkDirection::Next;
+    }
+    FinishCommand(buffer);
+}
+
+// C-w s/C-w C-s -- split below; C-w v/C-w C-v -- split right; C-w c -- close this
+// window; C-w o -- close every other window; C-w w/C-w C-w -- cycle focus to the next
+// window. Each letter's own Ctrl-chord form is accepted as an alias, matching real
+// vim's own convention (C-w C-s does what C-w s does). All five are PendingIntent
+// values -- this engine has no notion of "how many windows exist" or "which one is
+// next" to act on directly, same reasoning as PendingIntent's own doc comment.
+// Anything else is a silent no-op, matching HandleGPrefixed/HandleZPrefixed/
+// HandleBracketPrefixed's own fall-through for an unrecognized suffix.
+void Engine::HandleWindowPrefixed(text::Buffer& buffer, const KeyChord& chord) {
+    const auto isKey = [&chord](char32_t c) {
+        return IsPlainChar(chord, c) || (chord.Control && !chord.Meta && chord.Special == SpecialKey::None && chord.Codepoint == c);
+    };
+    if (isKey(U's')) {
+        pendingIntent_ = PendingIntent::SplitBelow;
+    }
+    else if (isKey(U'v')) {
+        pendingIntent_ = PendingIntent::SplitRight;
+    }
+    else if (isKey(U'c')) {
+        pendingIntent_ = PendingIntent::CloseWindow;
+    }
+    else if (isKey(U'o')) {
+        pendingIntent_ = PendingIntent::CloseOtherWindows;
+    }
+    else if (isKey(U'w')) {
+        pendingIntent_ = PendingIntent::OtherWindow;
     }
     FinishCommand(buffer);
 }
@@ -2577,8 +2626,33 @@ void Engine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) {
         FinishCommand(buffer);
         return;
     }
-    if (cmd->name == "q" || cmd->name == "quit") {
+    if (cmd->name == "q" || cmd->name == "quit" || cmd->name == "clo" || cmd->name == "close") {
+        // vim-window-commands follow-up: ":close"/":clo" reuses ":q"'s own
+        // CloseWindow/CloseWindowForced handling wholesale rather than a distinct
+        // value -- real vim's ":close" differs only in refusing outright ("E444:
+        // Cannot close last window") instead of falling through to quit on the last
+        // window, a nuance this codebase's own ":q"/"ZZ" simplification already
+        // declined to reproduce (see PendingIntent's own doc comment).
         pendingIntent_ = cmd->bang ? PendingIntent::CloseWindowForced : PendingIntent::CloseWindow;
+        FinishCommand(buffer);
+        return;
+    }
+    // A ":sp"/":vs" filename argument (real vim's "split and edit this file") lands in
+    // cmd->rest and is silently ignored -- these only ever split showing the CURRENT
+    // buffer, matching ned's own split-window-below/-right commands (C-x 2/C-x 3)
+    // exactly. A documented v1 cut, not an oversight.
+    if (cmd->name == "sp" || cmd->name == "split") {
+        pendingIntent_ = PendingIntent::SplitBelow;
+        FinishCommand(buffer);
+        return;
+    }
+    if (cmd->name == "vs" || cmd->name == "vsp" || cmd->name == "vsplit") {
+        pendingIntent_ = PendingIntent::SplitRight;
+        FinishCommand(buffer);
+        return;
+    }
+    if (cmd->name == "on" || cmd->name == "only") {
+        pendingIntent_ = PendingIntent::CloseOtherWindows;
         FinishCommand(buffer);
         return;
     }
