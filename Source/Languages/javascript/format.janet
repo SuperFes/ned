@@ -138,3 +138,27 @@
 (function_expression body: (statement_block . (_) .) @brace.function.simple)
 (generator_function body: (statement_block) @brace.function)
 (generator_function body: (statement_block . (_) .) @brace.function.simple)
+
+# align-kind follow-up (kind 5): the pilot construct, same capture NAME
+# cpp's own file uses -- one rule, several grammars. JavaScript's
+# assignment_expression has no "operator" field at all (node-types.json:
+# only "left"/"right" -- augmented assignment ("+=", ...) is a wholly
+# separate augmented_assignment_expression node, out of this pilot's own
+# scope), so the bare "=" token is captured directly instead, the same
+# "capture the literal token" mechanism this file's own paired-delimiter
+# captures already use elsewhere. Scoped to a bare expression_statement's
+# own assignment, matching cpp/format.janet's own scope cut exactly.
+(expression_statement (assignment_expression "=" @align.assignment))
+
+# arrange-kind follow-up (kind 8): the pilot construct -- a whole `import`
+# statement, captured as one node. Deliberately plain `import_statement`
+# only (not an `export ... from` re-export, a different node entirely) --
+# the same "one pilot construct" scope cut every rule kind's own first
+# capture in this file already makes.
+(import_statement) @arrange.import
+
+# rewrite-kind follow-up (kind 9): the pilot construct -- an ordinary
+# string literal. `template_string` is a wholly different node type
+# (backtick-delimited, never single/double-quoted), so it is never reached
+# by this capture at all -- no discriminator needed.
+(string) @rewrite.quote

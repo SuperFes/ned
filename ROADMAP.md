@@ -601,7 +601,50 @@ Architecture:
       lookup), `Tests/BufferViewTest.cpp` (auto-header-guard off by default leaves a new
       header empty, on inserts and positions point correctly, a non-conforming new
       filename appends the expected note).
-- [ ] Align (kind 5), Arrange (kind 8), and Rewrite (kind 9) remain unstarted.
+- [x] Align (kind 5), Arrange (kind 8), and Rewrite (kind 9) -- first pilot pass each,
+      shipped 2026-09-17. Each follows the exact rollout discipline every earlier kind in
+      this section set: one new pass (`Editor/FormatAlign.{h,cpp}`/`FormatArrange.{h,cpp}`/
+      `FormatRewrite.{h,cpp}`), one pilot capture, cpp and/or JavaScript (shared with
+      TypeScript/TSX via the existing `javascript/format.janet` reuse), full test coverage,
+      wired into both `format-buffer`'s whole-buffer chain (`Commands.cpp`) and the scoped
+      on-save pass (`ScopedFormat.cpp`), and a `Docs/FormattingRules.md` section each. Full
+      design/scope-cut rationale lives there and in `Docs/FormattingCapabilities.md`'s own
+      updated B2 entries for kinds 5/8/9 -- not duplicated here.
+    - **Align**: `align.assignment` (cpp only) -- a plain reassignment statement's own
+      operator token. The real new piece: `FormatAlign.h`'s own grouping rule ("adjacent
+      lines forming a group", a notion the capabilities doc said nothing else in the engine
+      had) -- a maximal run of same-name captures on strictly consecutive lines sharing the
+      SAME leading-indent text, a tree-free proxy for "same nesting depth, same immediate
+      parent". Runs LAST in the Native chain (after Break/Space, so it pads whatever spacing
+      those already settled on). Column counting is plain byte offset, not tab-width-aware
+      -- a declared, not silent, gap. Declaration names, enum/designated initialisers,
+      bit-field sizes, end-of-line comments, and every other language remain open
+      follow-ups.
+    - **Arrange**: `arrange.import` (cpp's `preproc_include`, JavaScript/TypeScript/TSX's
+      `import_statement`) -- reorders a run of adjacent import/include lines by the
+      captured text, `:case-insensitive` included. Reuses Align's own line-adjacency
+      grouping rule. A real live bug caught by this rollout's own test suite, not by
+      inspection: cpp's `preproc_include` node span includes its own trailing `'\n'`
+      (JavaScript's `import_statement` doesn't) -- every single-line `#include` was being
+      misread as "multi-line" and silently declined until `FormatArrange.cpp`'s
+      `WithoutOneTrailingNewline` fixed it. Runs SECOND (after Rewrite, before Blank) --
+      reordering whole lines has to settle before Blank's min/max-before rules react to the
+      result. Member arrangement (the ordered-matching-rule-list half of kind 8) remains
+      fully unstarted, matching the capabilities doc's own "ship the ordering, degrade the
+      grouping rules" stance.
+    - **Rewrite**: `rewrite.quote` (JavaScript/TypeScript/TSX `string` nodes, never
+      `template_string`) -- a pure quote-delimiter swap (`:quote-style :single`/`:double`),
+      declined per-string whenever it wouldn't stay pure (any backslash in the interior, or
+      an unescaped target quote) rather than attempting to (un)escape anything. Runs FIRST
+      in the Native chain -- a length-preserving in-place swap no other pass needs to react
+      to. Every other equivalence rewrite the capabilities doc lists (semicolon
+      insertion/removal, trailing comma, `elseif`→`else if`, `array()`→`[]`, short closures,
+      keyword/boolean-literal case) remains an open follow-up.
+    - Tests: `Tests/FormatAlignTest.cpp`, `Tests/FormatArrangeTest.cpp`,
+      `Tests/FormatRewriteTest.cpp`, plus rule-storage/round-trip cases added to
+      `Tests/FormatRulesTest.cpp` and schema parse/apply cases added to
+      `Tests/FormatConfigParseTest.cpp`. Full suite green (5046 passed, 5 pre-existing
+      environment-only skips) after this pass.
 
 ### Jupyter Notebooks
 

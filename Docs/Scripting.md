@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-204 bindings.
+212 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -65,6 +65,18 @@ Delete the grapheme cluster at point.
 
 The language's own overridden new-file case-convention name, or nil if unset.
 
+## `ned/format-align-enabled`
+
+The capture name's own overridden align-enabled rule, or nil if unset.
+
+## `ned/format-arrange-case-insensitive`
+
+The capture name's own overridden arrange-case-insensitive rule, or nil if unset.
+
+## `ned/format-arrange-enabled`
+
+The capture name's own overridden arrange-enabled rule, or nil if unset.
+
 ## `ned/format-blank-max-before`
 
 The capture name's own overridden blank-max-before rule, or nil if unset.
@@ -96,6 +108,10 @@ The capture name's own overridden break-before rule, or nil if unset.
 ## `ned/format-case-convention`
 
 The entity kind's own overridden case-convention name, or nil if unset.
+
+## `ned/format-rewrite-quote-style`
+
+The capture name's own overridden rewrite-quote-style name, or nil if unset.
 
 ## `ned/format-space-after`
 
@@ -337,6 +353,18 @@ Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comme
 
 Whether saving a file reached through a symlink writes the file the link points at (default true) or replaces the link itself with a regular file (false). Following also means the temporary file a save writes is created beside the real target, so a link pointing to another filesystem still saves.
 
+## `ned/set-format-align-enabled`
+
+Override whether a run of adjacent, same-indent lines sharing the given capture name gets their anchor tokens padded to a shared column (kind 5, Align) -- true/false, nil clears.
+
+## `ned/set-format-arrange-case-insensitive`
+
+Override whether the given capture name's own Arrange sort folds ASCII case before comparing -- true/false, nil clears (unset behaves as an ordinary case-sensitive ordinal compare).
+
+## `ned/set-format-arrange-enabled`
+
+Override whether a run of adjacent sibling captures sharing the given capture name gets reordered by sort key (kind 8, Arrange) -- true/false, nil clears.
+
 ## `ned/set-format-blank-max-before`
 
 Override the maximum blank lines preserved immediately before the given capture name -- an integer, nil clears. Applied unconditionally, unlike min-before.
@@ -372,6 +400,10 @@ Override the naming-case convention for an entity kind ("function", "parameter",
 ## `ned/set-format-command`
 
 Set the shell command save-buffer pipes buffer content through before writing (empty string clears it).
+
+## `ned/set-format-rewrite-quote-style`
+
+Override the quote-style rewrite for a string-literal capture name (kind 9, Rewrite): "single" or "double"; empty string clears. Declined per-string whenever a pure delimiter swap isn't safe -- see Editor/FormatRewrite.h's own header comment.
 
 ## `ned/set-format-space-after`
 

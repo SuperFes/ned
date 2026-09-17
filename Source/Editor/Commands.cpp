@@ -26,10 +26,13 @@
 #include "Fill.h"
 #include "FillColumn.h"
 #include "Format.h"
+#include "FormatAlign.h"
+#include "FormatArrange.h"
 #include "FormatBlankLines.h"
 #include "FormatBracePlacement.h"
 #include "FormatConfigParse.h"
 #include "FormatOnSave.h"
+#include "FormatRewrite.h"
 #include "FormatSpacing.h"
 #include "FormatWrap.h"
 #include "Indent.h"
@@ -222,10 +225,10 @@ namespace {
         // CapturesInRange's overlap+tree-pruned semantics still find a
         // multi-line string/comment that opened far above probe (see
         // Indent.h's VerbatimRanges, same fix, same reasoning).
-        const std::string  bufferText = buffer.Text();
+        const std::string                bufferText = buffer.Text();
         const std::vector<HighlightSpan> spans =
             mode->highlight(bufferText, HighlightWindow{probe, std::min(probe + 1, bufferText.size())});
-        SyntaxClass                      winner = SyntaxClass::Default;
+        SyntaxClass winner = SyntaxClass::Default;
         for (const HighlightSpan& span : spans) {
             if (span.startByte <= probe && probe < span.endByte) {
                 winner = span.syntaxClass; // later spans win on overlap -- Mode.h's own documented rule
@@ -2055,30 +2058,59 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           // Docs/FormattingRules.md). Run after the structural reindent
                           // (whose body indentation none of them touch) and before
                           // Hygiene (which cleans up whatever whitespace any of them
-                          // left behind). Blank runs FIRST: its own edit region always
-                          // ends at a capture's own startByte and sits strictly ABOVE
-                          // that capture's line, never overlapping a Break/Wrap/Space
-                          // capture's region (those sit AT OR AFTER a construct's
-                          // header) for any capture this codebase names today, so
-                          // running it first avoids the other passes ever having to
-                          // account for shifted blank-line whitespace above them.
-                          // wrap-kind follow-up: Wrap runs SECOND, before Break/Space --
-                          // a wrap decision rewrites a list's own interior line layout
-                          // wholesale (collapsing it to one line or chopping it to many),
-                          // which is exactly the kind of structural change Break's own
-                          // brace-placement gap and Space's own token-adjacency checks
-                          // need to see the RESULT of, not the pre-wrap shape (a chopped
-                          // list's own closing delimiter, for instance, now sits on a
-                          // fresh line at the header's indent -- Break's own placement
-                          // logic for a capture immediately following it should react to
-                          // that, not to wherever the delimiter used to be). Every pass
-                          // after the first reads a FRESH capture list re-read from
-                          // context.buffer.Text() rather than reusing an earlier one --
-                          // an earlier pass may have already shifted every byte offset
-                          // after its own edits, so reusing its list would be reading
-                          // stale offsets.
+                          // left behind).
+                          // align/arrange/rewrite-kind follow-up: Rewrite runs FIRST --
+                          // a pure in-place content swap (a string's own delimiter
+                          // character) that never changes line layout or length in any
+                          // way every other pass here would need to react to, so its
+                          // own ordering relative to them is a non-issue; run first
+                          // purely so "fix content equivalences before deciding layout"
+                          // reads as the obvious story. Arrange runs SECOND, before
+                          // Blank -- reordering whole import lines changes which lines
+                          // are adjacent to which, exactly the fact Blank's own
+                          // min/max-before rules need to already be settled against,
+                          // not react to mid-reorder. Blank runs THIRD: its own edit
+                          // region always ends at a capture's own startByte and sits
+                          // strictly ABOVE that capture's line, never overlapping a
+                          // Break/Wrap/Space capture's region (those sit AT OR AFTER a
+                          // construct's header) for any capture this codebase names
+                          // today, so running it before them avoids those passes ever
+                          // having to account for shifted blank-line whitespace above
+                          // them. wrap-kind follow-up: Wrap runs FOURTH, before
+                          // Break/Space -- a wrap decision rewrites a list's own
+                          // interior line layout wholesale (collapsing it to one line
+                          // or chopping it to many), which is exactly the kind of
+                          // structural change Break's own brace-placement gap and
+                          // Space's own token-adjacency checks need to see the RESULT
+                          // of, not the pre-wrap shape (a chopped list's own closing
+                          // delimiter, for instance, now sits on a fresh line at the
+                          // header's indent -- Break's own placement logic for a
+                          // capture immediately following it should react to that, not
+                          // to wherever the delimiter used to be). align-kind follow-up:
+                          // Align runs LAST of these seven, after Break/Space -- its
+                          // own column computation reads wherever an anchor token's
+                          // spacing ended up AFTER Space's own before/after rules ran,
+                          // not before, or its own padding would just get undone (or
+                          // doubled) the moment a Space rule touches the same gap.
+                          // Every pass after the first reads a FRESH capture list
+                          // re-read from context.buffer.Text() rather than reusing an
+                          // earlier one -- an earlier pass may have already shifted
+                          // every byte offset after its own edits, so reusing its list
+                          // would be reading stale offsets.
                           if (context.mode != nullptr && context.mode->formatCaptures) {
-                              const std::string languageKey = LanguageKeyForMode(*context.mode);
+                              const std::string                 languageKey  = LanguageKeyForMode(*context.mode);
+                              const std::vector<FormatTextEdit> rewriteEdits = ComputeRewriteEdits(
+                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
+                              if (!rewriteEdits.empty()) {
+                                  ApplyFormatTextEdits(context.buffer, rewriteEdits);
+                                  changed = true;
+                              }
+                              const std::vector<FormatTextEdit> arrangeEdits = ComputeArrangeEdits(
+                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
+                              if (!arrangeEdits.empty()) {
+                                  ApplyFormatTextEdits(context.buffer, arrangeEdits);
+                                  changed = true;
+                              }
                               const std::vector<FormatTextEdit> blankEdits = ComputeBlankLineEdits(
                                   context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
                               if (!blankEdits.empty()) {
@@ -2101,6 +2133,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                                   context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
                               if (!spaceEdits.empty()) {
                                   ApplyFormatTextEdits(context.buffer, spaceEdits);
+                                  changed = true;
+                              }
+                              const std::vector<FormatTextEdit> alignEdits = ComputeAlignEdits(
+                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
+                              if (!alignEdits.empty()) {
+                                  ApplyFormatTextEdits(context.buffer, alignEdits);
                                   changed = true;
                               }
                           }
@@ -3276,7 +3314,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             }
             if (context.message) {
                 const editor::coverage::Report report    = editor::coverage::CurrentCoverageReport();
-                std::size_t                            lineCount = 0;
+                std::size_t                    lineCount = 0;
                 for (const editor::coverage::FileCoverage& file : report) {
                     lineCount += file.lines.size();
                 }
