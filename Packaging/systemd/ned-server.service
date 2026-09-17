@@ -1,0 +1,31 @@
+# Ned LSP broker, run as a systemd --user service so language servers
+# (clangd, etc.) stay warm across every `ned` launch instead of the default
+# ephemeral auto-spawn (which self-exits ~1 minute after its last client
+# disconnects -- see Editor/Lsp/BrokerDaemon.h's own wholeDaemonIdleTimeout
+# comment). `--foreground` disables that idle exit; ned's own periodic
+# per-project idle eviction (30 minutes, unaffected by this) still reclaims
+# an actually-unused language-server subprocess on its own.
+#
+# Not installed by the build -- copy by hand:
+#   mkdir -p ~/.config/systemd/user
+#   cp Packaging/systemd/ned-server.service ~/.config/systemd/user/
+#   # edit ExecStart below to point at your built `ned` if it isn't on $PATH
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now ned-server
+#
+# Stop with `systemctl --user stop ned-server` (sends SIGTERM, which
+# BrokerDaemon::Run() now handles gracefully -- same shutdown sequence as
+# `ned --lsp-broker-stop`) or `ned --lsp-broker-stop` directly.
+
+[Unit]
+Description=Ned LSP broker (keeps language servers warm)
+
+[Service]
+Type=simple
+ExecStart=ned --foreground
+KillMode=control-group
+TimeoutStopSec=10
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
