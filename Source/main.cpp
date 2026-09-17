@@ -2768,6 +2768,75 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
         wm->TakeFocus();
     });
 
+    // Transient commit menu follow-up (ROADMAP's VCS-side-panel entry,
+    // "a real transient menu"): 'c' on VcsPanel no longer fires
+    // VcsPanelAction::Commit directly -- it opens this small menu instead,
+    // vcsContextMenu's own shape (anchored ListPopup, digit-key single-
+    // keystroke select already built into ListPopup itself -- see
+    // ListPopup::HandleKeyEvent's own "1"-"9" convenience). Fixed four rows
+    // in a fixed order, so no parallel action vector is needed the way the
+    // context menu's per-target row set requires -- kCommitMenuActions
+    // below is indexed by row position directly.
+    static constexpr std::array<ned::ui::VcsPanelAction, 4> kCommitMenuActions = {
+        ned::ui::VcsPanelAction::Commit,
+        ned::ui::VcsPanelAction::AmendCommit,
+        ned::ui::VcsPanelAction::ExtendCommit,
+        ned::ui::VcsPanelAction::RewordCommit,
+    };
+    ned::ui::ListPopup commitMenu(theme);
+    commitMenu.SetFocusable(true);
+    overlays.Add(commitMenu, [panel = &commitMenu](Size size) {
+        const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
+        const int            width  = std::min(30, size.width);
+        const int            height = std::clamp(panel->ContentRowCount(), 3, std::min(9, size.height));
+
+        const int xMin = std::clamp(origin.x, 0, std::max(0, size.width - width));
+        const int xMax = std::min(size.width - 1, xMin + width - 1);
+
+        int yMin, yMax;
+        if (origin.y + height - 1 <= size.height - 1) {
+            yMin = origin.y;
+            yMax = yMin + height - 1;
+        }
+        else {
+            yMax = std::max(0, origin.y - 1);
+            yMin = std::max(0, yMax - height + 1);
+        }
+        return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
+    });
+    vcsPanel->SetOnCommitMenuRequest([&overlays, panel = &commitMenu](ned::ui::Point anchor) {
+        ned::ui::ListPopupModel model;
+        model.anchor = anchor;
+        model.title  = "Commit";
+        model.rows   = {
+            {.left = "1)", .main = "Commit"},
+            {.left = "2)", .main = "Amend (fold in staged, keep tree)"},
+            {.left = "3)", .main = "Extend (fold in staged, keep message)"},
+            {.left = "4)", .main = "Reword (message only, keep tree)"},
+        };
+        model.selectedIndex = 0;
+        panel->SetModel(std::move(model));
+        overlays.Show(*panel);
+        panel->TakeFocus();
+    });
+    commitMenu.SetOnActivate([&overlays, panel = &commitMenu, wm = windowManager.get()](std::size_t index) {
+        // Focus must return to a pane before the action runs -- same
+        // reasoning vcsContextMenu's own SetOnActivate documents.
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+        if (index < kCommitMenuActions.size()) {
+            wm->RequestVcsPanelAction(kCommitMenuActions[index]);
+        }
+    });
+    commitMenu.SetOnCancel([&overlays, panel = &commitMenu, wm = windowManager.get()] {
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+    });
+    commitMenu.SetOnKey([&overlays, panel = &commitMenu, wm = windowManager.get()](const ned::editor::KeyChord&) {
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+    });
+
     // call/type-hierarchy follow-up: the shared TreeView overlay behind
     // lsp-call-hierarchy-incoming/-outgoing/lsp-type-hierarchy-supertypes/
     // -subtypes -- unlike candidatePopup/completionPopup above, this one

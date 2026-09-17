@@ -148,6 +148,19 @@ class VcsPanel : public Widget {
     // other Set* hook here.
     void SetOnContextMenuRequest(std::function<void(const VcsPanelContextMenuTarget&, Point anchor)> handler);
 
+    // Transient commit menu follow-up: 'c' no longer fires VcsPanelAction::
+    // Commit directly -- committing has four variants now (plain/amend/
+    // extend/reword), so 'c' instead reports the anchor point (this widget
+    // has no ListPopup access of its own, same SetOnContextMenuRequest
+    // reasoning above) for main.cpp to show a small lettered menu over.
+    // Picking a row there is main.cpp's job (via WindowManager::
+    // RequestVcsPanelAction, the exact same entry point 'C'/'e'/'r' already
+    // use directly) -- this widget doesn't see which one was picked.
+    // 'C'/'e'/'r'/'w'/'n' are untouched: only 'c' -- the common case, and
+    // the one Magit itself puts a menu behind -- gained one. Unset (the
+    // default) is a safe no-op, matching every other Set* hook here.
+    void SetOnCommitMenuRequest(std::function<void(Point anchor)> handler);
+
     // Entry points the context-menu wiring in main.cpp drives -- each reuses
     // an already-working keyboard/mouse code path unchanged, just re-scoped
     // to an explicit path/ref instead of the focused row or selected_ set.
@@ -260,6 +273,10 @@ class VcsPanel : public Widget {
     // vcs-panel-context-menu follow-up: see SetOnContextMenuRequest's own
     // doc comment.
     std::function<void(const VcsPanelContextMenuTarget&, Point)> onContextMenuRequest_;
+
+    // Transient commit menu follow-up -- see SetOnCommitMenuRequest's own
+    // doc comment.
+    std::function<void(Point)> onCommitMenuRequest_;
 
     editor::vcs::Runner*        vcsRunner_ = nullptr;
     editor::vcs::StatusSections sections_;
