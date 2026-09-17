@@ -1,13 +1,12 @@
 # ned_lib (everything except main()) and the ned executable. Added via
 # add_subdirectory(Source) from the root CMakeLists.txt, after
-# CMake/Dependencies.cmake, CMake/Grammars.cmake and CMake/EmbedGenerated.cmake
-# have already run -- this file links against targets/variables all three
-# produce (notcurses-core, vterm, utf8proc, nlohmann_json::nlohmann_json,
-# re2::re2, pcre2-8-static, the tree-sitter-* per-language grammar targets,
-# Janet_*, NED_GENERATED_QUERY_SOURCES).
+# CMake/Dependencies.cmake, CMake/Grammars.cmake and CMake/DataTree.cmake
+# have already run -- this file links against targets all three produce
+# (notcurses-core, vterm, utf8proc, nlohmann_json::nlohmann_json, re2::re2,
+# pcre2-8-static, the tree-sitter-* per-language grammar targets, Janet_*,
+# ned_data).
 
 add_library(ned_lib STATIC
-        ${NED_GENERATED_QUERY_SOURCES}
         Application.cpp
         Text/Rope.cpp
         Text/RopeStorage.cpp
@@ -56,6 +55,7 @@ add_library(ned_lib STATIC
         Editor/Mode.cpp
         Editor/LanguageDefinition.cpp
         Editor/LanguageFiles.cpp
+        Editor/DataDir.cpp
         Editor/JanetData.cpp
         Editor/LanguageParse.cpp
         Editor/LanguageRegistry.cpp
@@ -425,6 +425,12 @@ endif()
 add_executable(ned main.cpp)
 
 target_link_libraries(ned PRIVATE ned_lib CLI11::CLI11)
+
+# Editor/DataDir.cpp's last-resort candidate (after $NED_DATA_DIR and the
+# executable-relative share/ned); the build tree's own copy is assembled by
+# ned_data (CMake/DataTree.cmake).
+target_compile_definitions(ned_lib PRIVATE NED_INSTALL_DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/ned")
+add_dependencies(ned ned_data)
 
 # Packaging follow-up: no install() rule existed at all before this -- fine
 # for `cmake --build build && ./build/ned` (this project's own documented

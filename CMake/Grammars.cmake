@@ -1,28 +1,9 @@
-# tree-sitter core runtime plus every bundled grammar. Included from the root
-# CMakeLists.txt after CMake/Dependencies.cmake (NED_BUILD_TESTS must already
-# be defined) and before add_subdirectory(Source), since Source/CMakeLists.txt
-# links ned_lib against the per-language targets this file creates.
-
-#--- tree-sitter (core) ---------------------------------------------------------
-# Only ned_tests links this (see Tests/CMakeLists.txt) -- it is Phase 4b's
-# differential conformance reference for ned's own parsing engine
-# (Source/Editor/Parse/), never linked into ned_lib/ned itself, so it's only
-# built at all when tests are enabled. Used to be FetchContent'd at configure
-# time (v0.25.10 pinned); now vendored under
-# ThirdParty/tree-sitter-grammars/tree-sitter-core/ by Tools/vendor-grammars.py
-# -- see that script's header for why grammar sources moved out of
-# FetchContent entirely. Re-vendor with
-# `Tools/vendor-grammars.py tree-sitter-core` to bump the pinned version.
-if (NED_BUILD_TESTS)
-    set(NED_TREE_SITTER_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/tree-sitter-grammars/tree-sitter-core")
-    file(GLOB NED_TREE_SITTER_CORE_SOURCES "${NED_TREE_SITTER_CORE_DIR}/src/*.c")
-    add_library(tree-sitter STATIC ${NED_TREE_SITTER_CORE_SOURCES})
-    target_include_directories(tree-sitter
-            PUBLIC ${NED_TREE_SITTER_CORE_DIR}/include
-            PRIVATE ${NED_TREE_SITTER_CORE_DIR}/src)
-    set_target_properties(tree-sitter PROPERTIES C_STANDARD 11 POSITION_INDEPENDENT_CODE ON)
-endif()
-#------------------------------------------------------------------------------
+# Every bundled grammar's generated tables. Included from the root
+# CMakeLists.txt before add_subdirectory(Source), since Source/CMakeLists.txt
+# links ned_lib against the per-language targets this file creates. The
+# tree-sitter runtime itself is not built anywhere: ned's own engine
+# (Source/Editor/Parse/) interprets these tables, and its tests hold it to
+# the corpora under Source/Languages/<name>/corpus/.
 
 #--- Bundled tree-sitter grammars -----------------------------------------------
 # Every grammar's generated parser.c (+ scanner.c, when it has an external
@@ -260,10 +241,9 @@ ned_add_bundled_grammar(tree-sitter-diff)
 # 188-LOC scanner, 31-file corpus -- but its tags/main don't commit generated
 # parser.c/grammar.json (only grammar.js/scanner.c; generated output lives on
 # a gh-pages branch or, more traceably, as a release asset). Tools/vendor-
-# grammars.py pulls the release tarball for src/ and a second, ordinary tag
-# fetch for test/corpus (vendored separately as tree-sitter-sql-corpus/,
-# read directly by ParseConformanceTest.cpp -- never a CMake build input),
-# since the release tarball omits it.
+# grammars.py pulls the release tarball for src/; its corpus, which the
+# tarball omits, was imported into Source/Languages/sql/corpus/ like every
+# other language's.
 ned_add_bundled_grammar(tree-sitter-sql)
 
 # 2026-09-13 batch: Dockerfile, Make, HCL, Nix, Ruby, gitcommit, gitrebase

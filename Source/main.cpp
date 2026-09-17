@@ -689,9 +689,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     // (Editor/LanguageRegistry.h). Before LoadInitFile for the same
     // override-ordering reason as everything above; not trust-gated -- this
     // is the user's own config directory, the same standing init.janet has.
-    // A packaged install would add /usr/share/ned/languages here as a
-    // lower-precedence sibling; the loader is path-parameterized for exactly
-    // that.
+    // The bundled set is the lower-precedence sibling, read from
+    // DataDir()/languages through BundledLanguages.h.
     for (const std::filesystem::path& languageDir :
          ned::editor::LanguageDirectories(ned::janet::InitFilePath().parent_path() / "languages")) {
         try {

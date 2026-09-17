@@ -178,6 +178,5 @@ TEST_CASE("The dangling-path check would actually catch a rename", "[Docs]") {
     CHECK_FALSE(Resolves("NoSuchFileAnywhere.h"));
     CHECK_FALSE(Resolves("UI/Widget.cpp/NotAFile.h"));
 
-    CHECK(Resolves("tree_sitter/api.h")); // external, allowlisted
     CHECK(NormalizePairShorthand("Editor/Mode.h/.cpp") == "Editor/Mode.h");
 }
