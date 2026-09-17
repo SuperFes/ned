@@ -33,6 +33,8 @@ struct FormatRulesGuard {
         SetWrapPolicy("wrap.args", std::nullopt);
         SetWrapForceTrailingComma("wrap.args", std::nullopt);
         SetWrapPolicy("cpp/wrap.args", std::nullopt);
+        SetWrapPolicy("wrap.params", std::nullopt);
+        SetWrapForceTrailingComma("wrap.params", std::nullopt);
     }
 };
 
@@ -171,6 +173,71 @@ TEST_CASE("End to end: WrapPolicy::Always leaves a zero-argument call untouched,
     ApplyFormatTextEdits(buffer, ComputeWrapEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "int a = f();\nint b = f(\n    1\n);\n");
+}
+
+// wrap-kind widening: a second construct, cpp's own function parameter list
+// -- see cpp/format.janet's own header comment for wrap.params.
+TEST_CASE("cpp-mode's format.janet names wrap.params with correct item spans, over zero/one/"
+          "many parameters",
+          "[FormatWrap]") {
+    const Mode mode = CppMode();
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("void f();"), "wrap.params")[0].items.empty());
+
+    const auto one = CapturesNamed(mode.formatCaptures("void f(int a);"), "wrap.params");
+    REQUIRE(one.size() == 1);
+    REQUIRE(one[0].items.size() == 1);
+
+    const auto three = CapturesNamed(mode.formatCaptures("void f(int a, int b, int c);"), "wrap.params");
+    REQUIRE(three.size() == 1);
+    REQUIRE(three[0].items.size() == 3);
+}
+
+TEST_CASE("End to end: WrapPolicy::Always chops a parameter list to one item per line",
+          "[FormatWrap]") {
+    const FormatRulesGuard guard;
+    SetWrapPolicy("wrap.params", WrapPolicy::Always);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("t.cpp");
+    buffer.InsertAtPoint("void f(int a, int b, int c) {}\n");
+    ApplyFormatTextEdits(buffer, ComputeWrapEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "void f(\n    int a,\n    int b,\n    int c\n) {}\n");
+}
+
+TEST_CASE("End to end: WrapPolicy::Always over wrap.params is idempotent", "[FormatWrap]") {
+    const FormatRulesGuard guard;
+    SetWrapPolicy("wrap.params", WrapPolicy::Always);
+
+    const Mode        mode   = CppMode();
+    const std::string source = "void f(\n    int a,\n    int b\n) {}\n";
+    Buffer            buffer("t.cpp");
+    buffer.InsertAtPoint(source);
+    ApplyFormatTextEdits(buffer, ComputeWrapEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == source);
+}
+
+// A real corruption hazard found live, not by inspection, and a SEPARATE
+// fact from wrap.args's own -- see cpp/format.janet's own header comment
+// and FormatWrap.cpp's own TrailingCommaUnsafeForLanguage. Confirmed with a
+// real `g++` compile: WITHOUT this guard, the trailing comma this test
+// configures produces "expected identifier before ')' token".
+TEST_CASE("End to end: :force-trailing-comma is declined for cpp's own wrap.params (a "
+          "parameter list's own trailing comma is a hard C++ syntax error, confirmed live)",
+          "[FormatWrap]") {
+    const FormatRulesGuard guard;
+    SetWrapPolicy("wrap.params", WrapPolicy::Always);
+    SetWrapForceTrailingComma("wrap.params", true);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("t.cpp");
+    buffer.InsertAtPoint("void f(int a, int b) {}\n");
+    ApplyFormatTextEdits(buffer, ComputeWrapEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    // NOT "...int b,\n) {}\n" -- confirmed live that misparses.
+    REQUIRE(buffer.Text() == "void f(\n    int a,\n    int b\n) {}\n");
 }
 
 TEST_CASE("WrapRuleFor(name, language) resolves the language-scoped key first, matching "

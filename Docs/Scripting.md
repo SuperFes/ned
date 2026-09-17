@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-212 bindings.
+214 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -108,6 +108,10 @@ The capture name's own overridden break-before rule, or nil if unset.
 ## `ned/format-case-convention`
 
 The entity kind's own overridden case-convention name, or nil if unset.
+
+## `ned/format-rewrite-expand-elseif`
+
+The capture name's own overridden rewrite-expand-elseif rule, or nil if unset.
 
 ## `ned/format-rewrite-quote-style`
 
@@ -400,6 +404,10 @@ Override the naming-case convention for an entity kind ("function", "parameter",
 ## `ned/set-format-command`
 
 Set the shell command save-buffer pipes buffer content through before writing (empty string clears it).
+
+## `ned/set-format-rewrite-expand-elseif`
+
+Override whether an "elseif" keyword token capture name gets rewritten to "else if" (kind 9, Rewrite) -- true/false, nil clears.
 
 ## `ned/set-format-rewrite-quote-style`
 

@@ -40,7 +40,7 @@ namespace {
     }
 
     bool operator==(const RewriteRuleValue& a, const RewriteRuleValue& b) {
-        return a.quoteStyle == b.quoteStyle;
+        return a.quoteStyle == b.quoteStyle && a.expandElseif == b.expandElseif;
     }
 
     std::mutex& RulesMutex() {
@@ -335,6 +335,10 @@ ArrangeRuleValue ArrangeRuleFor(std::string_view name, std::string_view language
 
 void SetRewriteQuoteStyle(const std::string& name, std::optional<QuoteStyle> value) {
     SetRewriteField(name, value, &RewriteRuleValue::quoteStyle);
+}
+
+void SetRewriteExpandElseif(const std::string& name, std::optional<bool> value) {
+    SetRewriteField(name, value, &RewriteRuleValue::expandElseif);
 }
 
 RewriteRuleValue RewriteRuleFor(std::string_view name) {

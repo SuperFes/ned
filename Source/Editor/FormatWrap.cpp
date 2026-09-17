@@ -65,8 +65,14 @@ namespace {
     // chop-down LAYOUT itself (one item per line, no trailing comma) is
     // unaffected and stays fully available -- confirmed live it compiles
     // clean -- only the companion boolean is declined here.
+    //
+    // wrap.params gets its OWN entry, not a reuse of wrap.args's: a
+    // trailing comma after a function's last parameter is a separately
+    // confirmed C++ syntax error (a real `g++` compile: "expected
+    // identifier before ')' token") -- a different grammar construct, not
+    // something safe to assume carries over from the call-argument case.
     bool TrailingCommaUnsafeForLanguage(std::string_view languageKey, std::string_view captureName) {
-        return languageKey == "cpp" && captureName == "wrap.args";
+        return languageKey == "cpp" && (captureName == "wrap.args" || captureName == "wrap.params");
     }
 
 } // namespace

@@ -18,6 +18,7 @@ using ned::editor::FormatCapture;
 using ned::editor::FormatTextEdit;
 using ned::editor::JavaScriptMode;
 using ned::editor::Mode;
+using ned::editor::PythonMode;
 using ned::editor::SetArrangeCaseInsensitive;
 using ned::editor::SetArrangeEnabled;
 using ned::text::Buffer;
@@ -162,6 +163,49 @@ TEST_CASE("A multi-line import is declined -- never reordered, and doesn't block
     const Mode        mode   = JavaScriptMode();
     const std::string source = "import {\n  a,\n  b\n} from 'x';\nimport c from 'y';\n";
     REQUIRE(ComputeArrangeEdits(source, "javascript", mode.formatCaptures(source)).empty());
+}
+
+// arrange-kind widening: a second language, Python -- see python/format.janet's
+// own header comment for arrange.import.
+TEST_CASE("python-mode's format.janet names arrange.import on both \"import x\" and \"from x "
+          "import y\", one capture each, with no trailing newline in the span",
+          "[FormatArrange]") {
+    const Mode mode = PythonMode();
+
+    const auto plain = CapturesNamed(mode.formatCaptures("import a\nimport b\n"), "arrange.import");
+    REQUIRE(plain.size() == 2);
+    REQUIRE(plain[0].startByte == 0);
+    REQUIRE(plain[0].endByte == 8); // "import a" -- no trailing '\n'
+    REQUIRE(plain[1].startByte == 9);
+    REQUIRE(plain[1].endByte == 17);
+
+    const auto from = CapturesNamed(mode.formatCaptures("from a import b\n"), "arrange.import");
+    REQUIRE(from.size() == 1);
+    REQUIRE(from[0].startByte == 0);
+    REQUIRE(from[0].endByte == 15); // "from a import b" -- no trailing '\n'
+}
+
+TEST_CASE("End to end: an adjacent run of Python import statements sorts by the captured text",
+          "[FormatArrange]") {
+    const FormatRulesGuard guard;
+    SetArrangeEnabled("arrange.import", true);
+
+    const Mode mode = PythonMode();
+    Buffer     buffer("t.py");
+    buffer.InsertAtPoint("import z\nimport a\n");
+    ApplyFormatTextEdits(buffer, ComputeArrangeEdits(buffer.Text(), "python", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "import a\nimport z\n");
+}
+
+TEST_CASE("A multi-line Python \"from x import (...)\" is declined -- never reordered",
+          "[FormatArrange]") {
+    const FormatRulesGuard guard;
+    SetArrangeEnabled("arrange.import", true);
+
+    const Mode        mode   = PythonMode();
+    const std::string source = "from x import (\n    a,\n    b,\n)\nimport c\n";
+    REQUIRE(ComputeArrangeEdits(source, "python", mode.formatCaptures(source)).empty());
 }
 
 TEST_CASE("ArrangeRuleFor(name, language) resolves the language-scoped key first, matching every "

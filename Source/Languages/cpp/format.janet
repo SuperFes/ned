@@ -196,6 +196,19 @@
 # unaffected and confirmed live it compiles clean.
 (argument_list "(" @wrap.args.open (_)* @wrap.args.item ")" @wrap.args.close)
 
+# wrap-kind widening: a second construct, a function's own parameter list --
+# parameter_list has the identical anonymous-"("/")"-plus-named-children
+# shape argument_list does (confirmed against node-types.json), so the same
+# .open/.item/.close convention applies unchanged. A trailing comma after
+# the last parameter is ALSO a hard C++ syntax error (confirmed with a real
+# `g++` compile: "expected identifier before ')' token") -- a separate,
+# independently-verified fact from wrap.args's own (a different grammar
+# construct, not something to assume carries over), so
+# `TrailingCommaUnsafeForLanguage` gained its own `("cpp", "wrap.params")`
+# entry rather than reusing wrap.args's. Unconfigured, inert:
+#   (ned/set-format-wrap-policy "wrap.params" :always)
+(parameter_list "(" @wrap.params.open (_)* @wrap.params.item ")" @wrap.params.close)
+
 # align-kind follow-up (kind 5): the pilot construct for the whole rule
 # kind -- a plain reassignment statement's own operator token
 # (assignment_expression's "operator" field per node-types.json, spanning
@@ -208,6 +221,17 @@
 # (no built-in default), this capture is inert:
 #   (ned/set-format-align-enabled "align.assignment" true)
 (expression_statement (assignment_expression operator: _ @align.assignment))
+
+# align-kind widening: a second construct, an enum member's own initializer.
+# enumerator's "value" field is OPTIONAL per node-types.json, so a bare
+# enumerator with no initializer ("Red,") simply produces no match at all --
+# decline rather than guess, for free, no predicate needed. Deliberately
+# not "declaration-name alignment" (int a, b;'s own multiple-declarators-
+# per-line shape would put two anchors on one source line, which
+# FormatAlign.h's own header comment says the grouping rule assumes never
+# happens). Unconfigured, inert:
+#   (ned/set-format-align-enabled "align.enumerator" true)
+(enumerator name: (identifier) "=" @align.enumerator value: (_))
 
 # arrange-kind follow-up (kind 8): the pilot construct -- a whole #include
 # directive, captured as one node (preproc_include's own span already

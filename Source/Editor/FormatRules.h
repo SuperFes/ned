@@ -211,6 +211,15 @@ enum class QuoteStyle {
 
 struct RewriteRuleValue {
     std::optional<QuoteStyle> quoteStyle;
+
+    // A second, structurally unrelated rewrite family living in the same
+    // per-capture value -- true rewrites an "elseif" keyword token to
+    // "else if" (PHP's own `rewrite.elseif` pilot), independently of
+    // quoteStyle. Each field is checked independently in
+    // FormatRewrite.cpp's own ComputeRewriteEdits, the same "every optional
+    // field its own independent lever" shape WrapRuleValue's own two fields
+    // already use.
+    std::optional<bool> expandElseif;
 };
 
 // Malformed vs. merely unknown follows SyntaxTheme.h's own trust-boundary
@@ -268,6 +277,7 @@ void SetArrangeCaseInsensitive(const std::string& name, std::optional<bool> valu
 [[nodiscard]] ArrangeRuleValue ArrangeRuleFor(std::string_view name, std::string_view language);
 
 void SetRewriteQuoteStyle(const std::string& name, std::optional<QuoteStyle> value);
+void SetRewriteExpandElseif(const std::string& name, std::optional<bool> value);
 
 [[nodiscard]] RewriteRuleValue RewriteRuleFor(std::string_view name);
 [[nodiscard]] RewriteRuleValue RewriteRuleFor(std::string_view name, std::string_view language);
