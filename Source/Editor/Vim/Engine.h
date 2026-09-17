@@ -56,11 +56,27 @@ namespace ned::editor::vim {
 // Quit is ":qa"/":qall"/":quitall" -- unconditionally every window, checked the same
 // way. The *Forced variants (":q!"/"ZQ", ":qa!") skip the confirmation outright, same
 // as real vim's bang.
+//
+// SplitBelow/SplitRight/CloseOtherWindows/OtherWindow (vim-window-commands follow-up)
+// are the same "engine can't reach it" shape extended to real vim's own window-command
+// set (":sp"/":split", ":vs"/":vsp"/":vsplit", ":clo"/":close" -- the last reuses
+// CloseWindow/CloseWindowForced outright rather than a distinct value, since real
+// vim's ":close" differs from ":q" only in refusing outright on the last window
+// instead of falling through to quit, a nuance this codebase's own ":q"/"ZZ"
+// simplification already declined to reproduce -- and ":on"/":only", plus the native
+// C-w s/v/c/o/w prefix, below). Deliberately independent of the C-x window-split
+// prefix's own reachability gap under Vim mode (Engine::HandleAction's C-x is real
+// vim's decrement-number binding) -- these give window management a real, idiomatic
+// vim-native path instead.
 enum class PendingIntent { None,
                            Quit,
                            QuitForced,
                            CloseWindow,
-                           CloseWindowForced };
+                           CloseWindowForced,
+                           SplitBelow,
+                           SplitRight,
+                           CloseOtherWindows,
+                           OtherWindow };
 
 // "]c"/"[c" (gitsigns' own convention, not real vim's) -- move point to the
 // next/previous VCS-changed hunk. Same "engine can't reach it, host UI can" shape as
@@ -167,6 +183,7 @@ class Engine {
     void                                      HandleZPrefixed(text::Buffer& buffer, const KeyChord& chord);
     void                                      HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& chord);
     void                                      HandleBracketPrefixed(text::Buffer& buffer, const KeyChord& chord, bool opening);
+    void                                      HandleWindowPrefixed(text::Buffer& buffer, const KeyChord& chord);
     bool                                      HandleVisualSpecific(text::Buffer& buffer, const KeyChord& chord, long count); // true if the chord was consumed
     void                                      HandleAction(text::Buffer& buffer, const KeyChord& chord, long count);
 

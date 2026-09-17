@@ -544,15 +544,32 @@ window" — not-last forwards to the same `InteractiveRequest::DeleteWindow`
 command (`C-x C-c`) for its unsaved-changes-across-every-buffer confirmation rather than
 a second copy of that check. Fixed as a side effect: `ZQ` used to still confirm-prompt
 despite its own comment calling it force-quit, and `:qa`/`:qa!` had no unsaved-changes
-check of any kind).
+check of any kind), and `vim-window-commands` (window management now has a real,
+idiomatic vim-native path: real vim's own C-w prefix — `s`/`C-s` split-below, `v`/`C-v`
+split-right, `c` close-window, `o` close-other-windows, `w`/`C-w` cycle-focus, every
+letter's own Ctrl-chord form accepted as an alias — plus the ex-command equivalents
+`:sp`/`:split`, `:vs`/`:vsp`/`:vsplit`, `:clo`/`:close` (reuses `:q`'s own
+`CloseWindow`/`CloseWindowForced` handling wholesale — real vim's `:close` differs only
+in refusing outright on the last window rather than falling through to quit, a nuance
+`vim-quit-window-semantics` already declined to reproduce for `:q`/`ZZ`) and `:on`/
+`:only`. `PendingIntent` gained `SplitBelow`/`SplitRight`/`CloseOtherWindows`/
+`OtherWindow` alongside the existing pair, resolved by `BufferView` the same
+forward-to-`SetOnWindowRequest` way the ordinary `InteractiveRequest::SplitBelow`/etc.
+path already does. `C-w` joins `IsRecognizedNormalOrVisualControlChord`'s list, which
+also fixes a real quirk: it no longer falls through to ned's own global "kill-region"
+binding under Vim mode, which a vim user typing `C-w` never meant.).
 
-- [ ] **`C-x` is vim's own "decrement number under point" in Normal mode**
+- [ ] `C-x` itself is still vim's own "decrement number under point" in Normal mode
       (`Engine::HandleAction`'s Control-chord block), so ned's Emacs-style `C-x 2`/
-      `C-x 0`/`C-x o` window-split/-close/-cycle prefix has no way to reach `Dispatcher`
-      under Vim mode — confirmed live (`vim-keymap-fallthrough`'s own fallthrough
-      deliberately leaves every Control chord vim already recognizes, `C-x` included,
-      alone). No `:sp`/`:vs`/`:vsp` ex-command equivalent exists either
-      (`vim-quit-window-semantics`, found while testing it).
+      `C-x 0`/`C-x o` window-split/-close/-cycle prefix still has no way to reach
+      `Dispatcher` under Vim mode — confirmed live (`vim-keymap-fallthrough`'s own
+      fallthrough deliberately leaves every Control chord vim already recognizes, `C-x`
+      included, alone). Left alone deliberately rather than fixed: `vim-window-commands`
+      gives window management a real vim-native path (`C-w` prefix, `:sp`/`:vs`/`:on`)
+      that needs no resolution of this conflict at all, and the only way to actually
+      reach `Dispatcher` through `C-x` would mean either breaking real vim's own
+      decrement-number binding or a two-key lookahead hack — not worth it now that the
+      practical gap (no way to split/close/cycle windows under Vim mode) is closed.
 - [ ] **A determinate progress bar, and a huge save that can paint one.** The mode line's
       spinner is the right answer for indeterminate work and stays; what has no answer at
       all is a long operation whose end *is* knowable. Saving a multi-GB buffer is the

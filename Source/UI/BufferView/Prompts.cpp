@@ -249,6 +249,30 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         }
         return true;
     }
+    // vim-window-commands follow-up: ":sp"/":vs"/":on" and the native C-w s/v/o/w
+    // prefix -- same "signal intent, host UI acts on it" forward as the ordinary
+    // InteractiveRequest::SplitBelow/SplitRight/DeleteOtherWindows/OtherWindow path
+    // (Prompts.cpp's own RunCommandAndHandleOutcome switch), just reached via vim's
+    // PendingIntent channel instead of a Command. None of these four ever reshape this
+    // pane out from under itself the way CloseWindow's DeleteWindow can, so unlike that
+    // branch there's nothing to guard after the forward.
+    if (intent == editor::vim::PendingIntent::SplitBelow || intent == editor::vim::PendingIntent::SplitRight ||
+        intent == editor::vim::PendingIntent::CloseOtherWindows || intent == editor::vim::PendingIntent::OtherWindow) {
+        if (onWindowRequest_) {
+            editor::InteractiveRequest request = editor::InteractiveRequest::OtherWindow;
+            if (intent == editor::vim::PendingIntent::SplitBelow) {
+                request = editor::InteractiveRequest::SplitBelow;
+            }
+            else if (intent == editor::vim::PendingIntent::SplitRight) {
+                request = editor::InteractiveRequest::SplitRight;
+            }
+            else if (intent == editor::vim::PendingIntent::CloseOtherWindows) {
+                request = editor::InteractiveRequest::DeleteOtherWindows;
+            }
+            onWindowRequest_(request);
+        }
+        return true;
+    }
 
     // vim-hunk-nav follow-up: "]c"/"[c" -- reuse the same JumpToNextHunk/
     // JumpToPreviousHunk "vcs-next-hunk"/"vcs-previous-hunk" (C-c v N/P) already call,
