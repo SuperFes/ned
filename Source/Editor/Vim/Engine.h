@@ -62,6 +62,16 @@ enum class PendingIntent { None,
                            CloseWindow,
                            CloseWindowForced };
 
+// "]c"/"[c" (gitsigns' own convention, not real vim's) -- move point to the
+// next/previous VCS-changed hunk. Same "engine can't reach it, host UI can" shape as
+// PendingIntent above: hunk data comes from BufferView's own live VCS diff
+// (JumpToNextHunk/JumpToPreviousHunk), which this engine has no access to. Set by
+// HandleBracketPrefixed, consumed by BufferView the same way TakePendingIntent already
+// is -- this is a native trigger for the same navigation "vcs-next-hunk"/
+// "vcs-previous-hunk" (C-c v N/P) already perform, not a second implementation of it.
+enum class HunkDirection { Next,
+                           Previous };
+
 class Engine {
   public:
     Engine() = default;
@@ -124,6 +134,9 @@ class Engine {
     };
     [[nodiscard]] std::optional<PendingBufferJump> TakePendingBufferJump();
 
+    // See HunkDirection's own doc comment above.
+    [[nodiscard]] std::optional<HunkDirection> TakePendingHunkNavigation();
+
   private:
     using CharHandler = std::function<void(text::Buffer&, const KeyChord&)>;
 
@@ -153,6 +166,7 @@ class Engine {
     void                                      HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord);
     void                                      HandleZPrefixed(text::Buffer& buffer, const KeyChord& chord);
     void                                      HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& chord);
+    void                                      HandleBracketPrefixed(text::Buffer& buffer, const KeyChord& chord, bool opening);
     bool                                      HandleVisualSpecific(text::Buffer& buffer, const KeyChord& chord, long count); // true if the chord was consumed
     void                                      HandleAction(text::Buffer& buffer, const KeyChord& chord, long count);
 
@@ -348,6 +362,9 @@ class Engine {
 
     // vim-global-marks follow-up: see TakePendingBufferJump's own doc comment above.
     std::optional<PendingBufferJump> pendingBufferJump_;
+
+    // See HunkDirection's own doc comment above.
+    std::optional<HunkDirection> pendingHunkNavigation_;
 
     // buffer-scoped-marks follow-up: this engine is one-per-pane (BufferView.h), not
     // one-per-buffer, but real vim's lowercase/''/`` marks (and, unlike real vim,

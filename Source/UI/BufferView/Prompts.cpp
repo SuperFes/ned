@@ -250,6 +250,23 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         return true;
     }
 
+    // vim-hunk-nav follow-up: "]c"/"[c" -- reuse the same JumpToNextHunk/
+    // JumpToPreviousHunk "vcs-next-hunk"/"vcs-previous-hunk" (C-c v N/P) already call,
+    // which set their own status message and scroll -- return immediately rather than
+    // falling into the status/viewport block below, which would clobber the status
+    // message JumpToNextHunk/JumpToPreviousHunk just set (mode_ is Normal and
+    // vimEngine_.StatusText() is empty here, so that block's own "else" branch would
+    // otherwise clear it).
+    if (const auto hunkDirection = vimEngine_.TakePendingHunkNavigation()) {
+        if (*hunkDirection == editor::vim::HunkDirection::Next) {
+            JumpToNextHunk();
+        }
+        else {
+            JumpToPreviousHunk();
+        }
+        return true;
+    }
+
     // vim-global-marks follow-up: an uppercase-mark jump into a different file than the
     // one currently open -- Engine can't switch buffers itself (deliberately
     // UI-free), so it hands the target back here. Same open-then-jump shape
