@@ -1,5 +1,6 @@
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <clocale>
 #include <csignal>
 #include <cstdlib>
@@ -3108,6 +3109,7 @@ auto main(int argc, char** argv) -> int {
 
     bool                     lspBroker     = false;
     bool                     lspBrokerStop = false;
+    bool                     foreground    = false;
     bool                     format        = false;
     bool                     forceHuge     = false;
     bool                     forceBinary   = false;
@@ -3120,6 +3122,11 @@ auto main(int argc, char** argv) -> int {
         app.add_flag("--lsp-broker", lspBroker, "Run the headless LSP broker daemon and exit")
             ->group("Startup modes");
     app.add_flag("--lsp-broker-stop", lspBrokerStop, "Stop a running LSP broker daemon and exit")
+        ->excludes(lspBrokerOpt)
+        ->group("Startup modes");
+    app.add_flag("--foreground", foreground,
+                 "Run the LSP broker daemon in the foreground, never self-exiting when idle -- for a systemd "
+                 "--user service (see Packaging/systemd/ned-server.service) or any other real process supervisor")
         ->excludes(lspBrokerOpt)
         ->group("Startup modes");
     app.add_option("--mcp-stdio-relay", mcpStdioRelaySocketPath,
@@ -3159,7 +3166,7 @@ auto main(int argc, char** argv) -> int {
     // actually present on the command line still wins -- `ned-format
     // --lsp-broker` is unusual but not this dispatch's business to
     // override or refuse.
-    if (argc > 0 && ned::editor::InvokedAsNedFormat(argv[0]) && !lspBroker && !lspBrokerStop &&
+    if (argc > 0 && ned::editor::InvokedAsNedFormat(argv[0]) && !lspBroker && !lspBrokerStop && !foreground &&
         mcpStdioRelaySocketPath.empty()) {
         format = true;
     }
@@ -3172,6 +3179,17 @@ auto main(int argc, char** argv) -> int {
     // starts it explicitly at login instead.
     if (lspBroker) {
         return ned::editor::lsp::RunLspBrokerDaemon();
+    }
+
+    // `ned --foreground`: the same daemon, but never self-exiting on idle
+    // (BrokerDaemonOptions::wholeDaemonIdleTimeout = 0) -- for a
+    // deliberately always-on instance under a real process supervisor
+    // (systemd --user, see Packaging/systemd/ned-server.service) rather
+    // than the ephemeral, self-terminating auto-spawn `--lsp-broker` is
+    // tuned for. SIGTERM/SIGINT (BrokerDaemon::Run()) is what a supervisor
+    // stop or Ctrl-C actually shuts this down with.
+    if (foreground) {
+        return ned::editor::lsp::RunLspBrokerDaemon(/*maxConcurrentServers=*/8, /*wholeDaemonIdleTimeout=*/std::chrono::milliseconds::zero());
     }
 
     if (lspBrokerStop) {
