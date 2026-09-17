@@ -633,6 +633,37 @@ binding under Vim mode, which a vim user typing `C-w` never meant.).
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
+- [ ] **`VcsPanel` commit variants (amend/extend/reword)** — raised 2026-09-16, unscoped
+      pending a decision on how far to take it. Today `c` in the panel always does a
+      plain create-commit (`BufferView::BeginVcsCommitMessage` → the real `COMMIT_EDITMSG`
+      buffer, `C-c C-c` to finish) — there's no way to fold staged changes into the
+      previous commit at all. Researched prior art: Magit's status buffer pops a
+      **transient** (a lettered menu — `c` create, `a` amend, `e` extend/keep-message,
+      `w` reword-message-only, `f`/`s` fixup/squash) before ever opening the message
+      buffer; VS Code's SCM view uses an embedded textarea with a mouse-only dropdown for
+      variants; JetBrains uses a message field plus an amend checkbox. Verdict: the
+      embedded-textarea/dropdown shapes are desktop-GUI/mouse-first and don't translate to
+      a narrow keyboard-driven panel — Magit's split (lettered menu, then a **real
+      buffer** for the message) is the right fit and is already how this codebase's
+      commit flow is built, so this is additive, not a rework. Three candidate scopes,
+      smallest to largest, all still open:
+      - **Amend only** — a second panel key (e.g. `C`) opens the commit buffer pre-filled
+        with the previous commit's message and commits with `--amend` on `C-c C-c`. Needs
+        `Provider::CommitArgv` to take an amend flag (git provider + `vcs-git.janet`'s
+        `commit-argv` + `JanetVcsProvider`'s adapter) and a way to fetch the previous
+        commit's message to seed the buffer.
+      - **Amend + Extend** — the above plus a one-key "fold staged changes into HEAD,
+        keep its message, no buffer at all" action (Magit's `e`) — `git commit --amend
+        --no-edit`, no message round-trip needed.
+      - **Full transient** — `c` stops committing immediately and instead pops a small
+        lettered menu (create/amend/extend/reword); closest to real Magit, but changes
+        `c`'s existing behavior (`VcsPanelTest.cpp`'s own `'c'` test) and needs a new
+        small popup/menu mechanism this panel doesn't have today (it has no
+        `OverlayHost`/`ListPopup` access — see `VcsPanel::SetOnContextMenuRequest`'s own
+        doc comment on why that's routed out to `main.cpp` instead).
+      "Context-aware" in whatever ships means gating amend/extend/reword on there
+      actually being a previous commit to act on (no bare `HEAD` yet) rather than letting
+      git's own error surface cold.
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up

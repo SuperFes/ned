@@ -25,8 +25,28 @@ namespace {
     constexpr std::chrono::milliseconds kRefreshThrottle{1000};  // own poll cadence, independent of ProjectSidebar's
     constexpr std::chrono::milliseconds kDoubleClickWindow{400}; // ProjectSidebar's own kDoubleClickWindow
 
-    constexpr int kHeaderHeight       = 1;
-    constexpr int kBottomBorderHeight = 1;
+    constexpr int kHeaderHeight = 1;
+
+    // Key-legend follow-up: fixed-slot line counts for the two halves of
+    // VcsPanel::FooterLines() (row-scoped/RowFooterLines, root-scoped/
+    // RootFooterLines) -- this panel has no other on-screen affordance for
+    // its own single-letter bindings at all (they're handled as raw
+    // codepoint checks in HandleKeyEvent, never registered in a Keymap/
+    // CommandRegistry, so the Dispatcher-driven which-key popup --
+    // WhichKeyHint.h -- has nothing to hook into here even in principle).
+    // One key per LINE, not packed onto a row (this panel is narrow but
+    // tall -- a real docked instance runs the full window height -- so
+    // width is the scarce resource here and height the abundant one), and
+    // FIXED counts rather than "however many currently apply": both
+    // RowFooterLines and RootFooterLines blank-pad to these exact sizes so
+    // ContentHeight() -- and therefore the visible row list above -- never
+    // resizes as the user arrows between rows of different kinds or as
+    // ahead/behind changes underneath them. kRowFooterLines(4) is a file
+    // entry's own worst case (open/mark/stage-or-unstage/discard);
+    // kRootFooterLines(7) is pull+push+commit+stash+switch+new-branch+fetch.
+    constexpr int kRowFooterLines  = 4;
+    constexpr int kRootFooterLines = 7;
+    constexpr int kFooterLines     = kRowFooterLines + 1 /* separator */ + kRootFooterLines;
 
     constexpr char32_t kCollapsedTriangle = U'▸'; // matches ProjectSidebar's own collapsed-strip hint glyph
     constexpr char32_t kExpandedTriangle  = U'▾';
@@ -282,7 +302,8 @@ void VcsPanel::ReturnFocus() {
 }
 
 int VcsPanel::ContentHeight() const {
-    return std::max(0, size().height - kHeaderHeight);
+    const int available = std::max(0, size().height - kHeaderHeight);
+    return available - std::min(kFooterLines, available);
 }
 
 void VcsPanel::SetVcsRunner(editor::vcs::Runner* vcsRunner) {
@@ -447,6 +468,124 @@ std::optional<std::size_t> VcsPanel::StickyHeaderIndex(const std::vector<Row>& r
     return std::nullopt;
 }
 
+std::vector<std::string> VcsPanel::RowFooterLines(const std::vector<Row>& rows) const {
+    // Fixed-size, blank-padded to kRowFooterLines regardless of which row is
+    // focused -- the content viewport above (ContentHeight()) must NOT
+    // resize as the user arrows from a directory row (one real line) to a
+    // file row (four) to a stash entry (two): that would make the visible
+    // row list grow/shrink -- and therefore jump -- on ordinary navigation,
+    // which is worse than a few blank lines under a short-lived hint.
+    std::vector<std::string> lines(kRowFooterLines);
+    // Discard/revert confirm state intercepts every key (HandleKeyEvent's
+    // own precedent) -- the legend should say so rather than describing
+    // keys that don't apply while it's pending.
+    if (pendingRevertConfirm_) {
+        lines[0] = "y confirm";
+        lines[1] = "Esc/n cancel";
+        return lines;
+    }
+    if (rows.empty()) {
+        // BuildRows() always synthesizes the three section headers
+        // regardless of status data, so this isn't reachable through the
+        // public API today -- kept because indexing rows[] just below
+        // requires it (std::clamp(selectedIndex_, 0, rows.size() - 1) is
+        // UB the moment rows.size() == 0, since that hands clamp a hi < lo).
+        return lines;
+    }
+    const auto index = static_cast<std::size_t>(std::clamp(selectedIndex_, 0, static_cast<int>(rows.size()) - 1));
+    const Row& row   = rows[index];
+
+    std::size_t next = 0;
+    switch (row.kind) {
+    case Row::Kind::SectionHeader:
+        lines[next++] = "RET toggle";
+        // 'a'/'u' act on the marked (Space) set regardless of which row is
+        // focused (StageOrUnstageSelectionOrFocused's own precedent) -- only
+        // worth advertising here when there IS a marked set, since a header
+        // row itself is never a stage/unstage target.
+        if (!selected_.empty()) {
+            lines[next++] = "a stage marked";
+            lines[next++] = "u unstage marked";
+        }
+        break;
+    case Row::Kind::StashEntry:
+        lines[next++] = "RET apply";
+        lines[next++] = "d drop";
+        break;
+    case Row::Kind::Entry:
+        if (row.entry.isDirectory) {
+            lines[next++] = expandedDirs_.contains(row.entry.path) ? "← collapse" : "→ expand";
+        }
+        else {
+            lines[next++] = "RET open";
+            lines[next++] = "SPC mark";
+            // Staging an already-staged file (or unstaging an already-
+            // unstaged one) is a harmless no-op server-side, but advertising
+            // only the key that actually moves this row keeps the legend
+            // honest about what's useful right here.
+            lines[next++] = row.section == VcsPanelSection::Staged ? "u unstage" : "a stage";
+            // Discard targets HEAD (`git checkout HEAD -- path`, see
+            // vcs-git.janet's own revert-argv doc comment) -- meaningless
+            // for a file with no HEAD copy to restore.
+            if (row.section != VcsPanelSection::Untracked) {
+                lines[next++] = "x discard";
+            }
+        }
+        break;
+    }
+    return lines;
+}
+
+std::vector<std::string> VcsPanel::RootFooterLines() const {
+    // Fixed-size and fixed-SLOT, like RowFooterLines above and for the same
+    // reason: pull/push each own a dedicated slot (0/1) so commit/stash/
+    // switch/new-branch/fetch never shift position depending on whether
+    // there's currently something to push or pull -- only *that* pair's own
+    // two lines should ever wink in and out as ahead/behind changes.
+    std::vector<std::string> lines(kRootFooterLines);
+    // Every key here is inert while a discard/revert confirm is pending
+    // (HandleKeyEvent's confirm branch intercepts everything, not just the
+    // row-scoped keys) -- RowFooterLines's own lines already say what IS
+    // live ("y confirm"/"Esc/n cancel").
+    if (pendingRevertConfirm_) {
+        return lines;
+    }
+    // This panel already polls status/ahead-behind on its own throttled
+    // timer (RefreshStatus), so it always knows before the user would ask,
+    // matching the title row's own "↑N ↓N" convention for the same fact.
+    // Both need an upstream tracking branch to mean anything at all
+    // (vcs-git.janet's own push/pull-argv doc comment), which is exactly
+    // what aheadBehind_ being set at all already confirms -- so "no
+    // upstream" leaves both slots blank the same way "up to date" does,
+    // rather than advertising a key that would just error.
+    if (aheadBehind_) {
+        if (aheadBehind_->behind > 0) {
+            lines[0] = "F pull ↓" + std::to_string(aheadBehind_->behind);
+        }
+        if (aheadBehind_->ahead > 0) {
+            lines[1] = "P push ↑" + std::to_string(aheadBehind_->ahead);
+        }
+    }
+    lines[2] = "c commit";
+    lines[3] = "z stash";
+    lines[4] = "w switch";
+    lines[5] = "n new branch";
+    // Fetch has no matching "is there something to fetch" fact this panel
+    // tracks (unlike push/pull, it needs no upstream to mean something --
+    // it just refreshes the remote-tracking refs), so it's always offered,
+    // like commit/stash/switch/new-branch above.
+    lines[6] = "f fetch";
+    return lines;
+}
+
+std::vector<std::string> VcsPanel::FooterLines() const {
+    std::vector<std::string> lines = RowFooterLines(BuildRows());
+    lines.emplace_back(""); // fixed one-line separator -- see kFooterLines' own doc comment
+    const std::vector<std::string> rootLines = RootFooterLines();
+    lines.insert(lines.end(), rootLines.begin(), rootLines.end());
+    return lines;
+}
+
 void VcsPanel::Paint(Canvas c) {
     RefreshStatus(/*force=*/false);
 
@@ -601,6 +740,27 @@ void VcsPanel::Paint(Canvas c) {
             brush.ApplyTo(cell);
         }
     }
+
+    // Key-legend follow-up: see kFooterLines' own doc comment on why this
+    // block exists, why it's one key per LINE rather than packed onto a
+    // row, and why the count is fixed -- this panel is narrow but tall (a
+    // real docked instance runs the full window height), so unlike the row
+    // list above, vertical room is the abundant resource here, not the
+    // scarce one. lineNumberForeground -- this panel's own existing
+    // "recessive" color (used for a directory row's own dim glyph above) --
+    // reads as chrome rather than content, same reasoning as the header row.
+    const std::vector<std::string> footerLines = FooterLines(); // always kFooterLines entries, see its own doc comment
+    const int    footerAvailable = std::max(0, c.size().height - kHeaderHeight);
+    const int    footerHeight    = std::min(kFooterLines, footerAvailable);
+    const int    footerStartY    = c.size().height - footerHeight;
+    const Brush  footerBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
+    for (int i = 0; i < footerHeight; ++i) {
+        const int y = footerStartY + i;
+        for (int col = 0; col < c.size().width; ++col) {
+            footerBrush.ApplyTo(c[{.x = col, .y = y}]);
+        }
+        PaintUtf8Row(c, 0, y, footerLines[static_cast<std::size_t>(i)], footerBrush, c.size().width);
+    }
 }
 
 bool VcsPanel::OnEvent(const Event& event) {
@@ -644,7 +804,7 @@ bool VcsPanel::OnEvent(const Event& event) {
     // popup is main.cpp's job (TabBar/ProjectSidebar's own
     // SetOnContextMenuRequest shape).
     if (mouse->button == MouseEvent::Button::Right && mouse->motion == MouseEvent::Motion::Pressed) {
-        if (onContextMenuRequest_ && mouse->at.y >= kHeaderHeight) {
+        if (onContextMenuRequest_ && mouse->at.y >= kHeaderHeight && mouse->at.y < kHeaderHeight + ContentHeight()) {
             const std::vector<Row>           rows         = BuildRows();
             const std::optional<std::size_t> stickyHeader = StickyHeaderIndex(rows);
             const std::optional<std::size_t> index        = RowIndexForContentRow(mouse->at.y - kHeaderHeight, rows, stickyHeader);
@@ -677,8 +837,8 @@ bool VcsPanel::OnEvent(const Event& event) {
         return false;
     }
 
-    if (mouse->at.y < kHeaderHeight) {
-        return true; // this widget's own header row -- chrome, not content
+    if (mouse->at.y < kHeaderHeight || mouse->at.y >= kHeaderHeight + ContentHeight()) {
+        return true; // this widget's own header/footer rows -- chrome, not content
     }
 
     const std::vector<Row>           rows         = BuildRows();
