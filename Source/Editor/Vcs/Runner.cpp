@@ -509,6 +509,28 @@ void Runner::RequestCommit(const std::string& message, std::function<void(std::s
         std::move(onError));
 }
 
+void Runner::RequestAmendCommit(const std::string& message, std::function<void(std::string)> onSuccess,
+                                   std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "amend commit", "commit:" + root.string(),
+        [&root, &message](Provider& provider) { return provider.AmendCommitArgv(root, message); },
+        [onSuccess = std::move(onSuccess)](Provider&, std::string output) {
+            onSuccess(output.substr(0, output.find('\n')));
+        },
+        std::move(onError));
+}
+
+void Runner::RequestPreviousCommitMessage(std::function<void(std::string)> onComplete,
+                                             std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "previous commit message", "previous-commit-message:" + root.string(),
+        [&root](Provider& provider) { return provider.PreviousCommitMessageArgv(root); },
+        [onComplete = std::move(onComplete)](Provider&, std::string output) { onComplete(std::move(output)); },
+        std::move(onError));
+}
+
 void Runner::RequestBranchList(std::function<void(std::vector<BranchEntry>)> onComplete,
                                   std::function<void(std::string)>                 onError) {
     const std::filesystem::path root = ProjectRoot();

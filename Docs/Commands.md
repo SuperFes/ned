@@ -3,7 +3,7 @@
 Every command reachable from `M-x`, from a keybinding, or from Janet via
 `ned/run-command`.
 
-309 commands.
+310 commands.
 
 ## `acp-rewind`
 
@@ -1160,6 +1160,10 @@ Commit the staged changes -- opens a *vcs commit message* buffer to compose in.
 ## `vcs-commit-abort`
 
 Discard the in-progress commit message (bound C-c C-k in *vcs commit message*).
+
+## `vcs-commit-amend`
+
+Amend the previous commit -- opens a *vcs commit message* buffer pre-filled with its message.
 
 ## `vcs-commit-finish`
 

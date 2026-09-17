@@ -22,7 +22,8 @@ namespace ned::janet {
 // :parse-status, :stage-argv, :unstage-argv,
 // :staged-diff-argv, :stage-patch-argv, :unstage-patch-argv -- hunk-staging
 // follow-up -- :revert-patch-argv -- mouse-ergonomics follow-up --
-// :commit-argv, :branch-list-argv, :parse-branch-list,
+// :commit-argv, :amend-commit-argv, :previous-commit-message-argv -- VcsPanel
+// amend follow-up -- :branch-list-argv, :parse-branch-list,
 // :branch-switch-argv, :branch-create-argv, :revert-argv, :stash-list-argv,
 // :parse-stash-list, :stash-push-argv, :stash-pop-argv, :stash-drop-argv,
 // :push-argv, :pull-argv, :fetch-argv, :ahead-behind-argv,
@@ -87,6 +88,11 @@ class JanetVcsProvider : public editor::vcs::Provider {
 
     [[nodiscard]] editor::vcs::CommandSpec CommitArgv(const std::filesystem::path& root,
                                                          const std::string&           message) const override;
+
+    // VcsPanel amend follow-up.
+    [[nodiscard]] editor::vcs::CommandSpec AmendCommitArgv(const std::filesystem::path& root,
+                                                              const std::string&           message) const override;
+    [[nodiscard]] editor::vcs::CommandSpec PreviousCommitMessageArgv(const std::filesystem::path& root) const override;
 
     [[nodiscard]] editor::vcs::CommandSpec              BranchListArgv(const std::filesystem::path& root) const override;
     [[nodiscard]] std::vector<editor::vcs::BranchEntry> ParseBranchList(const std::string& stdout_) const override;

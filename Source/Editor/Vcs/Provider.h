@@ -274,6 +274,28 @@ class Provider {
         throw std::runtime_error("commit not supported by this provider");
     }
 
+    // VcsPanel amend follow-up: CommitArgv's own sibling rather than a
+    // boolean flag on it -- matching every other paired-but-distinct
+    // operation in this vocabulary (Stage/UnstageArgv, Push/Pull/FetchArgv,
+    // Stage/UnstagePatchArgv/RevertPatchArgv), so a provider that can
+    // commit but not amend (or vice versa) is expressible the same way any
+    // other partial provider already is.
+    [[nodiscard]] virtual CommandSpec AmendCommitArgv(const std::filesystem::path& root, const std::string& message) const {
+        (void)root;
+        (void)message;
+        throw std::runtime_error("amend commit not supported by this provider");
+    }
+
+    // VcsPanel amend follow-up: the previous commit's own message,
+    // verbatim, used to pre-fill the commit buffer for vcs-commit-amend
+    // the way `git commit --amend`'s own $EDITOR invocation does. No parse
+    // half -- the raw stdout (trimmed by the caller) IS the message, same
+    // "hand back raw text" shape WorkingDiffArgv/CommitDiffArgv use.
+    [[nodiscard]] virtual CommandSpec PreviousCommitMessageArgv(const std::filesystem::path& root) const {
+        (void)root;
+        throw std::runtime_error("previous commit message not supported by this provider");
+    }
+
     [[nodiscard]] virtual CommandSpec BranchListArgv(const std::filesystem::path& root) const {
         (void)root;
         throw std::runtime_error("branch listing not supported by this provider");

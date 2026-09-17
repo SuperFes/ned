@@ -174,6 +174,19 @@ TEST_CASE("Runner root-scoped requests report an error when no provider is regis
         [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
+    // VcsPanel amend follow-up.
+    error.clear();
+    runner.RequestAmendCommit(
+        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
+
+    error.clear();
+    runner.RequestPreviousCommitMessage(
+        [](std::string) { FAIL("onComplete should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
+
     error.clear();
     runner.RequestBranchList(
         [](std::vector<ned::editor::vcs::BranchEntry>) { FAIL("onComplete should not be called"); },
@@ -244,6 +257,19 @@ TEST_CASE("Runner surfaces the provider's own 'not supported' answer for unimple
         "a message", [](std::string) { FAIL("onSuccess should not be called"); },
         [&error](std::string message) { error = message; });
     REQUIRE(error == "commit not supported by this provider");
+
+    // VcsPanel amend follow-up.
+    error.clear();
+    runner.RequestAmendCommit(
+        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE(error == "amend commit not supported by this provider");
+
+    error.clear();
+    runner.RequestPreviousCommitMessage(
+        [](std::string) { FAIL("onComplete should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE(error == "previous commit message not supported by this provider");
 
     error.clear();
     runner.RequestBranchList(

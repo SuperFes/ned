@@ -708,6 +708,11 @@ enum class InteractiveRequest { None,
                                 VcsStageFile,
                                 VcsUnstageFile,
                                 VcsCommit,
+                                // VcsPanel amend follow-up: BeginVcsCommitMessage(amend=true)'s
+                                // own entry point -- seeds the *vcs commit message* buffer with
+                                // the previous commit's own message (fetched async) instead of
+                                // the blank template, and commits via `--amend` on CommitFinish.
+                                VcsCommitAmend,
                                 CommitFinish,
                                 VcsCommitAbort,
                                 VcsBranches,

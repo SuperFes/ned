@@ -452,7 +452,7 @@ class BufferView : public Widget {
     // RequestCommit's own guards (no provider registered) resolve
     // synchronously (see VcsRunnerTest.cpp), so FinishVcsCommitMessageForTesting
     // is fully exercisable without a live EventLoop too.
-    void BeginVcsCommitMessageForTesting();
+    void BeginVcsCommitMessageForTesting(bool amend = false);
     void FinishVcsCommitMessageForTesting();
     void AbortVcsCommitMessageForTesting();
     // Hunk-navigation follow-up: same seam again, for JumpToNextHunk/
@@ -2906,8 +2906,15 @@ class BufferView : public Widget {
     void StepError(bool forward);
     // multi-line-commit-message follow-up: opens (or, if one's already
     // mid-composition, just switches to) the *vcs commit message* buffer --
-    // InteractiveRequest::VcsCommit's entry point.
-    void BeginVcsCommitMessage();
+    // InteractiveRequest::VcsCommit's entry point. VcsPanel amend follow-up:
+    // amend=true fetches the previous commit's own message first (async --
+    // see Runner::RequestPreviousCommitMessage) and seeds the buffer with
+    // it instead of the blank template, and marks pendingCommitAmend_ so
+    // FinishVcsCommitMessage commits via RequestAmendCommit instead of
+    // RequestCommit; re-running this on an already-open buffer preserves
+    // whatever's typed and just updates the flag, same as the plain-commit
+    // path already did before this existed.
+    void BeginVcsCommitMessage(bool amend = false);
     // InteractiveRequest::CommitFinish/VcsCommitAbort's entry points --
     // strip the '#'-comment template and fire RequestCommit, or just
     // discard, then either way close the buffer via
@@ -3531,6 +3538,12 @@ class BufferView : public Widget {
     editor::ProjectUndoManager*           projectUndo_             = nullptr; // see SetProjectUndo
     editor::testrun::TestRunner*          testRunner_              = nullptr; // see SetTestRunner
     editor::vcs::Runner*               vcsRunner_               = nullptr; // see SetVcsRunner
+    // VcsPanel amend follow-up: set by BeginVcsCommitMessage(amend=true),
+    // consumed (and reset) by FinishVcsCommitMessage -- which of
+    // RequestCommit/RequestAmendCommit to fire. Only ever meaningful while
+    // the *vcs commit message* buffer is open; AbortVcsCommitMessage resets
+    // it too, so no stale amend flag can survive into a later plain commit.
+    bool                                  pendingCommitAmend_      = false;
     editor::dap::Manager*              dapManager_              = nullptr; // see SetDapManager
     editor::acp::Manager*              acpManager_              = nullptr; // see SetAcpManager
     const janet::Environment*             janetEnv_                = nullptr; // see SetJanetEnvironment
