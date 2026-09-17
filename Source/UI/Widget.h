@@ -197,6 +197,10 @@ struct Cell {
     bool        underlined    = false;
     bool        strikethrough = false;
     bool        inverted      = false;
+
+    // Screen::Flush's dirty-region diff: a cell identical to what was last
+    // flushed needs no Notcurses call at all.
+    [[nodiscard]] bool operator==(const Cell&) const = default;
 };
 
 // What Screen::Blend should do with a translucent color when the cell it
@@ -234,7 +238,8 @@ class Screen {
   public:
     Screen(int width, int height) : width_(std::max(0, width)), height_(std::max(0, height)),
                                     cells_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)),
-                                    backing_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)) {
+                                    backing_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)),
+                                    previousCells_(cells_.size()), previousBacking_(backing_.size()) {
     }
 
     [[nodiscard]] int Width() const {
@@ -311,6 +316,20 @@ class Screen {
     int               height_;
     std::vector<Cell> cells_;
     std::vector<Cell> backing_;
+
+    // What Flush() last actually wrote to the real planes, so it can skip
+    // any cell unchanged since then -- notcurses_render() still diffs the
+    // plane against the terminal itself below this, but building that full
+    // plane state every frame (14,400 ncplane_put*_yx calls at 160x45) was
+    // the cost an animation tick made visible (ROADMAP.md, "Dirty-region
+    // flush"). `dirty_` forces one full write regardless of these: true on
+    // construction, and Screen is rebuilt fresh on every resize (Source/
+    // main.cpp's onResize), so a stale previous-frame cache -- sized for
+    // the old dimensions, or simply never written to the new planes -- is
+    // never compared against.
+    std::vector<Cell> previousCells_;
+    std::vector<Cell> previousBacking_;
+    bool              dirty_ = true;
 };
 
 // A view onto a rectangular region of a Screen, translating local
