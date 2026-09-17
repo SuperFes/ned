@@ -4125,6 +4125,18 @@ class BufferView : public Widget {
     // between covering the syntax colour and being visible. Empty by default.
     void PaintCurrentLineHighlight(Canvas& c, const std::vector<std::size_t>& rowLine) const;
 
+    // Print-margin/fill-column-indicator follow-up: the "buffer.ruler"
+    // surface, a single-column wash spanning every visible row -- same
+    // backing-layer shape as PaintCurrentLineHighlight, one column instead
+    // of one row. No-op when Editor/RulerSettings.h's RulerEnabled() is
+    // false, or when the configured column has scrolled (or simply sits)
+    // off the pane's own right edge -- editor::RulerColumn() is a BUFFER
+    // column, translated to a screen column via gutterWidth and the
+    // viewport's own horizontal scroll (viewport_.LeftColumn(), always 0
+    // once wrap is on, so the ruler tracks scrolling exactly where
+    // horizontal scroll can happen at all).
+    void PaintRuler(Canvas& c, std::size_t gutterWidth) const;
+
     // The EndOfLine inline-diagnostic style: message after the line's own
     // text, on a row the line already occupies, so showing or clearing a
     // diagnostic never changes how many rows a line is tall. See

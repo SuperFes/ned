@@ -12,8 +12,8 @@
 
 #include "Editor/Acp/Config.h"
 #include "Editor/Acp/PanelConfig.h"
-#include "Editor/AutoMerge.h"
 #include "Editor/AutoFormatOnSave.h"
+#include "Editor/AutoMerge.h"
 #include "Editor/AutoPair.h"
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
@@ -45,6 +45,7 @@
 #include "Editor/Lsp/RootResolver.h"
 #include "Editor/Lsp/ServerConfig.h"
 #include "Editor/MacroRegistry.h"
+#include "Editor/MaxConsecutiveBlankLines.h"
 #include "Editor/Mcp/BridgeSetting.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
@@ -63,11 +64,12 @@
 #include "Editor/RecencyGlow.h"
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/RenameReviewSettings.h"
-#include "Editor/SearchEverywhereGestureSettings.h"
-#include "Editor/SearchEverywhereTextSearchSettings.h"
 #include "Editor/Repl/Config.h"
+#include "Editor/RulerSettings.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
+#include "Editor/SearchEverywhereGestureSettings.h"
+#include "Editor/SearchEverywhereTextSearchSettings.h"
 #include "Editor/SearchSettings.h"
 #include "Editor/Session.h"
 #include "Editor/SnippetRegistry.h"
@@ -80,7 +82,6 @@
 #include "Editor/TestRun/TestOutputParser.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/ToolchainIncludePaths.h"
-#include "Editor/MaxConsecutiveBlankLines.h"
 #include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vim/Settings.h"
@@ -351,6 +352,14 @@ namespace {
 
     void NedSetMinimapCharsPerDot(double columns) {
         editor::SetMinimapCharsPerDot(columns);
+    }
+
+    void NedSetRulerEnabled(bool enabled) {
+        editor::SetRulerEnabled(enabled);
+    }
+
+    void NedSetRulerColumn(std::int64_t column) {
+        editor::SetRulerColumn(static_cast<int>(column));
     }
 
     void NedSetTrailingWhitespaceHighlightEnabled(bool enabled) {
@@ -1661,6 +1670,15 @@ void InstallEditorBindings(Environment& env) {
         "and real-pixel rendering). Fractional values (e.g. 8.5) are accepted for finer-grained tuning. A line "
         "longer than minimap-width * chars-per-dot * 2 columns simply isn't rendered past that point -- not "
         "compressed.");
+    env.Register<&NedSetRulerEnabled>(
+        "ned", "set-ruler-enabled",
+        "Enable/disable the print-margin/fill-column ruler: a single-column background wash spanning every "
+        "visible row, marking ned/set-ruler-column's own column. Default true. Themed via the \"buffer.ruler\" "
+        "surface (ned/theme-surface).");
+    env.Register<&NedSetRulerColumn>(
+        "ned", "set-ruler-column",
+        "Set which 0-indexed buffer column the ruler marks (default 80). Has no effect while the ruler is "
+        "disabled (ned/set-ruler-enabled).");
     env.Register<&NedSetTrailingWhitespaceHighlightEnabled>(
         "ned", "set-trailing-whitespace-highlight-enabled",
         "Enable/disable a subtle background highlight on trailing whitespace (spaces/tabs after the last "

@@ -192,6 +192,7 @@ add_executable(ned_tests
             HighlightSettingsTest.cpp
             HugeStructuralWindowTest.cpp
             MinimapSettingsTest.cpp
+            RulerSettingsTest.cpp
             WhitespaceSettingsTest.cpp
             RelativeLineNumberSettingsTest.cpp
             WhichKeySettingsTest.cpp
