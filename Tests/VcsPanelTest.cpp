@@ -92,7 +92,7 @@ TEST_CASE("VcsPanel groups files into staged/unstaged/untracked sections, each a
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
 
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
@@ -105,8 +105,8 @@ TEST_CASE("VcsPanel groups files into staged/unstaged/untracked sections, each a
     // a.txt, row 3 "Unstaged (1)" header, row 4 sub/) so b.txt is visible.
     panel.OnEvent(MousePress(1, 4));
 
-    ned::ui::Screen screen = ned::ui::Screen(30, 12);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 11});
+    ned::ui::Screen screen = ned::ui::Screen(30, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 21});
     panel.Paint(canvas);
 
     // Row 0 is the border/title; content starts at row 1: "Staged (1)"
@@ -132,7 +132,7 @@ TEST_CASE("A left or right press anywhere in the widget takes keyboard focus", "
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
 
     // A wheel event never grabs focus.
     REQUIRE_FALSE(panel.Focused());
@@ -155,7 +155,7 @@ TEST_CASE("Clicking a section header collapses it, hiding its rows without touch
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
 
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
@@ -164,8 +164,8 @@ TEST_CASE("Clicking a section header collapses it, hiding its rows without touch
 
     panel.OnEvent(MousePress(1, 1)); // "Staged (1)" header row
 
-    ned::ui::Screen screen = ned::ui::Screen(30, 12);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 11});
+    ned::ui::Screen screen = ned::ui::Screen(30, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 21});
     panel.Paint(canvas);
 
     REQUIRE(RowText(screen, 1, 30).find("Staged (1)") != std::string::npos);
@@ -187,7 +187,7 @@ TEST_CASE("Space marks/unmarks the focused file for batch selection", "[VcsPanel
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
     });
@@ -222,7 +222,7 @@ TEST_CASE("Clicking the checkbox glyph toggles selection; clicking elsewhere on 
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
     });
@@ -257,7 +257,7 @@ TEST_CASE("Staging with no Runner configured reports an error rather than crashi
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
     });
@@ -288,7 +288,7 @@ TEST_CASE("Staging targets the selection set when non-empty, else falls back to 
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
     panel.SetVcsRunner(&runner);
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
@@ -322,7 +322,7 @@ TEST_CASE("'c'/'w'/'n' fire SetOnAction with Commit/SwitchBranch/CreateBranch an
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
 
     std::vector<ned::ui::VcsPanelAction> firedActions;
     panel.SetOnAction([&firedActions](ned::ui::VcsPanelAction action) { firedActions.push_back(action); });
@@ -366,7 +366,7 @@ TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jump
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
     panel.DispatchVcsStatusForTesting({
         {" M", "a.txt"},
         {" M", "clean.txt"},
@@ -378,8 +378,8 @@ TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jump
     // same way.
     panel.RefreshConflictedPathsForTesting();
 
-    ned::ui::Screen screen = ned::ui::Screen(30, 12);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 11});
+    ned::ui::Screen screen = ned::ui::Screen(30, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 21});
     panel.Paint(canvas);
 
     // Every section header renders regardless of emptiness (BuildRows'
@@ -416,7 +416,7 @@ TEST_CASE("'x' enters a discard/revert confirm state that only 'y' actually conf
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 50, 12); // wide enough for the confirm prompt's own text
+    PlacePanel(panel, 50, 22); // wide enough for the confirm prompt's own text
     panel.SetVcsRunner(&runner);
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
@@ -425,8 +425,8 @@ TEST_CASE("'x' enters a discard/revert confirm state that only 'y' actually conf
     panel.OnEvent(ned::ui::test::ArrowDown()); // a.txt
 
     panel.OnEvent(ned::ui::test::Character('x'));
-    ned::ui::Screen screen = ned::ui::Screen(50, 12);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 11});
+    ned::ui::Screen screen = ned::ui::Screen(50, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 21});
     panel.Paint(canvas);
     REQUIRE(RowText(screen, 0, 50).find("Discard changes to a.txt? y/n") != std::string::npos);
 
@@ -466,11 +466,11 @@ TEST_CASE("Stash section is hidden when empty and shows entries when not, with p
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 40, 12);
+    PlacePanel(panel, 40, 22);
     panel.SetVcsRunner(&runner);
 
-    ned::ui::Screen screen = ned::ui::Screen(40, 12);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 11});
+    ned::ui::Screen screen = ned::ui::Screen(40, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 21});
     panel.Paint(canvas);
     for (int row = 0; row < 12; ++row) {
         REQUIRE(RowText(screen, row, 40).find("Stash") == std::string::npos);
@@ -524,7 +524,7 @@ TEST_CASE("'f'/'F'/'P' fire fetch/pull/push", "[VcsPanel]") {
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 40, 12);
+    PlacePanel(panel, 40, 22);
     panel.SetVcsRunner(&runner);
     panel.TakeFocus();
 
@@ -554,7 +554,7 @@ TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 6); // contentHeight == 4 (6 - border top/bottom - kHeaderHeight)
+    PlacePanel(panel, 30, 17); // contentHeight == 4 (17 - kHeaderHeight(1) - kFooterLines(12))
 
     // Rows: "Staged (5)" header, a..e.txt (5 files), "Unstaged (0)" header,
     // "Untracked (0)" header -- 8 rows total, more than fits in 4.
@@ -571,8 +571,8 @@ TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]
     panel.OnEvent(MousePress(1, 2)); // arbitrary non-resize x, content y
     panel.OnEvent(ned::ui::test::Mouse(1, 2, ned::ui::MouseEvent::Button::WheelDown, ned::ui::MouseEvent::Motion::Pressed));
 
-    ned::ui::Screen screen = ned::ui::Screen(30, 6);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+    ned::ui::Screen screen = ned::ui::Screen(30, 17);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 16});
     panel.Paint(canvas);
 
     // Row 0 is the border; row 1 is the pinned "Staged (5)" header even
@@ -591,8 +591,8 @@ TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]
     // 3 rows total, and scrollOffset_ clamping on a shrunk row count is a
     // pre-existing, unrelated concern this test isn't after.
     panel.OnEvent(ned::ui::test::Mouse(1, 2, ned::ui::MouseEvent::Button::WheelUp, ned::ui::MouseEvent::Motion::Pressed));
-    ned::ui::Screen afterClick = ned::ui::Screen(30, 6);
-    ned::ui::Canvas afterCanvas(afterClick, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+    ned::ui::Screen afterClick = ned::ui::Screen(30, 17);
+    ned::ui::Canvas afterCanvas(afterClick, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 16});
     panel.Paint(afterCanvas);
     REQUIRE(RowText(afterClick, 1, 30).find("Staged (5)") != std::string::npos);
     REQUIRE(RowText(afterClick, 2, 30).find("Unstaged") != std::string::npos); // files hidden, section collapsed
@@ -612,7 +612,7 @@ TEST_CASE("Right-click reports the target row and never toggles/opens it", "[Vcs
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
 
     // Rows: 0 border, 1 "Staged (1)", 2 a.txt, 3 "Unstaged (1)", 4 sub/
     // (collapsed dir), 5 "Untracked (1)", 6 c.txt.
@@ -677,7 +677,7 @@ TEST_CASE("Right-click on a stash row reports a StashEntry target", "[VcsPanel]"
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
     panel.DispatchStashesForTesting({
         {"stash@{0}", "WIP on main: a test stash"},
     });
@@ -711,7 +711,7 @@ TEST_CASE("RequestStageOrUnstage/RequestDiscardConfirm/PopStash/DropStash act on
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 50, 12);
+    PlacePanel(panel, 50, 22);
 
     // No Runner yet -- same "report, don't crash" guard the keyboard path uses.
     panel.RequestStageOrUnstage("a.txt", /*stage=*/true);
@@ -739,8 +739,8 @@ TEST_CASE("RequestStageOrUnstage/RequestDiscardConfirm/PopStash/DropStash act on
     // keyboard focus first, same as the real wiring does.
     panel.TakeFocus();
     panel.RequestDiscardConfirm("a.txt");
-    ned::ui::Screen screen = ned::ui::Screen(50, 12);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 11});
+    ned::ui::Screen screen = ned::ui::Screen(50, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 21});
     panel.Paint(canvas);
     REQUIRE(RowText(screen, 0, 50).find("Discard changes to a.txt? y/n") != std::string::npos);
     panel.OnEvent(ned::ui::test::Character('y'));
@@ -772,7 +772,7 @@ TEST_CASE("OpenFileEntry opens the given path without requiring focus", "[VcsPan
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     std::string           statusMessage;
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 30, 12);
+    PlacePanel(panel, 30, 22);
 
     panel.OpenFileEntry(dir / "a.txt");
     REQUIRE(activeBuffer.Get().Name() == "a.txt");
@@ -800,4 +800,183 @@ TEST_CASE("Collapsing the dock while this panel is focused hands focus back via 
     // hosted panel hand focus back when the dock hides it.
     dock.SetCollapsed(true);
     REQUIRE(focusReturned);
+}
+
+// Key-legend follow-up: this panel's own single-letter bindings have no
+// other on-screen affordance at all (see VcsPanel.cpp's kFooterHeight doc
+// comment), so the bottom row is the only place a user ever learns them --
+// these pin what it says per focused-row kind/section.
+TEST_CASE("Footer legend names the key that actually moves the focused file, not every key", "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_footer_sections";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 60, 22);
+    panel.DispatchVcsStatusForTesting({
+        {"M ", "a.txt"}, // staged
+        {" M", "b.txt"}, // unstaged
+        {"??", "c.txt"}, // untracked
+    });
+    panel.TakeFocus();
+
+    ned::ui::Screen screen = ned::ui::Screen(60, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 21});
+    // height 22, available 21, kFooterLines(12): the fixed footer block
+    // starts at row 22-12=10. RowFooterLines' own 4 fixed slots come first.
+    const int kOpenOrToggleRow  = 10;
+    const int kMarkRow          = 11;
+    const int kStageUnstageRow  = 12;
+    const int kDiscardRow       = 13;
+
+    // Rows: 0 "Staged (1)" header, 1 a.txt, 2 "Unstaged (1)" header,
+    // 3 b.txt, 4 "Untracked (1)" header, 5 c.txt.
+    panel.OnEvent(ned::ui::test::ArrowDown()); // -> a.txt (Staged)
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kOpenOrToggleRow, 60).find("RET open") != std::string::npos);
+    REQUIRE(RowText(screen, kMarkRow, 60).find("SPC mark") != std::string::npos);
+    REQUIRE(RowText(screen, kStageUnstageRow, 60).find("u unstage") != std::string::npos);
+    REQUIRE(RowText(screen, kDiscardRow, 60).find("x discard") != std::string::npos);
+
+    panel.OnEvent(ned::ui::test::ArrowDown()); // -> "Unstaged (1)" header
+    panel.OnEvent(ned::ui::test::ArrowDown()); // -> b.txt (Unstaged)
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kStageUnstageRow, 60).find("a stage") != std::string::npos);
+    REQUIRE(RowText(screen, kDiscardRow, 60).find("x discard") != std::string::npos);
+
+    panel.OnEvent(ned::ui::test::ArrowDown()); // -> "Untracked (1)" header
+    panel.OnEvent(ned::ui::test::ArrowDown()); // -> c.txt (Untracked)
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kStageUnstageRow, 60).find("a stage") != std::string::npos);
+    // Discard targets HEAD, which an untracked file has no copy in -- its
+    // slot is left blank rather than claiming a key that would just error.
+    REQUIRE(RowText(screen, kDiscardRow, 60).find_first_not_of(' ') == std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Footer legend adds 'stage marked'/'unstage marked' only once something is marked, "
+          "and falls back to global keys when the panel is empty",
+          "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_footer_marked";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 60, 22);
+
+    ned::ui::Screen screen = ned::ui::Screen(60, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 21});
+    // Fixed footer block starts at row 22-12=10: RowFooterLines' 4 slots
+    // (10-13), 1 blank separator (14), then RootFooterLines' 7 slots
+    // (pull=15, push=16, commit=17, stash=18, switch=19, new-branch=20,
+    // fetch=21).
+    const int kOpenOrToggleRow = 10;
+    const int kMarkOrMarkedRow = 11;
+    const int kUnstageMarkedRow = 12;
+    const int kCommitRow        = 17;
+    const int kStashRow         = 18;
+    const int kSwitchRow        = 19;
+    const int kNewBranchRow     = 20;
+    const int kFetchRow         = 21;
+
+    // No provider configured at all -- the root-scoped slots still show the
+    // keys that don't depend on any row existing (BuildRows() always
+    // synthesizes the three section headers regardless of status data, so
+    // there's no "truly no rows at all" state to hit from here -- that's
+    // what the defensive rows.empty() branch in RowFooterLines is for, not
+    // a state this test can reach through the public API).
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kCommitRow, 60).find("c commit") != std::string::npos);
+    REQUIRE(RowText(screen, kStashRow, 60).find("z stash") != std::string::npos);
+    REQUIRE(RowText(screen, kSwitchRow, 60).find("w switch") != std::string::npos);
+    REQUIRE(RowText(screen, kNewBranchRow, 60).find("n new branch") != std::string::npos);
+    REQUIRE(RowText(screen, kFetchRow, 60).find("f fetch") != std::string::npos);
+
+    panel.DispatchVcsStatusForTesting({
+        {"M ", "a.txt"},
+    });
+    panel.TakeFocus();
+
+    // Focused on the "Staged (1)" header with nothing marked -- staging a
+    // whole section isn't a real action, so the legend shouldn't claim it
+    // (its slots stay blank rather than showing something misleading).
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kOpenOrToggleRow, 60).find("RET toggle") != std::string::npos);
+    REQUIRE(RowText(screen, kMarkOrMarkedRow, 60).find_first_not_of(' ') == std::string::npos);
+
+    panel.OnEvent(ned::ui::test::ArrowDown()); // -> a.txt
+    panel.OnEvent(ned::ui::test::Character(' ')); // mark it
+    panel.OnEvent(ned::ui::test::ArrowUp());      // back onto the header, marked set still non-empty
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kMarkOrMarkedRow, 60).find("a stage marked") != std::string::npos);
+    REQUIRE(RowText(screen, kUnstageMarkedRow, 60).find("u unstage marked") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Push/pull only appear in the root-scoped footer row when there's actually something to push/pull",
+          "[VcsPanel]") {
+    // This panel already polls status/ahead-behind on its own throttled
+    // timer, so the legend can know before the user would ask -- that's the
+    // whole point raised for this follow-up. DispatchAheadBehindForTesting
+    // is the same bypass-Runner-entirely precedent DispatchVcsStatusForTesting/
+    // DispatchStashesForTesting already establish.
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 60, 22);
+
+    ned::ui::Screen screen = ned::ui::Screen(60, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 21});
+    // Fixed footer block starts at row 22-12=10; pull/push own dedicated
+    // slots 15/16 (RowFooterLines' 4 slots at 10-13, 1 separator at 14).
+    const int kPullRow = 15;
+    const int kPushRow = 16;
+
+    // No upstream configured at all (nullopt) -- neither key means anything
+    // without one (both need a tracking branch), so both slots stay blank.
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kPullRow, 60).find_first_not_of(' ') == std::string::npos);
+    REQUIRE(RowText(screen, kPushRow, 60).find_first_not_of(' ') == std::string::npos);
+
+    // Upstream configured, but fully in sync -- "up to date" gets the same
+    // treatment as the title row's own "↑N ↓N" convention: nothing shown.
+    panel.DispatchAheadBehindForTesting(ned::editor::vcs::AheadBehind{.ahead = 0, .behind = 0});
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kPullRow, 60).find_first_not_of(' ') == std::string::npos);
+    REQUIRE(RowText(screen, kPushRow, 60).find_first_not_of(' ') == std::string::npos);
+
+    // Behind only -- pull's own slot fills in, push's stays blank.
+    panel.DispatchAheadBehindForTesting(ned::editor::vcs::AheadBehind{.ahead = 0, .behind = 2});
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kPullRow, 60).find("F pull ↓2") != std::string::npos);
+    REQUIRE(RowText(screen, kPushRow, 60).find_first_not_of(' ') == std::string::npos);
+
+    // Ahead only -- the reverse.
+    panel.DispatchAheadBehindForTesting(ned::editor::vcs::AheadBehind{.ahead = 3, .behind = 0});
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kPullRow, 60).find_first_not_of(' ') == std::string::npos);
+    REQUIRE(RowText(screen, kPushRow, 60).find("P push ↑3") != std::string::npos);
+
+    // Both diverged -- both slots fill in, still each in its own place.
+    panel.DispatchAheadBehindForTesting(ned::editor::vcs::AheadBehind{.ahead = 1, .behind = 1});
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kPullRow, 60).find("F pull ↓1") != std::string::npos);
+    REQUIRE(RowText(screen, kPushRow, 60).find("P push ↑1") != std::string::npos);
 }

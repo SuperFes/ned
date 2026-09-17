@@ -190,6 +190,15 @@ class VcsPanel : public Widget {
         stashes_ = std::move(entries);
     }
 
+    // Key-legend follow-up: same bypass-Runner-entirely testing precedent --
+    // aheadBehind_ otherwise only ever changes via RequestAheadBehind's real
+    // subprocess callback (VcsRunnerTest.cpp's own documented boundary: that
+    // never completes synchronously in these tests), so the global footer
+    // row's push/pull visibility has no other way to reach a test.
+    void DispatchAheadBehindForTesting(std::optional<editor::vcs::AheadBehind> aheadBehind) {
+        aheadBehind_ = aheadBehind;
+    }
+
     // Test-only introspection: the currently marked (multi-selected) paths,
     // in no particular order -- same "small, honest introspection point"
     // reason ScrollArrowButton::IsRepeating() exists.
@@ -328,6 +337,52 @@ class VcsPanel : public Widget {
     // OnEvent()'s click handler both call this so row-index resolution
     // agrees between what's drawn and what a click resolves to.
     [[nodiscard]] std::optional<std::size_t> StickyHeaderIndex(const std::vector<Row>& rows) const;
+
+    // Key-legend follow-up: the key-hint legend Paint() renders into the
+    // panel's own bottom rows, since this panel's single-letter bindings
+    // (a/u/x/z/d/f/F/P/c/w/n/Space) have no other on-screen affordance at
+    // all (see kFooterLines' own doc comment in VcsPanel.cpp). One key per
+    // LINE, not packed onto one row -- this panel is narrow but tall (a
+    // real docked instance runs the full window height), so width is the
+    // scarce resource and height the abundant one, the inverse of what a
+    // single crammed-and-truncated row assumed. Each half below returns a
+    // FIXED number of entries (kRowFooterLines/kRootFooterLines), blank-
+    // padded when fewer actually apply, so ContentHeight() -- and therefore
+    // the visible row list above -- stays a constant size regardless of
+    // which row is focused or what ahead/behind currently says; letting it
+    // vary with either would make the row list resize under the user while
+    // they're just arrowing through it. FooterLines() is the one combiner
+    // both Paint() and ContentHeight() build from; the two pieces below
+    // split the same way the keys themselves split: RowFooterLines is
+    // row-scoped (what does a key do to *this* row -- open/mark/stage/
+    // unstage/discard/toggle/apply/drop/expand/collapse), RootFooterLines
+    // is root-scoped (commit/stash/branch/remote, meaningful regardless of
+    // which row is focused). Exposed privately rather than tested as free
+    // functions since RowFooterLines reads selectedIndex_/selected_/
+    // expandedDirs_ directly, the same shape BuildRows/StickyHeaderIndex
+    // already have.
+    [[nodiscard]] std::vector<std::string> RowFooterLines(const std::vector<Row>& rows) const;
+
+    // Root-scoped half of the legend above -- always kRootFooterLines
+    // entries (see RowFooterLines' own doc comment on why). Pull/push each
+    // own a dedicated slot and appear there only when aheadBehind_ actually
+    // says there's something to push/pull (this panel already polls
+    // status/ahead-behind on its own throttled timer, so it always knows
+    // before the user would ask); commit/stash/switch/new-branch/fetch have
+    // no such gate since none of them depend on a fact this panel tracks,
+    // and sit in fixed slots after the pull/push pair regardless. All
+    // blank while pendingRevertConfirm_ is set -- every one of these keys
+    // is inert then too (HandleKeyEvent's confirm state intercepts every
+    // key, not just the row-scoped ones).
+    [[nodiscard]] std::vector<std::string> RootFooterLines() const;
+
+    // The full legend block Paint()/ContentHeight() actually draw/measure --
+    // RowFooterLines(BuildRows()), one fixed blank separator line, then
+    // RootFooterLines(): always exactly kFooterLines entries. A plain
+    // member function (not cached) since it's cheap at this panel's scale
+    // and BuildRows() itself is already recomputed just as freely elsewhere
+    // in this file (ToggleDirectory, the wheel-scroll handler, ...).
+    [[nodiscard]] std::vector<std::string> FooterLines() const;
 
     // vcs-panel-context-menu follow-up: the row-index-from-mouse-y math
     // Paint()'s own loop and OnEvent()'s left-click handler both already
