@@ -619,6 +619,14 @@ constexpr char32_t kTruncationIndicator = U'»';
 // render loop's own use below.
 constexpr char32_t kIndentGuide = U'│';
 
+// Whitespace-visualization follow-up: overwrites the first cell of an
+// expanded tab, marking where a real tab byte sits (as opposed to the
+// space cells the rest of its expansion still renders as) -- see the
+// render loop's own use below. U+2192 RIGHTWARDS ARROW, the same glyph
+// VSCode/Sublime use for this, and distinct from kWrapContinuationIndicator
+// below (U+21B3) so a tab never reads as a wrap continuation.
+constexpr char32_t kTabGlyph = U'→';
+
 // gutter-wrap-indicator follow-up: marks a row that continues a line
 // begun above -- U+21B3, Kate's own gutter cue, which reads as "came
 // down from the line before" in a left-hand column the way the earlier

@@ -1435,7 +1435,18 @@ void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const text::IT
         for (int i = 0; i < cellsToEmit && col < c.size().width; ++i) {
             Cell&     cell          = c[{.x = col, .y = row}];
             const int displayColumn = visualColumn + i;
-            if (inIndent && displayColumn > 0 && displayColumn % tabWidth == 0) {
+            if (i == 0 && editor::TabGlyphsEnabled()) {
+                // Whitespace-visualization follow-up: marks where the
+                // real tab byte itself sits, ahead of the indent-guide
+                // check below -- a guide glyph at this same cell would
+                // only say "here's a nesting level," which the tab
+                // glyph already implies.
+                cell.character        = text::EncodeCodepointUtf8(kTabGlyph);
+                Brush tabBrush        = brush;
+                tabBrush.foreground   = theme_.tabGlyphForeground;
+                tabBrush.ApplyTo(cell);
+            }
+            else if (inIndent && displayColumn > 0 && displayColumn % tabWidth == 0) {
                 // Whitespace-visualization follow-up: a guide
                 // glyph in place of one of the expanded tab's
                 // space cells, at each indent-width column --

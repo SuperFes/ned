@@ -95,6 +95,7 @@ can't linger here after it stops existing.
 
 `mode_line_foreground` `mode_line_gradient_start` `mode_line_gradient_end` `mode_line_focused_gradient_start`
 `mode_line_focused_gradient_end` `line_number_foreground` `current_line_number_foreground` `indent_guide_foreground`
+`tab_glyph_foreground`
 
 **Overlays (all composited, so all accept alpha)**
 

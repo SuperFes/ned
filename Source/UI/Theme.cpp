@@ -404,6 +404,7 @@ Theme DarkTheme() {
         // above, just spread across a few distinct hues instead of one).
         .indentGuideDepthPalette  = {Color::RGB(0x9a5555), Color::RGB(0x9a7a55), Color::RGB(0x9a9a55),
                                      Color::RGB(0x559a68), Color::RGB(0x55809a), Color::RGB(0x80559a)},
+        .tabGlyphForeground       = Color::RGB(0x4a4a58), // same dim gray as indentGuideForeground
         .headlineLevel1Foreground = Color::RGB(0x74c7ff),
         .headlineLevel2Foreground = Color::RGB(0x6fe0a0),
         .headlineLevel3Foreground = Color::RGB(0x8fd67e),
@@ -521,6 +522,7 @@ Theme LightTheme() {
         // light background instead of washing out.
         .indentGuideDepthPalette  = {Color::RGB(0xb03030), Color::RGB(0xb07a20), Color::RGB(0x9a9a20),
                                      Color::RGB(0x2f9a4f), Color::RGB(0x2f70b0), Color::RGB(0x7a2fb0)},
+        .tabGlyphForeground       = Color::RGB(0xd8d4e8), // same light gray as indentGuideForeground
         .headlineLevel1Foreground = Color::RGB(0x1c66c9),
         .headlineLevel2Foreground = Color::RGB(0x158f6a),
         .headlineLevel3Foreground = Color::RGB(0x1f8f44),

@@ -375,6 +375,10 @@ namespace {
         editor::SetIndentGuideDepthColorsEnabled(enabled);
     }
 
+    void NedSetTabGlyphsEnabled(bool enabled) {
+        editor::SetTabGlyphsEnabled(enabled);
+    }
+
     void NedSetAutoDetectProjectRoot(bool enabled) {
         editor::SetAutoDetectProjectRoot(enabled);
     }
@@ -1840,6 +1844,11 @@ void InstallEditorBindings(Environment& env) {
         "Enable/disable cycling each indent guide's color by its own nesting level (Theme's "
         "indent-guide-depth-palette) instead of one flat color. Only visible when indent guides themselves are "
         "on. Default true.");
+    env.Register<&NedSetTabGlyphsEnabled>(
+        "ned", "set-tab-glyphs-enabled",
+        "Enable/disable a glyph at the first cell of every expanded real tab byte, distinguishing it from the "
+        "space cells the rest of its expansion still renders as. Default false, same opt-in reasoning as "
+        "set-trailing-whitespace-highlight-enabled.");
     env.Register<&NedSetAutoDetectProjectRoot>(
         "ned", "set-auto-detect-project-root",
         "Enable/disable walking upward from an opened file for a VCS marker directory to find the project root "
