@@ -34,6 +34,7 @@ namespace {
         "amend-commit-argv",
         "previous-commit-message-argv",
         "extend-commit-argv",
+        "reword-commit-argv",
         "branch-list-argv",
         "parse-branch-list",
         "branch-switch-argv",
@@ -437,6 +438,15 @@ editor::vcs::CommandSpec JanetVcsProvider::ExtendCommitArgv(const std::filesyste
         return Provider::ExtendCommitArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
+}
+
+editor::vcs::CommandSpec JanetVcsProvider::RewordCommitArgv(const std::filesystem::path& root,
+                                                               const std::string&           message) const {
+    const std::string* fn = InternalName("reword-commit-argv");
+    if (!fn) {
+        return Provider::RewordCommitArgv(root, message);
+    }
+    return ParseCommandSpec(CallWithStrings(*fn, root.string(), message));
 }
 
 editor::vcs::CommandSpec JanetVcsProvider::BranchListArgv(const std::filesystem::path& root) const {

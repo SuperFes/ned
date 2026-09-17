@@ -310,7 +310,9 @@ TEST_CASE("Staging targets the selection set when non-empty, else falls back to 
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("'c'/'C'/'e'/'w'/'n' fire SetOnAction with Commit/AmendCommit/ExtendCommit/SwitchBranch/CreateBranch and return focus", "[VcsPanel]") {
+TEST_CASE("'c'/'C'/'e'/'r'/'w'/'n' fire SetOnAction with Commit/AmendCommit/ExtendCommit/RewordCommit/SwitchBranch/"
+          "CreateBranch and return focus",
+          "[VcsPanel]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_actions";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -339,16 +341,19 @@ TEST_CASE("'c'/'C'/'e'/'w'/'n' fire SetOnAction with Commit/AmendCommit/ExtendCo
     panel.TakeFocus();
     panel.OnEvent(ned::ui::test::Character('e'));
     panel.TakeFocus();
+    panel.OnEvent(ned::ui::test::Character('r'));
+    panel.TakeFocus();
     panel.OnEvent(ned::ui::test::Character('w'));
     panel.TakeFocus();
     panel.OnEvent(ned::ui::test::Character('n'));
 
-    REQUIRE(firedActions.size() == 5);
+    REQUIRE(firedActions.size() == 6);
     REQUIRE(firedActions[0] == ned::ui::VcsPanelAction::Commit);
     REQUIRE(firedActions[1] == ned::ui::VcsPanelAction::AmendCommit);
     REQUIRE(firedActions[2] == ned::ui::VcsPanelAction::ExtendCommit);
-    REQUIRE(firedActions[3] == ned::ui::VcsPanelAction::SwitchBranch);
-    REQUIRE(firedActions[4] == ned::ui::VcsPanelAction::CreateBranch);
+    REQUIRE(firedActions[3] == ned::ui::VcsPanelAction::RewordCommit);
+    REQUIRE(firedActions[4] == ned::ui::VcsPanelAction::SwitchBranch);
+    REQUIRE(firedActions[5] == ned::ui::VcsPanelAction::CreateBranch);
 
     std::filesystem::remove_all(dir);
 }

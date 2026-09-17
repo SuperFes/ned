@@ -306,6 +306,17 @@ class Provider {
         throw std::runtime_error("extend commit not supported by this provider");
     }
 
+    // Reword follow-up: Magit's own "reword" -- replaces HEAD's message
+    // without touching its tree at all, even if something is currently
+    // staged (git: `commit --amend --only -m message`, the `--only` with no
+    // pathspec being what keeps the index out of it -- unlike
+    // AmendCommitArgv, which deliberately folds in whatever's staged).
+    [[nodiscard]] virtual CommandSpec RewordCommitArgv(const std::filesystem::path& root, const std::string& message) const {
+        (void)root;
+        (void)message;
+        throw std::runtime_error("reword commit not supported by this provider");
+    }
+
     [[nodiscard]] virtual CommandSpec BranchListArgv(const std::filesystem::path& root) const {
         (void)root;
         throw std::runtime_error("branch listing not supported by this provider");

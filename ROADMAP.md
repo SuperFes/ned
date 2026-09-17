@@ -462,17 +462,14 @@ ordinary click) or `BufferView::ForwardMouseWhileSiblingDrags` (a real drop)).
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
-- [ ] **Reword, plus a real transient menu** — the one remaining candidate scope this entry
-      originally sketched, still open. **Reword**: keep HEAD's tree exactly as-is, open the
-      commit buffer pre-filled with its message (the same `PreviousCommitMessageArgv` round
-      trip amend already does), and commit via `--amend --only` (or a provider-specific
-      equivalent) on `C-c C-c` — never re-stages anything, unlike amend. **Full transient**:
-      `c` stops committing immediately and instead pops a small lettered menu
-      (create/amend/extend/reword); closest to real Magit, but changes `c`'s existing
-      behavior (`VcsPanelTest.cpp`'s own `'c'` test) and needs a new small popup/menu
-      mechanism this panel doesn't have today (it has no `OverlayHost`/`ListPopup` access —
-      see `VcsPanel::SetOnContextMenuRequest`'s own doc comment on why that's routed out to
-      `main.cpp` instead).
+- [ ] **A real transient menu** — reword shipped (`git log --grep=vcs-reword-commit`:
+      `vcs-reword-commit`/`C-c v r`/`VcsPanelAction::RewordCommit`, `commit --amend --only`
+      so it never re-stages, unlike amend). Still open: `c` stops committing immediately and
+      instead pops a small lettered menu (create/amend/extend/reword); closest to real
+      Magit, but changes `c`'s existing behavior (`VcsPanelTest.cpp`'s own `'c'` test) and
+      needs a new small popup/menu mechanism this panel doesn't have today (it has no
+      `OverlayHost`/`ListPopup` access — see `VcsPanel::SetOnContextMenuRequest`'s own doc
+      comment on why that's routed out to `main.cpp` instead).
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up

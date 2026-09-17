@@ -542,6 +542,18 @@ void Runner::RequestExtendCommit(std::function<void(std::string)> onSuccess, std
         std::move(onError));
 }
 
+void Runner::RequestRewordCommit(const std::string& message, std::function<void(std::string)> onSuccess,
+                                    std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "reword commit", "commit:" + root.string(),
+        [&root, &message](Provider& provider) { return provider.RewordCommitArgv(root, message); },
+        [onSuccess = std::move(onSuccess)](Provider&, std::string output) {
+            onSuccess(output.substr(0, output.find('\n')));
+        },
+        std::move(onError));
+}
+
 void Runner::RequestBranchList(std::function<void(std::vector<BranchEntry>)> onComplete,
                                   std::function<void(std::string)>                 onError) {
     const std::filesystem::path root = ProjectRoot();

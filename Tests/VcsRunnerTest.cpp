@@ -194,6 +194,13 @@ TEST_CASE("Runner root-scoped requests report an error when no provider is regis
         [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
+    // Reword follow-up.
+    error.clear();
+    runner.RequestRewordCommit(
+        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
+
     error.clear();
     runner.RequestBranchList(
         [](std::vector<ned::editor::vcs::BranchEntry>) { FAIL("onComplete should not be called"); },
@@ -284,6 +291,13 @@ TEST_CASE("Runner surfaces the provider's own 'not supported' answer for unimple
         [](std::string) { FAIL("onSuccess should not be called"); },
         [&error](std::string message) { error = message; });
     REQUIRE(error == "extend commit not supported by this provider");
+
+    // Reword follow-up.
+    error.clear();
+    runner.RequestRewordCommit(
+        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE(error == "reword commit not supported by this provider");
 
     error.clear();
     runner.RequestBranchList(
@@ -430,6 +444,12 @@ TEST_CASE("Runner refuses a second concurrent status/commit for the same root", 
         [](std::string) { FAIL("onSuccess should not be called"); },
         [&extendError](std::string message) { extendError = message; });
     REQUIRE(extendError == "extend commit is already running");
+
+    std::string rewordError;
+    runner.RequestRewordCommit(
+        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
+        [&rewordError](std::string message) { rewordError = message; });
+    REQUIRE(rewordError == "reword commit is already running");
 }
 
 // Hunk-staging follow-up: RequestHunkApply's synchronous guard paths. The

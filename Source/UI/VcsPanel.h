@@ -46,18 +46,24 @@ namespace ned::ui {
 
 // What a panel-triggered action asks the focused pane's BufferView to do --
 // see VcsPanel::SetOnAction's own doc comment. Commit/AmendCommit/
-// ExtendCommit/SwitchBranch/CreateBranch all reuse an existing BufferView
-// interactive flow verbatim (BeginVcsCommitMessage/ExtendCommit/
+// ExtendCommit/RewordCommit/SwitchBranch/CreateBranch all reuse an existing
+// BufferView interactive flow verbatim (BeginVcsCommitMessage/ExtendCommit/
 // BeginVcsSwitchBranchPrompt/the vcs-create-branch prompt) -- this panel
 // adds no new commit/branch primitive of its own, just a second entry
-// point into flows that already work from C-c v c/C/e/w/n. AmendCommit is
-// the VcsPanel amend follow-up (BeginVcsCommitMessage(amend=true));
+// point into flows that already work from C-c v c/C/e/r/w/n. AmendCommit is
+// the VcsPanel amend follow-up (BeginVcsCommitMessage(VcsCommitMode::Amend));
 // ExtendCommit is the commit-variants follow-up's "extend" -- unlike the
 // other two, it needs no compose buffer at all (BufferView::ExtendCommit
-// fires straight through to Runner::RequestExtendCommit).
+// fires straight through to Runner::RequestExtendCommit). RewordCommit is
+// the Reword follow-up: like AmendCommit it opens a compose buffer
+// pre-filled with HEAD's own message, but commits via
+// Runner::RequestRewordCommit (`commit --amend --only`), which never
+// re-stages anything -- unlike a real amend, it leaves HEAD's tree exactly
+// as-is even if something is currently staged.
 enum class VcsPanelAction { Commit,
                             AmendCommit,
                             ExtendCommit,
+                            RewordCommit,
                             SwitchBranch,
                             CreateBranch };
 

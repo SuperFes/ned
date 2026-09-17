@@ -447,12 +447,21 @@ class BufferView : public Widget {
     // mouse-ergonomics follow-up: same seam again, for RevertHunkAtPoint's
     // own synchronous guards (no runner / modified buffer / no path).
     void RevertHunkAtPointForTesting();
+    // Reword follow-up: BeginVcsCommitMessage's own three-way choice --
+    // Amend folds in whatever's staged (git's ordinary `commit --amend`),
+    // Reword touches only the message (`commit --amend --only`, see
+    // Editor/Vcs/Provider.h's RewordCommitArgv). Declared here, ahead of
+    // BeginVcsCommitMessage's own (private) declaration further down, since
+    // BeginVcsCommitMessageForTesting's parameter needs it in scope already.
+    enum class VcsCommitMode { Commit,
+                                Amend,
+                                Reword };
     // multi-line-commit-message follow-up: same seam shape, for
     // BeginVcsCommitMessage/FinishVcsCommitMessage/AbortVcsCommitMessage --
     // RequestCommit's own guards (no provider registered) resolve
     // synchronously (see VcsRunnerTest.cpp), so FinishVcsCommitMessageForTesting
     // is fully exercisable without a live EventLoop too.
-    void BeginVcsCommitMessageForTesting(bool amend = false);
+    void BeginVcsCommitMessageForTesting(VcsCommitMode mode = VcsCommitMode::Commit);
     void FinishVcsCommitMessageForTesting();
     void AbortVcsCommitMessageForTesting();
     // VcsPanel commit-variants follow-up: ExtendCommit is already fully
@@ -2911,14 +2920,15 @@ class BufferView : public Widget {
     // multi-line-commit-message follow-up: opens (or, if one's already
     // mid-composition, just switches to) the *vcs commit message* buffer --
     // InteractiveRequest::VcsCommit's entry point. VcsPanel amend follow-up:
-    // amend=true fetches the previous commit's own message first (async --
-    // see Runner::RequestPreviousCommitMessage) and seeds the buffer with
-    // it instead of the blank template, and marks pendingCommitAmend_ so
-    // FinishVcsCommitMessage commits via RequestAmendCommit instead of
-    // RequestCommit; re-running this on an already-open buffer preserves
-    // whatever's typed and just updates the flag, same as the plain-commit
-    // path already did before this existed.
-    void BeginVcsCommitMessage(bool amend = false);
+    // Amend/Reword both fetch the previous commit's own message first
+    // (async -- see Runner::RequestPreviousCommitMessage) and seed the
+    // buffer with it instead of the blank template, and mark
+    // pendingCommitMode_ so FinishVcsCommitMessage commits via
+    // RequestAmendCommit/RequestRewordCommit instead of RequestCommit;
+    // re-running this on an already-open buffer preserves whatever's typed
+    // and just updates the mode, same as the plain-commit path already did
+    // before amend existed.
+    void BeginVcsCommitMessage(VcsCommitMode mode = VcsCommitMode::Commit);
     // InteractiveRequest::CommitFinish/VcsCommitAbort's entry points --
     // strip the '#'-comment template and fire RequestCommit, or just
     // discard, then either way close the buffer via
@@ -3548,12 +3558,13 @@ class BufferView : public Widget {
     editor::ProjectUndoManager*           projectUndo_             = nullptr; // see SetProjectUndo
     editor::testrun::TestRunner*          testRunner_              = nullptr; // see SetTestRunner
     editor::vcs::Runner*               vcsRunner_               = nullptr; // see SetVcsRunner
-    // VcsPanel amend follow-up: set by BeginVcsCommitMessage(amend=true),
-    // consumed (and reset) by FinishVcsCommitMessage -- which of
-    // RequestCommit/RequestAmendCommit to fire. Only ever meaningful while
-    // the *vcs commit message* buffer is open; AbortVcsCommitMessage resets
-    // it too, so no stale amend flag can survive into a later plain commit.
-    bool                                  pendingCommitAmend_      = false;
+    // VcsPanel amend follow-up: set by BeginVcsCommitMessage, consumed (and
+    // reset to Commit) by FinishVcsCommitMessage -- which of
+    // RequestCommit/RequestAmendCommit/RequestRewordCommit to fire. Only
+    // ever meaningful while the *vcs commit message* buffer is open;
+    // AbortVcsCommitMessage resets it too, so no stale mode can survive
+    // into a later plain commit.
+    VcsCommitMode                         pendingCommitMode_       = VcsCommitMode::Commit;
     editor::dap::Manager*              dapManager_              = nullptr; // see SetDapManager
     editor::acp::Manager*              acpManager_              = nullptr; // see SetAcpManager
     const janet::Environment*             janetEnv_                = nullptr; // see SetJanetEnvironment
