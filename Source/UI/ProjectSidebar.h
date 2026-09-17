@@ -133,18 +133,21 @@ class ProjectSidebar : public Widget {
     // project-sidebar-drag-drop follow-up: same cross-widget cooperation
     // shape LeftDock::IsResizing()/EndResize() use for its own resize-drag
     // handoff -- a left-press on a file row (never a directory; there's no
-    // single sensible target to open) additionally arms this alongside the
-    // row's existing open-preview behavior. BufferView checks it in its own
+    // single sensible target to open) arms this instead of opening
+    // anything itself (sidebar-drag-drop-double-open fix: the open is
+    // deferred until whichever Released event actually claims the press,
+    // so a real drag never also opens the file in whatever pane happened
+    // to be focused when it started). BufferView checks it in its own
     // OnMouseEvent (rawMouse, ahead of that widget's own LocalMouseEvent
     // gate, mirroring how it already checks LeftDock::IsResizing()) and,
-    // when a Released event lands inside
-    // its own Box_(), opens the dragged file there and calls EndFileDrag()
-    // itself. A Released landing back on this widget's own bounds is just
-    // an ordinary click (already handled by the press-time open) and clears
-    // this with no drop action of its own. A Released claimed by neither --
-    // dropped on the tab bar, VCS panel, or echo area -- leaves this armed
-    // until the next drag start overwrites it; a documented, harmless v1
-    // edge case, since nothing else ever reads it.
+    // when a Released event lands inside its own Box_(), opens the dragged
+    // file there and calls EndFileDrag() itself. A Released landing back
+    // on this widget's own bounds is just an ordinary click -- this is
+    // what actually opens the file in that case -- and clears this
+    // afterward. A Released claimed by neither -- dropped on the tab bar,
+    // VCS panel, or echo area -- leaves this armed until the next drag
+    // start overwrites it; a documented, harmless v1 edge case, since
+    // nothing else ever reads it.
     [[nodiscard]] std::optional<std::filesystem::path> DraggingFilePath() const;
     void                                               EndFileDrag();
 
@@ -240,6 +243,14 @@ class ProjectSidebar : public Widget {
 
     // project-sidebar-drag-drop follow-up: see DraggingFilePath's own doc comment.
     std::optional<std::filesystem::path> dragPath_;
+
+    // sidebar-drag-drop-double-open fix: the single-vs-double-click
+    // classification decided at press time (comparing against
+    // lastFileClickPath_/lastFileClickTime_ below), applied only once the
+    // matching Released event resolves whether this press was an ordinary
+    // click or a real drag -- paired with dragPath_, meaningless once it's
+    // reset.
+    bool dragIsDoubleClick_ = false;
 
     // Double-click detection for file rows (single-click-preview follow-up):
     // a second click on the *same path* within kDoubleClickWindow counts as
