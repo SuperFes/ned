@@ -116,6 +116,7 @@ add_executable(ned_tests
             FormatBlankLinesTest.cpp
             FormatWrapTest.cpp
             FormatCaseTest.cpp
+            FileNamingTest.cpp
             FormatTest.cpp
             FormatKeyDocsTest.cpp
             IndentEngineTest.cpp

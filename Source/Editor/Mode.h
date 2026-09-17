@@ -331,6 +331,13 @@ using ImportTargetsFunction = std::function<std::vector<ImportTarget>(std::strin
 // indicator, three buckets is plenty). SyntaxClassFor below is what ties a
 // SymbolKind back to a real theme color, so a custom theme needs no new
 // fields of its own for this.
+// case-catalogue follow-up: stays exactly this coarse on purpose -- the
+// gutter/breadcrumb consumers below only ever needed "roughly what kind of
+// thing is this," and widening these four buckets would be a breaking
+// change to every SyntaxClassFor/gutter-glyph caller for no benefit to them.
+// SymbolMarker::definitionKind (below) is where the finer word (struct vs.
+// class vs. enum, function vs. method, ...) actually lives now, for the one
+// consumer (Editor/FormatCase.cpp) that needs it.
 enum class SymbolKind {
     Callable,  // a function or method definition
     TypeLike,  // a class/interface/type-alias/enum/struct definition
@@ -384,6 +391,20 @@ struct SymbolMarker {
     // were being thrown away. Falls back to startByte when the match had no
     // "@name" capture at all, which is also when `name` is empty.
     std::size_t nameStartByte = 0;
+
+    // case-catalogue follow-up: the matched "@definition.*" capture's own
+    // suffix, verbatim -- "class"/"struct"/"enum"/"enum_member"/"field"/
+    // "function"/"method"/"macro"/"namespace"/"var"/... -- finer than `kind`
+    // itself, which stays a deliberately coarse 3-4-bucket grouping for the
+    // gutter glyph/breadcrumb (see SymbolKind's own doc comment). Populated
+    // by SymbolKindFromCaptureName's second, optional out-param; every
+    // gutter/sticky-scroll consumer keeps reading `kind` unchanged, so this
+    // field existing changes nothing for them. Editor/FormatCase.cpp is the
+    // one consumer that reads it, for a naming-convention entity kind finer
+    // than `kind` alone could ever give it. Empty only for a hand-built
+    // SymbolMarker that skipped SymbolKindFromCaptureName entirely (no real
+    // tags-query build does).
+    std::string definitionKind;
 };
 
 // Given a buffer's full text, returns every definition-site landmark in it
@@ -416,11 +437,22 @@ using SymbolKindWindowFunction = std::function<std::vector<SymbolMarker>(std::st
 // isn't itself a *definition* capture: a nested "@name"/"@doc"/
 // "@local.scope" capture from the same pattern match, or a "@reference.*"
 // one (a *use*, not a definition -- tags.scm files mix both in the same
-// query). Shared by every GrammarModeFromLanguage-built symbolKind
+// query).
+//
+// case-catalogue follow-up: `rawKind`, when non-null, receives the matched
+// capture's own suffix verbatim (e.g. "struct", not just the TypeLike
+// bucket it maps to) -- cleared first, so a caller can always trust it
+// after the call regardless of the return value. Mirrors
+// LocalCaptureKindFromCaptureName's own `qualifier` out-param below, same
+// reason: SymbolMarker::definitionKind needs the exact word, not just
+// which of four coarse buckets it landed in.
+//
+// Shared by every GrammarModeFromLanguage-built symbolKind
 // closure (Mode.cpp) rather than duplicated per language, since this naming
 // vocabulary is the same ctags convention across every grammar that ships a
 // tags.scm, not something each language's query invents independently.
-[[nodiscard]] std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName);
+[[nodiscard]] std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName,
+                                                                  std::string* rawKind = nullptr);
 
 // test-runner integration: one discovered test definition. [startByte,
 // endByte) covers the whole definition including its body where the parse

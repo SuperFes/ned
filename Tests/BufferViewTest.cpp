@@ -27,6 +27,7 @@
 #include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Dispatcher.h"
+#include "Editor/FileNaming.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
@@ -4537,6 +4538,99 @@ TEST_CASE("find-file on a path that doesn't exist yet creates a new buffer and r
     // Back to normal editing in the new buffer.
     view.OnEvent(ned::ui::test::Character("z"));
     REQUIRE(activeBuffer.Get().Text() == "z");
+}
+
+// file-naming-conventions follow-up: RAII reset for the same reason
+// FormatCaseTest.cpp's own FormatRulesGuard exists -- process-wide state.
+namespace {
+struct FileNamingGuard {
+    ~FileNamingGuard() {
+        ned::editor::SetAutoHeaderGuard(false);
+        ned::editor::SetFileNamingCaseConvention("cpp", std::nullopt);
+        ned::editor::SetHeaderGuardTemplate("cpp", std::nullopt);
+    }
+};
+} // namespace
+
+TEST_CASE("find-file on a new header file does not insert a guard when ned/set-auto-header-guard is off (the "
+          "default)",
+          "[BufferView]") {
+    const FileNamingGuard        guard;
+    const CurrentPathGuard        pathGuard(std::filesystem::temp_directory_path());
+    const std::filesystem::path  path = std::filesystem::temp_directory_path() / "ned_bufferview_test_noguard.hpp";
+    std::filesystem::remove(path);
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('f'));
+    TypeText(view, path.string());
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(activeBuffer.Get().Text().empty());
+}
+
+TEST_CASE("find-file on a new header file inserts the expanded include guard when "
+          "ned/set-auto-header-guard is on",
+          "[BufferView]") {
+    const FileNamingGuard       guard;
+    ned::editor::SetAutoHeaderGuard(true);
+    const CurrentPathGuard       pathGuard(std::filesystem::temp_directory_path());
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_test_guard.hpp";
+    std::filesystem::remove(path);
+    const std::string projectName = std::filesystem::temp_directory_path().filename().string();
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('f'));
+    TypeText(view, path.string());
+    view.OnEvent(ned::ui::test::Return());
+
+    const std::string macro = ned::editor::ExpandHeaderGuardTemplate("${PROJECT_NAME}_${FILE_NAME}_${EXT}", path);
+    const std::string expected =
+        "#ifndef " + macro + "\n#define " + macro + "\n\n#endif // " + macro + "\n";
+    REQUIRE(activeBuffer.Get().Text() == expected);
+
+    // Point sits on the blank line between #define and #endif, not at the end.
+    const std::string beforePoint = "#ifndef " + macro + "\n#define " + macro + "\n\n";
+    REQUIRE(activeBuffer.Get().Point() == beforePoint.size());
+}
+
+TEST_CASE("find-file on a new .cpp file with a non-conforming name appends a naming-convention note to the "
+          "status message",
+          "[BufferView]") {
+    const FileNamingGuard       guard;
+    ned::editor::SetFileNamingCaseConvention("cpp", ned::editor::CaseConvention::SnakeCase);
+    const CurrentPathGuard       pathGuard(std::filesystem::temp_directory_path());
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "BadlyNamedFile.cpp";
+    std::filesystem::remove(path);
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('f'));
+    TypeText(view, path.string());
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.statusMessage.find("(New file") == 0);
+    REQUIRE(fixture.statusMessage.find("snake-case") != std::string::npos); // CaseConventionName's own kebab spelling
+    REQUIRE(fixture.statusMessage.find("badly_named_file") != std::string::npos);
 }
 
 TEST_CASE("Escape cancels the find-file prompt and returns to normal editing on the original buffer", "[BufferView]") {
