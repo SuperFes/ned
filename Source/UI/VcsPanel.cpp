@@ -43,10 +43,10 @@ namespace {
     // resizes as the user arrows between rows of different kinds or as
     // ahead/behind changes underneath them. kRowFooterLines(4) is a file
     // entry's own worst case (open/mark/stage-or-unstage/discard);
-    // kRootFooterLines(9) is pull+push+commit+amend+extend+stash+switch+
-    // new-branch+fetch.
+    // kRootFooterLines(10) is pull+push+commit+amend+extend+reword+stash+
+    // switch+new-branch+fetch.
     constexpr int kRowFooterLines  = 4;
-    constexpr int kRootFooterLines = 9;
+    constexpr int kRootFooterLines = 10;
     constexpr int kFooterLines     = kRowFooterLines + 1 /* separator */ + kRootFooterLines;
 
     constexpr char32_t kCollapsedTriangle = U'▸'; // matches ProjectSidebar's own collapsed-strip hint glyph
@@ -265,6 +265,10 @@ void VcsPanel::SetOnSelectionChanged(std::function<void(std::optional<std::files
 
 void VcsPanel::SetOnContextMenuRequest(std::function<void(const VcsPanelContextMenuTarget&, Point)> handler) {
     onContextMenuRequest_ = std::move(handler);
+}
+
+void VcsPanel::SetOnCommitMenuRequest(std::function<void(Point)> handler) {
+    onCommitMenuRequest_ = std::move(handler);
 }
 
 void VcsPanel::ForceRefresh() {
@@ -567,6 +571,9 @@ std::vector<std::string> VcsPanel::RootFooterLines() const {
             lines[1] = "P push ↑" + std::to_string(aheadBehind_->ahead);
         }
     }
+    // Transient commit menu follow-up: 'c' now opens the four-way commit
+    // menu (create/amend/extend/reword) rather than committing directly --
+    // "commit" is still the honest label for what the key does.
     lines[2] = "c commit";
     // VcsPanel amend follow-up: "C" as amend's shifted twin, next to
     // commit -- the same capital-letter-variant precedent pull/push (F/P
@@ -575,14 +582,17 @@ std::vector<std::string> VcsPanel::RootFooterLines() const {
     // VcsPanel commit-variants follow-up: "e" for extend, Magit's own
     // mnemonic for the same operation.
     lines[4] = "e extend";
-    lines[5] = "z stash";
-    lines[6] = "w switch";
-    lines[7] = "n new branch";
+    // Reword follow-up: "r" for reword, next to "e" -- matches the global
+    // keymap's own "C-c v r" mnemonic.
+    lines[5] = "r reword";
+    lines[6] = "z stash";
+    lines[7] = "w switch";
+    lines[8] = "n new branch";
     // Fetch has no matching "is there something to fetch" fact this panel
     // tracks (unlike push/pull, it needs no upstream to mean something --
     // it just refreshes the remote-tracking refs), so it's always offered,
-    // like commit/amend/extend/stash/switch/new-branch above.
-    lines[8] = "f fetch";
+    // like commit/amend/extend/reword/stash/switch/new-branch above.
+    lines[9] = "f fetch";
     return lines;
 }
 
@@ -1234,8 +1244,22 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
             RunRemoteAction(RemoteAction::Push);
             return true;
         }
-        if (chord->Codepoint == U'c' || chord->Codepoint == U'C' || chord->Codepoint == U'e' || chord->Codepoint == U'r' ||
-            chord->Codepoint == U'w' || chord->Codepoint == U'n') {
+        // Transient commit menu follow-up: 'c' stopped being a one-shot
+        // Commit trigger -- committing has four variants now, so 'c' opens
+        // a small lettered menu over them instead (main.cpp's job, same
+        // "this widget has no ListPopup of its own" reasoning as the
+        // context menu above). Reports the panel's own top-left content
+        // corner as the anchor -- there's no click position to reuse here,
+        // unlike the mouse-driven context menu.
+        if (chord->Codepoint == U'c') {
+            if (onCommitMenuRequest_) {
+                const Box& box = Box_();
+                onCommitMenuRequest_(Point{.x = box.x_min, .y = box.y_min + kHeaderHeight});
+            }
+            return true;
+        }
+        if (chord->Codepoint == U'C' || chord->Codepoint == U'e' || chord->Codepoint == U'r' || chord->Codepoint == U'w' ||
+            chord->Codepoint == U'n') {
             // ReturnFocus() *before* firing onAction_ -- WindowManager::
             // RequestVcsPanelAction resolves "the focused pane"
             // (RequestOpenBinaryFile's own shape), and while this widget
@@ -1248,8 +1272,7 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
             // trigger was a silent no-op before this fix.
             ReturnFocus();
             if (onAction_) {
-                onAction_(chord->Codepoint == U'c'   ? VcsPanelAction::Commit
-                          : chord->Codepoint == U'C' ? VcsPanelAction::AmendCommit
+                onAction_(chord->Codepoint == U'C'   ? VcsPanelAction::AmendCommit
                           : chord->Codepoint == U'e' ? VcsPanelAction::ExtendCommit
                           : chord->Codepoint == U'r' ? VcsPanelAction::RewordCommit
                           : chord->Codepoint == U'w' ? VcsPanelAction::SwitchBranch
