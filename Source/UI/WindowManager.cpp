@@ -548,6 +548,9 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     // Split-resize follow-up: see WindowManager.h's own resizingSplit_
     // comment and BufferView::SetSplitResizeQuery's own doc comment.
     pane->Buffer().SetSplitResizeQuery([this] { return resizingSplit_; });
+    // vim-quit-window-semantics follow-up: same test DeleteWindow already uses to
+    // refuse "Cannot delete the only window." -- a leaf root means no split exists.
+    pane->Buffer().SetIsOnlyWindowQuery([this] { return root_->kind == WindowNode::Kind::Leaf; });
     return pane;
 }
 

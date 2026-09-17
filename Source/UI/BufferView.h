@@ -634,6 +634,15 @@ class BufferView : public Widget {
     // however many BufferViews exist) is the intended registrant.
     void SetOnWindowRequest(std::function<void(editor::InteractiveRequest)> handler);
 
+    // vim-quit-window-semantics follow-up: real vim's ":q"/"ZZ" close the current
+    // window and only quit the whole process when it's the last one -- a fact only
+    // WindowManager (the owner of however many panes exist) can answer, this class has
+    // no window-tree of its own to consult. Same "connect after construction, unset is
+    // a safe no-op" convention as SetOnWindowRequest; unset defaults to "yes, the only
+    // window" (true), matching every test-constructed BufferView's own implicit
+    // single-pane assumption and every other headless use.
+    void SetIsOnlyWindowQuery(std::function<bool()> query);
+
     // Split-resize follow-up: the same "checked first, regardless of
     // position, ahead of this widget's own mouse handling" cooperation
     // OnMouseEvent already gives ProjectSidebar's own IsResizing() -- but a
@@ -3743,6 +3752,7 @@ class BufferView : public Widget {
     // Window-splitting follow-up: see SetOnWindowRequest/SetOnBufferClosed.
     std::function<void(editor::InteractiveRequest)>    onWindowRequest_;
     std::function<void(text::Buffer&)>                 onBufferClosed_;
+    std::function<bool()>                              isOnlyWindowQuery_; // see SetIsOnlyWindowQuery
     std::function<void()>                              onTerminalToggle_;      // see SetOnTerminalToggle
     std::function<void()>                              onNewTerminalRequest_;  // see SetOnNewTerminalRequest
     std::function<void()>                              onAcpPanelToggle_;      // see SetOnAcpPanelToggle

@@ -17,6 +17,7 @@
 #include "Editor/Register.h"
 #include "Editor/Vcs/Provider.h"
 #include "Editor/Vcs/ProviderRegistry.h"
+#include "Editor/Vim/Settings.h"
 #include "Editor/Vcs/Runner.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
@@ -119,6 +120,26 @@ class CountingDiffProvider : public ned::editor::vcs::Provider {
 
   private:
     int& count_;
+};
+
+// vim-quit-window-semantics follow-up: same TabWidth.h-shaped process-wide-setting
+// restore precedent BufferViewTest.cpp's own VimModeGuard already uses -- not shared
+// across translation units, same "not worth a new cross-test-binary dependency for
+// something this small" call this codebase's tests already make elsewhere (see
+// RowText's own comment above).
+class VimModeGuard {
+  public:
+    VimModeGuard() : previous_(ned::editor::vim::ModeEnabled()) {
+        ned::editor::vim::SetModeEnabled(true);
+    }
+    ~VimModeGuard() {
+        ned::editor::vim::SetModeEnabled(previous_);
+    }
+    VimModeGuard(const VimModeGuard&)            = delete;
+    VimModeGuard& operator=(const VimModeGuard&) = delete;
+
+  private:
+    bool previous_;
 };
 
 } // namespace
@@ -254,6 +275,36 @@ TEST_CASE("delete-window on the sole window is a no-op reporting via statusMessa
 
     REQUIRE(manager.WindowCount() == 1);
     REQUIRE_FALSE(fixture.statusMessage.empty());
+}
+
+// vim-quit-window-semantics follow-up: full-stack proof that BufferView's
+// SetIsOnlyWindowQuery/SetOnWindowRequest wiring (WindowManager::MakePane) resolves
+// vim's own ":q" the same way real delete-window (C-x 0) already does in a split --
+// closing just the focused window, never touching eventLoop_ or the buffer, and never
+// reachable through this file's other tests since none of them enable vim mode. The
+// split itself is created with vim mode still off: C-x is vim's own "decrement number
+// under point" binding in Normal mode (Engine::HandleAction), so a real "C-x 2" while
+// vim mode is already on would never reach Dispatcher at all -- confirmed live before
+// writing this, not assumed.
+TEST_CASE(":q in a 2-window split closes only the focused window under vim mode", "[WindowManager]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
+
+    ned::ui::Widget& root = manager.RootComponent();
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")});
+    REQUIRE(manager.WindowCount() == 2);
+
+    ned::ui::ActiveBuffer* survivorActiveBuffer = &manager.FocusedActiveBuffer();
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // focus the new pane
+    REQUIRE(&manager.FocusedActiveBuffer() != survivorActiveBuffer);
+
+    VimModeGuard vimGuard;
+    FeedSequence(root, {ned::ui::test::Character(":"), ned::ui::test::Character("q"), ned::ui::test::Return()});
+
+    REQUIRE(manager.WindowCount() == 1);
+    REQUIRE(&manager.FocusedActiveBuffer() == survivorActiveBuffer);
+    REQUIRE(fixture.statusMessage != "Shutting down..."); // the app itself never quit
 }
 
 TEST_CASE("delete-other-windows collapses back to a single window", "[WindowManager]") {

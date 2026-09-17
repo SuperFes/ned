@@ -43,13 +43,24 @@
 
 namespace ned::editor::vim {
 
-// An intent beyond single-buffer scope (":q", ":wq") that only the host UI (BufferView)
-// can actually carry out -- CommandContext::interactiveRequest's own "command signals
-// intent, host UI acts on it" shape, deliberately kept this small rather than threading
-// a BufferList&/WindowManager callback into the engine itself.
+// An intent beyond single-buffer scope (":q", ":wq", ":qa") that only the host UI
+// (BufferView) can actually carry out -- CommandContext::interactiveRequest's own
+// "command signals intent, host UI acts on it" shape, deliberately kept this small
+// rather than threading a BufferList&/WindowManager callback into the engine itself.
+//
+// CloseWindow is real vim's own ":q"/"ZZ" meaning -- close the current WINDOW, which
+// only quits the whole process when it's the last one -- not Emacs' kill-buffer (this
+// engine has no notion of "how many windows are open" to decide that itself, so the
+// host UI resolves it: not the only window closes just that window, only window falls
+// through to the same confirm-if-anything-unsaved path as the ordinary "quit" command).
+// Quit is ":qa"/":qall"/":quitall" -- unconditionally every window, checked the same
+// way. The *Forced variants (":q!"/"ZQ", ":qa!") skip the confirmation outright, same
+// as real vim's bang.
 enum class PendingIntent { None,
                            Quit,
-                           CloseBuffer };
+                           QuitForced,
+                           CloseWindow,
+                           CloseWindowForced };
 
 class Engine {
   public:
@@ -57,8 +68,12 @@ class Engine {
 
     [[nodiscard]] Mode CurrentMode() const;
 
-    // BufferView calls this whenever CurrentMode() != Mode::Insert.
-    void HandleKey(text::Buffer& buffer, const KeyChord& chord);
+    // BufferView calls this whenever CurrentMode() != Mode::Insert. Returns false for a
+    // narrow, deliberate case -- an unrecognized Control chord (C-c, ...) arriving at the
+    // start of a fresh command -- meaning the caller should feed it to ned's own global
+    // keymap instead (see this method's own vim-keymap-fallthrough doc comment in
+    // Engine.cpp); true otherwise, including every ordinary vim command and no-op.
+    [[nodiscard]] bool HandleKey(text::Buffer& buffer, const KeyChord& chord);
 
     // BufferView calls this for every non-Escape chord while CurrentMode() ==
     // Mode::Insert, before deciding how to actually apply it -- dot-repeat/macro
