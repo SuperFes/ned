@@ -1644,6 +1644,25 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         "insert a tab character.",
         IndentForTabCommandBody);
 
+    // tab-stop-rendering follow-up: an escape hatch for indent-for-tab-
+    // command's own fallback, which -- since e65b935 -- respects the
+    // buffer's configured indent style (a literal '\t' only when
+    // useTabs is on; real space characters, tab-stop-aligned, otherwise).
+    // A user who wants a literal tab byte unconditionally, regardless of
+    // mode/position/indent style, needs a separate, always-insert-a-raw-
+    // tab command -- bound below to C-q rather than any TAB variant, since
+    // plain TAB is claimed by every mode's own smart reindent/table-
+    // navigation/snippet-cycle behavior and S-TAB by unindent. PerCursor,
+    // same as self-insert-command: each cursor gets its own literal tab.
+    registry.Register(
+        "insert-literal-tab",
+        "Insert a literal tab character at point, unconditionally -- bypassing indent-for-tab-command's "
+        "reindent/snippet-expansion logic and the buffer's own useTabs=false space substitution.",
+        PerCursor([](CommandContext& context) {
+            context.buffer.ClearMark();
+            context.buffer.InsertAtPoint("\t");
+        }));
+
     // mode-agnostic-rigid-indent follow-up: S-TAB's own symmetric sibling
     // to indent-for-tab-command's new mark-active branch above -- no
     // leading-whitespace-position guard (unlike TAB, S-TAB never means
@@ -4434,6 +4453,16 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("ESC w"), "kill-ring-save");
     keymap.Bind(ParseKeySequence("RET"), "newline");
     keymap.Bind(ParseKeySequence("TAB"), "indent-for-tab-command");
+    // tab-stop-rendering follow-up: always inserts a raw tab byte, bypassing
+    // whatever indent-for-tab-command's own mode-specific override
+    // (org-cycle, markdown-table-align, ...) claimed plain TAB for -- see
+    // insert-literal-tab's own doc comment. Bound to C-q, real Emacs' own
+    // "quoted-insert" chord (there, a general next-character-literally
+    // command; here, narrowed to this one specific escape hatch) --
+    // S-TAB is already unindent's, and M-TAB is unusable in practice, since
+    // many desktop window managers/terminal multiplexers intercept Alt+Tab
+    // for their own window-switching before it ever reaches ned.
+    keymap.Bind(ParseKeySequence("C-q"), "insert-literal-tab");
     // mode-agnostic-rigid-indent follow-up: safe to bind globally --
     // Markdown/Org's own table-cell S-TAB bindings and the snippet
     // session's own S-TAB handling both take priority over this (mode

@@ -3,7 +3,7 @@
 Every command reachable from `M-x`, from a keybinding, or from Janet via
 `ned/run-command`.
 
-308 commands.
+309 commands.
 
 ## `acp-rewind`
 
@@ -404,6 +404,10 @@ Reindent the current line to its computed indentation, or -- with an active regi
 ## `indent-region`
 
 Reindent every line the region between point and mark spans.
+
+## `insert-literal-tab`
+
+Insert a literal tab character at point, unconditionally -- bypassing indent-for-tab-command's reindent/snippet-expansion logic and the buffer's own useTabs=false space substitution.
 
 ## `insert-register`
 
