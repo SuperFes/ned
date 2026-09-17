@@ -14412,6 +14412,64 @@ TEST_CASE("format-buffer prefers an external format command over LSP when both a
     std::filesystem::remove(path);
 }
 
+// huge-file-streaming-sweep follow-up.
+TEST_CASE("format-buffer on a huge buffer asks first; n cancels, y streams the reformat to disk",
+          "[BufferView][HugeFile]") {
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            ned::text::SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } thresholdGuard;
+
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_format_buffer_huge.txt";
+    {
+        std::ofstream(path) << "if (x) {\nfoo();\n}\n";
+    }
+
+    ned::text::SetHugeFileThreshold(1); // well under this file's real size
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    REQUIRE(buffer.Content().IsHuge());
+    fixture.activeBuffer.Set(buffer);
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "format-buffer");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage.find("huge") != std::string::npos);
+
+    // n: the file on disk is left exactly as-is.
+    view.OnEvent(ned::ui::test::Character("n"));
+    {
+        std::ifstream in(path);
+        std::string   onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == "if (x) {\nfoo();\n}\n");
+    }
+    REQUIRE(fixture.statusMessage.find("Format cancelled") == 0);
+
+    // y: streams the lexical reindent to a sibling temp file, renames it
+    // over the original, and reloads the buffer.
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "format-buffer");
+    view.OnEvent(ned::ui::test::Return());
+    view.OnEvent(ned::ui::test::Character("y"));
+
+    REQUIRE(fixture.statusMessage.find("Formatted") == 0);
+    REQUIRE_FALSE(buffer.Modified());
+    REQUIRE(buffer.Content().IsHuge()); // Revert()'s own huge dispatch kept this buffer huge-backed
+    {
+        std::ifstream in(path);
+        std::string   onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == buffer.Text());
+    }
+    REQUIRE_FALSE(std::filesystem::exists(path.string() + ".ned-tmp")); // no sibling temp file left behind
+
+    std::filesystem::remove(path);
+}
+
 namespace {
 // on-type-formatting follow-up: same RAII shape as LspFormatOnSaveGuard
 // above, for the sibling toggle.

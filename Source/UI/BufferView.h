@@ -1337,7 +1337,11 @@ class BufferView : public Widget {
                            // no command dispatch that triggers this, only a raw mouse
                            // event, the same "mouse handler sets inputMode_ directly"
                            // shape the fold-gutter left-click already has).
-                           ContextMenu };
+                           ContextMenu,
+                           // huge-file-streaming-sweep follow-up: format-buffer found a huge
+                           // buffer -- y/n before running the lexical streaming reindent over
+                           // it, same shape as ConfirmOverwriteSave/ConfirmRevertHunk above.
+                           ConfirmHugeFormat };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -1550,6 +1554,7 @@ class BufferView : public Widget {
     void               HandleMultibufferApplyTargetKey(const editor::KeyChord& chord);
     void               StartMultibufferApply(bool fileOnly);
     void               HandleConfirmRevertHunkKey(const editor::KeyChord& chord);        // mouse-ergonomics follow-up: y -> RevertHunkAtPoint
+    void               HandleConfirmHugeFormatKey(const editor::KeyChord& chord);        // huge-file-streaming-sweep follow-up: y -> RunHugeFormat
     // class-file-sync follow-up: see UI/BufferView/ClassFileSync.cpp.
     void               HandleConfirmRenameFileToMatchTypeKey(const editor::KeyChord& chord);
     void               HandleConfirmRenameTypeToMatchFileKey(const editor::KeyChord& chord);
@@ -2317,6 +2322,14 @@ class BufferView : public Widget {
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmSaveWithConflictsPrompt();
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmOpenBinaryPrompt();
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmRevertHunkPrompt();
+    // huge-file-streaming-sweep follow-up: y -> RunHugeFormat, which runs
+    // StreamHugeReindent and reloads the buffer on success.
+    [[nodiscard]] bufferview::ConfirmPrompt ConfirmHugeFormatPrompt();
+    // The actual streaming-reindent-then-reload -- only ever called from
+    // ConfirmHugeFormatPrompt's onConfirm. Returns false (leaving the buffer
+    // and disk file untouched) on any failure, with statusMessage_ set to
+    // why.
+    bool RunHugeFormat();
     // class-file-sync follow-up.
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmRenameFileToMatchTypePrompt();
     [[nodiscard]] bufferview::ConfirmPrompt ConfirmRenameTypeToMatchFilePrompt();

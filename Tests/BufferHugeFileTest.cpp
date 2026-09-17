@@ -189,6 +189,37 @@ TEST_CASE("Buffer::FromHugeFile SaveToFile round-trips edited content", "[Buffer
     std::filesystem::remove(path);
 }
 
+TEST_CASE("Buffer::Revert dispatches to FromHugeFile once the file on disk crosses HugeFileThreshold",
+          "[Buffer][HugeFile]") {
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            ned::text::SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } guard;
+
+    const std::filesystem::path path = WriteTempFile("ned_buffer_huge_revert.txt", "original content\nsecond line\n");
+
+    // Opened as an ordinary (non-huge) buffer -- Revert()'s dispatch reads
+    // the file's CURRENT on-disk size at revert time, not how this buffer
+    // was originally opened.
+    Buffer buffer = Buffer::FromFile(path);
+    REQUIRE_FALSE(buffer.Content().IsHuge());
+
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << "rewritten on disk\nunderneath the buffer\n";
+    }
+
+    ned::text::SetHugeFileThreshold(1); // well under this file's real size
+    buffer.Revert();
+
+    REQUIRE(buffer.Content().IsHuge()); // dispatched to FromHugeFile, not FromFile
+    REQUIRE(buffer.Text() == "rewritten on disk\nunderneath the buffer\n");
+    REQUIRE_FALSE(buffer.Modified());
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Buffer::FromHugeFile handles a real multi-MB file: edit at start/middle/end, save, byte-for-byte", "[Buffer][HugeFile]") {
     // The user explicitly said large temp test files are fine here --
     // exercises PieceTable's chunking/BuildBalancedSpan across many leaves,

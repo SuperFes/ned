@@ -334,6 +334,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
             ClampPointToNarrowing();
             return true;
 
+        case InputMode::ConfirmHugeFormat:
+            HandleConfirmHugeFormatKey(*chord);
+            ClampPointToNarrowing();
+            return true;
+
         case InputMode::ConfirmRenameFileToMatchType:
             HandleConfirmRenameFileToMatchTypeKey(*chord);
             ClampPointToNarrowing();
