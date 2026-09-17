@@ -1790,6 +1790,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
         if (it == terminalTabs.end()) {
             return;
         }
+
         panelDock.RemovePanel(it->tabId);
         terminalTabs.erase(it);
     };
@@ -1803,13 +1804,18 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
                            &eventLoop]() -> TerminalTab& {
         std::string label  = "Terminal";
         int         suffix = 2;
+
         while (std::any_of(terminalTabs.begin(), terminalTabs.end(),
                            [&label](const TerminalTab& tab) { return tab.panel->Label() == label; })) {
             label = "Terminal <" + std::to_string(suffix++) + ">";
         }
+
         auto                    panel    = std::make_shared<ned::ui::TerminalPanel>(theme, std::vector<std::string>{}, label);
+
         ned::ui::TerminalPanel* rawPanel = panel.get();
+
         panel->SetEventLoop(&eventLoop);
+
         // toggleTerminal's own reserved-chord wiring: while this panel
         // itself has focus, TerminalPanel handles `` C-` `` internally and
         // calls this callback directly (bypassing the global keymap
@@ -1820,6 +1826,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
                 toggleTerminal();
             }
         });
+
         const std::size_t tabId = panelDock.AddPanel(
             label, *panel, [rawPanel] { return rawPanel->TitleText(); }, &ned::editor::terminal::TerminalHeightPercent,
             &ned::editor::terminal::SetTerminalHeightPercent, [rawPanel, &closeTerminalTab] {
