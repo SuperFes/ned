@@ -1401,13 +1401,21 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
 }
 
 // Emits the cells one codepoint occupies, advancing col past them. A tab
-// expands to the next tab stop, a C0/DEL byte renders as a hex placeholder,
-// and anything else is a single cell. Only the first cell of a multi-column
-// glyph carries a secondary caret's inversion.
-void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const bufferview::GutterLayout& gutter,
-                                    const text::ITextStorage::DecodedCodepoint& decoded, const Brush& brush,
-                                    bool secondaryCaretHere, const LineRenderState& lineState,
-                                    std::size_t offset) const {
+// expands to the next tab stop -- real terminal semantics, a variable-width
+// jump that depends on the tab's own visual column, not a flat
+// editor::TabWidth() cells every time -- a C0/DEL byte renders as a hex
+// placeholder, and anything else is a single cell. Only the first cell of a
+// multi-column glyph carries a secondary caret's inversion.
+//
+// columnOffset recovers the byte's real visual column (from this real
+// line's own start) from its on-screen cell column: visualColumn = col +
+// columnOffset, constant for the whole row (see the call site's own doc
+// comment) -- what a tab's own next-stop math needs, since "col relative to
+// the gutter" alone silently disagrees with the real column the instant
+// horizontal scroll or a wrap continuation's hang indent is involved.
+void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const text::ITextStorage::DecodedCodepoint& decoded,
+                                    const Brush& brush, bool secondaryCaretHere, const LineRenderState& lineState,
+                                    std::size_t offset, int columnOffset) const {
     if (decoded.codepoint == U'\t') {
         // A real terminal treats a raw tab byte as "jump to the next
         // tab stop" (consuming several columns), not "print one
@@ -1420,11 +1428,13 @@ void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const buffervi
         // real terminal's actual column count -- in agreement.
         // editor::TabWidth() is a *display* setting only; the
         // buffer's real tab byte is untouched.
-        const int  tabWidth = editor::TabWidth();
-        const bool inIndent = editor::IndentGuidesEnabled() && offset < lineState.indentEnd;
-        for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
+        const int  tabWidth     = editor::TabWidth();
+        const int  visualColumn = col + columnOffset;
+        const int  cellsToEmit  = tabWidth - (visualColumn % tabWidth);
+        const bool inIndent     = editor::IndentGuidesEnabled() && offset < lineState.indentEnd;
+        for (int i = 0; i < cellsToEmit && col < c.size().width; ++i) {
             Cell&     cell          = c[{.x = col, .y = row}];
-            const int displayColumn = col - static_cast<int>(gutter.totalWidth);
+            const int displayColumn = visualColumn + i;
             if (inIndent && displayColumn > 0 && displayColumn % tabWidth == 0) {
                 // Whitespace-visualization follow-up: a guide
                 // glyph in place of one of the expanded tab's
@@ -1476,7 +1486,7 @@ void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const buffervi
     }
     else {
         Cell&     cell          = c[{.x = col, .y = row}];
-        const int displayColumn = col - static_cast<int>(gutter.totalWidth);
+        const int displayColumn = col + columnOffset;
         // offset < lineState.indentEnd here only ever holds for
         // a space cell (see that field's own doc comment: the
         // scan that computes it stops at the first non-space/tab
@@ -1554,7 +1564,7 @@ void BufferView::EmitInlayHint(Canvas& c, int row, int& col, std::size_t offset,
 // Returns true when it drew one, in which case the bytes it replaced must not
 // also be rendered.
 bool BufferView::EmitCollapsedLink(Canvas& c, int row, int& col, std::size_t& offset,
-                                   const LineRenderState& lineState) const {
+                                   const LineRenderState& lineState, int columnOffset) const {
     if (const RenderedLink* link = LinkStartingAt(lineState.links, offset)) {
         // Links follow-up: real Org's own "descriptive links" --
         // the raw "[[target][description]]" markup collapses down
@@ -1576,8 +1586,10 @@ bool BufferView::EmitCollapsedLink(Canvas& c, int row, int& col, std::size_t& of
         while (textOffset < displayRope.ByteLength() && col < c.size().width) {
             const auto glyph = displayRope.CodepointAt(textOffset);
             if (glyph.codepoint == U'\t') {
-                const int tabWidth = editor::TabWidth();
-                for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
+                const int tabWidth    = editor::TabWidth();
+                const int visualColumn = col + columnOffset;
+                const int cellsToEmit = tabWidth - (visualColumn % tabWidth);
+                for (int i = 0; i < cellsToEmit && col < c.size().width; ++i) {
                     Cell& cell     = c[{.x = col, .y = row}];
                     cell.character = " ";
                     linkBrush.ApplyTo(cell);
@@ -1993,18 +2005,33 @@ void BufferView::Paint(Canvas paneCanvas) {
             // ScrollToShowPointHorizontally's own doc comment), so this is
             // a no-op loop in that case without needing a separate check
             // here.
+            // Real tab-stop math needs the actual visual column a byte
+            // renders at (from this real line's own start), not the on-
+            // screen cell column -- those two disagree the moment either
+            // horizontal scroll or a wrap continuation's own hang indent is
+            // in play. rowStartColumn is that visual column at
+            // currentSegment.startByte: the fast-forward walk below (when it
+            // runs) IS that walk from column 0, and continuationIndent
+            // already means the same thing for a wrapped continuation row
+            // (ComputeWrapSegments resets its own running column to exactly
+            // this value at each break) -- the two cases are mutually
+            // exclusive (viewport_.LeftColumn() stays 0 whenever wrap, and
+            // therefore a nonzero continuationIndent, is active), so one
+            // variable serves both.
+            int rowStartColumn = currentSegment.continuationIndent;
             if (viewport_.LeftColumn() > 0) {
                 int skipped = 0;
                 while (offset < currentSegment.endByte && skipped < static_cast<int>(viewport_.LeftColumn())) {
                     if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
-                        skipped += DisplayColumns(link->displayText);
+                        skipped += DisplayColumns(link->displayText, skipped);
                         offset = link->endByte;
                         continue;
                     }
                     const auto decoded = content.CodepointAt(offset);
-                    skipped += CodepointColumns(decoded.codepoint);
+                    skipped += CodepointColumns(decoded.codepoint, skipped);
                     offset += decoded.byteLength;
                 }
+                rowStartColumn = skipped;
             }
             // wrap-indent follow-up: currentSegment.continuationIndent is 0
             // for a line's first row always, and for every row when
@@ -2014,8 +2041,15 @@ void BufferView::Paint(Canvas paneCanvas) {
             // starting the real content further right, not drawing
             // anything extra.
             int col = static_cast<int>(gutter.totalWidth) + currentSegment.continuationIndent;
+            // The constant that recovers a byte's real visual column from
+            // its on-screen cell column at any point in this row: every
+            // emitter below advances col and the real visual column by the
+            // identical amount per cell, so the gap between them never
+            // changes once col starts at gutter.totalWidth+continuationIndent
+            // and the real column starts at rowStartColumn.
+            const int columnOffset = rowStartColumn - static_cast<int>(gutter.totalWidth) - currentSegment.continuationIndent;
             while (offset < currentSegment.endByte && col < c.size().width) {
-                if (EmitCollapsedLink(c, row, col, offset, lineState)) {
+                if (EmitCollapsedLink(c, row, col, offset, lineState, columnOffset)) {
                     continue; // the link stood in for these bytes
                 }
 
@@ -2032,7 +2066,7 @@ void BufferView::Paint(Canvas paneCanvas) {
 
                 Brush brush = BrushForCell(offset, lineState, c, col, row);
 
-                EmitCodepointCells(c, row, col, gutter, decoded, brush, secondaryCaretHere, lineState, offset);
+                EmitCodepointCells(c, row, col, decoded, brush, secondaryCaretHere, lineState, offset, columnOffset);
                 offset += decoded.byteLength;
             }
 

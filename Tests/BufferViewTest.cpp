@@ -854,8 +854,12 @@ TEST_CASE("A tab character expands to TabWidth() space columns, not one raw code
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
 
-    // "a", 4 space columns for the tab, then "b" -- never a literal U+0009.
-    REQUIRE(ContentRowText(screen, 0, 6, 1) == "a    b");
+    // "a", then the tab's own span, then "b" -- never a literal U+0009. Real
+    // tab-stop semantics: the tab starts at column 1 (right after 'a') and
+    // advances to the next multiple of tabWidth=4, i.e. column 4 -- only 3
+    // space columns, not a flat 4, since it starts one column short of a
+    // stop already.
+    REQUIRE(ContentRowText(screen, 0, 5, 1) == "a   b");
 }
 
 TEST_CASE("Cursor position accounts for tab expansion, not a plain codepoint count", "[BufferView]") {
@@ -874,9 +878,10 @@ TEST_CASE("Cursor position accounts for tab expansion, not a plain codepoint cou
     view.Paint(canvas);
 
     REQUIRE(view.CursorPosition().has_value());
-    // Visual column: 1 ('a') + 4 (the expanded tab) = 5, not 2 (a plain
-    // byte/codepoint count of "a\t").
-    REQUIRE(*view.CursorPosition() == ned::ui::Point{.x = GutterWidth(1) + 5, .y = 0});
+    // Visual column: 1 ('a') + 3 (the tab's own span -- it starts at column
+    // 1 and stops at the next multiple of 4) = 4, not 2 (a plain
+    // byte/codepoint count of "a\t") and not 5 (a flat +tabWidth).
+    REQUIRE(*view.CursorPosition() == ned::ui::Point{.x = GutterWidth(1) + 4, .y = 0});
 }
 
 TEST_CASE("A configured tab width other than the default is respected when painting", "[BufferView]") {
@@ -893,7 +898,10 @@ TEST_CASE("A configured tab width other than the default is respected when paint
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
 
-    REQUIRE(ContentRowText(screen, 0, 4, 1) == "a  b");
+    // The tab starts at column 1 and stops at the next multiple of
+    // tabWidth=2, i.e. column 2 -- one space column, not the 3 a tabWidth=4
+    // default would have produced at this same position.
+    REQUIRE(ContentRowText(screen, 0, 3, 1) == "a b");
 }
 
 TEST_CASE("mouse_press accounts for tab expansion, not a plain codepoint count", "[BufferView]") {
@@ -905,15 +913,17 @@ TEST_CASE("mouse_press accounts for tab expansion, not a plain codepoint count",
     ned::editor::SetTabWidth(4);
 
     Fixture fixture;
-    fixture.buffer.InsertAtPoint("a\tbc"); // 'a'=0, tab spans [1,5), 'b'=5, 'c'=6
+    // 'a'=0; the tab starts at column 1 and stops at the next multiple of 4
+    // (column 4, a 3-column span, not a flat 4); 'b'=4, 'c'=5.
+    fixture.buffer.InsertAtPoint("a\tbc");
 
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
-    // Visual column 5 ('b') -- a plain codepoint count would have clamped
+    // Visual column 4 ('b') -- a plain codepoint count would have clamped
     // this to the buffer's actual length (4 codepoints) and landed on 'c'
-    // instead of the correct 'b', right after the tab's 4-column span.
-    view.OnEvent(MousePress(GutterWidth(1) + 5, 0));
+    // instead of the correct 'b', right after the tab's own span.
+    view.OnEvent(MousePress(GutterWidth(1) + 4, 0));
     REQUIRE(fixture.buffer.Point() == 2); // 'b'
 
     // Visual column 0 ('a') -- unaffected either way, sanity check.
