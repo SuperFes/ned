@@ -147,3 +147,19 @@
 (anonymous_function body: (compound_statement) @brace.function)
 (anonymous_function body: (compound_statement . (_) .) @brace.function.simple)
 (anonymous_class body: (declaration_list) @brace.class)
+
+# rewrite-kind widening (kind 9): a second rewrite family, structurally
+# unlike rewrite.quote's own pure delimiter swap -- a keyword-token
+# replacement. Confirmed against tree-sitter-php's own node-types.json
+# that "elseif" is its own distinct anonymous token (not "else"+"if"
+# glued together), so a bare literal-token capture on else_if_clause's own
+# leading keyword names it directly, independent of which of the three
+# body shapes (brace/colon-alternate/bare-statement) this particular
+# clause happens to use -- the keyword itself precedes the body field
+# entirely, so brace.control's own three-way body-shape concern (this
+# file's own header comment) never enters into it. Editor/FormatRewrite.cpp
+# rewrites the captured token to "else if" whenever
+# ned/set-format-rewrite-expand-elseif is on for this capture name.
+# Unconfigured, inert:
+#   (ned/set-format-rewrite-expand-elseif "rewrite.elseif" true)
+(else_if_clause "elseif" @rewrite.elseif)

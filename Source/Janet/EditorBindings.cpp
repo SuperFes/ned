@@ -1526,6 +1526,14 @@ namespace {
         return style ? std::optional(editor::QuoteStyleName(*style)) : std::nullopt;
     }
 
+    void NedSetFormatRewriteExpandElseif(std::string captureName, Janet value) {
+        editor::SetRewriteExpandElseif(captureName, JanetToOptionalBool(value));
+    }
+
+    std::optional<bool> NedFormatRewriteExpandElseif(std::string captureName) {
+        return editor::RewriteRuleFor(captureName).expandElseif;
+    }
+
     // Registers a VCS-agnostic plugin from one struct/table of callbacks
     // keyed by keyword -- see JanetVcsProvider's header comment for the
     // full key list and which are optional (vocabulary-completion
@@ -1712,6 +1720,13 @@ void InstallEditorBindings(Environment& env) {
         "Editor/FormatRewrite.h's own header comment.");
     env.Register<&NedFormatRewriteQuoteStyle>(
         "ned", "format-rewrite-quote-style", "The capture name's own overridden rewrite-quote-style name, or nil if unset.");
+    env.Register<&NedSetFormatRewriteExpandElseif>(
+        "ned", "set-format-rewrite-expand-elseif",
+        "Override whether an \"elseif\" keyword token capture name gets rewritten to \"else if\" (kind 9, "
+        "Rewrite) -- true/false, nil clears.");
+    env.Register<&NedFormatRewriteExpandElseif>(
+        "ned", "format-rewrite-expand-elseif",
+        "The capture name's own overridden rewrite-expand-elseif rule, or nil if unset.");
     env.Register<&NedSetFillColumn>(
         "ned", "set-fill-column",
         "Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comments to (default 70).");

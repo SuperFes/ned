@@ -439,6 +439,42 @@ TEST_CASE("RewriteRuleFor(name, language) resolves the language-scoped key first
     REQUIRE(RewriteRuleFor("format-rules-test.capture", "python").quoteStyle == QuoteStyle::Double);
 }
 
+TEST_CASE("SetRewriteExpandElseif/RewriteRuleFor round-trip, independently of quoteStyle",
+          "[FormatRules]") {
+    using ned::editor::RewriteRuleFor;
+    using ned::editor::SetRewriteExpandElseif;
+    struct Guard {
+        ~Guard() {
+            SetRewriteExpandElseif("format-rules-test.capture", std::nullopt);
+        }
+    } guard;
+
+    REQUIRE_FALSE(RewriteRuleFor("format-rules-test.capture").expandElseif.has_value());
+
+    SetRewriteExpandElseif("format-rules-test.capture", true);
+    REQUIRE(RewriteRuleFor("format-rules-test.capture").expandElseif == true);
+    REQUIRE_FALSE(RewriteRuleFor("format-rules-test.capture").quoteStyle.has_value()); // unaffected
+}
+
+TEST_CASE("RewriteRuleFor(name, language) resolves expand-elseif with the same language-scoped "
+          "precedent as quote-style",
+          "[FormatRules]") {
+    using ned::editor::RewriteRuleFor;
+    using ned::editor::SetRewriteExpandElseif;
+    struct Guard {
+        ~Guard() {
+            SetRewriteExpandElseif("format-rules-test.capture", std::nullopt);
+            SetRewriteExpandElseif("php/format-rules-test.capture", std::nullopt);
+        }
+    } guard;
+
+    SetRewriteExpandElseif("format-rules-test.capture", false);
+    SetRewriteExpandElseif("php/format-rules-test.capture", true);
+
+    REQUIRE(RewriteRuleFor("format-rules-test.capture", "php").expandElseif == true);
+    REQUIRE(RewriteRuleFor("format-rules-test.capture", "python").expandElseif == false); // falls through
+}
+
 TEST_CASE("An invalid capture name throws for both rule kinds", "[FormatRules]") {
     REQUIRE_THROWS_AS(SetSpaceBefore("", true), std::runtime_error);
     REQUIRE_THROWS_AS(SetSpaceBefore("@leading-at", true), std::runtime_error);

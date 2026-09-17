@@ -29,6 +29,7 @@ struct FormatRulesGuard {
     ~FormatRulesGuard() {
         SetAlignEnabled("align.assignment", std::nullopt);
         SetAlignEnabled("cpp/align.assignment", std::nullopt);
+        SetAlignEnabled("align.enumerator", std::nullopt);
     }
 };
 
@@ -144,6 +145,52 @@ TEST_CASE("A run of three lines aligns every operator to the widest name's own c
     ApplyFormatTextEdits(buffer, ComputeAlignEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "a   = 1;\nbb  = 2;\nccc = 3;\n");
+}
+
+// align-kind widening: a second construct, cpp's own enum-member
+// initializer -- see cpp/format.janet's own header comment for
+// align.enumerator. A bare enumerator with no initializer produces no
+// match at all, for free (its "value" field is optional in the grammar).
+TEST_CASE("cpp-mode's format.janet names align.enumerator on an enumerator's own \"=\", and "
+          "not at all on a bare enumerator with no initializer",
+          "[FormatAlign]") {
+    const Mode mode = CppMode();
+
+    const auto withValue = CapturesNamed(mode.formatCaptures("enum E { Red = 1 };\n"), "align.enumerator");
+    REQUIRE(withValue.size() == 1);
+
+    REQUIRE(CapturesNamed(mode.formatCaptures("enum E { Red };\n"), "align.enumerator").empty());
+}
+
+TEST_CASE("End to end: a run of adjacent enum-member initializers gets padded to a shared "
+          "column",
+          "[FormatAlign]") {
+    const FormatRulesGuard guard;
+    SetAlignEnabled("align.enumerator", true);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("t.cpp");
+    buffer.InsertAtPoint("enum Color {\n    Red = 1,\n    Green = 2,\n};\n");
+    ApplyFormatTextEdits(buffer, ComputeAlignEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "enum Color {\n    Red   = 1,\n    Green = 2,\n};\n");
+}
+
+TEST_CASE("End to end: an uninitialized enumerator inside the run is simply not part of it -- "
+          "the remaining initialized members still align to each other",
+          "[FormatAlign]") {
+    const FormatRulesGuard guard;
+    SetAlignEnabled("align.enumerator", true);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("t.cpp");
+    buffer.InsertAtPoint("enum Color {\n    Red = 1,\n    Blue,\n    Green = 2,\n};\n");
+    ApplyFormatTextEdits(buffer, ComputeAlignEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text())));
+
+    // Red/Green are not adjacent lines of the SAME capture once Blue's own
+    // uncaptured line sits between them -- each is its own run of size one,
+    // so neither gets touched.
+    REQUIRE(buffer.Text() == "enum Color {\n    Red = 1,\n    Blue,\n    Green = 2,\n};\n");
 }
 
 TEST_CASE("AlignRuleFor(name, language) resolves the language-scoped key first, matching every "

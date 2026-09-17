@@ -55,3 +55,20 @@
 (module . [(function_definition) (class_definition) (decorated_definition)] @def.toplevel.first)
 (class_definition
   body: (block . [(function_definition) (decorated_definition)] @def.method.first))
+
+# arrange-kind widening (kind 8): a second language for the Import-
+# organisation pilot -- both of Python's own import shapes ("import x" and
+# "from x import y"), each its own top-level node type per node-types.json
+# (import_statement / import_from_statement), captured as one whole
+# statement the same way cpp's preproc_include and JS's import_statement
+# already are. Editor/FormatArrange.cpp's own WithoutOneTrailingNewline
+# handles either newline-inclusion shape generically -- verified live this
+# grammar's own import nodes do NOT include their own trailing newline
+# (unlike cpp's preproc_include), so no new C++ branch was needed, only
+# this query addition. A multi-line "from x import (a, b, c)" is declined
+# outright by the existing multi-line check, the same call every other
+# language's own pilot already makes for a construct spanning more than
+# one line. Unconfigured, inert:
+#   (ned/set-format-arrange-enabled "arrange.import" true)
+(import_statement) @arrange.import
+(import_from_statement) @arrange.import
