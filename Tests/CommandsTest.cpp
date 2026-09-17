@@ -22,6 +22,7 @@
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Session.h"
 #include "Editor/SnippetRegistry.h"
+#include "Editor/WhitespaceSettings.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -35,6 +36,16 @@ namespace {
 struct FormatCommandGuard {
     ~FormatCommandGuard() {
         SetFormatCommand(std::nullopt);
+    }
+};
+
+// WhitespaceSettings is process-wide state (see Editor/WhitespaceSettings.h);
+// mirrors FormatCommandGuard's own RAII shape.
+struct WhitespaceSettingsGuard {
+    ~WhitespaceSettingsGuard() {
+        SetTabGlyphsEnabled(false);
+        SetIndentGuidesEnabled(false);
+        SetTrailingWhitespaceHighlightEnabled(false);
     }
 };
 
@@ -982,6 +993,40 @@ TEST_CASE("toggle-binary-safeguards lets save-buffer apply its normal behavior a
     REQUIRE(buffer.Text() == "HELLO"); // format-on-save ran normally now
 
     std::filesystem::remove(path);
+}
+
+TEST_CASE("toggle-tab-glyphs/toggle-indent-guides/toggle-trailing-whitespace-highlight flip their WhitespaceSettings flag",
+          "[Commands][WhitespaceSettings]") {
+    const WhitespaceSettingsGuard guard;
+    CommandRegistry               registry;
+    RegisterBuiltinCommands(registry);
+
+    ned::text::Buffer     buffer("scratch", ned::text::Rope("hello"));
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+
+    registry.Invoke("toggle-tab-glyphs", context);
+    REQUIRE(TabGlyphsEnabled());
+    REQUIRE(message == "Tab glyphs on.");
+    registry.Invoke("toggle-tab-glyphs", context);
+    REQUIRE_FALSE(TabGlyphsEnabled());
+    REQUIRE(message == "Tab glyphs off.");
+
+    registry.Invoke("toggle-indent-guides", context);
+    REQUIRE(IndentGuidesEnabled());
+    REQUIRE(message == "Indent guides on.");
+    registry.Invoke("toggle-indent-guides", context);
+    REQUIRE_FALSE(IndentGuidesEnabled());
+    REQUIRE(message == "Indent guides off.");
+
+    registry.Invoke("toggle-trailing-whitespace-highlight", context);
+    REQUIRE(TrailingWhitespaceHighlightEnabled());
+    REQUIRE(message == "Trailing whitespace highlight on.");
+    registry.Invoke("toggle-trailing-whitespace-highlight", context);
+    REQUIRE_FALSE(TrailingWhitespaceHighlightEnabled());
+    REQUIRE(message == "Trailing whitespace highlight off.");
 }
 
 TEST_CASE("toggle-binary-safeguards is a no-op message for a buffer that was never detected as binary",
