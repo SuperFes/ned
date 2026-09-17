@@ -316,6 +316,12 @@ struct Theme {
     // for a Theme built by hand without it.
     std::vector<Color> indentGuideDepthPalette;
 
+    // Whitespace-visualization follow-up: the foreground for kTabGlyph, the
+    // glyph drawn at a real tab byte's first cell when
+    // Editor/WhitespaceSettings.h's TabGlyphsEnabled() is on. Same
+    // low-contrast tier as indentGuideForeground above.
+    Color tabGlyphForeground;
+
     // Org-mode syntax-highlighting follow-up: one Color per new
     // Org-specific SyntaxClass member (Mode.h) -- headline levels cycle
     // through 3 distinct, bold hues; TodoKeyword/DoneKeyword use the

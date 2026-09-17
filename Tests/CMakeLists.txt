@@ -78,6 +78,7 @@ add_executable(ned_tests
             BufferViewDiffGutterTest.cpp
             BufferViewHunkNavigationTest.cpp
             BufferViewIndentGuideDepthTest.cpp
+            BufferViewTabGlyphTest.cpp
             BufferViewStickyScrollTest.cpp
             BufferViewSymbolGutterTest.cpp
             BufferViewHugeStructuralGutterTest.cpp

@@ -26,6 +26,11 @@ namespace {
         return enabled;
     }
 
+    bool& TabGlyphsStorage() {
+        static bool enabled = false;
+        return enabled;
+    }
+
 } // namespace
 
 void SetTrailingWhitespaceHighlightEnabled(bool enabled) {
@@ -56,6 +61,16 @@ void SetIndentGuideDepthColorsEnabled(bool enabled) {
 bool IndentGuideDepthColorsEnabled() {
     const std::lock_guard<std::mutex> lock(SettingsMutex());
     return IndentGuideDepthColorsStorage();
+}
+
+void SetTabGlyphsEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(SettingsMutex());
+    TabGlyphsStorage() = enabled;
+}
+
+bool TabGlyphsEnabled() {
+    const std::lock_guard<std::mutex> lock(SettingsMutex());
+    return TabGlyphsStorage();
 }
 
 } // namespace ned::editor

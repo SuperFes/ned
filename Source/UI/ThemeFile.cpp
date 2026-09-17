@@ -107,6 +107,7 @@ namespace {
         {"blame_recent_foreground", &Theme::blameRecentForeground},
         {"blame_old_foreground", &Theme::blameOldForeground},
         {"indent_guide_foreground", &Theme::indentGuideForeground},
+        {"tab_glyph_foreground", &Theme::tabGlyphForeground},
         {"headline_level1_foreground", &Theme::headlineLevel1Foreground},
         {"headline_level2_foreground", &Theme::headlineLevel2Foreground},
         {"headline_level3_foreground", &Theme::headlineLevel3Foreground},

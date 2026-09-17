@@ -6,7 +6,9 @@ using ned::editor::IndentGuideDepthColorsEnabled;
 using ned::editor::IndentGuidesEnabled;
 using ned::editor::SetIndentGuideDepthColorsEnabled;
 using ned::editor::SetIndentGuidesEnabled;
+using ned::editor::SetTabGlyphsEnabled;
 using ned::editor::SetTrailingWhitespaceHighlightEnabled;
+using ned::editor::TabGlyphsEnabled;
 using ned::editor::TrailingWhitespaceHighlightEnabled;
 
 namespace {
@@ -20,6 +22,7 @@ struct WhitespaceSettingsGuard {
         SetTrailingWhitespaceHighlightEnabled(false);
         SetIndentGuidesEnabled(false);
         SetIndentGuideDepthColorsEnabled(true);
+        SetTabGlyphsEnabled(false);
     }
 };
 
@@ -29,6 +32,7 @@ TEST_CASE("Whitespace settings default to disabled", "[WhitespaceSettings]") {
     const WhitespaceSettingsGuard guard;
     REQUIRE_FALSE(TrailingWhitespaceHighlightEnabled());
     REQUIRE_FALSE(IndentGuidesEnabled());
+    REQUIRE_FALSE(TabGlyphsEnabled());
 }
 
 TEST_CASE("SetTrailingWhitespaceHighlightEnabled/TrailingWhitespaceHighlightEnabled round-trip", "[WhitespaceSettings]") {
@@ -58,4 +62,12 @@ TEST_CASE("SetIndentGuideDepthColorsEnabled/IndentGuideDepthColorsEnabled round-
     REQUIRE_FALSE(IndentGuideDepthColorsEnabled());
     SetIndentGuideDepthColorsEnabled(true);
     REQUIRE(IndentGuideDepthColorsEnabled());
+}
+
+TEST_CASE("SetTabGlyphsEnabled/TabGlyphsEnabled round-trip", "[WhitespaceSettings]") {
+    const WhitespaceSettingsGuard guard;
+    SetTabGlyphsEnabled(true);
+    REQUIRE(TabGlyphsEnabled());
+    SetTabGlyphsEnabled(false);
+    REQUIRE_FALSE(TabGlyphsEnabled());
 }
