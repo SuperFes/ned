@@ -31,6 +31,18 @@ namespace {
         return a.convention == b.convention;
     }
 
+    bool operator==(const AlignRuleValue& a, const AlignRuleValue& b) {
+        return a.enabled == b.enabled;
+    }
+
+    bool operator==(const ArrangeRuleValue& a, const ArrangeRuleValue& b) {
+        return a.enabled == b.enabled && a.caseInsensitive == b.caseInsensitive;
+    }
+
+    bool operator==(const RewriteRuleValue& a, const RewriteRuleValue& b) {
+        return a.quoteStyle == b.quoteStyle;
+    }
+
     std::mutex& RulesMutex() {
         static std::mutex mutex;
         return mutex;
@@ -58,6 +70,21 @@ namespace {
 
     std::unordered_map<std::string, CaseRuleValue>& CaseRules() {
         static std::unordered_map<std::string, CaseRuleValue> rules;
+        return rules;
+    }
+
+    std::unordered_map<std::string, AlignRuleValue>& AlignRules() {
+        static std::unordered_map<std::string, AlignRuleValue> rules;
+        return rules;
+    }
+
+    std::unordered_map<std::string, ArrangeRuleValue>& ArrangeRules() {
+        static std::unordered_map<std::string, ArrangeRuleValue> rules;
+        return rules;
+    }
+
+    std::unordered_map<std::string, RewriteRuleValue>& RewriteRules() {
+        static std::unordered_map<std::string, RewriteRuleValue> rules;
         return rules;
     }
 
@@ -122,6 +149,33 @@ namespace {
         ValidateCaptureName(name);
         const std::lock_guard<std::mutex> lock(RulesMutex());
         auto&                             entry = BlankRules()[name];
+        entry.*field                            = std::move(value);
+        ++Generation();
+    }
+
+    template <typename T, typename Field>
+    void SetAlignField(const std::string& name, std::optional<T> value, Field AlignRuleValue::* field) {
+        ValidateCaptureName(name);
+        const std::lock_guard<std::mutex> lock(RulesMutex());
+        auto&                             entry = AlignRules()[name];
+        entry.*field                            = std::move(value);
+        ++Generation();
+    }
+
+    template <typename T, typename Field>
+    void SetArrangeField(const std::string& name, std::optional<T> value, Field ArrangeRuleValue::* field) {
+        ValidateCaptureName(name);
+        const std::lock_guard<std::mutex> lock(RulesMutex());
+        auto&                             entry = ArrangeRules()[name];
+        entry.*field                            = std::move(value);
+        ++Generation();
+    }
+
+    template <typename T, typename Field>
+    void SetRewriteField(const std::string& name, std::optional<T> value, Field RewriteRuleValue::* field) {
+        ValidateCaptureName(name);
+        const std::lock_guard<std::mutex> lock(RulesMutex());
+        auto&                             entry = RewriteRules()[name];
         entry.*field                            = std::move(value);
         ++Generation();
     }
@@ -249,6 +303,49 @@ BlankRuleValue BlankRuleFor(std::string_view name, std::string_view language) {
     return ScopedRuleFor<BlankRuleValue>(name, language, [](std::string_view n) { return BlankRuleFor(n); });
 }
 
+void SetAlignEnabled(const std::string& name, std::optional<bool> value) {
+    SetAlignField(name, value, &AlignRuleValue::enabled);
+}
+
+AlignRuleValue AlignRuleFor(std::string_view name) {
+    const std::lock_guard<std::mutex> lock(RulesMutex());
+    return RuleFor(AlignRules(), name);
+}
+
+AlignRuleValue AlignRuleFor(std::string_view name, std::string_view language) {
+    return ScopedRuleFor<AlignRuleValue>(name, language, [](std::string_view n) { return AlignRuleFor(n); });
+}
+
+void SetArrangeEnabled(const std::string& name, std::optional<bool> value) {
+    SetArrangeField(name, value, &ArrangeRuleValue::enabled);
+}
+
+void SetArrangeCaseInsensitive(const std::string& name, std::optional<bool> value) {
+    SetArrangeField(name, value, &ArrangeRuleValue::caseInsensitive);
+}
+
+ArrangeRuleValue ArrangeRuleFor(std::string_view name) {
+    const std::lock_guard<std::mutex> lock(RulesMutex());
+    return RuleFor(ArrangeRules(), name);
+}
+
+ArrangeRuleValue ArrangeRuleFor(std::string_view name, std::string_view language) {
+    return ScopedRuleFor<ArrangeRuleValue>(name, language, [](std::string_view n) { return ArrangeRuleFor(n); });
+}
+
+void SetRewriteQuoteStyle(const std::string& name, std::optional<QuoteStyle> value) {
+    SetRewriteField(name, value, &RewriteRuleValue::quoteStyle);
+}
+
+RewriteRuleValue RewriteRuleFor(std::string_view name) {
+    const std::lock_guard<std::mutex> lock(RulesMutex());
+    return RuleFor(RewriteRules(), name);
+}
+
+RewriteRuleValue RewriteRuleFor(std::string_view name, std::string_view language) {
+    return ScopedRuleFor<RewriteRuleValue>(name, language, [](std::string_view n) { return RewriteRuleFor(n); });
+}
+
 std::size_t FormatRuleGeneration() {
     const std::lock_guard<std::mutex> lock(RulesMutex());
     return Generation();
@@ -298,6 +395,26 @@ std::string WrapPolicyName(WrapPolicy policy) {
             return "always";
     }
     throw std::runtime_error("ned: internal error: unhandled WrapPolicy");
+}
+
+QuoteStyle QuoteStyleByName(const std::string& name) {
+    if (name == "single") {
+        return QuoteStyle::Single;
+    }
+    if (name == "double") {
+        return QuoteStyle::Double;
+    }
+    throw std::runtime_error("ned: invalid quote style \"" + name + "\" -- expected \"single\" or \"double\"");
+}
+
+std::string QuoteStyleName(QuoteStyle style) {
+    switch (style) {
+        case QuoteStyle::Single:
+            return "single";
+        case QuoteStyle::Double:
+            return "double";
+    }
+    throw std::runtime_error("ned: internal error: unhandled QuoteStyle");
 }
 
 CaseConvention CaseConventionByName(const std::string& name) {
@@ -377,7 +494,9 @@ namespace {
     // A single "word" of a separator-delimited convention (snake_case's
     // own "snake"/"case"). Each convention's own casing requirement per
     // word is one of these four shapes.
-    enum class WordCase { AllLower, AllUpper, Capitalized };
+    enum class WordCase { AllLower,
+                          AllUpper,
+                          Capitalized };
 
     bool WordMatches(std::string_view word, WordCase wordCase) {
         if (word.empty()) {
@@ -403,16 +522,16 @@ namespace {
         switch (wordCase) {
             case WordCase::AllLower:
                 return IsAsciiLower(word.front()) &&
-                      std::all_of(word.begin() + 1, word.end(),
-                                  [](char c) { return IsAsciiLower(c) || IsAsciiDigit(c); });
+                       std::all_of(word.begin() + 1, word.end(),
+                                   [](char c) { return IsAsciiLower(c) || IsAsciiDigit(c); });
             case WordCase::AllUpper:
                 return IsAsciiUpper(word.front()) &&
-                      std::all_of(word.begin() + 1, word.end(),
-                                  [](char c) { return IsAsciiUpper(c) || IsAsciiDigit(c); });
+                       std::all_of(word.begin() + 1, word.end(),
+                                   [](char c) { return IsAsciiUpper(c) || IsAsciiDigit(c); });
             case WordCase::Capitalized:
                 return IsAsciiUpper(word.front()) &&
-                      std::all_of(word.begin() + 1, word.end(),
-                                  [](char c) { return IsAsciiLower(c) || IsAsciiDigit(c); });
+                       std::all_of(word.begin() + 1, word.end(),
+                                   [](char c) { return IsAsciiLower(c) || IsAsciiDigit(c); });
         }
         return false;
     }
@@ -428,7 +547,7 @@ namespace {
         std::size_t start   = 0;
         bool        isFirst = true;
         while (true) {
-            const std::size_t sep  = name.find(separator, start);
+            const std::size_t      sep  = name.find(separator, start);
             const std::string_view word = (sep == std::string_view::npos) ? name.substr(start)
                                                                           : name.substr(start, sep - start);
             if (!WordMatches(word, isFirst ? firstWord : restWords)) {
@@ -460,10 +579,10 @@ bool MatchesCaseConvention(std::string_view name, CaseConvention convention) {
             return WordMatches(name, WordCase::AllUpper);
         case CaseConvention::CamelCase:
             return IsAsciiLower(name.front()) &&
-                  std::all_of(name.begin() + 1, name.end(), [](char c) { return IsAsciiLower(c) || IsAsciiUpper(c) || IsAsciiDigit(c); });
+                   std::all_of(name.begin() + 1, name.end(), [](char c) { return IsAsciiLower(c) || IsAsciiUpper(c) || IsAsciiDigit(c); });
         case CaseConvention::PascalCase:
             return IsAsciiUpper(name.front()) &&
-                  std::all_of(name.begin() + 1, name.end(), [](char c) { return IsAsciiLower(c) || IsAsciiUpper(c) || IsAsciiDigit(c); });
+                   std::all_of(name.begin() + 1, name.end(), [](char c) { return IsAsciiLower(c) || IsAsciiUpper(c) || IsAsciiDigit(c); });
         case CaseConvention::SnakeCase:
             return MatchesSeparated(name, '_', WordCase::AllLower, WordCase::AllLower);
         case CaseConvention::LeadingSnakeCase:

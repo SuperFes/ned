@@ -210,10 +210,11 @@ every build:
 
 <!-- format-keys:begin -->
 
-`indent` `space` `break` `blank` `wrap` `case` `trim-trailing-whitespace`
-`ensure-final-newline` `max-consecutive-blank-lines` `tabs` `width` `before` `after`
-`within` `placement` `collapse-empty` `collapse-simple` `min-before` `max-before` `policy`
-`force-trailing-comma`
+`indent` `space` `break` `blank` `wrap` `align` `arrange` `rewrite` `case`
+`trim-trailing-whitespace` `ensure-final-newline` `max-consecutive-blank-lines` `tabs`
+`width` `before` `after` `within` `placement` `collapse-empty` `collapse-simple`
+`min-before` `max-before` `policy` `force-trailing-comma` `enabled` `case-insensitive`
+`quote-style`
 
 <!-- format-keys:end -->
 
@@ -270,9 +271,10 @@ see below), Fish's `begin_statement` alone, in two forms (`"begin"`/`"end"` or `
 -- no delimiter of any kind for if/while/for/switch/function, see below); TypeScript
 and TSX have no `format.janet` files of their own at all, see below), all wired into
 `format-buffer`'s and
-`--format`'s Native chain (reindent, then Blank, then Wrap, then Break, then Space, then
-Hygiene -- Wrap slotted in after this section was first written, see its own section
-below for why it runs where it does) and
+`--format`'s Native chain (reindent, then Rewrite, then Arrange, then Blank, then Wrap, then
+Break, then Space, then Align, then Hygiene -- Wrap, Rewrite, Arrange, and Align each slotted
+in after this section was first written, see their own sections below for why each runs
+where it does) and
 all shipping no built-in default -- neither does anything until you configure a rule:
 
 - **Break-kind captures** (`Editor/FormatBracePlacement.h`'s `ComputeBracePlacementEdits`,
@@ -1510,6 +1512,156 @@ capture immediately follows it should react to that, not to wherever the delimit
 be. Live-verified end to end via `ned --format` with a real project `.ned/format.janet`,
 output re-checked with a real `g++` compile (the trailing-comma hazard above was caught
 exactly this way, not by inspection). Full suite: 4751 cases (9 new).
+
+## Align, and the "adjacent lines forming a group" problem
+
+`:align` (kind 5 of `Docs/FormattingCapabilities.md`'s catalogue) pads a run of adjacent,
+same-indent lines' own anchor tokens to a shared column -- "the single most 'opinionated
+codebase' feature in the list", per that doc's own B2 section, and the first rule kind whose
+own edit decision needs more than one capture at a time. Every prior kind resolves a capture
+entirely against its own span; a shared column is inherently a property of several lines at
+once, so `Editor/FormatAlign.h` is also where "adjacent lines forming a group" -- a notion
+that doc says nothing else in the engine had -- actually gets defined, deliberately *after*
+kinds 2/3/4/6 shipped rather than guessed at ahead of time, the same "worth doing after B1"
+sequencing that doc originally called for.
+
+```janet
+{:align {"align.assignment" {:enabled true}}}
+```
+
+`:enabled` is the only field `AlignRuleValue` has: unlike Space/Break/Blank/Wrap, there is no
+per-capture geometry left to configure once a construct opts in -- the grouping rule itself
+supplies everything else. That rule: captures sharing one NAME are split into maximal runs
+where each next capture sits on the line immediately following the previous one's own line
+(a blank line, an intervening unrelated statement, or simply "not adjacent" all end a run)
+AND shares that previous capture's own leading-indent text exactly, byte for byte -- a
+deliberately conservative, tree-free proxy for "same nesting depth, same immediate parent"
+that works from the same flat capture list every other pass here already reads. A run of
+size one has nothing to align against and contributes no edit.
+
+Only the whitespace strictly between the previous non-whitespace byte and a capture's own
+start byte is ever touched, the same "never touch what's not part of the gap" discipline
+Break/Space's own captures already hold to -- so a run's own longest line is left completely
+untouched, and every other member gets exactly enough padding inserted for its own anchor to
+land in the same column, with at least one space always preserved even when the original gap
+was zero (`a=1;` reassigned right next to a wider `bb = 2;` still gets a real gap inserted,
+not glued flush). Column counting is plain byte offset from a line's own start, not
+tab-width-aware -- a real, declared gap (a mid-line tab before the anchor would miscount),
+logged rather than guessed at, the same honesty Wrap's own "no margin-aware policy yet" note
+above models.
+
+**Only cpp, and only a plain reassignment statement's own operator token, has an `:align`
+capture today** -- the same "one pilot construct, full chain end to end" discipline every
+other rule kind's own first capture in this codebase follows.
+`(expression_statement (assignment_expression operator: _ @align.assignment))` deliberately
+scopes to a *statement-level* assignment, not any `assignment_expression` anywhere (a
+for-loop's own update clause, a chained `a = b = 1`, one nested inside a call argument) --
+`FormatAlign.h`'s own grouping rule only ever needs ONE anchor per line to mean anything, and
+narrowing to top-level statement assignments is what keeps that anchor unambiguous. Kind
+5's own B2 list is otherwise untouched: declaration names, enum/designated initialisers,
+bit-field sizes, end-of-line comments, and every SQL row remain open follow-ups.
+
+Settable live from `init.janet` too, the same per-field shape every other kind here uses:
+`(ned/set-format-align-enabled "align.assignment" true)`.
+
+Align runs LAST in the Native chain, after Break/Space -- its own column computation reads
+wherever an anchor token's spacing ended up AFTER Space's own before/after rules ran, not
+before, or its own padding would just get undone (or doubled) the moment a Space rule
+touches the same gap. Idempotent by construction: re-running against an already-aligned run
+recomputes the identical target column and finds every gap already at it.
+
+## Arrange, and the Import-organisation pilot
+
+`:arrange` (kind 8) reorders a run of adjacent sibling captures sharing one name by a sort
+key -- "Reorder siblings by a key", per the capabilities doc's own framing. That doc splits
+kind 8 into two real B2 items: Import organisation ("tree-sitter handles all of it") and
+Member arrangement (needs "which methods are dependent"/"which are overridden", real
+semantics). This rollout is the Import-organisation half only; Member arrangement remains
+unstarted design.
+
+```janet
+{:arrange {"arrange.import" {:enabled true :case-insensitive true}}}
+```
+
+The pilot construct: a whole import/include STATEMENT captured as one node --
+`arrange.import`, cpp's own `preproc_include` and JavaScript/TypeScript/TSX's own
+`import_statement` (shared for free via the same `javascript/format.janet` file every other
+kind already reuses across those three languages). Grouping mirrors Align's own rule
+(`Editor/FormatArrange.h`, `Editor/FormatAlign.h`'s exact line-adjacency shape): a maximal
+run of same-name captures where each next one starts on the line immediately following the
+previous one's own LAST line. A blank line between two imports is therefore a real group
+boundary -- a rough approximation of JetBrains' own "group plain vs. from imports
+separately" instinct, gotten for free from line-adjacency alone rather than a real
+from/plain classification this pilot doesn't attempt. A capture whose own span crosses a
+newline (a multi-line import) is dropped before grouping even begins -- reordering it would
+mean moving something other than "one line", which this pass's own per-line-text reorder
+mechanism cannot safely do; decline rather than approximate, the same call `FormatWrap.h`'s
+own item-shape checks make. The run's own LAST member being the literal last line of the
+buffer with no trailing newline is a second, narrower decline -- reordering it could lose or
+duplicate that missing terminator; a real edge case in practice, since the Hygiene pass
+already ensures a final newline on any buffer this pass would otherwise touch.
+
+**A real live surprise, not assumed going in:** cpp's own `preproc_include` node span
+includes its own trailing `'\n'` (verified live: a `"#include <b.h>\n"` source produces a
+capture spanning all 15 bytes, not 14), while JavaScript's `import_statement` stops at the
+statement's own last token. `Editor/FormatArrange.cpp`'s `WithoutOneTrailingNewline` strips
+at most one trailing newline before either checking for an EMBEDDED one (the real
+multi-line-decline test) or using the captured text as a sort key -- first written without
+this and caught immediately by this rollout's own test suite: every single cpp `#include`
+was being misread as "multi-line" and silently declined outright, a real bug caught live,
+not by inspection.
+
+The sort key is the captured node's own text verbatim (minus that one possible trailing
+newline) -- not a resolved module path, not the specifier alone, so aliasing syntax before
+the module string still participates in the sort. `:case-insensitive` (default off, ordinal
+byte compare) folds ASCII case before comparing, matching JetBrains' own toggle. Sorting by
+name-within-an-import, merging same-module imports, and split/join all remain open
+follow-ups, along with every language besides cpp/JS/TS/TSX.
+
+Settable live from `init.janet`: `(ned/set-format-arrange-enabled "arrange.import" true)`,
+`(ned/set-format-arrange-case-insensitive "arrange.import" true)`.
+
+Arrange runs SECOND in the Native chain, right after Rewrite and before Blank -- reordering
+whole import lines changes which lines are adjacent to which, exactly the fact Blank's own
+min/max-before rules need to already be settled against, not react to mid-reorder.
+
+## Rewrite, and the quote-style pilot
+
+`:rewrite` (kind 9) replaces a captured construct with an equivalent one -- "Equivalence
+rewrites" in the capabilities doc's own B2 section, and the doc is explicit about the
+tradeoff: individually trivial, collectively what makes a formatter feel opinionated, but
+"some are not semantics-preserving in every dialect, so each ships off by default." Unlike
+every kind above it, this one's own safety story is per-EDIT, not just per-configuration:
+even a fully configured `:rewrite` rule declines any specific string it cannot rewrite as a
+pure, content-preserving delimiter swap.
+
+```janet
+{:rewrite {"rewrite.quote" {:quote-style :double}}}
+```
+
+`:quote-style` (`:single`/`:double`) is `RewriteRuleValue`'s only field. The pilot
+construct: a `rewrite.quote` capture naming a JavaScript/TypeScript/TSX `string` node --
+`template_string` is a wholly different grammar node (backtick-delimited), so it is never
+reached by this capture at all, no discriminator needed. A candidate is rewritten only when
+doing so touches nothing but the two delimiter bytes: declined outright whenever the
+string's own interior contains ANY backslash (an escape sequence this pass does not attempt
+to re-derive -- an escaped target quote would need unescaping, an escaped current quote
+would become an unnecessary-but-legal escape this pass chooses not to leave behind either)
+or an unescaped occurrence of the target quote character (which would need escaping to stay
+legal). Decline rather than guess, the same discipline every prior rule kind's own hazard
+(Go's ASI, PHP's three-way body, Kotlin's fieldless grammar) already established for this
+codebase.
+
+Only quote style, and only for JS/TS/TSX string literals, is implemented -- semicolon
+insertion/removal, trailing comma, `elseif`→`else if`, `array()`→`[]`, short closures, and
+keyword/boolean-literal case all remain open follow-ups, per the capabilities doc's own list.
+
+Settable live from `init.janet`: `(ned/set-format-rewrite-quote-style "rewrite.quote" "double")`.
+
+Rewrite runs FIRST in the Native chain, ahead of every other kind here -- a pure in-place
+content swap that never changes line layout or length in any way another pass would need to
+react to, so its own ordering relative to them is a non-issue; it runs first purely so "fix
+content equivalences before deciding layout" reads as the obvious story.
 
 ## Case, and why it's not wired into the reformat pipeline
 

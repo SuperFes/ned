@@ -91,8 +91,8 @@ TEST_CASE("Space rule fields are independent", "[FormatRules]") {
 TEST_CASE("SpaceRuleFor(name, language) tries the language-scoped key first", "[FormatRules]") {
     FormatRulesGuard guard;
 
-    SetSpaceBefore("format-rules-test.capture", true);            // shared rule
-    SetSpaceBefore("cpp/format-rules-test.capture", false);       // cpp's own override
+    SetSpaceBefore("format-rules-test.capture", true);      // shared rule
+    SetSpaceBefore("cpp/format-rules-test.capture", false); // cpp's own override
 
     REQUIRE(SpaceRuleFor("format-rules-test.capture", "cpp").before == false);
     REQUIRE(SpaceRuleFor("format-rules-test.capture", "python").before == true); // falls through to the shared rule
@@ -119,7 +119,7 @@ TEST_CASE("BreakRuleFor(name, language) resolves the same way, per-field", "[For
 
 TEST_CASE("BracePlacementByName/BracePlacementName round-trip for every value", "[FormatRules]") {
     for (const BracePlacement placement :
-        {BracePlacement::SameLine, BracePlacement::NextLine, BracePlacement::NextLineIndented}) {
+         {BracePlacement::SameLine, BracePlacement::NextLine, BracePlacement::NextLineIndented}) {
         REQUIRE(BracePlacementByName(BracePlacementName(placement)) == placement);
     }
 }
@@ -201,9 +201,9 @@ TEST_CASE("CaseConventionByName/CaseConventionName round-trip for every value", 
     using ned::editor::CaseConventionByName;
     using ned::editor::CaseConventionName;
     for (const CaseConvention convention :
-        {CaseConvention::None, CaseConvention::Lowercase, CaseConvention::Uppercase, CaseConvention::CamelCase,
-         CaseConvention::PascalCase, CaseConvention::SnakeCase, CaseConvention::LeadingSnakeCase,
-         CaseConvention::UpperSnakeCase, CaseConvention::ScreamingSnakeCase, CaseConvention::LispCase}) {
+         {CaseConvention::None, CaseConvention::Lowercase, CaseConvention::Uppercase, CaseConvention::CamelCase,
+          CaseConvention::PascalCase, CaseConvention::SnakeCase, CaseConvention::LeadingSnakeCase,
+          CaseConvention::UpperSnakeCase, CaseConvention::ScreamingSnakeCase, CaseConvention::LispCase}) {
         REQUIRE(CaseConventionByName(CaseConventionName(convention)) == convention);
     }
 }
@@ -223,9 +223,9 @@ TEST_CASE("MatchesCaseConvention: every other convention rejects the empty strin
     using ned::editor::CaseConvention;
     using ned::editor::MatchesCaseConvention;
     for (const CaseConvention convention :
-        {CaseConvention::Lowercase, CaseConvention::Uppercase, CaseConvention::CamelCase, CaseConvention::PascalCase,
-         CaseConvention::SnakeCase, CaseConvention::LeadingSnakeCase, CaseConvention::UpperSnakeCase,
-         CaseConvention::ScreamingSnakeCase, CaseConvention::LispCase}) {
+         {CaseConvention::Lowercase, CaseConvention::Uppercase, CaseConvention::CamelCase, CaseConvention::PascalCase,
+          CaseConvention::SnakeCase, CaseConvention::LeadingSnakeCase, CaseConvention::UpperSnakeCase,
+          CaseConvention::ScreamingSnakeCase, CaseConvention::LispCase}) {
         REQUIRE_FALSE(MatchesCaseConvention("", convention));
     }
 }
@@ -277,8 +277,8 @@ TEST_CASE("MatchesCaseConvention: snake_case", "[FormatRules]") {
     REQUIRE_FALSE(MatchesCaseConvention("Foo_bar", CaseConvention::SnakeCase));
     REQUIRE_FALSE(MatchesCaseConvention("foo_Bar", CaseConvention::SnakeCase));
     REQUIRE_FALSE(MatchesCaseConvention("FOO_BAR", CaseConvention::SnakeCase));
-    REQUIRE_FALSE(MatchesCaseConvention("_foo", CaseConvention::SnakeCase));  // leading separator
-    REQUIRE_FALSE(MatchesCaseConvention("foo_", CaseConvention::SnakeCase)); // trailing separator
+    REQUIRE_FALSE(MatchesCaseConvention("_foo", CaseConvention::SnakeCase));     // leading separator
+    REQUIRE_FALSE(MatchesCaseConvention("foo_", CaseConvention::SnakeCase));     // trailing separator
     REQUIRE_FALSE(MatchesCaseConvention("foo__bar", CaseConvention::SnakeCase)); // doubled separator
 }
 
@@ -333,11 +333,110 @@ TEST_CASE("CaseRuleFor(name, language) resolves the language-scoped key first, m
         }
     } guard;
 
-    SetCaseConvention("format-rules-test.capture", CaseConvention::CamelCase);       // shared rule
+    SetCaseConvention("format-rules-test.capture", CaseConvention::CamelCase);     // shared rule
     SetCaseConvention("cpp/format-rules-test.capture", CaseConvention::SnakeCase); // cpp's own override
 
     REQUIRE(CaseRuleFor("format-rules-test.capture", "cpp").convention == CaseConvention::SnakeCase);
     REQUIRE(CaseRuleFor("format-rules-test.capture", "python").convention == CaseConvention::CamelCase);
+}
+
+TEST_CASE("A capture with no align override has every field unset", "[FormatRules]") {
+    REQUIRE_FALSE(ned::editor::AlignRuleFor("format-rules-test.unconfigured").enabled.has_value());
+}
+
+TEST_CASE("Setting and clearing an align rule round-trips and bumps the generation", "[FormatRules]") {
+    using ned::editor::AlignRuleFor;
+    using ned::editor::SetAlignEnabled;
+    struct Guard {
+        ~Guard() {
+            SetAlignEnabled("format-rules-test.capture", std::nullopt);
+        }
+    } guard;
+
+    const std::size_t before = FormatRuleGeneration();
+    SetAlignEnabled("format-rules-test.capture", true);
+    REQUIRE(AlignRuleFor("format-rules-test.capture").enabled == true);
+    REQUIRE(FormatRuleGeneration() > before);
+
+    SetAlignEnabled("format-rules-test.capture", std::nullopt);
+    REQUIRE_FALSE(AlignRuleFor("format-rules-test.capture").enabled.has_value());
+}
+
+TEST_CASE("AlignRuleFor(name, language) resolves the language-scoped key first", "[FormatRules]") {
+    using ned::editor::AlignRuleFor;
+    using ned::editor::SetAlignEnabled;
+    struct Guard {
+        ~Guard() {
+            SetAlignEnabled("format-rules-test.capture", std::nullopt);
+            SetAlignEnabled("cpp/format-rules-test.capture", std::nullopt);
+        }
+    } guard;
+
+    SetAlignEnabled("format-rules-test.capture", true);
+    SetAlignEnabled("cpp/format-rules-test.capture", false);
+
+    REQUIRE(AlignRuleFor("format-rules-test.capture", "cpp").enabled == false);
+    REQUIRE(AlignRuleFor("format-rules-test.capture", "python").enabled == true);
+}
+
+TEST_CASE("A capture with no arrange override has every field unset", "[FormatRules]") {
+    REQUIRE_FALSE(ned::editor::ArrangeRuleFor("format-rules-test.unconfigured").enabled.has_value());
+    REQUIRE_FALSE(ned::editor::ArrangeRuleFor("format-rules-test.unconfigured").caseInsensitive.has_value());
+}
+
+TEST_CASE("Arrange rule fields are independent", "[FormatRules]") {
+    using ned::editor::ArrangeRuleFor;
+    using ned::editor::SetArrangeCaseInsensitive;
+    using ned::editor::SetArrangeEnabled;
+    struct Guard {
+        ~Guard() {
+            SetArrangeEnabled("format-rules-test.capture", std::nullopt);
+            SetArrangeCaseInsensitive("format-rules-test.capture", std::nullopt);
+        }
+    } guard;
+
+    SetArrangeEnabled("format-rules-test.capture", true);
+    REQUIRE(ArrangeRuleFor("format-rules-test.capture").enabled == true);
+    REQUIRE_FALSE(ArrangeRuleFor("format-rules-test.capture").caseInsensitive.has_value());
+
+    SetArrangeCaseInsensitive("format-rules-test.capture", true);
+    REQUIRE(ArrangeRuleFor("format-rules-test.capture").caseInsensitive == true);
+    REQUIRE(ArrangeRuleFor("format-rules-test.capture").enabled == true); // unaffected
+}
+
+TEST_CASE("A capture with no rewrite override has every field unset", "[FormatRules]") {
+    REQUIRE_FALSE(ned::editor::RewriteRuleFor("format-rules-test.unconfigured").quoteStyle.has_value());
+}
+
+TEST_CASE("QuoteStyleByName/QuoteStyleName round-trip for every value", "[FormatRules]") {
+    using ned::editor::QuoteStyle;
+    using ned::editor::QuoteStyleByName;
+    using ned::editor::QuoteStyleName;
+    for (const QuoteStyle style : {QuoteStyle::Single, QuoteStyle::Double}) {
+        REQUIRE(QuoteStyleByName(QuoteStyleName(style)) == style);
+    }
+}
+
+TEST_CASE("QuoteStyleByName throws for an unrecognized name", "[FormatRules]") {
+    REQUIRE_THROWS_AS(ned::editor::QuoteStyleByName("not-a-real-style"), std::runtime_error);
+}
+
+TEST_CASE("RewriteRuleFor(name, language) resolves the language-scoped key first", "[FormatRules]") {
+    using ned::editor::QuoteStyle;
+    using ned::editor::RewriteRuleFor;
+    using ned::editor::SetRewriteQuoteStyle;
+    struct Guard {
+        ~Guard() {
+            SetRewriteQuoteStyle("format-rules-test.capture", std::nullopt);
+            SetRewriteQuoteStyle("javascript/format-rules-test.capture", std::nullopt);
+        }
+    } guard;
+
+    SetRewriteQuoteStyle("format-rules-test.capture", QuoteStyle::Double);
+    SetRewriteQuoteStyle("javascript/format-rules-test.capture", QuoteStyle::Single);
+
+    REQUIRE(RewriteRuleFor("format-rules-test.capture", "javascript").quoteStyle == QuoteStyle::Single);
+    REQUIRE(RewriteRuleFor("format-rules-test.capture", "python").quoteStyle == QuoteStyle::Double);
 }
 
 TEST_CASE("An invalid capture name throws for both rule kinds", "[FormatRules]") {

@@ -195,3 +195,24 @@
 # chop-down LAYOUT itself (one argument per line, no trailing comma) is
 # unaffected and confirmed live it compiles clean.
 (argument_list "(" @wrap.args.open (_)* @wrap.args.item ")" @wrap.args.close)
+
+# align-kind follow-up (kind 5): the pilot construct for the whole rule
+# kind -- a plain reassignment statement's own operator token
+# (assignment_expression's "operator" field per node-types.json, spanning
+# the "=" itself, or a compound one like "+="). Deliberately scoped to a
+# bare `expression_statement`'s own assignment, not any assignment_expression
+# anywhere (a for-loop's own update clause, a chained "a = b = 1", or one
+# nested inside a call argument) -- FormatAlign.h's own grouping rule only
+# ever needs ONE anchor per line to work at all, and scoping to top-level
+# statement assignments is what keeps that anchor unambiguous. Unconfigured
+# (no built-in default), this capture is inert:
+#   (ned/set-format-align-enabled "align.assignment" true)
+(expression_statement (assignment_expression operator: _ @align.assignment))
+
+# arrange-kind follow-up (kind 8): the pilot construct -- a whole #include
+# directive, captured as one node (preproc_include's own span already
+# covers "#include <foo.h>"/"#include \"foo.h\"" in full, per
+# node-types.json). Editor/FormatArrange.h reorders a run of adjacent
+# #include lines by the captured text itself. Unconfigured, inert:
+#   (ned/set-format-arrange-enabled "arrange.import" true)
+(preproc_include) @arrange.import

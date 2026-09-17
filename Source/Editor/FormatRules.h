@@ -151,20 +151,66 @@ struct WrapRuleValue {
 // fixer second (a code action). Never an automatic reformat step --
 // renaming on save would be hostile."
 enum class CaseConvention {
-    None,             // <none> -- no constraint, always matches
-    Lowercase,        // lowercase
-    Uppercase,        // UPPERCASE
-    CamelCase,        // camelCase
-    PascalCase,       // PascalCase
-    SnakeCase,        // snake_case
-    LeadingSnakeCase, // Leading_snake_case
-    UpperSnakeCase,   // Upper_Snake_Case
+    None,               // <none> -- no constraint, always matches
+    Lowercase,          // lowercase
+    Uppercase,          // UPPERCASE
+    CamelCase,          // camelCase
+    PascalCase,         // PascalCase
+    SnakeCase,          // snake_case
+    LeadingSnakeCase,   // Leading_snake_case
+    UpperSnakeCase,     // Upper_Snake_Case
     ScreamingSnakeCase, // SCREAMING_SNAKE_CASE
-    LispCase,         // lisp-case
+    LispCase,           // lisp-case
 };
 
 struct CaseRuleValue {
     std::optional<CaseConvention> convention;
+};
+
+// Kind 5 (Align): whether a run of adjacent, same-indent lines whose capture
+// shares one name gets its anchor tokens padded to a shared column --
+// FormattingCapabilities.md's own "a shared column across sibling lines".
+// Unlike Space/Break/Blank/Wrap, a single capture is never enough on its own
+// to decide anything: the grouping ITSELF (which adjacent lines form one
+// alignable run) is a property of the whole capture list for one name, not
+// of any one capture, so `enabled` is the only field -- there is no
+// per-capture geometry left to configure once a construct opts in. See
+// Editor/FormatAlign.h for the actual grouping rule (line-adjacent, same
+// leading indent, FormattingCapabilities.md's own "adjacent lines forming a
+// group" concept this rule kind is the first to need).
+struct AlignRuleValue {
+    std::optional<bool> enabled;
+};
+
+// Kind 8 (Arrange): reorder a run of adjacent sibling captures sharing one
+// name by a sort key -- FormattingCapabilities.md's own "Reorder siblings by
+// a key". Scoped to the Import-organisation half of that doc's B2 section
+// for its pilot (Editor/FormatArrange.h); the Member-arrangement half
+// (an ordered matching-rule list, grouping by "dependent"/"overridden") is
+// explicitly out of scope for this rollout, per that doc's own "ship the
+// ordering, degrade the two grouping rules" stance -- there is no ordered-
+// rule-list field here to configure yet.
+struct ArrangeRuleValue {
+    std::optional<bool> enabled;
+    // Ordinal byte compare by default (false/unset); true folds ASCII case
+    // before comparing, JetBrains' own "sort case-insensitively" toggle.
+    std::optional<bool> caseInsensitive;
+};
+
+// Kind 9 (Rewrite): replace a captured node with an equivalent one --
+// FormattingCapabilities.md's own "replace a construct with an equivalent
+// one", and its own explicit safety stance ("each ships off by default").
+// Quote style is the pilot (Editor/FormatRewrite.h): a string literal's own
+// delimiter character, `Single` (') or `Double` ("). Declined outright
+// (left alone, never guessed) whenever rewriting would require re-escaping
+// the string's own interior -- see FormatRewrite.cpp's own comment.
+enum class QuoteStyle {
+    Single, // '...'
+    Double, // "..."
+};
+
+struct RewriteRuleValue {
+    std::optional<QuoteStyle> quoteStyle;
 };
 
 // Malformed vs. merely unknown follows SyntaxTheme.h's own trust-boundary
@@ -210,6 +256,22 @@ void SetBlankMaxBefore(const std::string& name, std::optional<int> value);
 [[nodiscard]] BlankRuleValue BlankRuleFor(std::string_view name);
 [[nodiscard]] BlankRuleValue BlankRuleFor(std::string_view name, std::string_view language);
 
+void SetAlignEnabled(const std::string& name, std::optional<bool> value);
+
+[[nodiscard]] AlignRuleValue AlignRuleFor(std::string_view name);
+[[nodiscard]] AlignRuleValue AlignRuleFor(std::string_view name, std::string_view language);
+
+void SetArrangeEnabled(const std::string& name, std::optional<bool> value);
+void SetArrangeCaseInsensitive(const std::string& name, std::optional<bool> value);
+
+[[nodiscard]] ArrangeRuleValue ArrangeRuleFor(std::string_view name);
+[[nodiscard]] ArrangeRuleValue ArrangeRuleFor(std::string_view name, std::string_view language);
+
+void SetRewriteQuoteStyle(const std::string& name, std::optional<QuoteStyle> value);
+
+[[nodiscard]] RewriteRuleValue RewriteRuleFor(std::string_view name);
+[[nodiscard]] RewriteRuleValue RewriteRuleFor(std::string_view name, std::string_view language);
+
 // Bumped by every setter above -- one counter for both kinds, mirroring
 // SyntaxThemeGeneration()'s own "cheap, did-it-change" signal shape (the
 // SyntaxClass/capture-style tiers share one generation too).
@@ -225,6 +287,10 @@ void SetBlankMaxBefore(const std::string& name, std::optional<int> value);
 // Same round-trip shape for WrapPolicy ("never"/"always").
 [[nodiscard]] WrapPolicy  WrapPolicyByName(const std::string& name);
 [[nodiscard]] std::string WrapPolicyName(WrapPolicy policy);
+
+// Same round-trip shape for QuoteStyle ("single"/"double").
+[[nodiscard]] QuoteStyle  QuoteStyleByName(const std::string& name);
+[[nodiscard]] std::string QuoteStyleName(QuoteStyle style);
 
 // Same round-trip shape for CaseConvention -- kebab-case names for the
 // multi-word conventions, matching every other Janet-facing enum name in
