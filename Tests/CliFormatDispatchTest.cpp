@@ -31,4 +31,7 @@ TEST_CASE("InvokedAsNedLangc matches only the ned-langc basename", "[CliFormatDi
     REQUIRE_FALSE(InvokedAsNedLangc("ned"));
     REQUIRE_FALSE(InvokedAsNedLangc("ned-format"));
     REQUIRE_FALSE(InvokedAsNedLangc("/opt/ned-langc/ned"));
+    REQUIRE(ned::editor::InvokedAsNedImportLanguage("/usr/bin/ned-import-language"));
+    REQUIRE(ned::editor::InvokedAsNedTestLanguage("ned-test-language"));
+    REQUIRE_FALSE(ned::editor::InvokedAsNedTestLanguage("ned-import-language"));
 }

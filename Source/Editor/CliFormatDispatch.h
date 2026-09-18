@@ -19,8 +19,11 @@ namespace ned::editor {
 // component (e.g. ".../ned-format/ned") does not match.
 [[nodiscard]] bool InvokedAsNedFormat(std::string_view argv0);
 
-// The same test for the `ned-langc` symlink (`ned --compile-language`).
+// The same test for the `ned-langc` (`--compile-language`), `ned-import-language`
+// and `ned-test-language` symlinks.
 [[nodiscard]] bool InvokedAsNedLangc(std::string_view argv0);
+[[nodiscard]] bool InvokedAsNedImportLanguage(std::string_view argv0);
+[[nodiscard]] bool InvokedAsNedTestLanguage(std::string_view argv0);
 
 } // namespace ned::editor
 

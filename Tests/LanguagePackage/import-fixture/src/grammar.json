@@ -1,0 +1,14 @@
+{
+  "name": "words",
+  "rules": {
+    "source_file": {"type": "REPEAT", "content": {"type": "SYMBOL", "name": "item"}},
+    "item": {"type": "SEQ", "members": [{"type": "SYMBOL", "name": "word"}, {"type": "STRING", "value": ";"}]},
+    "word": {"type": "PATTERN", "value": "[a-z]+"}
+  },
+  "extras": [{"type": "PATTERN", "value": "\\s"}],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}
