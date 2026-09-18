@@ -20,11 +20,19 @@ function(ned_add_treesitter_grammar_target target_name grammar_dir)
                 "run Tools/vendor-grammars.py to populate ThirdParty/tree-sitter-grammars/")
     endif()
     add_library(${target_name} STATIC "${grammar_dir}/src/parser.c")
-    if (EXISTS "${grammar_dir}/src/scanner.c")
-        target_sources(${target_name} PRIVATE "${grammar_dir}/src/scanner.c")
-    endif()
     target_include_directories(${target_name} PRIVATE "${grammar_dir}/src")
     set_target_properties(${target_name} PROPERTIES C_STANDARD 11 POSITION_INDEPENDENT_CODE ON)
+endfunction()
+
+# A grammar's external scanner is ned's own code (Source/Editor/Languages/
+# Scanners/, ported from the grammar's scanner.c against Editor/Parse/
+# Scanner.h). It compiles into the grammar's target because parser.c
+# references it by tree-sitter's C symbol names, which the port exports;
+# the registry (Scanners.cpp, in ned_lib) reaches the same table by name.
+function(ned_grammar_scanner target_name scanner_name)
+    target_sources(${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/Languages/Scanners/${scanner_name}Scanner.cpp")
+    target_include_directories(${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+    set_target_properties(${target_name} PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 endfunction()
 
 # Convenience wrapper for the common case: a vendored directory whose name is
@@ -280,3 +288,34 @@ ned_add_bundled_grammar(tree-sitter-gitrebase)
 ned_add_bundled_grammar(tree-sitter-r)
 
 #------------------------------------------------------------------------------
+
+#--- External scanners ----------------------------------------------------------
+ned_grammar_scanner(tree-sitter-bash Bash)
+ned_grammar_scanner(tree-sitter-c-sharp CSharp)
+ned_grammar_scanner(tree-sitter-cmake CMake)
+ned_grammar_scanner(tree-sitter-cpp Cpp)
+ned_grammar_scanner(tree-sitter-css Css)
+ned_grammar_scanner(tree-sitter-dockerfile Dockerfile)
+ned_grammar_scanner(tree-sitter-fish Fish)
+ned_grammar_scanner(tree-sitter-gitcommit GitCommit)
+ned_grammar_scanner(tree-sitter-hcl Hcl)
+ned_grammar_scanner(tree-sitter-html Html)
+ned_grammar_scanner(tree-sitter-janet-simple Janet)
+ned_grammar_scanner(tree-sitter-javascript JavaScript)
+ned_grammar_scanner(tree-sitter-kotlin Kotlin)
+ned_grammar_scanner(tree-sitter-lua Lua)
+ned_grammar_scanner(tree-sitter-markdown Markdown)
+ned_grammar_scanner(tree-sitter-markdown-inline MarkdownInline)
+ned_grammar_scanner(tree-sitter-nix Nix)
+ned_grammar_scanner(tree-sitter-org Org)
+ned_grammar_scanner(tree-sitter-php Php)
+ned_grammar_scanner(tree-sitter-python Python)
+ned_grammar_scanner(tree-sitter-r R)
+ned_grammar_scanner(tree-sitter-ruby Ruby)
+ned_grammar_scanner(tree-sitter-rust Rust)
+ned_grammar_scanner(tree-sitter-sql Sql)
+ned_grammar_scanner(tree-sitter-toml Toml)
+ned_grammar_scanner(tree-sitter-tsx Tsx)
+ned_grammar_scanner(tree-sitter-typescript TypeScript)
+ned_grammar_scanner(tree-sitter-xml Xml)
+ned_grammar_scanner(tree-sitter-yaml Yaml)

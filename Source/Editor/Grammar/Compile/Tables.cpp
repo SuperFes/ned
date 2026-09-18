@@ -329,15 +329,9 @@ namespace {
                 out->symbolMetadata.push_back({.visible = true, .named = alias.named, .supertype = false});
                 out->publicSymbolMap.push_back(aliasIds.at(alias));
             }
-            for (const std::string& name : out->symbolNameStorage)
-                out->symbolNames.push_back(name.c_str());
-
             out->fieldNameStorage.emplace_back(); // [0] = NULL
             for (const std::string& name : fieldNames)
                 out->fieldNameStorage.push_back(name);
-            out->fieldNames.push_back(nullptr);
-            for (std::size_t i = 1; i < out->fieldNameStorage.size(); ++i)
-                out->fieldNames.push_back(out->fieldNameStorage[i].c_str());
         }
 
         [[nodiscard]] std::uint16_t FieldId(const std::string& name) const {
@@ -593,8 +587,9 @@ namespace {
                 const ExternalToken& token = in.syntax.externalTokens[i];
                 out->externalScannerSymbolMap.push_back(symbolIds.at(token.correspondingInternalToken.value_or(Symbol::External(static_cast<std::uint32_t>(i)))));
             }
-            const std::size_t stateCount = in.parseTable.externalLexStates.size();
-            out->externalScannerStates   = std::make_unique<bool[]>(stateCount * tokenCount);
+            const std::size_t stateCount   = in.parseTable.externalLexStates.size();
+            out->externalScannerStateCount = stateCount;
+            out->externalScannerStates     = std::make_unique<bool[]>(stateCount * tokenCount);
             for (std::size_t s = 0; s < stateCount; ++s)
                 for (const Symbol token : in.parseTable.externalLexStates[s].Symbols())
                     out->externalScannerStates[s * tokenCount + token.index] = true;
@@ -643,48 +638,62 @@ namespace {
             data.productionIdCount      = static_cast<std::uint32_t>(in.parseTable.productionInfos.size());
             data.fieldCount             = static_cast<std::uint32_t>(fieldNames.size());
             data.maxAliasSequenceLength = static_cast<std::uint16_t>(in.parseTable.maxAliasedProductionLength);
-            data.parseTable             = out->parseTable.data();
-            data.smallParseTable        = out->smallParseTable.empty() ? nullptr : out->smallParseTable.data();
-            data.smallParseTableMap     = out->smallParseTableMap.empty() ? nullptr : out->smallParseTableMap.data();
-            data.parseActions           = out->parseActions.data();
-            data.symbolNames            = out->symbolNames.data();
-            data.fieldNames             = fieldNames.empty() ? nullptr : out->fieldNames.data();
-            data.fieldMapSlices         = fieldNames.empty() ? nullptr : out->fieldMapSlices.data();
-            data.fieldMapEntries        = fieldNames.empty() ? nullptr : out->fieldMapEntries.data();
-            data.symbolMetadata         = out->symbolMetadata.data();
-            data.publicSymbolMap        = out->publicSymbolMap.data();
-            data.aliasMap               = out->aliasMap.data();
-            data.aliasSequences         = out->aliasSequences.empty() ? nullptr : out->aliasSequences.data();
-            data.lexModes               = out->lexModes.data();
-            data.lexFn                  = nullptr; // the DFAs stand in
-            data.keywordLexFn           = nullptr;
             data.keywordCaptureToken    = in.syntax.wordToken ? symbolIds.at(*in.syntax.wordToken) : 0;
-            data.externalScanner        = {};
-            if (!in.syntax.externalTokens.empty()) {
-                data.externalScanner.states    = out->externalScannerStates.get();
-                data.externalScanner.symbolMap = out->externalScannerSymbolMap.data();
-            }
-            data.primaryStateIds        = out->primaryStateIds.data();
-            data.name                   = out->name.c_str();
-            data.reservedWords          = reservedWordSets.size() > 1 ? out->reservedWords.data() : nullptr;
             data.maxReservedWordSetSize = static_cast<std::uint16_t>(MaxReservedWordSetSize());
             data.supertypeCount         = static_cast<std::uint32_t>(out->supertypeSymbols.size());
-            data.supertypeSymbols       = out->supertypeSymbols.empty() ? nullptr : out->supertypeSymbols.data();
-            data.supertypeMapSlices     = out->supertypeSymbols.empty() ? nullptr : out->supertypeMapSlices.data();
-            data.supertypeMapEntries    = out->supertypeSymbols.empty() ? nullptr : out->supertypeMapEntries.data();
-            data.metadata               = {.majorVersion = 0, .minorVersion = 0, .patchVersion = 0};
+            data.externalScanner        = {};
+            out->Link();
             return std::move(out);
         }
     };
 
 } // namespace
 
-void CompiledLanguage::AdoptExternalScanner(const parse::abi::LanguageData& from) {
-    language_->data.externalScanner.create      = from.externalScanner.create;
-    language_->data.externalScanner.destroy     = from.externalScanner.destroy;
-    language_->data.externalScanner.scan        = from.externalScanner.scan;
-    language_->data.externalScanner.serialize   = from.externalScanner.serialize;
-    language_->data.externalScanner.deserialize = from.externalScanner.deserialize;
+void CompiledLanguage::Link() {
+    symbolNames.clear();
+    for (const std::string& symbolName : symbolNameStorage)
+        symbolNames.push_back(symbolName.c_str());
+    fieldNames.clear();
+    fieldNames.push_back(nullptr); // field id 0 is "no field"
+    for (std::size_t i = 1; i < fieldNameStorage.size(); ++i)
+        fieldNames.push_back(fieldNameStorage[i].c_str());
+
+    LanguageData& data      = language_->data;
+    const bool    hasFields = data.fieldCount > 0;
+    data.parseTable         = parseTable.data();
+    data.smallParseTable    = smallParseTable.empty() ? nullptr : smallParseTable.data();
+    data.smallParseTableMap = smallParseTableMap.empty() ? nullptr : smallParseTableMap.data();
+    data.parseActions       = parseActions.data();
+    data.symbolNames        = symbolNames.data();
+    data.fieldNames         = hasFields ? fieldNames.data() : nullptr;
+    data.fieldMapSlices     = hasFields ? fieldMapSlices.data() : nullptr;
+    data.fieldMapEntries    = hasFields ? fieldMapEntries.data() : nullptr;
+    data.symbolMetadata     = symbolMetadata.data();
+    data.publicSymbolMap    = publicSymbolMap.data();
+    data.aliasMap           = aliasMap.data();
+    data.aliasSequences     = aliasSequences.empty() ? nullptr : aliasSequences.data();
+    data.lexModes           = lexModes.data();
+    data.lexFn              = nullptr; // the DFAs stand in
+    data.keywordLexFn       = nullptr;
+    if (data.externalTokenCount > 0) {
+        data.externalScanner.states    = externalScannerStates.get();
+        data.externalScanner.symbolMap = externalScannerSymbolMap.data();
+    }
+    data.primaryStateIds     = primaryStateIds.data();
+    data.name                = name.c_str();
+    data.reservedWords       = reservedWords.empty() ? nullptr : reservedWords.data();
+    data.supertypeSymbols    = supertypeSymbols.empty() ? nullptr : supertypeSymbols.data();
+    data.supertypeMapSlices  = supertypeSymbols.empty() ? nullptr : supertypeMapSlices.data();
+    data.supertypeMapEntries = supertypeSymbols.empty() ? nullptr : supertypeMapEntries.data();
+    data.metadata            = {.majorVersion = 0, .minorVersion = 0, .patchVersion = 0};
+}
+
+void CompiledLanguage::AdoptExternalScanner(const parse::ScannerVTable& scanner) {
+    language_->data.externalScanner.create      = scanner.create;
+    language_->data.externalScanner.destroy     = scanner.destroy;
+    language_->data.externalScanner.scan        = scanner.scan;
+    language_->data.externalScanner.serialize   = scanner.serialize;
+    language_->data.externalScanner.deserialize = scanner.deserialize;
 }
 
 std::unique_ptr<CompiledLanguage> AssembleTables(AssemblyInput input) {

@@ -20,6 +20,7 @@
 #include "Editor/Grammar/Compile/NodeTypes.h"
 #include "Editor/Grammar/Compile/ParseTable.h"
 #include "Editor/Parse/LexDfa.h"
+#include "Editor/Parse/Scanner.h"
 
 namespace ned::editor::grammar::compile {
 
@@ -31,10 +32,14 @@ class CompiledLanguage {
         return &language_->data;
     }
 
-    // Until ned's own scanners exist, a compiled language borrows the
-    // external scanner of the generated parser for the same grammar (the
-    // external token order is the grammar's, so the two agree).
-    void AdoptExternalScanner(const parse::abi::LanguageData& from);
+    // Attaches the language's external scanner (the external token order
+    // is the grammar's, so the scanner's valid-symbol indices agree).
+    void AdoptExternalScanner(const parse::ScannerVTable& scanner);
+
+    // Points every LanguageData array at the storage below (the scalar
+    // counts in `language_->data` must already be set). Called once the
+    // storage is final -- by the assembler, and by the table-file loader.
+    void Link();
 
     std::unique_ptr<parse::DfaLanguage>       language_;
     std::vector<std::uint16_t>                parseTable;
@@ -59,7 +64,8 @@ class CompiledLanguage {
     std::vector<parse::abi::Symbol>           supertypeSymbols;
     std::vector<parse::abi::MapSlice>         supertypeMapSlices;
     std::vector<parse::abi::Symbol>           supertypeMapEntries;
-    std::unique_ptr<bool[]>                   externalScannerStates;
+    std::unique_ptr<bool[]>                   externalScannerStates; // externalScannerStateCount x externalTokenCount
+    std::size_t                               externalScannerStateCount = 0;
 };
 
 struct AssemblyInput {

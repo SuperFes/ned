@@ -197,44 +197,62 @@ bool Rule::IsEmpty() const {
 
 // --- TokenSet ----------------------------------------------------------------
 
-namespace {
-    void SetBit(std::vector<bool>& bits, std::uint32_t index) {
-        if (index >= bits.size())
-            bits.resize(index + 1, false);
-        bits[index] = true;
+void TokenSet::Set(Words& words, std::uint32_t index) {
+    const std::size_t word = index / 64;
+    if (word >= words.size())
+        words.resize(word + 1, 0);
+    words[word] |= std::uint64_t{1} << (index % 64);
+}
+
+bool TokenSet::Clear(Words& words, std::uint32_t index) {
+    if (!Get(words, index))
+        return false;
+    words[index / 64] &= ~(std::uint64_t{1} << (index % 64));
+    while (!words.empty() && words.back() == 0)
+        words.pop_back();
+    return true;
+}
+
+bool TokenSet::Union(Words& words, const Words& other) {
+    if (other.size() > words.size())
+        words.resize(other.size(), 0);
+    bool changed = false;
+    for (std::size_t w = 0; w < other.size(); ++w) {
+        const std::uint64_t merged = words[w] | other[w];
+        changed |= merged != words[w];
+        words[w] = merged;
     }
-    bool GetBit(const std::vector<bool>& bits, std::uint32_t index) {
-        return index < bits.size() && bits[index];
+    return changed;
+}
+
+std::optional<std::uint32_t> TokenSet::FirstDifference(const Words& a, const Words& b) {
+    const std::size_t n = std::max(a.size(), b.size());
+    for (std::size_t w = 0; w < n; ++w) {
+        const std::uint64_t x = w < a.size() ? a[w] : 0;
+        const std::uint64_t y = w < b.size() ? b[w] : 0;
+        if (x != y)
+            return static_cast<std::uint32_t>(w * 64 + static_cast<std::size_t>(std::countr_zero(x ^ y)));
     }
-    bool ClearBit(std::vector<bool>& bits, std::uint32_t index) {
-        if (!GetBit(bits, index))
-            return false;
-        bits[index] = false;
-        while (!bits.empty() && !bits.back())
-            bits.pop_back();
+    return std::nullopt;
+}
+
+bool TokenSet::AnyAbove(const Words& words, std::uint32_t index) {
+    const std::size_t word = index / 64;
+    if (word >= words.size())
+        return false;
+    const std::uint32_t shift = index % 64 + 1;
+    if (shift < 64 && (words[word] >> shift) != 0)
         return true;
-    }
-    bool InsertBits(std::vector<bool>& into, const std::vector<bool>& from) {
-        bool changed = false;
-        if (from.size() > into.size())
-            into.resize(from.size(), false);
-        for (std::size_t i = 0; i < from.size(); ++i) {
-            if (from[i] && !into[i]) {
-                into[i] = true;
-                changed = true;
-            }
-        }
-        return changed;
-    }
-} // namespace
+    return word + 1 < words.size(); // canonical: a later word is non-zero
+}
 
 void TokenSet::Insert(Symbol symbol) {
     switch (symbol.kind) {
         case SymbolType::Terminal:
-            SetBit(terminals_, symbol.index);
+            Set(terminals_, symbol.index);
             return;
         case SymbolType::External:
-            SetBit(externals_, symbol.index);
+            Set(externals_, symbol.index);
             return;
         case SymbolType::End:
             eof_ = true;
@@ -250,9 +268,9 @@ void TokenSet::Insert(Symbol symbol) {
 bool TokenSet::Remove(Symbol symbol) {
     switch (symbol.kind) {
         case SymbolType::Terminal:
-            return ClearBit(terminals_, symbol.index);
+            return Clear(terminals_, symbol.index);
         case SymbolType::External:
-            return ClearBit(externals_, symbol.index);
+            return Clear(externals_, symbol.index);
         case SymbolType::End:
             return std::exchange(eof_, false);
         case SymbolType::EndOfNonTerminalExtra:
@@ -266,9 +284,9 @@ bool TokenSet::Remove(Symbol symbol) {
 bool TokenSet::Contains(Symbol symbol) const {
     switch (symbol.kind) {
         case SymbolType::Terminal:
-            return GetBit(terminals_, symbol.index);
+            return Get(terminals_, symbol.index);
         case SymbolType::External:
-            return GetBit(externals_, symbol.index);
+            return Get(externals_, symbol.index);
         case SymbolType::End:
             return eof_;
         case SymbolType::EndOfNonTerminalExtra:
@@ -279,23 +297,21 @@ bool TokenSet::Contains(Symbol symbol) const {
     return false;
 }
 
-bool TokenSet::ContainsTerminal(std::uint32_t index) const {
-    return GetBit(terminals_, index);
-}
-
 bool TokenSet::IsEmpty() const {
-    return !eof_ && !endOfNonTerminalExtra_ && std::none_of(terminals_.begin(), terminals_.end(), [](bool b) { return b; }) &&
-           std::none_of(externals_.begin(), externals_.end(), [](bool b) { return b; });
+    return !eof_ && !endOfNonTerminalExtra_ && terminals_.empty() && externals_.empty();
 }
 
 std::size_t TokenSet::Len() const {
-    return static_cast<std::size_t>(eof_) + static_cast<std::size_t>(endOfNonTerminalExtra_) +
-           static_cast<std::size_t>(std::count(terminals_.begin(), terminals_.end(), true)) +
-           static_cast<std::size_t>(std::count(externals_.begin(), externals_.end(), true));
+    std::size_t count = static_cast<std::size_t>(eof_) + static_cast<std::size_t>(endOfNonTerminalExtra_);
+    for (const std::uint64_t word : terminals_)
+        count += static_cast<std::size_t>(std::popcount(word));
+    for (const std::uint64_t word : externals_)
+        count += static_cast<std::size_t>(std::popcount(word));
+    return count;
 }
 
 bool TokenSet::InsertAllTerminals(const TokenSet& other) {
-    return InsertBits(terminals_, other.terminals_);
+    return Union(terminals_, other.terminals_);
 }
 
 bool TokenSet::InsertAll(const TokenSet& other) {
@@ -308,38 +324,49 @@ bool TokenSet::InsertAll(const TokenSet& other) {
         endOfNonTerminalExtra_ = true;
         changed                = true;
     }
-    changed |= InsertBits(terminals_, other.terminals_);
-    changed |= InsertBits(externals_, other.externals_);
+    changed |= Union(terminals_, other.terminals_);
+    changed |= Union(externals_, other.externals_);
     return changed;
 }
 
 std::vector<Symbol> TokenSet::Symbols() const {
-    std::vector<Symbol> out = Terminals();
-    for (std::size_t i = 0; i < externals_.size(); ++i)
-        if (externals_[i])
-            out.push_back(Symbol::External(static_cast<std::uint32_t>(i)));
-    if (eof_)
-        out.push_back(Symbol::End());
-    if (endOfNonTerminalExtra_)
-        out.push_back(Symbol::EndOfNonTerminalExtra());
+    std::vector<Symbol> out;
+    out.reserve(Len());
+    ForEach([&](Symbol symbol) { out.push_back(symbol); });
     return out;
 }
 
 std::vector<Symbol> TokenSet::Terminals() const {
     std::vector<Symbol> out;
-    for (std::size_t i = 0; i < terminals_.size(); ++i)
-        if (terminals_[i])
-            out.push_back(Symbol::Terminal(static_cast<std::uint32_t>(i)));
+    ForEachTerminal([&](Symbol symbol) { out.push_back(symbol); });
     return out;
 }
 
-bool TokenSet::operator==(const TokenSet& other) const {
-    return eof_ == other.eof_ && endOfNonTerminalExtra_ == other.endOfNonTerminalExtra_ && Terminals() == other.Terminals() &&
-           Symbols() == other.Symbols();
-}
-
-bool TokenSet::operator<(const TokenSet& other) const {
-    return Symbols() < other.Symbols();
+// Symbols() lists terminals, then externals, then eof, then end-of-extra,
+// and Symbol orders External < End < EndOfNonTerminalExtra < Terminal. So
+// at the first terminal one set has and the other lacks, the one lacking it
+// is greater only if it still has a later terminal; otherwise its next
+// element is a lower kind (or nothing), which sorts first.
+std::strong_ordering TokenSet::Compare(const TokenSet& other) const {
+    if (const auto index = FirstDifference(terminals_, other.terminals_)) {
+        const bool mineHasIt      = Get(terminals_, *index);
+        const bool lackerHasLater = AnyAbove(mineHasIt ? other.terminals_ : terminals_, *index);
+        return (mineHasIt == lackerHasLater) ? std::strong_ordering::less : std::strong_ordering::greater;
+    }
+    if (const auto index = FirstDifference(externals_, other.externals_)) {
+        const bool      mineHasIt      = Get(externals_, *index);
+        const TokenSet& lacker         = mineHasIt ? other : *this;
+        const bool      lackerHasLater = AnyAbove(lacker.externals_, *index) || lacker.eof_ || lacker.endOfNonTerminalExtra_;
+        return (mineHasIt == lackerHasLater) ? std::strong_ordering::less : std::strong_ordering::greater;
+    }
+    if (eof_ != other.eof_) {
+        // End sorts before EndOfNonTerminalExtra and after nothing at all.
+        const TokenSet& lacker = eof_ ? other : *this;
+        return (eof_ == lacker.endOfNonTerminalExtra_) ? std::strong_ordering::less : std::strong_ordering::greater;
+    }
+    if (endOfNonTerminalExtra_ != other.endOfNonTerminalExtra_)
+        return endOfNonTerminalExtra_ ? std::strong_ordering::greater : std::strong_ordering::less;
+    return std::strong_ordering::equal;
 }
 
 // --- Grammars ----------------------------------------------------------------

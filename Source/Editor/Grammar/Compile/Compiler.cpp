@@ -37,10 +37,11 @@ namespace {
                 candidates.Insert(Symbol::Terminal(static_cast<std::uint32_t>(i)));
         }
 
-        TokenSet unshadowed;
-        for (const Symbol token : candidates.Symbols()) {
+        const std::vector<Symbol> candidateList = candidates.Symbols();
+        TokenSet                  unshadowed;
+        for (const Symbol token : candidateList) {
             bool shadowed = false;
-            for (const Symbol other : candidates.Symbols())
+            for (const Symbol other : candidateList)
                 if (other != token && conflicts.DoesMatchSameString(other.index, token.index)) {
                     shadowed = true;
                     break;
@@ -49,13 +50,17 @@ namespace {
                 unshadowed.Insert(token);
         }
 
+        std::vector<bool> stateHasWordToken(table.states.size());
+        for (std::size_t id = 0; id < table.states.size(); ++id)
+            stateHasWordToken[id] = table.states[id].terminalEntries.count(*wordToken) > 0;
+
         for (const Symbol token : unshadowed.Symbols()) {
             bool include = true;
             for (std::size_t other = 0; other < lexical.variables.size(); ++other) {
                 if (candidates.Contains(Symbol::Terminal(static_cast<std::uint32_t>(other))))
                     continue;
                 const std::vector<ParseStateId>& states = coincident.StatesWith(token, Symbol::Terminal(static_cast<std::uint32_t>(other)));
-                if (std::all_of(states.begin(), states.end(), [&](ParseStateId id) { return table.states[id].terminalEntries.count(*wordToken) > 0; }))
+                if (std::all_of(states.begin(), states.end(), [&](ParseStateId id) { return stateHasWordToken[id]; }))
                     continue;
                 if (!conflicts.HasSameConflictStatus(token.index, wordToken->index, other)) {
                     include = false;
@@ -81,12 +86,13 @@ namespace {
                 conflictFree.Insert(Symbol::Terminal(static_cast<std::uint32_t>(i)));
         }
 
-        const ParseTableEntry recover{.actions = {ParseAction::Recover()}, .reusable = false};
+        const ParseTableEntry     recover{.actions = {ParseAction::Recover()}, .reusable = false};
+        const std::vector<Symbol> conflictFreeList = conflictFree.Symbols();
         for (std::size_t i = 0; i < n; ++i) {
             const Symbol symbol = Symbol::Terminal(static_cast<std::uint32_t>(i));
             if (!conflictFree.Contains(symbol) && !keywords.Contains(symbol) && syntax.wordToken != symbol) {
                 bool excluded = false;
-                for (const Symbol t : conflictFree.Symbols())
+                for (const Symbol t : conflictFreeList)
                     if (!coincident.Contains(symbol, t) && conflicts.DoesConflict(symbol.index, t.index)) {
                         excluded = true;
                         break;

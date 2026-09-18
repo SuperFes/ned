@@ -24,6 +24,7 @@
 #include "Editor/Grammar/QueryMatcher.h"
 #include "Editor/Grammar/Tree.h"
 #include "Editor/LanguageFiles.h"
+#include "Editor/Languages/Scanners/Scanners.h"
 #include "Editor/Parse/Cursor.h"
 #include "Editor/Parse/Node.h"
 #include "Editor/Parse/Parser.h"
@@ -1557,7 +1558,8 @@ TEST_CASE("Compiled grammar.janet tables parse the corpora as the vendored table
         const auto                        started   = std::chrono::steady_clock::now();
         std::unique_ptr<CompiledLanguage> compiled  = CompileGrammar(grammar);
         const auto                        compileMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
-        compiled->AdoptExternalScanner(*static_cast<const ned::editor::parse::abi::LanguageData*>(static_cast<const void*>(vendored->Raw())));
+        if (const ned::editor::parse::ScannerVTable* scanner = ned::editor::languages::scanners::FindBundledScanner(languageName))
+            compiled->AdoptExternalScanner(*scanner);
 
         ned::editor::parse::Engine reference(vendored->Raw());
         ned::editor::parse::Engine candidate(compiled->Data());
