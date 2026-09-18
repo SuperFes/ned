@@ -1,0 +1,47 @@
+================================================================================
+String values
+================================================================================
+
+key = multi word non    quoted string
+key = hyphenated-value another.value
+key = value with trailing spaces      
+key = singleword
+
+key = "quoted string"
+key = ""
+
+key = 'single quoted string'
+key = ''
+
+--------------------------------------------------------------------------------
+
+(document
+ (assignment
+  (identifier)
+  (string
+   (string_content)))
+ (assignment
+  (identifier)
+  (string
+   (string_content)))
+ (assignment
+  (identifier)
+  (string
+   (string_content)))
+ (assignment
+  (identifier)
+  (value))
+ (assignment
+  (identifier)
+  (string
+   (string_content)))
+ (assignment
+  (identifier)
+  (string))
+ (assignment
+  (identifier)
+  (string
+   (string_content)))
+ (assignment
+  (identifier)
+  (string)))

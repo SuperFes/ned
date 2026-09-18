@@ -43,11 +43,14 @@ namespace {
             return false;
         }
         bool ConsumePrefix(std::string_view prefix) {
-            if (src_.substr(pos_, prefix.size()) == prefix) {
+            if (StartsWith(prefix)) {
                 pos_ += prefix.size();
                 return true;
             }
             return false;
+        }
+        [[nodiscard]] bool StartsWith(std::string_view prefix) const {
+            return src_.substr(pos_, prefix.size()) == prefix;
         }
 
         // One UTF-8 codepoint of the pattern text.
@@ -370,21 +373,50 @@ namespace {
             return set;
         }
 
-        // After the opening bracket.
+        // After the opening bracket. The reference's class syntax: a union
+        // of items, then `&&` (intersection), `--` (difference) and `~~`
+        // (symmetric difference) between unions, left to right, all at
+        // one precedence below union: [a-z&&[^aeiou]].
         CharacterSet ParseClass() {
             const bool   negated = Consume('^');
-            CharacterSet set;
-            bool         first = true;
+            CharacterSet set     = ParseClassUnion(/*first=*/true);
             for (;;) {
                 if (AtEnd())
                     Fail("unclosed character class");
-                if (Peek() == ']' && !first) {
-                    ++pos_;
+                if (Consume(']'))
                     break;
+                if (ConsumePrefix("&&")) {
+                    const CharacterSet rhs = ParseClassUnion(false);
+                    set                    = set.Difference(set.Difference(rhs));
                 }
+                else if (ConsumePrefix("--")) {
+                    set = set.Difference(ParseClassUnion(false));
+                }
+                else if (ConsumePrefix("~~")) {
+                    const CharacterSet rhs = ParseClassUnion(false);
+                    set                    = set.Add(rhs).Difference(set.Difference(set.Difference(rhs)));
+                }
+                else {
+                    Fail("malformed character class");
+                }
+            }
+            return negated ? set.Negate() : set;
+        }
+
+        // Items up to the closing bracket or a set operator; `first` allows
+        // a literal `]` right after the opening bracket.
+        CharacterSet ParseClassUnion(bool first) {
+            CharacterSet set;
+            for (;;) {
+                if (AtEnd())
+                    Fail("unclosed character class");
+                if (Peek() == ']' && !first)
+                    break;
+                // A set operator needs a left operand: at the head of a class
+                // `--` is a literal dash (powershell's `[--][gG][tT]`).
+                if (!first && (StartsWith("&&") || StartsWith("--") || StartsWith("~~")))
+                    break;
                 first = false;
-                if (ConsumePrefix("&&") || ConsumePrefix("--") || ConsumePrefix("~~"))
-                    Fail("class set operations are not supported");
                 if (Peek() == '[') {
                     if (ConsumePrefix("[:")) {
                         std::string name;
@@ -408,7 +440,7 @@ namespace {
                 else {
                     item = CharacterSet::FromChar(TakeCodepoint());
                 }
-                if (single && Peek() == '-' && Peek(1) != ']' && Peek(1) != '\0') {
+                if (single && Peek() == '-' && Peek(1) != ']' && Peek(1) != '\0' && Peek(1) != '-') {
                     ++pos_;
                     const std::uint32_t start = item.Ranges()[0].start;
                     std::uint32_t       end;
@@ -427,7 +459,7 @@ namespace {
                 }
                 set = set.Add(item);
             }
-            return negated ? set.Negate() : set;
+            return set;
         }
 
         CharacterSet PosixClass(const std::string& name) {

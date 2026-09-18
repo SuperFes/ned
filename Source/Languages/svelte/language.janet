@@ -1,0 +1,3 @@
+{:name "svelte"
+ :extensions [".svelte"]
+}

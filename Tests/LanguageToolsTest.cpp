@@ -53,6 +53,16 @@ fs::path DemoPackageWithCorpus() {
     return dir;
 }
 
+// The reference's `:cst` listing for the demo grammar over "foo\n": the
+// root, one item, a named leaf with its text, and the scanner's line_end
+// token whose text spans a line break, so it is listed line by line with
+// each line's own range.
+const char* const kDemoCst = "0:0 - 1:0   source_file\n"
+                             "0:0 - 1:0     item\n"
+                             "0:0 - 0:3       word `foo`\n"
+                             "0:3 - 1:0       line_end\n"
+                             "0:3 - 0:4         `\\n`";
+
 } // namespace
 
 TEST_CASE("The corpus reader keeps the byte span of each expected tree", "[LanguageTools]") {
@@ -62,6 +72,28 @@ TEST_CASE("The corpus reader keeps the byte span of each expected tree", "[Langu
     CHECK(content.substr(cases[0].expectedStart, cases[0].expectedEnd - cases[0].expectedStart) == "(a)\n\n");
     CHECK(content.substr(cases[1].expectedStart, cases[1].expectedEnd - cases[1].expectedStart) == "\n(b)\n");
     CHECK(ned::editor::grammar::corpus::PrettySexp("(source_file (item name: (word) (line_end)))") == "(source_file\n  (item\n    name: (word)\n    (line_end)))");
+}
+
+TEST_CASE("A :cst case compares the reference's concrete-syntax listing, and --bless writes it back in that form", "[LanguageTools]") {
+    const std::string content = "====\nListing\n:cst\n====\nfoo\n\n---\n\n" + std::string(kDemoCst) + "\n\n====\nStale listing\n:cst\n====\nfoo\n\n---\n0:0 - 1:0   source_file\n";
+    const auto        cases   = ned::editor::grammar::corpus::ParseCorpusFile(content, "f.txt");
+    REQUIRE(cases.size() == 2);
+    CHECK(cases[0].cst);
+    CHECK_FALSE(cases[0].hasFields);
+    CHECK(cases[0].expected == kDemoCst);
+
+    const fs::path package = DemoPackageWithCorpus();
+    std::ofstream(package / "corpus" / "cst.txt") << content;
+    std::ostringstream out, err;
+    CHECK(RunTestLanguage({package.string()}, false, out, err) == 1);
+    CHECK(out.str().find("FAIL     cst.txt: Stale listing") != std::string::npos);
+    CHECK(out.str().find("FAIL     cst.txt: Listing") == std::string::npos);
+    CHECK(out.str().find("demo: 4 cases, 2 passed, 2 failed") != std::string::npos);
+
+    std::ostringstream out2, err2;
+    CHECK(RunTestLanguage({package.string()}, true, out2, err2) == 0);
+    const std::string blessed = ReadWhole(package / "corpus" / "cst.txt");
+    CHECK(blessed.find(std::string("Stale listing\n:cst\n====\nfoo\n\n---\n\n") + kDemoCst + "\n") != std::string::npos);
 }
 
 TEST_CASE("The test-language command reports a failing case, and --bless rewrites it", "[LanguageTools]") {
@@ -107,6 +139,7 @@ TEST_CASE("The import-language command turns a grammar repository into a package
     const std::string definition = ReadWhole(package / "language.janet");
     CHECK(definition.find("{:name \"words\"") != std::string::npos);
     CHECK(definition.find(":extensions [\".words\" \".wd\"]") != std::string::npos);
+    CHECK(definition.find(":filenames [\".wordsrc\" \"words.lock\"]") != std::string::npos);
     CHECK(definition.find("generated ABI 14, scanner 7 lines, corpus 1 files") != std::string::npos);
     CHECK(definition.find("# :scanner-library") != std::string::npos);
     CHECK(out.str().find("words: 2 cases, 2 passed, 0 failed") != std::string::npos);

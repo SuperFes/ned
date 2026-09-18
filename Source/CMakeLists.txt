@@ -275,33 +275,79 @@ add_library(ned_lib STATIC
         Editor/Grammar/Corpus.cpp
         Editor/Parse/LexDfa.cpp
         Editor/Languages/Scanners/Scanners.cpp
+        Editor/Languages/Scanners/AsciidocInlineScanner.cpp
+        Editor/Languages/Scanners/AsciidocScanner.cpp
+        Editor/Languages/Scanners/AstroScanner.cpp
         Editor/Languages/Scanners/BashScanner.cpp
         Editor/Languages/Scanners/CMakeScanner.cpp
-        Editor/Languages/Scanners/CSharpScanner.cpp
         Editor/Languages/Scanners/CppScanner.cpp
+        Editor/Languages/Scanners/CrystalScanner.cpp
+        Editor/Languages/Scanners/CSharpScanner.cpp
         Editor/Languages/Scanners/CssScanner.cpp
+        Editor/Languages/Scanners/CudaScanner.cpp
+        Editor/Languages/Scanners/DartScanner.cpp
         Editor/Languages/Scanners/DockerfileScanner.cpp
+        Editor/Languages/Scanners/DotenvScanner.cpp
+        Editor/Languages/Scanners/DScanner.cpp
+        Editor/Languages/Scanners/EarthfileScanner.cpp
+        Editor/Languages/Scanners/EditorconfigScanner.cpp
+        Editor/Languages/Scanners/ElixirScanner.cpp
+        Editor/Languages/Scanners/ElmScanner.cpp
+        Editor/Languages/Scanners/ErlangScanner.cpp
         Editor/Languages/Scanners/FishScanner.cpp
+        Editor/Languages/Scanners/FortranScanner.cpp
+        Editor/Languages/Scanners/FsharpScanner.cpp
+        Editor/Languages/Scanners/GdscriptScanner.cpp
         Editor/Languages/Scanners/GitCommitScanner.cpp
+        Editor/Languages/Scanners/GleamScanner.cpp
+        Editor/Languages/Scanners/HaskellScanner.cpp
         Editor/Languages/Scanners/HclScanner.cpp
+        Editor/Languages/Scanners/HlslScanner.cpp
         Editor/Languages/Scanners/HtmlScanner.cpp
         Editor/Languages/Scanners/JanetScanner.cpp
         Editor/Languages/Scanners/JavaScriptScanner.cpp
+        Editor/Languages/Scanners/JuliaScanner.cpp
+        Editor/Languages/Scanners/JustScanner.cpp
+        Editor/Languages/Scanners/KdlScanner.cpp
         Editor/Languages/Scanners/KotlinScanner.cpp
+        Editor/Languages/Scanners/LatexScanner.cpp
         Editor/Languages/Scanners/LuaScanner.cpp
         Editor/Languages/Scanners/MarkdownInlineScanner.cpp
         Editor/Languages/Scanners/MarkdownScanner.cpp
+        Editor/Languages/Scanners/MatlabScanner.cpp
+        Editor/Languages/Scanners/NimScanner.cpp
         Editor/Languages/Scanners/NixScanner.cpp
+        Editor/Languages/Scanners/NuScanner.cpp
+        Editor/Languages/Scanners/OcamlInterfaceScanner.cpp
+        Editor/Languages/Scanners/OcamlScanner.cpp
+        Editor/Languages/Scanners/OdinScanner.cpp
         Editor/Languages/Scanners/OrgScanner.cpp
+        Editor/Languages/Scanners/PerlScanner.cpp
         Editor/Languages/Scanners/PhpScanner.cpp
+        Editor/Languages/Scanners/PowershellScanner.cpp
+        Editor/Languages/Scanners/PropertiesScanner.cpp
+        Editor/Languages/Scanners/PurescriptScanner.cpp
         Editor/Languages/Scanners/PythonScanner.cpp
+        Editor/Languages/Scanners/RacketScanner.cpp
+        Editor/Languages/Scanners/RescriptScanner.cpp
+        Editor/Languages/Scanners/RonScanner.cpp
         Editor/Languages/Scanners/RScanner.cpp
+        Editor/Languages/Scanners/RstScanner.cpp
         Editor/Languages/Scanners/RubyScanner.cpp
         Editor/Languages/Scanners/RustScanner.cpp
+        Editor/Languages/Scanners/ScalaScanner.cpp
+        Editor/Languages/Scanners/ScssScanner.cpp
         Editor/Languages/Scanners/SqlScanner.cpp
+        Editor/Languages/Scanners/StarlarkScanner.cpp
+        Editor/Languages/Scanners/SvelteScanner.cpp
+        Editor/Languages/Scanners/SwiftScanner.cpp
+        Editor/Languages/Scanners/TclScanner.cpp
         Editor/Languages/Scanners/TomlScanner.cpp
         Editor/Languages/Scanners/TsxScanner.cpp
         Editor/Languages/Scanners/TypeScriptScanner.cpp
+        Editor/Languages/Scanners/TypstScanner.cpp
+        Editor/Languages/Scanners/VhdlScanner.cpp
+        Editor/Languages/Scanners/VueScanner.cpp
         Editor/Languages/Scanners/XmlScanner.cpp
         Editor/Languages/Scanners/YamlScanner.cpp
         Editor/Grammar/Tree.cpp

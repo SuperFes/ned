@@ -1,6 +1,6 @@
 //
 // Phase 4a: ned's own query matcher, consuming QueryData Forms directly
-// against a tree-sitter parse tree -- the replacement for the
+// against ned's own parse tree -- the replacement for the
 // ToQueryText -> ts_query_new -> TSQueryCursor round trip. Same output
 // vocabulary as Query.h (QueryCapture/QueryMatch), same predicate semantics
 // (QueryPredicates.h, shared code), same compile-time strictness (an

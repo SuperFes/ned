@@ -27,7 +27,7 @@ tab-completes as its own tool.
 
 | command | symlink | does |
 | --- | --- | --- |
-| `ned --import-language <url-or-dir> [--name n] [--subdir s] [--ref tag] [--into root]` | `ned-import-language` | a tree-sitter grammar repository → a package |
+| `ned --import-language <url-or-dir> [--name n] [--subdir s] [--ref tag-or-commit] [--into root]` | `ned-import-language` | a tree-sitter grammar repository → a package |
 | `ned --compile-language <dir>... [-o file]` | `ned-langc` | `grammar.janet` → `tables` |
 | `ned --test-language <dir>... [--bless]` | `ned-test-language` | run the corpus; `--bless` rewrites stale expected trees |
 
@@ -48,7 +48,8 @@ clones the repository shallowly and writes `~/.config/ned/languages/ini/`:
   helper is beside ned (`libexec/ned/port-scanner`, or `Tools/port-scanner.py` in a
   source tree), a `<Name>Scanner.cpp` ported the mechanical half of the way -- see
   "External scanners" for the rest.
-- `language.janet`, a skeleton: the name, the extensions the repository declares, and
+- `language.janet`, a skeleton: the name, the file types the repository declares
+  (`:extensions`, and `:filenames` for dotfiles and whole basenames), and
   a header recording what the admission policy asks for (`Docs/LanguageCoverage.md`:
   the generated ABI version, the scanner's size, the corpus size), plus the keys to
   fill in.
@@ -99,9 +100,10 @@ associativity resolve conflicts the same way, an undeclared conflict is an error
 the two interpretations, and the generator's own error messages are the ones
 `ned --compile-language` prints, with the file and line.
 
-Regular expressions are the subset the reference generator accepts: classes,
-`\p{Letter}`-style Unicode properties, quantifiers, groups, alternation; `\w`, `\s`
-and `\d` are ASCII.
+Regular expressions are the subset the reference generator accepts: classes with
+the reference's set operations (`[a-z&&[^aeiou]]`, `--`, `~~`), `\p{Letter}`-style
+Unicode properties including the identifier (`XID_Start`) and emoji (`Emoji`, `EMod`)
+ones, quantifiers, groups, alternation; `\w`, `\s` and `\d` are ASCII.
 
 The loop is: edit `grammar.janet`, run `ned --test-language <dir>`, read the trees that
 changed, `--bless` the ones that are right.
@@ -126,9 +128,29 @@ key = value
     value: (value)))
 ```
 
-`:skip`, `:error` (the input must fail to parse), `:platform(linux)` and
-`:language(name)` markers after the case name work as they do upstream. Fields in an
-expected tree are compared only when the tree spells them.
+`:skip`, `:error` (the input must fail to parse), `:platform(linux)`,
+`:language(name)` and `:cst` markers after the case name work as they do upstream.
+Fields in an expected tree are compared only when the tree spells them. A `:cst`
+case's expected text is the reference's concrete-syntax listing -- every node with
+its `row:column` range, anonymous tokens quoted, leaf text in backticks -- compared
+verbatim, which pins positions the S-expression does not:
+
+```
+==================
+A setting
+:cst
+==================
+
+key = value
+
+---
+
+0:0  - 1:0    document
+0:0  - 0:11     setting
+0:0  - 0:3        key: name `key`
+0:4  - 0:5        "="
+0:6  - 0:11       value: value `value`
+```
 
 ## External scanners
 
@@ -185,7 +207,7 @@ A scanner imported from a tree-sitter repository arrives with the mechanical par
 the port done (`port-scanner`: the headers, the lexer's member names, the entry
 points); what remains is the C-to-C++ friction a compiler names -- a `void*` that
 needs a cast, an enum assigned an `int`. The bundled scanners under
-`Source/Editor/Languages/Scanners/` are 29 worked examples.
+`Source/Editor/Languages/Scanners/` are 75 worked examples.
 
 ## Queries
 

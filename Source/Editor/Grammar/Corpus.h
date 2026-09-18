@@ -5,7 +5,7 @@
 // language. Shared by the conformance tests and `ned --test-language`.
 //
 // The reader follows the reference's own rules exactly -- fence suffixes,
-// `:skip`/`:error`/`:platform`/`:language` markers, comment stripping and
+// `:skip`/`:error`/`:cst`/`:platform`/`:language` markers, comment stripping and
 // whitespace normalization of the expected tree -- so a corpus written for
 // the grammar's upstream tooling reads the same here.
 //
@@ -29,6 +29,7 @@ struct Case {
     std::string              expected; // normalized; empty for :error cases
     bool                     skip            = false;
     bool                     error           = false;
+    bool                     cst             = false; // expected is a concrete-syntax listing, not an S-expression
     bool                     platformMatches = true;
     bool                     hasFields       = false;
     std::vector<std::string> languages; // :language(...) values; single "" if none
@@ -51,12 +52,25 @@ struct Case {
 // The tree as the corpus compares it.
 [[nodiscard]] std::string ActualSexp(const parse::GreenTree& tree, bool keepFields);
 
+// The reference's `:cst` rendering (`tree-sitter parse --cst`): one node
+// per line with its row:column range, anonymous tokens quoted, leaf text
+// in backticks, depth as indentation. Compared verbatim against a `:cst`
+// case's expected text.
+[[nodiscard]] std::string RenderCst(const parse::GreenTree& tree, std::string_view input);
+
+// The tree in the form `item` compares -- the S-expression or the CST.
+[[nodiscard]] std::string ActualOutput(const parse::GreenTree& tree, const Case& item);
+
 // One node per line, two spaces per depth -- the layout a corpus file
 // records an expected tree in.
 [[nodiscard]] std::string PrettySexp(std::string_view sexp);
 
-// Every corpus file under `directory`, sorted (tree-sitter-make's end in
-// .mk rather than .txt).
+// What `--bless` writes as the expected text for a failing case: the pretty
+// S-expression, or the CST listing as is.
+[[nodiscard]] std::string BlessedExpected(const Case& item, std::string_view actual);
+
+// Every corpus file under `directory`, sorted, whatever the extension
+// (tree-sitter-make's end in .mk, tree-sitter-typst's in .scm).
 [[nodiscard]] std::vector<std::filesystem::path> CorpusFiles(const std::filesystem::path& directory);
 
 struct CaseResult {

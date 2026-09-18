@@ -56,16 +56,23 @@ C_TO_CXX_HEADERS = {
 }
 
 
-def inline_local_includes(source: str, directory: Path) -> str:
+def inline_local_includes(source: str, directory: Path, seen: set[Path] | None = None) -> str:
     """A `#include "file"` that names a file beside the scanner (a shared
-    common/scanner.h, html's tag.h, yaml's schema tables) is inlined."""
+    common/scanner.h, html's tag.h, yaml's schema tables) is inlined -- once,
+    the way `#pragma once` would have it when several files include it."""
+    if seen is None:
+        seen = set()
     def replace(match: re.Match) -> str:
-        if match.group(1).startswith("tree_sitter/"):
+        if "tree_sitter/" in match.group(1):
             return match.group(0)
         local = (directory / match.group(1)).resolve()
         if not local.is_file():
             return match.group(0)
-        return f"// --- {local.name} (from the same grammar) ---\n" + inline_local_includes(local.read_text(), local.parent) + "\n"
+        if local in seen:
+            return f"// --- {local.name} already inlined above ---\n"
+        seen.add(local)
+        text = re.sub(r"^[ \t]*#[ \t]*pragma[ \t]+once[ \t]*\n", "", local.read_text(), flags=re.M)
+        return f"// --- {local.name} (from the same grammar) ---\n" + inline_local_includes(text, local.parent, seen) + "\n"
     return re.sub(r'#include "([^"]+)"\n', replace, source)
 
 
@@ -92,7 +99,8 @@ def port(source: str, language: str, repo: str, library: bool = False) -> str:
         header = re.match(r'\s*#\s*include\s*[<"]([^>"]+)[>"]', line)
         if header:
             name = header.group(1)
-            if name.startswith("tree_sitter/"):
+            # tree-sitter's own headers, however a nested file reaches them.
+            if "tree_sitter/" in name:
                 continue
             if name in C_TO_CXX_HEADERS:
                 cxx = C_TO_CXX_HEADERS[name]
@@ -103,6 +111,11 @@ def port(source: str, language: str, repo: str, library: bool = False) -> str:
             continue
         body_lines.append(line)
     body = "\n".join(body_lines)
+    # C99's restrict has no C++ spelling; a void* local from the allocator
+    # needs the implicit-conversion helper C++ lacks.
+    if re.search(r"\brestrict\b", body):
+        body = "// C99's restrict qualifier has no C++ spelling; a no-op here.\n#define restrict\n\n" + body
+    body = re.sub(r"\bvoid\s*\*\s*(\w+)\s*=\s*(scanner_(?:re|c|m)alloc\([^;]*\));", r"VoidPtr \1{\2};", body)
 
     for old, new in IDENTIFIER_RENAMES.items():
         body = re.sub(rf"\b{old}\b", new, body)

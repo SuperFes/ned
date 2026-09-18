@@ -195,6 +195,24 @@ std::optional<CharacterSet> Property(std::string_view name) {
         result = FromTable(kIdStart, kIdStartCount);
     else if (name == "ID_Continue")
         result = FromTable(kIdContinue, kIdContinueCount);
+    // The emoji properties, with the short aliases the reference's regex
+    // crate accepts (PropertyAliases.txt).
+    else if (name == "Emoji")
+        result = FromTable(kEmoji, kEmojiCount);
+    else if (name == "Emoji_Presentation" || name == "EPres")
+        result = FromTable(kEmojiPresentation, kEmojiPresentationCount);
+    else if (name == "Emoji_Modifier" || name == "EMod")
+        result = FromTable(kEmojiModifier, kEmojiModifierCount);
+    else if (name == "Emoji_Modifier_Base" || name == "EBase")
+        result = FromTable(kEmojiModifierBase, kEmojiModifierBaseCount);
+    else if (name == "Emoji_Component" || name == "EComp")
+        result = FromTable(kEmojiComponent, kEmojiComponentCount);
+    else if (name == "Extended_Pictographic" || name == "ExtPict")
+        result = FromTable(kExtendedPictographic, kExtendedPictographicCount);
+    // White_Space (PropList.txt): the space separators plus the ASCII
+    // controls and NEL.
+    else if (name == "White_Space" || name == "space")
+        result = ScanCategories({UTF8PROC_CATEGORY_ZS, UTF8PROC_CATEGORY_ZL, UTF8PROC_CATEGORY_ZP}).AddRange(0x09, 0x0D).AddChar(0x85);
     else {
         const std::string_view canonical = CanonicalCategory(name);
         if (canonical.size() == 2) {

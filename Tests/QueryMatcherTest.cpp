@@ -346,6 +346,11 @@ TEST_CASE("query construct census: every bundled query file uses only the enumer
         "quantifier '?' on list",        // x3
         "quantifier '?' on wildcard",    // x2
         "quantifier '?' on alternation", // x1, sql upstream -- `parameter: [(literal)]?`
+        // Supertype-scoped names (`expression/variable`): the subtype's symbol
+        // must be in the supertype's subtype set (validated at compile time);
+        // membership is the whole check, the node's position under a hidden
+        // supertype is not consulted.
+        "supertype-scoped type name", // x42, haskell/upstream/highlights.janet
         // Predicates: placement.
         "predicate in node children", // x50
         "predicate in group",         // x162
@@ -366,11 +371,26 @@ TEST_CASE("query construct census: every bundled query file uses only the enumer
         // The two variadic has-parent spellings: any-of semantics over the
         // trailing type operands (nvim's own convention), same as any-of?.
         "predicate :has-parent? (capture token token)",           // x1, cpp/highlights.janet:370
+        "predicate :not-has-parent? (capture token token)",       // x1, odin/upstream/highlights.janet:170
+        "predicate :eq? (capture capture)",                       // x3, haskell/upstream/highlights.janet -- both operands resolve to node text
+        "predicate :is? (capture string)",                        // x1, groovy/upstream/highlights.janet -- nvim locals directive, inert
+        "predicate :set! (string string)",                        // x1, fsharp/upstream/locals.janet -- nvim scope directive, inert
+        "predicate :set! (capture token string)",                 // x1, vue/upstream/highlights.janet -- nvim bo.commentstring, inert
         "predicate :not-has-parent? (capture token token token)", // x2, c/highlights.janet:181
         // Non-filtering directives.
-        "predicate :set! (token string)", // x7 -- injection.language, read by Matches()
-        "predicate :set! (token token)",  // x3 -- priority, currently unread
-        "predicate :is-not? (token)",     // x2, nvim convention, inert
+        "predicate :set! (token string)",             // x7 -- injection.language, read by Matches()
+        "predicate :set! (token token)",              // x3 -- priority, currently unread
+        "predicate :set! (string token)",             // x1 -- starlark's quoted "priority", currently unread
+        "predicate :set! (token)",                    // x8 -- injection.include-children, currently unread
+        "predicate :not-lua-match? (capture string)", // x1, asciidoc/upstream/highlights.janet -- the not- prefix negates lua-match?
+        // nvim-treesitter directives on injection captures, inert in ned: a
+        // :gsub! would rewrite the language name out of an attribute list
+        // (asciidoc "source,python"), an :offset! would trim the script
+        // delimiters (http); without them the injection simply does not
+        // resolve, or spans two more characters.
+        "predicate :gsub! (capture string string)",             // x3, asciidoc/upstream/injections.janet
+        "predicate :offset! (capture token token token token)", // x2, http/upstream/injections.janet
+        "predicate :is-not? (token)",                           // x2, nvim convention, inert
         // nvim-treesitter capture-text directives in upstream files; inert
         // in ned (they rewrite capture TEXT for nvim's own consumers).
         "predicate :strip! (capture string)",            // x7
@@ -633,13 +653,16 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"cpp/indents", 1},
         {"csharp/locals", 1},
         {"java/locals", 1},
+        {"julia/highlights", 1}, // upstream :has-ancestor? on a module-scoped name
         {"kotlin/locals", 1},
+        {"objc/highlights", 1}, // upstream's C-derived :not-has-parent? clause
+        {"odin/highlights", 2}, // upstream :not-has-parent? on constants and types
         {"python/locals", 1},
         {"rust/locals", 1},
         {"yaml/indents", 2},
     };
     CHECK(counts == expected);
-    CHECK(total == 20);
+    CHECK(total == 24);
 }
 
 // Ned's own emission order, pinned. The matcher's capture stream reproduces

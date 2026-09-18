@@ -1,0 +1,58 @@
+====================
+image_macro
+====================
+
+this is a image:filename.png[Alt Text] or image:http://example.com/images/filename.png[Alt Text] or image:filename.png[More [Alt\] Text] (alt text becomes "More [Alt] Text") or icon:github[large]
+
+-----
+
+(inline
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (target)
+      (attr)))
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (target)
+      (attr)))
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (target)
+      (attr)))
+  (inline_element)
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element)
+  (inline_element
+    (word))
+  (inline_element)
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element)
+  (inline_element)
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (target)
+      (attr))))

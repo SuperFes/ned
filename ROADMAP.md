@@ -159,7 +159,11 @@ performance section above).
 
 Two items remain open, both conscious calls rather than defaults:
 
-- [ ] **Keeping `grammar.json` ingestion is a hard constraint**, and it permanently
+- [ ] **Keeping tree-sitter grammar ingestion is a hard constraint** -- at import time
+      now, not runtime: `ned --import-language` converts a repository's `grammar.json`
+      to `grammar.janet` once, and ned's own generator (`Editor/Grammar/Compile/`) and
+      engine (`Editor/Parse/`) do the rest (2026-09-17/18: no tree-sitter code, headers or
+      runtime anywhere in the tree; 74 languages bundled through that path). It still
       forecloses the resilient-LL path (matklad's) that would give better error recovery,
       because LL means hand-written grammars and therefore losing every language nobody
       here personally writes a grammar for.
@@ -167,6 +171,23 @@ Two items remain open, both conscious calls rather than defaults:
       ned specifics (Janet host callouts, `Mode`'s capability surface, `SyntaxClass`);
       designing library-first would make it worse at the job it exists for. Extract later
       if it earns it.
+- [ ] **Table-generator outliers** (measured 2026-09-18 at the Tier B systems batch,
+      single-core CPU, `ned --compile-language`): ada 149s for only 2,207 parse states
+      (its case-insensitive keyword tokens -- `[pP][aA][cC][kK][aA][gG][eE]` and every
+      other reserved word -- multiply lex-state construction and token-conflict work),
+      nim 70s / 20,305 states, odin 60s / 9,611, kotlin 40s, crystal 30s. Absorbed by the
+      parallel build-time compile (`CMake/LanguageTables.cmake`), so nothing is checked
+      in; profile with `perf record --call-graph dwarf` before touching it -- the known
+      remaining cost is item-set construction (`ParseItem::Order` / `TokenSet::Compare`
+      under `std::map`), and ada suggests the lex side has its own hot spot.
+- [ ] **QueryMatcher supertype-scoped names are membership-only.** `(expression/variable)`
+      (2026-09-18, for haskell's upstream highlights) checks that `variable` is one of
+      `expression`'s declared subtypes at compile time and then matches by the subtype's
+      symbol; whether the node actually sits under a hidden `expression` in the tree is
+      not consulted, so `(pattern/variable)` and `(expression/variable)` match the same
+      nodes. The cursor stack carries the hidden ancestors (tree_cursor.c's field walk
+      already climbs them), so a positional check is a small addition if a query ever
+      needs the distinction.
 
 **Language coverage** — full catalogue in `Docs/LanguageCoverage.md`: the depth ladder
 (D0 structural / D1 navigational / D2 integrated / D3 bespoke), Tier A flagship through
@@ -912,10 +933,11 @@ non-goal, see below).
       but rejected in favor of mdBook to avoid adding a Python toolchain to a project
       that currently has none, and for mdBook's first-party GitHub Pages support.
 - [ ] **Environment setup tool** (`ned-setup` or similar) — first-run detection: shell
-      integration, plus scanning the system for installed tree-sitter grammars and
-      *generating an editable Janet file* loaded from `init.janet`. Deliberately a
-      standalone, inspectable generator — silent runtime auto-detection was considered
-      and rejected (system grammar layouts aren't portable).
+      integration, installed language servers and debug adapters, *generating an
+      editable Janet file* loaded from `init.janet`. Deliberately a standalone,
+      inspectable generator — silent runtime auto-detection was considered and rejected.
+      (Languages are no longer part of this: every grammar is a package under
+      `share/ned/languages`, and a new one comes in through `ned --import-language`.)
 - [ ] **Cookbook entries for debugger-adjacent tools that already work with zero new
       code** (audit finding, 2026-09-06 — a documentation gap, not a code gap):
       Valgrind (`valgrind --vgdb=yes --vgdb-error=0` + DAP `Attach`, memcheck errors
@@ -955,21 +977,14 @@ a PR is a `git am` and a push rather than a re-derivation.
 
 ### Vendored Grammar Patches Worth Upstreaming (Watch List)
 
-- [ ] **`tree-sitter-sql`'s external scanner leaks two ways** — found 2026-09-14 the
-      first time CI actually completed a `sanitize` run (LeakSanitizer, via
-      `Tests/ParseConformanceTest.cpp`'s `[Corpus]` tests): `scan()`'s dollar-quoted-
-      string path drops `start_tag` on the early return when it matches the already-open
-      tag, and `deserialize()` unconditionally overwrites `state->start_tag` without
-      freeing whatever a prior `scan()`/`deserialize()` call had already allocated —
-      the latter fires on every lex attempt while the scanner's lex state is active, so a
-      real SQL file leaks repeatedly, not once. Confirmed still present on upstream
-      `DerekStride/tree-sitter-sql` `master` as of this date. Patched directly in
-      `ThirdParty/tree-sitter-grammars/tree-sitter-sql/src/scanner.c` (two `free()`
-      calls, commented `ned local fix`) rather than via a `Patches/` file the way
-      Notcurses' fixes are — there's no re-apply mechanism for vendored grammars yet,
-      so **`Tools/vendor-grammars.py` re-vendoring this grammar for a version bump will
-      silently drop this fix** unless upstream has merged an equivalent by then; check
-      before bumping.
+- [x] **`tree-sitter-sql`'s external scanner leaks two ways** — found 2026-09-14 under
+      LeakSanitizer (`scan()`'s dollar-quoted-string path dropped `start_tag` on an early
+      return; `deserialize()` overwrote `state->start_tag` without freeing it). The fix
+      now lives in ned's own port, `Source/Editor/Languages/Scanners/SqlScanner.cpp`
+      (2026-09-17, Step 3 of the tree-sitter divorce), so there is no vendored file to
+      re-apply it to; a future `ned --import-language` of a newer tree-sitter-sql would
+      re-port the upstream scanner and needs the two `free()` calls re-checked. Still
+      unmerged upstream as of 2026-09-14.
 
 ### Known Test Flakiness / Non-Critical Issues (Watch List)
 

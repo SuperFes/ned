@@ -1,0 +1,42 @@
+====================
+kbd_macro
+====================
+
+this is kbd:[F3] or kbd:[Ctrl+Shift+T] or kbd:[Ctrl+\]] or kbd:[Ctrl,T] or btn:[Save].
+
+-----
+
+(inline
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (attr)))
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (attr)))
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (attr)))
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (attr)))
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (attr)))
+  (inline_element))

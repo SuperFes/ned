@@ -130,8 +130,12 @@ TEST_CASE("Query discovery: upstream first, own delta after; explicit entries wi
 // ImportResolutionConfig, Injection aliases, BundledSnippets), and a
 // definition losing one silently would only show up feature-by-feature.
 TEST_CASE("The definitions carry the facts the old C++ tables held", "[LanguageParse]") {
-    const std::set<std::string>              kRootMarkerLanguages       = {"c", "cpp", "python", "javascript", "typescript", "tsx",
-                                                                           "php", "rust", "go", "csharp", "java", "kotlin", "lua"};
+    const std::set<std::string>              kRootMarkerLanguages       = {"c", "cpp", "python", "javascript", "typescript", "tsx", "php", "rust", "go", "csharp", "java",
+                                                                           "kotlin", "lua",
+                                                                           // 2026-09-18 pump: build-manifest markers for a future D2 entry
+                                                                           "starlark", "latex", "swift", "nim", "odin", "crystal", "d", "fortran", "ada", "v",
+                                                                           "scala", "haskell", "elixir", "erlang", "elm", "purescript", "rescript", "gleam", "fsharp", "ocaml",
+                                                                           "ocaml-interface", "groovy", "perl", "julia", "dart", "solidity", "gdscript"};
     const std::set<std::string>              kImportResolutionLanguages = {"php", "javascript", "typescript", "tsx", "python", "bash",
                                                                            "clojure", "jank", "css", "janet", "rust"};
     const std::map<std::string, std::string> kAliases                   = {
@@ -151,6 +155,7 @@ TEST_CASE("The definitions carry the facts the old C++ tables held", "[LanguageP
         {"clj", "clojure"},
         {"markdown_inline", "markdown-inline"},
         {"udiff", "diff"},
+        {"asciidoc_inline", "asciidoc-inline"},
     };
 
     std::set<std::string>              rootMarkers, importResolution;
