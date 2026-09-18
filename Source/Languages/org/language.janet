@@ -5,6 +5,8 @@
  :extensions [".org"]
  :line-comment "#"
  :wrap-lines true
+ # Structure is headline depth; a link's [[...]] is not a delimited body.
+ :imprint false
 
  # Real Org's own bindings, with three deliberate mode-over-global shadows
  # (C-c C-p over toggle-project-sidebar, C-c C-o over find-scratch,

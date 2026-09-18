@@ -1,5 +1,7 @@
 #include "JanetData.h"
 
+#include <cstdio>
+
 namespace ned::editor::janetdata {
 
 JanetDataError::JanetDataError(int line, int column, const std::string& message) : std::runtime_error(std::to_string(line) + ":" + std::to_string(column) + ": " + message), line_(line) {
@@ -251,6 +253,45 @@ namespace {
 
 Value ParseJanetData(std::string_view source) {
     return Reader(source).ReadOne();
+}
+
+std::string QuoteJanetString(std::string_view text) {
+    std::string out;
+    out.reserve(text.size() + 2);
+    out += '"';
+    for (const char c : text) {
+        switch (c) {
+            case '"':
+                out += "\\\"";
+                break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            case '\0':
+                out += "\\0";
+                break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20 || c == 0x7f) {
+                    char buffer[8];
+                    std::snprintf(buffer, sizeof buffer, "\\x%02x", static_cast<unsigned char>(c));
+                    out += buffer;
+                }
+                else {
+                    out += c;
+                }
+        }
+    }
+    out += '"';
+    return out;
 }
 
 } // namespace ned::editor::janetdata

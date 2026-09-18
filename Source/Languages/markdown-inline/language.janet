@@ -3,6 +3,7 @@
 # upstream's plus ned's one addition (strikethrough).
 
 {:name "markdown-inline"
+ :imprint false
 
  # Upstream injections.scm files spell it with an underscore (Neovim's
  # parser-name convention).

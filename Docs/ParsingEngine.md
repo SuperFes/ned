@@ -6,8 +6,8 @@ tree-sitter runtime underneath it.
 
 Status: **Tier 0 is built and shipping; Tiers 1-2 and the language-definition
 format are still a design sketch.** `Editor/Imprint.h` (the vocabulary),
-`Grammar/GrammarImprint.h` (inference over `grammar.json`),
-`Editor/ImprintTables.cpp` (the compiled-in result) and its three drivers --
+`Grammar/GrammarImprint.h` (inference over a language's `grammar.janet`),
+`Editor/ImprintTables.h` (the per-language result, read at runtime) and its three drivers --
 `ImprintFold.h`, `ImprintBracket.h` and `ImprintIndent.h` -- are real code, and
 folding for 21 languages, matching-bracket lookup and the structural half of
 indentation run on them. Everything from "Tier 1 -- declared concepts" onward
@@ -976,7 +976,7 @@ because grammar bumps are already manual and gated:
 `Tests/QueryDataTest.cpp` re-converts each source file from the FetchContent
 tree on every run and diffs it against the vendored copy, so a bump whose
 query changed fails the build until `NED_BLESS_QUERIES=1` re-vendors it and
-the diff is read -- `ImprintTables.cpp`'s exact bless shape.
+the diff is read.
 
 Two `.scm`-shaped things survive, deliberately. The *reader* for tree-sitter's
 own spelling stays (`ParseScm` -- one reader, two dialects), because a
@@ -1181,8 +1181,8 @@ validated against it. Cheap, and without it none of the rest is falsifiable.
 declare traits alongside, emit one artifact. Implement Tier 0 inference and
 measure it against the existing fold/indent corpus. Exit criterion: 53 of 55
 fold nodes reproduced with zero hand-written rules. *Status:* Tier 0 is the
-compiled-in imprint table (`Editor/ImprintTables.cpp`), held against live
-inference on every run; the gate was met at 60/60. The "declare traits
+imprint table (`Editor/ImprintTables.h`), inferred from each language's
+`grammar.janet` at runtime; the gate was met at 60/60. The "declare traits
 alongside, emit one artifact" half was measured rather than built: Tier 1 does
 not restate across drivers (10% node overlap, none with the same role -- see
 "Tier 1 is not restated per driver either"), so there is nothing for a compiler

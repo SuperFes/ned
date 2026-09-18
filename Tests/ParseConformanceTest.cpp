@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -9,22 +10,24 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "Editor/BundledLanguages.h"
-#include "Editor/LanguageFiles.h"
-#include "Editor/Parse/Cursor.h"
-#include "Editor/Parse/Node.h"
-#include "Editor/Parse/Parser.h"
-#include "Editor/Parse/Sexp.h"
+#include "Editor/Grammar/Compile/Compiler.h"
 #include "Editor/Grammar/Languages.h"
 #include "Editor/Grammar/MatchCache.h"
 #include "Editor/Grammar/Parser.h"
 #include "Editor/Grammar/QueryMatcher.h"
 #include "Editor/Grammar/Tree.h"
+#include "Editor/LanguageFiles.h"
+#include "Editor/Parse/Cursor.h"
+#include "Editor/Parse/Node.h"
+#include "Editor/Parse/Parser.h"
+#include "Editor/Parse/Sexp.h"
 #include "Text/OffsetRemap.h"
 
 // The conformance bar for the parsing engine.
@@ -1443,5 +1446,196 @@ TEST_CASE("Recovery keeps later structures parsed past an early error", "[ParseR
         const std::size_t lastOccurrence = sexp.rfind(expectation.laterStructure);
         CHECK(lastOccurrence != std::string::npos);
         CHECK(lastOccurrence > sexp.size() / 3);
+    }
+}
+
+// --- Compiled grammar.janet vs the vendored parser.c ------------------------------
+//
+// The table compiler's oracle while parser.c still exists: the tables ned
+// compiles from grammar.janet must parse every corpus case to the same tree
+// -- symbols, byte ranges, MISSING/ERROR/extra placement and fields -- as
+// the tables tree-sitter generated for the same grammar. State numbering is
+// not the contract; the tree is.
+
+namespace {
+
+void AppendShape(ned::editor::parse::TreeCursor& cursor, std::string& out) {
+    using namespace ned::editor::parse;
+    const RedNode node = cursor.CurrentNode();
+    out += NodeType(node);
+    out += '[';
+    out += std::to_string(NodeStartByte(node));
+    out += ',';
+    out += std::to_string(NodeEndByte(node));
+    out += ']';
+    if (NodeIsMissing(node))
+        out += 'M';
+    if (NodeIsError(node))
+        out += 'E';
+    if (NodeIsExtra(node))
+        out += 'X';
+    if (cursor.CurrentFieldId() != 0) {
+        out += '@';
+        out += std::to_string(cursor.CurrentFieldId());
+    }
+    if (cursor.GotoFirstChild()) {
+        out += '(';
+        do {
+            AppendShape(cursor, out);
+            out += ' ';
+        }
+        while (cursor.GotoNextSibling());
+        cursor.GotoParent();
+        out += ')';
+    }
+}
+
+std::string TreeShape(const ned::editor::parse::GreenTree& tree) {
+    std::string                    out;
+    ned::editor::parse::TreeCursor cursor(tree.RootNode());
+    AppendShape(cursor, out);
+    return out;
+}
+
+// The grammars held tree-identical on every run: those that compile in
+// well under a second each. The rest (bash, c, java, javascript, rust,
+// typescript, tsx, php, cpp, csharp, ruby, sql, kotlin -- 3s to 195s each)
+// are covered by NED_COMPILE_CONFORMANCE_LANGUAGES=a,b,c or "all" until
+// the build compiles every language once and the test reads the result.
+// Cases where the vendored parser.c came from an older generator than the
+// one ned's compiler ports (v0.25.10), keyed "language" -> "file: case".
+// kotlin (ABI 14): `_quest: "?"` -- old generators gave the `?` token the
+// hidden rule's name; extract_tokens now keeps an anonymous string token
+// visible when only a hidden rule wraps it, so `?` shows in the tree.
+const std::map<std::string_view, std::set<std::string>>& KnownGeneratorDivergences() {
+    static const std::map<std::string_view, std::set<std::string>> known = {
+        {"kotlin", {"classes.txt: Properties"}},
+    };
+    return known;
+}
+
+std::vector<std::string_view> CompileConformanceLanguages() {
+    static const std::vector<std::string_view> languages = {"json", "diff", "clojure", "cmake", "css", "fish", "go", "html", "janet",
+                                                            "lua", "markdown", "markdown-inline", "org", "python", "toml", "xml", "yaml", "dockerfile",
+                                                            "make", "hcl", "nix", "gitcommit", "gitrebase", "r"};
+    const char*                                override  = std::getenv("NED_COMPILE_CONFORMANCE_LANGUAGES");
+    if (override == nullptr)
+        return languages;
+    std::vector<std::string_view> chosen;
+    if (std::string_view(override) == "all") {
+        for (const CorpusSource& source : CorpusSources()) {
+            chosen.push_back(source.defaultLanguage);
+            for (const DialectMapping& dialect : source.dialects)
+                if (!dialect.language.empty() && dialect.language != source.defaultLanguage)
+                    chosen.push_back(dialect.language);
+        }
+        return chosen;
+    }
+    std::string_view rest = override;
+    while (!rest.empty()) {
+        const std::size_t comma = rest.find(',');
+        chosen.push_back(rest.substr(0, comma));
+        rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+    }
+    return chosen;
+}
+
+} // namespace
+
+TEST_CASE("Compiled grammar.janet tables parse the corpora as the vendored tables do", "[CompileConformance][Corpus]") {
+    using ned::editor::grammar::compile::CompiledLanguage;
+    using ned::editor::grammar::compile::CompileGrammar;
+    using ned::editor::grammar::compile::GrammarFile;
+    using ned::editor::grammar::compile::ParseGrammarJanet;
+
+    for (const std::string_view languageName : CompileConformanceLanguages()) {
+        INFO("language: " << languageName);
+        const std::optional<Language> vendored = LanguageByName(languageName);
+        REQUIRE(vendored.has_value());
+
+        const GrammarFile                 grammar   = ParseGrammarJanet(ReadFile(ned::editor::BundledLanguagesRoot() / languageName / "grammar.janet"));
+        const auto                        started   = std::chrono::steady_clock::now();
+        std::unique_ptr<CompiledLanguage> compiled  = CompileGrammar(grammar);
+        const auto                        compileMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+        compiled->AdoptExternalScanner(*static_cast<const ned::editor::parse::abi::LanguageData*>(static_cast<const void*>(vendored->Raw())));
+
+        ned::editor::parse::Engine reference(vendored->Raw());
+        ned::editor::parse::Engine candidate(compiled->Data());
+
+        std::size_t              compared = 0;
+        std::vector<std::string> divergences;
+        for (const CorpusSource& source : CorpusSources()) {
+            for (const fs::path& file : CorpusFiles(source)) {
+                const std::string content = ReadFile(file);
+                const std::string label   = CorpusLabel(source, file);
+                for (CorpusCase& item : ParseCorpusFile(content, label)) {
+                    if (item.skip || !item.platformMatches)
+                        continue;
+                    for (const std::string& attributeLanguage : item.languages) {
+                        std::string_view caseLanguage = source.defaultLanguage;
+                        if (!attributeLanguage.empty()) {
+                            caseLanguage = {};
+                            for (const DialectMapping& dialect : source.dialects)
+                                if (dialect.attribute == attributeLanguage)
+                                    caseLanguage = dialect.language;
+                        }
+                        if (caseLanguage != languageName)
+                            continue;
+                        if (const auto known = KnownGeneratorDivergences().find(languageName);
+                            known != KnownGeneratorDivergences().end() && known->second.count(item.file + ": " + item.name) > 0)
+                            continue;
+                        ++compared;
+                        const ned::editor::parse::GreenTree expected      = reference.Parse(item.input);
+                        const ned::editor::parse::GreenTree actual        = candidate.Parse(item.input);
+                        const std::string                   expectedShape = TreeShape(expected);
+                        const std::string                   actualShape   = TreeShape(actual);
+                        if (expectedShape != actualShape && divergences.size() < 5) {
+                            divergences.push_back(item.file + ": " + item.name + "\n  vendored: " + ned::editor::parse::SubtreeToSexp(expected.Root(), expected.Language()) +
+                                                  "\n  compiled: " + ned::editor::parse::SubtreeToSexp(actual.Root(), actual.Language()) + "\n  vendored shape: " + expectedShape +
+                                                  "\n  compiled shape: " + actualShape);
+                        }
+                        else if (expectedShape != actualShape) {
+                            divergences.push_back(item.file + ": " + item.name);
+                        }
+                    }
+                }
+            }
+        }
+        // The recovery corpus: broken sources, where error-recovery
+        // tie-breaks (small-state group order, lookahead iteration) show.
+        static const std::map<std::string_view, std::string_view> kRecoveryLanguages = {
+            {".c", "c"},
+            {".cpp", "cpp"},
+            {".js", "javascript"},
+            {".rs", "rust"},
+            {".py", "python"},
+            {".json", "json"},
+            {".md", "markdown"},
+            {".sh", "bash"},
+        };
+        for (const auto& entry : fs::directory_iterator(fs::path(NED_REPO_ROOT) / "Tests" / "ParseRecovery" / "corpus")) {
+            const auto found = kRecoveryLanguages.find(entry.path().extension().string());
+            if (found == kRecoveryLanguages.end() || found->second != languageName)
+                continue;
+            ++compared;
+            const std::string                   source        = ReadFile(entry.path());
+            const ned::editor::parse::GreenTree expected      = reference.Parse(source);
+            const ned::editor::parse::GreenTree actual        = candidate.Parse(source);
+            const std::string                   expectedShape = TreeShape(expected);
+            const std::string                   actualShape   = TreeShape(actual);
+            if (expectedShape != actualShape)
+                divergences.push_back("ParseRecovery/" + entry.path().filename().string() + "\n  vendored shape: " + expectedShape + "\n  compiled shape: " + actualShape);
+        }
+
+        REQUIRE(compared > 0);
+        std::string report;
+        for (const std::string& divergence : divergences)
+            report += divergence + "\n";
+        if (std::getenv("NED_PARSE_CONFORMANCE_VERBOSE") != nullptr)
+            std::cerr << languageName << ": compiled in " << compileMs << "ms, " << divergences.size() << " of " << compared << " cases diverge\n"
+                      << report;
+        INFO(divergences.size() << " of " << compared << " cases diverge:\n"
+                                << report);
+        CHECK(divergences.empty());
     }
 }
