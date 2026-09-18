@@ -1,0 +1,33 @@
+========================
+Response from localhost
+========================
+
+GET http://localhost:3000/api/v1/users/all
+HTTP/1.1 200 OK
+Content-Length: 21
+Content-Type: application/json
+
+{
+  "data": [],
+  "count": 0
+}
+
+
+---
+
+(document
+  (section
+  request: (request
+    method: (method)
+    url: (target_url)
+    (response
+      (http_version)
+      (status_code)
+      (status_text))
+    header: (header
+      name: (header_entity)
+      value: (value))
+    header: (header
+      name: (header_entity)
+      value: (value))
+    body: (json_body))))

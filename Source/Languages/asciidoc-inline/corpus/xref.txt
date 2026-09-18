@@ -1,0 +1,30 @@
+====================
+xref
+====================
+
+<<id,reftext>>
+xref:id[reftext]
+
+<<aaa\,\>,bbb\>>>
+
+<<aaa\,\>>>
+
+-----
+
+(inline
+  (inline_element
+    (xref
+      (id)
+      (reftext)))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (target)
+      (attr)))
+  (inline_element
+    (xref
+      (id)
+      (reftext)))
+  (inline_element
+    (xref
+      (id))))

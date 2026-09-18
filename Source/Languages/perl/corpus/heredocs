@@ -1,0 +1,382 @@
+================================================================================
+Non-quoted heredoc
+================================================================================
+print(<<TINGS, 'other content');
+this is just $content
+  TINGS here (or even \nTINGS here) does not end it\
+TINGS
+<<\RAW;
+This type does no $interp
+RAW
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (function_call_expression
+      (function)
+      (list_expression
+        (heredoc_token)
+        (string_literal
+          (string_content)))))
+  (heredoc_content
+    (scalar
+      (varname))
+    (escape_sequence)
+    (escape_sequence)
+    (heredoc_end))
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (heredoc_end)))
+
+================================================================================
+Quoted heredocs
+================================================================================
+<<  "$STOP";
+please $STOP doing \\ silly things
+$STOP
+<<  '  CRAZY';
+you'd think this is just
+CRAZY, but you'd be \n $wrong
+  CRAZY
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (scalar
+      (varname))
+    (escape_sequence)
+    (heredoc_end))
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (heredoc_end)))
+
+================================================================================
+Command heredocs
+================================================================================
+<< `BASH`;
+:(){ :|:& };:
+BASH
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (command_heredoc_token))
+  (heredoc_content
+    (heredoc_end)))
+
+================================================================================
+Indented heredocs
+================================================================================
+<<~SIMPLE;
+   This is indented
+   SIMPLE
+<<~    "QUOTED";
+    Guess what?
+    This $works, too!
+    QUOTED
+<<~\LOLWUT
+    And apparently, this $monstrosity works, too
+    LOLWUT
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (heredoc_end))
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (scalar
+      (varname))
+    (heredoc_end))
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (heredoc_end)))
+
+================================================================================
+Insane heredocs
+================================================================================
+<<'WUT\'\n?';
+this is intersting
+WUT'\n?
+<<"WHY?$CUZ";
+ WHY?$CUZ
+WHY?$CUZ
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (heredoc_end))
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (scalar
+      (varname))
+    (heredoc_end)))
+
+================================================================================
+heredocs after a statement (gh#92)
+================================================================================
+my $ting;
+print <<EOF;
+$tings --tings
+EOF
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (variable_declaration
+      (scalar
+        (varname))))
+  (expression_statement
+    (ambiguous_function_call_expression
+      (function)
+      (heredoc_token)))
+  (heredoc_content
+    (scalar
+      (varname))
+    (heredoc_end)))
+
+================================================================================
+weird heredoc interpolation (gh#133)
+================================================================================
+<<EOF;
+@
+EOF
+<<EOF;
+$sner->
+EOF
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (heredoc_end))
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (scalar
+      (varname))
+    (heredoc_end)))
+
+================================================================================
+utf8 heredoc delims
+================================================================================
+<<עד_כאן;
+this is just plain old דברים!
+עד_כאן
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (heredoc_token))
+  (heredoc_content
+    (heredoc_end)))
+
+================================================================================
+Stacked heredocs (two on one line)
+================================================================================
+print <<A, <<B;
+first
+A
+second
+B
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (ambiguous_function_call_expression
+      (function)
+      (list_expression
+        (heredoc_token)
+        (heredoc_token))))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end)))
+
+================================================================================
+Stacked heredocs (four on one line)
+================================================================================
+say <<A, <<B, <<C, <<D;
+aaa
+A
+bbb
+B
+ccc
+C
+ddd
+D
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (ambiguous_function_call_expression
+      (function)
+      (list_expression
+        (heredoc_token)
+        (heredoc_token)
+        (heredoc_token)
+        (heredoc_token))))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end)))
+
+================================================================================
+Stacked heredocs (mixed indented, interpolating, and non-interpolating)
+================================================================================
+print <<~X, <<"Y", <<'Z';
+   indented $here
+   X
+interp $yes
+Y
+literal $no
+Z
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (ambiguous_function_call_expression
+      (function)
+      (list_expression
+        (heredoc_token)
+        (heredoc_token)
+        (heredoc_token))))
+  (heredoc_content
+    (scalar
+      (varname))
+    (heredoc_end))
+  (heredoc_content
+    (scalar
+      (varname))
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end)))
+
+================================================================================
+Stacked heredocs overflow (more than the cap) degrades gracefully
+================================================================================
+say <<X1, <<X2, <<X3, <<X4, <<X5, <<X6, <<X7, <<X8, <<X9;
+b1
+X1
+b2
+X2
+b3
+X3
+b4
+X4
+b5
+X5
+b6
+X6
+b7
+X7
+b8
+X8
+b9
+X9
+my $after = 42;
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (ambiguous_function_call_expression
+      (function)
+      (list_expression
+        (heredoc_token)
+        (heredoc_token)
+        (heredoc_token)
+        (heredoc_token)
+        (heredoc_token)
+        (heredoc_token)
+        (heredoc_token)
+        (heredoc_token)
+        (heredoc_token))))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end))
+  (heredoc_content
+    (heredoc_end))
+  (expression_statement
+    (assignment_expression
+      (variable_declaration
+        (scalar
+          (varname)))
+      (number))))
+
+================================================================================
+Empty-delimiter heredoc <<'' (body ends at blank line, non-interpolating) (G3)
+================================================================================
+my $a = <<'';
+plain body
+
+my $z = 1;
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (assignment_expression
+      left: (variable_declaration
+        variable: (scalar
+          (varname)))
+      right: (heredoc_token)))
+  (heredoc_content
+    (heredoc_end))
+  (expression_statement
+    (assignment_expression
+      left: (variable_declaration
+        variable: (scalar
+          (varname)))
+      right: (number))))
+
+================================================================================
+Empty-delimiter heredoc <<"" (body ends at blank line, interpolating) (G5)
+================================================================================
+my $b = <<"";
+interp $z body
+
+my $w = 2;
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (assignment_expression
+      left: (variable_declaration
+        variable: (scalar
+          (varname)))
+      right: (heredoc_token)))
+  (heredoc_content
+    (scalar
+      (varname))
+    (heredoc_end))
+  (expression_statement
+    (assignment_expression
+      left: (variable_declaration
+        variable: (scalar
+          (varname)))
+      right: (number))))

@@ -1,0 +1,45 @@
+====================
+empty
+====================
+
+stem:[]
+
+-------
+
+(inline
+  (inline_element
+    (stem_macro
+      (macro_name))))
+
+====================
+stem
+====================
+
+stem:[a + b = c]
+stem:[A = \{ a + b \}]
+
+-----
+
+(inline
+  (inline_element
+    (stem_macro
+      (macro_name)
+      (attr)))
+  (inline_element
+    (stem_macro
+      (macro_name)
+      (attr))))
+
+================
+stem escaped ]
+================
+
+stem:[aaaa\]]
+
+------
+
+(inline
+  (inline_element
+    (stem_macro
+      (macro_name)
+      (attr))))

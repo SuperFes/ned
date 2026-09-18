@@ -4,6 +4,8 @@
 #include <cctype>
 #include <optional>
 
+#include "Editor/Parse/Cursor.h"
+#include "Editor/Parse/Node.h"
 #include "Editor/Parse/Sexp.h"
 
 namespace ned::editor::grammar::corpus {
@@ -14,6 +16,139 @@ namespace {
 
     bool IsWordChar(char c) {
         return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+    }
+
+    std::string Trim(std::string_view text) {
+        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0)
+            text.remove_prefix(1);
+        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())) != 0)
+            text.remove_suffix(1);
+        return std::string(text);
+    }
+
+    // --- The reference's CST rendering (cli/src/parse.rs render_cst) ---
+
+    // Digits minus one; the reference's checked_ilog10().unwrap_or(0).
+    std::size_t Ilog10(std::size_t value) {
+        std::size_t n = 0;
+        while (value >= 10) {
+            value /= 10;
+            ++n;
+        }
+        return n;
+    }
+
+    void AppendCstText(std::string& out, std::string_view text) {
+        for (const char c : text) {
+            switch (c) {
+                case '\n':
+                    out += "\\n";
+                    break;
+                case '\r':
+                    out += "\\r";
+                    break;
+                case '\t':
+                    out += "\\t";
+                    break;
+                case '\0':
+                    out += "\\0";
+                    break;
+                case '\\':
+                    out += "\\\\";
+                    break;
+                case '\v':
+                    out += "\\v";
+                    break;
+                case '\f':
+                    out += "\\f";
+                    break;
+                case '`':
+                    out += "\\`";
+                    break;
+                case '"':
+                    out += "\\\"";
+                    break;
+                default:
+                    out.push_back(c);
+            }
+        }
+    }
+
+    // `row:col` padded so the columns line up across the listing:
+    // totalWidth is the widest row/column digit budget the input needs.
+    void AppendCstRange(std::string& out, parse::abi::Point start, parse::abi::Point end, std::size_t totalWidth) {
+        const auto remaining = [totalWidth](std::uint32_t row, std::uint32_t column) {
+            std::size_t width = totalWidth;
+            width             = width > Ilog10(row) ? width - Ilog10(row) : 0;
+            width             = width > Ilog10(column) ? width - Ilog10(column) : 0;
+            return std::max<std::size_t>(width, 1);
+        };
+        out += std::to_string(start.row) + ":" + std::to_string(start.column);
+        out.append(remaining(start.row, start.column), ' ');
+        out += "- " + std::to_string(end.row) + ":" + std::to_string(end.column);
+        out.append(remaining(end.row, end.column), ' ');
+    }
+
+    // A leaf's text: quoted on the node's line, or one backticked line per
+    // source line (each with its own range) when it spans lines.
+    void AppendCstNodeText(std::string& out, parse::RedNode node, bool named, std::string_view text, std::size_t totalWidth, std::size_t indent) {
+        if (!named) {
+            out.push_back('"');
+            AppendCstText(out, text);
+            out.push_back('"');
+            return;
+        }
+        const bool  multiline = text.find('\n') != std::string_view::npos;
+        std::size_t pos       = 0;
+        for (std::size_t i = 0; pos < text.size(); ++i) {
+            const std::size_t      nl   = text.find('\n', pos);
+            const std::string_view line = text.substr(pos, nl == std::string_view::npos ? std::string_view::npos : nl + 1 - pos);
+            pos                         = nl == std::string_view::npos ? text.size() : nl + 1;
+            if (multiline) {
+                parse::abi::Point start = parse::NodeStartPoint(node);
+                start.row += static_cast<std::uint32_t>(i);
+                const parse::abi::Point end{start.row, static_cast<std::uint32_t>(line.size() + (i == 0 ? start.column : 0))};
+                out.push_back('\n');
+                AppendCstRange(out, start, end, totalWidth);
+                out.append((indent + 1) * 2, ' ');
+            }
+            else {
+                out.push_back(' ');
+            }
+            out.push_back('`');
+            AppendCstText(out, line);
+            out.push_back('`');
+        }
+    }
+
+    void AppendCstNode(std::string& out, const parse::TreeCursor& cursor, const parse::abi::LanguageData* language, std::string_view input, std::size_t totalWidth,
+                       std::size_t indent, bool inError) {
+        const parse::RedNode node  = cursor.CurrentNode();
+        const bool           named = parse::NodeIsNamed(node);
+        AppendCstRange(out, parse::NodeStartPoint(node), parse::NodeEndPoint(node), totalWidth);
+        out.append(indent * 2, ' ');
+        if (inError && !parse::NodeHasError(node))
+            out.push_back(' ');
+        if (named) {
+            if (const parse::abi::FieldId field = cursor.CurrentFieldId(); field != 0) {
+                out += language->fieldNames[field];
+                out += ": ";
+            }
+            if (parse::NodeHasError(node) || parse::NodeIsError(node))
+                out += "•";
+            out += parse::NodeType(node);
+            if (parse::NodeChildCount(node) == 0)
+                AppendCstNodeText(out, node, true, input.substr(parse::NodeStartByte(node), parse::NodeEndByte(node) - parse::NodeStartByte(node)), totalWidth, indent);
+        }
+        else if (parse::NodeIsMissing(node)) {
+            out += "MISSING: \"";
+            out += parse::NodeType(node);
+            out.push_back('"');
+        }
+        else {
+            AppendCstNodeText(out, node, false, parse::NodeType(node), totalWidth, indent);
+        }
+        out.push_back('\n');
     }
 
     struct Line {
@@ -76,6 +211,7 @@ namespace {
         std::string              name;
         bool                     skip            = false;
         bool                     error           = false;
+        bool                     cst             = false;
         bool                     platformMatches = true;
         std::vector<std::string> languages;
     };
@@ -241,6 +377,10 @@ std::vector<Case> ParseCorpusFile(std::string_view content, const std::string& f
                 seenMarker = true;
                 h.error    = true;
             }
+            else if (beforeParen == ":cst") {
+                seenMarker = true;
+                h.cst      = true;
+            }
             else if (beforeParen == ":platform" && trimmed.size() > 10 && trimmed.back() == ')') {
                 seenMarker                   = true;
                 const std::string_view value = trimmed.substr(10, trimmed.size() - 11);
@@ -298,10 +438,13 @@ std::vector<Case> ParseCorpusFile(std::string_view content, const std::string& f
         item.input           = std::string(content.substr(h.endOffset, divider->start - h.endOffset));
         if (!item.input.empty() && item.input.back() == '\n')
             item.input.pop_back();
+        item.cst                           = h.cst;
         item.expectedStart = divider->end;
         item.expectedEnd   = segmentEnd;
-        item.expected      = NormalizeExpected(content.substr(divider->end, segmentEnd - divider->end));
-        item.hasFields     = HasFieldSyntax(item.expected);
+        const std::string_view rawExpected = content.substr(divider->end, segmentEnd - divider->end);
+        // A CST listing is compared as written (trimmed), never normalized.
+        item.expected  = h.cst ? Trim(rawExpected) : NormalizeExpected(rawExpected);
+        item.hasFields = !h.cst && HasFieldSyntax(item.expected);
         cases.push_back(std::move(item));
     }
     return cases;
@@ -312,6 +455,66 @@ std::string ActualSexp(const parse::GreenTree& tree, bool keepFields) {
     if (!keepFields)
         sexp = StripSexpFields(sexp);
     return sexp;
+}
+
+std::string RenderCst(const parse::GreenTree& tree, std::string_view input) {
+    if (tree.IsNull())
+        return {};
+    // The reference sizes the range columns from the input's line count and
+    // longest line (Rust's lines(): no trailing empty line, \r stripped).
+    std::size_t totalWidth = 1;
+    std::size_t row        = 0;
+    for (std::size_t pos = 0; pos < input.size(); ++row) {
+        const std::size_t nl   = input.find('\n', pos);
+        std::string_view  line = input.substr(pos, nl == std::string_view::npos ? std::string_view::npos : nl - pos);
+        if (!line.empty() && line.back() == '\r')
+            line.remove_suffix(1);
+        totalWidth = std::max(totalWidth, Ilog10(row) + Ilog10(line.size()) + 1);
+        pos        = nl == std::string_view::npos ? input.size() : nl + 1;
+    }
+
+    std::string       out;
+    parse::TreeCursor cursor(tree.RootNode());
+    std::size_t       indent           = 1;
+    bool              didVisitChildren = false;
+    bool              inError          = false;
+    for (;;) {
+        if (didVisitChildren) {
+            if (cursor.GotoNextSibling()) {
+                didVisitChildren = false;
+            }
+            else if (cursor.GotoParent()) {
+                didVisitChildren = true;
+                --indent;
+                if (!parse::NodeHasError(cursor.CurrentNode()))
+                    inError = false;
+            }
+            else {
+                break;
+            }
+        }
+        else {
+            AppendCstNode(out, cursor, tree.Language(), input, totalWidth, indent, inError);
+            if (cursor.GotoFirstChild()) {
+                didVisitChildren = false;
+                ++indent;
+                if (parse::NodeHasError(cursor.CurrentNode()))
+                    inError = true;
+            }
+            else {
+                didVisitChildren = true;
+            }
+        }
+    }
+    return Trim(out);
+}
+
+std::string ActualOutput(const parse::GreenTree& tree, const Case& item) {
+    return item.cst ? RenderCst(tree, item.input) : ActualSexp(tree, item.hasFields);
+}
+
+std::string BlessedExpected(const Case& item, std::string_view actual) {
+    return item.cst ? std::string(actual) : PrettySexp(actual);
 }
 
 std::string PrettySexp(std::string_view sexp) {
@@ -362,8 +565,10 @@ std::string PrettySexp(std::string_view sexp) {
 std::vector<fs::path> CorpusFiles(const fs::path& directory) {
     std::vector<fs::path> files;
     std::error_code       ec;
+    // Any regular file: the reference reads every entry, and grammars name
+    // their corpus files .txt, .mk (make) or .scm (typst) alike.
     for (const auto& entry : fs::recursive_directory_iterator(directory, ec))
-        if (entry.is_regular_file() && (entry.path().extension() == ".txt" || entry.path().extension() == ".mk"))
+        if (entry.is_regular_file() && !entry.path().filename().string().starts_with('.'))
             files.push_back(entry.path());
     std::sort(files.begin(), files.end());
     return files;
@@ -372,8 +577,8 @@ std::vector<fs::path> CorpusFiles(const fs::path& directory) {
 CaseResult RunCase(parse::Engine& engine, const Case& item) {
     const parse::GreenTree tree = engine.Parse(item.input);
     if (item.error)
-        return {.passed = tree.HasError(), .actual = tree.HasError() ? std::string() : ActualSexp(tree, item.hasFields)};
-    std::string actual = ActualSexp(tree, item.hasFields);
+        return {.passed = tree.HasError(), .actual = tree.HasError() ? std::string() : ActualOutput(tree, item)};
+    std::string actual = ActualOutput(tree, item);
     const bool  passed = actual == item.expected;
     return {.passed = passed, .actual = std::move(actual)};
 }

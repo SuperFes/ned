@@ -49,7 +49,9 @@
 //    ts_node_string(), with ` field: (` prefixes stripped from the actual
 //    when the expectation names no fields;
 //  - `:skip` skips, `:error` asserts only that the tree contains an error,
-//    `:language(x)` routes a case to a dialect grammar.
+//    `:language(x)` routes a case to a dialect grammar, `:cst` compares the
+//    reference's concrete-syntax listing (ranges, anonymous tokens, leaf
+//    text) verbatim instead of the S-expression.
 //
 // Regenerate after an intentional change:
 //
@@ -126,12 +128,83 @@ const std::vector<CorpusSource>& CorpusSources() {
         {"gitcommit/corpus", "gitcommit"},
         {"gitrebase/corpus", "gitrebase"},
         {"r/corpus", "r"},
+        {"ini/corpus", "ini"},
+        {"json5/corpus", "json5"},
+        {"meson/corpus", "meson"},
+        {"gitattributes/corpus", "gitattributes"},
+        {"ssh_config/corpus", "ssh_config"},
+        {"requirements/corpus", "requirements"},
+        {"udev/corpus", "udev"},
+        {"gitconfig/corpus", "gitconfig"},
+        {"properties/corpus", "properties"},
+        {"kdl/corpus", "kdl"},
+        {"starlark/corpus", "starlark"},
+        {"just/corpus", "just"},
+        {"editorconfig/corpus", "editorconfig"},
+        {"ron/corpus", "ron"},
+        {"earthfile/corpus", "earthfile"},
+        {"dotenv/corpus", "dotenv"},
+        {"latex/corpus", "latex"},
+        {"rst/corpus", "rst"},
+        {"typst/corpus", "typst"},
+        {"asciidoc/corpus", "asciidoc"},
+        {"asciidoc-inline/corpus", "asciidoc-inline"},
+        {"proto/corpus", "proto"},
+        {"thrift/corpus", "thrift"},
+        {"http/corpus", "http"},
+        {"pem/corpus", "pem"},
+        {"csv/corpus", "csv", {{"csv", "csv"}, {"tsv", "tsv"}, {"psv", "psv"}}},
+        {"swift/corpus", "swift"},
+        {"nim/corpus", "nim"},
+        {"odin/corpus", "odin"},
+        {"crystal/corpus", "crystal", {{"crystal", "crystal"}}}, // half its cases carry a :language(crystal) marker
+        {"d/corpus", "d"},
+        {"fortran/corpus", "fortran"},
+        {"objc/corpus", "objc"},
+        {"ada/corpus", "ada"},
+        {"pascal/corpus", "pascal"},
+        {"vala/corpus", "vala"},
+        {"asm/corpus", "asm"},
+        {"v/corpus", "v"},
+        {"scala/corpus", "scala"},
+        {"haskell/corpus", "haskell"},
+        {"elixir/corpus", "elixir"},
+        {"erlang/corpus", "erlang"},
+        {"elm/corpus", "elm"},
+        {"purescript/corpus", "purescript"},
+        {"rescript/corpus", "rescript"},
+        {"gleam/corpus", "gleam"},
+        {"commonlisp/corpus", "commonlisp"},
+        {"scheme/corpus", "scheme"},
+        {"racket/corpus", "racket"},
+        {"fennel/corpus", "fennel"},
+        {"fsharp/corpus", "fsharp"},
+        {"ocaml/corpus", "ocaml", {{"ocaml", "ocaml"}, {"ocaml_interface", "ocaml-interface"}, {"ocaml_type", ""}}},
+        {"ocaml-interface/corpus", "ocaml-interface", {{"ocaml_interface", "ocaml-interface"}}},
+        {"groovy/corpus", "groovy"},
+        {"perl/corpus", "perl"},
+        {"julia/corpus", "julia"},
+        {"dart/corpus", "dart"},
+        {"tcl/corpus", "tcl"},
+        {"nu/corpus", "nu"},
+        {"powershell/corpus", "powershell"},
+        {"scss/corpus", "scss"},
+        {"vue/corpus", "vue"},
+        {"svelte/corpus", "svelte"},
+        {"astro/corpus", "astro"},
+        {"glsl/corpus", "glsl"},
+        {"hlsl/corpus", "hlsl"},
+        {"cuda/corpus", "cuda"},
+        {"verilog/corpus", "verilog"},
+        {"vhdl/corpus", "vhdl"},
+        {"solidity/corpus", "solidity"},
+        {"gdscript/corpus", "gdscript"},
+        {"matlab/corpus", "matlab"},
     };
     return sources;
 }
 
-// The corpus files under one source, sorted. tree-sitter-make is the one
-// grammar whose corpus files end in .mk, not .txt.
+// The corpus files under one source, sorted.
 std::vector<fs::path> CorpusFiles(const CorpusSource& source) {
     return ned::editor::grammar::corpus::CorpusFiles(ned::editor::BundledLanguagesRoot() / source.directory);
 }
@@ -149,6 +222,7 @@ std::string ReadFile(const fs::path& path) {
 }
 
 using CorpusCase = ned::editor::grammar::corpus::Case;
+using ned::editor::grammar::corpus::ActualOutput;
 using ned::editor::grammar::corpus::ParseCorpusFile;
 using ned::editor::grammar::corpus::StripSexpFields;
 
@@ -241,7 +315,7 @@ TEST_CASE("Bundled corpora conformance scorecard matches the blessed baseline", 
                         passed = tree.Green().HasError();
                     }
                     else {
-                        passed = ActualSexp(tree, item.hasFields) == item.expected;
+                        passed = ActualOutput(tree.Green(), item) == item.expected;
                     }
                     if (passed) {
                         ++score.passed;
@@ -250,7 +324,7 @@ TEST_CASE("Bundled corpora conformance scorecard matches the blessed baseline", 
                         if (std::getenv("NED_PARSE_CONFORMANCE_VERBOSE") != nullptr) {
                             std::cerr << "case:     " << item.file << ": " << item.name << "\n"
                                       << "expected: " << item.expected << "\n"
-                                      << "actual:   " << ActualSexp(tree, item.hasFields) << "\n\n";
+                                      << "actual:   " << ActualOutput(tree.Green(), item) << "\n\n";
                         }
                         ++score.failed;
                         score.failures.push_back(item.file + ": " + item.name +
@@ -293,11 +367,16 @@ TEST_CASE("Bundled corpora conformance scorecard matches the blessed baseline", 
 
 TEST_CASE("Ned parse engine matches the bundled corpora", "[ParseEngine][Corpus]") {
     // The markdown-inline grammar's shipped tables were not generated with
-    // the extensions these three files exercise; the scorecard baseline pins
-    // the same 8 failures.
+    // the extensions these three files exercise; typst's "negative" file
+    // expects an older CLI's MISSING-token recovery where the reference and
+    // ned both produce an ERROR. The scorecard baseline pins the same 10
+    // failures.
     const auto isKnownBaselineFailure = [](std::string_view corpus, std::string_view file) {
-        return corpus == "markdown-inline/corpus" &&
-               (file == "extension_wikilink.txt" || file == "tags.txt" || file == "spec.txt");
+        return (corpus == "markdown-inline/corpus" &&
+                (file == "extension_wikilink.txt" || file == "tags.txt" || file == "spec.txt")) ||
+               (corpus == "typst/corpus" && file == "negative.scm") ||
+               // haskell's one `error:` case pins an older CLI's recovery shape.
+               (corpus == "haskell/corpus" && file == "varsym.txt");
     };
 
     std::size_t                                                totalRuns = 0;
@@ -354,9 +433,7 @@ TEST_CASE("Ned parse engine matches the bundled corpora", "[ParseEngine][Corpus]
                         continue;
                     }
 
-                    std::string actual = ned::editor::parse::SubtreeToSexp(tree.Root(), tree.Language());
-                    if (!item.hasFields)
-                        actual = StripSexpFields(actual);
+                    const std::string actual = ActualOutput(tree, item);
                     if (actual != item.expected) {
                         recordFailure("");
                         if (std::getenv("NED_PARSE_CONFORMANCE_VERBOSE") != nullptr) {
@@ -795,9 +872,11 @@ bool SamePoint(ned::editor::parse::abi::Point a, ned::editor::parse::abi::Point 
 }
 
 struct RedLayerTally {
-    std::size_t compared     = 0;
-    std::size_t fieldLookups = 0;
-    std::size_t fieldNulls   = 0;
+    std::size_t compared           = 0;
+    std::size_t fieldLookups       = 0;
+    std::size_t fieldNulls         = 0;
+    std::size_t fieldInnerChildren = 0; // node.c answered an inherited field with the expansion's first child
+    std::size_t siblingNephews     = 0; // node.c's next-named-sibling descended into an anonymous sibling
 };
 
 // Checks `ref` (child `index` of `parent`, null for the root) and its
@@ -838,8 +917,21 @@ bool CheckRefNode(const RefNode& ref, const RefNode* parent, std::size_t index, 
         };
         if (!check("next sibling", NodeNextSibling(node), nextAfter(false)))
             return false;
-        if (!check("next named sibling", NodeNextNamedSibling(node), nextAfter(true)))
-            return false;
+        // node.c's search (ts_node__next_sibling: a later child that is not
+        // itself relevant but has relevant descendants is descended into,
+        // and the first of those is returned) hands back a nephew through an
+        // anonymous sibling -- just's line-continuation expressions -- which
+        // no sibling walk yields. Tolerated when the cursor sees no later
+        // named sibling and the answer starts after this node; counted so it
+        // stays the rare exception.
+        {
+            const RedNode actual   = NodeNextNamedSibling(node);
+            const RedNode expected = nextAfter(true);
+            if (NodeIsNull(expected) && !NodeIsNull(actual) && NodeIsNamed(actual) && NodeStartByte(actual) >= end)
+                ++tally.siblingNephews;
+            else if (!check("next named sibling", actual, expected))
+                return false;
+        }
         // The previous-sibling search is a byte-position heuristic that can
         // give up (null) when this node itself is zero-width; exact otherwise.
         const auto prevBefore = [&](bool namedOnly) {
@@ -853,8 +945,17 @@ bool CheckRefNode(const RefNode& ref, const RefNode* parent, std::size_t index, 
         };
         if (!checkPrev("prev sibling", NodePrevSibling(node), prevBefore(false)))
             return false;
-        if (!checkPrev("prev named sibling", NodePrevNamedSibling(node), prevBefore(true)))
-            return false;
+        // The mirror of the next-named-sibling nephew above (ts_node__prev_sibling
+        // descends the same way), for the operator token that follows a
+        // continuation-wrapped value.
+        {
+            const RedNode actual   = NodePrevNamedSibling(node);
+            const RedNode expected = prevBefore(true);
+            if (NodeIsNull(expected) && !NodeIsNull(actual) && NodeIsNamed(actual) && NodeEndByte(actual) <= start)
+                ++tally.siblingNephews;
+            else if (!checkPrev("prev named sibling", actual, expected))
+                return false;
+        }
     }
 
     if (NodeChildCount(node) != ref.children.size())
@@ -892,8 +993,27 @@ bool CheckRefNode(const RefNode& ref, const RefNode* parent, std::size_t index, 
         // answers null there; anything non-null must be the cursor's child.
         const RedNode actual = NodeChildByFieldId(node, field);
         ++tally.fieldLookups;
+        // node.c follows an inherited entry into the hidden expansion and
+        // returns its first relevant child, while the cursor reports only the
+        // innermost non-inherited entry for each child: an expansion whose
+        // first child carries its own inner field (swift's `user_type` inside
+        // `_possibly_implicitly_unwrapped_type`, ssh_config's forward values)
+        // shows the outer field on the anonymous token that follows it. Then
+        // node.c's answer is an earlier named child of this node.
+        const auto isInnerChild = [&] {
+            if (NodeIsNamed(ref.children[i].node) || !NodeIsNamed(actual))
+                return false;
+            for (std::size_t j = 0; j < i; ++j)
+                if (SameNode(actual, ref.children[j].node))
+                    return true;
+            return false;
+        };
         if (NodeIsNull(actual))
             ++tally.fieldNulls;
+        else if (SameNode(actual, ref.children[i].node))
+            ;
+        else if (isInnerChild())
+            ++tally.fieldInnerChildren;
         else if (!check(("child by field id " + std::to_string(field)).c_str(), actual, ref.children[i].node))
             return false;
     }
@@ -958,9 +1078,12 @@ TEST_CASE("Ned red layer: node operations agree with a cursor walk over the bund
     CHECK(tally.compared > 90000);
     // The null tolerance above must stay the rare exception, or a lookup that
     // always answered null would pass.
-    INFO("field lookups: " << tally.fieldLookups << ", null: " << tally.fieldNulls);
+    INFO("field lookups: " << tally.fieldLookups << ", null: " << tally.fieldNulls << ", inner children: " << tally.fieldInnerChildren
+                           << "; sibling nephews: " << tally.siblingNephews << " of " << tally.compared);
     CHECK(tally.fieldLookups > 5000);
     CHECK(tally.fieldNulls * 100 < tally.fieldLookups);
+    CHECK(tally.fieldInnerChildren * 100 < tally.fieldLookups);
+    CHECK(tally.siblingNephews * 1000 < tally.compared);
     INFO("first failures: " << [&] {
         std::string joined;
         for (std::size_t i = 0; i < failures.size() && i < 20; i++)

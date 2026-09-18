@@ -315,6 +315,34 @@ struct QueryMatcher::Impl {
             else if (head->text == "ERROR") {
                 node.kind = PatternNode::Kind::Error;
             }
+            else if (const std::size_t slash = head->text.find('/'); slash != std::string::npos) {
+                // A supertype-scoped name, `expression/variable`: the subtype
+                // must be one of the supertype's declared subtypes, checked
+                // here; matching is by the subtype's symbols alone -- the
+                // node's position under the hidden supertype is not
+                // consulted (haskell's highlights are written this way).
+                const std::string superName = head->text.substr(0, slash);
+                const std::string subName   = head->text.substr(slash + 1);
+                const auto        supertype = supertypes.find(superName);
+                const auto        symbols   = namedTypes.find(subName);
+                if (supertype == supertypes.end()) {
+                    throw QueryMatcherError(head->line, "unknown supertype '" + superName + "'");
+                }
+                if (symbols == namedTypes.end()) {
+                    throw QueryMatcherError(head->line, "unknown node type '" + subName + "'");
+                }
+                const std::unordered_set<parse::abi::Symbol> subtypes = ExpandSupertype(supertype->second);
+                for (const parse::abi::Symbol symbol : symbols->second) {
+                    if (subtypes.contains(symbol)) {
+                        node.symbols.push_back(symbol);
+                    }
+                }
+                if (node.symbols.empty()) {
+                    throw QueryMatcherError(head->line, "'" + subName + "' is not a subtype of '" + superName + "'");
+                }
+                node.kind = PatternNode::Kind::Named;
+                node.type = head->text;
+            }
             else if (const auto symbols = namedTypes.find(head->text); symbols != namedTypes.end()) {
                 node.kind    = PatternNode::Kind::Named;
                 node.type    = head->text;

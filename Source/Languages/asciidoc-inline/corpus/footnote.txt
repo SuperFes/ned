@@ -1,0 +1,62 @@
+====================
+footnote
+====================
+
+this is a footnote:[text] or footnote:id[text] or footnote:id[] or footnoteref:[id,text] or footnoteref:[id]
+
+This is afootnote:[text], but notstem.
+
+-----
+
+(inline
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element
+    (footnote
+      (macro_name)
+      (attr)))
+  (inline_element
+    (word))
+  (inline_element
+    (footnote
+      (macro_name)
+      (target)
+      (attr)))
+  (inline_element
+    (word))
+  (inline_element
+    (footnote
+      (macro_name)
+      (target)))
+  (inline_element
+    (word))
+  (inline_element
+    (footnote
+      (macro_name)
+      (attr)))
+  (inline_element
+    (word))
+  (inline_element
+    (footnote
+      (macro_name)
+      (attr)))
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element
+    (footnote
+      (macro_name)
+      (attr)))
+  (inline_element)
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element))

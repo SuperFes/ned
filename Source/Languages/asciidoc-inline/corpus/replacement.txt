@@ -1,0 +1,19 @@
+===========
+replacement
+===========
+
+(R)
+
+(C)
+
+-&gt;
+
+-----
+
+(inline
+  (inline_element
+    (replacement))
+  (inline_element
+    (replacement))
+  (inline_element
+    (replacement)))

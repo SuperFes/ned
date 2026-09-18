@@ -1,0 +1,37 @@
+====================
+anchor_macro
+====================
+
+this is a [[idname]] or [[idname,Reference Text]] or anchor:idname[] or anchor:idname[Reference Text]
+
+-----
+
+(inline
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element
+    (id_assignment
+      (id)))
+  (inline_element
+    (word))
+  (inline_element
+    (id_assignment
+      (id)
+      (reftext)))
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (target)))
+  (inline_element
+    (word))
+  (inline_element
+    (inline_macro
+      (macro_name)
+      (target)
+      (attr))))
