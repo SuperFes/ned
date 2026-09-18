@@ -2803,8 +2803,8 @@ static bool inner_scan(void *payload, Lexer *lexer, const bool *valid_symbols) {
                     PUSH_LITERAL(state, ((PercentLiteral){
                                             .opening_char = static_cast<uint8_t>(opening_char),
                                             .closing_char = static_cast<uint8_t>(closing_char),
-                                            .type = type,
                                             .nesting_level = 0,
+                                            .type = type,
                                         }));
 
                     return true;
@@ -2823,8 +2823,8 @@ static bool inner_scan(void *payload, Lexer *lexer, const bool *valid_symbols) {
                 PUSH_LITERAL(state, ((PercentLiteral){
                                         .opening_char = '"',
                                         .closing_char = '"',
-                                        .type = STRING,
                                         .nesting_level = 0,
+                                        .type = STRING,
                                     }));
 
                 lexer->resultSymbol = STRING_LITERAL_START;
@@ -2843,8 +2843,8 @@ static bool inner_scan(void *payload, Lexer *lexer, const bool *valid_symbols) {
                 PUSH_LITERAL(state, ((PercentLiteral){
                                         .opening_char = '`',
                                         .closing_char = '`',
-                                        .type = COMMAND,
                                         .nesting_level = 0,
+                                        .type = COMMAND,
                                     }));
 
                 lexer->resultSymbol = COMMAND_LITERAL_START;
