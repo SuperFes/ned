@@ -58,7 +58,7 @@ See [`ROADMAP.md`](ROADMAP.md) for what's still open.
 - [Notcurses](https://github.com/dankamongmen/notcurses) v3.0.17 exactly, with three
   small input-handling patches ned carries (`Patches/notcurses/`)
 - System packages for `libutf8proc`, CLI11, `nlohmann/json`, RE2, PCRE2, `libvterm`,
-  and Catch2 (tests) — no `FetchContent` network fetch for any of these
+  and Catch2 (tests)
 
 Every bundled language is a package under `Source/Languages/<name>/` (its grammar as
 `grammar.janet`, compiled by ned itself at build time), so an ordinary build touches no
