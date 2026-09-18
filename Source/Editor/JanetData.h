@@ -12,9 +12,10 @@
 // The accepted subset is deliberately small: `{...}` structs, `[...]`/`(...)`
 // tuples, `:keywords`, `"strings"` (Janet's escape rules, matching
 // QueryData.cpp's Janet dialect), `true`/`false`/`nil`, bare symbols, and
-// `#` line comments. Anything else -- quote, splice, long strings, a
-// function call -- is a loud error, so a definition that has grown code gets
-// rejected here rather than silently misread.
+// `#` line comments. A number reads as a bare symbol; the consumer that
+// wants one parses its text. Anything else -- quote, splice, long strings,
+// a function call -- is a loud error, so a definition that has grown code
+// gets rejected here rather than silently misread.
 //
 
 #ifndef NED_EDITOR_JANETDATA_H
@@ -62,6 +63,9 @@ struct Value {
     [[nodiscard]] bool IsBool() const {
         return kind == Kind::Bool;
     }
+    [[nodiscard]] bool IsSymbol() const {
+        return kind == Kind::Symbol;
+    }
 
     // Struct lookup by keyword key; null when absent.
     [[nodiscard]] const Value* Get(std::string_view keyword) const;
@@ -81,6 +85,10 @@ class JanetDataError : public std::runtime_error {
 // Reads exactly one top-level value (comments aside); more than one, or
 // none, is an error -- a definition file is one struct.
 [[nodiscard]] Value ParseJanetData(std::string_view source);
+
+// `text` as a quoted Janet string literal ReadString above reads back
+// byte for byte.
+[[nodiscard]] std::string QuoteJanetString(std::string_view text);
 
 } // namespace ned::editor::janetdata
 

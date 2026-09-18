@@ -5,6 +5,8 @@
 {:name "markdown"
  :extensions [".md" ".markdown"]
  :wrap-lines true
+ # Structure is section depth; a link's [text](url) is not a delimited body.
+ :imprint false
 
  # Real Org's own table-editing bindings, mirrored. S-TAB is unbound
  # globally; M-UP/M-DOWN deliberately shadow move-line-up/down with a

@@ -157,6 +157,7 @@ add_executable(ned_tests
             DocSourcePathsTest.cpp
             OracleTest.cpp
             ImprintTest.cpp
+            GrammarFileTest.cpp
             ImprintIndentTest.cpp
             CommandReferenceTest.cpp
             ImprintBracketTest.cpp

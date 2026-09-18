@@ -256,6 +256,19 @@ add_library(ned_lib STATIC
         Editor/ImprintBracket.cpp
         Editor/ImprintIndent.cpp
         Editor/Grammar/GrammarImprint.cpp
+        Editor/Grammar/Compile/GrammarFile.cpp
+        Editor/Grammar/Compile/Grammar.cpp
+        Editor/Grammar/Compile/Nfa.cpp
+        Editor/Grammar/Compile/Unicode.cpp
+        Editor/Grammar/Compile/UnicodeTables.cpp
+        Editor/Grammar/Compile/Regex.cpp
+        Editor/Grammar/Compile/Prepare.cpp
+        Editor/Grammar/Compile/NodeTypes.cpp
+        Editor/Grammar/Compile/ParseTable.cpp
+        Editor/Grammar/Compile/LexTable.cpp
+        Editor/Grammar/Compile/Tables.cpp
+        Editor/Grammar/Compile/Compiler.cpp
+        Editor/Parse/LexDfa.cpp
         Editor/Grammar/Tree.cpp
         Editor/Grammar/Parser.cpp
         Editor/Grammar/IncrementalParse.cpp
