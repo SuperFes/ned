@@ -18,7 +18,8 @@ namespace ned::editor::grammar::compile::unicode {
 
 // The characters with property or general category `name` -- a one- or
 // two-letter category ("L", "Nd"), a long category alias ("Letter",
-// "Control"), or an identifier property ("XID_Start"). Nullopt for a name
+// "Control"), an identifier property ("XID_Start") or an emoji property
+// ("Emoji", "Emoji_Modifier"/"EMod", ...). Nullopt for a name
 // this doesn't know.
 [[nodiscard]] std::optional<CharacterSet> Property(std::string_view name);
 

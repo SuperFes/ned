@@ -1,0 +1,70 @@
+=============
+id
+=============
+
+[#goals]
+* Goal 1
+* Goal 2
+
+----
+
+(inline
+  (inline_element
+    (id_assignment
+      (id)))
+  (inline_element)
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element)
+  (inline_element
+    (word))
+  (inline_element
+    (word)))
+
+===============
+id 2
+===============
+
+[[goals]]
+* Goal 1
+* Goal 2
+
+------
+
+(inline
+  (inline_element
+    (id_assignment
+      (id)))
+  (inline_element)
+  (inline_element
+    (word))
+  (inline_element
+    (word))
+  (inline_element)
+  (inline_element
+    (word))
+  (inline_element
+    (word)))
+
+===============
+id in line
+===============
+
+[#free_the_world]#free the world#
+[#free_the_world]#free the world#
+
+--------
+
+(inline
+  (inline_element
+    (id_assignment
+      (id)))
+  (inline_element
+    (highlight))
+  (inline_element
+    (id_assignment
+      (id)))
+  (inline_element
+    (highlight)))

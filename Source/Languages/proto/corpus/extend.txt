@@ -1,0 +1,53 @@
+================================================================================
+Extend
+================================================================================
+
+syntax = "proto2";
+
+extend Foo {
+  optional int32 bar = 126;
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (syntax
+    (string))
+  (extend
+    (full_ident
+      (identifier))
+    (message_body
+      (field
+        (type)
+        (identifier)
+        (field_number
+          (int_lit
+            (decimal_lit)))))))
+
+================================================================================
+Extend a fully-qualified type
+================================================================================
+
+syntax = "proto2";
+
+extend .google.protobuf.FieldOptions {
+  optional int32 my_option = 51234;
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (syntax
+    (string))
+  (extend
+    (full_ident
+      (identifier)
+      (identifier)
+      (identifier))
+    (message_body
+      (field
+        (type)
+        (identifier)
+        (field_number
+          (int_lit
+            (decimal_lit)))))))

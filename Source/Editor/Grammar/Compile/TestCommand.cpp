@@ -29,9 +29,14 @@ namespace {
         return buffer.str();
     }
 
+    struct PackageLanguage {
+        Language    language;
+        std::string grammarName; // what a case's :language(...) marker must name to run here
+    };
+
     // The package's grammar: its own when the directory holds one, else the
     // bundled grammar its definition names.
-    Language LoadPackageLanguage(const fs::path& directory) {
+    PackageLanguage LoadPackageLanguage(const fs::path& directory) {
         const std::string          name = directory.filename().string();
         std::optional<std::string> grammar;
         std::string                scannerLibrary;
@@ -41,10 +46,33 @@ namespace {
             scannerLibrary                      = definition.scannerLibrary;
         }
         if (fs::exists(directory / "grammar.janet") || fs::exists(directory / "tables"))
-            return LoadLanguagePackage(directory, PackageScanner{.name = grammar.value_or(name), .library = scannerLibrary});
+            return {LoadLanguagePackage(directory, PackageScanner{.name = grammar.value_or(name), .library = scannerLibrary}), grammar.value_or(name)};
         if (const std::optional<Language> bundled = LanguageByName(grammar.value_or(name)))
-            return *bundled;
+            return {*bundled, grammar.value_or(name)};
         throw std::runtime_error(directory.string() + ": no grammar.janet, no tables, and no bundled grammar named '" + grammar.value_or(name) + "'");
+    }
+
+    // A corpus shared by several grammars (tree-sitter-csv's csv/tsv/psv,
+    // typescript's tsx) marks the other grammars' cases with :language(...);
+    // those are skipped here, the way the reference skips them.
+    bool CaseAppliesTo(const corpus::Case& item, const PackageLanguage& package, const std::string& packageName) {
+        // Upstream spells a grammar name with underscores where a package
+        // uses hyphens (ocaml_interface / ocaml-interface).
+        const auto matches = [](std::string_view marker, std::string_view name) {
+            if (marker.size() != name.size())
+                return false;
+            for (std::size_t i = 0; i < marker.size(); ++i) {
+                const char a = marker[i] == '_' ? '-' : marker[i];
+                const char b = name[i] == '_' ? '-' : name[i];
+                if (a != b)
+                    return false;
+            }
+            return true;
+        };
+        for (const std::string& language : item.languages)
+            if (language.empty() || matches(language, packageName) || matches(language, package.grammarName))
+                return true;
+        return false;
     }
 
     fs::path CorpusDirectory(const fs::path& directory) {
@@ -58,10 +86,10 @@ namespace {
     };
 
     Tally TestPackage(const fs::path& directory, bool bless, std::ostream& out) {
-        Tally          tally;
-        const Language language = LoadPackageLanguage(directory);
-        parse::Engine  engine(language.Raw());
-        const fs::path corpusDir = CorpusDirectory(directory);
+        Tally                 tally;
+        const PackageLanguage package = LoadPackageLanguage(directory);
+        parse::Engine         engine(package.language.Raw());
+        const fs::path        corpusDir = CorpusDirectory(directory);
         for (const fs::path& file : corpus::CorpusFiles(corpusDir)) {
             const std::string         content = ReadWhole(file);
             const std::string         label   = fs::relative(file, corpusDir).string();
@@ -70,7 +98,7 @@ namespace {
             std::size_t               copied = 0;
             for (const corpus::Case& item : cases) {
                 ++tally.cases;
-                if (item.skip || !item.platformMatches) {
+                if (item.skip || !item.platformMatches || !CaseAppliesTo(item, package, directory.filename().string())) {
                     ++tally.skipped;
                     continue;
                 }
@@ -82,7 +110,7 @@ namespace {
                 ++tally.failed;
                 if (bless && !item.error) {
                     rewritten.append(content, copied, item.expectedStart - copied);
-                    rewritten.append("\n" + corpus::PrettySexp(result.actual) + "\n\n");
+                    rewritten.append("\n" + corpus::BlessedExpected(item, result.actual) + "\n\n");
                     copied = item.expectedEnd;
                     ++tally.blessed;
                     out << "blessed  " << label << ": " << item.name << "\n";

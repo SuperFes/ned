@@ -2,6 +2,8 @@
 
 #include <unistd.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -79,23 +81,38 @@ namespace {
         return std::nullopt;
     }
 
-    // The extensions a grammar repository declares for itself:
-    // tree-sitter.json's `grammars[].file-types`, else package.json's
-    // `tree-sitter[].file-types`.
-    std::vector<std::string> DeclaredExtensions(const fs::path& repo, const fs::path& grammarDir) {
+    struct FileTypes {
         std::vector<std::string> extensions;
-        const auto               collect = [&](const nlohmann::json& list) {
+        std::vector<std::string> filenames;
+    };
+
+    // The file types a grammar repository declares for itself:
+    // tree-sitter.json's `grammars[].file-types`, else package.json's
+    // `tree-sitter[].file-types`. A bare word is an extension; a dotfile
+    // (".gitattributes") or a dotted name ("requirements.txt") is a whole
+    // basename, which the definition claims through :filenames.
+    FileTypes DeclaredFileTypes(const fs::path& repo, const fs::path& grammarDir) {
+        FileTypes  types;
+        const auto collect = [&](const nlohmann::json& list) {
             if (!list.is_array())
                 return;
             for (const nlohmann::json& entry : list) {
                 if (!entry.is_object())
                     continue;
-                const auto types = entry.find("file-types");
-                if (types == entry.end() || !types->is_array())
+                const auto declared = entry.find("file-types");
+                if (declared == entry.end() || !declared->is_array())
                     continue;
-                for (const nlohmann::json& type : *types)
-                    if (type.is_string())
-                        extensions.push_back("." + type.get<std::string>());
+                for (const nlohmann::json& type : *declared) {
+                    if (!type.is_string())
+                        continue;
+                    const std::string text = type.get<std::string>();
+                    if (text.empty())
+                        continue;
+                    std::vector<std::string>& into = text.find('.') != std::string::npos ? types.filenames : types.extensions;
+                    const std::string         item = &into == &types.extensions ? "." + text : text;
+                    if (std::find(into.begin(), into.end(), item) == into.end())
+                        into.push_back(item);
+                }
             }
         };
         for (const fs::path dir : {grammarDir, repo}) {
@@ -114,11 +131,15 @@ namespace {
                     collect(json.value("grammars", nlohmann::json::array()));
                 else
                     collect(json.value("tree-sitter", nlohmann::json::array()));
-                if (!extensions.empty())
-                    return extensions;
+                if (!types.extensions.empty() || !types.filenames.empty())
+                    return types;
             }
         }
-        return extensions;
+        return types;
+    }
+
+    bool LooksLikeCommitHash(const std::string& ref) {
+        return ref.size() == 40 && std::all_of(ref.begin(), ref.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
     }
 
     std::string Today() {
@@ -151,9 +172,11 @@ int RunImportLanguage(const ImportOptions& options, std::ostream& out, std::ostr
         if (LooksLikeUrl(options.source)) {
             scratch = fs::temp_directory_path() / ("ned-import-" + std::to_string(::getpid()));
             fs::remove_all(scratch);
-            std::vector<std::string> argv = {"git", "clone", "--depth", "1", "--quiet"};
+            // A tag or branch clones by name; a full commit hash (the other
+            // pin the admission policy accepts) needs --revision.
+            std::vector<std::string> argv = {"git", "-c", "advice.detachedHead=false", "clone", "--depth", "1", "--quiet"};
             if (!options.ref.empty()) {
-                argv.emplace_back("--branch");
+                argv.emplace_back(LooksLikeCommitHash(options.ref) ? "--revision" : "--branch");
                 argv.push_back(options.ref);
             }
             argv.push_back(options.source);
@@ -195,14 +218,23 @@ int RunImportLanguage(const ImportOptions& options, std::ostream& out, std::ostr
         WriteWhole(package / "grammar.janet", ToGrammarJanet(grammar));
         out << "  grammar.janet (" << grammar.rules.size() << " rules, " << grammar.externals.size() << " external tokens)\n";
 
-        // Upstream queries, in ned's spelling.
+        // Upstream queries, in ned's spelling: queries/<kind>.scm, or the
+        // per-language layout some repositories use, queries/<name>/<kind>.scm,
+        // or a queries/nvim/ set kept beside editor-specific variants -- under
+        // the grammar's directory, else the repository root (a multi-grammar
+        // repository keeps one queries/ tree beside its grammars).
         std::vector<std::string> queryKinds;
         for (const char* kind : {"highlights", "tags", "injections", "locals"}) {
-            const fs::path scm = grammarDir / "queries" / (std::string(kind) + ".scm");
-            if (!fs::exists(scm))
-                continue;
-            WriteWhole(package / "upstream" / (std::string(kind) + ".janet"), querydata::ConvertScmToJanet(ReadWhole(scm)));
-            queryKinds.emplace_back(kind);
+            const std::string file = std::string(kind) + ".scm";
+            for (const fs::path scm : {grammarDir / "queries" / file, grammarDir / "queries" / grammar.name / file, grammarDir / "queries" / "nvim" / file,
+                                       grammarDir / "queries" / "neovim" / file, grammarDir / "queries" / "Neovim" / file, repo / "queries" / file,
+                                       repo / "queries" / grammar.name / file}) {
+                if (!fs::exists(scm))
+                    continue;
+                WriteWhole(package / "upstream" / (std::string(kind) + ".janet"), querydata::ConvertScmToJanet(ReadWhole(scm)));
+                queryKinds.emplace_back(kind);
+                break;
+            }
         }
         if (!queryKinds.empty()) {
             out << "  upstream/:";
@@ -212,8 +244,14 @@ int RunImportLanguage(const ImportOptions& options, std::ostream& out, std::ostr
         }
 
         // The corpus.
+        // A repository holding several grammars keeps one corpus at its root,
+        // routing cases with :language(...) markers.
         std::size_t corpusFiles = 0;
-        if (const fs::path corpus = grammarDir / "test" / "corpus"; fs::is_directory(corpus)) {
+        fs::path    corpus      = grammarDir / "test" / "corpus";
+        for (const fs::path candidate : {repo / "test" / "corpus", grammarDir / "corpus", repo / "corpus"})
+            if (!fs::is_directory(corpus))
+                corpus = candidate; // some repositories (nix, astro) keep the corpus at the root
+        if (fs::is_directory(corpus)) {
             fs::copy(corpus, package / "corpus", fs::copy_options::recursive);
             for (const auto& entry : fs::recursive_directory_iterator(package / "corpus"))
                 corpusFiles += entry.is_regular_file() ? 1 : 0;
@@ -228,15 +266,40 @@ int RunImportLanguage(const ImportOptions& options, std::ostream& out, std::ostr
             if (fs::exists(grammarDir / "src" / file))
                 scannerSource = grammarDir / "src" / file;
         if (!scannerSource.empty()) {
+            // Everything under src/ but the generated files and tree-sitter's
+            // own headers: a scanner may include siblings from a
+            // subdirectory (rst's tree_sitter_rst/, asciidoc's include/),
+            // which the port helper inlines from the staged copy.
             const fs::path staging = package / "scanner";
             fs::create_directories(staging);
             for (const auto& entry : fs::directory_iterator(grammarDir / "src")) {
                 const std::string base = entry.path().filename().string();
-                if (entry.is_regular_file() && base != "parser.c" && base != "grammar.json" && base != "node-types.json")
+                if (entry.is_directory() && base != "tree_sitter")
+                    fs::copy(entry.path(), staging / base, fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+                else if (entry.is_regular_file() && base != "parser.c" && base != "grammar.json" && base != "node-types.json")
                     fs::copy_file(entry.path(), staging / base, fs::copy_options::overwrite_existing);
             }
-            if (const fs::path common = grammarDir.parent_path() / "common"; fs::is_directory(common) && !options.subdir.empty())
-                fs::copy(common, staging.parent_path() / "common", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+            // A multi-grammar repository keeps shared scanner code in a
+            // common/ directory above the grammar (typescript, ocaml,
+            // fsharp), reached by `#include "../../common/scanner.h"`. It is
+            // staged beside the scanner and the includes retargeted, so the
+            // port helper inlines it from the staged copy.
+            for (fs::path dir = grammarDir;; dir = dir.parent_path()) {
+                if (const fs::path common = dir / "common"; fs::is_directory(common) && dir != grammarDir) {
+                    fs::copy(common, staging / "common", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+                    for (const auto& entry : fs::recursive_directory_iterator(staging)) {
+                        if (!entry.is_regular_file())
+                            continue;
+                        const std::string text       = ReadWhole(entry.path());
+                        const std::string retargeted = std::regex_replace(text, std::regex("#include \"(?:\\.\\./)+common/"), "#include \"common/");
+                        if (retargeted != text)
+                            WriteWhole(entry.path(), retargeted);
+                    }
+                    break;
+                }
+                if (dir == repo || dir.empty() || dir == dir.parent_path())
+                    break;
+            }
             scannerLines               = CountLines(ReadWhole(scannerSource));
             const std::string ported   = CamelCase(name) + "Scanner.cpp";
             const fs::path    portedTo = staging / ported;
@@ -261,7 +324,7 @@ int RunImportLanguage(const ImportOptions& options, std::ostream& out, std::ostr
             if (std::regex_search(text, match, std::regex("#define LANGUAGE_VERSION (\\d+)")))
                 abiVersion = match[1];
         }
-        const std::vector<std::string> extensions = DeclaredExtensions(repo, grammarDir);
+        const FileTypes fileTypes = DeclaredFileTypes(repo, grammarDir);
 
         // The definition skeleton.
         std::ostringstream definition;
@@ -271,20 +334,28 @@ int RunImportLanguage(const ImportOptions& options, std::ostream& out, std::ostr
                    << " files.\n"
                    << "# Fill in what the import cannot know: :line-comment, :lsp-root-markers, and a\n"
                    << "# tags.janet/indents.janet beside this file.\n\n"
-                   << "{:name \"" << name << "\"\n"
-                   << " :extensions [";
-        for (std::size_t i = 0; i < extensions.size(); ++i)
-            definition << (i > 0 ? " " : "") << "\"" << extensions[i] << "\"";
-        definition << "]\n";
+                   << "{:name \"" << name << "\"\n";
+        const auto writeList = [&](const char* key, const std::vector<std::string>& items) {
+            definition << " " << key << " [";
+            for (std::size_t i = 0; i < items.size(); ++i)
+                definition << (i > 0 ? " " : "") << "\"" << items[i] << "\"";
+            definition << "]\n";
+        };
+        if (!fileTypes.extensions.empty() || fileTypes.filenames.empty())
+            writeList(":extensions", fileTypes.extensions);
+        if (!fileTypes.filenames.empty())
+            writeList(":filenames", fileTypes.filenames);
         if (!scannerSource.empty())
             definition << " # The grammar's external scanner: uncomment once scanner/ is built as a shared library.\n"
                        << " # :scanner-library \"" << (package / "scanner" / ("libned-" + name + "-scanner.so")).string() << "\"\n";
         definition << "}\n";
         WriteWhole(package / "language.janet", definition.str());
-        out << "  language.janet (extensions:";
-        for (const std::string& extension : extensions)
+        out << "  language.janet (file types:";
+        for (const std::string& extension : fileTypes.extensions)
             out << " " << extension;
-        out << (extensions.empty() ? " none declared" : "") << ")\n";
+        for (const std::string& filename : fileTypes.filenames)
+            out << " " << filename;
+        out << (fileTypes.extensions.empty() && fileTypes.filenames.empty() ? " none declared" : "") << ")\n";
 
         // Compile, then run the corpus.
         if (const int code = RunCompileLanguage({package.string()}, "", out, err); code != 0)

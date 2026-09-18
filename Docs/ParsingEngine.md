@@ -2,7 +2,12 @@
 
 Design for replacing ned's per-language tree-sitter query corpus with a single
 trait-based language-definition format, and -- later, and separably -- the
-tree-sitter runtime underneath it.
+tree-sitter runtime underneath it. Both have happened: the runtime went in
+Phase 4b (2026-09-13), and the generator, the scanners and the grammar files
+themselves followed on 2026-09-17/18 (`Editor/Grammar/Compile/`, `grammar.janet`
+packages, `ned --import-language`; see `Docs/LanguageAuthoring.md`). Nothing in
+the tree depends on tree-sitter; the sections below that say "tree-sitter's tree"
+or "grammar.json" describe the ecosystem the design was measured against.
 
 Status: **Tier 0 is built and shipping; Tiers 1-2 and the language-definition
 format are still a design sketch.** `Editor/Imprint.h` (the vocabulary),
@@ -1149,6 +1154,12 @@ live, and it stays a separate decision:
   missing-token insertion scored against the parse table.
 
 ### Grammar packaging, if and when Phase 4 happens
+
+*Done, 2026-09-17/18:* a language is a directory package (`language.janet`,
+`grammar.janet`, `tables`, queries, corpus) compiled at build time by ned's own
+generator; scanners are C++ against `Editor/Parse/Scanner.h` (75 bundled) or a
+`.so` for out-of-tree packages; `ned --import-language` converts a tree-sitter
+repository in one step. The measurements below were the case for doing it.
 
 - `grammar.json` **ships in all 24 fetched repos** (3.6 MB total) -- the grammar
   as pure data, no `node` required.

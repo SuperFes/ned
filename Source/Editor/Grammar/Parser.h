@@ -42,11 +42,10 @@ class Language {
 
 class Parser {
   public:
-    // Throws std::runtime_error if language was generated for an ABI version
-    // outside the engine's supported range (13-15) -- ordinarily only
-    // reachable if a dynamically-loaded grammar (see the
-    // dynamic-grammar-loading follow-up) was built against a mismatched
-    // tree-sitter version.
+    // Throws std::runtime_error if the language's tables are not the engine's
+    // own layout (Parse/Abi.h's kAbiVersion) -- ordinarily only reachable
+    // through a package whose `tables` file predates a format change and
+    // was not recompiled from its grammar.janet.
     explicit Parser(const Language& language);
     ~Parser();
 

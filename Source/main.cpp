@@ -3244,7 +3244,7 @@ auto main(int argc, char** argv) -> int {
         ->group("Startup modes");
     app.add_option("--name", importName, "With --import-language: the language name (default: the grammar's own)");
     app.add_option("--subdir", importSubdir, "With --import-language: the grammar's directory inside a multi-grammar repository");
-    app.add_option("--ref", importRef, "With --import-language and a git URL: the tag or branch to clone");
+    app.add_option("--ref", importRef, "With --import-language and a git URL: the tag, branch or full commit hash to clone");
     app.add_option("--into", importInto, "With --import-language: the languages root to write the package under (default: $XDG_CONFIG_HOME/ned/languages)");
     app.add_flag("--test-language", testLanguage, "Run each given language package's corpus against its grammar and exit")
         ->excludes(lspBrokerOpt)

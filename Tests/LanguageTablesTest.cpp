@@ -135,3 +135,29 @@ TEST_CASE("The compile-language command defaults to `tables` beside the grammar 
     CHECK(RunCompileLanguage({}, "", out3, err3) == 2);
     CHECK(RunCompileLanguage({languageDir.string(), languageDir.string()}, "x", out3, err3) == 2);
 }
+
+// The reference regex crate's class set operations and emoji properties,
+// which swift's and nim's identifier tokens need.
+TEST_CASE("Token regexes take class set operations and emoji properties", "[LanguageTables]") {
+    const std::unique_ptr<CompiledLanguage> setOps = CompileGrammar(ParseGrammarJanet(
+        "{:name \"setops\" :extras [(:pattern \"\\\\s\")]\n"
+        " :rules {source_file (:repeat (:choice consonants emoji))\n"
+        "         consonants (:pattern \"[a-z&&[^aeiou]]+\")\n"
+        "         emoji (:pattern \"[\\\\p{Emoji}--[0-9#*]]\\\\p{EMod}?\")}}"));
+    CHECK(ParseWith(*setOps, "bcd \xF0\x9F\x99\x82 xyz \xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD") == "(source_file (consonants) (emoji) (consonants) (emoji))");
+    CHECK(ParseWith(*setOps, "bad").find("ERROR") != std::string::npos); // a vowel is subtracted
+    CHECK(ParseWith(*setOps, "7").find("ERROR") != std::string::npos);   // a keycap base is an Emoji, removed by --
+
+    const std::unique_ptr<CompiledLanguage> symmetric = CompileGrammar(ParseGrammarJanet(
+        "{:name \"symdiff\" :rules {source_file (:repeat sym) sym (:pattern \"[a-e~~c-g]+\")}}"));
+    CHECK(ParseWith(*symmetric, "abfg") == "(source_file (sym))");
+    CHECK(ParseWith(*symmetric, "c").find("ERROR") != std::string::npos);
+
+    CHECK_THROWS_AS(CompileGrammar(ParseGrammarJanet("{:name \"bad\" :rules {source_file (:pattern \"\\\\p{NoSuchProperty}\")}}")), CompileError);
+
+    // A dash at the head of a class is a literal, not the difference
+    // operator: powershell spells its operators as [--][gG][tT].
+    const std::unique_ptr<CompiledLanguage> dash = CompileGrammar(ParseGrammarJanet(
+        "{:name \"dash\" :extras [(:pattern \"\\\\s\")] :rules {source_file (:repeat (:choice op word)) op (:pattern \"[--][gG][tT]\") word (:pattern \"[a-z]+\")}}"));
+    CHECK(ParseWith(*dash, "a -gt b") == "(source_file (word) (op) (word))");
+}

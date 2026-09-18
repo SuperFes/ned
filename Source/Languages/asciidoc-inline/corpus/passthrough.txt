@@ -1,0 +1,40 @@
+====================
+empty
+====================
+
+pass:[]
+
+-------
+
+(inline
+  (inline_element
+    (macro_passthrough
+      (macro_name))))
+
+====================
+passthrough
+====================
+
++text+
+`text`
+
+$$text$$
+$$text$$
+pass:quotes[text]
+
+-----
+
+(inline
+  (inline_element
+    (passthrough))
+  (inline_element
+    (monospace))
+  (inline_element
+    (passthrough))
+  (inline_element
+    (passthrough))
+  (inline_element
+    (macro_passthrough
+      (macro_name)
+      (target)
+      (attr))))

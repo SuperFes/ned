@@ -80,25 +80,46 @@ Everything mainstream enough that a user arriving with it should find ned
 already competent. Trait declaration committed; integration config accepted
 gladly but not owned.
 
-**Systems / compiled:** Kotlin, Swift, Zig *(→ Tier D, no admissible grammar
-yet)*, Nim, Odin, V, Crystal, D, Objective-C, Ada, Fortran, Pascal, Vala,
-Assembly (x86, ARM)
+**Systems / compiled:** Kotlin, Swift *(admitted 2026-09-18 — see below)*,
+Zig *(→ Tier D, no admissible grammar yet)*, Nim *(admitted 2026-09-18)*, Odin
+*(admitted 2026-09-18)*, V *(admitted 2026-09-18)*, Crystal *(admitted
+2026-09-18)*, D *(admitted 2026-09-18)*, Objective-C *(admitted 2026-09-18)*,
+Ada *(admitted 2026-09-18)*, Fortran *(admitted 2026-09-18)*, Pascal *(admitted
+2026-09-18)*, Vala *(admitted 2026-09-18)*, Assembly (x86 *admitted
+2026-09-18*; ARM: no grammar found under the obvious names)
 
-**JVM / .NET:** Scala, Groovy, Clojure *(in-tree)*, F#, VB.NET
+**JVM / .NET:** Scala *(admitted 2026-09-18 — see below)*, Groovy *(admitted
+2026-09-18)*, Clojure *(in-tree)*, F# *(admitted 2026-09-18)*, VB.NET *(no
+grammar with a corpus -- parked)*
 
-**Functional:** Haskell, OCaml, Elixir, Erlang, Elm, PureScript, ReScript, Gleam,
-Common Lisp, Scheme, Racket, Fennel
+**Functional:** Haskell *(admitted 2026-09-18)*, OCaml *(admitted 2026-09-18,
+with its interface grammar)*, Elixir *(admitted 2026-09-18)*, Erlang *(admitted
+2026-09-18)*, Elm *(admitted 2026-09-18)*, PureScript *(admitted 2026-09-18)*,
+ReScript *(admitted 2026-09-18)*, Gleam *(admitted 2026-09-18)*, Common Lisp
+*(admitted 2026-09-18)*, Scheme *(admitted 2026-09-18)*, Racket *(admitted
+2026-09-18)*, Fennel *(admitted 2026-09-18)*
 
-**Dynamic / scripting:** Ruby *(admitted 2026-09-13 — see below)*, Perl,
-R *(admitted 2026-09-14 — see below)*, Julia, Dart, Tcl, AWK, Zsh, Nushell,
-PowerShell, Fish *(in-tree)*, Elvish
+**Dynamic / scripting:** Ruby *(admitted 2026-09-13 — see below)*, Perl
+*(admitted 2026-09-18 — see below)*, R *(admitted 2026-09-14 — see below)*,
+Julia *(admitted 2026-09-18)*, Dart *(admitted 2026-09-18)*, Tcl *(admitted
+2026-09-18)*, AWK *(grammar rejected by the reference generator -- parked, see
+below)*, Zsh *(rides bash)*, Nushell *(admitted 2026-09-18)*, PowerShell
+*(admitted 2026-09-18)*, Fish *(in-tree)*, Elvish *(→ Graveyard)*
 
-**Web / frontend:** HTML *(in-tree)*, CSS *(in-tree)*, SCSS/Less, Vue, Svelte,
-Astro
+**Web / frontend:** HTML *(in-tree)*, CSS *(in-tree)*, SCSS *(admitted
+2026-09-18)*/Less, Vue *(admitted 2026-09-18)*, Svelte *(admitted 2026-09-18)*,
+Astro *(admitted 2026-09-18)*
 
-**GPU / hardware:** WGSL, GLSL, HLSL, CUDA, Verilog, SystemVerilog, VHDL
+**GPU / hardware:** WGSL *(no corpus upstream -- parked)*, GLSL *(admitted
+2026-09-18)*, HLSL *(admitted 2026-09-18)*, CUDA *(admitted 2026-09-18)*,
+Verilog *(admitted 2026-09-18)*, SystemVerilog *(no corpus upstream -- parked;
+the Verilog grammar covers the SystemVerilog syntax its corpus exercises)*,
+VHDL *(admitted 2026-09-18)*
 
-**Other:** Solidity, GDScript, MATLAB, Prolog, Hack
+**Other:** Solidity *(admitted 2026-09-18)*, GDScript *(admitted 2026-09-18 at
+D0/D1; the Godot integration Tier D describes is untouched)*, MATLAB
+*(admitted 2026-09-18)*, Prolog *(no `grammar.json` upstream -- parked)*, Hack
+*(→ Graveyard, archived)*
 
 Health verified for a sample of these on 2026-09-11: swift `2026-09-10`,
 elixir `2026-07-20`, nix `2026-09-11`, ruby `2026-03-10`, scala `2026-08-25`,
@@ -113,21 +134,34 @@ The category most editors under-serve, and the one where D0-is-free pays
 immediately: a config file is *almost entirely* structure, so Tier 0 inference
 alone makes it genuinely usable.
 
-**Config:** INI/properties, HCL/Terraform *(admitted 2026-09-13 — see below)*,
-Nix *(admitted 2026-09-13 — see below)*, Dhall, Jsonnet, KDL, HOCON, JSON5,
-RON, Pkl, Nickel, editorconfig, `.desktop`, systemd units, `ssh_config`,
-nginx, Caddy, `.env`, `requirements.txt`, Kconfig, udev, muttrc, xresources,
-`.gitconfig` / `.gitignore` / `.gitattributes`
+**Config:** INI/properties *(both admitted 2026-09-18 — see below)*, HCL/Terraform *(admitted 2026-09-13 — see below)*,
+Nix *(admitted 2026-09-13 — see below)*, Dhall, Jsonnet, KDL *(admitted
+2026-09-18)*, HOCON *(→ Graveyard)*, JSON5 *(admitted 2026-09-18)*, RON
+*(admitted 2026-09-18)*, Pkl, Nickel, editorconfig *(admitted 2026-09-18)*,
+`.desktop`, systemd units, `ssh_config` *(admitted 2026-09-18)*, nginx, Caddy,
+`.env` *(admitted 2026-09-18)*, `requirements.txt` *(admitted 2026-09-18)*, Kconfig *(no corpus
+upstream -- parked)*, udev *(admitted 2026-09-18)*, muttrc *(ships no
+`grammar.json` -- parked)*, xresources, `.gitconfig` *(admitted 2026-09-18)* /
+`.gitignore` *(→ Graveyard)* / `.gitattributes` *(admitted 2026-09-18)*
 
 **Build systems:** CMake *(→ Tier A)*, Make *(admitted 2026-09-13 — see
-below)*, Meson, Ninja, Starlark/Bazel, Earthfile, GN, Bitbake, just/Justfile,
+below)*, Meson *(admitted 2026-09-18)*, Ninja, Starlark/Bazel *(admitted
+2026-09-18)*, Earthfile *(admitted 2026-09-18)*, GN *(no corpus upstream --
+parked)*, Bitbake *(no corpus upstream -- parked)*, just/Justfile *(admitted
+2026-09-18)*,
 Dockerfile/Containerfile *(admitted 2026-09-13 — see below)*, Gradle *(rides
 Kotlin/Groovy)*, docker-compose and CI pipelines *(ride YAML)*, Helm *(templated
 YAML -- see Tier D)*
 
-**Data and markup:** CSV/TSV, LaTeX, BibTeX, reStructuredText, AsciiDoc, Typst,
-GraphQL, Protobuf, Thrift, Textproto, Mermaid, PlantUML, HTTP, Hurl, PEM, Po,
-XML *(in-tree)*, YAML *(in-tree)*, TOML *(in-tree)*, JSON *(in-tree)*
+**Data and markup:** CSV/TSV/PSV *(admitted 2026-09-18 — see below)*, LaTeX
+*(admitted 2026-09-18)*, BibTeX *(no corpus upstream -- parked)*, reStructuredText
+*(admitted 2026-09-18)*, AsciiDoc *(admitted 2026-09-18)*, Typst *(admitted
+2026-09-18)*, GraphQL *(→ Graveyard)*, Protobuf *(admitted 2026-09-18)*, Thrift
+*(admitted 2026-09-18)*, Textproto *(no corpus upstream -- parked)*, Mermaid *(→
+Graveyard)*, PlantUML *(→ Graveyard)*, HTTP *(admitted 2026-09-18)*, Hurl *(no
+corpus upstream -- parked)*, PEM *(admitted 2026-09-18)*, Po *(no corpus
+upstream -- parked)*, XML *(in-tree)*, YAML *(in-tree)*, TOML *(in-tree)*, JSON
+*(in-tree)*
 
 **VCS-shaped, and self-serving:** **diff/unified-diff**, gitcommit *(admitted
 2026-09-13 — see below)*, gitrebase *(admitted 2026-09-13 — see below)*. ned
@@ -206,6 +240,444 @@ maintained candidate, pushed 2026-09-13) ships **no `test/` directory at
 all**, failing admission policy item 8 outright; the one alternative with
 real history, `maxxnino/tree-sitter-zig` (124★), is **archived**. Revisit
 when either a corpus lands upstream or a maintained fork adds one.
+
+### 2026-09-18 batch: ini, json5, meson, gitattributes, ssh_config, requirements, udev, gitconfig
+
+The first batch through `ned --import-language` (Docs/LanguageAuthoring.md):
+no tree-sitter tooling anywhere in the loop, every package compiled from its
+`grammar.janet` by ned's own generator at build time, every corpus at 100%
+against the production engine. Chosen as the scanner-free half of Tier C's
+config/build column, so the batch measured the import path itself rather than
+the port work. Admission facts:
+
+- **ini** `justinmk/tree-sitter-ini` v1.4.0 (ABI 15, no scanner, 11-case
+  corpus; upstream highlights vendored unmodified, tags ned-authored: a
+  section is a namespace over its settings). The de-facto grammar (Helix,
+  nvim-treesitter); no `tree-sitter-grammars` fork exists.
+- **json5** `Joakker/tree-sitter-json5` v0.1.0 (ABI 15, no scanner, 39-case
+  corpus; upstream highlights vendored unmodified). One upstream corpus case
+  (`Array with only trailing comma`) carried its `:error` marker *below* the
+  header fence, where tree-sitter's own reader treats it as input; moved into
+  the header, which is what the case meant.
+- **meson** `tree-sitter-grammars/tree-sitter-meson` v1.3.0 (ABI 14, no
+  scanner, 22-case corpus; upstream highlights vendored unmodified, the
+  `folds.scm` it also ships is not a kind ned reads -- folds come from the
+  imprint). Claimed by filename: `meson.build`, `meson.options`,
+  `meson_options.txt`.
+- **gitattributes** `tree-sitter-grammars/tree-sitter-gitattributes` v0.1.6
+  (ABI 14, no scanner, 10-case corpus; upstream highlights vendored
+  unmodified). Claimed by filename.
+- **ssh_config** `tree-sitter-grammars/tree-sitter-ssh-config` v0.5.0 (ABI 15,
+  no scanner, 9-case corpus; upstream highlights and injections vendored
+  unmodified -- `ProxyCommand`/`LocalCommand`/`Match exec` arguments inject
+  bash; tags ned-authored over `Host`/`Match` blocks). `~/.ssh/config` has
+  the basename `config`, too generic to claim; `ssh_config` and
+  `*.ssh_config` are claimed, the per-user file waits on path-pattern claims.
+- **requirements** `tree-sitter-grammars/tree-sitter-requirements` v0.6.1
+  (ABI 15, no scanner, 9-case corpus; upstream highlights vendored
+  unmodified). Claimed by the conventional basenames (`requirements.txt`,
+  `requirements-dev.txt`, `constraints.txt`, ...) and `*.pip`.
+- **udev** `tree-sitter-grammars/tree-sitter-udev` v0.2.1 (ABI 14, no
+  scanner, 5-case corpus; upstream highlights, injections *and* tags vendored
+  unmodified -- `LABEL`/`GOTO` and `ENV` definitions and references).
+- **gitconfig** `the-mikedavis/tree-sitter-git-config` pinned at commit
+  `3a61756a81a86291a0f48e3eeeaa0692b9981aa9` (2026-07-20; the repository
+  has no tags, so this is the batch's one SHA pin -- `--ref` takes a full
+  hash) (ABI 14, no scanner, 14-case corpus; upstream highlights vendored
+  unmodified, tags ned-authored over section headers). Claims `.gitconfig`,
+  `.gitmodules`; `.git/config` has the generic basename `config`, same
+  caveat as ssh_config.
+
+Screened and not admitted in the same pass: `tree-sitter-grammars/tree-sitter-kconfig`,
+`-gn` and `-bitbake` are live but ship **no corpus** (policy item 8);
+`neomutt/tree-sitter-muttrc` ships no `src/grammar.json` (the import reads
+the generated grammar, not `grammar.js`); `shunsambongi/tree-sitter-gitignore`
+and `antosha417/tree-sitter-hocon` are stale since 2022 (→ Graveyard). Ninja,
+xresources and Caddy have no grammar under the names tried; revisit with a
+specific repository.
+
+### 2026-09-18 batch 2: properties, kdl, starlark, just, editorconfig, ron, earthfile, dotenv
+
+The scanner-bearing half of the same column, and the first eight scanners
+to arrive through `ned --import-language`'s port helper rather than a hand
+port: every one compiled and passed its corpus with no edit beyond the ones
+the header explains (just's, below). Admission facts:
+
+- **properties** `tree-sitter-grammars/tree-sitter-properties` v0.3.0 (ABI 15,
+  28-LOC scanner, 3-case corpus; upstream highlights and tags vendored
+  unmodified). Java `.properties`.
+- **kdl** `tree-sitter-grammars/tree-sitter-kdl` v2.0.0 (ABI 15, 184-LOC
+  scanner, 211-case corpus in `v1/` and `v2/` subdirectories -- the corpus
+  reader recurses, so both dialect trees run; upstream highlights,
+  injections and locals vendored unmodified).
+- **starlark** `tree-sitter-grammars/tree-sitter-starlark` v1.3.0 (ABI 15,
+  433-LOC scanner -- python's indent scanner, 90-case corpus; upstream
+  highlights, injections and locals vendored unmodified, tags ned-authored
+  as python's upstream tags minus the class rule). Claims `.bzl`, `.bazel`,
+  `.star`, `.sky` and the `BUILD`/`WORKSPACE`/`MODULE.bazel` basenames,
+  plus `Tiltfile` and `Snakefile`, which are Starlark dialects. Root
+  markers `MODULE.bazel`/`WORKSPACE` for a future Bazel LSP entry.
+- **just** `IndianBoy42/tree-sitter-just` v0.2.0 (ABI 15, 317-LOC scanner,
+  64-case corpus; upstream highlights, injections and locals vendored
+  unmodified from the repository's `queries/just/` layout -- the import
+  reads `queries/<name>/` as well as `queries/`; tags ned-authored over
+  recipes, aliases, assignments and modules). **One scanner edit:**
+  upstream's `assertf` calls `exit(1)` on an invariant failure and refuses
+  to compile under `NDEBUG`; ned keeps the no-op the scanner already
+  defines for wasm builds -- an editor never exits on a scanner invariant.
+- **editorconfig** `ValdezFOmar/tree-sitter-editorconfig` v2.0.0 (ABI 15,
+  73-LOC scanner, 29-case corpus; upstream highlights vendored from
+  `queries/editorconfig/`; tags ned-authored over section globs).
+- **ron** `tree-sitter-grammars/tree-sitter-ron` v0.2.0 (ABI 15, 191-LOC
+  scanner, 13-case corpus; upstream highlights, injections and locals
+  vendored unmodified).
+- **earthfile** `glehmann/tree-sitter-earthfile` 0.6.0 (ABI 15, 155-LOC
+  scanner, 96-case corpus across 31 files -- the largest of the batch;
+  upstream highlights and injections vendored unmodified, tags ned-authored
+  over targets). Claims `Earthfile` by name and `.earth`.
+- **dotenv** `pnx/tree-sitter-dotenv` v1.1.2 (ABI 15, 44-LOC scanner,
+  11-case corpus; upstream highlights vendored unmodified). Two corpus
+  cases are written in tree-sitter's newer `:cst` form (a positions-and-text
+  listing rather than an S-expression); the corpus reader now renders that
+  form byte for byte (`Grammar/Corpus.h::RenderCst`), so they run rather
+  than skip -- and pin node positions, which the S-expression never did.
+  Claims `.env` and its `.env.local`/`.env.production`-style variants by
+  name.
+
+Two query constructs joined the QueryMatcher census with this batch, both
+inert: `(:set! "priority" N)` with the key quoted (starlark) and the
+one-operand `(:set! injection.include-children)` (earthfile, just).
+
+### 2026-09-18 batch 3: latex, rst, typst, asciidoc (+inline), proto, thrift, http, pem, csv/tsv/psv
+
+Tier C's data-and-markup column. Three of these grammars ship no queries at
+all, so their highlights and tags are ned-authored (the hcl precedent); the
+rest vendor upstream's. Admission facts:
+
+- **latex** `latex-lsp/tree-sitter-latex` v0.6.0 (ABI 15, 141-LOC scanner,
+  104-case corpus across 10 files; **no queries upstream** -- texlab is its
+  consumer -- highlights and tags ned-authored from the grammar: sectioning
+  commands, environments, includes, labels, citations, math). The largest
+  table in the tree (3.4MB, 4,531 parse states, ~11s to generate); the
+  build-time compile absorbs it.
+- **rst** `stsewd/tree-sitter-rst` v0.2.0 (ABI 15, scanner split across
+  `src/tree_sitter_rst/` -- 44-line entry file, ~3,300 lines inlined by the
+  port helper, which now stages `src/` subdirectories and inlines each header
+  once; 40-case corpus; **no queries upstream**, highlights and tags
+  ned-authored). `:imprint false`: section adornments are lines, not
+  brackets.
+- **typst** `uben0/tree-sitter-typst` v0.11.0 (ABI 14, 1,077-LOC scanner --
+  one `int → enum` cast at two sites was the whole C++ friction; 430-case
+  corpus in `.scm`-named files, so the corpus reader now takes any regular
+  file; upstream highlights and injections vendored from `queries/typst/`,
+  tags ned-authored over headings and `let` bindings). **Two cases fail on
+  purpose:** `negative/000` and `negative/001` expect a `(MISSING _)`
+  recovery where ned (and current tree-sitter) produce an `ERROR` -- the
+  expectations were generated by an older CLI whose error-cost heuristics
+  differed; the file is upstream's own "negative" bucket. Pinned in the
+  conformance baseline, not blessed away.
+- **asciidoc** + **asciidoc-inline** `cathaysia/tree-sitter-asciidoc` v0.9.0,
+  subdirectories `tree-sitter-asciidoc` and `tree-sitter-asciidoc_inline`
+  (ABI 15; 935-LOC and 145-LOC scanners sharing `include/` headers -- the
+  `Result &=` enum-narrowing at four sites was the C++ friction; 40- and
+  49-case corpora; upstream highlights and injections vendored unmodified,
+  tags ned-authored over the document title and the five section-title node
+  types). Wired the markdown/markdown-inline way: `:injection-aliases
+  ["asciidoc_inline"]` resolves upstream's underscore spelling.
+- **proto** `coder3101/tree-sitter-proto` 0.6.0 (ABI 14, no scanner,
+  40-case corpus; upstream highlights and injections vendored unmodified;
+  tags ned-authored: messages, enums, services, rpcs, fields, package).
+  `mitchellh/tree-sitter-proto` was already graveyarded.
+- **thrift** `tree-sitter-grammars/tree-sitter-thrift` v0.5.0 (ABI 14, no
+  scanner, 29-case corpus; upstream highlights, injections and locals
+  vendored unmodified; tags ned-authored).
+- **http** `rest-nvim/tree-sitter-http` v3.0 (ABI 14, no scanner, 26-case
+  corpus; upstream highlights and injections vendored unmodified -- the
+  `:offset!` directive on script bodies is inert in ned, so a `{% %}` script
+  injection spans its delimiters). Claims `.http` and `.rest`.
+- **pem** `tree-sitter-grammars/tree-sitter-pem` v0.1.1 (ABI 14, no
+  scanner, 3-case corpus; **no queries at the pinned tag** -- the
+  `queries/` directory arrived later on the default branch -- highlights
+  ned-authored, six lines). Claims `.pem`, `.crt`, `.cer`, `.csr`; `.key` is
+  left unclaimed (too many other file kinds use it).
+- **csv**, **tsv**, **psv** `tree-sitter-grammars/tree-sitter-csv` pinned at
+  commit `f6bf6e35eb0b95fbadea4bb39cb9709507fcb181` (2025-11-13; the v1.2.0
+  tag predates the corpus, which lives at the repository root and routes
+  the `tsv`/`psv` cases with `:language(...)` -- the conformance suite
+  routes them through the dialect map the way typescript/tsx is handled,
+  and `ned --test-language` now skips a case whose marker names another
+  grammar). Three packages from one repository via `--subdir`; ABI 14, no
+  scanners, 8 shared cases; upstream highlights vendored unmodified.
+
+Three more query constructs joined the census with this batch:
+`:not-lua-match?` (the matcher's generic `not-` negation already covers it),
+and the inert nvim directives `:gsub!` (asciidoc) and `:offset!` (http).
+
+Screened and not admitted: `latex-lsp/tree-sitter-bibtex`,
+`pfeiferj/tree-sitter-hurl`, `PorterAtGoogle/tree-sitter-textproto` and
+`tree-sitter-grammars/tree-sitter-po` ship no corpus (policy item 8);
+`monaqa/tree-sitter-mermaid` (2024-04) and `lyndsysimon/tree-sitter-plantuml`
+(2021-12) are stale (→ Graveyard); `bkegley/tree-sitter-graphql` was already
+graveyarded and no fork has appeared.
+
+### 2026-09-18 batch 4: swift, nim, odin, v, crystal, d, objc, ada, fortran, pascal, vala, asm
+
+Tier B's systems column, twelve grammars, six with scanners (7,144 lines
+ported in all; every C++ friction point was an enum conversion C tolerates).
+Two generator gaps surfaced and were closed for good: swift's identifier
+regex names `\p{Emoji}` and `\p{EMod}`, and swift's and nim's use the
+reference regex crate's class set operations (`[a-z&&[^aeiou]]`, `--`,
+`~~`) -- `Compile/Regex.cpp` now parses all three at the reference's
+precedence, and `Tools/gen-unicode-tables.py` reads the six emoji
+properties from a vendored `Tools/unicode/emoji-data.txt`. Admission facts:
+
+- **swift** `alex-pinkus/tree-sitter-swift` 0.7.3 (the de-facto grammar --
+  Helix, nvim-treesitter; no `tree-sitter-grammars` fork). Upstream commits
+  `grammar.json` and `scanner.c` but **no `parser.c`**, so there is no
+  upstream ABI to record: ned generates the tables itself, which is the
+  whole point. 949-LOC scanner, 238-case corpus across 10 files; upstream
+  highlights, tags, injections and locals vendored unmodified.
+- **nim** `alaviss/tree-sitter-nim` 0.6.2 (ABI 14, 1,156-LOC scanner --
+  serialize/deserialize take byte buffers, wrapped; 72-case corpus; upstream
+  highlights adapted at one clause: a nested field alternation `[ type: [...]
+  return_type: [...] ]` split into the two patterns it means; tags
+  ned-authored over the routine kinds, types and constants). The largest
+  table set in the tree: 20,305 parse states, 9.1MB, ~70s to generate.
+- **odin** `tree-sitter-grammars/tree-sitter-odin` v1.3.0 (ABI 14, 305-LOC
+  scanner, 2-case corpus -- thin, but present; upstream highlights,
+  injections and locals adapted: four `"="?`/`":"?` quantified-token
+  clauses spelled out or dropped, the nix precedent; tags ned-authored over
+  the `name :: ...` declaration forms).
+- **v** `vlang/v-analyzer` pinned at commit
+  `925d4570d1668746762a2cdf0ecb9a25be704a67` (2026-06-20), subdirectory
+  `tree_sitter_v` -- the language server's own grammar, which superseded
+  `nedpals/tree-sitter-v` (stale since 2023-07, → Graveyard). ABI 15, no
+  scanner, 336-case corpus across 48 files; upstream highlights vendored
+  unmodified, tags ned-authored (Go's layout).
+- **crystal** `crystal-lang-tools/tree-sitter-crystal` pinned at commit
+  `50ca9e6fcfb16a2cbcad59203cfd8ad650e25c49` (2025-10-12; no tags upstream).
+  ABI 15, 3,383-LOC scanner (Ruby-class, the largest of the batch), 245-case
+  corpus, 132 of them marked `:language(crystal)` -- routed through the
+  dialect map like typescript; upstream highlights (from `queries/nvim/`,
+  which the import now reads) and injections vendored unmodified; tags
+  ned-authored, Ruby's shape.
+- **d** `gdamore/tree-sitter-d` v0.9.1 (ABI 14, 587-LOC scanner, 218-case
+  corpus across 36 files; upstream highlights, tags and injections vendored
+  unmodified -- the Helix/Nova variants it also ships are not read).
+- **objc** `tree-sitter-grammars/tree-sitter-objc` v3.0.2 (ABI 14, no
+  scanner; its 75-case corpus is tree-sitter-c's, inherited -- there is no
+  Objective-C-specific case upstream, so the ObjC constructs are covered by
+  the generator's C conformance only; upstream highlights adapted at one
+  `"="?` clause, injections and locals unmodified; tags ned-authored). Claims
+  `.m` only: `.h` stays with C. `jiyee/tree-sitter-objc` (2022) is
+  superseded.
+- **ada** `briot/tree-sitter-ada` pinned at commit
+  `dd5fa4cdb3aba91abc687aa68fb1431396fce6a6` (2026-07-31; the repository's
+  only tag is named `master`). ABI 14, no scanner, 129-case corpus across 21
+  files; upstream highlights and locals vendored unmodified, tags
+  ned-authored. **Generation outlier:** 149s CPU for 2,207 parse states --
+  the case-insensitive keyword tokens (`[pP][aA][cC][kK][aA][gG][eE]` and
+  friends) multiply the lex-state work; noted in ROADMAP's generator
+  follow-ups, absorbed by the parallel build for now.
+- **fortran** `stadelmanma/tree-sitter-fortran` v0.6.0 (ABI 15, 764-LOC
+  scanner, 137-case corpus; upstream highlights, tags and locals vendored
+  unmodified). Free-form extensions plus `.f`/`.for`.
+- **pascal** `Isopod/tree-sitter-pascal` v0.10.2 (ABI 14, no scanner,
+  88-case corpus across 13 files; upstream highlights and locals vendored
+  unmodified, tags ned-authored over units, routines, types, fields,
+  properties).
+- **vala** `vala-lang/tree-sitter-vala` pinned at commit
+  `97e6db3c8c73b15a9541a458d8e797a07f588ef4` (2024-10-29 -- **23 months
+  stale, past policy item 4's line; admitted under its own exception:
+  nothing else exists**, and the grammar is the language project's own).
+  ABI 13, no scanner, 6-case corpus; upstream highlights and locals vendored
+  unmodified, tags ned-authored.
+- **asm** `RubixDev/tree-sitter-asm` v0.24.0 (ABI 14, no scanner, 32-case
+  corpus; upstream highlights and injections vendored from `queries/asm/`;
+  tags ned-authored: labels and constants). GNU as / NASM-style x86;
+  claims `.s`, `.S`, `.asm`, `.nasm`.
+
+Screened and not admitted: `tree-sitter-grammars/tree-sitter-zig` still
+ships no corpus (unchanged since the 2026-09-13 note); no ARM-specific
+grammar under `tree-sitter-grammars/tree-sitter-arm` or the other obvious
+names.
+
+### 2026-09-18 batch 5: scala, groovy, fsharp, haskell, ocaml (+interface), elixir, erlang, elm, purescript, rescript, gleam, commonlisp, scheme, racket, fennel
+
+Tier B's JVM and functional columns, sixteen packages from fifteen
+repositories, twelve with scanners (19,600 ported lines, the two Haskell-family
+scanners alone 13,400). What this batch taught the tooling: a multi-grammar
+repository's shared `common/` scanner code is now staged and its includes
+retargeted (fsharp, ocaml); C99 `restrict` and allocator `void*` locals are
+handled by the port helper; a `queries/` tree at the repository root serves a
+`--subdir` grammar; and `ned --test-language` treats `:language(ocaml_interface)`
+as naming the `ocaml-interface` package. One matcher feature landed:
+**supertype-scoped node names** (`(expression/variable)`), which haskell's
+upstream highlights use 42 times -- the subtype must be in the supertype's
+declared subtype set (checked at compile time), and matching is by the subtype's
+symbol alone; the node's position under the hidden supertype is not consulted.
+Admission facts:
+
+- **scala** `tree-sitter/tree-sitter-scala` v0.26.2 (official org; ABI 15,
+  1,927-LOC scanner, 273-case corpus, one `:skip`; upstream highlights, tags
+  and locals vendored unmodified). 18,261 parse states, 15s to generate.
+- **groovy** `murtaza64/tree-sitter-groovy` pinned at commit
+  `deb0dcf8c4544f07564060f6e9b9f6e4b0bfc27d` (2026-04-11; its only tag is
+  named `initial`). ABI 15, no scanner, 87-case corpus; upstream highlights,
+  injections and locals vendored unmodified, tags ned-authored. Claims
+  `Jenkinsfile` and `.gradle` by name.
+- **fsharp** `ionide/tree-sitter-fsharp` v0.2.0, subdirectory `fsharp` (the
+  separate `fsharp_signature` grammar is not bundled; `.fsi` files parse with
+  this one). ABI 15, 811-LOC scanner through the repository's `common/`,
+  340-case corpus (the `fsharp_signature/` cases pruned); upstream highlights,
+  injections and locals vendored, adapted at three clauses -- two quantified
+  bare tokens (`"*"*`, `"?"?`) dropped, one `(identifier)+` run respelled;
+  upstream's `tags.scm` is empty and is not vendored.
+- **haskell** `tree-sitter/tree-sitter-haskell` v0.23.1 (official org; ABI
+  14, 5,996-LOC scanner after inlining -- five of its enums get an integer
+  carrier type because the scanner increments and combines them the C way;
+  725-case corpus, **one pinned failure**: `varsym.txt: varsym: error: carrow`
+  expects an older CLI's recovery shape). Upstream highlights, injections and
+  locals vendored; highlights adapted at one `(_)+` run, and otherwise run
+  unmodified on the new supertype-scoped names. Tags ned-authored.
+- **ocaml** + **ocaml-interface** `tree-sitter/tree-sitter-ocaml` v0.26.0,
+  subdirectories `grammars/ocaml` and `grammars/interface` (the `type`
+  grammar is not bundled). ABI 15, 634- and 633-LOC scanners sharing
+  `common/`; 94- and 2-case corpora (the repository's one corpus tree, split
+  by its `:language(...)` markers and its `ocaml_interface/` subdirectory);
+  upstream highlights, tags and locals vendored unmodified.
+- **elixir** `elixir-lang/tree-sitter-elixir` v0.3.5 (the language's own; ABI
+  14, 660-LOC scanner, 292-case corpus; upstream highlights, tags and
+  injections vendored unmodified).
+- **erlang** `WhatsApp/tree-sitter-erlang` 0.20 (ABI 14, 215-LOC scanner,
+  228-case corpus; upstream highlights vendored unmodified, tags
+  ned-authored: functions, the module attribute, records, types).
+- **elm** `elm-tooling/tree-sitter-elm` v5.9.4 (ABI 15, 682-LOC scanner --
+  its `VEC_RESIZE` macro needed the allocator `void*` wrapped; 119-case
+  corpus; upstream highlights, tags, injections and locals vendored
+  unmodified).
+- **purescript** `postsolar/tree-sitter-purescript` v0.3.0 (ABI 15, 7,393-LOC
+  scanner after inlining, Haskell-derived; 147-case corpus; upstream
+  highlights, injections and locals vendored unmodified; tags ned-authored
+  over the aliased declaration nodes `data`/`newtype`/`type_alias`).
+- **rescript** `rescript-lang/tree-sitter-rescript` v6.0.0 (the language's
+  own; ABI 15, 419-LOC scanner, 142-case corpus; upstream highlights,
+  injections and locals vendored unmodified, tags ned-authored).
+- **gleam** `gleam-lang/tree-sitter-gleam` v1.1.0 (the language's own; ABI
+  15, 69-LOC scanner, 70-case corpus; upstream highlights, tags, injections
+  and locals vendored unmodified).
+- **commonlisp** `theHamsta/tree-sitter-commonlisp` v0.4.1 (ABI 14, no
+  scanner, 42-case corpus; upstream tags vendored unmodified, **no upstream
+  highlights** (they live in nvim-treesitter) -- highlights ned-authored).
+- **scheme** `6cdh/tree-sitter-scheme` v0.24.7 (ABI 14, no scanner, 31-case
+  corpus in `.scm`-named files; upstream highlights adapted -- five
+  quantified bare wildcards (`_*`) and one `(symbol)+` run respelled; tags
+  ned-authored over the define forms).
+- **racket** `6cdh/tree-sitter-racket` v0.25.0 (ABI 15, 176-LOC scanner,
+  24-case corpus; upstream highlights, tags and locals vendored, adapted at
+  the same `_*` and `(symbol)+` shapes as scheme's).
+- **fennel** `TravonteD/tree-sitter-fennel` 1.1.0 (ABI 14, no scanner,
+  35-case corpus; **no queries upstream** -- highlights and tags
+  ned-authored).
+
+Screened and not admitted: VB.NET has no grammar with a corpus
+(`CodeAnt-AI/tree-sitter-vb-dotnet` ships example files only).
+
+### 2026-09-18 batch 6: perl, julia, dart, tcl, nu, powershell, scss, vue, svelte, astro, glsl, hlsl, cuda, verilog, vhdl, solidity, gdscript, matlab
+
+The rest of Tier B, eighteen packages, fifteen with scanners (38,000 ported
+lines; VHDL's alone is 27,000 after its per-keyword tables inline). Two
+generator findings: `[--]` at the head of a character class is a literal dash
+(powershell spells its operators `[--][gG][tT]`; ned's set-operation parser
+had read it as an empty difference), and `\p{White_Space}` joined the
+property table (perl). Admission facts:
+
+- **perl** `tree-sitter-perl/tree-sitter-perl` v2.0.0 (the organisation's own
+  rewrite; upstream commits `grammar.json` and `scanner.c` but no `parser.c`,
+  so no upstream ABI to record). 4,545-LOC scanner after inlining its keyword
+  tables -- three C++ fixes: two `goto`s that jumped an initialised local,
+  `register`, a `void*` state cast; 283-case corpus; upstream highlights and
+  injections vendored unmodified, tags ned-authored.
+- **julia** `tree-sitter/tree-sitter-julia` v0.25.0 (official org; ABI 15,
+  206-LOC scanner, 63-case corpus; upstream highlights, injections and locals
+  vendored unmodified -- one `:has-ancestor?` clause joins the
+  ancestor-crossing census; tags ned-authored).
+- **dart** `UserNobody14/tree-sitter-dart` pinned at commit
+  `be07cf7118d3dba06236a3f19541685a68209934` (2026-07-07; no tags upstream).
+  ABI 15, 149-LOC scanner, 187-case corpus; upstream highlights vendored
+  unmodified, tags vendored minus two `@reference.*` clauses that quantify
+  bare tokens.
+- **tcl** `tree-sitter-grammars/tree-sitter-tcl` pinned at commit
+  `850a72ab6436e06645b33b11cfa60cbdb04b1f01` (2026-08-05; no tags upstream).
+  ABI 15, 63-LOC scanner, 19-case corpus; upstream highlights vendored from
+  `queries/tcl/`, tags ned-authored.
+- **nu** `nushell/tree-sitter-nu` pinned at commit
+  `4f577aaa735154f934594b598a69ed7b1b707cf6` (2026-09-14; the language's
+  own, untagged). ABI 15, 155-LOC scanner, 309-case corpus in `.nu`-named
+  files; upstream highlights and injections vendored from `queries/nu/`,
+  adapted at three clauses (a quantified delimiter alternation, two optional
+  sigil tokens, one `(comment)+` run); tags ned-authored.
+- **powershell** `airbus-cert/tree-sitter-powershell` v0.26.5 (ABI 15,
+  93-LOC scanner, 139-case corpus -- the batch's generator find; upstream
+  highlights vendored unmodified, tags ned-authored).
+- **scss** `tree-sitter-grammars/tree-sitter-scss` v1.0.0 (ABI 14, 118-LOC
+  scanner, 56-case corpus; upstream highlights vendored unmodified).
+  `serenadeai/tree-sitter-scss` (2022) is superseded.
+- **vue** `tree-sitter-grammars/tree-sitter-vue` pinned at commit
+  `ce8011a414fdf8091f4e4071752efc376f4afb08` (2026-01-24). ABI 15, 865-LOC
+  scanner, 10-case corpus; upstream highlights and injections vendored from
+  `queries/vue/` unmodified (its nvim `bo.commentstring` directive is inert).
+  `ikatyang/tree-sitter-vue` (2024-02) is superseded.
+- **svelte** `tree-sitter-grammars/tree-sitter-svelte` v1.0.2 (ABI 14,
+  1,105-LOC scanner, 45-case corpus; upstream highlights, injections and
+  locals vendored unmodified).
+- **astro** `virchau13/tree-sitter-astro` pinned at commit
+  `213f6e6973d9b456c6e50e86f19f66877e7ef0ee` (2025-04-23, 17 months -- inside
+  the line). ABI 14, 1,124-LOC scanner, 22-case corpus at the repository root
+  (`corpus/`, the nix layout, which the import now finds); upstream highlights
+  and injections vendored unmodified.
+- **glsl** `tree-sitter-grammars/tree-sitter-glsl` v0.2.0 (ABI 14, no
+  scanner, 13-case corpus; upstream highlights vendored unmodified; tags
+  ned-authored, C's declarator chain). Claims the shader-stage extensions;
+  `.vs`/`.fs`/`.vsh` stay with F# and V.
+- **hlsl** `tree-sitter-grammars/tree-sitter-hlsl` v0.2.0 (ABI 14, 167-LOC
+  scanner, 14-case corpus; **no queries upstream** -- the grammar is
+  tree-sitter-cpp plus HLSL, so `:queries-from "cpp"` reads cpp's whole set;
+  tags ned-authored).
+- **cuda** `tree-sitter-grammars/tree-sitter-cuda` v0.21.2 (ABI 15, 167-LOC
+  scanner, 184-case corpus; upstream highlights vendored unmodified, tags
+  ned-authored). 13,077 parse states, 7MB, 35s to generate.
+- **verilog** `tree-sitter/tree-sitter-verilog` v1.0.3 (official org; ABI 14,
+  no scanner, 70-case corpus; **no queries upstream** -- highlights and tags
+  ned-authored; its comments are node-less extras and cannot be coloured).
+  The largest table set in the tree: 20,534 parse states, 18MB. **Takes
+  `.v`** from the V language (far more files in the wild); V keeps `.vsh`,
+  `.vv` and `v.mod`.
+- **vhdl** `jpt13653903/tree-sitter-vhdl` v2.0.3 (ABI 15, the 27,000-line
+  scanner -- 841 `{ KEYWORD, 0 }` enum arrays needed a cast, and its typed
+  entry points a `void*` wrapper; 34-case corpus; upstream highlights and
+  injections vendored from `queries/Neovim/`, tags ned-authored).
+  `alemuller/tree-sitter-vhdl` (2023-12) is superseded.
+- **solidity** `JoranHonig/tree-sitter-solidity` v1.2.13 (ABI 15, no scanner,
+  125-case corpus; upstream highlights, tags and locals vendored, one
+  grouped-anchor clause respelled).
+- **gdscript** `PrestonKnopp/tree-sitter-gdscript` v6.1.0 (ABI 14, 646-LOC
+  scanner, 167-case corpus; **no queries upstream** -- highlights and tags
+  ned-authored).
+- **matlab** `acristoffers/tree-sitter-matlab` v1.3.1 (ABI 15, 1,191-LOC
+  scanner, 157-case corpus; upstream highlights, injections, locals and tags
+  vendored from `queries/neovim/`, locals adapted at one quantified group).
+  Claims `.mlx` only: `.m` is Objective-C's.
+
+**Parked: AWK.** `Beaglefoot/tree-sitter-awk` v0.7.2 declares
+`binary_relation > piped_io_exp` in one precedence list and the reverse in
+another; the reference generator's own validation ("Conflicting orderings for
+precedences") rejects it since 0.22, and the shipped `parser.c` (ABI 14)
+predates that check. Revisit when upstream regenerates. Screened and not
+admitted: `elves/tree-sitter-elvish` (2023-07, → Graveyard),
+`szebniok/tree-sitter-wgsl` (no corpus, stale), `gmlarumbe/tree-sitter-systemverilog`
+(no corpus), `foxyseta/tree-sitter-prolog` (no `grammar.json`),
+`slackhq/tree-sitter-hack` (archived, → Graveyard).
 
 **Injected-into-comments-and-strings:** regex, JSDoc, Doxygen, Luadoc, and
 tree-sitter's own query language (`.scm` -- which ned authors 79 of and
@@ -424,6 +896,15 @@ nobody re-litigates them from scratch.
 | `mitchellh/tree-sitter-proto` | Stale since 2024-06 | Same |
 | `MunifTanjim/tree-sitter-lua` | Personal fork, 1★, superseded | Use `tree-sitter-grammars/tree-sitter-lua` |
 | `the-mikedavis/tree-sitter-git-commit` | Archived (13★) | Superseded by `gbprod/tree-sitter-gitcommit` |
+| `shunsambongi/tree-sitter-gitignore` | Stale since 2022-05 | A maintained fork appears; `.gitignore` is one pattern per line and reads fine as plain text meanwhile |
+| `antosha417/tree-sitter-hocon` | Stale since 2022-11 | A maintained fork appears |
+| `monaqa/tree-sitter-mermaid` | Stale since 2024-04 | A maintained fork appears; Mermaid rides Markdown fences as plain text meanwhile |
+| `lyndsysimon/tree-sitter-plantuml` | Stale since 2021-12 | A maintained fork appears |
+| `nedpals/tree-sitter-v` | Stale since 2023-07 | Superseded by `vlang/v-analyzer`'s `tree_sitter_v` (admitted) |
+| `jiyee/tree-sitter-objc` | Stale since 2022-08 | Superseded by `tree-sitter-grammars/tree-sitter-objc` (admitted) |
+| `elves/tree-sitter-elvish` | Stale since 2023-07 | A maintained fork appears |
+| `slackhq/tree-sitter-hack` | Archived upstream | A maintained fork appears |
+| `serenadeai/tree-sitter-scss`, `ikatyang/tree-sitter-vue`, `alemuller/tree-sitter-vhdl` | Stale personal originals | Superseded by the `tree-sitter-grammars` forks / `jpt13653903/tree-sitter-vhdl` (admitted) |
 | nvim-treesitter's unmaintained set | caddy, djot, robot, roc, slint, vento, ziggy, ziggy_schema | Per-grammar, on demand |
 | Long-tail DSLs | ABL, Magik, Hoon, Uxntal, Papyrus, Quakec, Runescript, Sflog, T32, and ~200 similar | **One credible user request.** Not rejected on quality -- parked on audience. Under D0 the cost of honouring such a request is adding one grammar, so the bar is deliberately low. |
 

@@ -25,9 +25,12 @@ dives and capability audits), both built from this repository on every push.
   multiple cursors** — the core Emacs-class editing vocabulary.
 - **Janet scripting throughout** — commands, keybindings, modes, and most editor
   settings are reachable from a `~/.config/ned/init.janet`.
-- **Tree-sitter syntax highlighting, folding, and smart indentation** for 24 bundled
-  languages — see [Language Support](https://superfes.github.io/ned/user/language-support.html)
-  — with per-capture-name theming.
+- **Syntax highlighting, folding, and smart indentation** for 74 bundled languages on
+  ned's own parsing engine and query matcher (grammars are data, compiled by ned's own
+  generator -- no tree-sitter dependency) — see
+  [Language Support](https://superfes.github.io/ned/user/language-support.html) — with
+  per-capture-name theming; `ned --import-language` brings in any tree-sitter grammar
+  repository as a package.
 - **LSP and DAP clients** for language server features (diagnostics, completion, code
   actions, go-to-definition, scope-aware rename) and debugging (breakpoints, stepping,
   variable/memory inspection, reverse execution where the adapter supports it).
