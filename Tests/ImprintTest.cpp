@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -13,15 +14,17 @@
 #include <vector>
 
 #include "Editor/CodeFold.h"
-#include "Editor/Imprint.h"
-#include "Editor/ImprintFold.h"
-#include "Editor/ImprintTables.h"
-#include "Editor/Mode.h"
+#include "Editor/Grammar/Compile/GrammarFile.h"
 #include "Editor/Grammar/GrammarImprint.h"
 #include "Editor/Grammar/Languages.h"
 #include "Editor/Grammar/Node.h"
 #include "Editor/Grammar/Parser.h"
 #include "Editor/Grammar/Tree.h"
+#include "Editor/Imprint.h"
+#include "Editor/ImprintFold.h"
+#include "Editor/ImprintTables.h"
+#include "Editor/LanguageFiles.h"
+#include "Editor/Mode.h"
 
 // Two halves, deliberately.
 //
@@ -59,14 +62,20 @@ json Optional(const json& content) {
 json Prec(const json& content) { return json{{"type", "PREC_RIGHT"}, {"value", 0}, {"content", content}}; }
 
 json Grammar(const json& rules, const json& externals = json::array()) {
-    return json{{"rules", rules}, {"externals", externals}};
+    return json{{"name", "crafted"}, {"rules", rules}, {"externals", externals}};
 }
 
-// The vendored tree the real grammars live in (Tools/vendor-grammars.py),
-// normally always present since it's checked into the repo -- the exists()
-// guard below is defense against a manually pruned/partial checkout, not
-// the normal case it used to be under FetchContent.
-fs::path DepsDir() { return fs::path(NED_REPO_ROOT) / "ThirdParty" / "tree-sitter-grammars"; }
+// The crafted cases are written as grammar.json objects; inference reads a
+// GrammarFile, so they go through the same importer a real grammar.json does.
+std::map<std::string, DelimitedBody> InferDelimitedBodies(const json& grammar) {
+    return ned::editor::grammar::InferDelimitedBodies(
+        ned::editor::grammar::compile::ParseGrammarJson(nlohmann::ordered_json::parse(grammar.dump())));
+}
+
+// A bundled language's grammar, as the editor reads it at runtime.
+ned::editor::grammar::compile::GrammarFile BundledGrammar(const std::string& language) {
+    return ned::editor::grammar::compile::ParseGrammarJanet(ned::editor::ReadLanguageFile(language + "/grammar.janet"));
+}
 
 } // namespace
 
@@ -115,8 +124,6 @@ TEST_CASE("Non-delimited and malformed productions are simply not reported", "[I
     CHECK(InferDelimitedBodies(Grammar({{"plain", Seq({Sym("a"), Sym("b")})}})).empty());
     CHECK(InferDelimitedBodies(Grammar({{"mismatched", Seq({Str("{"), Str(")")})}})).empty());
     CHECK(InferDelimitedBodies(Grammar({{"unopened", Seq({Repeat(Sym("x")), Str("}")})}})).empty());
-    CHECK(InferDelimitedBodies(json::object()).empty());          // no "rules" at all
-    CHECK(InferDelimitedBodies(json{{"rules", 42}}).empty());      // "rules" of the wrong type
 }
 
 TEST_CASE("A self-referential hidden rule terminates", "[Imprint]") {
@@ -380,42 +387,11 @@ const std::map<std::string, std::set<std::string>> kDeletedFoldQueries = {
 TEST_CASE("Every deleted fold query's nodes still fold from the imprint", "[Imprint][Corpus]") {
     // The Phase 1 gate, outliving the queries it was written against. See
     // Docs/ParsingEngine.md.
-    const std::map<std::string, std::string> kGrammars = {
-        {"c", "tree-sitter-c/src/grammar.json"},
-        {"cpp", "tree-sitter-cpp/src/grammar.json"},
-        {"csharp", "tree-sitter-c-sharp/src/grammar.json"},
-        {"go", "tree-sitter-go/src/grammar.json"},
-        {"java", "tree-sitter-java/src/grammar.json"},
-        {"javascript", "tree-sitter-javascript/src/grammar.json"},
-        {"json", "tree-sitter-json/src/grammar.json"},
-        {"kotlin", "tree-sitter-kotlin/src/grammar.json"},
-        {"python", "tree-sitter-python/src/grammar.json"},
-        {"rust", "tree-sitter-rust/src/grammar.json"},
-        {"typescript", "tree-sitter-typescript-src/typescript/src/grammar.json"},
-        {"clojure", "tree-sitter-clojure/src/grammar.json"},
-    };
-
-    if (!fs::exists(DepsDir())) {
-        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
-        return;
-    }
-
     std::size_t reproduced = 0;
     std::size_t expected   = 0;
     for (const auto& [language, nodes] : kDeletedFoldQueries) {
-        const fs::path path = DepsDir() / kGrammars.at(language);
-        INFO("language: " << language << "  grammar: " << path.string());
-        if (!fs::exists(path)) {
-            WARN("missing grammar.json for " << language << " -- not counted");
-            continue;
-        }
-
-        std::ifstream in(path);
-        REQUIRE(in);
-        json grammar;
-        in >> grammar;
-
-        const auto inferred = InferDelimitedBodies(grammar);
+        INFO("language: " << language);
+        const auto inferred = ned::editor::grammar::InferDelimitedBodies(BundledGrammar(language));
         expected += nodes.size();
 
         for (const std::string& node : nodes) {
@@ -534,22 +510,19 @@ TEST_CASE("Every deleted indent capture's node still indents from the imprint", 
 }
 
 // ---------------------------------------------------------------------------
-// End-to-end: does the CHECKED-IN table actually drive folding the way live
-// inference does, not merely agree about map entries?
+// End-to-end: does the imprint the shipping path serves drive folding the way
+// inference read here does, not merely agree about map entries?
 //
 // The case above compares node types and their inferred signals, which is
 // necessary and not sufficient -- entries matching says nothing about the byte
 // ranges a real parse produces. This walks a real tree here in the test,
-// emitting a fold range for every node live inference reports as foldable, and
-// holds the result against what the shipping path produces from
-// `Editor/ImprintTables.cpp`.
+// emitting a fold range for every node inference reports as foldable, and
+// holds the result against what the shipping path (`Editor/ImprintTables.h`
+// through `ImprintFold.cpp`) produces.
 //
-// It was written against the hand-written fold queries and outlived them: with
-// those deleted, the two sides are `grammar.json` read at test time versus the
-// artifact generated from it, and the walk below is a second implementation of
-// `ImprintFold.cpp`'s rather than a reuse of it. Both halves are the point --
-// a stale checked-in table shows up as a range diff, and the walk itself is
-// cross-checked by an independent one.
+// It was written against the hand-written fold queries and outlived them: the
+// walk below is a second implementation of `ImprintFold.cpp`'s rather than a
+// reuse of it, so the two fold walkers cross-check each other.
 //
 // Both sides get the multi-line rule applied, because that is the one part of
 // "foldable" no static policy can answer (Editor/CodeFold.h enforces it on the
@@ -624,216 +597,60 @@ void Normalize(std::vector<std::pair<std::size_t, std::size_t>>& blocks, const s
 
 } // namespace
 
-// The compiled-in table (Editor/ImprintTables.cpp) is generated from the same
-// grammars this test reads. Holding the two against each other on every run is
-// what keeps a checked-in artifact from serving yesterday's answer.
-//
-// Regenerate with NED_BLESS_IMPRINT=1 and read the diff.
-TEST_CASE("The compiled-in imprint table matches live inference", "[Imprint][Corpus]") {
-    const std::map<std::string, std::string> kGrammars = {
-        {"c", "tree-sitter-c/src/grammar.json"},
-        {"cpp", "tree-sitter-cpp/src/grammar.json"},
-        {"csharp", "tree-sitter-c-sharp/src/grammar.json"},
-        {"go", "tree-sitter-go/src/grammar.json"},
-        {"java", "tree-sitter-java/src/grammar.json"},
-        {"javascript", "tree-sitter-javascript/src/grammar.json"},
-        {"json", "tree-sitter-json/src/grammar.json"},
-        {"kotlin", "tree-sitter-kotlin/src/grammar.json"},
-        {"python", "tree-sitter-python/src/grammar.json"},
-        {"rust", "tree-sitter-rust/src/grammar.json"},
-        {"typescript", "tree-sitter-typescript-src/typescript/src/grammar.json"},
-        {"clojure", "tree-sitter-clojure/src/grammar.json"},
-        // Languages with NO hand-written folds.scm at all. They get folding
-        // from the imprint alone -- which is the whole N x M argument arriving:
-        // nine languages gaining a feature because the grammar already said
-        // enough, with nothing authored per language.
-        {"bash", "tree-sitter-bash/src/grammar.json"},
-        {"css", "tree-sitter-css/src/grammar.json"},
-        {"fish", "tree-sitter-fish/src/grammar.json"},
-        {"html", "tree-sitter-html/src/grammar.json"},
-        {"janet", "tree-sitter-janet-simple/src/grammar.json"},
-        {"php", "tree-sitter-php/php/src/grammar.json"},
-        {"toml", "tree-sitter-toml/src/grammar.json"},
-        {"xml", "tree-sitter-xml/xml/src/grammar.json"},
-        {"yaml", "tree-sitter-yaml/src/grammar.json"},
-        {"tsx", "tree-sitter-typescript-src/tsx/src/grammar.json"},
-        // jank shares Clojure's grammar outright, but a table is keyed by the
-        // MODE's language key rather than by the grammar, so it needs its own
-        // entry -- it had none, and folded only because it also shared
-        // clojure-folds.scm. Deleting that query is what surfaced it, and
-        // bracket matching (gated on the same table) had been silently missing
-        // for jank all along.
-        {"jank", "tree-sitter-clojure/src/grammar.json"},
-        {"lua", "tree-sitter-lua/src/grammar.json"},
-        {"cmake", "tree-sitter-cmake/src/grammar.json"},
-        {"diff", "tree-sitter-diff/src/grammar.json"},
-        {"sql", "tree-sitter-sql/src/grammar.json"},
-        {"dockerfile", "tree-sitter-dockerfile/src/grammar.json"},
-        {"make", "tree-sitter-make/src/grammar.json"},
-        {"hcl", "tree-sitter-hcl/src/grammar.json"},
-        {"nix", "tree-sitter-nix/src/grammar.json"},
-        {"ruby", "tree-sitter-ruby/src/grammar.json"},
-        {"gitcommit", "tree-sitter-gitcommit/src/grammar.json"},
-        {"gitrebase", "tree-sitter-gitrebase/src/grammar.json"},
-        {"r", "tree-sitter-r/src/grammar.json"},
-    };
-
-    if (!fs::exists(DepsDir())) {
-        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
+// jank shares Clojure's grammar outright, and the table is keyed by the MODE's
+// language key rather than by the grammar: it folded only because it also
+// shared clojure-folds.scm, and bracket matching (gated on the same table)
+// had been silently missing for jank all along. TableFor answers it through
+// its definition's :grammar.
+// NED_DUMP_IMPRINT=<language> prints that language's served imprint, one
+// entry per line, for comparing against another source of it.
+TEST_CASE("Dump a language's imprint on request", "[Imprint]") {
+    const char* language = std::getenv("NED_DUMP_IMPRINT");
+    if (language == nullptr)
         return;
-    }
-
-    std::map<std::string, std::map<std::string, DelimitedBody>> live;
-    for (const auto& [language, relative] : kGrammars) {
-        const fs::path path = DepsDir() / relative;
-        if (!fs::exists(path)) continue;
-        std::ifstream in(path);
-        REQUIRE(in);
-        json grammar;
-        in >> grammar;
-        live[language] = InferDelimitedBodies(grammar);
-    }
-
-    if (std::getenv("NED_BLESS_IMPRINT") != nullptr) {
-        std::ostringstream out;
-        out << "// GENERATED by Tests/ImprintTest.cpp -- do not edit by hand.\n"
-            << "//\n"
-            << "// Regenerate with:  NED_BLESS_IMPRINT=1 ./build/ned_tests \"[Imprint]\"\n"
-            << "// See Editor/ImprintTables.h for why this is checked in rather than\n"
-            << "// derived at build time, and what guards it against going stale.\n\n"
-            << "#include \"Editor/ImprintTables.h\"\n\n"
-            << "namespace ned::editor::imprint {\n\nnamespace {\n\n"
-            << "struct Entry {\n"
-            << "    std::string_view node;\n"
-            << "    DelimiterKind    kind;\n"
-            << "    bool             openerIsFirst;\n"
-            << "    bool             listLikeInterior;\n"
-            << "    std::string_view opener; // Keyword bodies only\n"
-            << "    std::string_view closer;\n"
-            << "};\n\n";
-
-        for (const auto& [language, bodies] : live) {
-            if (bodies.empty()) {
-                // A zero-length array is ill-formed; a grammar the imprint
-                // reads NO bodies out of (diff: no bracket structure at all)
-                // just gets no table, which TableFor already treats as empty.
-                out << "// " << language << ": measured, zero delimited bodies.\n\n";
-                continue;
-            }
-            out << "constexpr Entry k" << static_cast<char>(std::toupper(language[0])) << language.substr(1)
-                << "[] = {\n";
-            for (const auto& [node, body] : bodies) {
-                out << "    {\"" << node << "\", DelimiterKind::" << DelimiterKindName(body.kind) << ", "
-                    << (body.openerIsFirst ? "true" : "false") << ", "
-                    << (body.listLikeInterior ? "true" : "false");
-                if (body.kind == DelimiterKind::Keyword) {
-                    out << ", \"" << body.opener << "\", \"" << body.closer << "\"";
-                }
-                out << "},\n";
-            }
-            out << "};\n\n";
-        }
-
-        out << "const std::map<std::string, std::map<std::string, DelimitedBody>>& Tables() {\n"
-            << "    static const std::map<std::string, std::map<std::string, DelimitedBody>> kTables = [] {\n"
-            << "        std::map<std::string, std::map<std::string, DelimitedBody>> built;\n"
-            << "        const auto load = [&built](std::string_view language, const Entry* entries,\n"
-            << "                                   std::size_t count) {\n"
-            << "            auto& table = built[std::string(language)];\n"
-            << "            for (std::size_t i = 0; i < count; ++i) {\n"
-            << "                table.emplace(std::string(entries[i].node),\n"
-            << "                              DelimitedBody{entries[i].kind, entries[i].openerIsFirst,\n"
-            << "                                            entries[i].listLikeInterior, std::string(entries[i].opener),\n"
-            << "                                            std::string(entries[i].closer)});\n"
-            << "            }\n"
-            << "        };\n";
-        for (const auto& [language, bodies] : live) {
-            if (bodies.empty()) {
-                continue;
-            }
-            const std::string symbol =
-                "k" + std::string(1, static_cast<char>(std::toupper(language[0]))) + language.substr(1);
-            out << "        load(\"" << language << "\", " << symbol << ", std::size(" << symbol << "));\n";
-        }
-        out << "        return built;\n    }();\n    return kTables;\n}\n\n"
-            << "} // namespace\n\n"
-            << "const std::map<std::string, DelimitedBody>& TableFor(std::string_view language) {\n"
-            << "    static const std::map<std::string, DelimitedBody> kEmpty;\n"
-            << "    const auto it = Tables().find(std::string(language));\n"
-            << "    return it == Tables().end() ? kEmpty : it->second;\n}\n\n"
-            << "std::vector<std::string> TabledLanguages() {\n"
-            << "    std::vector<std::string> names;\n"
-            << "    for (const auto& [language, table] : Tables()) names.push_back(language);\n"
-            << "    return names;\n}\n\n"
-            << "} // namespace ned::editor::imprint\n";
-
-        std::ofstream file(fs::path(NED_REPO_ROOT) / "Source" / "Editor" / "ImprintTables.cpp",
-                           std::ios::binary | std::ios::trunc);
-        REQUIRE(file);
-        file << out.str();
-        SUCCEED("regenerated ImprintTables.cpp -- read the diff");
-        return;
-    }
-
-    for (const auto& [language, bodies] : live) {
-        INFO("language: " << language);
-        const auto& compiled = TableFor(language);
-        INFO("compiled-in " << compiled.size() << " entries, live " << bodies.size()
-                            << " (regenerate: NED_BLESS_IMPRINT=1 ./build/ned_tests \"[Imprint]\")");
-        REQUIRE(compiled.size() == bodies.size());
-        for (const auto& [node, body] : bodies) {
-            INFO("node: " << node);
-            const auto it = compiled.find(node);
-            REQUIRE(it != compiled.end());
-            CHECK(it->second.kind == body.kind);
-            CHECK(it->second.openerIsFirst == body.openerIsFirst);
-            CHECK(it->second.listLikeInterior == body.listLikeInterior);
-            CHECK(it->second.opener == body.opener);
-            CHECK(it->second.closer == body.closer);
-        }
-    }
+    for (const auto& [node, body] : TableFor(language))
+        std::cout << node << " " << DelimiterKindName(body.kind) << " " << body.openerIsFirst << " " << body.listLikeInterior << " " << body.opener
+                  << " " << body.closer << "\n";
 }
 
-TEST_CASE("The compiled table folds real files exactly as live inference does", "[Imprint][Corpus]") {
+TEST_CASE("A definition borrowing another grammar gets that grammar's imprint", "[Imprint]") {
+    const auto& jank    = TableFor("jank");
+    const auto& clojure = TableFor("clojure");
+    REQUIRE_FALSE(jank.empty());
+    REQUIRE(jank.size() == clojure.size());
+    for (const auto& [node, body] : clojure) {
+        INFO("node: " << node);
+        const auto it = jank.find(node);
+        REQUIRE(it != jank.end());
+        CHECK(it->second.kind == body.kind);
+        CHECK(it->second.openerIsFirst == body.openerIsFirst);
+    }
+    CHECK(TableFor("no-such-language").empty());
+}
+
+TEST_CASE("The served imprint folds real files exactly as inference read here does", "[Imprint][Corpus]") {
     struct Case {
-        std::string             file;
-        std::string             grammarDir;
-        ned::editor::Mode       mode;
-        std::string             language;
+        std::string       file;
+        ned::editor::Mode mode;
+        std::string       language;
     };
 
-    if (!fs::exists(DepsDir())) {
-        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout -- run Tools/vendor-grammars.py");
-        return;
-    }
-
     std::vector<Case> cases;
-    cases.push_back({"sample.c", "tree-sitter-c", ned::editor::CMode(), "c"});
-    cases.push_back({"sample.cpp", "tree-sitter-cpp", ned::editor::CppMode(), "cpp"});
-    cases.push_back({"sample.py", "tree-sitter-python", ned::editor::PythonMode(), "python"});
-    cases.push_back({"sample.json", "tree-sitter-json", ned::editor::JsonMode(), "json"});
-    cases.push_back({"sample.clj", "tree-sitter-clojure", ned::editor::ClojureMode(), "clojure"});
-    cases.push_back({"sample.go", "tree-sitter-go", ned::editor::GoMode(), "go"});
-    cases.push_back({"sample.rs", "tree-sitter-rust", ned::editor::RustMode(), "rust"});
-    cases.push_back({"sample.java", "tree-sitter-java", ned::editor::JavaMode(), "java"});
-    cases.push_back({"sample.cs", "tree-sitter-c-sharp", ned::editor::CSharpMode(), "csharp"});
-    cases.push_back({"sample.js", "tree-sitter-javascript", ned::editor::JavaScriptMode(), "javascript"});
-    cases.push_back(
-        {"sample.ts", "tree-sitter-typescript-src/typescript", ned::editor::TypeScriptMode(), "typescript"});
-    cases.push_back({"sample.kt", "tree-sitter-kotlin", ned::editor::KotlinMode(), "kotlin"});
+    cases.push_back({"sample.c", ned::editor::CMode(), "c"});
+    cases.push_back({"sample.cpp", ned::editor::CppMode(), "cpp"});
+    cases.push_back({"sample.py", ned::editor::PythonMode(), "python"});
+    cases.push_back({"sample.json", ned::editor::JsonMode(), "json"});
+    cases.push_back({"sample.clj", ned::editor::ClojureMode(), "clojure"});
+    cases.push_back({"sample.go", ned::editor::GoMode(), "go"});
+    cases.push_back({"sample.rs", ned::editor::RustMode(), "rust"});
+    cases.push_back({"sample.java", ned::editor::JavaMode(), "java"});
+    cases.push_back({"sample.cs", ned::editor::CSharpMode(), "csharp"});
+    cases.push_back({"sample.js", ned::editor::JavaScriptMode(), "javascript"});
+    cases.push_back({"sample.ts", ned::editor::TypeScriptMode(), "typescript"});
+    cases.push_back({"sample.kt", ned::editor::KotlinMode(), "kotlin"});
 
     for (const Case& testCase : cases) {
         INFO("corpus file: " << testCase.file);
-
-        const fs::path grammarPath = DepsDir() / testCase.grammarDir / "src" / "grammar.json";
-        if (!fs::exists(grammarPath)) {
-            WARN("missing grammar.json for " << testCase.file);
-            continue;
-        }
-        std::ifstream grammarIn(grammarPath);
-        REQUIRE(grammarIn);
-        nlohmann::json grammar;
-        grammarIn >> grammar;
 
         std::ifstream sourceIn(fs::path(NED_REPO_ROOT) / "Tests" / "Oracle" / "corpus" / testCase.file);
         REQUIRE(sourceIn);
@@ -847,19 +664,19 @@ TEST_CASE("The compiled table folds real files exactly as live inference does", 
         const ned::editor::grammar::Tree   tree = parser.Parse(text);
 
         std::vector<std::pair<std::size_t, std::size_t>> inferred;
-        CollectFoldable(tree.RootNode(), InferDelimitedBodies(grammar), ned::editor::imprint::FoldPolicy{}, text,
-                        inferred);
+        CollectFoldable(tree.RootNode(), ned::editor::grammar::InferDelimitedBodies(BundledGrammar(testCase.language)),
+                        ned::editor::imprint::FoldPolicy{}, text, inferred);
         Normalize(inferred, text);
 
-        // The shipping path: a Mode whose fold source is the compiled-in
-        // table, run through the same FoldableBlocks every consumer uses.
+        // The shipping path: a Mode whose fold source is the served imprint,
+        // run through the same FoldableBlocks every consumer uses.
         ned::editor::Mode viaImprint = testCase.mode;
         viaImprint.fold = ned::editor::imprint::BuildFoldFunction(testCase.language);
         REQUIRE(static_cast<bool>(viaImprint.fold));
         auto compiled = ned::editor::codefold::FoldableBlocks(viaImprint, text);
         Normalize(compiled, text);
 
-        INFO("live inference " << inferred.size() << " ranges, compiled table " << compiled.size());
+        INFO("inference " << inferred.size() << " ranges, served imprint " << compiled.size());
         if (inferred != compiled) {
             for (const auto& range : inferred) {
                 if (std::find(compiled.begin(), compiled.end(), range) == compiled.end()) {

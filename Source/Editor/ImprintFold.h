@@ -1,5 +1,5 @@
 //
-// A fold source built from a compiled-in imprint instead of a hand-written
+// A fold source built from the language's imprint instead of a hand-written
 // folds.scm.
 //
 // Same contract as `Mode::fold` -- byte ranges of every foldable block in a
@@ -9,7 +9,7 @@
 // the eleven languages that had one, the queries produced zero fold ranges
 // this does not. `Tests/ImprintTest.cpp` pins what they said.
 //
-// Needs no grammar.json at runtime; `Editor/ImprintTables.h` carries the table.
+// `Editor/ImprintTables.h` serves the table, read off the language's grammar.
 //
 
 #ifndef NED_EDITOR_IMPRINTFOLD_H

@@ -1,5 +1,7 @@
 #include "Editor/Parse/Parser.h"
 
+#include "Editor/Parse/LexDfa.h"
+
 #include <cstring>
 #include <stdexcept>
 
@@ -363,7 +365,7 @@ Subtree Engine::LexToken(StackVersion version, abi::StateId parseState) {
         }
 
         lexer_.Start();
-        foundToken = language_->lexFn(&lexer_.data, lexMode.lexState);
+        foundToken = LexMain(language_, &lexer_.data, lexMode.lexState);
         lexer_.Finish(&lookaheadEndByte);
         if (foundToken)
             break;
@@ -415,7 +417,7 @@ Subtree Engine::LexToken(StackVersion version, abi::StateId parseState) {
             lexer_.Reset(lexer_.tokenStartPosition);
             lexer_.Start();
 
-            isKeyword = language_->keywordLexFn(&lexer_.data, 0);
+            isKeyword = LexKeyword(language_, &lexer_.data, 0);
 
             if (isKeyword && lexer_.tokenEndPosition.bytes == endByte &&
                 (LanguageHasActions(language_, parseState, lexer_.data.resultSymbol) ||

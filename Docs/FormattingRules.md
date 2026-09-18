@@ -1209,7 +1209,7 @@ predicate at all -- the same shape C#/JavaScript's own lambda bodies turned out 
 
 **One pre-existing, unrelated bug found and logged, not fixed in-session**: testing Lua's
 new `repeat`/`until` capture live surfaced that its own body is never reindented at all
-(`Editor/ImprintTables.cpp`'s Lua table has entries for `do`/`if`/`while` but none for
+(the Lua imprint, `imprint::TableFor("lua")`, has entries for `do`/`if`/`while` but none for
 `repeat_statement`) -- a real gap in the separate structural-indent engine, unrelated to
 this formatter work, logged to `ROADMAP.md`'s watch list.
 
@@ -1316,7 +1316,7 @@ case/case_match's own value alike.
 **A pre-existing, unrelated bug found and logged during this rollout, fixed as its own
 follow-up once a real Ruby toolchain was installed**: a baseline `ned --format` pass with no
 format.janet rules configured revealed `method`/`singleton_method`/`while`/`until` bodies
-are never reindented at all -- `Editor/ImprintTables.cpp`'s Ruby table has entries for
+are never reindented at all -- the Ruby imprint (`imprint::TableFor("ruby")`) has entries for
 `if`/`class`/`module`/`begin`/`do`/`case` but none for these four, for the identical
 underlying reason format captures needed extra care for them (no single, always-present
 open token directly beside the body). `Editor/Grammar/GrammarImprint.cpp`'s static

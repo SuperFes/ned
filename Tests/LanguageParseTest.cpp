@@ -54,6 +54,7 @@ TEST_CASE("A definition parses every field, and rejects what it does not know", 
  :line-comment ";"
  :auto-pairs :lisp
  :wrap-lines true
+ :imprint false
  :embedded-documents true
  :keymap [["TAB" "demo-align"]]
  :capture-classes {"punctuation.special" :markup-marker}
@@ -71,6 +72,7 @@ TEST_CASE("A definition parses every field, and rejects what it does not know", 
     REQUIRE(definition.lineCommentPrefix == ";");
     REQUIRE(definition.autoPairs == ned::editor::AutoPairSet::Lisp);
     REQUIRE(definition.wrapLines);
+    REQUIRE_FALSE(definition.imprint);
     REQUIRE(definition.embeddedDocuments);
     REQUIRE(definition.keymap.front() == std::pair<std::string, std::string>{"TAB", "demo-align"});
     REQUIRE(definition.captureClasses.front().second == SyntaxClass::MarkupMarker);

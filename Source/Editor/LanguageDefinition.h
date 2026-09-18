@@ -81,6 +81,11 @@ struct LanguageDefinition {
     // A definition with no grammar at all sets `grammarless` instead.
     std::string grammar;
     bool        grammarless = false; // fundamental-mode: no parser, no capabilities
+    // Whether the grammar's delimited bodies are read as structure
+    // (ImprintTables.h: folds, bracket matching, indent). `:imprint false`
+    // for a language whose bracket-looking syntax isn't -- Org and Markdown
+    // links are `[[...]]`, and their structure is headline/section depth.
+    bool imprint = true;
     // File-name matching: extensions carry their leading dot (".cpp"), the
     // form std::filesystem::path::extension() hands back; filenames match
     // the whole basename and are checked first (Emacs' auto-mode-alist).

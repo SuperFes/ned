@@ -141,6 +141,9 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "wrap-lines") {
             definition.wrapLines = ExpectBool(directoryName, value, ":wrap-lines");
         }
+        else if (key == "imprint") {
+            definition.imprint = ExpectBool(directoryName, value, ":imprint");
+        }
         else if (key == "embedded-documents") {
             definition.embeddedDocuments = ExpectBool(directoryName, value, ":embedded-documents");
         }
