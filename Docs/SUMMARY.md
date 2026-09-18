@@ -21,4 +21,5 @@
 
 # Contributing
 
+- [Authoring a Language](LanguageAuthoring.md)
 - [Authoring a Bundled Theme](ThemeAuthoring.md)

@@ -80,7 +80,7 @@ def payload_through_voidptr(body: str) -> str:
     return pattern.sub(replace, body)
 
 
-def port(source: str, language: str, repo: str) -> str:
+def port(source: str, language: str, repo: str, library: bool = False) -> str:
     includes: list[str] = []
     export = re.search(r"\btree_sitter_(\w+)_external_scanner_create\b", source)
     if export is None:
@@ -136,6 +136,9 @@ def port(source: str, language: str, repo: str) -> str:
     out.append("")
     out.append(f"}} // namespace {ns}")
     out.append("")
+    if library:
+        out.append(f"NED_SCANNER_LIBRARY_EXPORT({language.replace('-', '_')}, {ns}::kScanner)")
+        out.append("")
     return "\n".join(out)
 
 
@@ -145,10 +148,11 @@ def main() -> None:
     parser.add_argument("language")
     parser.add_argument("output")
     parser.add_argument("--repo", default="its upstream repository")
+    parser.add_argument("--library", action="store_true", help="export the table as ned_scanner_<language>, for a :scanner-library shared object")
     args = parser.parse_args()
     path = Path(args.scanner)
     source = inline_local_includes(path.read_text(), path.parent)
-    Path(args.output).write_text(port(source, args.language, args.repo))
+    Path(args.output).write_text(port(source, args.language, args.repo, args.library))
 
 
 if __name__ == "__main__":
