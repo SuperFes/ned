@@ -12,7 +12,7 @@ using ned::editor::languages::scanners::FindBundledScanner;
 namespace {
 
 const ned::editor::parse::abi::LanguageData* Tables(const ned::editor::grammar::Language& language) {
-    return static_cast<const ned::editor::parse::abi::LanguageData*>(static_cast<const void*>(language.Raw()));
+    return language.Raw();
 }
 
 } // namespace

@@ -1156,8 +1156,8 @@ live, and it stays a separate decision:
   generated goto-DFA, which is what makes `parser.c` 825k lines) and the
   external scanner are code. Emitting the lexer DFA as character-range
   transition *data* is what turns a language into one inspectable, mmap-able,
-  runtime-loadable artifact -- and deletes `Grammar/DynamicGrammar.h`'s
-  `dlopen`/`dlsym("tree_sitter_<name>")` path along with it.
+  runtime-loadable artifact -- and deletes the `dlopen`/`dlsym("tree_sitter_<name>")`
+  path along with it. *Done:* `Grammar/Compile/` and `Grammar/LanguagePackage.h`.
 - **External scanners cannot be avoided**: 19 of 24 grammars carry one, ~10,600
   LOC of hand-written C (markdown ~2,000, yaml ~1,415, bash ~1,217). Three
   tiers: a declarative DSL for the common shapes (indentation stacks, heredocs,

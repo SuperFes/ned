@@ -102,9 +102,9 @@ cmake --build build
 `cmake -S . -B build` also works but falls back to whatever `cc`/`c++` resolve to on
 your system rather than pinning the toolchain.
 
-Every tree-sitter grammar ned bundles (24 languages and counting) is vendored under
-`ThirdParty/tree-sitter-grammars/` and checked into the repository, so this build
-touches no network at all beyond the initial `git clone`.
+Every language ned bundles is a package under `Source/Languages/<name>/` -- its grammar
+is `grammar.janet`, compiled to parse tables by ned itself during the build -- so this
+build touches no network at all beyond the initial `git clone`.
 
 ### Running the test suite
 

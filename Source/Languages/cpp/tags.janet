@@ -16,7 +16,7 @@
 # in-class-method captures renamed @definition.function -> @definition.method,
 # and the entirely new field/macro/enum_member/template_parameter patterns)
 # is ned's own addition -- checked directly against
-# ThirdParty/tree-sitter-grammars/tree-sitter-cpp/src/node-types.json, not
+# tree-sitter-cpp's node-types.json (the grammar now in cpp/grammar.janet), not
 # guessed, then confirmed live via Tests/ModeTest.cpp/Tests/FormatCaseTest.cpp
 # parses of real snippets. Deliberately NOT covered: a const/constexpr-
 # qualified "constant" bucket (distinguishing it from a plain field needs a

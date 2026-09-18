@@ -18,34 +18,26 @@
 #include <memory>
 #include <string_view>
 
+#include "Editor/Parse/Abi.h"
+
 #include "Editor/Parse/Parser.h"
 
 #include "Tree.h"
 
-// The opaque grammar handle a generated `tree_sitter_<name>()` entry point
-// returns -- tree_sitter/api.h's own typedef, forward-declared here so
-// nothing in ned_lib needs the tree-sitter runtime's headers (the runtime
-// itself is no longer linked; ned's engine interprets the generated tables
-// directly).
-typedef struct TSLanguage TSLanguage; // NOLINT(modernize-use-using)
-
 namespace ned::editor::grammar {
 
-// A non-owning handle to one of tree-sitter's statically-linked-in grammar
-// languages (e.g. the value returned by tree_sitter_json()) -- the
-// TSLanguage itself lives in the grammar's own static/read-only data for the
-// process lifetime, nothing here owns or frees it. See Languages.h for how a
-// Language is actually obtained by name. The generated grammar artifacts
-// (parser.c tables, lexers, external scanners) are exactly what ned's own
-// engine interprets, so this stays the currency for grammar identity.
+// A non-owning handle to a loaded language's tables (Parse/Abi.h) -- they
+// belong to the language package that loaded them (LanguagePackage.h) and
+// live for the process, nothing here owns or frees them. See Languages.h
+// for how a Language is obtained by name.
 class Language {
   public:
-    explicit Language(const TSLanguage* language) noexcept;
+    explicit Language(const parse::abi::LanguageData* language) noexcept;
 
-    [[nodiscard]] const TSLanguage* Raw() const noexcept;
+    [[nodiscard]] const parse::abi::LanguageData* Raw() const noexcept;
 
   private:
-    const TSLanguage* language_;
+    const parse::abi::LanguageData* language_;
 };
 
 class Parser {

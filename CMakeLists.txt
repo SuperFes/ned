@@ -41,17 +41,16 @@ include(FindPkgConfig)
 # header comment.
 include(CMake/Dependencies.cmake)
 
-# Every bundled grammar's tables -- see CMake/Grammars.cmake's own header
-# comment. Must run before add_subdirectory(Source), which links ned_lib
-# against the grammar targets this creates.
-include(CMake/Grammars.cmake)
-
 # The share/ned data tree (bundled languages and Janet plugins, read from
 # disk at runtime) -- see CMake/DataTree.cmake's own header comment.
 include(CMake/DataTree.cmake)
 
 # ned_lib (everything except main()) and the ned executable.
 add_subdirectory(Source)
+
+# Every bundled language's parse tables, compiled by ned itself -- see
+# CMake/LanguageTables.cmake's own header comment.
+include(CMake/LanguageTables.cmake)
 
 # Standalone Notcurses/terminal-capability diagnostics -- not part of
 # ned/ned_lib, see Tools/CMakeLists.txt.

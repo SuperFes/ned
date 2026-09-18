@@ -8,9 +8,9 @@
 #include <stdexcept>
 
 #include "BundledLanguages.h"
+#include "Grammar/LanguagePackage.h"
 #include "LanguageParse.h"
 #include "ModeOverrides.h"
-#include "Grammar/DynamicGrammar.h"
 
 namespace ned::editor {
 
@@ -77,13 +77,13 @@ void LoadLanguageDirectory(const std::filesystem::path& directory) {
     }
 
     RegisteredLanguage registered{.definition = std::move(definition)};
-    if (!registered.definition.grammarLibrary.empty()) {
-        const std::string symbolName =
-            registered.definition.grammar.empty() ? registered.definition.name : registered.definition.grammar;
-        // Throws with a path-qualified message on a missing library/symbol;
-        // the handle stays resident for the process lifetime
-        // (Grammar/DynamicGrammar.h's own scope cut).
-        registered.language = grammar::LoadDynamicLanguage(registered.definition.grammarLibrary, symbolName);
+    const bool         ownGrammar = std::filesystem::exists(directory / "grammar.janet") || std::filesystem::exists(directory / "tables");
+    if (ownGrammar || !registered.definition.scannerLibrary.empty()) {
+        const std::string grammarName = registered.definition.grammar.empty() ? registered.definition.name : registered.definition.grammar;
+        // Throws with a path-qualified message; the package stays loaded for
+        // the process (Grammar/LanguagePackage.h).
+        registered.language = grammar::LoadLanguagePackage(
+            directory, grammar::PackageScanner{.name = grammarName, .library = registered.definition.scannerLibrary});
     }
     RegisterLanguage(std::move(registered));
 }

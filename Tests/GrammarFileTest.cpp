@@ -198,99 +198,6 @@ TEST_CASE("Malformed grammar.janet fails with the line and the mistake", "[Gramm
     }
 }
 
-// --- The bundled grammars ------------------------------------------------------
-//
-// Each bundled language's grammar.janet is the mechanical conversion of the
-// grammar.json its generated tables came from. While ThirdParty/ still holds
-// those grammar.json files (until the table compiler replaces the generated
-// tables), this is the drift gate: a grammar bump whose grammar.json changed
-// fails until NED_BLESS_GRAMMARS=1 re-converts it. The mapping is the same
-// one Tests/ImprintTest.cpp uses.
-
-namespace {
-
-const std::map<std::string, std::string>& GrammarJsonSources() {
-    static const std::map<std::string, std::string> kSources = {
-        {"bash", "tree-sitter-bash/src/grammar.json"},
-        {"c", "tree-sitter-c/src/grammar.json"},
-        {"clojure", "tree-sitter-clojure/src/grammar.json"},
-        {"cmake", "tree-sitter-cmake/src/grammar.json"},
-        {"cpp", "tree-sitter-cpp/src/grammar.json"},
-        {"csharp", "tree-sitter-c-sharp/src/grammar.json"},
-        {"css", "tree-sitter-css/src/grammar.json"},
-        {"diff", "tree-sitter-diff/src/grammar.json"},
-        {"dockerfile", "tree-sitter-dockerfile/src/grammar.json"},
-        {"fish", "tree-sitter-fish/src/grammar.json"},
-        {"gitcommit", "tree-sitter-gitcommit/src/grammar.json"},
-        {"gitrebase", "tree-sitter-gitrebase/src/grammar.json"},
-        {"go", "tree-sitter-go/src/grammar.json"},
-        {"hcl", "tree-sitter-hcl/src/grammar.json"},
-        {"html", "tree-sitter-html/src/grammar.json"},
-        {"janet", "tree-sitter-janet-simple/src/grammar.json"},
-        {"java", "tree-sitter-java/src/grammar.json"},
-        {"javascript", "tree-sitter-javascript/src/grammar.json"},
-        {"json", "tree-sitter-json/src/grammar.json"},
-        {"kotlin", "tree-sitter-kotlin/src/grammar.json"},
-        {"lua", "tree-sitter-lua/src/grammar.json"},
-        {"make", "tree-sitter-make/src/grammar.json"},
-        {"markdown", "tree-sitter-markdown/tree-sitter-markdown/src/grammar.json"},
-        {"markdown-inline", "tree-sitter-markdown/tree-sitter-markdown-inline/src/grammar.json"},
-        {"nix", "tree-sitter-nix/src/grammar.json"},
-        {"org", "tree-sitter-org/src/grammar.json"},
-        {"php", "tree-sitter-php/php/src/grammar.json"},
-        {"python", "tree-sitter-python/src/grammar.json"},
-        {"r", "tree-sitter-r/src/grammar.json"},
-        {"ruby", "tree-sitter-ruby/src/grammar.json"},
-        {"rust", "tree-sitter-rust/src/grammar.json"},
-        {"sql", "tree-sitter-sql/src/grammar.json"},
-        {"toml", "tree-sitter-toml/src/grammar.json"},
-        {"tsx", "tree-sitter-typescript-src/tsx/src/grammar.json"},
-        {"typescript", "tree-sitter-typescript-src/typescript/src/grammar.json"},
-        {"xml", "tree-sitter-xml/xml/src/grammar.json"},
-        {"yaml", "tree-sitter-yaml/src/grammar.json"},
-    };
-    return kSources;
-}
-
-fs::path DepsDir() {
-    return fs::path(NED_REPO_ROOT) / "ThirdParty" / "tree-sitter-grammars";
-}
-
-fs::path SourceLanguagesDir() {
-    return fs::path(NED_REPO_ROOT) / "Source" / "Languages";
-}
-
-} // namespace
-
-TEST_CASE("Every bundled grammar.janet is the conversion of its grammar.json", "[GrammarFile][Corpus]") {
-    if (!fs::exists(DepsDir())) {
-        SUCCEED("no ThirdParty/tree-sitter-grammars in this checkout");
-        return;
-    }
-    const bool blessing = std::getenv("NED_BLESS_GRAMMARS") != nullptr;
-    for (const auto& [language, relative] : GrammarJsonSources()) {
-        const fs::path source = DepsDir() / relative;
-        const fs::path target = SourceLanguagesDir() / language / "grammar.janet";
-        INFO(language << ": " << source.string() << " -> " << target.string());
-        REQUIRE(fs::exists(source));
-
-        const GrammarFile fromJson = ParseGrammarJson(nlohmann::ordered_json::parse(ReadFile(source)));
-        const std::string text     = ToGrammarJanet(fromJson);
-        if (blessing) {
-            // Written before the round-trip check so a failing conversion
-            // leaves its output on disk to read.
-            std::ofstream out(target, std::ios::binary | std::ios::trunc);
-            REQUIRE(out);
-            out << text;
-        }
-        REQUIRE(ParseGrammarJanet(text) == fromJson);
-        if (!blessing) {
-            REQUIRE(fs::exists(target));
-            CHECK(ReadFile(target) == text);
-        }
-    }
-}
-
 TEST_CASE("Every bundled language with a grammar has a readable grammar.janet", "[GrammarFile]") {
     std::size_t found = 0;
     for (const auto& entry : fs::directory_iterator(ned::editor::BundledLanguagesRoot())) {
@@ -304,5 +211,5 @@ TEST_CASE("Every bundled language with a grammar has a readable grammar.janet", 
         CHECK_FALSE(grammar.rules.empty());
         ++found;
     }
-    CHECK(found == GrammarJsonSources().size());
+    CHECK(found == 37);
 }

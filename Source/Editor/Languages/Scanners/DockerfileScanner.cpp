@@ -339,5 +339,3 @@ static bool Scan(void* payload_, Lexer* lexer,
 extern const ned::editor::parse::ScannerVTable kScanner = {Create, Destroy, Scan, Serialize, Deserialize};
 
 } // namespace ned::editor::languages::scanners::dockerfile
-
-NED_TREE_SITTER_SCANNER_EXPORTS(dockerfile, ned::editor::languages::scanners::dockerfile)

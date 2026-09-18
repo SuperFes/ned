@@ -472,8 +472,8 @@ const std::map<std::string, std::set<std::string>> kDeletedIndentCaptures = {
 };
 
 TEST_CASE("Every deleted indent capture's node still indents from the imprint", "[Imprint]") {
-    // The deletable criterion, held against the COMPILED table so it needs no
-    // ThirdParty/tree-sitter-grammars: a bracket body is a container whenever its instance
+    // The deletable criterion, held against the served table: a bracket body
+    // is a container whenever its instance
     // carries its brackets (Editor/ImprintBracket.h's DelimitersOf, an
     // instance-level test no table can pre-answer), and an indentation body
     // is one when it has no introducer of its own -- `openerIsFirst` false --

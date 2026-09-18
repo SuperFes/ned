@@ -34,23 +34,10 @@ namespace scanner {
 
 } // namespace ned::editor::parse
 
-// While the generated parser.c files are still linked, each one references
-// its scanner by tree-sitter's five C symbol names; this exports a ported
-// scanner's table under those names. Goes with parser.c.
-#define NED_TREE_SITTER_SCANNER_EXPORTS(name, ns)                                                                           \
-    extern "C" void* tree_sitter_##name##_external_scanner_create() {                                                       \
-        return ns::kScanner.create();                                                                                       \
-    }                                                                                                                       \
-    extern "C" void tree_sitter_##name##_external_scanner_destroy(void* payload) {                                          \
-        ns::kScanner.destroy(payload);                                                                                      \
-    }                                                                                                                       \
-    extern "C" bool tree_sitter_##name##_external_scanner_scan(void* payload, ned::editor::parse::abi::LexerData* lexer,    \
-                                                               const bool* validSymbols) {                                  \
-        return ns::kScanner.scan(payload, lexer, validSymbols);                                                             \
-    }                                                                                                                       \
-    extern "C" unsigned tree_sitter_##name##_external_scanner_serialize(void* payload, char* buffer) {                      \
-        return ns::kScanner.serialize(payload, buffer);                                                                     \
-    }                                                                                                                       \
-    extern "C" void tree_sitter_##name##_external_scanner_deserialize(void* payload, const char* buffer, unsigned length) { \
-        ns::kScanner.deserialize(payload, buffer, length);                                                                  \
+// An out-of-tree scanner is a shared library named by a language
+// definition's `:scanner-library`, exporting its table as
+// `ned_scanner_<name>` -- this writes that function.
+#define NED_SCANNER_LIBRARY_EXPORT(name, table)                                \
+    extern "C" const ned::editor::parse::ScannerVTable* ned_scanner_##name() { \
+        return &(table);                                                       \
     }

@@ -22,29 +22,27 @@ using ned::editor::SetModeForFilename;
 
 namespace {
 
-// See DynamicGrammarTest.cpp's own header comment: real, non-bundled,
-// system-installed grammar + query, not FetchContent'd -- tests
-// exercising the real load path SKIP rather than fail if absent.
-// kLuaQueriesDir is exactly the shape a real system tree-sitter install
+// A real, system-installed tree-sitter query file, not FetchContent'd --
+// tests exercising the foreign-queries path SKIP rather than fail if
+// absent. kLuaQueriesDir is exactly the shape a system tree-sitter install
 // uses (/usr/share/tree-sitter/queries/<lang>/highlights.scm, ...) -- the
-// :queries-dir key exists for it.
-const std::filesystem::path kLuaLibrary    = "/usr/lib64/libtree-sitter-lua.so";
+// :queries-dir key exists for it. The grammar itself is ned's bundled lua
+// (a registered "lua" without a grammar of its own borrows it).
 const std::filesystem::path kLuaQueriesDir = "/usr/share/tree-sitter/queries/lua";
 const std::filesystem::path kLuaQuery      = kLuaQueriesDir / "highlights.scm";
 
 bool HasRealLuaFixture() {
-    return std::filesystem::exists(kLuaLibrary) && std::filesystem::exists(kLuaQuery);
+    return std::filesystem::exists(kLuaQuery);
 }
 
 // A scratch language directory in the bundled layout: <parent>/lua/
-// language.janet pointing at the system grammar. `extra` appends more
-// definition keys.
+// language.janet redefining lua over the bundled grammar. `extra` appends
+// more definition keys.
 std::filesystem::path WriteLuaLanguageDir(const std::string& extra = {}) {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned-test-languages" / "lua";
     std::filesystem::create_directories(dir);
     std::ofstream out(dir / "language.janet", std::ios::trunc);
     out << "{:name \"lua\"\n :extensions [\".lua\"]\n :line-comment \"--\"\n"
-        << " :grammar-library \"" << kLuaLibrary.string() << "\"\n"
         << extra << "}\n";
     out.close();
     return dir;
@@ -72,20 +70,17 @@ TEST_CASE("ModeByName returns nullopt for a name that is neither bundled nor reg
     REQUIRE_FALSE(ModeByName("never-registered-language-xyz").has_value());
 }
 
-TEST_CASE("LoadLanguageDirectory throws for a nonexistent grammar library", "[ModeOverrides]") {
+TEST_CASE("LoadLanguageDirectory throws for a nonexistent scanner library", "[ModeOverrides]") {
     const RegistryGuard         guard;
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned-test-languages" / "bogus";
     std::filesystem::create_directories(dir);
     std::ofstream(dir / "language.janet", std::ios::trunc)
-        << "{:name \"bogus\" :grammar-library \"/not/a/real/libtree-sitter-bogus.so\"}\n";
+        << "{:name \"bogus\" :scanner-library \"/not/a/real/libned-bogus-scanner.so\"}\n";
     REQUIRE_THROWS_AS(LoadLanguageDirectory(dir), std::runtime_error);
     REQUIRE_FALSE(ModeByName("bogus-mode").has_value()); // nothing half-registered
 }
 
-TEST_CASE("A grammar-library definition with no query files still registers, parser only", "[ModeOverrides]") {
-    if (!std::filesystem::exists(kLuaLibrary)) {
-        SKIP("system-wide libtree-sitter-lua.so not found on this machine");
-    }
+TEST_CASE("A definition over a bundled grammar with no query files still registers, parser only", "[ModeOverrides]") {
     const RegistryGuard guard;
     LoadLanguageDirectory(WriteLuaLanguageDir());
 
@@ -96,7 +91,7 @@ TEST_CASE("A grammar-library definition with no query files still registers, par
 
 TEST_CASE("A :queries-dir pointing at a system tree-sitter install round-trips", "[ModeOverrides]") {
     if (!HasRealLuaFixture()) {
-        SKIP("system-wide lua grammar/query not found on this machine");
+        SKIP("system-wide lua queries not found on this machine");
     }
     const RegistryGuard guard;
     LoadLanguageDirectory(WriteLuaLanguageDir(" :queries-dir \"" + kLuaQueriesDir.string() + "\"\n"));
@@ -112,7 +107,7 @@ TEST_CASE("A :queries-dir pointing at a system tree-sitter install round-trips",
 
 TEST_CASE("A registered definition's own :extensions claim files with no override call", "[ModeOverrides]") {
     if (!HasRealLuaFixture()) {
-        SKIP("system-wide lua grammar/query not found on this machine");
+        SKIP("system-wide lua queries not found on this machine");
     }
     const RegistryGuard guard;
     LoadLanguageDirectory(WriteLuaLanguageDir(" :queries-dir \"" + kLuaQueriesDir.string() + "\"\n"));
