@@ -215,14 +215,15 @@ bool TokenConflictMap::PreferTransition(const LexicalGrammar& grammar, const Nfa
 // --- CoincidentTokenIndex -----------------------------------------------------------
 
 CoincidentTokenIndex::CoincidentTokenIndex(const ParseTable& table, const LexicalGrammar& grammar) : n_(grammar.variables.size()), entries_(n_ * n_) {
+    std::vector<std::uint32_t> terminals;
     for (std::size_t i = 0; i < table.states.size(); ++i) {
-        for (const auto& [symbol, _] : table.states[i].terminalEntries) {
-            if (!symbol.IsTerminal())
-                continue;
-            for (const auto& [other, __] : table.states[i].terminalEntries) {
-                if (!other.IsTerminal())
-                    continue;
-                std::vector<ParseStateId>& entry = entries_[Index(symbol.index, other.index)];
+        terminals.clear();
+        for (const auto& [symbol, _] : table.states[i].terminalEntries)
+            if (symbol.IsTerminal())
+                terminals.push_back(symbol.index);
+        for (const std::uint32_t a : terminals) {
+            for (const std::uint32_t b : terminals) {
+                std::vector<ParseStateId>& entry = entries_[Index(a, b)];
                 if (entry.empty() || entry.back() != i)
                     entry.push_back(i);
             }
@@ -343,12 +344,17 @@ namespace {
                 without = &tokens;
             else
                 continue;
-            for (const Symbol existing : without->Terminals()) {
+            bool mergeable = true;
+            without->ForEachTerminal([&](Symbol existing) {
+                if (!mergeable)
+                    return;
                 if (conflicts.DoesConflict(i, existing.index) || conflicts.DoesMatchPrefix(i, existing.index))
-                    return false;
-                if (!coincident.Contains(symbol, existing) && (conflicts.DoesOverlap(existing.index, i) || conflicts.DoesOverlap(i, existing.index)))
-                    return false;
-            }
+                    mergeable = false;
+                else if (!coincident.Contains(symbol, existing) && (conflicts.DoesOverlap(existing.index, i) || conflicts.DoesOverlap(i, existing.index)))
+                    mergeable = false;
+            });
+            if (!mergeable)
+                return false;
         }
         tokens.InsertAll(other);
         return true;

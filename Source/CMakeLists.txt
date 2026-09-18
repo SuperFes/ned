@@ -268,7 +268,10 @@ add_library(ned_lib STATIC
         Editor/Grammar/Compile/LexTable.cpp
         Editor/Grammar/Compile/Tables.cpp
         Editor/Grammar/Compile/Compiler.cpp
+        Editor/Grammar/Compile/TableFile.cpp
+        Editor/Grammar/Compile/CompileCommand.cpp
         Editor/Parse/LexDfa.cpp
+        Editor/Languages/Scanners/Scanners.cpp
         Editor/Grammar/Tree.cpp
         Editor/Grammar/Parser.cpp
         Editor/Grammar/IncrementalParse.cpp
@@ -485,4 +488,6 @@ install(TARGETS ned RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(CODE "
     file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\")
     file(CREATE_LINK \"ned\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\" SYMBOLIC)
+    file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-langc\")
+    file(CREATE_LINK \"ned\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-langc\" SYMBOLIC)
 ")

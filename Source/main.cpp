@@ -36,10 +36,10 @@
 #include "Editor/Acp/PanelConfig.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
-#include "Editor/CliFormatDispatch.h"
 #include "Editor/Bookmark.h"
 #include "Editor/BufferSave.h"
 #include "Editor/BundledSnippets.h"
+#include "Editor/CliFormatDispatch.h"
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
@@ -48,9 +48,10 @@
 #include "Editor/FormatBracePlacement.h"
 #include "Editor/FormatConfigParse.h"
 #include "Editor/FormatOnSave.h"
-#include "Editor/HugeFileReindent.h"
 #include "Editor/FormatSpacing.h"
 #include "Editor/FormatWrap.h"
+#include "Editor/Grammar/Compile/CompileCommand.h"
+#include "Editor/HugeFileReindent.h"
 #include "Editor/Indent.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/BrokerMain.h"
@@ -3187,6 +3188,8 @@ auto main(int argc, char** argv) -> int {
     bool                     foreground    = false;
     bool                     format        = false;
     bool                     forceHuge     = false;
+    bool                     compileLanguage = false;
+    std::string              compileOutput;
     bool                     forceBinary   = false;
     bool                     noRestore     = false;
     bool                     vimMode       = false;
@@ -3218,6 +3221,14 @@ auto main(int argc, char** argv) -> int {
                  "(Native reindent only -- no external formatter, no space/break/wrap/blank rules) instead of "
                  "skipping it")
         ->needs("--format");
+    app.add_flag("--compile-language", compileLanguage,
+                 "Compile each given language directory's grammar.janet to its parse tables (written as `tables` "
+                 "beside it) and exit -- what the build runs for every bundled language, and the authoring loop "
+                 "for a hand-written grammar")
+        ->excludes(lspBrokerOpt)
+        ->group("Startup modes");
+    app.add_option("-o,--output", compileOutput, "With --compile-language and a single language, write the tables to this file instead")
+        ->needs("--compile-language");
     app.add_flag("--force-binary", forceBinary,
                  "Open files that look binary anyway, without an interactive confirmation");
     app.add_flag("--no-restore", noRestore,
@@ -3244,6 +3255,10 @@ auto main(int argc, char** argv) -> int {
     if (argc > 0 && ned::editor::InvokedAsNedFormat(argv[0]) && !lspBroker && !lspBrokerStop && !foreground &&
         mcpStdioRelaySocketPath.empty()) {
         format = true;
+    }
+    if (argc > 0 && ned::editor::InvokedAsNedLangc(argv[0]) && !lspBroker && !lspBrokerStop && !foreground &&
+        mcpStdioRelaySocketPath.empty() && !format) {
+        compileLanguage = true;
     }
 
     // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
@@ -3273,6 +3288,10 @@ auto main(int argc, char** argv) -> int {
 
     if (!mcpStdioRelaySocketPath.empty()) {
         return RunMcpStdioRelay(mcpStdioRelaySocketPath);
+    }
+
+    if (compileLanguage) {
+        return ned::editor::grammar::compile::RunCompileLanguage(paths, compileOutput, std::cout, std::cerr);
     }
 
     if (format) {

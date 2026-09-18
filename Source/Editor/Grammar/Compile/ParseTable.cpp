@@ -1019,6 +1019,50 @@ namespace {
             }
         }
 
+        // The pairwise questions below run for every pair of states in a
+        // core group, so they work on flat, sorted copies of each state's
+        // entries (walked together, never looked up) and memoize the
+        // per-(state, token) conflict test.
+        struct StateView {
+            std::vector<std::pair<Symbol, const ParseTableEntry*>> terminals;
+            std::vector<std::uint32_t>                             terminalIndices; // Terminal-kind tokens only
+            std::vector<std::pair<Symbol, ParseStateId>>           shiftTargets;    // terminals whose last action shifts
+            std::vector<std::pair<Symbol, GotoAction>>             gotos;
+            const TokenSet*                                        reservedWords = nullptr;
+            std::size_t                                            id            = 0;
+        };
+
+        std::vector<StateView>   views_;
+        std::vector<std::int8_t> tokenConflictMemo_; // views_.size() x (terminal count + 1), -1 = unknown
+        std::size_t              memoStride_ = 0;
+        TokenSet                 externalCorresponding_;
+
+        void BuildViews() {
+            views_.clear();
+            views_.reserve(table_.states.size());
+            for (std::size_t i = 0; i < table_.states.size(); ++i) {
+                const ParseState& state = table_.states[i];
+                StateView         view;
+                view.id            = i;
+                view.reservedWords = &state.reservedWords;
+                for (const auto& [token, entry] : state.terminalEntries) {
+                    view.terminals.emplace_back(token, &entry);
+                    if (token.IsTerminal())
+                        view.terminalIndices.push_back(token.index);
+                    if (entry.actions.back().kind == ParseAction::Kind::Shift)
+                        view.shiftTargets.emplace_back(token, entry.actions.back().state);
+                }
+                for (const auto& [symbol, action] : state.nonterminalEntries)
+                    view.gotos.emplace_back(symbol, action);
+                views_.push_back(std::move(view));
+            }
+            memoStride_ = lexical_.variables.size() + 1;
+            tokenConflictMemo_.assign(views_.size() * memoStride_, -1);
+            for (const ExternalToken& external : syntax_.externalTokens)
+                if (external.correspondingInternalToken)
+                    externalCorresponding_.Insert(*external.correspondingInternalToken);
+        }
+
         void MergeCompatibleStates() {
             std::size_t coreCount = 0;
             for (const ParseState& state : table_.states)
@@ -1031,11 +1075,14 @@ namespace {
                 groupIdsByStateId.push_back(table_.states[i].coreId);
             }
 
-            SplitStateIdGroups(table_.states, stateIdsByGroupId, groupIdsByStateId, 0,
-                               [&](const ParseState& l, const ParseState& r, const std::vector<std::size_t>& groups) { return StatesConflict(l, r, groups); });
-            while (SplitStateIdGroups(table_.states, stateIdsByGroupId, groupIdsByStateId, 0,
-                                      [&](const ParseState& l, const ParseState& r, const std::vector<std::size_t>& groups) { return StateSuccessorsDiffer(l, r, groups); })) {
+            BuildViews();
+            SplitStateIdGroups(views_, stateIdsByGroupId, groupIdsByStateId, 0,
+                               [&](const StateView& l, const StateView& r, const std::vector<std::size_t>& groups) { return StatesConflict(l, r, groups); });
+            while (SplitStateIdGroups(views_, stateIdsByGroupId, groupIdsByStateId, 0,
+                                      [&](const StateView& l, const StateView& r, const std::vector<std::size_t>& groups) { return StateSuccessorsDiffer(l, r, groups); })) {
             }
+            views_.clear();
+            tokenConflictMemo_.clear();
 
             const auto groupContaining = [&](std::size_t stateId) {
                 for (std::size_t g = 0; g < stateIdsByGroupId.size(); ++g)
@@ -1068,44 +1115,61 @@ namespace {
             table_.states = std::move(newStates);
         }
 
-        bool StatesConflict(const ParseState& left, const ParseState& right, const std::vector<std::size_t>& groups) const {
-            for (const auto& [token, leftEntry] : left.terminalEntries) {
-                if (const auto it = right.terminalEntries.find(token); it != right.terminalEntries.end()) {
-                    if (EntriesConflict(token, leftEntry, it->second, groups))
+        bool StatesConflict(const StateView& left, const StateView& right, const std::vector<std::size_t>& groups) {
+            auto l = left.terminals.begin();
+            auto r = right.terminals.begin();
+            while (l != left.terminals.end() || r != right.terminals.end()) {
+                if (r == right.terminals.end() || (l != left.terminals.end() && l->first < r->first)) {
+                    if (TokenConflicts(right, l->first))
                         return true;
+                    ++l;
                 }
-                else if (TokenConflicts(right, token)) {
-                    return true;
+                else if (l == left.terminals.end() || r->first < l->first) {
+                    if (TokenConflicts(left, r->first))
+                        return true;
+                    ++r;
+                }
+                else {
+                    if (EntriesConflict(l->first, *l->second, *r->second, groups))
+                        return true;
+                    ++l;
+                    ++r;
                 }
             }
-            for (const auto& [token, _] : right.terminalEntries)
-                if (left.terminalEntries.count(token) == 0 && TokenConflicts(left, token))
-                    return true;
             return false;
         }
 
-        bool StateSuccessorsDiffer(const ParseState& state1, const ParseState& state2, const std::vector<std::size_t>& groups) const {
-            for (const auto& [token, entry1] : state1.terminalEntries) {
-                const ParseAction& last1 = entry1.actions.back();
-                if (last1.kind != ParseAction::Kind::Shift)
-                    continue;
-                if (const auto it = state2.terminalEntries.find(token); it != state2.terminalEntries.end()) {
-                    const ParseAction& last2 = it->second.actions.back();
-                    if (last2.kind == ParseAction::Kind::Shift && groups[last1.state] != groups[last2.state])
+        static bool StateSuccessorsDiffer(const StateView& state1, const StateView& state2, const std::vector<std::size_t>& groups) {
+            auto a = state1.shiftTargets.begin();
+            auto b = state2.shiftTargets.begin();
+            while (a != state1.shiftTargets.end() && b != state2.shiftTargets.end()) {
+                if (a->first < b->first)
+                    ++a;
+                else if (b->first < a->first)
+                    ++b;
+                else {
+                    if (groups[a->second] != groups[b->second])
                         return true;
+                    ++a;
+                    ++b;
                 }
             }
-            for (const auto& [symbol, s1] : state1.nonterminalEntries) {
-                if (const auto it = state2.nonterminalEntries.find(symbol); it != state2.nonterminalEntries.end()) {
-                    const GotoAction& s2 = it->second;
-                    if (s1.shiftExtra && s2.shiftExtra)
-                        continue;
-                    if (!s1.shiftExtra && !s2.shiftExtra) {
-                        if (groups[s1.state] != groups[s2.state])
-                            return true;
-                        continue;
-                    }
-                    return true;
+            auto n1 = state1.gotos.begin();
+            auto n2 = state2.gotos.begin();
+            while (n1 != state1.gotos.end() && n2 != state2.gotos.end()) {
+                if (n1->first < n2->first)
+                    ++n1;
+                else if (n2->first < n1->first)
+                    ++n2;
+                else {
+                    const GotoAction& s1 = n1->second;
+                    const GotoAction& s2 = n2->second;
+                    if (s1.shiftExtra != s2.shiftExtra)
+                        return true;
+                    if (!s1.shiftExtra && groups[s1.state] != groups[s2.state])
+                        return true;
+                    ++n1;
+                    ++n2;
                 }
             }
             return false;
@@ -1128,24 +1192,35 @@ namespace {
             return false;
         }
 
-        bool TokenConflicts(const ParseState& rightState, Symbol newToken) const {
+        // Whether adding `newToken` to `rightState`'s valid tokens would
+        // make its lexing ambiguous. The reference asks this with eof's
+        // index treated as terminal 0; kept.
+        bool TokenConflicts(const StateView& rightState, Symbol newToken) {
             if (newToken == Symbol::EndOfNonTerminalExtra())
                 return true;
             if (newToken.IsExternal())
                 return true;
-            if (rightState.reservedWords.Contains(newToken))
+            const std::size_t slot = rightState.id * memoStride_ + (newToken.IsTerminal() ? newToken.index : memoStride_ - 1);
+            if (tokenConflictMemo_[slot] >= 0)
+                return tokenConflictMemo_[slot] != 0;
+            const bool result        = TokenConflictsUncached(rightState, newToken);
+            tokenConflictMemo_[slot] = result ? 1 : 0;
+            return result;
+        }
+
+        bool TokenConflictsUncached(const StateView& rightState, Symbol newToken) const {
+            if (rightState.reservedWords->Contains(newToken))
                 return false;
-            for (const ExternalToken& external : syntax_.externalTokens)
-                if (external.correspondingInternalToken == newToken)
-                    return true;
-            for (const auto& [token, _] : rightState.terminalEntries) {
-                if (!token.IsTerminal())
+            if (newToken.IsTerminal() && externalCorresponding_.Contains(newToken))
+                return true;
+            const bool newIsWord    = syntax_.wordToken == newToken;
+            const bool newIsKeyword = keywords_.Contains(newToken);
+            for (const std::uint32_t index : rightState.terminalIndices) {
+                if (newIsKeyword && syntax_.wordToken && syntax_.wordToken->index == index)
                     continue;
-                if (syntax_.wordToken == token && keywords_.Contains(newToken))
+                if (newIsWord && keywords_.ContainsTerminal(index))
                     continue;
-                if (syntax_.wordToken == newToken && keywords_.Contains(token))
-                    continue;
-                if (conflicts_.DoesConflict(newToken.index, token.index) || conflicts_.DoesMatchSameString(newToken.index, token.index))
+                if (conflicts_.DoesConflict(newToken.index, index) || conflicts_.DoesMatchSameString(newToken.index, index))
                     return true;
             }
             return false;

@@ -14,6 +14,7 @@
 #ifndef NED_EDITOR_GRAMMAR_COMPILE_GRAMMAR_H
 #define NED_EDITOR_GRAMMAR_COMPILE_GRAMMAR_H
 
+#include <bit>
 #include <compare>
 #include <cstdint>
 #include <initializer_list>
@@ -181,14 +182,18 @@ struct Rule {
     [[nodiscard]] bool IsEmpty() const;
 };
 
-// A set of tokens as bit vectors, one per index; eof and the end of a
-// non-terminal extra are two extra bits. Equality is set equality.
+// A set of tokens as bit words, one bit per index; eof and the end of a
+// non-terminal extra are two extra bits. Equality is set equality. The
+// generator holds these in maps and compares them constantly, so nothing
+// here allocates except Symbols()/Terminals().
 class TokenSet {
   public:
-    void                      Insert(Symbol symbol);
-    bool                      Remove(Symbol symbol);
-    [[nodiscard]] bool        Contains(Symbol symbol) const;
-    [[nodiscard]] bool        ContainsTerminal(std::uint32_t index) const;
+    void               Insert(Symbol symbol);
+    bool               Remove(Symbol symbol);
+    [[nodiscard]] bool Contains(Symbol symbol) const;
+    [[nodiscard]] bool ContainsTerminal(std::uint32_t index) const {
+        return Get(terminals_, index);
+    }
     [[nodiscard]] bool        IsEmpty() const;
     [[nodiscard]] std::size_t Len() const;
     bool                      InsertAllTerminals(const TokenSet& other);
@@ -198,9 +203,28 @@ class TokenSet {
     [[nodiscard]] std::vector<Symbol> Symbols() const;
     [[nodiscard]] std::vector<Symbol> Terminals() const;
 
-    bool operator==(const TokenSet& other) const;
-    // Lexicographic over Symbols(); any strict weak order will do for maps.
-    bool operator<(const TokenSet& other) const;
+    template <typename F>
+    void ForEachTerminal(F&& f) const {
+        ForEachBit(terminals_, [&](std::uint32_t index) { f(Symbol::Terminal(index)); });
+    }
+    // Symbols() order, without the vector.
+    template <typename F>
+    void ForEach(F&& f) const {
+        ForEachTerminal(f);
+        ForEachBit(externals_, [&](std::uint32_t index) { f(Symbol::External(index)); });
+        if (eof_)
+            f(Symbol::End());
+        if (endOfNonTerminalExtra_)
+            f(Symbol::EndOfNonTerminalExtra());
+    }
+
+    bool operator==(const TokenSet& other) const = default;
+    // The order of Symbols() compared lexicographically, computed on the
+    // words: what a map keyed on token sets iterates by.
+    [[nodiscard]] std::strong_ordering Compare(const TokenSet& other) const;
+    bool                               operator<(const TokenSet& other) const {
+        return Compare(other) == std::strong_ordering::less;
+    }
 
     static TokenSet Of(std::initializer_list<Symbol> symbols) {
         TokenSet set;
@@ -210,10 +234,30 @@ class TokenSet {
     }
 
   private:
-    std::vector<bool> terminals_;
-    std::vector<bool> externals_;
-    bool              eof_                   = false;
-    bool              endOfNonTerminalExtra_ = false;
+    using Words = std::vector<std::uint64_t>; // never ends in a zero word
+
+    static bool Get(const Words& words, std::uint32_t index) {
+        const std::size_t word = index / 64;
+        return word < words.size() && ((words[word] >> (index % 64)) & 1U) != 0;
+    }
+    static void Set(Words& words, std::uint32_t index);
+    static bool Clear(Words& words, std::uint32_t index);
+    static bool Union(Words& words, const Words& other);
+    template <typename F>
+    static void ForEachBit(const Words& words, F&& f) {
+        for (std::size_t w = 0; w < words.size(); ++w) {
+            for (std::uint64_t bits = words[w]; bits != 0; bits &= bits - 1)
+                f(static_cast<std::uint32_t>(w * 64 + static_cast<std::size_t>(std::countr_zero(bits))));
+        }
+    }
+    // First index where the two differ, or nullopt when equal.
+    static std::optional<std::uint32_t> FirstDifference(const Words& a, const Words& b);
+    static bool                         AnyAbove(const Words& words, std::uint32_t index);
+
+    Words terminals_;
+    Words externals_;
+    bool  eof_                   = false;
+    bool  endOfNonTerminalExtra_ = false;
 };
 
 using AliasMap = std::map<Symbol, Alias>;

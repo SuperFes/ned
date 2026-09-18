@@ -23,3 +23,12 @@ TEST_CASE("InvokedAsNedFormat does not match a directory component merely spelle
           "[CliFormatDispatch]") {
     REQUIRE_FALSE(InvokedAsNedFormat("/opt/ned-format/ned"));
 }
+
+TEST_CASE("InvokedAsNedLangc matches only the ned-langc basename", "[CliFormatDispatch]") {
+    using ned::editor::InvokedAsNedLangc;
+    REQUIRE(InvokedAsNedLangc("ned-langc"));
+    REQUIRE(InvokedAsNedLangc("/usr/bin/ned-langc"));
+    REQUIRE_FALSE(InvokedAsNedLangc("ned"));
+    REQUIRE_FALSE(InvokedAsNedLangc("ned-format"));
+    REQUIRE_FALSE(InvokedAsNedLangc("/opt/ned-langc/ned"));
+}
