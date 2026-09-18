@@ -1184,5 +1184,3 @@ static void Destroy(void* payload_) {
 extern const ned::editor::parse::ScannerVTable kScanner = {Create, Destroy, Scan, Serialize, Deserialize};
 
 } // namespace ned::editor::languages::scanners::ruby
-
-NED_TREE_SITTER_SCANNER_EXPORTS(ruby, ned::editor::languages::scanners::ruby)

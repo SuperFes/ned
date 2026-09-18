@@ -1925,5 +1925,3 @@ static bool Scan(void* payload_, Lexer* lexer, const bool* valid_symbols) {
 extern const ned::editor::parse::ScannerVTable kScanner = {Create, Destroy, Scan, Serialize, Deserialize};
 
 } // namespace ned::editor::languages::scanners::yaml
-
-NED_TREE_SITTER_SCANNER_EXPORTS(yaml, ned::editor::languages::scanners::yaml)

@@ -20,8 +20,9 @@ namespace ned::editor::parse {
 
 class Engine {
   public:
-    // `language` is the pointer a generated `tree_sitter_<name>()` returns;
-    // it must be ABI version 15 (checked, throws std::runtime_error).
+    // `language` is a loaded package's abi::LanguageData (Grammar/
+    // LanguagePackage.h); its table version is checked (throws
+    // std::runtime_error).
     explicit Engine(const void* language);
     ~Engine();
     Engine(const Engine&)            = delete;

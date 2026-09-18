@@ -2,10 +2,10 @@
 
 namespace ned::editor::grammar {
 
-Language::Language(const TSLanguage* language) noexcept : language_(language) {
+Language::Language(const parse::abi::LanguageData* language) noexcept : language_(language) {
 }
 
-const TSLanguage* Language::Raw() const noexcept {
+const parse::abi::LanguageData* Language::Raw() const noexcept {
     return language_;
 }
 

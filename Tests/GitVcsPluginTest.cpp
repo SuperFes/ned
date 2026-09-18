@@ -37,7 +37,7 @@ struct RegistryResetGuard {
 
 // Real, non-bundled, system-installed `git` -- tests exercising the real
 // end-to-end blame path SKIP rather than fail if absent, matching
-// DynamicGrammarTest.cpp/ModeOverridesTest.cpp's own convention for a
+// ModeOverridesTest.cpp's own convention for a
 // system-dependent fixture.
 bool GitAvailable() {
     try {

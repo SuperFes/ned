@@ -194,8 +194,8 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                 definition.captureSpans.emplace_back(capture.text, CaptureSpanRule::LineEnd);
             }
         }
-        else if (key == "grammar-library") {
-            definition.grammarLibrary = ExpectString(directoryName, value, ":grammar-library");
+        else if (key == "scanner-library") {
+            definition.scannerLibrary = ExpectString(directoryName, value, ":scanner-library");
         }
         else if (key == "queries-dir") {
             definition.queriesDir = ExpectString(directoryName, value, ":queries-dir");

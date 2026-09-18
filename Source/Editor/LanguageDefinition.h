@@ -124,10 +124,11 @@ struct LanguageDefinition {
     // kind. See LanguageParse.h.
     std::string queriesFrom;
     // Runtime-registered languages only (LanguageRegistry.h; both rejected
-    // at load for a bundled definition): a shared library exporting
-    // `tree_sitter_<grammar>` to dlopen, and a foreign tree-sitter-layout
-    // queries directory scanned per kind as `<kind>.janet` or `<kind>.scm`.
-    std::string grammarLibrary;
+    // at load for a bundled definition): the shared library holding the
+    // grammar's external scanner (`ned_scanner_<grammar>`, see
+    // Grammar/LanguagePackage.h), and a foreign tree-sitter-layout queries
+    // directory scanned per kind as `<kind>.janet` or `<kind>.scm`.
+    std::string scannerLibrary;
     std::string queriesDir;
     // Names in the escape registry, applied in order after the generic
     // build. An unknown name is a build error (ModeFromDefinition throws),
@@ -173,8 +174,9 @@ void               RegisterModeEscape(std::string name, ModeEscape escape);
 // build, applies the definition's own fields, then each escape in order.
 [[nodiscard]] Mode ModeFromDefinition(const LanguageDefinition& definition);
 
-// The same, for a grammar the caller already resolved -- a runtime-loaded
-// one (Grammar/DynamicGrammar.h) that LanguageByName cannot see.
+// The same, for a grammar the caller already resolved -- a registered
+// language's own package (Grammar/LanguagePackage.h) that LanguageByName
+// cannot see.
 [[nodiscard]] Mode ModeFromDefinition(const LanguageDefinition& definition, const grammar::Language& language);
 
 } // namespace ned::editor

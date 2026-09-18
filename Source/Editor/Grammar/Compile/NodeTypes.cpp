@@ -48,9 +48,15 @@ namespace {
         return changed;
     }
 
+    // A supertype is a named node whatever its own kind says; an inlined
+    // variable never appears in a tree at all.
     VariableType VariableTypeForChildType(const ChildType& type, const SyntaxGrammar& syntax, const LexicalGrammar& lexical) {
         if (type.kind == ChildType::Kind::Aliased)
             return type.alias.named ? VariableType::Named : VariableType::Anonymous;
+        if (std::find(syntax.supertypeSymbols.begin(), syntax.supertypeSymbols.end(), type.symbol) != syntax.supertypeSymbols.end())
+            return VariableType::Named;
+        if (std::find(syntax.variablesToInline.begin(), syntax.variablesToInline.end(), type.symbol) != syntax.variablesToInline.end())
+            return VariableType::Hidden;
         switch (type.symbol.kind) {
             case SymbolType::NonTerminal:
                 return syntax.variables[type.symbol.index].kind;

@@ -1,26 +1,7 @@
 //
-// The registry of tree-sitter grammars statically linked into this binary
-// (tree-sitter foundation follow-up) -- distinct from, and a prerequisite
-// for, the dynamic-grammar-loading follow-up's runtime-loaded ones. Each
-// bundled grammar is vendored source under ThirdParty/tree-sitter-grammars/
-// (Tools/vendor-grammars.py), compiled by CMakeLists.txt, exposing exactly
-// one C entry point, `tree_sitter_<name>()`, per
-// tree-sitter's own convention -- this file is the one place those get
-// forward-declared and named.
-//
-// Phase 1 (tree-sitter foundation) bundled only "json", to prove the
-// plumbing end-to-end; the bundle-remaining-grammars follow-up adds "c",
-// "cpp", "php", "javascript", "typescript", "tsx", "html", "css", "python",
-// "bash", "janet", and "markdown" -- Perl was on the user's own requested
-// list but is skipped: no official tree-sitter grammar for it ships a
-// pre-generated parser.c (would need the Node-based tree-sitter CLI this
-// project's build deliberately never depends on), and the user explicitly
-// agreed to drop it rather than work around that. See ROADMAP.md. The
-// Org-mode syntax-highlighting follow-up adds "org" -- not the real
-// upstream nvim-orgmode/tree-sitter-org, but Ned's own fork of it (see
-// CMakeLists.txt's own ned_add_treesitter_grammar(tree-sitter-org ...)
-// call), which adds real grammar-level inline emphasis support the
-// upstream grammar doesn't have at all.
+// The bundled grammars, by name: each is a language package under
+// `<data dir>/languages/<name>/` (Editor/LanguageFiles.h), loaded on first
+// use through Grammar/LanguagePackage.h and kept for the process.
 //
 
 #ifndef NED_EDITOR_GRAMMAR_LANGUAGES_H
@@ -37,7 +18,8 @@ namespace ned::editor::grammar {
 // std::nullopt if name isn't a bundled grammar -- not an error, since a
 // caller (a Mode picking a language by file extension) needs to fall back
 // gracefully to no highlighting for an unbundled language, the same way
-// FundamentalMode already means "no highlighting" today.
+// FundamentalMode already means "no highlighting" today. A package that
+// exists but cannot be loaded throws (LanguagePackage.h).
 [[nodiscard]] std::optional<Language> LanguageByName(std::string_view name);
 
 } // namespace ned::editor::grammar

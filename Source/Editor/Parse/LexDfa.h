@@ -85,7 +85,7 @@ struct DfaLanguage {
 // accepted (lexer->resultSymbol set, end marked).
 bool DfaLex(const DfaLanguage& language, const LexDfa& dfa, abi::LexerData* lexer, abi::StateId state);
 
-// Dispatch to the language's generated lexer or its DFA.
+// The language's lexers, as the engine calls them.
 bool LexMain(const abi::LanguageData* language, abi::LexerData* lexer, abi::StateId state);
 bool LexKeyword(const abi::LanguageData* language, abi::LexerData* lexer, abi::StateId state);
 

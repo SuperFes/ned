@@ -70,10 +70,6 @@ inline bool LanguageHasReduceAction(const abi::LanguageData* language, abi::Stat
 }
 
 inline abi::LexerMode LanguageLexModeForState(const abi::LanguageData* language, abi::StateId state) {
-    if (language->abiVersion < 15) {
-        const auto* modes = reinterpret_cast<const abi::LexModeOld*>(language->lexModes);
-        return {.lexState = modes[state].lexState, .externalLexState = modes[state].externalLexState, .reservedWordSetId = 0};
-    }
     return language->lexModes[state];
 }
 
@@ -159,16 +155,12 @@ inline SymbolType LanguageSymbolType(const abi::LanguageData* language, abi::Sym
 }
 
 inline const abi::Symbol* LanguageSupertypes(const abi::LanguageData* language, std::uint32_t* length) {
-    if (language->abiVersion >= 15) {
-        *length = language->supertypeCount;
-        return language->supertypeSymbols;
-    }
-    *length = 0;
-    return nullptr;
+    *length = language->supertypeCount;
+    return language->supertypeSymbols;
 }
 
 inline const abi::Symbol* LanguageSubtypes(const abi::LanguageData* language, abi::Symbol supertype, std::uint32_t* length) {
-    if (language->abiVersion < 15 || !LanguageSymbolMetadata(language, supertype).supertype) {
+    if (!LanguageSymbolMetadata(language, supertype).supertype) {
         *length = 0;
         return nullptr;
     }

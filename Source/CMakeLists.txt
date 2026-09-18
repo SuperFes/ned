@@ -3,7 +3,7 @@
 # CMake/Dependencies.cmake, CMake/Grammars.cmake and CMake/DataTree.cmake
 # have already run -- this file links against targets all three produce
 # (notcurses-core, vterm, utf8proc, nlohmann_json::nlohmann_json, re2::re2,
-# pcre2-8-static, the tree-sitter-* per-language grammar targets, Janet_*,
+# pcre2-8-static, Janet_*,
 # ned_data).
 
 add_library(ned_lib STATIC
@@ -272,14 +272,43 @@ add_library(ned_lib STATIC
         Editor/Grammar/Compile/CompileCommand.cpp
         Editor/Parse/LexDfa.cpp
         Editor/Languages/Scanners/Scanners.cpp
+        Editor/Languages/Scanners/BashScanner.cpp
+        Editor/Languages/Scanners/CMakeScanner.cpp
+        Editor/Languages/Scanners/CSharpScanner.cpp
+        Editor/Languages/Scanners/CppScanner.cpp
+        Editor/Languages/Scanners/CssScanner.cpp
+        Editor/Languages/Scanners/DockerfileScanner.cpp
+        Editor/Languages/Scanners/FishScanner.cpp
+        Editor/Languages/Scanners/GitCommitScanner.cpp
+        Editor/Languages/Scanners/HclScanner.cpp
+        Editor/Languages/Scanners/HtmlScanner.cpp
+        Editor/Languages/Scanners/JanetScanner.cpp
+        Editor/Languages/Scanners/JavaScriptScanner.cpp
+        Editor/Languages/Scanners/KotlinScanner.cpp
+        Editor/Languages/Scanners/LuaScanner.cpp
+        Editor/Languages/Scanners/MarkdownInlineScanner.cpp
+        Editor/Languages/Scanners/MarkdownScanner.cpp
+        Editor/Languages/Scanners/NixScanner.cpp
+        Editor/Languages/Scanners/OrgScanner.cpp
+        Editor/Languages/Scanners/PhpScanner.cpp
+        Editor/Languages/Scanners/PythonScanner.cpp
+        Editor/Languages/Scanners/RScanner.cpp
+        Editor/Languages/Scanners/RubyScanner.cpp
+        Editor/Languages/Scanners/RustScanner.cpp
+        Editor/Languages/Scanners/SqlScanner.cpp
+        Editor/Languages/Scanners/TomlScanner.cpp
+        Editor/Languages/Scanners/TsxScanner.cpp
+        Editor/Languages/Scanners/TypeScriptScanner.cpp
+        Editor/Languages/Scanners/XmlScanner.cpp
+        Editor/Languages/Scanners/YamlScanner.cpp
         Editor/Grammar/Tree.cpp
         Editor/Grammar/Parser.cpp
+        Editor/Grammar/LanguagePackage.cpp
         Editor/Grammar/IncrementalParse.cpp
         Editor/Grammar/QueryPredicates.cpp
         Editor/Grammar/QueryMatcher.cpp
         Editor/Grammar/MatchCache.cpp
         Editor/Grammar/Languages.cpp
-        Editor/Grammar/DynamicGrammar.cpp
         Editor/Parse/Green.cpp
         Editor/Parse/Lexer.cpp
         Editor/Parse/Stack.cpp
@@ -381,48 +410,6 @@ target_link_libraries(ned_lib
         PUBLIC vterm
         PUBLIC utf8proc
         PUBLIC nlohmann_json::nlohmann_json
-        # The tree-sitter RUNTIME is deliberately absent: since the Phase 4b
-        # engine swap ned parses with Source/Editor/Parse/ interpreting the
-        # generated grammar tables below directly. ned_tests still links the
-        # runtime privately as the conformance suite's differential
-        # reference.
-        PUBLIC tree-sitter-json
-        PUBLIC tree-sitter-c
-        PUBLIC tree-sitter-cpp
-        PUBLIC tree-sitter-php
-        PUBLIC tree-sitter-javascript
-        PUBLIC tree-sitter-typescript
-        PUBLIC tree-sitter-tsx
-        PUBLIC tree-sitter-html
-        PUBLIC tree-sitter-css
-        PUBLIC tree-sitter-python
-        PUBLIC tree-sitter-bash
-        PUBLIC tree-sitter-janet-simple
-        PUBLIC tree-sitter-markdown
-        PUBLIC tree-sitter-markdown-inline
-        PUBLIC tree-sitter-org
-        PUBLIC tree-sitter-yaml
-        PUBLIC tree-sitter-toml
-        PUBLIC tree-sitter-clojure
-        PUBLIC tree-sitter-fish
-        PUBLIC tree-sitter-xml
-        PUBLIC tree-sitter-rust
-        PUBLIC tree-sitter-go
-        PUBLIC tree-sitter-c-sharp
-        PUBLIC tree-sitter-java
-        PUBLIC tree-sitter-kotlin
-        PUBLIC tree-sitter-lua
-        PUBLIC tree-sitter-cmake
-        PUBLIC tree-sitter-diff
-        PUBLIC tree-sitter-sql
-        PUBLIC tree-sitter-dockerfile
-        PUBLIC tree-sitter-make
-        PUBLIC tree-sitter-hcl
-        PUBLIC tree-sitter-nix
-        PUBLIC tree-sitter-ruby
-        PUBLIC tree-sitter-gitcommit
-        PUBLIC tree-sitter-gitrebase
-        PUBLIC tree-sitter-r
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public
