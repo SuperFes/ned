@@ -1,7 +1,7 @@
 //
 // A user-configurable override table pointing a filename or file extension
 // at a Mode -- either one of the bundled *Mode() functions (Mode.h) or a
-// grammar loaded at runtime (Grammar/DynamicGrammar.h).
+// language package loaded at runtime (Grammar/LanguagePackage.h).
 //
 // Originally built dynamic-registrations-only (dynamic-grammar-loading
 // follow-up, as DynamicMode.h); widened and renamed (this follow-up) once

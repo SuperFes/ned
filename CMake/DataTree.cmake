@@ -27,7 +27,8 @@ include(GNUInstallDirs)
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Source/Languages/"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/ned/languages"
-        FILES_MATCHING PATTERN "*.janet")
+        FILES_MATCHING PATTERN "*.janet"
+        PATTERN "corpus" EXCLUDE)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Source/Janet/Plugins/"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/ned/plugins"
         FILES_MATCHING PATTERN "*.janet")

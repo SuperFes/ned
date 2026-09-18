@@ -628,7 +628,7 @@ namespace {
             }
 
             LanguageData& data          = out->language_->data;
-            data.abiVersion             = 15;
+            data.abiVersion             = parse::abi::kAbiVersion;
             data.symbolCount            = static_cast<std::uint32_t>(in.parseTable.symbols.size());
             data.aliasCount             = static_cast<std::uint32_t>(uniqueAliases.size());
             data.tokenCount             = static_cast<std::uint32_t>(tokenCount);
@@ -673,8 +673,6 @@ void CompiledLanguage::Link() {
     data.aliasMap           = aliasMap.data();
     data.aliasSequences     = aliasSequences.empty() ? nullptr : aliasSequences.data();
     data.lexModes           = lexModes.data();
-    data.lexFn              = nullptr; // the DFAs stand in
-    data.keywordLexFn       = nullptr;
     if (data.externalTokenCount > 0) {
         data.externalScanner.states    = externalScannerStates.get();
         data.externalScanner.symbolMap = externalScannerSymbolMap.data();

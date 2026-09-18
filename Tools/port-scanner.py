@@ -7,7 +7,7 @@ Does the mechanical half: the tree-sitter headers become Editor/Parse/
 Scanner.h (+ ScannerSupport.h when the array vocabulary is used), TSLexer/
 TSSymbol and the lexer's member names become ned's, the five entry points
 become static Create/Destroy/Scan/Serialize/Deserialize behind a
-ScannerVTable, and the file is wrapped in the language's namespace. A
+ScannerVTable (registered in Scanners.cpp), and the file is wrapped in the language's namespace. A
 `#include "../../common/scanner.h"` is inlined. What remains is C-to-C++
 friction (void* conversions, out-of-order designated initializers, goto over
 an initialization), which the compiler names and a person fixes.
@@ -135,8 +135,6 @@ def port(source: str, language: str, repo: str) -> str:
     out.append("extern const ned::editor::parse::ScannerVTable kScanner = {Create, Destroy, Scan, Serialize, Deserialize};")
     out.append("")
     out.append(f"}} // namespace {ns}")
-    out.append("")
-    out.append(f"NED_TREE_SITTER_SCANNER_EXPORTS({export_name}, {ns})")
     out.append("")
     return "\n".join(out)
 

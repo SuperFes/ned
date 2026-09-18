@@ -883,8 +883,8 @@ struct ModeBuildContext {
 
 // The shared construction logic GrammarMode above delegates to, split out
 // (dynamic-grammar-loading follow-up) so a caller that already has a
-// resolved Language -- a dynamically dlopen'd grammar (see
-// Grammar/DynamicGrammar.h), which by definition isn't in the bundled
+// resolved Language -- a registered language's own package (see
+// Grammar/LanguagePackage.h), which by definition isn't in the bundled
 // registry GrammarMode's own languageName lookup searches -- doesn't need
 // to hand-duplicate the Parser/Query/HighlightFunction-construction logic a
 // second time.

@@ -60,9 +60,9 @@ See [`ROADMAP.md`](ROADMAP.md) for what's still open.
 - System packages for `libutf8proc`, CLI11, `nlohmann/json`, RE2, PCRE2, `libvterm`,
   and Catch2 (tests) — no `FetchContent` network fetch for any of these
 
-Every bundled tree-sitter grammar is vendored under `ThirdParty/tree-sitter-grammars/`
-and checked into the repository, so an ordinary build touches no network beyond the
-initial `git clone`. See the
+Every bundled language is a package under `Source/Languages/<name>/` (its grammar as
+`grammar.janet`, compiled by ned itself at build time), so an ordinary build touches no
+network beyond the initial `git clone`. See the
 **[Installation guide](https://superfes.github.io/ned/user/installation.html)** for the
 exact package names per distribution and the Notcurses patch recipe.
 

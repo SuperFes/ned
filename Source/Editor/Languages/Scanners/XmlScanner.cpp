@@ -453,5 +453,3 @@ static void Deserialize(void* payload_, const char* buffer, unsigned length) {
 extern const ned::editor::parse::ScannerVTable kScanner = {Create, Destroy, Scan, Serialize, Deserialize};
 
 } // namespace ned::editor::languages::scanners::xml
-
-NED_TREE_SITTER_SCANNER_EXPORTS(xml, ned::editor::languages::scanners::xml)

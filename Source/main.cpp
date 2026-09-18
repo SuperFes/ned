@@ -752,7 +752,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     std::vector<std::filesystem::path> projectTrustCandidates = ned::editor::ProjectPluginFiles(projectRoot);
     // A project's own languages (.ned/languages/<name>/language.janet) go
     // through the same per-file trust gate: the definition itself is data,
-    // but it may name a :grammar-library to dlopen, which is arbitrary code
+    // but it may name a :scanner-library to dlopen, which is arbitrary code
     // by any measure. The trusted-file loader below dispatches on the
     // basename -- a language.janet is loaded through LoadLanguageDirectory,
     // never evaluated as Janet.
@@ -3227,8 +3227,7 @@ auto main(int argc, char** argv) -> int {
                  "for a hand-written grammar")
         ->excludes(lspBrokerOpt)
         ->group("Startup modes");
-    app.add_option("-o,--output", compileOutput, "With --compile-language and a single language, write the tables to this file instead")
-        ->needs("--compile-language");
+    app.add_option("-o,--output", compileOutput, "With --compile-language (or as ned-langc) and a single language, write the tables to this file instead");
     app.add_flag("--force-binary", forceBinary,
                  "Open files that look binary anyway, without an interactive confirmation");
     app.add_flag("--no-restore", noRestore,

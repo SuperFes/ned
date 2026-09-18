@@ -367,6 +367,8 @@ std::unique_ptr<CompiledLanguage> LoadLanguage(std::string_view bytes) {
 
     parse::abi::LanguageData& data = language->language_->data;
     data.abiVersion                = r.U32();
+    if (data.abiVersion != parse::abi::kAbiVersion)
+        throw CompileError("tables: language tables version " + std::to_string(data.abiVersion) + ", this ned reads " + std::to_string(parse::abi::kAbiVersion));
     data.symbolCount               = r.U32();
     data.aliasCount                = r.U32();
     data.tokenCount                = r.U32();

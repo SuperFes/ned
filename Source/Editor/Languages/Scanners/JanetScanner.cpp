@@ -123,5 +123,3 @@ static bool Scan(
 extern const ned::editor::parse::ScannerVTable kScanner = {Create, Destroy, Scan, Serialize, Deserialize};
 
 } // namespace ned::editor::languages::scanners::janet
-
-NED_TREE_SITTER_SCANNER_EXPORTS(janet_simple, ned::editor::languages::scanners::janet)

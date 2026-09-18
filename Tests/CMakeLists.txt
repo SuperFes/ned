@@ -1,7 +1,7 @@
 # ned_tests (Catch2). Added via add_subdirectory(Tests) from the root
 # CMakeLists.txt, inside the NED_BUILD_TESTS guard that already called
-# enable_testing()/include(CTest)/include(Catch) and built ned_lib plus the
-# tree-sitter core conformance-reference target (CMake/Grammars.cmake).
+# enable_testing()/include(CTest)/include(Catch) and built ned_lib and the
+# compiled language tables (CMake/LanguageTables.cmake).
 
 add_executable(ned_tests
             ApplicationTest.cpp
@@ -229,6 +229,7 @@ add_executable(ned_tests
             CliFormatDispatchTest.cpp
             LanguageTablesTest.cpp
             ScannersTest.cpp
+            LanguagePackageTest.cpp
             PersistentUndoTest.cpp
             ProjectUndoTest.cpp
             DiagnosticsLogTest.cpp
@@ -304,7 +305,6 @@ add_executable(ned_tests
             TerminalPanelTest.cpp
             GrammarTest.cpp
             ParseConformanceTest.cpp
-            DynamicGrammarTest.cpp
             ModeOverridesTest.cpp
             ModePrewarmTest.cpp
             BufferViewSearchInResultsTest.cpp
@@ -350,8 +350,18 @@ endif()
 
 target_link_libraries(ned_tests PRIVATE ned_lib Catch2::Catch2WithMain)
 # The tests read the bundled languages/plugins from build/share/ned
-# (Editor/DataDir.h's executable-relative rule), assembled by ned_data.
-add_dependencies(ned_tests ned_data)
+# (Editor/DataDir.h's executable-relative rule), assembled by ned_data and
+# the compiled tables ned_tables puts beside them.
+add_dependencies(ned_tests ned_data ned_tables)
+
+# The out-of-tree language package the LanguagePackage tests load: its
+# scanner is a real shared library built against Editor/Parse/Scanner.h
+# alone, the way a user's would be.
+add_library(ned_demo_scanner SHARED LanguagePackage/DemoScanner.cpp)
+target_include_directories(ned_demo_scanner PRIVATE "${CMAKE_SOURCE_DIR}/Source")
+set_target_properties(ned_demo_scanner PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+add_dependencies(ned_tests ned_demo_scanner)
+target_compile_definitions(ned_tests PRIVATE NED_DEMO_SCANNER_LIBRARY="$<TARGET_FILE:ned_demo_scanner>")
 
 # ThemeKeyDocsTest holds Docs/Themes.md's key reference against the real
 # ui::ThemeKeys() table, so it needs to find the repo from a test binary
@@ -359,9 +369,9 @@ add_dependencies(ned_tests ned_data)
 # ned_lib or the ned binary may depend on where the source happens to be.
 target_compile_definitions(ned_tests PRIVATE NED_REPO_ROOT="${CMAKE_SOURCE_DIR}")
 
-# SKIP_REGULAR_EXPRESSION: Catch2's SKIP() (e.g. DynamicGrammarTest.cpp/
-# ModeOverridesTest.cpp's real-system-grammar tests, which SKIP rather than
-# fail when a machine has no system-wide tree-sitter grammar .so installed)
+# SKIP_REGULAR_EXPRESSION: Catch2's SKIP() (e.g. ModeOverridesTest.cpp's
+# real-system-queries tests, which SKIP rather than fail when a machine has
+# no system-wide tree-sitter queries installed)
 # prints "SKIPPED:" but CTest has no built-in notion of a Catch2 skip -- left
 # unset, ctest classifies a fully-skipped test case as a plain failure (the
 # process still returns non-zero: 0 assertions ran). Without this, any

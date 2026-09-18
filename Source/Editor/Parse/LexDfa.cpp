@@ -110,15 +110,11 @@ bool DfaLex(const DfaLanguage& language, const LexDfa& dfa, abi::LexerData* lexe
 }
 
 bool LexMain(const abi::LanguageData* language, abi::LexerData* lexer, abi::StateId state) {
-    if (language->lexFn != nullptr)
-        return language->lexFn(lexer, state);
     const auto& dfa = *reinterpret_cast<const DfaLanguage*>(language);
     return DfaLex(dfa, dfa.main, lexer, state);
 }
 
 bool LexKeyword(const abi::LanguageData* language, abi::LexerData* lexer, abi::StateId state) {
-    if (language->lexFn != nullptr)
-        return language->keywordLexFn(lexer, state);
     const auto& dfa = *reinterpret_cast<const DfaLanguage*>(language);
     return DfaLex(dfa, dfa.keyword, lexer, state);
 }

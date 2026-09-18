@@ -3,20 +3,16 @@
 #include <bit>
 #include <cstdint>
 
-// Ned's own declaration of the tree-sitter ABI-15 data layout.
+// The table layout ned's parser engine runs on: what a language package's
+// `tables` file loads into (Grammar/Compile/TableFile.h) and what the
+// engine (Parse/Parser.cpp, LanguageTables.h) reads. The generator
+// (Grammar/Compile/) produces exactly this; the lexer is the DFA that
+// follows it in memory (LexDfa.h's DfaLanguage, whose first member this
+// is).
 //
-// Every generated parser.c embeds its own copy of these struct definitions
-// (each grammar repo vendors src/tree_sitter/parser.h), so the layout is a
-// compatibility contract between the generator and any runtime — not a
-// private detail of the tree-sitter library. Ned's engine interprets the
-// generated tables through this contract directly; Tests/AbiLayoutTest.cpp
-// static-asserts these declarations against the vendored header while the
-// tree-sitter FetchContent checkout still exists.
-//
-// The names are namespaced copies, not the C names, so this header can
-// coexist with <tree_sitter/api.h>'s opaque typedefs in one translation
-// unit. `LanguageData` is what an opaque `const TSLanguage*` really points
-// at for abi_version >= 15.
+// The layout is tree-sitter's ABI-15 language struct minus its lexer
+// function pointers, which is what keeps the engine's table-walking code
+// a faithful port of the reference; nothing else depends on that.
 
 namespace ned::editor::parse::abi {
 
@@ -31,15 +27,9 @@ inline constexpr Symbol        kBuiltinSymbolError       = static_cast<Symbol>(-
 inline constexpr Symbol        kBuiltinSymbolErrorRepeat = kBuiltinSymbolError - 1;
 inline constexpr std::uint32_t kSerializationBufferSize  = 1024;
 
-// The bundled grammar set spans generated ABI versions 13-15 (janet-simple
-// is 13; roughly half are 14). Version N's struct is a strict prefix of
-// N+1's: 14 ends at primaryStateIds, 13 just before it, and 15 appends
-// name/reservedWords/supertypes/metadata. Two rules keep mixed versions
-// safe, same as upstream: never read a field beyond the language's own
-// version's end, and read `lexModes` as the two-field `LexModeOld` element
-// type when abiVersion < 15 (the third field was added in 15).
-inline constexpr std::uint32_t kMinAbiVersion = 13;
-inline constexpr std::uint32_t kMaxAbiVersion = 15;
+// The one table version the engine reads; a package records it so a
+// mismatch is refused rather than misread.
+inline constexpr std::uint32_t kAbiVersion = 15;
 
 struct Point {
     std::uint32_t row;
@@ -63,7 +53,7 @@ struct SymbolMetadata {
     bool supertype;
 };
 
-// The TSLexer struct generated lexers and external scanners are handed.
+// The lexer an external scanner is handed (Parse/Scanner.h).
 struct LexerData {
     std::int32_t lookahead;
     Symbol       resultSymbol;
@@ -105,12 +95,6 @@ struct LexerMode {
     std::uint16_t reservedWordSetId;
 };
 
-// The pre-ABI-15 element type of the lexModes table.
-struct LexModeOld {
-    std::uint16_t lexState;
-    std::uint16_t externalLexState;
-};
-
 union ParseActionEntry {
     ParseAction action;
     struct {
@@ -149,9 +133,7 @@ struct LanguageData {
     const std::uint16_t*    aliasMap;
     const Symbol*           aliasSequences;
     const LexerMode*        lexModes;
-    bool (*lexFn)(LexerData*, StateId);
-    bool (*keywordLexFn)(LexerData*, StateId);
-    Symbol keywordCaptureToken;
+    Symbol                  keywordCaptureToken;
     struct {
         const bool*   states;
         const Symbol* symbolMap;

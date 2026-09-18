@@ -77,8 +77,8 @@ void Engine::ReusableNodeAdvancePastLeaf(ReusableNode* self) {
 // --- Engine -----------------------------------------------------------------
 
 Engine::Engine(const void* language) : language_(static_cast<const abi::LanguageData*>(language)) {
-    if (language_ == nullptr || language_->abiVersion < abi::kMinAbiVersion || language_->abiVersion > abi::kMaxAbiVersion)
-        throw std::runtime_error("parse::Engine requires a tree-sitter ABI version 13-15 grammar");
+    if (language_ == nullptr || language_->abiVersion != abi::kAbiVersion)
+        throw std::runtime_error("parse::Engine: language tables are not version " + std::to_string(abi::kAbiVersion));
     treePool_ = SubtreePool::New(32);
     stack_    = new Stack(&treePool_);
     reduceActions_.Reserve(4);
