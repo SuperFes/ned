@@ -1,0 +1,25 @@
+==================
+Two words
+==================
+
+foo; bar;
+
+---
+
+(source_file
+  (item
+    (word))
+  (item
+    (word)))
+
+==================
+One word
+==================
+
+baz;
+
+---
+
+(source_file
+  (item
+    (word)))

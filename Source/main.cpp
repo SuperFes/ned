@@ -51,6 +51,8 @@
 #include "Editor/FormatSpacing.h"
 #include "Editor/FormatWrap.h"
 #include "Editor/Grammar/Compile/CompileCommand.h"
+#include "Editor/Grammar/Compile/ImportCommand.h"
+#include "Editor/Grammar/Compile/TestCommand.h"
 #include "Editor/HugeFileReindent.h"
 #include "Editor/Indent.h"
 #include "Editor/Keymap.h"
@@ -3190,6 +3192,13 @@ auto main(int argc, char** argv) -> int {
     bool                     forceHuge     = false;
     bool                     compileLanguage = false;
     std::string              compileOutput;
+    bool                     importLanguage = false;
+    bool                     testLanguage   = false;
+    bool                     bless          = false;
+    std::string              importName;
+    std::string              importSubdir;
+    std::string              importRef;
+    std::string              importInto;
     bool                     forceBinary   = false;
     bool                     noRestore     = false;
     bool                     vimMode       = false;
@@ -3228,6 +3237,19 @@ auto main(int argc, char** argv) -> int {
         ->excludes(lspBrokerOpt)
         ->group("Startup modes");
     app.add_option("-o,--output", compileOutput, "With --compile-language (or as ned-langc) and a single language, write the tables to this file instead");
+    app.add_flag("--import-language", importLanguage,
+                 "Turn a tree-sitter grammar repository (a git URL or a checkout) into a ned language package: grammar.janet, "
+                 "upstream queries, corpus, staged scanner, and a language.janet skeleton -- then compile it and run its corpus")
+        ->excludes(lspBrokerOpt)
+        ->group("Startup modes");
+    app.add_option("--name", importName, "With --import-language: the language name (default: the grammar's own)");
+    app.add_option("--subdir", importSubdir, "With --import-language: the grammar's directory inside a multi-grammar repository");
+    app.add_option("--ref", importRef, "With --import-language and a git URL: the tag or branch to clone");
+    app.add_option("--into", importInto, "With --import-language: the languages root to write the package under (default: $XDG_CONFIG_HOME/ned/languages)");
+    app.add_flag("--test-language", testLanguage, "Run each given language package's corpus against its grammar and exit")
+        ->excludes(lspBrokerOpt)
+        ->group("Startup modes");
+    app.add_flag("--bless", bless, "With --test-language: rewrite each failing case's expected tree to what the grammar parses now");
     app.add_flag("--force-binary", forceBinary,
                  "Open files that look binary anyway, without an interactive confirmation");
     app.add_flag("--no-restore", noRestore,
@@ -3255,9 +3277,13 @@ auto main(int argc, char** argv) -> int {
         mcpStdioRelaySocketPath.empty()) {
         format = true;
     }
-    if (argc > 0 && ned::editor::InvokedAsNedLangc(argv[0]) && !lspBroker && !lspBrokerStop && !foreground &&
-        mcpStdioRelaySocketPath.empty() && !format) {
-        compileLanguage = true;
+    if (argc > 0 && !lspBroker && !lspBrokerStop && !foreground && mcpStdioRelaySocketPath.empty() && !format) {
+        if (ned::editor::InvokedAsNedLangc(argv[0]))
+            compileLanguage = true;
+        else if (ned::editor::InvokedAsNedImportLanguage(argv[0]))
+            importLanguage = true;
+        else if (ned::editor::InvokedAsNedTestLanguage(argv[0]))
+            testLanguage = true;
     }
 
     // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
@@ -3291,6 +3317,18 @@ auto main(int argc, char** argv) -> int {
 
     if (compileLanguage) {
         return ned::editor::grammar::compile::RunCompileLanguage(paths, compileOutput, std::cout, std::cerr);
+    }
+    if (importLanguage) {
+        if (paths.size() != 1) {
+            std::cerr << "ned --import-language: exactly one git URL or directory is required\n";
+            return 2;
+        }
+        return ned::editor::grammar::compile::RunImportLanguage(
+            ned::editor::grammar::compile::ImportOptions{.source = paths.front(), .name = importName, .subdir = importSubdir, .ref = importRef, .into = importInto},
+            std::cout, std::cerr);
+    }
+    if (testLanguage) {
+        return ned::editor::grammar::compile::RunTestLanguage(paths, bless, std::cout, std::cerr);
     }
 
     if (format) {

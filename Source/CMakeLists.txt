@@ -270,6 +270,9 @@ add_library(ned_lib STATIC
         Editor/Grammar/Compile/Compiler.cpp
         Editor/Grammar/Compile/TableFile.cpp
         Editor/Grammar/Compile/CompileCommand.cpp
+        Editor/Grammar/Compile/TestCommand.cpp
+        Editor/Grammar/Compile/ImportCommand.cpp
+        Editor/Grammar/Corpus.cpp
         Editor/Parse/LexDfa.cpp
         Editor/Languages/Scanners/Scanners.cpp
         Editor/Languages/Scanners/BashScanner.cpp
@@ -477,4 +480,18 @@ install(CODE "
     file(CREATE_LINK \"ned\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\" SYMBOLIC)
     file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-langc\")
     file(CREATE_LINK \"ned\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-langc\" SYMBOLIC)
+    file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-import-language\")
+    file(CREATE_LINK \"ned\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-import-language\" SYMBOLIC)
+    file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-test-language\")
+    file(CREATE_LINK \"ned\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-test-language\" SYMBOLIC)
 ")
+
+# The out-of-tree scanner ABI: what a language package's own scanner
+# compiles against (Docs/LanguageAuthoring.md), and the helper that ports
+# a tree-sitter scanner.c the mechanical half of the way there --
+# `ned --import-language` runs it from libexec when it finds it.
+install(FILES Editor/Parse/Scanner.h Editor/Parse/ScannerSupport.h Editor/Parse/Abi.h
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/ned/Editor/Parse")
+install(PROGRAMS "${CMAKE_SOURCE_DIR}/Tools/port-scanner.py"
+        DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/ned" RENAME port-scanner)
+configure_file("${CMAKE_SOURCE_DIR}/Tools/port-scanner.py" "${CMAKE_BINARY_DIR}/libexec/ned/port-scanner" COPYONLY)
