@@ -45,7 +45,7 @@ static String string_new(void) {
     size_t cap = init_len + 1;
     VoidPtr tmp{scanner_calloc(1, sizeof(char) * cap)};
     check_alloc(tmp);
-    return (String){.cap = cap, .len = 0, .data = tmp};
+    return (String){.len = 0, .cap = cap, .data = tmp};
 }
 
 static void string_resize(String *str, size_t new_cap) {

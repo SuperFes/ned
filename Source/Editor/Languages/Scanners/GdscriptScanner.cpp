@@ -20,7 +20,7 @@ using namespace ned::editor::parse::scanner;
 
 #define VEC_RESIZE(vec, _cap)                                                  \
     VoidPtr tmp{scanner_realloc((vec)->data, (_cap) * sizeof((vec)->data[0]))}; \
-    assert(tmp != NULL);                                                       \
+    assert(tmp);                                                       \
     (vec)->data = tmp;                                                         \
     (vec)->cap = (_cap);
 
