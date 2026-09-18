@@ -133,34 +133,42 @@ void MinimizeParseTable(ParseTable& table, const SyntaxGrammar& syntax, const Le
                         const TokenConflictMap& conflicts, const TokenSet& keywords);
 
 // Groups states (state ids grouped by group id, and the inverse) and splits
-// any group whose members `shouldSplit`; true when something split.
+// any group whose members `shouldSplit`; true when something split. Each
+// group compares every pair, so membership in the split-off set is a flag
+// per state rather than a search.
 template <typename State, typename ShouldSplit>
 bool SplitStateIdGroups(const std::vector<State>& states, std::vector<std::vector<std::size_t>>& stateIdsByGroupId,
                         std::vector<std::size_t>& groupIdsByStateId, std::size_t startGroupId, ShouldSplit&& shouldSplit) {
-    bool result = false;
+    bool                     result = false;
+    std::vector<char>        split(states.size(), 0);
+    std::vector<std::size_t> splitStateIds;
     for (std::size_t groupId = startGroupId; groupId < stateIdsByGroupId.size(); ++groupId) {
-        std::vector<std::size_t>        splitStateIds;
+        splitStateIds.clear();
         const std::vector<std::size_t>& stateIds = stateIdsByGroupId[groupId];
         for (std::size_t i = 0; i < stateIds.size(); ++i) {
             const std::size_t left = stateIds[i];
-            if (std::find(splitStateIds.begin(), splitStateIds.end(), left) != splitStateIds.end())
+            if (split[left] != 0)
                 continue;
             for (std::size_t j = i + 1; j < stateIds.size(); ++j) {
                 const std::size_t right = stateIds[j];
-                if (std::find(splitStateIds.begin(), splitStateIds.end(), right) != splitStateIds.end())
+                if (split[right] != 0)
                     continue;
-                if (shouldSplit(states[left], states[right], groupIdsByStateId))
+                if (shouldSplit(states[left], states[right], groupIdsByStateId)) {
+                    split[right] = 1;
                     splitStateIds.push_back(right);
+                }
             }
         }
         if (!splitStateIds.empty()) {
             result                          = true;
             std::vector<std::size_t>& group = stateIdsByGroupId[groupId];
-            group.erase(std::remove_if(group.begin(), group.end(), [&](std::size_t id) { return std::find(splitStateIds.begin(), splitStateIds.end(), id) != splitStateIds.end(); }), group.end());
+            group.erase(std::remove_if(group.begin(), group.end(), [&](std::size_t id) { return split[id] != 0; }), group.end());
             const std::size_t newGroupId = stateIdsByGroupId.size();
-            for (const std::size_t id : splitStateIds)
+            for (const std::size_t id : splitStateIds) {
                 groupIdsByStateId[id] = newGroupId;
-            stateIdsByGroupId.push_back(std::move(splitStateIds));
+                split[id]             = 0;
+            }
+            stateIdsByGroupId.push_back(splitStateIds);
         }
     }
     return result;

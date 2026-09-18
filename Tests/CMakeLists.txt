@@ -227,6 +227,8 @@ add_executable(ned_tests
             ScratchPadTest.cpp
             BackupTest.cpp
             CliFormatDispatchTest.cpp
+            LanguageTablesTest.cpp
+            ScannersTest.cpp
             PersistentUndoTest.cpp
             ProjectUndoTest.cpp
             DiagnosticsLogTest.cpp
