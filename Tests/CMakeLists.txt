@@ -168,6 +168,8 @@ add_executable(ned_tests
             OffsetRemapTest.cpp
             EditJournalTest.cpp
             BufferEditJournalTest.cpp
+            AnchorSetTest.cpp
+            BufferTrackedStateTest.cpp
             OverlayScrimTest.cpp
             OverlayShadowTest.cpp
             RecencyGlowTest.cpp

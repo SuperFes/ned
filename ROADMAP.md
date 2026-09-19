@@ -233,32 +233,36 @@ answer to a request for an obscure DSL becomes "yes, next release".
 
 ### Refactoring
 
-- [ ] **Sidecar metadata: association without binding** (raised 2026-09-18). Anything
-      that describes a span of text -- point, mark, narrowed range, fold markers,
-      secondary cursors, snippet ranges, excerpt ranges, diagnostics -- currently holds
-      raw byte offsets that every mutator has to fix up by hand. `Buffer` carries eight
-      `Relocate*For{Insert,Delete}` pairs for that, each duplicated across five mutation
-      sites, each with its own subtly different gravity rule, and a ninth field means a
-      ninth pair. The alternative is one store of anchors that survive edits by
-      construction, sitting *beside* the rope rather than inside it, so a feature
-      associates metadata with a position without the text structure knowing anything
-      about it. Prior art: Emacs markers, CodeMirror's `RangeSet`, Zed's anchors.
-      **Not in the rope itself**, and that is the whole point of the framing: the rope is
-      persistent with structural sharing (`Clone()` is O(1), `UndoTree` snapshots share
-      nodes with the live buffer), so mutable annotations on shared nodes would bleed
-      across undo snapshots; and an anchor usually falls where no piece boundary exists,
-      so binding to one means splitting pieces on the hot path. A sidecar keeps the rope's
-      current properties exactly.
-      **The prerequisite already shipped**: the store needs a feed of every edit, which is
-      what `Buffer::Edits()` (`Text/EditJournal.h`, `buffer-anchored-lsp-results`) now is.
-      Eager application to a live anchor set and `CarryForward`'s lazy replay are two
-      consumers of the same feed, and they compose rather than compete: an anchor is right
-      for anything already placed in the live document (exact forever, never has to answer
-      "I cannot carry this"), while the journal is what translates a result stamped against
-      an *older* document version -- every LSP result -- onto the present, once, at receipt.
-      Worth scoping as a `Buffer` refactor with those eight existing fields as its first
-      tenants, which is a self-contained win independent of any LSP work.
-      Explicitly *not* a fix for stale server data: an anchor placed at a wrong offset
+**Sidecar metadata: association without binding**
+
+Shipped, slug for `git log --grep=`: `sidecar-anchors` (`Text/AnchorSet.h` -- a store of
+anchors that survive edits by construction, sitting beside the rope rather than in it, so
+a feature associates metadata with a position without the text structure knowing anything
+about it. Fed by the same `Commit*` helpers that publish a generation and append to
+`Buffer::Edits()`, so eager anchor relocation and `CarryForward`'s lazy journal replay are
+two consumers of one feed. Per-endpoint `Gravity` and `InsideDelete` came straight from
+`EditJournal.h` -- measured against all nine hand-written rules first, and they already
+covered every one). The duplication that motivated it went with the same change:
+`Buffer::RelocateTrackedState` is now the single place every tracked position moves, and
+the five content-mutation entry points call `ApplyInsert`/`ApplyDelete` instead of
+repeating the list. `Tests/BufferTrackedStateTest.cpp` holds the tenant-by-entry-point
+matrix that the per-tenant tests leave open, which is the shape of gap that let
+diagnostics ship wired at five sites and not the sixth.
+
+- [ ] The eight existing tenants are **not** migrated onto anchors, and that is a cost
+      finding rather than a leftover: each accessor (`Diagnostics()`, `SnippetRanges()`,
+      `ExcerptRanges()`, `SecondaryCursors()`, `FoldMarkerAt()`) has 58-108 call sites and
+      returns a reference to stored state, so a migration means either touching all of
+      them or materializing a vector per read -- and `Diagnostics()`/`SecondaryCursors()`
+      are read inside `Paint()` loops. They already relocate correctly through the one
+      feed, so the churn buys nothing visible. The exception worth taking on its own
+      merits is snippet ranges, because there the migration closes a real open item
+      rather than just moving code -- see "Nested snippet placeholders" below.
+- [ ] Anchors have no Janet surface. Deliberate for now: the C++ seam has one consumer
+      shape so far, and a scripted holder that leaks handles leaks them forever (there is
+      no RAII handle -- `Buffer` is move-only and an anchor outliving its owner would
+      dangle across a `Clone()`). Revisit when a plugin actually wants to mark a position.
+- [ ] Explicitly *not* a fix for stale server data: an anchor placed at a wrong offset
       stays faithfully wrong, which is exactly what the 2026-09-18 phpantom_lsp session
       turned out to be (the server's own `character` values disagreed with its own
       document; ned's conversion and relocation were both correct).
@@ -505,8 +509,11 @@ ordinary click) or `BufferView::ForwardMouseWhileSiblingDrags` (a real drop)).
       grammar/parser behind it to re-derive anything from). The real blocker: field 2's
       range would need to sit properly *contained inside* field 1's range, and
       `Buffer::SnippetRange`'s relocation/gravity model currently only understands
-      "disjoint or adjacent" — true nesting needs new relocation semantics in
-      `Text/Buffer.h`, not a parser gap. Not attempted.
+      "disjoint or adjacent" — true nesting needs new relocation semantics, not a
+      parser gap. Those semantics now exist: `Text/AnchorSet.h` (`sidecar-anchors`)
+      relocates each endpoint independently under its own gravity, which is what a
+      properly contained range needs, so this is now a migration of `SnippetRanges_` onto
+      anchors rather than a model to invent. Not attempted.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
