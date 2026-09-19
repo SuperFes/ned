@@ -88,6 +88,7 @@ namespace {
         {"binary_foreground", &Theme::binaryForeground},
         {"ghost_text_foreground", &Theme::ghostTextForeground},
         {"inlay_hint_foreground", &Theme::inlayHintForeground},
+        {"inlay_hint_parameter_foreground", &Theme::inlayHintParameterForeground},
         {"code_lens_foreground", &Theme::codeLensForeground},
         {"link_foreground", &Theme::linkForeground},
         {"truncation_indicator_foreground", &Theme::truncationIndicatorForeground},

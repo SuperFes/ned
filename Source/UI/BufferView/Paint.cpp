@@ -1237,6 +1237,14 @@ Color BufferView::OverlayWashAt(std::string_view surfaceName, const Color& fallb
 // small; closing it properly means resolving virtual-text foregrounds in a
 // pass after every background is final, which is not worth a second walk of
 // the viewport for the size of the error.
+// InlayHintKind 2 is Parameter; everything else (Type, and a hint that sent
+// no kind at all) takes the base colour. Kept here rather than in the paint
+// loop so the one-kind-gets-its-own-colour rule has a single home if a
+// third ever earns one.
+Color BufferView::InlayHintForeground(int kind) const {
+    return kind == 2 ? theme_.inlayHintParameterForeground : theme_.inlayHintForeground;
+}
+
 Color BufferView::GhostForegroundOver(const Color& beneath) const {
     return GhostForegroundOver(beneath, theme_.ghostTextForeground);
 }
@@ -1562,7 +1570,7 @@ void BufferView::EmitInlayHint(Canvas& c, int row, int& col, std::size_t offset,
                 // now, and a gradient one differs across the hint.
                 const Color beneath = BrushForCell(offset, lineState, c, col, row).background;
                 const Brush hintBrush{.background = beneath,
-                                      .foreground = GhostForegroundOver(beneath, theme_.inlayHintForeground),
+                                      .foreground = GhostForegroundOver(beneath, InlayHintForeground(hint->kind)),
                                       .italic     = true};
                 Cell&       cell = c[{.x = col, .y = row}];
                 cell.character   = text::EncodeCodepointUtf8(glyph.codepoint);

@@ -803,7 +803,7 @@ inline std::vector<RenderedInlayHint> InlayHintsForLine(const std::vector<editor
     std::vector<RenderedInlayHint> rendered;
     for (const editor::lsp::Manager::ResolvedInlayHint& hint : hints) {
         if (hint.byteOffset >= lineStart && hint.byteOffset < lineEnd) {
-            rendered.push_back(RenderedInlayHint{.byteOffset = hint.byteOffset, .label = hint.label});
+            rendered.push_back(RenderedInlayHint{.byteOffset = hint.byteOffset, .label = hint.label, .kind = hint.kind});
         }
     }
     return rendered;

@@ -744,8 +744,13 @@ struct SemanticTokensDeltaEdit {
 // richer one -- both flattened to plain text here, since this client
 // doesn't support per-part tooltips/commands (a v1 scope cut).
 struct InlayHint {
-    Position position;
+    Position    position;
     std::string label;
+    // InlayHintKind, spec 3.17: 1 Type, 2 Parameter. 0 for a hint that sent
+    // no kind at all, which the spec explicitly allows and which is
+    // therefore a real value here rather than a parse failure -- a renderer
+    // treats it as "just a hint" and styles it with the base colour.
+    int kind = 0;
 
     bool operator==(const InlayHint&) const = default;
 };

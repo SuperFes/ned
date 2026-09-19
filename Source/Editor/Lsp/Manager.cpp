@@ -2301,7 +2301,7 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
                            << " lineStart=" << content.LineToByteOffset(hint.position.line) << " byte=" << byteOffset
                            << " label=" << hint.label << '\n';
                 }
-                resolved.push_back(ResolvedInlayHint{.byteOffset = byteOffset, .label = hint.label});
+                resolved.push_back(ResolvedInlayHint{.byteOffset = byteOffset, .label = hint.label, .kind = hint.kind});
             }
             std::sort(resolved.begin(), resolved.end(),
                       [](const ResolvedInlayHint& a, const ResolvedInlayHint& b) { return a.byteOffset < b.byteOffset; });
@@ -2412,7 +2412,7 @@ const std::vector<Manager::ResolvedInlayHint>& Manager::InlayHintSpans(const tex
     view.hints.reserve(anchorsIt->second.size());
     for (const AnchoredInlayHint& hint : anchorsIt->second) {
         if (const std::optional<std::size_t> offset = buffer.AnchorOffset(hint.anchor)) {
-            view.hints.push_back(ResolvedInlayHint{.byteOffset = *offset, .label = hint.label});
+            view.hints.push_back(ResolvedInlayHint{.byteOffset = *offset, .label = hint.label, .kind = hint.kind});
         }
     }
     view.builtAtGeneration = generation;
@@ -2441,7 +2441,8 @@ void Manager::MergeInlayHints(text::Buffer& buffer, std::vector<ResolvedInlayHin
     }
     for (ResolvedInlayHint& hint : resolved) {
         kept.push_back(AnchoredInlayHint{.anchor = buffer.CreateAnchor(hint.byteOffset, kInlayHintAnchor),
-                                         .label  = std::move(hint.label)});
+                                         .label  = std::move(hint.label),
+                                         .kind   = hint.kind});
     }
     EvictInlayHintsBeyondCap(buffer, kept, rangeStart);
     // Sorted here, once, so the read path stays a linear copy: anchor

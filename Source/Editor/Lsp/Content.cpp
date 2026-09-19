@@ -1177,7 +1177,11 @@ std::vector<InlayHint> ExtractInlayHints(const Json& result) {
         if (label.empty()) {
             continue; // nothing to render either way
         }
-        hints.push_back(InlayHint{.position = PositionFromJson(item["position"]), .label = std::move(label)});
+        // A non-integer "kind" is treated as absent rather than rejected:
+        // the hint itself is still renderable, and the kind only chooses a
+        // colour.
+        const int kind = item.contains("kind") && item["kind"].is_number_integer() ? item["kind"].get<int>() : 0;
+        hints.push_back(InlayHint{.position = PositionFromJson(item["position"]), .label = std::move(label), .kind = kind});
     }
     return hints;
 }
