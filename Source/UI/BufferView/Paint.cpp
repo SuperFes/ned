@@ -87,6 +87,19 @@ void BufferView::PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::siz
     const Brush titleBrush{.background = theme_.background,
                            .foreground = GhostForegroundOver(theme_.background, theme_.codeLensForeground),
                            .italic     = true};
+    // U+25B9 WHITE RIGHT-POINTING SMALL TRIANGLE -- the open sibling of the
+    // U+25B8 this codebase already uses for "expand/go here" (ProjectSidebar,
+    // result headers), the same filled-vs-open pairing the DAP gutter's
+    // ◆/◇ already establishes: the filled one is a thing you navigate, the
+    // open one annotates. Without it a lens title reads as a stray comment,
+    // since it is the only virtual text that gets a line to itself.
+    //
+    // One glyph, not one per lens kind: LSP gives a lens no kind at all,
+    // only a title string, so per-kind glyphs would mean sniffing for
+    // "N references" / "Run test" -- server-specific, language-specific, and
+    // wrong the first time a server words it differently.
+    joinedTitle.insert(0, "\u25B9 ");
+
     const int   width = c.size().width;
     const int   col   = static_cast<int>(gutterWidth);
     // A lens title comes from real LSP text (symbol names, reference counts,
