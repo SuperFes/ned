@@ -1706,12 +1706,25 @@ void BufferView::PushHierarchyModel() {
     model.rows.reserve(rows.size());
     for (const auto& row : rows) {
         const auto& node = session.tree.At(row.index);
+        // Same glyph the gutter and the completion popup use, via the same
+        // SyntaxClassFor color -- an unrecognized kind gets the popup's own
+        // generic dim marker rather than an empty column, so every row still
+        // lines up.
+        std::string          kindGlyph      = "·";
+        std::optional<Color> kindForeground = theme_.ghostTextForeground;
+        if (const std::optional<editor::SymbolKind> bucket = SymbolKindBucket(node.data.item.kind)) {
+            kindGlyph      = SymbolGlyphFor(*bucket);
+            kindForeground = theme_.BrushFor(editor::SyntaxClassFor(*bucket)).foreground;
+        }
+
         model.rows.push_back(ui::TreeRow{
-            .label       = BuildHierarchyRowLabel(node.data),
-            .depth       = row.depth,
-            .hasChildren = !node.childrenFetched || !node.children.empty(),
-            .expanded    = node.expanded,
-            .loading     = node.loading,
+            .kindGlyph      = kindGlyph,
+            .kindForeground = kindForeground,
+            .label          = BuildHierarchyRowLabel(node.data),
+            .depth          = row.depth,
+            .hasChildren    = !node.childrenFetched || !node.children.empty(),
+            .expanded       = node.expanded,
+            .loading        = node.loading,
         });
     }
     if (!model.rows.empty()) {

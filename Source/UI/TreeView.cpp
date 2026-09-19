@@ -165,7 +165,21 @@ void TreeView::Paint(Canvas c) {
         // asian-width accounting, matching ListPopup).
         const int indent = 2 + static_cast<int>(treeRow.depth) * 2;
         PaintRowText(c, indent, width, row, DisclosureGlyph(treeRow), glyph);
-        PaintRowText(c, indent + 2, width, row, treeRow.label, text);
+        // The kind marker sits between the disclosure column and the label,
+        // in its own per-kind color -- the selection brush still wins over
+        // that color, same as the disclosure glyph above, so a selected row
+        // stays legible rather than keeping a color chosen against the
+        // unselected background.
+        int labelColumn = indent + 2;
+        if (!treeRow.kindGlyph.empty()) {
+            Brush kindBrush = text;
+            if (!selected && treeRow.kindForeground) {
+                kindBrush.foreground = *treeRow.kindForeground;
+            }
+            PaintRowText(c, labelColumn, width, row, treeRow.kindGlyph, kindBrush);
+            labelColumn += 2;
+        }
+        PaintRowText(c, labelColumn, width, row, treeRow.label, text);
         ++row;
     }
 }

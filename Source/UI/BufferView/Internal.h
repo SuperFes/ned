@@ -559,6 +559,42 @@ inline std::string BuildSymbolLabel(const editor::lsp::Manager::SymbolResult& sy
     return label;
 }
 
+// The LSP *SymbolKind* vocabulary (spec 3.17, 1-26) bucketed onto the
+// gutter's own SymbolKind, so a hierarchy row can wear the same glyph the
+// gutter and the completion popup already use. Deliberately a separate
+// function from CompletionKindBucket just below rather than a shared one:
+// the two are different enumerations that happen to overlap in places
+// (LSP CompletionItemKind 7 is Class, SymbolKind 7 is Property), and
+// folding them together is how a row ends up wearing the wrong glyph.
+// nullopt for the kinds with no honest bucket -- the caller shows a
+// generic marker, exactly as the completion popup does.
+inline std::optional<editor::SymbolKind> SymbolKindBucket(int lspKind) {
+    switch (lspKind) {
+        case 6:  // Method
+        case 9:  // Constructor
+        case 12: // Function
+            return editor::SymbolKind::Callable;
+        case 5:  // Class
+        case 10: // Enum
+        case 11: // Interface
+        case 23: // Struct
+        case 26: // TypeParameter
+            return editor::SymbolKind::TypeLike;
+        case 2: // Module
+        case 3: // Namespace
+        case 4: // Package
+            return editor::SymbolKind::Namespace;
+        case 7:  // Property
+        case 8:  // Field
+        case 13: // Variable
+        case 14: // Constant
+        case 22: // EnumMember
+            return editor::SymbolKind::Data;
+        default:
+            return std::nullopt;
+    }
+}
+
 // call/type-hierarchy follow-up: one TreeRow::label, BuildSymbolLabel's
 // own "kind name — path:line" shape reused verbatim (SymbolKindLabel
 // takes the same raw LSP SymbolKind vocabulary both HierarchyItem::kind
@@ -569,9 +605,13 @@ inline std::string BuildSymbolLabel(const editor::lsp::Manager::SymbolResult& sy
 // branch of BuildSymbolLabel with the containerName segment dropped
 // rather than a parallel near-duplicate.
 inline std::string BuildHierarchyRowLabel(const editor::lsp::Manager::ResolvedHierarchyItem& resolved) {
-    std::string label(editor::lsp::SymbolKindLabel(resolved.item.kind));
-    label += " ";
-    label += resolved.item.name;
+    // No spelled-out kind here, unlike BuildSymbolLabel: a tree row carries
+    // the kind as a glyph in its own column instead (see
+    // TreeRow::kindGlyph). The picker keeps the word because its labels are
+    // what FuzzyFilterAndRank matches against, so typing "class" there
+    // genuinely narrows the list -- a tree is navigated, not filtered, so
+    // the word costs width and buys nothing.
+    std::string                 label(resolved.item.name);
     std::error_code             ec;
     const std::filesystem::path relative = std::filesystem::relative(resolved.path, editor::ProjectRoot(), ec);
     label += "  — " + ((!ec && !relative.empty()) ? relative.string() : resolved.path.string());
