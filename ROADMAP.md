@@ -109,6 +109,32 @@ measurement said "fine" while typing felt bad.
       so it was left alone deliberately rather than overlooked. Revisit if a project path
       with a space/`#`/`?` in it ever misbehaves.
 
+**LSP results as buffer-anchored data, not byte snapshots**
+
+Shipped, slug for `git log --grep=`: `buffer-anchored-lsp-results` (`Text/EditJournal.h`
+plus `Manager::CarryForward` -- `Buffer` records one op per content generation, and every
+server result that holds byte offsets across edits replays those ops from the generation
+it was resolved against, with per-kind gravity, instead of diffing document snapshots).
+
+- [ ] The payoff this unlocks is not taken yet: with the last good set staying valid
+      under typing, ned can debounce against the server far more aggressively --
+      request on idle rather than per `Paint()`, and drop responses freely -- because a
+      late or missing response now costs nothing visible. `RequestInlayHints`,
+      `RequestSemanticTokens` and `RequestCodeLenses` are still called per frame, which
+      was the right call only while a stale set was wrong within one keystroke.
+- [ ] `documentHighlight` is deliberately *not* carried forward (`BufferView.h`'s
+      `DocumentHighlightState` says why): it describes the symbol under point rather
+      than a span of text, so typing inside that symbol makes it a different symbol,
+      which no relocation fixes -- and any edit moves point, which re-arms its own
+      debounce. Suppress-and-re-request is the right model there. Revisit only if the
+      one-debounce-window gap turns out to be visible in practice.
+- [ ] Related policy question surfaced by the same session: a server's semantic tokens
+      currently override any syntax class the grammar produced, including `comment`.
+      phpantom_lsp lexes `//` without a following space as code, so a commented-out
+      line renders as a call and carries a "did you mean" diagnostic. Ned's own PHP
+      grammar parses it as a comment (verified with `--test-language`). Decide whether a
+      grammar `comment` cell is ever a server's to recolour.
+
 **LSP completion fidelity**
 
 - [ ] `commitCharacters` and `preselect` are honored only where a server actually
@@ -206,6 +232,36 @@ answer to a request for an obscure DSL becomes "yes, next release".
       at admission.
 
 ### Refactoring
+
+- [ ] **Sidecar metadata: association without binding** (raised 2026-09-18). Anything
+      that describes a span of text -- point, mark, narrowed range, fold markers,
+      secondary cursors, snippet ranges, excerpt ranges, diagnostics -- currently holds
+      raw byte offsets that every mutator has to fix up by hand. `Buffer` carries eight
+      `Relocate*For{Insert,Delete}` pairs for that, each duplicated across five mutation
+      sites, each with its own subtly different gravity rule, and a ninth field means a
+      ninth pair. The alternative is one store of anchors that survive edits by
+      construction, sitting *beside* the rope rather than inside it, so a feature
+      associates metadata with a position without the text structure knowing anything
+      about it. Prior art: Emacs markers, CodeMirror's `RangeSet`, Zed's anchors.
+      **Not in the rope itself**, and that is the whole point of the framing: the rope is
+      persistent with structural sharing (`Clone()` is O(1), `UndoTree` snapshots share
+      nodes with the live buffer), so mutable annotations on shared nodes would bleed
+      across undo snapshots; and an anchor usually falls where no piece boundary exists,
+      so binding to one means splitting pieces on the hot path. A sidecar keeps the rope's
+      current properties exactly.
+      **The prerequisite already shipped**: the store needs a feed of every edit, which is
+      what `Buffer::Edits()` (`Text/EditJournal.h`, `buffer-anchored-lsp-results`) now is.
+      Eager application to a live anchor set and `CarryForward`'s lazy replay are two
+      consumers of the same feed, and they compose rather than compete: an anchor is right
+      for anything already placed in the live document (exact forever, never has to answer
+      "I cannot carry this"), while the journal is what translates a result stamped against
+      an *older* document version -- every LSP result -- onto the present, once, at receipt.
+      Worth scoping as a `Buffer` refactor with those eight existing fields as its first
+      tenants, which is a self-contained win independent of any LSP work.
+      Explicitly *not* a fix for stale server data: an anchor placed at a wrong offset
+      stays faithfully wrong, which is exactly what the 2026-09-18 phpantom_lsp session
+      turned out to be (the server's own `character` values disagreed with its own
+      document; ned's conversion and relocation were both correct).
 
 - [ ] A Lisp binding vector's names are captured by unrolled per-pair-index patterns
       (`clojure-locals.scm`, `janet-locals.scm`), because the whole-vector form a query
@@ -391,6 +447,37 @@ ordinary click) or `BufferView::ForwardMouseWhileSiblingDrags` (a real drop)).
       Deliberately *not* the "state-driven mode-line fills" idea listed under Translucency
       phase 5 — that one washes the whole bar and was set aside as decoration; this is a
       real widget for real determinate work.
+
+- [ ] **Search-everywhere remainder** (2026-09-18). The palette itself shipped -- see
+      `git log --grep=search-everywhere`: double-tap-Shift gesture
+      (`ned/set-search-everywhere-gesture`, `UI/DoubleTapModifier.h`), a merged
+      Command/Macro/File/Buffer/Symbol/TextMatch pool in `Editor/SearchEverywhere.h`
+      that keeps each candidate's provenance and a dimmed `detail` line through its own
+      ranking, JetBrains-style kind-filter cycling, async workspace symbols appended as
+      they arrive, and a debounced backgrounded project text scan
+      (`ned/set-search-everywhere-text-search`). What is genuinely missing, smallest
+      first:
+      - **A command's own keybinding is not shown beside it.** `detail` carries the
+        docstring; `Keymap` already knows the chord. This is the single highest-value
+        row detail in every palette that has one -- it is what turns the palette into
+        the thing that *teaches* the chords rather than the thing that replaces them,
+        which was the whole worry behind the original non-goal.
+      - **A server's own commands are unreachable.** `executeCommandProvider.commands`
+        is never read from the initialize response (no reference anywhere in
+        `Editor/Lsp/*.cpp`), so `intelephense.index.workspace`,
+        `rust-analyzer.reloadWorkspace` and every other maintenance verb can only be
+        reached if a code action or code lens happens to carry it.
+        `Manager::ExecuteCommand` already exists and is exercised by those two paths --
+        this needs the capability recorded per connection and a seventh
+        `SearchEverywhereKind`, nothing more.
+      - **Themes and registered projects aren't sources**, though both are already
+        enumerable (`UI/ThemeRegistry.h`, `Editor/Project/Registry.h`) and both are
+        things people reach for by name.
+      - **No preview pane** for a File/Symbol/TextMatch row (Telescope's, JetBrains').
+        Last, and genuinely optional.
+      Not wanted: making this the only way to reach anything. Every purpose-built
+      command and binding stays -- see the amended Named Non-Goal below for why that
+      distinction is the one that matters.
 
 - [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
       consumed by the panel itself (focus, scrollback ring); a TUI subprocess running
@@ -1018,10 +1105,14 @@ for closed-issue history.
       Ned's model is one Janet-scriptable environment plus opt-in project-local plugins
       gated by `ProjectTrust`'s hash-based trust registry — a marketplace implies a
       supply-chain-trust problem this project has deliberately stayed out of.
-- [ ] A single fuzzy command palette unifying M-x/find-file/switch-buffer into one popup
-      (VSCode/Sublime's Cmd+Shift+P). Real Emacs keeps these as separate, purpose-built
-      commands with their own bindings — consistent with this project's Emacs-class-
-      parity vision, so this reads as a different, already-chosen philosophy.
+- ~~A single fuzzy command palette~~ — **stale, corrected 2026-09-18.** This was
+      already false when written: `search-everywhere` ships a merged Command/Macro/File/
+      Buffer/Symbol/TextMatch palette on a double-tap-Shift gesture. The distinction the
+      entry was reaching for is real and still holds, so keep it: M-x, `project-find-file`
+      and `switch-to-buffer` remain separate purpose-built commands with their own
+      bindings, and the palette is an *additional* front door rather than their
+      replacement. Remaining work is under Editor Ergonomics ("Search-everywhere
+      remainder").
 
 ### Native Windows Port (Idea, Unstarted — Design Sketch Only)
 

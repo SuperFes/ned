@@ -5,28 +5,24 @@
 // tracked fields across an undo/redo restore, extracted so anything else that
 // holds offsets against a stale snapshot can relocate them the same way.
 //
-// The consumer that forced the extraction is LSP diagnostics. A server
-// computes `{line, character}` positions against the document version it was
-// last told about, and answers on its own schedule -- so by the time a
-// publish arrives the buffer has usually moved on. Converting those positions
-// against the *current* text puts every diagnostic on the wrong bytes until
-// the next publish catches up, which is visible as an underline that sits
-// beside the token it flags rather than on it. Converting against the text of
-// the version the server named and then remapping through this is what makes
-// the offsets right on arrival.
+// The consumer that forced the extraction was LSP diagnostics, and it has
+// since moved off this: a server result is carried forward by replaying the
+// buffer's own edits (`EditJournal.h`), which is exact for any number of them
+// rather than only for one. What is left here is the case this model is
+// actually right for -- a restore, where two whole versions are swapped and
+// there are no edits to replay, only two documents to compare.
 //
 // Pure and storage-only: no Buffer, no UI, no knowledge of what the offsets
 // mean. Reads through `ITextStorage::Substring` in exponentially growing
 // blocks and never materializes either side whole, so a localized edit costs
 // O(edit size) no matter how large the documents are.
 //
-// The model is deliberately one contiguous changed region, not a real diff.
-// That is exact for what an editing session actually produces between two
-// nearby versions -- a burst of typing, a paste, a deletion -- and degrades
-// predictably rather than wrongly when it is not: two edits far apart are
-// reported as one span covering both, so an offset between them relocates as
-// if it sat inside the change. A caller that cannot tolerate that should
-// compare versions more often rather than ask this for more than it offers.
+// The model is deliberately one contiguous changed region, not a real diff,
+// and that is exact only for a single hop between two versions. Two edits far
+// apart are reported as one span covering both, so an offset between them
+// relocates as if it sat inside the change -- which is why anything holding
+// offsets across a *run* of ordinary edits uses `EditJournal.h` instead.
+// Nothing here should grow a second such caller.
 //
 
 #ifndef NED_TEXT_OFFSETREMAP_H

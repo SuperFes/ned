@@ -166,6 +166,8 @@ add_executable(ned_tests
             InitFileThemeWriteTest.cpp
             LayoutStabilityProbe.cpp
             OffsetRemapTest.cpp
+            EditJournalTest.cpp
+            BufferEditJournalTest.cpp
             OverlayScrimTest.cpp
             OverlayShadowTest.cpp
             RecencyGlowTest.cpp

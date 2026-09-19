@@ -501,15 +501,21 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
             }
             DisableBracketedPaste();
             notcurses_stop(nc_);
-            nc_ = nullptr;
+            nc_           = nullptr;
+            backingPlane_ = nullptr; // freed with the context above; RebuildBackingPlane must not destroy it again
             std::raise(SIGTSTP);
             InitializeNotcurses_();
             inputFd       = notcurses_inputready_fd(nc_);
             unsigned rows = 0, cols = 0;
             notcurses_refresh(nc_, &rows, &cols);
+            RebuildBackingPlane(nc_, backingPlane_);
             const Size resumedSize{static_cast<int>(cols), static_cast<int>(rows)};
-            if ((resumedSize.width != lastSize.width || resumedSize.height != lastSize.height) && callbacks.onResize) {
-                lastSize = resumedSize;
+            lastSize = resumedSize;
+            // Always, not only on a size change: the Screen's dirty-region
+            // cache (Screen::Flush) describes planes that no longer exist,
+            // and a rebuilt Screen is what forces every cell onto the new
+            // ones. Same size means a diff of nothing and a blank terminal.
+            if (callbacks.onResize) {
                 SafeInvoke("onResize", [&] { callbacks.onResize(resumedSize); });
             }
             needsRepaint = true;

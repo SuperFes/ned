@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 
 #include <fnmatch.h>
 #include <unistd.h>
@@ -21,7 +23,6 @@
 #include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
-#include "Text/OffsetRemap.h"
 #include "Text/Rope.h"
 #include "Text/RopeStorage.h"
 #include "Text/Utf8.h"
@@ -997,7 +998,19 @@ void Manager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, c
     // nothing to send them to, and once that cost exceeds the tick
     // interval the EventLoop::Post queue backs up forever. A no-op buffer
     // argument is never worth evaluating eagerly.
+    // NED_DEBUG_LSP_SYNC also records why a sync did NOT happen: a didChange
+    // that stops being sent and a didChange that is sent wrongly look
+    // identical from the server's answers.
+    const auto traceSkip = [&](const char* reason, std::size_t detail) {
+        if (const char* path = std::getenv("NED_DEBUG_LSP_SYNC"); path != nullptr && *path != '\0') {
+            if (std::ofstream trace{path, std::ios::app}) {
+                trace << "syncSkip " << reason << " serverKey=" << serverKey << " generation=" << buffer.ContentGeneration()
+                      << " detail=" << detail << '\n';
+            }
+        }
+    };
     if (!ClientForLanguage(serverKey, root)) {
+        traceSkip("no-client", 0);
         return;
     }
 
@@ -1016,7 +1029,7 @@ void Manager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, c
         if (const auto stateIt = bufferIt->second.find(serverKey); stateIt != bufferIt->second.end()) {
             existingState = &stateIt->second;
             if (existingState->opened && existingState->lastSyncedGeneration == buffer.ContentGeneration()) {
-                return; // nothing changed since the last sync
+                return; // nothing changed since the last sync (not traced: the common per-frame no-op)
             }
         }
     }
@@ -1041,9 +1054,11 @@ void Manager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, c
     // own doc comment for why this guards against re-arming on every
     // Paint(), not just on a genuine new edit.
     if (existingState->pendingSyncGeneration && *existingState->pendingSyncGeneration == buffer.ContentGeneration()) {
+        traceSkip("already-pending", *existingState->pendingSyncGeneration);
         return; // already debounced for this exact generation -- let it run its course
     }
     existingState->pendingSyncGeneration = buffer.ContentGeneration();
+    traceSkip("arming", static_cast<std::size_t>(SyncDebounceMs()));
 
     text::Buffer* const bufferPtr = &buffer;
     syncDebounceTimers_[&buffer][serverKey].Arm(
@@ -1051,6 +1066,11 @@ void Manager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, c
             // Re-reads buffer.Text() fresh here, not at arm time -- more
             // edits may have landed during the debounce window, and this
             // must send the *latest* content, not a stale snapshot.
+            if (const char* path = std::getenv("NED_DEBUG_LSP_SYNC"); path != nullptr && *path != '\0') {
+                if (std::ofstream trace{path, std::ios::app}) {
+                    trace << "syncTimerFired serverKey=" << serverKey << " generation=" << bufferPtr->ContentGeneration() << '\n';
+                }
+            }
             SyncTextToServer(*bufferPtr, serverKey, languageId, bufferPtr->Text(), root);
         });
 }
@@ -1115,7 +1135,26 @@ void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKe
     }
 
     ++state.version;
-    if (TextDocumentSyncKindFor(state.connectionKey) == TextDocumentSyncKind::Incremental) {
+    // NED_DEBUG_LSP_FULL_SYNC=1 sends the whole document on every change
+    // regardless of what the server advertised. A server whose positions stop
+    // drifting under it is one that does not apply our incremental edits.
+    static const bool forceFullSync = [] {
+        const char* value = std::getenv("NED_DEBUG_LSP_FULL_SYNC");
+        return value != nullptr && *value != '\0' && *value != '0';
+    }();
+    // NED_DEBUG_LSP_SYNC=<path>: what we actually put on the wire, so a
+    // server answering against a document it never received is
+    // distinguishable from one we told incorrectly.
+    const auto traceSync = [&](const char* kind, const std::string& detail) {
+        if (const char* path = std::getenv("NED_DEBUG_LSP_SYNC"); path != nullptr && *path != '\0') {
+            if (std::ofstream trace{path, std::ios::app}) {
+                trace << "didChange " << kind << " uri=" << state.uri << " version=" << state.version
+                      << " generation=" << buffer.ContentGeneration() << " docBytes=" << documentText.size() << ' '
+                      << detail << '\n';
+            }
+        }
+    };
+    if (!forceFullSync && TextDocumentSyncKindFor(state.connectionKey) == TextDocumentSyncKind::Incremental) {
         // incremental-sync follow-up: common-prefix/common-suffix byte diff,
         // the same shape as IncrementalParseCache::Update's own diff
         // (Editor/Grammar/IncrementalParse.cpp) -- "correct, if not
@@ -1163,6 +1202,10 @@ void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKe
         const std::size_t rangeLength = Utf16LengthOfByteRange(oldText, oldStartByte, oldEndByte);
         const std::string changedText = documentText.substr(newStartByte, newEndByte - newStartByte);
 
+        traceSync("incremental", "range=" + std::to_string(range.start.line) + ':' +
+                                    std::to_string(range.start.character) + ".." + std::to_string(range.end.line) + ':' +
+                                    std::to_string(range.end.character) + " rangeLength=" + std::to_string(rangeLength) +
+                                    " textBytes=" + std::to_string(changedText.size()));
         client->SendNotification(
             "textDocument/didChange",
             {
@@ -1177,6 +1220,8 @@ void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKe
             });
     }
     else {
+        traceSync("full", "advertisedKind=" + std::to_string(static_cast<int>(TextDocumentSyncKindFor(state.connectionKey))) +
+                              " forced=" + std::to_string(forceFullSync));
         client->SendNotification("textDocument/didChange", {
                                                                {"textDocument", {{"uri", state.uri}, {"version", state.version}}},
                                                                {"contentChanges", Json::array({{{"text", documentText}}})},
@@ -1469,12 +1514,10 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     inlayHintsRequestedRange_.erase(&buffer);
     inlayHintsRequestCounter_.erase(&buffer);
     inlayHintSpans_.erase(&buffer);
-    inlayHintSpansContent_.erase(&buffer);
     inlayHintSpansGeneration_.erase(&buffer);
     codeLensRequestedGeneration_.erase(&buffer);
     codeLensRequestCounter_.erase(&buffer);
     codeLensSpans_.erase(&buffer);
-    codeLensSpansContent_.erase(&buffer);
     codeLensSpansGeneration_.erase(&buffer);
 }
 
@@ -1554,11 +1597,11 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
     // the LSP redraws" looked like from the outside.
     //
     // BufferSyncState::lastSyncedText is already exactly the text the server
-    // was last sent (it exists as the incremental-sync baseline), so this
-    // needs no new storage: convert against that, then remap the resulting
-    // offsets onto the live content through the single-changed-range diff in
-    // Text/OffsetRemap.h -- the same relocation Buffer applies to its own
-    // tracked fields across an undo.
+    // was last sent (it exists as the incremental-sync baseline), and
+    // lastSyncedGeneration says which buffer generation that text is -- so
+    // this needs no new storage: convert against that text, then carry the
+    // resulting offsets onto live content by replaying the buffer's own edits
+    // since that generation.
     //
     // The remap runs before FilterToOwnedRanges, which asks about the *live*
     // buffer's embedded-language ranges and would otherwise be handed offsets
@@ -1572,12 +1615,12 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
     DiagnosticSlice        slice;
     if (syncState != nullptr && !syncState->lastSyncedText.empty() &&
         syncState->lastSyncedGeneration != buffer->ContentGeneration()) {
-        auto sentContent  = std::make_shared<const text::RopeStorage>(text::Rope(syncState->lastSyncedText));
-        slice.diagnostics = ParsePublishedDiagnostics(params, *sentContent, origin);
-        // Deliberately not stamped with the live generation: these offsets are
-        // against what the server was sent, and the rebase just below is what
-        // has to run.
-        slice.resolvedAgainst = std::move(sentContent);
+        const text::RopeStorage sentContent{text::Rope(syncState->lastSyncedText)};
+        slice.diagnostics = ParsePublishedDiagnostics(params, sentContent, origin);
+        // Stamped with the generation that text is, not the live one: these
+        // offsets are against what the server was sent, and the rebase just
+        // below is what has to run.
+        slice.resolvedAtGeneration = syncState->lastSyncedGeneration;
         // Onto the live content right here rather than leaving it for the
         // push: FilterToOwnedRanges just below asks about the *live*
         // buffer's embedded-language ranges and would otherwise be handed
@@ -1586,7 +1629,6 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
     }
     else {
         slice.diagnostics          = ParsePublishedDiagnostics(params, buffer->Content(), origin);
-        slice.resolvedAgainst      = buffer->Content().Clone();
         slice.resolvedAtGeneration = buffer->ContentGeneration();
     }
     FilterToOwnedRanges(buffer, language, slice.diagnostics);
@@ -1595,8 +1637,8 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
     // set for buffer replaces only its own slice -- another server's slice
     // (recorded independently the same way) is untouched. PushMergedDiagnostics
     // is what actually reaches buffer.SetDiagnostics.
-    // slice.resolvedAgainst is what PushMergedDiagnostics remaps from -- these
-    // offsets are right for the buffer as it is at this instant, and the
+    // slice.resolvedAtGeneration is what PushMergedDiagnostics carries from --
+    // these offsets are right for the buffer as it is at this instant, and the
     // debounce below means that is not the instant they are applied.
     diagnosticsBySource_[buffer][language] = std::move(slice);
 
@@ -1667,9 +1709,20 @@ void Manager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& se
     const std::string connectionKey = state->connectionKey; // the "stop asking" latch's own key
     const std::string sourceKey     = serverKey;            // diagnosticsBySource_/FilterToOwnedRanges' key -- per server, not per connection
     const Json        params        = {{"textDocument", {{"uri", uri}}}};
+    // buffer-anchored-lsp-results follow-up: the document at request time --
+    // the one the server answers about -- plus its generation and the
+    // buffer's own identity. The identity is compared, never dereferenced:
+    // this handler deliberately re-resolves the buffer by uri (it could have
+    // closed), and a *different* buffer reopened at the same path has its own
+    // unrelated generation counter, so a snapshot from the old one must not
+    // be carried onto it.
+    std::shared_ptr<const text::ITextStorage> requestedContent    = buffer.Content().Clone();
+    const std::size_t                         requestedGeneration = buffer.ContentGeneration();
+    const text::Buffer* const                 requestedBuffer     = &buffer;
     client->SendRequest(
         "textDocument/diagnostic", params,
-        [this, uri, connectionKey, sourceKey](std::optional<Json> result, std::optional<Json> error) {
+        [this, uri, connectionKey, sourceKey, requestedContent, requestedGeneration,
+         requestedBuffer](std::optional<Json> result, std::optional<Json> error) {
             if (error) {
                 // A real error response (as opposed to a legitimate "no
                 // diagnostics right now" empty items array) is this
@@ -1691,7 +1744,12 @@ void Manager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& se
             if (!buffer) {
                 return; // buffer closed since this was requested
             }
-            const text::ITextStorage&             content = buffer->Content();
+            // Same buffer as the request was made against, or a different one
+            // that happens to sit at the same path now -- only the former can
+            // be carried forward from the request-time snapshot.
+            const bool                sameBuffer = buffer == requestedBuffer;
+            const text::ITextStorage& content    = sameBuffer ? *requestedContent : buffer->Content();
+
             std::vector<text::Buffer::Diagnostic> diagnostics;
             diagnostics.reserve(items->size());
             for (const PullDiagnosticItem& item : *items) {
@@ -1704,21 +1762,25 @@ void Manager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& se
                     .message   = item.message,
                 });
             }
-            FilterToOwnedRanges(buffer, sourceKey, diagnostics);
+            DiagnosticSlice slice{.diagnostics          = std::move(diagnostics),
+                                  .resolvedAtGeneration = sameBuffer ? requestedGeneration : buffer->ContentGeneration()};
+            // Before FilterToOwnedRanges, which asks about the *live*
+            // buffer's embedded-language ranges -- the same ordering
+            // HandlePublishDiagnostics' own stale-publish branch keeps.
+            RebaseSliceOntoLiveContent(*buffer, slice);
+            FilterToOwnedRanges(buffer, sourceKey, slice.diagnostics);
             // Same source-key slot HandlePublishDiagnostics writes into --
             // see this method's own doc comment in Manager.h for why
             // that's the deliberate choice here.
-            diagnosticsBySource_[buffer][sourceKey] =
-                DiagnosticSlice{.diagnostics          = std::move(diagnostics),
-                                .resolvedAgainst      = content.Clone(),
-                                .resolvedAtGeneration = buffer->ContentGeneration()};
+            diagnosticsBySource_[buffer][sourceKey] = std::move(slice);
             PushMergedDiagnostics(*buffer);
         });
 }
 
 void Manager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector<SemanticToken>& tokens,
-                                            const SemanticTokensLegend& legend) {
-    const text::ITextStorage&          content = buffer.Content();
+                                         const SemanticTokensLegend& legend, const text::ITextStorage& resolvedContent,
+                                         std::size_t resolvedGeneration) {
+    const text::ITextStorage&          content = resolvedContent;
     std::vector<editor::HighlightSpan> spans;
     spans.reserve(tokens.size());
     for (const SemanticToken& token : tokens) {
@@ -1738,6 +1800,14 @@ void Manager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector
             .syntaxClass = *syntaxClass,
         });
     }
+    // Resolved against the document the server answered about; carry them
+    // onto whatever the buffer is now. A token whose text an edit rewrote is
+    // dropped rather than left recolouring whatever now sits there -- that
+    // mis-colouring is the whole symptom this family of fixes exists for.
+    std::size_t resolvedAt = resolvedGeneration;
+    CarryForward(spans, resolvedAt, buffer, [](editor::HighlightSpan& span, const std::vector<text::EditOp>& ops) {
+        return RelocateRange(span.startByte, span.endByte, ops, kSemanticTokenInsideDelete);
+    });
     semanticTokenSpans_[&buffer]                  = std::move(spans);
     semanticTokenSpansContentGeneration_[&buffer] = buffer.ContentGeneration();
     ++semanticTokensGeneration_[&buffer];
@@ -1789,6 +1859,9 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
         semanticTokensRequestedRange_[&buffer] = requestedRange;
         const std::size_t requestId            = ++semanticTokensRequestCounter_[&buffer];
         const std::size_t requestedGeneration  = buffer.ContentGeneration();
+        // The document the server will answer about, kept so its positions
+        // convert against the right text however long the round trip takes.
+        std::shared_ptr<const text::ITextStorage> requestedContent = buffer.Content().Clone();
 
         const text::ITextStorage& content = buffer.Content();
         const Position         start   = BytePositionToLsp(content, viewportStartByte);
@@ -1799,8 +1872,8 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
         };
         client->SendRequest(
             "textDocument/semanticTokens/range", params,
-            [this, bufferPtr, requestId, requestedGeneration, legendCopy, connectionKey](std::optional<Json> result,
-                                                                                         std::optional<Json> error) {
+            [this, bufferPtr, requestId, requestedGeneration, requestedContent, legendCopy,
+             connectionKey](std::optional<Json> result, std::optional<Json> error) {
                 const auto counterIt = semanticTokensRequestCounter_.find(bufferPtr);
                 if (counterIt == semanticTokensRequestCounter_.end() || counterIt->second != requestId) {
                     return; // superseded by a newer request for this buffer
@@ -1818,13 +1891,8 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
                 if (!result) {
                     return;
                 }
-                // stale-position-race follow-up: see the full/delta branch
-                // below's own comment on requestedGeneration -- same race,
-                // same fix.
-                if (bufferPtr->ContentGeneration() != requestedGeneration) {
-                    return;
-                }
-                ApplyDecodedSemanticTokens(*bufferPtr, DecodeSemanticTokenData(ExtractSemanticTokensRawData(*result)), legendCopy);
+                ApplyDecodedSemanticTokens(*bufferPtr, DecodeSemanticTokenData(ExtractSemanticTokensRawData(*result)),
+                                           legendCopy, *requestedContent, requestedGeneration);
             });
         return;
     }
@@ -1838,6 +1906,8 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
     semanticTokensRequestedGeneration_[&buffer] = buffer.ContentGeneration();
     const std::size_t requestId                 = ++semanticTokensRequestCounter_[&buffer];
     const std::size_t requestedGeneration       = buffer.ContentGeneration();
+    // See the range branch above: the document the server answers about.
+    std::shared_ptr<const text::ITextStorage> requestedContent = buffer.Content().Clone();
 
     const bool useDelta = legendCopy.fullDeltaSupported && !semanticTokensFullDeltaUnsupported_.contains(state->connectionKey) &&
                           previousSemanticTokens_.contains(&buffer);
@@ -1848,8 +1918,8 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
         };
         client->SendRequest(
             "textDocument/semanticTokens/full/delta", params,
-            [this, bufferPtr, requestId, requestedGeneration, legendCopy, connectionKey](std::optional<Json> result,
-                                                                                         std::optional<Json> error) {
+            [this, bufferPtr, requestId, requestedGeneration, requestedContent, legendCopy,
+             connectionKey](std::optional<Json> result, std::optional<Json> error) {
                 const auto counterIt = semanticTokensRequestCounter_.find(bufferPtr);
                 if (counterIt == semanticTokensRequestCounter_.end() || counterIt->second != requestId) {
                     return; // superseded by a newer request for this buffer
@@ -1868,24 +1938,16 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
                 }
                 // stale-position-race follow-up: the response's Position
                 // values were computed by the server against the document as
-                // it stood AT REQUEST TIME -- if a local edit landed while
-                // this was in flight, bufferPtr->Content() below is already
-                // the EDITED text, and converting the server's now-stale
-                // positions against it silently lands on the wrong bytes
-                // (off by however much the document shifted), not an
-                // out-of-range failure that would be caught some other way.
-                // A real, live-reported bug: syntax coloring visibly
-                // detached from the characters it belonged to for a moment
-                // after every keystroke. Discarding here is safe --
-                // RequestSemanticTokens' own debounce-aware re-request gate
-                // guarantees a fresh request for the new generation follows
-                // once SyncToServer's debounced didChange actually lands
-                // (see that function's own doc comment), so this is never a
-                // permanent gap, just a stale response correctly thrown
-                // away instead of misapplied.
-                if (bufferPtr->ContentGeneration() != requestedGeneration) {
-                    return;
-                }
+                // it stood AT REQUEST TIME, so converting them against
+                // bufferPtr->Content() would silently land on the wrong bytes
+                // once any local edit had landed in flight -- a real,
+                // live-reported bug (syntax colouring visibly detached from
+                // the characters it belonged to after every keystroke). This
+                // used to be answered by discarding the whole response, which
+                // during continuous typing meant discarding essentially all
+                // of them; requestedContent/requestedGeneration below convert
+                // and then carry it forward instead.
+                //
                 // A SemanticTokensDelta response carries "edits" (applied
                 // against the cached baseline); a server that decided to
                 // resend the whole document instead carries "data" like any
@@ -1907,7 +1969,8 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
                 else {
                     previousSemanticTokens_.erase(bufferPtr); // server stopped offering a resultId -- start fresh next time
                 }
-                ApplyDecodedSemanticTokens(*bufferPtr, DecodeSemanticTokenData(rawData), legendCopy);
+                ApplyDecodedSemanticTokens(*bufferPtr, DecodeSemanticTokenData(rawData), legendCopy, *requestedContent,
+                                           requestedGeneration);
             });
         return;
     }
@@ -1915,16 +1978,14 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
     const Json params = {{"textDocument", {{"uri", state->uri}}}};
     client->SendRequest(
         "textDocument/semanticTokens/full", params,
-        [this, bufferPtr, requestId, requestedGeneration, legendCopy](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, requestedGeneration, requestedContent, legendCopy](std::optional<Json> result,
+                                                                                        std::optional<Json> error) {
             const auto counterIt = semanticTokensRequestCounter_.find(bufferPtr);
             if (counterIt == semanticTokensRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
             }
             if (error || !result) {
                 return; // leave whatever spans were already applied in place
-            }
-            if (bufferPtr->ContentGeneration() != requestedGeneration) {
-                return; // stale-position-race follow-up -- see the full/delta branch's own comment above
             }
             const std::vector<std::uint32_t> rawData = ExtractSemanticTokensRawData(*result);
             // range/delta follow-up: seed the delta baseline here too, not
@@ -1935,7 +1996,8 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
             if (const auto resultId = ExtractSemanticTokensResultId(*result)) {
                 previousSemanticTokens_[bufferPtr] = PreviousSemanticTokens{.resultId = *resultId, .rawData = rawData};
             }
-            ApplyDecodedSemanticTokens(*bufferPtr, DecodeSemanticTokenData(rawData), legendCopy);
+            ApplyDecodedSemanticTokens(*bufferPtr, DecodeSemanticTokenData(rawData), legendCopy, *requestedContent,
+                                       requestedGeneration);
         });
 }
 
@@ -1945,27 +2007,27 @@ const std::vector<editor::HighlightSpan>& Manager::SemanticTokenSpans(const text
     if (it == semanticTokenSpans_.end()) {
         return kEmpty;
     }
-    // Same staleness rule inlay hints got, for the same reason and with a
-    // different symptom. These spans are byte ranges resolved against the
-    // document as it stood when the response landed; nothing relocates them
-    // across the edits that follow. Handing them out anyway does not move any
-    // text -- it recolours the *wrong characters*, so colours, bolds, italics
-    // and underlines drift out of step with the code they belong to while you
-    // type (live-reported 2026-09-10, right after the annotation rows stopped
-    // moving and made this the visible artifact).
+    // These spans are byte ranges resolved against the document the server
+    // answered about. Handing them out against a document that has moved does
+    // not displace any text -- it recolours the *wrong characters*, so
+    // colours, bolds, italics and underlines drift out of step with the code
+    // they belong to while you type (live-reported 2026-09-10, right after
+    // the annotation rows stopped moving and made this the visible artifact).
     //
-    // As with inlay hints, the receipt path's own generation check is what
-    // makes this persist rather than self-correct: during continuous typing
-    // every response is computed against a superseded document and dropped,
-    // so the last applied set stays up and drifts further with each keystroke.
-    //
-    // Falling back to empty is cheap and correct here in a way it would not be
-    // for some features: the tree-sitter highlighting underneath is a complete
-    // answer on its own, and is exactly what the buffer showed before the
-    // server ever replied.
+    // That used to be answered by serving nothing at all once the buffer
+    // moved, which is cheap and correct here in a way it would not be for
+    // some features -- the grammar's own highlighting underneath is a
+    // complete answer, and is exactly what the buffer showed before the
+    // server ever replied. It also meant the server's contribution blinked
+    // out on every keystroke and came back a round trip later. Carrying the
+    // spans forward keeps them on the characters they describe instead, and
+    // drops only the individual tokens whose own text an edit rewrote.
     const auto generationIt = semanticTokenSpansContentGeneration_.find(const_cast<text::Buffer*>(&buffer));
-    if (generationIt == semanticTokenSpansContentGeneration_.end() || generationIt->second != buffer.ContentGeneration()) {
-        return kEmpty;
+    if (generationIt != semanticTokenSpansContentGeneration_.end()) {
+        CarryForward(it->second, generationIt->second, buffer,
+                     [](editor::HighlightSpan& span, const std::vector<text::EditOp>& ops) {
+                         return RelocateRange(span.startByte, span.endByte, ops, kSemanticTokenInsideDelete);
+                     });
     }
     return it->second;
 }
@@ -2009,20 +2071,22 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
     const Position            end           = BytePositionToLsp(content, viewportEndByte);
     text::Buffer* const       bufferPtr     = &buffer;
     const std::string         connectionKey = state->connectionKey; // per-connection latch, see RequestSemanticTokens
-    // region-scoped-relocation follow-up: captured so the response handler
-    // can resolve positions against exactly the document the server was
-    // asked about, then RemapInlayHintSpans carries them onto whatever the
-    // buffer has become by the time the response lands -- ContentGeneration()
-    // alone can't do that job, it can only say "something changed", not what.
+    // Captured so the response handler can convert the server's
+    // {line, character} positions against exactly the document it was asked
+    // about, however long it takes to arrive. Only for that conversion --
+    // carrying the result onto live content is CarryForward's job, off the
+    // buffer's own edit journal.
     // O(1): ITextStorage::Clone() is structurally shared, never materialized.
-    std::shared_ptr<const text::ITextStorage> requestedContent = buffer.Content().Clone();
-    const Json                                params           = {
+    std::shared_ptr<const text::ITextStorage> requestedContent    = buffer.Content().Clone();
+    const std::size_t                         requestedGeneration = buffer.ContentGeneration();
+    const Json                                params              = {
         {"textDocument", {{"uri", state->uri}}},
         {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
     };
     client->SendRequest(
         "textDocument/inlayHint", params,
-        [this, bufferPtr, requestId, connectionKey, requestedContent](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, connectionKey, requestedContent,
+         requestedGeneration](std::optional<Json> result, std::optional<Json> error) {
             const auto counterIt = inlayHintsRequestCounter_.find(bufferPtr);
             if (counterIt == inlayHintsRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
@@ -2038,60 +2102,100 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
             if (!result) {
                 return;
             }
-            // region-scoped-relocation follow-up: positions are resolved
-            // against *requestedContent -- exactly the document the server
-            // was asked about -- never against bufferPtr->Content() here,
-            // which may already be a different document by the time this
-            // response lands. RemapInlayHintSpans is what carries the
-            // result forward from there onto whatever the buffer has
+            // Positions are resolved against *requestedContent -- exactly the
+            // document the server was asked about -- never against
+            // bufferPtr->Content() here, which may already be a different
+            // document by the time this response lands. CarryForward is what
+            // takes the result from there onto whatever the buffer has
             // become, dropping anything the carry can't trust rather than
             // guessing.
             const std::vector<InlayHint>   hints   = ExtractInlayHints(*result);
             const text::ITextStorage&      content = *requestedContent;
             std::vector<ResolvedInlayHint> resolved;
             resolved.reserve(hints.size());
+            // Traced inside the conversion, before the sort below reorders
+            // it: the server's own position is the only thing that separates
+            // "the server told us the wrong place" from "we converted it
+            // wrongly", and after sorting the two are no longer lined up.
+            const char* const rawTrace = std::getenv("NED_DEBUG_LSP_HINTS");
+            std::ofstream     rawOut;
+            if (rawTrace != nullptr && *rawTrace != '\0') {
+                rawOut.open(rawTrace, std::ios::app);
+                rawOut << "  raw response against docBytes=" << content.ByteLength() << '\n';
+            }
             for (const InlayHint& hint : hints) {
-                resolved.push_back(ResolvedInlayHint{.byteOffset = PositionToByte(content, hint.position), .label = hint.label});
+                const std::size_t byteOffset = PositionToByte(content, hint.position);
+                if (rawOut) {
+                    rawOut << "    raw serverPos=" << hint.position.line << ':' << hint.position.character
+                           << " lineStart=" << content.LineToByteOffset(hint.position.line) << " byte=" << byteOffset
+                           << " label=" << hint.label << '\n';
+                }
+                resolved.push_back(ResolvedInlayHint{.byteOffset = byteOffset, .label = hint.label});
             }
             std::sort(resolved.begin(), resolved.end(),
                       [](const ResolvedInlayHint& a, const ResolvedInlayHint& b) { return a.byteOffset < b.byteOffset; });
-            RemapInlayHintSpans(resolved, *requestedContent, bufferPtr->Content());
+            std::size_t       resolvedAt = requestedGeneration;
+            const std::size_t beforeCarry = resolved.empty() ? 0 : resolved.front().byteOffset;
+            const bool        carried     = CarryForward(resolved, resolvedAt, *bufferPtr,
+                                                  [](ResolvedInlayHint& hint, const std::vector<text::EditOp>& ops) {
+                                                      return RelocatePoint(hint.byteOffset, ops, kInlayHintAnchor);
+                                                  });
+            // NED_DEBUG_LSP_HINTS=<path>: the numbers behind a hint landing in
+            // the wrong column. A carry that did not happen and one that
+            // happened by the wrong amount look identical on screen.
+            if (const char* tracePath = std::getenv("NED_DEBUG_LSP_HINTS"); tracePath != nullptr && *tracePath != '\0') {
+                if (std::ofstream trace{tracePath, std::ios::app}) {
+                    const std::optional<std::vector<text::EditOp>> ops = bufferPtr->Edits().OpsSince(requestedGeneration);
+                    trace << "inlayHint response: requestedGeneration=" << requestedGeneration
+                          << " liveGeneration=" << bufferPtr->ContentGeneration() << " opsSince="
+                          << (ops ? std::to_string(ops->size()) : std::string("UNREACHABLE")) << " carried=" << carried
+                          << " hints=" << resolved.size() << " firstOffset " << beforeCarry << " -> "
+                          << (resolved.empty() ? 0 : resolved.front().byteOffset) << '\n';
+                    if (ops) {
+                        for (const text::EditOp& op : *ops) {
+                            trace << "    op gen=" << op.generation << " offset=" << op.offset << " old=" << op.oldLength
+                                  << " new=" << op.newLength << " barrier=" << op.barrier << '\n';
+                        }
+                    }
+                    // Every hint as stored -- the first one converting
+                    // correctly says nothing about the rest. Logged after the
+                    // sort/carry, so this is exactly what the painter reads;
+                    // the server's own positions are not lined up with it any
+                    // more and would mislead rather than help.
+                    for (const ResolvedInlayHint& hint : resolved) {
+                        trace << "    hint byte=" << hint.byteOffset << " label=" << hint.label << '\n';
+                    }
+                }
+            }
             inlayHintSpans_[bufferPtr]           = std::move(resolved);
-            inlayHintSpansContent_[bufferPtr]    = bufferPtr->Content().Clone();
             inlayHintSpansGeneration_[bufferPtr] = bufferPtr->ContentGeneration();
         });
 }
 
-// Carries a resolved inlay-hint set from the document it was resolved
-// against onto a newer one -- shared by the receipt path above
-// (request-time document -> live) and by InlayHintSpans' own lazy catch-up
-// (last-known document -> live). Unlike RemapCodeLensSpans, a hint whose
-// offset falls *inside* the changed region is dropped rather than clamped:
-// a lens owns a whole extra row that can sit at the edit point harmlessly,
-// but a hint inserts real columns inline, so clamping it to the edit point
-// would render it inside whatever token now sits there -- the exact
-// "writfd:ten" gargling this whole mechanism exists to prevent. A hint
-// entirely outside the changed region is unaffected content, safe to keep
-// and just reposition.
-void Manager::RemapInlayHintSpans(std::vector<ResolvedInlayHint>& hints, const text::ITextStorage& from,
-                                  const text::ITextStorage& to) {
-    if (hints.empty()) {
-        return;
+bool Manager::RelocatePoint(std::size_t& offset, const std::vector<text::EditOp>& ops, text::AnchorPolicy policy) {
+    const std::optional<std::size_t> moved = text::RelocateThroughAll(offset, ops, policy);
+    if (!moved) {
+        return false;
     }
-    const std::optional<text::ChangedSpan> span = text::ChangedByteRange(from, to);
-    if (!span) {
-        return; // byte-identical: nothing to carry
+    offset = *moved;
+    return true;
+}
+
+bool Manager::RelocateRange(std::size_t& startByte, std::size_t& endByte, const std::vector<text::EditOp>& ops,
+                            text::InsideDelete insideDelete) {
+    const std::optional<std::size_t> movedStart =
+        text::RelocateThroughAll(startByte, ops, {.gravity = text::Gravity::Right, .insideDelete = insideDelete});
+    const std::optional<std::size_t> movedEnd =
+        text::RelocateThroughAll(endByte, ops, {.gravity = text::Gravity::Left, .insideDelete = insideDelete});
+    if (!movedStart || !movedEnd) {
+        return false;
     }
-    std::vector<ResolvedInlayHint> kept;
-    kept.reserve(hints.size());
-    for (ResolvedInlayHint& hint : hints) {
-        if (hint.byteOffset > span->oldStart && hint.byteOffset < span->oldEnd) {
-            continue; // anchored inside the text the edit just rewrote -- can't trust it
-        }
-        hint.byteOffset = text::RemapOffset(hint.byteOffset, *span);
-        kept.push_back(std::move(hint));
-    }
-    hints = std::move(kept);
+    startByte = *movedStart;
+    // The two gravities can cross when an edit eats the range from both
+    // sides; a degenerate range is kept rather than dropped, matching what
+    // the diff path did, and leaves the decision to whoever renders it.
+    endByte = std::max(*movedStart, *movedEnd);
+    return true;
 }
 
 const std::vector<Manager::ResolvedInlayHint>& Manager::InlayHintSpans(const text::Buffer& buffer) const {
@@ -2102,17 +2206,16 @@ const std::vector<Manager::ResolvedInlayHint>& Manager::InlayHintSpans(const tex
         return kEmpty;
     }
 
-    // Lazy catch-up, CodeLensSpans' own shape: done here on read, rather
-    // than at each edit, because Manager has no hook into Buffer's own
-    // edits -- and it is cheap, one bounded diff per generation change,
-    // amortized across however many reads that generation sees.
+    // Lazy catch-up: done here on read rather than at each edit, because
+    // Manager has no hook into Buffer's own edits -- and it stays cheap
+    // because replaying a handful of ops is bounded by how many edits have
+    // happened since, not by document size.
     const auto generationIt = inlayHintSpansGeneration_.find(key);
-    const auto contentIt    = inlayHintSpansContent_.find(key);
-    if (generationIt != inlayHintSpansGeneration_.end() && contentIt != inlayHintSpansContent_.end() &&
-        contentIt->second != nullptr && generationIt->second != buffer.ContentGeneration()) {
-        RemapInlayHintSpans(it->second, *contentIt->second, buffer.Content());
-        contentIt->second    = buffer.Content().Clone();
-        generationIt->second = buffer.ContentGeneration();
+    if (generationIt != inlayHintSpansGeneration_.end()) {
+        CarryForward(it->second, generationIt->second, buffer,
+                     [](ResolvedInlayHint& hint, const std::vector<text::EditOp>& ops) {
+                         return RelocatePoint(hint.byteOffset, ops, kInlayHintAnchor);
+                     });
     }
     return it->second;
 }
@@ -2152,17 +2255,19 @@ void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverK
     // time, which is the one the server will answer about -- the guard above
     // already refuses to ask unless the server is in sync with it. Kept so the
     // response's {line, character} positions can be converted against the
-    // right text however long it takes to arrive, and then remapped onto
-    // whatever the buffer has become.
+    // right text however long it takes to arrive; carrying the result onto
+    // live content is CarryForward's job, off the buffer's own edit journal.
     //
     // Clone() is O(1): storage is structurally shared and never materialized
     // (see Buffer's own use of it across undo), so this costs a pointer, not a
     // copy of the document -- which is what makes holding it per in-flight
     // request reasonable at all.
-    std::shared_ptr<const text::ITextStorage> requestedContent = buffer.Content().Clone();
+    std::shared_ptr<const text::ITextStorage> requestedContent    = buffer.Content().Clone();
+    const std::size_t                         requestedGeneration = buffer.ContentGeneration();
     client->SendRequest(
         "textDocument/codeLens", params,
-        [this, bufferPtr, requestId, connectionKey, requestedContent](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, connectionKey, requestedContent,
+         requestedGeneration](std::optional<Json> result, std::optional<Json> error) {
             const auto counterIt = codeLensRequestCounter_.find(bufferPtr);
             if (counterIt == codeLensRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
@@ -2192,32 +2297,16 @@ void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverK
             std::sort(resolved.begin(), resolved.end(),
                       [](const ResolvedCodeLens& a, const ResolvedCodeLens& b) { return a.startByte < b.startByte; });
             // Resolved against the requested document; carry them forward to
-            // whatever the buffer is now, and record the content they are
+            // whatever the buffer is now, and record the generation they are
             // valid against so CodeLensSpans can keep doing that as editing
             // continues.
-            RemapCodeLensSpans(resolved, *requestedContent, bufferPtr->Content());
+            std::size_t resolvedAt = requestedGeneration;
+            CarryForward(resolved, resolvedAt, *bufferPtr, [](ResolvedCodeLens& lens, const std::vector<text::EditOp>& ops) {
+                return RelocateRange(lens.startByte, lens.endByte, ops, text::InsideDelete::Clamp);
+            });
             codeLensSpans_[bufferPtr]           = std::move(resolved);
-            codeLensSpansContent_[bufferPtr]    = bufferPtr->Content().Clone();
             codeLensSpansGeneration_[bufferPtr] = bufferPtr->ContentGeneration();
         });
-}
-
-// Carries a resolved lens set from the document it was resolved against onto a
-// newer one. Shared by the receipt path (request-time document -> live) and by
-// CodeLensSpans' own lazy catch-up (last-known document -> live).
-void Manager::RemapCodeLensSpans(std::vector<ResolvedCodeLens>& lenses, const text::ITextStorage& from,
-                                 const text::ITextStorage& to) {
-    if (lenses.empty()) {
-        return;
-    }
-    const std::optional<text::ChangedSpan> span = text::ChangedByteRange(from, to);
-    if (!span) {
-        return; // byte-identical: nothing to carry
-    }
-    for (ResolvedCodeLens& lens : lenses) {
-        lens.startByte = text::RemapOffset(lens.startByte, *span);
-        lens.endByte   = std::max(lens.startByte, text::RemapOffset(lens.endByte, *span));
-    }
 }
 
 const std::vector<Manager::ResolvedCodeLens>& Manager::CodeLensSpans(const text::Buffer& buffer) const {
@@ -2233,24 +2322,25 @@ const std::vector<Manager::ResolvedCodeLens>& Manager::CodeLensSpans(const text:
     // does not merely misplace a label -- it puts that row above the wrong
     // line, and every line below moves.
     //
-    // Relocated rather than suppressed, for the same reason diagnostics were:
-    // blanking the set would make the row itself blink in and out as you type,
-    // which is the movement this is meant to stop. Done here on read rather
-    // than at each edit because Manager has no hook into Buffer's own edits --
-    // and it is cheap: one bounded diff per generation change, amortized
-    // across however many reads that generation sees (Paint asks twice a
-    // frame), with the snapshot advanced so the next diff starts from here.
+    // Carried forward rather than suppressed, for the same reason diagnostics
+    // are: blanking the set would make the row itself blink in and out as you
+    // type, which is the movement this is meant to stop. Done here on read
+    // rather than at each edit because Manager has no hook into Buffer's own
+    // edits -- and it is cheap: replaying however few ops have landed since,
+    // amortized across however many reads that generation sees (Paint asks
+    // twice a frame).
     //
-    // Holding a snapshot is affordable only because ITextStorage::Clone is
-    // O(1) -- structurally shared, never materialized. A std::string copy per
-    // buffer would not have been.
+    // Clamped, not invalidated, unlike an inlay hint: a lens owns a whole
+    // extra row rather than columns inside a line, so one sitting at an edit
+    // point is misplaced but never garbles the text it sits above -- and a
+    // lens that vanished as you typed inside the function it counts would be
+    // the flicker this is here to prevent.
     const auto generationIt = codeLensSpansGeneration_.find(key);
-    const auto contentIt    = codeLensSpansContent_.find(key);
-    if (generationIt != codeLensSpansGeneration_.end() && contentIt != codeLensSpansContent_.end() &&
-        contentIt->second != nullptr && generationIt->second != buffer.ContentGeneration()) {
-        RemapCodeLensSpans(it->second, *contentIt->second, buffer.Content());
-        contentIt->second    = buffer.Content().Clone();
-        generationIt->second = buffer.ContentGeneration();
+    if (generationIt != codeLensSpansGeneration_.end()) {
+        CarryForward(it->second, generationIt->second, buffer,
+                     [](ResolvedCodeLens& lens, const std::vector<text::EditOp>& ops) {
+                         return RelocateRange(lens.startByte, lens.endByte, ops, text::InsideDelete::Clamp);
+                     });
     }
     return it->second;
 }
@@ -2407,7 +2497,7 @@ void Manager::PushMergedDiagnostics(text::Buffer& buffer) {
     if (const auto it = diagnosticsBySource_.find(&buffer); it != diagnosticsBySource_.end()) {
         for (auto& perSource : it->second) {
             // debounce-window-drift follow-up. A slice's offsets were resolved
-            // against the document in resolvedAgainst, which is not the
+            // against the document at resolvedAtGeneration, which is not the
             // document they are about to be applied to: this buffer kept being
             // typed into through DiagnosticsDebounceMs(), and a slice from
             // another source may have been sitting here far longer than that,
@@ -2423,31 +2513,17 @@ void Manager::PushMergedDiagnostics(text::Buffer& buffer) {
 }
 
 void Manager::RebaseSliceOntoLiveContent(const text::Buffer& buffer, DiagnosticSlice& slice) const {
-    if (!slice.resolvedAgainst || slice.diagnostics.empty() || slice.resolvedAtGeneration == buffer.ContentGeneration()) {
-        return;
-    }
-    const std::optional<text::ChangedSpan> span = text::ChangedByteRange(*slice.resolvedAgainst, buffer.Content());
-    if (!span) {
-        return; // byte-identical -- the offsets already name the live content
-    }
-    // A pure insertion leaves RemapOffset with no way to know which side of
-    // it an offset sitting exactly at the insertion point belongs to -- that
-    // is gravity, and it is the caller's to decide. A diagnostic start has
-    // right gravity for the same reason Buffer::RelocateDiagnosticsForInsert
-    // gives it one: text typed at a flagged token's first byte was not part
-    // of what the server flagged, so the underline moves along rather than
-    // growing over it. The end needs no such case (RemapOffset already
-    // shifts an offset at the change's end, which is the at-or-after rule
-    // that side wants).
-    const bool insertionOnly = span->oldStart == span->oldEnd;
-    for (text::Buffer::Diagnostic& diagnostic : slice.diagnostics) {
-        diagnostic.startByte = (insertionOnly && diagnostic.startByte == span->oldStart)
-                                   ? span->newEnd
-                                   : text::RemapOffset(diagnostic.startByte, *span);
-        diagnostic.endByte   = std::max(diagnostic.startByte, text::RemapOffset(diagnostic.endByte, *span));
-    }
-    slice.resolvedAgainst      = buffer.Content().Clone();
-    slice.resolvedAtGeneration = buffer.ContentGeneration();
+    // Gravity is what the diff path had to hand-special-case here: a
+    // diagnostic start has right gravity for the same reason
+    // Buffer::RelocateDiagnosticsForInsert gives it one -- text typed at a
+    // flagged token's first byte was not part of what the server flagged, so
+    // the underline moves along rather than growing over it -- and its end
+    // has left gravity, so the underline does not swallow text typed just
+    // past it either. RelocateRange pairs exactly that.
+    CarryForward(slice.diagnostics, slice.resolvedAtGeneration, buffer,
+                 [](text::Buffer::Diagnostic& diagnostic, const std::vector<text::EditOp>& ops) {
+                     return RelocateRange(diagnostic.startByte, diagnostic.endByte, ops, kDiagnosticInsideDelete);
+                 });
 }
 
 void Manager::HandleProgress(const std::string& connectionKey, const Json& params) {

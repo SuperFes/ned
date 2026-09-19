@@ -9,5 +9,5 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 cmake -S . -B cmake-build-asan -DNED_ENABLE_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build cmake-build-asan -j8 --target ned_tests
-exec ./cmake-build-asan/ned_tests "$@"
+cmake --build cmake-build-asan -j4 --target ned_tests
+exec ./cmake-build-asan/Tests/ned_tests "$@"

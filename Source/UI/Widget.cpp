@@ -2,6 +2,8 @@
 
 #include "Compositing.h"
 
+#include <cstdlib>
+
 #include <notcurses/notcurses.h>
 
 namespace ned::ui {
@@ -295,7 +297,15 @@ void Screen::Flush(ncplane* plane, ncplane* backingPlane) {
     // comparison the one time it would be wrong: the first Flush() against a
     // brand-new Screen/plane pair, where `previousCells_`/`previousBacking_`
     // don't reflect what (if anything) is actually on the real planes yet.
-    const bool fullRepaint = dirty_;
+    // NED_DEBUG_FULL_REPAINT=1 disables the skip entirely. A rendering fault
+    // that disappears under it is this diff's, not the Canvas's: the cells it
+    // would have skipped are the only difference between the two modes. Read
+    // once -- this is on the per-frame path.
+    static const bool forceFullRepaint = [] {
+        const char* value = std::getenv("NED_DEBUG_FULL_REPAINT");
+        return value != nullptr && *value != '\0' && *value != '0';
+    }();
+    const bool fullRepaint = dirty_ || forceFullRepaint;
 
     // The backing layer first, so the text plane above has something to defer
     // to. Only its background is meaningful -- the glyph always comes from
