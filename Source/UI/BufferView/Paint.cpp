@@ -1776,6 +1776,13 @@ void BufferView::Paint(Canvas paneCanvas) {
 
     std::vector<editor::dap::Manager::Breakpoint>   dapBreakpoints;
     std::optional<std::pair<std::string, std::size_t>> dapStop;
+    if (dapManager_ != nullptr) {
+        // dap-anchored-breakpoints follow-up: the gutter is where a breakpoint's line
+        // is read, so it is also where that line is brought up to date -- a buffer
+        // being looked at needs no separate invalidation rule. Costs a map lookup for
+        // a buffer whose file has no breakpoints.
+        dapManager_->TrackBuffer(activeBuffer_.Get());
+    }
     if (gutter.dapWidth > 0) {
         dapBreakpoints = dapManager_->BreakpointsForKey(dapPathKey_);
         dapStop        = dapManager_->CurrentStopKeyAndLine();

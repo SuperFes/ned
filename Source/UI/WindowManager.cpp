@@ -1776,6 +1776,11 @@ void WindowManager::NotifyPanesBufferClosed(text::Buffer& closingBuffer) {
     for (Pane* pane : Leaves()) {
         pane->Buffer().NotifyBufferClosed(closingBuffer);
     }
+    // dap-anchored-breakpoints follow-up: same contract, one store rather than one per
+    // pane -- the breakpoints survive, as the lines their anchors last resolved to.
+    if (dapManager_) {
+        dapManager_->NotifyBufferClosed(closingBuffer);
+    }
 }
 
 void WindowManager::DoSplit(WindowNode::Kind kind) {

@@ -291,18 +291,57 @@ diagnostics ship wired at five sites and not the sixth.
       feed, so the churn buys nothing visible. The exception worth taking on its own
       merits is snippet ranges, because there the migration closes a real open item
       rather than just moving code -- see "Nested snippet placeholders" below.
-- [ ] **Audit what predates the seams we since built.** Inlay hints were found (2026-09-19)
-      still keeping a byte-offset-plus-generation store and replaying the journal on every
-      read -- and it is a tenant the entry above never counted, because the seam landed
-      the day before and the survey only looked at what `Buffer` itself tracked. The store
-      was also *wrong* for the job, not merely dated: a set meant to live as long as the
-      buffer cannot ride `EditJournal`, whose `OpsSince` stops reaching back past
-      `kCapacity` and whose answer to that is to drop everything the holder has.
-      Worth one pass over the rest on the same question: what is hand-rolling something `AnchorSet`, `EditJournal`/`CarryForward`,
-      `Buffer::Commit*`, `QueryMatcher` or `FramedConnection` now does properly? Not the
-      eight tenants above (that is a measured decline, see the entry above this one) --
-      the ones nobody has weighed at all. Each hit is its own judgement call: migrate only
-      where the old path is wrong or the churn buys something visible.
+
+**What a second and third tenant cost, and the one rule they found.** An `AnchorId`
+carries no owner, so a handle from one buffer offered to another buffer's `AnchorSet` can
+free a *stranger's* live anchor whose slot index and version happen to match. A holder
+that follows a buffer around therefore needs an explicit release hook, called while the
+outgoing buffer is still alive -- the `NotifyBufferClosed` shape, fanned out from
+`WindowManager`'s two close sites -- rather than noticing the change lazily, by which
+point the pointer it would release into is dangling. Identity compares against
+`Buffer::InstanceId()`, never the address.
+
+The pass this section used to ask for ran 2026-09-19: what else hand-rolls something
+`AnchorSet`, `EditJournal`/`CarryForward`, `Buffer::Commit*`, `QueryMatcher` or
+`FramedConnection` now does properly? Two hits were wrong rather than merely dated and
+were fixed (vim's marks/jumplist/changelist, DAP breakpoints -- `git log --grep=`
+`vim-anchored-marks` and `dap-anchored-breakpoints`). Four things came back clean and are
+recorded so the question isn't re-asked: every `Storage_` assignment in `Buffer.cpp`
+pairs with a `Commit*`/barrier, so no mutation bypasses the one feed; `OffsetRemap` is
+down to a single caller, the undo/restore path its one-contiguous-region model is exact
+for; the gutter/inline-diagnostic/test/coverage stores are derive-and-invalidate caches
+keyed on generation, not tracked positions; and `Bookmark.h`/`Vim/GlobalMarks.h` store
+line/column rather than offsets on a stated rationale (surviving edits made to the file
+outside ned), which anchors don't address either way. What the pass left open:
+
+- [ ] **`IncrementalParseCache` re-derives an edit the buffer already recorded exactly.**
+      `Editor/Grammar/IncrementalParse.h` keeps `lastText_` -- a second full copy of the
+      document -- and reconstructs one changed region per call by common-prefix/suffix
+      diffing it, which is what `Buffer::Edits()` has held exactly since
+      `sidecar-anchors`. Cost, not wrongness: the reconstruction is conservative (two
+      distant edits widen to one span covering both, so the parser reuses fewer subtrees
+      but never a wrong one). The reason it diffs is a real constraint, not an oversight
+      -- every `Mode` capability is a pure function of "the buffer's full current text",
+      with no `Buffer&` and no edit-delta parameter, which is what keeps `Mode` a
+      copyable value type a test can drive with a bare string. So this is a change to
+      that seam, not to this file. Worth doing only once the doubled resident text
+      actually shows up in a measurement (`Tests/KeystrokeBench.cpp`, a large file, RSS
+      per open buffer) rather than on principle.
+- [ ] **The background-loop-plus-`EventLoop::Post` machine is hand-rolled in five more
+      places.** `Editor/Protocol/FramedConnection.h` exists because three protocol
+      clients each rebuilt the same thing and a member-declaration-order invariant was
+      defended only by a comment repeated in three files. `Editor/Mcp/BridgeServer` is a
+      fourth copy of exactly that -- jthread read loop, `shared_ptr<bool> alive_` captured
+      by value into every `Post`, and the same "declared last so its destructor runs after
+      the body has unblocked it" comment -- and `Terminal/PtyProcess`, `Tasks/TaskProcess`,
+      `FileWatch` and `ModePrewarm` each carry a thinner version. `FramedConnection`
+      cannot be reused as-is: it owns one spawned `TransportT` by value (which is what
+      enforces the destruction order), while the bridge accepts N socket connections and
+      the other four aren't framed protocols at all. So the honest options are extracting
+      the per-connection half into something the bridge can hold one of per accepted
+      connection, or leaving it -- not a migration. Nothing here is known-broken; the
+      cost is that the next bug of the shape `lsp-use-after-free` was has five places to
+      hide in instead of one.
 
 - [ ] Anchors have no Janet surface. Deliberate for now: the C++ seam has one consumer
       shape so far, and a scripted holder that leaks handles leaks them forever (there is
