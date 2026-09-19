@@ -270,6 +270,19 @@ diagnostics ship wired at five sites and not the sixth.
       feed, so the churn buys nothing visible. The exception worth taking on its own
       merits is snippet ranges, because there the migration closes a real open item
       rather than just moving code -- see "Nested snippet placeholders" below.
+- [ ] **Audit what predates the seams we since built.** Inlay hints were found (2026-09-19)
+      still keeping a byte-offset-plus-generation store and replaying the journal on every
+      read -- and it is a tenant the entry above never counted, because the seam landed
+      the day before and the survey only looked at what `Buffer` itself tracked. The store
+      was also *wrong* for the job, not merely dated: a set meant to live as long as the
+      buffer cannot ride `EditJournal`, whose `OpsSince` stops reaching back past
+      `kCapacity` and whose answer to that is to drop everything the holder has.
+      Worth one pass over the rest on the same question: what is hand-rolling something `AnchorSet`, `EditJournal`/`CarryForward`,
+      `Buffer::Commit*`, `QueryMatcher` or `FramedConnection` now does properly? Not the
+      eight tenants above (that is a measured decline, see the entry above this one) --
+      the ones nobody has weighed at all. Each hit is its own judgement call: migrate only
+      where the old path is wrong or the churn buys something visible.
+
 - [ ] Anchors have no Janet surface. Deliberate for now: the C++ seam has one consumer
       shape so far, and a scripted holder that leaks handles leaks them forever (there is
       no RAII handle -- `Buffer` is move-only and an anchor outliving its owner would

@@ -4061,7 +4061,10 @@ TEST_CASE("RequestViewportFeatures sends the first viewport at once and collapse
     REQUIRE(deferred[0]["method"] == "textDocument/semanticTokens/range");
     REQUIRE(deferred[0]["params"]["range"]["start"]["line"] == 2); // the last viewport, never the middle one
     REQUIRE(deferred[1]["method"] == "textDocument/inlayHint");
-    REQUIRE(deferred[1]["params"]["range"]["start"]["line"] == 2);
+    // One line earlier than the viewport, and than semanticTokens just
+    // above: hints are asked for a screenful either side so the next scroll
+    // lands on covered ground (clamped to the buffer's end on this side).
+    REQUIRE(deferred[1]["params"]["range"]["start"]["line"] == 1);
 
     // A further frame at the settled pair arms nothing and sends nothing.
     manager.RequestViewportFeatures(buffer, 22, 33, "test-lang");
@@ -4512,30 +4515,210 @@ TEST_CASE("A response landing after the buffer was edited relocates onto live co
     REQUIRE(hints[1].byteOffset == 18); // after it, shifted by the inserted length
 }
 
-TEST_CASE("RequestInlayHints does not resend for the same (content, viewport), but does resend for a different "
-          "viewport",
-          "[Lsp]") {
+// This used to assert the opposite of its third case: any viewport change at
+// all was worth a fresh request, because the store only ever held the last
+// response and a scroll really did have nothing left to show. With hints
+// retained per answered range, re-asking about a range already answered buys
+// nothing and costs a round trip per wheel notch -- so the contract is now
+// "ask about ground nobody has asked about", and the margin is what makes an
+// ordinary scroll land on covered ground.
+TEST_CASE("RequestInlayHints asks only about ranges not already covered", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    Manager                  manager(bufferList, eventLoop);
+    Manager                     manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-dedup-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    for (int line = 0; line < 10; ++line) {
+        buffer.InsertAtPoint("int x = 1;\n"); // 11 bytes a line, 110 total
+    }
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    // One screenful visible; a screenful either side is what actually goes
+    // out, so this request covers bytes 0-22.
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang");
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const auto        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["params"]["range"]["start"]["line"] == 0);
+    REQUIRE(request["params"]["range"]["end"]["line"] == 2); // the margin, not just what is visible
+
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang"); // a repaint, not a real change
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    // The case that changed: scrolled a line, still inside what was asked
+    // about. The old gate sent a second request here.
+    manager.RequestInlayHints(buffer, 11, 22, "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    // Scrolled past the margin -- genuinely new ground, so one request.
+    manager.RequestInlayHints(buffer, 44, 55, "test-lang");
+    const std::string secondRaw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(secondRaw.substr(secondRaw.find("\r\n\r\n") + 4))["method"] == "textDocument/inlayHint");
+}
+
+TEST_CASE("An edit discards inlay hint coverage, since a hint anywhere may have changed", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-coverage-edit-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("int x = 1;\nint y = 2;\n");
 
-    Client* client = nullptr;
+    Client*    client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     manager.RequestInlayHints(buffer, 0, 11, "test-lang");
-    (void)ReadRawFrame(server.serverStdinRead); // the one real request for this range
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"result", Json::array()}}.dump());
 
-    manager.RequestInlayHints(buffer, 0, 11, "test-lang"); // same range, no edit -- a repaint, not a real change
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang"); // answered already
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 
-    manager.RequestInlayHints(buffer, 11, 22, "test-lang"); // scrolled to reveal new content
-    const std::string raw = ReadRawFrame(server.serverStdinRead);
-    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/inlayHint");
+    buffer.InsertAtPoint("x");
+    manager.SyncBuffer(buffer, "test-lang");
+    // RequestInlayHints will not ask about a generation the server has not
+    // been sent yet, so the debounced didChange has to land first.
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang");
+    const std::string afterEdit = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(afterEdit.substr(afterEdit.find("\r\n\r\n") + 4))["method"] == "textDocument/inlayHint");
+}
+
+// The bug these three cover: a response used to replace the whole store, so
+// scrolling to a new region deleted the hints for every region already
+// answered. Visible as the code bouncing sideways for a round trip on every
+// mouse-wheel notch, and as hints that never came back until you edited.
+TEST_CASE("A response for one range leaves the hints already answered for another range alone", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-retain-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int a = 1;\nint b = 2;\nint c = 3;");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    // The first screenful: line 0.
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang");
+    const std::string firstRaw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(firstRaw)},
+                               {"result", Json::array({{{"position", {{"line", 0}, {"character", 3}}}, {"label", ": int"}}})}}
+                              .dump());
+    REQUIRE(manager.InlayHintSpans(buffer).size() == 1);
+
+    // Scrolled to line 2, past the first request's margin. The server
+    // answers only about what it was asked about, which is exactly how the
+    // old code came to lose line 0.
+    manager.RequestInlayHints(buffer, 22, buffer.Size(), "test-lang");
+    const std::string secondRaw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(secondRaw)},
+                               {"result", Json::array({{{"position", {{"line", 2}, {"character", 3}}}, {"label", ": int"}}})}}
+                              .dump());
+
+    const std::vector<Manager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
+    REQUIRE(hints.size() == 2);
+    REQUIRE(hints[0].byteOffset == 3);  // line 0, kept across a scroll that never asked about it again
+    REQUIRE(hints[1].byteOffset == 25); // line 2
+}
+
+TEST_CASE("A second response for the same range replaces that range's hints rather than duplicating them", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-replace-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int a = 1;\nint b = 2;\nint c = 3;");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang");
+    const std::string firstRaw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(firstRaw)},
+                               {"result", Json::array({{{"position", {{"line", 0}, {"character", 3}}}, {"label", ": int"}}})}}
+                              .dump());
+    REQUIRE(manager.InlayHintSpans(buffer).size() == 1);
+
+    // An edit is what makes already-answered ground askable again, so this
+    // is also the only way back to the same range through the real path.
+    buffer.InsertAtPoint(";"); // at end of buffer -- moves no earlier offset
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    (void)ReadRawFrame(server.serverStdinRead); // the debounced didChange
+
+    // Answered again for the same ground, with a different label at the same
+    // position: one hint, the newer label -- never two stacked.
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang");
+    const std::string secondRaw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(secondRaw)},
+                               {"result", Json::array({{{"position", {{"line", 0}, {"character", 3}}}, {"label", ": long"}}})}}
+                              .dump());
+
+    const std::vector<Manager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
+    REQUIRE(hints.size() == 1);
+    REQUIRE(hints[0].label == ": long");
+}
+
+TEST_CASE("An empty response withdraws that range's hints and only that range's", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-withdraw-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int a = 1;\nint b = 2;\nint c = 3;");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang");
+    const std::string firstRaw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(firstRaw)},
+                               {"result", Json::array({{{"position", {{"line", 0}, {"character", 3}}}, {"label", ": int"}}})}}
+                              .dump());
+
+    manager.RequestInlayHints(buffer, 22, buffer.Size(), "test-lang");
+    const std::string secondRaw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(secondRaw)},
+                               {"result", Json::array({{{"position", {{"line", 2}, {"character", 3}}}, {"label", ": int"}}})}}
+                              .dump());
+    REQUIRE(manager.InlayHintSpans(buffer).size() == 2);
+
+    // An edit is what makes already-answered ground askable again, so this
+    // is also the only way back to the same range through the real path.
+    buffer.InsertAtPoint(";"); // at end of buffer -- moves no earlier offset
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    (void)ReadRawFrame(server.serverStdinRead); // the debounced didChange
+
+    // Line 0's hints withdrawn. Retention must not mean "a hint can never go
+    // away" -- an empty answer about a range is still an answer about it.
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang");
+    const std::string thirdRaw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(thirdRaw)}, {"result", Json::array()}}.dump());
+
+    const std::vector<Manager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
+    REQUIRE(hints.size() == 1);
+    REQUIRE(hints[0].byteOffset == 25); // line 2 untouched
 }
 
 TEST_CASE("A server erroring on textDocument/inlayHint is never asked again for that connection's lifetime", "[Lsp]") {
