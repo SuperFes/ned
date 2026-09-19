@@ -101,6 +101,8 @@ class Pane {
          editor::acp::Manager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
          std::function<void(editor::InteractiveRequest)> onWindowRequest, std::function<void(text::Buffer&)> onBufferClosed);
 
+    ~Pane();
+
     Pane(const Pane&)            = delete;
     Pane& operator=(const Pane&) = delete;
     Pane(Pane&&)                 = delete;
@@ -836,6 +838,10 @@ class WindowManager {
     // showing closingBuffer to some other live buffer, conjuring a single
     // shared fresh scratch buffer if there's genuinely nothing else open.
     void ReassignPanesShowing(text::Buffer& closingBuffer, Pane* skip);
+
+    // Its sibling for the other thing a close has to do while the buffer is still
+    // alive -- see the definition.
+    void NotifyPanesBufferClosed(text::Buffer& closingBuffer);
 
     void DoSplit(WindowNode::Kind kind);
     void SplitBelow();

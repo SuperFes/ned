@@ -523,6 +523,140 @@ TEST_CASE("An unset uppercase mark reports E20 like any other unset mark", "[Eng
     REQUIRE_FALSE(engine.TakePendingBufferJump().has_value());
 }
 
+// vim-anchored-marks follow-up. Every position this engine remembers is an anchor now,
+// so what these pin is the property a raw byte offset could never have: an edit
+// somewhere else in the buffer moves the remembered position with the text it named.
+// The old reads clamped to the buffer's length, which hid the overrun rather than
+// fixing it, so each of these asserts the landing byte against the content it is
+// supposed to be naming, not just that it stayed in range.
+TEST_CASE("A mark follows the text it was set on across an edit above it", "[Engine]") {
+    Buffer buffer = MakeBuffer("alpha\nbravo\ncharlie\n");
+    Engine engine;
+
+    Feed(engine, buffer, "jma"); // mark 'a' at the start of "bravo"
+    const std::size_t marked = buffer.Point();
+    REQUIRE(buffer.Text().substr(marked, 5) == "bravo");
+
+    buffer.InsertAt(0, "zero\n"); // a line arrives above the mark
+    Feed(engine, buffer, "G`a");
+
+    REQUIRE(buffer.Point() == marked + 5);
+    REQUIRE(buffer.Text().substr(buffer.Point(), 5) == "bravo");
+}
+
+TEST_CASE("A mark deleted out from under itself clamps to the edit point", "[Engine]") {
+    Buffer buffer = MakeBuffer("alpha\nbravo\ncharlie\n");
+    Engine engine;
+
+    Feed(engine, buffer, "jlllma"); // mark inside "bravo"
+    buffer.DeleteRange(6, 12);      // the whole "bravo\n" line goes
+
+    Feed(engine, buffer, "G`a");
+    REQUIRE(buffer.Point() == 6); // where the deleted text was, not a stale offset past it
+    REQUIRE(engine.StatusText().empty());
+}
+
+TEST_CASE("The jumplist follows the text its entries named", "[Engine]") {
+    Buffer buffer = MakeBuffer("alpha\nbravo\ncharlie\ndelta\n");
+    Engine engine;
+
+    Feed(engine, buffer, "jj"); // to "charlie"
+    const std::size_t left = buffer.Point();
+    Feed(engine, buffer, "G"); // a jump, recording `left`
+    buffer.InsertAt(0, "zero\n");
+
+    (void)engine.HandleKey(buffer, Ctrl(U'o'));
+    REQUIRE(buffer.Point() == left + 5);
+    REQUIRE(buffer.Text().substr(buffer.Point(), 7) == "charlie");
+}
+
+TEST_CASE("gv re-selects the same text after an edit above it", "[Engine]") {
+    Buffer buffer = MakeBuffer("alpha\nbravo\ncharlie\n");
+    Engine engine;
+
+    Feed(engine, buffer, "jvll\x1b"); // select three bytes of "bravo", then leave Visual
+    buffer.InsertAt(0, "zero\n");
+
+    Feed(engine, buffer, "gv");
+    REQUIRE(engine.CurrentMode() == Mode::Visual);
+    REQUIRE(buffer.Text().substr(buffer.Point(), 3) == "avo");
+}
+
+TEST_CASE("A revert drops every mark rather than pointing it at new content", "[Engine]") {
+    Buffer buffer = MakeBuffer("alpha\nbravo\ncharlie\n");
+    Engine engine;
+
+    Feed(engine, buffer, "jma");
+    buffer.ReplaceContentForLoad(ned::text::Rope("something else entirely\n")); // a barrier
+
+    Feed(engine, buffer, "`a");
+    REQUIRE(engine.StatusText() == "E20: Mark not set");
+}
+
+TEST_CASE("Switching buffers releases the anchors the marks held", "[Engine]") {
+    Buffer bufferA = MakeBuffer("alpha\nbravo\ncharlie\n");
+    Engine engine;
+
+    Feed(engine, bufferA, "jmajmbG"); // two marks, a jump mark and a jumplist entry
+    REQUIRE(bufferA.LiveAnchorCount() > 0);
+
+    Buffer bufferB = MakeBuffer("one\ntwo\n");
+    (void)engine.HandleKey(bufferB, Ch(U'j'));
+
+    // An abandoned anchor is a slot the old buffer would relocate on every edit
+    // forever, which is the one cost this seam's own header calls a leak.
+    REQUIRE(bufferA.LiveAnchorCount() == 0);
+}
+
+TEST_CASE("A closed buffer's anchors are released before it goes away", "[Engine]") {
+    Buffer buffer = MakeBuffer("alpha\nbravo\ncharlie\n");
+    Engine engine;
+
+    Feed(engine, buffer, "jmaG");
+    REQUIRE(buffer.LiveAnchorCount() > 0);
+
+    engine.NotifyBufferClosed(buffer);
+    REQUIRE(buffer.LiveAnchorCount() == 0);
+}
+
+TEST_CASE("Re-marking the same letter doesn't accumulate anchors", "[Engine]") {
+    Buffer buffer = MakeBuffer("alpha\nbravo\ncharlie\n");
+    Engine engine;
+
+    Feed(engine, buffer, "ma");
+    const std::size_t afterFirst = buffer.LiveAnchorCount();
+    for (int i = 0; i < 20; ++i) {
+        Feed(engine, buffer, "jma");
+    }
+    REQUIRE(buffer.LiveAnchorCount() == afterFirst);
+}
+
+TEST_CASE("'<,'> covers the lines the old selection moved to", "[Engine]") {
+    Buffer buffer = MakeBuffer("alpha\nbravo\ncharlie\ndelta\n");
+    Engine engine;
+
+    Feed(engine, buffer, "jVj\x1b"); // linewise-select "bravo" and "charlie", then leave Visual
+    buffer.InsertAt(0, "zero\n");    // both lines slide down one
+
+    Feed(engine, buffer, ":'<,'>d\n");
+    REQUIRE(buffer.Text() == "zero\nalpha\ndelta\n");
+}
+
+TEST_CASE("Leaving Insert mode in a different buffer anchors in that buffer", "[Engine]") {
+    Buffer bufferA = MakeBuffer("alpha\nbravo\n");
+    Engine engine;
+    Feed(engine, bufferA, "ma");
+    REQUIRE(bufferA.LiveAnchorCount() == 1);
+
+    // BufferView calls this directly rather than through HandleKey, so it is its own
+    // first sight of a switched-to buffer.
+    Buffer bufferB = MakeBuffer("one\ntwo\n");
+    engine.ExitInsertToNormal(bufferB);
+
+    REQUIRE(bufferA.LiveAnchorCount() == 0);
+    REQUIRE(bufferB.LiveAnchorCount() == 1); // gi's own memory, in the buffer it happened in
+}
+
 TEST_CASE("Lowercase marks don't leak across a buffer switch in the same pane", "[Engine]") {
     Buffer bufferA = MakeBuffer("abcdefghij");
     Engine engine;
