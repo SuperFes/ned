@@ -242,6 +242,35 @@ TEST_CASE("CursorPosition skips the code lens row drawn above point's own line",
     REQUIRE(cursor->y == 2);
 }
 
+TEST_CASE("A code lens row is drawn with its own marker glyph", "[BufferView][CodeLens]") {
+    LspFixture    lsp("ned_bufferview_code_lens_glyph_test.c", "int a = 1;\nint main() {}\nint b = 2;\n");
+    FakeLspServer server = FakeLspServer::Create(lsp.manager, "c", lsp.eventLoop, lsp.client);
+    FrameReader   frames{server.serverStdinRead, {}};
+
+    BufferView view = lsp.fixture.View();
+    lsp.Ready(view, frames);
+
+    const Json request = frames.WithMethod("textDocument/codeLens");
+    REQUIRE(request.contains("id"));
+    lsp.client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                                   {"id", request["id"]},
+                                   {"result", Json::array({Json{{"range", RangeJson(1, 0, 3)},
+                                                                {"command", {{"title", "2 references"}, {"command", "noop"}}}}})}}
+                                  .dump());
+
+    ned::ui::Canvas canvas(lsp.screen, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 5});
+    view.Paint(canvas);
+
+    // Row 1 is the lens drawn above line 1. Reading the painted screen
+    // rather than the model: the glyph only matters if it actually reaches
+    // a cell, and the gutter offset is part of getting that right.
+    std::string painted;
+    for (int x = 0; x < 40; ++x) {
+        painted += lsp.screen.PixelAt(x, 1).character;
+    }
+    REQUIRE(painted.find("\u25B9 2 references") != std::string::npos);
+}
+
 TEST_CASE("CursorPosition is unaffected when the lens sits on a line other than point's", "[BufferView][CodeLens]") {
     LspFixture    lsp("ned_bufferview_code_lens_row_other_test.c", "int a = 1;\nint main() {}\nint b = 2;\n");
     FakeLspServer server = FakeLspServer::Create(lsp.manager, "c", lsp.eventLoop, lsp.client);
