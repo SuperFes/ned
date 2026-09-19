@@ -218,6 +218,14 @@ TEST_CASE("RequestHierarchyAtPoint(IncomingCalls) sends prepareCallHierarchy, th
     REQUIRE_FALSE(finalModel.rows[0].loading);
     REQUIRE(finalModel.rows[1].depth == 1);
     REQUIRE(finalModel.rows[1].label.find("caller") != std::string::npos);
+    // LSP SymbolKind 12 is Function, so both rows wear the gutter's own
+    // Callable glyph rather than spelling the kind out in the label -- the
+    // word would cost width in a tree that is navigated rather than
+    // filtered, and the picker (which IS fuzzy-filtered on its labels)
+    // keeps its word for that reason.
+    REQUIRE(finalModel.rows[1].kindGlyph == "\u0192"); // LATIN SMALL LETTER F WITH HOOK
+    REQUIRE(finalModel.rows[1].kindForeground.has_value());
+    REQUIRE(finalModel.rows[1].label.find("function") == std::string::npos);
     // "caller" itself has never been expanded (only the root was
     // auto-expanded) -- ChildrenFetched is false for it, so hasChildren
     // defaults to true ("not yet asked, assume it might have some").

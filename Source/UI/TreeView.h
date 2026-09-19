@@ -27,6 +27,14 @@
 namespace ned::ui {
 
 struct TreeRow {
+    // An optional kind marker drawn between the disclosure glyph and the
+    // label, with its own per-kind color -- the same shape and the same
+    // reasoning as ListPopupRow::left/leftForeground, so the gutter's
+    // symbol vocabulary reads identically wherever it appears. Empty means
+    // none, and the label then starts where it always did.
+    std::string          kindGlyph;
+    std::optional<Color> kindForeground;
+
     std::string label;
     std::size_t depth = 0; // 0 for a root -- indentation is depth * 2 columns
 
