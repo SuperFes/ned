@@ -77,15 +77,21 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         // green for "mine" (echoing diffAddedBackground's own role), blue
         // for "incoming", and a neutral subtleForeground wash for the
         // diff3-only base section.
-        .conflictOursBackground        = Color::Interpolate(0.82F, p.green, p.background),
-        .conflictTheirsBackground      = Color::Interpolate(0.82F, p.blue, p.background),
-        .conflictBaseBackground        = Color::Interpolate(0.82F, p.subtleForeground, p.background),
-        .tabBar                        = Brush{.background = p.chromeBackground, .foreground = dimChromeForeground},
-        .activeTab                     = Brush{.background = p.chromeBackgroundEmphasis, .foreground = p.chromeForeground, .bold = true},
-        .scrollBar                     = Brush{.foreground = p.subtleForeground},
-        .scrollBarDisabled             = Brush{.foreground = Color::Interpolate(0.6F, p.subtleForeground, p.background)},
-        .binaryForeground              = p.red,
-        .ghostTextForeground           = p.subtleForeground,
+        .conflictOursBackground   = Color::Interpolate(0.82F, p.green, p.background),
+        .conflictTheirsBackground = Color::Interpolate(0.82F, p.blue, p.background),
+        .conflictBaseBackground   = Color::Interpolate(0.82F, p.subtleForeground, p.background),
+        .tabBar                   = Brush{.background = p.chromeBackground, .foreground = dimChromeForeground},
+        .activeTab                = Brush{.background = p.chromeBackgroundEmphasis, .foreground = p.chromeForeground, .bold = true},
+        .scrollBar                = Brush{.foreground = p.subtleForeground},
+        .scrollBarDisabled        = Brush{.foreground = Color::Interpolate(0.6F, p.subtleForeground, p.background)},
+        .binaryForeground         = p.red,
+        .ghostTextForeground      = p.subtleForeground,
+        // A hint stays exactly as quiet as virtual text has always been; a
+        // lens is an affordance, so it borrows the same cyan a link does --
+        // already contrast-checked, and already means "you can act on this"
+        // everywhere else in the UI.
+        .inlayHintForeground           = p.subtleForeground,
+        .codeLensForeground            = Color::Interpolate(0.35F, p.cyan, p.background),
         .linkForeground                = p.cyan,
         .truncationIndicatorForeground = p.accent,
         .unsavedChangeIndicator        = p.orange,
@@ -128,10 +134,10 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         // accent hues, each pulled halfway toward background the same way
         // indentGuideForeground above is -- dim enough to stay secondary to
         // real syntax highlighting, in every derived theme uniformly.
-        .indentGuideDepthPalette = {Color::Interpolate(0.5F, p.red, p.background), Color::Interpolate(0.5F, p.orange, p.background),
-                                    Color::Interpolate(0.5F, p.yellow, p.background), Color::Interpolate(0.5F, p.green, p.background),
-                                    Color::Interpolate(0.5F, p.blue, p.background), Color::Interpolate(0.5F, p.purple, p.background)},
-        .tabGlyphForeground     = Color::Interpolate(0.5F, p.subtleForeground, p.background),
+        .indentGuideDepthPalette  = {Color::Interpolate(0.5F, p.red, p.background), Color::Interpolate(0.5F, p.orange, p.background),
+                                     Color::Interpolate(0.5F, p.yellow, p.background), Color::Interpolate(0.5F, p.green, p.background),
+                                     Color::Interpolate(0.5F, p.blue, p.background), Color::Interpolate(0.5F, p.purple, p.background)},
+        .tabGlyphForeground       = Color::Interpolate(0.5F, p.subtleForeground, p.background),
         .headlineLevel1Foreground = p.blue,
         .headlineLevel2Foreground = p.cyan,
         .headlineLevel3Foreground = p.green,

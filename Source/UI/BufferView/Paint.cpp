@@ -85,7 +85,7 @@ void BufferView::PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::siz
     }
 
     const Brush titleBrush{.background = theme_.background,
-                           .foreground = GhostForegroundOver(theme_.background),
+                           .foreground = GhostForegroundOver(theme_.background, theme_.codeLensForeground),
                            .italic     = true};
     const int   width = c.size().width;
     const int   col   = static_cast<int>(gutterWidth);
@@ -1225,7 +1225,11 @@ Color BufferView::OverlayWashAt(std::string_view surfaceName, const Color& fallb
 // pass after every background is final, which is not worth a second walk of
 // the viewport for the size of the error.
 Color BufferView::GhostForegroundOver(const Color& beneath) const {
-    const Color ghost = theme_.ghostTextForeground;
+    return GhostForegroundOver(beneath, theme_.ghostTextForeground);
+}
+
+Color BufferView::GhostForegroundOver(const Color& beneath, const Color& authored) const {
+    const Color ghost = authored;
     if (ghost.Opaque()) {
         return ghost;
     }
@@ -1545,7 +1549,7 @@ void BufferView::EmitInlayHint(Canvas& c, int row, int& col, std::size_t offset,
                 // now, and a gradient one differs across the hint.
                 const Color beneath = BrushForCell(offset, lineState, c, col, row).background;
                 const Brush hintBrush{.background = beneath,
-                                      .foreground = GhostForegroundOver(beneath),
+                                      .foreground = GhostForegroundOver(beneath, theme_.inlayHintForeground),
                                       .italic     = true};
                 Cell&       cell = c[{.x = col, .y = row}];
                 cell.character   = text::EncodeCodepointUtf8(glyph.codepoint);

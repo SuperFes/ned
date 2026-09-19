@@ -124,11 +124,18 @@ can't linger here after it stops existing.
 
 **Misc text**
 
-`binary_foreground` `ghost_text_foreground` `link_foreground` `truncation_indicator_foreground`
+`binary_foreground` `ghost_text_foreground` `inlay_hint_foreground` `code_lens_foreground`
+`link_foreground` `truncation_indicator_foreground`
 `underline_foreground` `strikethrough_foreground`
 
-`ghost_text_foreground` is the **virtual text** colour -- inlay hints, code-lens titles:
-text ned synthesises rather than text the buffer contains. It is the one colour key where
+`ghost_text_foreground` is the **virtual text** colour: text ned synthesises rather than
+text the buffer contains. It backs every synthetic glyph without a key of its own -- the
+completion popup's generic kind marker, a hierarchy row's unrecognized kind. The two
+pieces of virtual text that sit *in the buffer* have their own keys, because they say
+different things: `inlay_hint_foreground` for what the compiler worked out (there is one
+on nearly every line, so it should stay quiet) and `code_lens_foreground` for an
+affordance you can act on. Setting `ghost_text_foreground` alone no longer recolours
+those two. All three are the colour keys where
 alpha does something beyond compositing a background: give it one (`#c5c8d680`) and virtual
 text fades toward whatever is genuinely behind that cell instead of toward a colour picked
 once at theme-author time. The bundled themes all use an opaque pre-dimmed grey, which is
