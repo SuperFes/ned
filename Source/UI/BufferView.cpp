@@ -147,6 +147,14 @@ void BufferView::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {
     onBufferClosed_ = std::move(handler);
 }
 
+void BufferView::NotifyBufferClosed(text::Buffer& buffer) {
+    vimEngine_.NotifyBufferClosed(buffer);
+}
+
+void BufferView::ReleaseVimAnchoredPositions() {
+    vimEngine_.ReleaseAnchoredPositions();
+}
+
 void BufferView::SetOnTerminalToggle(std::function<void()> handler) {
     onTerminalToggle_ = std::move(handler);
 }

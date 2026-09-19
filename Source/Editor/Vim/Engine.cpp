@@ -1,6 +1,7 @@
 #include "Engine.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cctype>
 #include <cstring>
 #include <fstream>
@@ -316,21 +317,7 @@ void Engine::UpdateGoalColumn(const text::Buffer& buffer) {
 bool Engine::HandleKey(text::Buffer& buffer, const KeyChord& chord) {
     statusText_.clear();
 
-    // buffer-scoped-marks follow-up: see currentBufferIdentity_'s own doc comment --
-    // marks_ (a-z, '</'>. and the ``/'' kJumpMark toggle) must not silently carry over
-    // from whatever buffer this pane last showed. jumpList_/changeList_ have the exact
-    // same problem (raw byte offsets with no buffer/file identity of their own) --
-    // cleared here too rather than given real vim's own cross-file jumplist capability,
-    // a documented v1 cut (jumpList_/changeList_ stay buffer-scoped, not global, unlike
-    // uppercase marks -- see GlobalMarks.h).
-    if (&buffer != currentBufferIdentity_) {
-        currentBufferIdentity_ = &buffer;
-        marks_.clear();
-        jumpList_.clear();
-        jumpListPos_ = 0;
-        changeList_.clear();
-        changeListPos_ = 0;
-    }
+    AdoptBuffer(buffer);
 
     if (pendingCharHandler_) {
         CharHandler handler = std::move(pendingCharHandler_);
@@ -410,6 +397,10 @@ void Engine::RecordInsertKey(const KeyChord& chord) {
 }
 
 void Engine::ExitInsertToNormal(text::Buffer& buffer) {
+    // BufferView calls this directly, not through HandleKey, so this is its own first
+    // sight of whichever buffer Insert mode is being left in -- and it stamps gi's own
+    // anchor below.
+    AdoptBuffer(buffer);
     const KeyChord escape{false, false, false, SpecialKey::Escape, 0};
     currentCommandChords_.push_back(escape);
     if (isRecordingMacro_) {
@@ -417,7 +408,7 @@ void Engine::ExitInsertToNormal(text::Buffer& buffer) {
     }
     buffer.EndUndoGroup();
     mode_                       = Mode::Normal;
-    lastInsertExitPoint_        = buffer.Point(); // gi's own memory, before the point-back adjustment below
+    MoveAnchor(buffer, lastInsertExitPoint_, buffer.Point()); // gi's own memory, before the point-back adjustment below
     lastInsertedText_           = insertModeTypedText_;
     const std::size_t lineStart = LineStart(buffer, LineOf(buffer, buffer.Point()));
     if (buffer.Point() > lineStart) {
@@ -459,6 +450,7 @@ void Engine::HandleInsertKeyDirectly(text::Buffer& buffer, const KeyChord& chord
 }
 
 bool Engine::HandleInsertModeChord(text::Buffer& buffer, const KeyChord& chord) {
+    AdoptBuffer(buffer); // another entry point BufferView reaches without going through HandleKey
     if (awaitingInsertRegisterName_) {
         awaitingInsertRegisterName_ = false;
         if (IsPlainCharChord(chord)) {
@@ -842,7 +834,7 @@ std::optional<char32_t> Engine::ResolveOperatorChord(const KeyChord& chord) cons
     }
 }
 
-std::optional<MotionResult> Engine::TryImmediateMotion(const text::Buffer& buffer, const KeyChord& chord, long count) {
+std::optional<MotionResult> Engine::TryImmediateMotion(text::Buffer& buffer, const KeyChord& chord, long count) {
     if (chord.Special == SpecialKey::Left) {
         return CharLeft(buffer, buffer.Point(), count);
     }
@@ -905,7 +897,7 @@ std::optional<MotionResult> Engine::TryImmediateMotion(const text::Buffer& buffe
             }
             return std::nullopt; // count% (goto file-percentage) -- deliberate v1 cut
         case U'G':
-            marks_[kJumpMark] = buffer.Point();
+            MoveAnchor(buffer, marks_[kJumpMark], buffer.Point());
             PushJumpListEntry(buffer);
             return GotoLastLine(buffer, hasCount_ ? countBuffer_ : 0);
         case U'H':
@@ -1160,7 +1152,7 @@ void Engine::HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord) {
         return;
     }
     if (chord.Codepoint == U'g') {
-        marks_[kJumpMark] = buffer.Point();
+        MoveAnchor(buffer, marks_[kJumpMark], buffer.Point());
         PushJumpListEntry(buffer);
         const MotionResult m = GotoFirstLine(buffer, hasCount_ ? countBuffer_ : 0);
         ResolveMotionAndAct(buffer, m, true);
@@ -1185,18 +1177,18 @@ void Engine::HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord) {
         return;
     }
     if (chord.Codepoint == U'i') { // gi -- resume Insert where it was last exited
-        buffer.SetPoint(std::min(lastInsertExitPoint_, buffer.Content().ByteLength()));
+        buffer.SetPoint(AnchorPosition(lastInsertExitPoint_).value_or(0));
         buffer.BeginUndoGroup();
         BeginInsertSession(buffer);
         return;
     }
     if (chord.Codepoint == U'v' && mode_ == Mode::Normal) {
-        if (hasLastVisual_) {
-            const std::size_t clampedAnchor = std::min(lastVisualAnchor_, buffer.Content().ByteLength());
-            const std::size_t clampedPoint  = std::min(lastVisualPoint_, buffer.Content().ByteLength());
-            mode_                           = lastVisualKind_;
-            visualAnchor_                   = clampedAnchor;
-            buffer.SetPoint(clampedPoint);
+        const std::optional<std::size_t> anchor = AnchorPosition(lastVisualAnchor_);
+        const std::optional<std::size_t> point  = AnchorPosition(lastVisualPoint_);
+        if (hasLastVisual_ && anchor && point) {
+            mode_         = lastVisualKind_;
+            visualAnchor_ = *anchor;
+            buffer.SetPoint(*point);
             UpdateGoalColumn(buffer);
         }
         FinishCommand(buffer);
@@ -1945,16 +1937,23 @@ void Engine::EnterVisual(text::Buffer& buffer, Mode kind) {
 }
 
 void Engine::RememberVisualRange(text::Buffer& buffer) {
-    const std::size_t l1 = LineOf(buffer, visualAnchor_);
-    const std::size_t l2 = LineOf(buffer, buffer.Point());
-    lastVisualRange_     = ExRange{true, std::min(l1, l2), std::max(l1, l2)};
-
     // Every call site here runs while mode_ still holds the active Visual/VisualLine/
     // VisualBlock kind (each caller reassigns mode_ to Normal only after this returns).
-    lastVisualAnchor_ = visualAnchor_;
-    lastVisualPoint_  = buffer.Point();
-    lastVisualKind_   = mode_;
-    hasLastVisual_    = true;
+    MoveAnchor(buffer, lastVisualAnchor_, visualAnchor_);
+    MoveAnchor(buffer, lastVisualPoint_, buffer.Point());
+    lastVisualKind_ = mode_;
+    hasLastVisual_  = true;
+}
+
+std::optional<ExRange> Engine::LastVisualLineRange(const text::Buffer& buffer) const {
+    const std::optional<std::size_t> anchor = AnchorPosition(lastVisualAnchor_);
+    const std::optional<std::size_t> point  = AnchorPosition(lastVisualPoint_);
+    if (!hasLastVisual_ || !anchor || !point) {
+        return std::nullopt;
+    }
+    const std::size_t l1 = LineOf(buffer, *anchor);
+    const std::size_t l2 = LineOf(buffer, *point);
+    return ExRange{true, std::min(l1, l2), std::max(l1, l2)};
 }
 
 void Engine::InsertLineBlock(text::Buffer& buffer, const std::vector<std::string>& pieces, std::size_t line, bool before) {
@@ -2191,7 +2190,7 @@ void Engine::SetMarkAt(text::Buffer& buffer, char32_t name) {
         SetGlobalMark(name, GlobalMark{.path = ec ? *buffer.Path() : normalized, .line = line, .column = column});
         return;
     }
-    marks_[name] = buffer.Point();
+    MoveAnchor(buffer, marks_[name], buffer.Point());
 }
 
 namespace {
@@ -2199,25 +2198,133 @@ namespace {
     constexpr std::size_t kMaxJumpList = 100;
 } // namespace
 
-void Engine::PushJumpListEntry(const text::Buffer& buffer) {
+// ---------------------------------------------------------------------------------
+// Anchored navigation positions (vim-anchored-marks)
+// ---------------------------------------------------------------------------------
+
+std::optional<std::size_t> Engine::AnchorPosition(text::AnchorId id) const {
+    if (anchorOwner_ == nullptr) {
+        return std::nullopt;
+    }
+    return anchorOwner_->AnchorOffset(id);
+}
+
+void Engine::MoveAnchor(text::Buffer& buffer, text::AnchorId& slot, std::size_t offset) {
+    // Every caller reaches here from HandleKey, which has already adopted this buffer.
+    // Asserting it rather than re-adopting keeps "the anchors belong to exactly one
+    // buffer" a single rule with a single enforcement point.
+    assert(anchorOwner_ == &buffer);
+    buffer.DestroyAnchor(slot);
+    slot = buffer.CreateAnchor(offset);
+}
+
+void Engine::DropRingEntries(std::vector<text::AnchorId>& ring, std::size_t first, std::size_t last) {
+    for (std::size_t i = first; i < last; ++i) {
+        if (anchorOwner_ != nullptr) {
+            anchorOwner_->DestroyAnchor(ring[i]);
+        }
+    }
+    ring.erase(ring.begin() + static_cast<std::ptrdiff_t>(first), ring.begin() + static_cast<std::ptrdiff_t>(last));
+}
+
+void Engine::CompactRing(std::vector<text::AnchorId>& ring, std::size_t& pos) {
+    std::size_t write = 0;
+    for (std::size_t read = 0; read < ring.size(); ++read) {
+        if (AnchorPosition(ring[read])) {
+            ring[write++] = ring[read];
+            continue;
+        }
+        // Dead (a barrier dropped it), so the slot is only still held, not still
+        // tracked -- release it here rather than leaving it for the buffer's teardown.
+        if (anchorOwner_ != nullptr) {
+            anchorOwner_->DestroyAnchor(ring[read]);
+        }
+        if (read < pos) {
+            --pos; // keep pos naming the same surviving entry it named before
+        }
+    }
+    ring.resize(write);
+    pos = std::min(pos, ring.size());
+}
+
+void Engine::ReleaseAnchors() {
+    if (anchorOwner_ != nullptr) {
+        for (const auto& [name, id] : marks_) {
+            anchorOwner_->DestroyAnchor(id);
+        }
+        for (const text::AnchorId id : jumpList_) {
+            anchorOwner_->DestroyAnchor(id);
+        }
+        for (const text::AnchorId id : changeList_) {
+            anchorOwner_->DestroyAnchor(id);
+        }
+        anchorOwner_->DestroyAnchor(lastVisualAnchor_);
+        anchorOwner_->DestroyAnchor(lastVisualPoint_);
+        anchorOwner_->DestroyAnchor(lastInsertExitPoint_);
+    }
+    marks_.clear();
+    jumpList_.clear();
+    jumpListPos_ = 0;
+    changeList_.clear();
+    changeListPos_         = 0;
+    lastVisualAnchor_      = text::AnchorId{};
+    lastVisualPoint_       = text::AnchorId{};
+    hasLastVisual_         = false;
+    lastInsertExitPoint_   = text::AnchorId{};
+    anchorOwner_           = nullptr;
+    anchorOwnerInstanceId_ = 0;
+}
+
+void Engine::AdoptBuffer(text::Buffer& buffer) {
+    if (anchorOwner_ == &buffer) {
+        if (anchorOwnerInstanceId_ == buffer.InstanceId()) {
+            return; // same buffer, same instance: the anchors are already this one's
+        }
+        // Same address, a different buffer: the one these handles name died without
+        // this engine being told, which NotifyBufferClosed exists to prevent. Drop them
+        // rather than destroy them -- an id offered to a stranger's AnchorSet can free a
+        // live anchor whose slot index and version happen to match.
+        anchorOwner_ = nullptr;
+    }
+    // Otherwise this is an ordinary switch and the outgoing buffer is still alive (same
+    // invariant), so its anchors are released properly rather than abandoned.
+    ReleaseAnchors();
+    anchorOwner_           = &buffer;
+    anchorOwnerInstanceId_ = buffer.InstanceId();
+}
+
+void Engine::NotifyBufferClosed(text::Buffer& buffer) {
+    if (anchorOwner_ != &buffer) {
+        return;
+    }
+    ReleaseAnchors();
+}
+
+void Engine::ReleaseAnchoredPositions() {
+    ReleaseAnchors();
+}
+
+void Engine::PushJumpListEntry(text::Buffer& buffer) {
+    CompactRing(jumpList_, jumpListPos_);
     // A new jump branches off -- any forward history past the current navigation
     // position is discarded, mirroring a browser's own back/forward truncation-on-branch
     // rule (BufferView's unrelated, Emacs-flavored jumpBackStack_/jumpForwardStack_ pair
     // follows the identical rule for its own separate ring).
     if (jumpListPos_ < jumpList_.size()) {
-        jumpList_.resize(jumpListPos_);
+        DropRingEntries(jumpList_, jumpListPos_, jumpList_.size());
     }
     const std::size_t point = buffer.Point();
-    if (jumpList_.empty() || jumpList_.back() != point) {
-        jumpList_.push_back(point);
+    if (jumpList_.empty() || AnchorPosition(jumpList_.back()) != point) {
+        jumpList_.push_back(buffer.CreateAnchor(point));
         if (jumpList_.size() > kMaxJumpList) {
-            jumpList_.erase(jumpList_.begin());
+            DropRingEntries(jumpList_, 0, 1);
         }
     }
     jumpListPos_ = jumpList_.size(); // back to "live"
 }
 
 void Engine::JumpListBack(text::Buffer& buffer) {
+    CompactRing(jumpList_, jumpListPos_);
     if (jumpListPos_ == 0) {
         FinishCommand(buffer); // no earlier jumps -- a silent no-op, matching real vim
         return;
@@ -2226,59 +2333,64 @@ void Engine::JumpListBack(text::Buffer& buffer) {
         // Leaving the live position for the first time since the last new jump -- record
         // it so a later jump-forward (C-i) can return here, this ring's version of the
         // ``/'' toggle's own kJumpMark overwrite.
-        jumpList_.push_back(buffer.Point());
+        jumpList_.push_back(buffer.CreateAnchor(buffer.Point()));
     }
     --jumpListPos_;
-    buffer.SetPoint(std::min(jumpList_[jumpListPos_], buffer.Content().ByteLength()));
+    buffer.SetPoint(AnchorPosition(jumpList_[jumpListPos_]).value_or(0));
     UpdateGoalColumn(buffer);
     FinishCommand(buffer);
 }
 
 void Engine::JumpListForward(text::Buffer& buffer) {
+    CompactRing(jumpList_, jumpListPos_);
     if (jumpListPos_ + 1 >= jumpList_.size()) {
         FinishCommand(buffer); // already at the newest recorded entry -- silent no-op
         return;
     }
     ++jumpListPos_;
-    buffer.SetPoint(std::min(jumpList_[jumpListPos_], buffer.Content().ByteLength()));
+    buffer.SetPoint(AnchorPosition(jumpList_[jumpListPos_]).value_or(0));
     UpdateGoalColumn(buffer);
     FinishCommand(buffer);
 }
 
 void Engine::PushChangeListEntry(text::Buffer& buffer) {
-    const std::size_t point = buffer.Point();
+    CompactRing(changeList_, changeListPos_);
+    const std::size_t                point  = buffer.Point();
+    const std::optional<std::size_t> newest = changeList_.empty() ? std::nullopt : AnchorPosition(changeList_.back());
     // Consecutive changes on the same line collapse into one, updated entry -- real
     // vim's own documented changelist behavior -- rather than one entry per edit.
-    if (!changeList_.empty() && LineOf(buffer, changeList_.back()) == LineOf(buffer, point)) {
-        changeList_.back() = point;
+    if (newest && LineOf(buffer, *newest) == LineOf(buffer, point)) {
+        MoveAnchor(buffer, changeList_.back(), point);
     }
     else {
-        changeList_.push_back(point);
+        changeList_.push_back(buffer.CreateAnchor(point));
         if (changeList_.size() > kMaxJumpList) { // same cap as jumpList_ -- real vim's own 'jumps' default
-            changeList_.erase(changeList_.begin());
+            DropRingEntries(changeList_, 0, 1);
         }
     }
     changeListPos_ = changeList_.size() - 1; // always points at the newest entry after a push
 }
 
 void Engine::ChangeListOlder(text::Buffer& buffer) {
+    CompactRing(changeList_, changeListPos_);
     if (changeList_.empty() || changeListPos_ == 0) {
         FinishCommand(buffer); // nothing recorded, or already at the oldest -- silent no-op
         return;
     }
     --changeListPos_;
-    buffer.SetPoint(std::min(changeList_[changeListPos_], buffer.Content().ByteLength()));
+    buffer.SetPoint(AnchorPosition(changeList_[changeListPos_]).value_or(0));
     UpdateGoalColumn(buffer);
     FinishCommand(buffer);
 }
 
 void Engine::ChangeListNewer(text::Buffer& buffer) {
+    CompactRing(changeList_, changeListPos_);
     if (changeList_.empty() || changeListPos_ + 1 >= changeList_.size()) {
         FinishCommand(buffer); // already at the newest entry -- silent no-op
         return;
     }
     ++changeListPos_;
-    buffer.SetPoint(std::min(changeList_[changeListPos_], buffer.Content().ByteLength()));
+    buffer.SetPoint(AnchorPosition(changeList_[changeListPos_]).value_or(0));
     UpdateGoalColumn(buffer);
     FinishCommand(buffer);
 }
@@ -2286,11 +2398,12 @@ void Engine::ChangeListNewer(text::Buffer& buffer) {
 void Engine::GotoMark(text::Buffer& buffer, char32_t name, bool linewise) {
     std::size_t target;
     if (name == U'<' || name == U'>') {
-        if (!lastVisualRange_) {
+        const std::optional<ExRange> visual = LastVisualLineRange(buffer);
+        if (!visual) {
             FinishCommand(buffer);
             return;
         }
-        target = LineStart(buffer, name == U'<' ? lastVisualRange_->startLine : lastVisualRange_->endLine);
+        target = LineStart(buffer, name == U'<' ? visual->startLine : visual->endLine);
     }
     else if (name >= U'A' && name <= U'Z') {
         // vim-global-marks follow-up: resolved from the process-wide store, not marks_ --
@@ -2324,16 +2437,22 @@ void Engine::GotoMark(text::Buffer& buffer, char32_t name, bool linewise) {
         // set via 'm'.
         const char32_t lookupName = (name == U'`' || name == U'\'') ? kJumpMark : name;
         const auto     it         = marks_.find(lookupName);
-        if (it == marks_.end()) {
+        // A mark whose anchor is gone (a revert or a reload dropped every position in
+        // the buffer) reads exactly like one that was never set.
+        const std::optional<std::size_t> marked = it == marks_.end() ? std::nullopt : AnchorPosition(it->second);
+        if (!marked) {
+            if (it != marks_.end()) {
+                marks_.erase(it);
+            }
             statusText_ = "E20: Mark not set";
             FinishCommand(buffer);
             return;
         }
-        target = std::min(it->second, buffer.Content().ByteLength());
+        target = *marked;
     }
     // Every successful jump -- including through kJumpMark itself -- overwrites kJumpMark
     // with the position being left, so `` / '' toggles between the last two positions.
-    marks_[kJumpMark] = buffer.Point();
+    MoveAnchor(buffer, marks_[kJumpMark], buffer.Point());
     PushJumpListEntry(buffer);
     if (linewise) {
         target = FirstNonBlankOffset(buffer, LineOf(buffer, target));
@@ -2482,7 +2601,7 @@ namespace {
 } // namespace
 
 void Engine::RunSearch(text::Buffer& buffer, bool forward, const std::string& pattern) {
-    marks_[kJumpMark] = buffer.Point(); // /, ?, n, N, *, # all funnel through here
+    MoveAnchor(buffer, marks_[kJumpMark], buffer.Point()); // /, ?, n, N, *, # all funnel through here
     PushJumpListEntry(buffer);
     try {
         const RegexPattern re(pattern);
@@ -2600,7 +2719,7 @@ void Engine::SearchWordUnderPoint(text::Buffer& buffer, bool forward) {
 void Engine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) {
     const std::size_t currentLine = LineOf(buffer, buffer.Point());
     const std::size_t lastLine    = EffectiveLastLine(buffer);
-    const auto        cmd         = ParseExCommand(text, currentLine, lastLine, lastVisualRange_);
+    const auto        cmd         = ParseExCommand(text, currentLine, lastLine, LastVisualLineRange(buffer));
     if (!cmd) {
         statusText_ = "E492: Not an editor command: " + text;
         FinishCommand(buffer);
@@ -2881,7 +3000,7 @@ void Engine::ExecuteMoveOrCopy(text::Buffer& buffer, const ExCommand& cmd, bool 
     const std::size_t sl          = cmd.range.present ? cmd.range.startLine : currentLine;
     const std::size_t el          = cmd.range.present ? cmd.range.endLine : currentLine;
 
-    const auto destAddr = ParseExAddress(cmd.rest, currentLine, lastLine, lastVisualRange_);
+    const auto destAddr = ParseExAddress(cmd.rest, currentLine, lastLine, LastVisualLineRange(buffer));
     if (!destAddr) {
         statusText_ = "E14: Invalid address";
         return;

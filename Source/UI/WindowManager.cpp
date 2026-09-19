@@ -292,6 +292,19 @@ void Pane::ReleaseMinimapPixelPlane() {
     minimap_->ReleasePlane();
 }
 
+Pane::~Pane() {
+    // vim-anchored-marks follow-up: this pane's vim engine holds its marks/jumplist as
+    // anchors in whichever buffer it last handled a key for, and a buffer outlives
+    // every pane that ever showed it (BufferList owns them, and a closing buffer
+    // reassigns every pane before it goes). Releasing here rather than leaving the
+    // handles behind is what keeps closing a split from leaving slots the buffer would
+    // relocate on every edit forever. Same reasoning as ReleaseMinimapPixelPlane: tear
+    // it down while the thing it points into is still guaranteed alive.
+    if (bufferView_) {
+        bufferView_->ReleaseVimAnchoredPositions();
+    }
+}
+
 void Pane::ClearBufferCaches(text::Buffer& buffer) {
     bufferView_->ClearBufferCaches(buffer);
     minimap_->ClearBufferCache(buffer);
@@ -1720,6 +1733,7 @@ void WindowManager::HandleBufferClosed(text::Buffer& closedBuffer) {
     if (lspManager_) {
         lspManager_->NotifyBufferClosed(closedBuffer);
     }
+    NotifyPanesBufferClosed(closedBuffer);
     // The pane whose own CloseBufferNow triggered this already handles its
     // own ActiveBuffer reassignment independently -- skip it here so a
     // single-buffer-in-the-whole-app close doesn't conjure two separate
@@ -1749,7 +1763,19 @@ void WindowManager::NotifyBufferClosing(text::Buffer& closingBuffer) {
     if (lspManager_) {
         lspManager_->NotifyBufferClosed(closingBuffer);
     }
+    NotifyPanesBufferClosed(closingBuffer);
     ReassignPanesShowing(closingBuffer, nullptr);
+}
+
+void WindowManager::NotifyPanesBufferClosed(text::Buffer& closingBuffer) {
+    // vim-anchored-marks follow-up: a pane's vim engine holds anchors in whichever
+    // buffer it last saw, and this is the last moment that buffer is alive to release
+    // them into. Every pane is told, not just the ones currently showing it -- an
+    // engine keeps its marks for the buffer it last *handled a key* for, which a pane
+    // retargeted a moment ago is no longer showing.
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().NotifyBufferClosed(closingBuffer);
+    }
 }
 
 void WindowManager::DoSplit(WindowNode::Kind kind) {

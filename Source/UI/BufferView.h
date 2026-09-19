@@ -673,6 +673,18 @@ class BufferView : public Widget {
     // is a safe no-op, matching every other Set* hook here.
     void SetOnBufferClosed(std::function<void(text::Buffer&)> handler);
 
+    // vim-anchored-marks follow-up: this pane's vim engine holds its marks, jumplist
+    // and changelist as anchors in whichever buffer it last saw, and they have to be
+    // released while that buffer is still alive. WindowManager fans this out to every
+    // pane from the same two places it tells lsp::Manager a buffer closed. A pane
+    // holding nothing for this buffer is a no-op.
+    void NotifyBufferClosed(text::Buffer& buffer);
+
+    // Its sibling for the pane going away instead of the buffer -- see
+    // vim::Engine::ReleaseAnchoredPositions. Called from ~Pane, where every buffer a
+    // pane could still hold anchors in is guaranteed alive.
+    void ReleaseVimAnchoredPositions();
+
     // terminal-panel follow-up: toggle-terminal's forwarding hook -- the
     // panel is an OverlayHost overlay owned by main.cpp's composition, above
     // even WindowManager's level, so like the window-management requests

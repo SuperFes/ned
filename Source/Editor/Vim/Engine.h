@@ -153,6 +153,23 @@ class Engine {
     // See HunkDirection's own doc comment above.
     [[nodiscard]] std::optional<HunkDirection> TakePendingHunkNavigation();
 
+    // vim-anchored-marks follow-up: the pane's navigation positions are anchors in
+    // whichever buffer it last saw (see marks_), and an abandoned anchor is a slot that
+    // buffer keeps relocating forever. HandleKey releases them itself when it is handed
+    // a different buffer, which covers every ordinary switch; this covers the one case
+    // it cannot, a buffer being closed out from under the pane. WindowManager calls it
+    // from the same two places it already calls lsp::Manager::NotifyBufferClosed, and
+    // for the same reason: the buffer is still alive at that moment and will not be by
+    // the time this engine next runs. A buffer this engine holds nothing for is a no-op.
+    void NotifyBufferClosed(text::Buffer& buffer);
+
+    // The pane itself going away, rather than one buffer. Releases into whichever
+    // buffer currently owns these anchors, which is not necessarily the one the pane is
+    // showing now -- an engine keeps its marks for the buffer it last handled a key
+    // for. Safe for the same reason NotifyBufferClosed is: a buffer that dies is always
+    // announced first, so the owner is either null or alive.
+    void ReleaseAnchoredPositions();
+
   private:
     using CharHandler = std::function<void(text::Buffer&, const KeyChord&)>;
 
@@ -172,7 +189,9 @@ class Engine {
     // ---- Normal/Visual grammar helpers ----
     [[nodiscard]] long                        EffectiveCount() const;
     [[nodiscard]] std::optional<char32_t>     ResolveOperatorChord(const KeyChord& chord) const;
-    [[nodiscard]] std::optional<MotionResult> TryImmediateMotion(const text::Buffer& buffer, const KeyChord& chord, long count);
+    // Non-const because G/gg stamp the jump mark and push the jumplist, and both of
+    // those are anchors in the buffer now rather than bare offsets here.
+    [[nodiscard]] std::optional<MotionResult> TryImmediateMotion(text::Buffer& buffer, const KeyChord& chord, long count);
     void                                      ResolveMotionAndAct(text::Buffer& buffer, const MotionResult& motion, bool horizontal);
     void                                      ApplyOperatorRange(text::Buffer& buffer, char32_t op, std::size_t anchor, std::size_t target, bool linewise, bool inclusive);
     void                                      ApplyOperator(text::Buffer& buffer, char32_t op, std::size_t start, std::size_t end, bool linewise);
@@ -302,18 +321,61 @@ class Engine {
     std::string insertModeTypedText_; // accumulates live during a session, see RecordInsertKey
 
     std::size_t            visualAnchor_ = 0;
-    std::optional<ExRange> lastVisualRange_; // '< / '>, remembered when leaving Visual mode
+    // '< / '> and the ':'<,'>' range, derived from the gv anchors below rather than
+    // stored as line numbers -- the lines an old visual selection covered move when
+    // text above them does, and two anchors already know where they went.
+    [[nodiscard]] std::optional<ExRange> LastVisualLineRange(const text::Buffer& buffer) const;
     bool                   blockInsertSession_ = false;
 
-    // gv's own memory -- exact byte offsets and the visual kind, distinct from
-    // lastVisualRange_'s line-only shape (which only needs to serve ':<,'>'-style ranges
-    // and the linewise '< / '> marks).
-    std::size_t lastVisualAnchor_ = 0;
-    std::size_t lastVisualPoint_  = 0;
-    Mode        lastVisualKind_   = Mode::Visual;
-    bool        hasLastVisual_    = false;
+    // gv's own memory -- the exact two ends of the last visual selection and its kind.
+    // LastVisualLineRange above reduces the same pair to the line range ':'<,'>' and the
+    // '< / '> marks need, so there is one stored fact rather than two that can disagree.
+    text::AnchorId lastVisualAnchor_;
+    text::AnchorId lastVisualPoint_;
+    Mode           lastVisualKind_ = Mode::Visual;
+    bool           hasLastVisual_  = false;
 
-    std::map<char32_t, std::size_t> marks_;
+    // ---- anchored navigation positions (vim-anchored-marks) ----
+    // anchorOwner_ is the buffer every AnchorId below belongs to, and the only one they
+    // may be resolved or destroyed against. It is a raw, non-owning pointer, kept valid
+    // by the same invariant lsp::Manager's own buffer-keyed maps rely on: a buffer being
+    // closed reaches NotifyBufferClosed while it is still alive, so a pointer here is
+    // either null or live.
+    [[nodiscard]] std::optional<std::size_t> AnchorPosition(text::AnchorId id) const;
+    // Destroys whatever `slot` held and re-points it at `offset`. The destroy is the
+    // whole reason this is a helper: overwriting a mark letter without it leaks the old
+    // anchor into a store that relocates it on every edit forever.
+    void MoveAnchor(text::Buffer& buffer, text::AnchorId& slot, std::size_t offset);
+    // Called at the top of HandleKey: if this is a different buffer than the anchors
+    // belong to, releases them into the old one and starts fresh on the new.
+    void AdoptBuffer(text::Buffer& buffer);
+    void ReleaseAnchors();
+    // Drops entries a barrier invalidated (a revert/reload leaves a whole ring dead),
+    // keeping `pos` naming the same surviving entry it named before.
+    void CompactRing(std::vector<text::AnchorId>& ring, std::size_t& pos);
+    // Releases and erases [first, last) of a ring -- its cap eviction and its
+    // discard-the-forward-history-on-a-new-jump rule both drop entries.
+    void DropRingEntries(std::vector<text::AnchorId>& ring, std::size_t first, std::size_t last);
+
+    text::Buffer* anchorOwner_ = nullptr;
+
+    // Every position this engine remembers is an anchor in anchorOwner_
+    // (Text/AnchorSet.h), not a raw byte offset. A raw offset is only ever
+    // right until the next edit: `ma`, open a line above it, and `a named the wrong byte
+    // -- clamping to the buffer's length (all the old reads did) hides the overrun, it
+    // does not fix it. Real vim moves a mark with the text it was set on, which is
+    // exactly the anchor contract.
+    //
+    // Policy is {Right, Clamp} throughout (AnchorSet::kDefaultPolicy): Right so a mark
+    // follows text inserted at its own position rather than being left in front of it,
+    // and Clamp rather than Invalidate even though real vim drops a mark whose line is
+    // deleted -- ned's edits are coarser than vim's (indent-buffer, format-on-save and
+    // an LSP workspace edit all replace whole line ranges), so Invalidate would silently
+    // lose marks vim itself keeps, while a Clamped mark lands at the edit point, which
+    // is both harmless and what an Emacs marker has always done. A barrier (a revert or
+    // a reload) still drops everything, and a mark that comes back dead reads as
+    // "E20: Mark not set".
+    std::map<char32_t, text::AnchorId> marks_;
 
     // jumplist-ring follow-up: generalizes kJumpMark's single-slot ``/'' toggle (still
     // unchanged -- see GotoMark) into a real back/forward ring, navigated by C-o/C-i.
@@ -324,11 +386,11 @@ class Engine {
     // every site that already stamps kJumpMark (G, gg, GotoMark, RunSearch -- so /, ?, n,
     // N, *, # all count too, a deliberate simplification vs. real vim, which doesn't
     // treat every n/N repeat as its own jump) via PushJumpListEntry.
-    std::vector<std::size_t> jumpList_;
-    std::size_t              jumpListPos_ = 0;
-    void                     PushJumpListEntry(const text::Buffer& buffer);
-    void                     JumpListBack(text::Buffer& buffer);
-    void                     JumpListForward(text::Buffer& buffer);
+    std::vector<text::AnchorId> jumpList_;
+    std::size_t                 jumpListPos_ = 0;
+    void                        PushJumpListEntry(text::Buffer& buffer);
+    void                        JumpListBack(text::Buffer& buffer);
+    void                        JumpListForward(text::Buffer& buffer);
 
     // changelist-ring follow-up: g;/g, walk changeList_ -- real vim's changelist, a
     // simpler cousin of jumpList_ above. Every entry is already a position an edit
@@ -342,8 +404,8 @@ class Engine {
     // genuinely returns to Normal). Consecutive changes on the same line collapse into
     // one updated entry rather than accumulating, matching real vim's own documented
     // behavior.
-    std::vector<std::size_t> changeList_;
-    std::size_t              changeListPos_ = 0;
+    std::vector<text::AnchorId> changeList_;
+    std::size_t                 changeListPos_ = 0;
     void                     PushChangeListEntry(text::Buffer& buffer);
     void                     ChangeListOlder(text::Buffer& buffer);
     void                     ChangeListNewer(text::Buffer& buffer);
@@ -372,7 +434,7 @@ class Engine {
     // gi's own memory: where Insert mode was last exited from (before ExitInsertToNormal's
     // own point-back-one-grapheme adjustment), distinct from wherever point ends up moving
     // to afterward.
-    std::size_t lastInsertExitPoint_ = 0;
+    text::AnchorId lastInsertExitPoint_;
 
     std::string   statusText_;
     PendingIntent pendingIntent_ = PendingIntent::None;
@@ -389,11 +451,17 @@ class Engine {
     // buffer-scoped -- switching which buffer a pane shows (switch-to-buffer, a tab
     // click, ...) previously left them holding stale byte offsets from whatever buffer
     // was active when they were set, silently misapplied to a *different* buffer's
-    // content if that buffer happened to be long enough. Noted (and all three cleared)
-    // the moment HandleKey sees a different Buffer& than last time -- a raw, non-owning
-    // identity pointer is safe here since it's only ever compared against a live Buffer&
-    // handed in per call, never dereferenced.
-    const text::Buffer* currentBufferIdentity_ = nullptr;
+    // content if that buffer happened to be long enough. All of it is dropped the moment
+    // HandleKey sees a different Buffer& than last time -- see AdoptBuffer, which is also
+    // where anchorOwner_'s anchors are released.
+    //
+    // vim-anchored-marks follow-up: the identity test is Buffer::InstanceId(), not the
+    // address, which matters now that the handles below are resolved rather than merely
+    // cleared -- an allocator reusing a dead buffer's address would otherwise hand this
+    // engine a different buffer it believes it already owns anchors in, and an AnchorId
+    // carries no owner of its own to catch that (the hazard InstanceId() was added for,
+    // confirmed live once already in HighlightCache).
+    std::size_t anchorOwnerInstanceId_ = 0;
 };
 
 } // namespace ned::editor::vim
