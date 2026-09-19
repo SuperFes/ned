@@ -213,6 +213,17 @@ struct Theme {
     // ghost-text comment) atop this dim color, the same "UI chrome, not
     // syntax" reasoning binaryForeground/linkForeground already establish.
     Color ghostTextForeground;
+    // Virtual text, split by what it is telling you. ghostTextForeground
+    // stays the family's base and the colour every other synthetic glyph
+    // uses (the completion popup's generic marker, a hierarchy row's
+    // unrecognized kind); these two are the in-buffer pair, and they are
+    // separate keys because they say different things. An inlay hint is
+    // something the compiler worked out and should stay quiet -- there is
+    // one on nearly every line. A code lens is an affordance you can act
+    // on, and reads as such. Both honour alpha exactly as
+    // ghostTextForeground does (see GhostForegroundOver).
+    Color inlayHintForeground;
+    Color codeLensForeground;
 
     // Foreground for a collapsed Org link's own displayText (links
     // follow-up) -- see BufferView::Paint()'s own "descriptive links"

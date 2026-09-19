@@ -3125,6 +3125,10 @@ class BufferView : public Widget {
     // theme_.ghostTextForeground -- every bundled theme today -- comes back
     // untouched.
     [[nodiscard]] Color GhostForegroundOver(const Color& beneath) const;
+    // The same resolution against an explicitly-chosen virtual-text colour
+    // (theme_.inlayHintForeground, theme_.codeLensForeground) rather than
+    // the family's base.
+    [[nodiscard]] Color GhostForegroundOver(const Color& beneath, const Color& authored) const;
 
     [[nodiscard]] Brush BrushForCell(std::size_t offset, const LineRenderState& lineState, const Canvas& c, int col,
                                      int row) const;

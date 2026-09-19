@@ -1809,7 +1809,12 @@ TEST_CASE("Virtual text honours a translucent ghost foreground", "[BufferView]")
 
     fixture.theme                     = ned::ui::ThemeByName("gruvbox-light").value(); // opaque background to resolve against
     const ned::ui::Color ghost        = ned::ui::Color::RGB(0x204080).WithAlpha(128);
-    fixture.theme.ghostTextForeground = ghost;
+    fixture.theme.inlayHintForeground = ghost;
+    // Deliberately a different colour on the family's base key: an inlay
+    // hint reads inlay_hint_foreground, not ghost_text_foreground, and this
+    // is what says so. ghostTextForeground still backs the synthetic glyphs
+    // that have no key of their own.
+    fixture.theme.ghostTextForeground = ned::ui::Color::RGB(0x808080);
 
     // The current-line wash composites into these same cells *after* the
     // content loop has already resolved the hint's foreground, so leaving it

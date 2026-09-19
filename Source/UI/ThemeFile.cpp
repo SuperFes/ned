@@ -87,6 +87,8 @@ namespace {
         {"conflict_base_background", &Theme::conflictBaseBackground},
         {"binary_foreground", &Theme::binaryForeground},
         {"ghost_text_foreground", &Theme::ghostTextForeground},
+        {"inlay_hint_foreground", &Theme::inlayHintForeground},
+        {"code_lens_foreground", &Theme::codeLensForeground},
         {"link_foreground", &Theme::linkForeground},
         {"truncation_indicator_foreground", &Theme::truncationIndicatorForeground},
         {"unsaved_change_indicator", &Theme::unsavedChangeIndicator},
