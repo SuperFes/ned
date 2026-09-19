@@ -974,6 +974,31 @@ class Manager {
     // caller to distinguish "unset" from "explicitly Full."
     [[nodiscard]] TextDocumentSyncKind TextDocumentSyncKindFor(const std::string& connectionKey) const;
 
+    // The one call a per-frame caller should make: throttles
+    // RequestSemanticTokens/RequestInlayHints/RequestCodeLenses to at most
+    // one round trip per RequestIdleMs() window (ServerConfig.h) for a
+    // buffer, so a viewport that moves every frame stops costing a round
+    // trip every frame. The three below stay public and unthrottled for
+    // callers that want a request *now*.
+    //
+    // Leading edge, not plain trailing debounce: a pair change with nothing
+    // sent inside the window goes immediately, which is every discrete jump
+    // (a PageDown, opening a file, a cursor move that scrolls one line).
+    // Only a pair that changes again *inside* the window is deferred, and
+    // then a single fire at the window's end carries whatever pair is armed
+    // by the time it lands -- so a held scroll is one request per window
+    // rather than one per frame, and the frames in between arm nothing.
+    // That matters twice over: DeadlineTimer::Arm spawns a thread, so
+    // re-arming per frame would trade one cost for another.
+    //
+    // A send is skipped entirely when the pair is one the buffer has since
+    // moved off, or when the server hasn't been sent this generation yet
+    // (didChange is itself debounced) -- the pair is then dropped so the
+    // next frame retries, and a frame is guaranteed to follow because
+    // whatever made the pair stale posts to the event loop itself.
+    void RequestViewportFeatures(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                                 const std::string& serverKey);
+
     // semanticTokens follow-up, extended by the range/delta follow-up.
     // Called once per Paint() for the active buffer (BufferView.cpp,
     // alongside the existing SyncBuffer call, not from inside
@@ -1682,6 +1707,34 @@ class Manager {
     // before any of its timers could fire against a dead buffer -- same
     // rationale as diagnosticsDebounceTimers_ just above.
     std::unordered_map<text::Buffer*, std::unordered_map<std::string, ned::ui::DeadlineTimer>> syncDebounceTimers_;
+
+    // RequestViewportFeatures' own state. ArmedViewportRequest is the
+    // (server, content generation, viewport) pair a buffer most recently
+    // asked about -- kept after a send rather than cleared, so the frames
+    // that follow an unchanged pair compare equal and do nothing at all.
+    // viewportRequestPending_ holds the buffers with a fire already on its
+    // way and lastViewportRequestAt_ when each last actually sent: together
+    // those are the throttle, the timestamp deciding whether a pair change
+    // is a leading edge or a deferral, and the set keeping a run of
+    // deferrals from arming a timer apiece. All four are erased in
+    // NotifyBufferClosed, same rationale as syncDebounceTimers_ above.
+    struct ArmedViewportRequest {
+        std::string serverKey;
+        std::size_t generation        = 0;
+        std::size_t viewportStartByte = 0;
+        std::size_t viewportEndByte   = 0;
+
+        [[nodiscard]] bool operator==(const ArmedViewportRequest&) const = default;
+    };
+    std::unordered_map<text::Buffer*, ArmedViewportRequest>                  armedViewportRequests_;
+    std::unordered_map<text::Buffer*, ned::ui::DeadlineTimer>                viewportRequestTimers_;
+    std::unordered_set<text::Buffer*>                                        viewportRequestPending_;
+    std::unordered_map<text::Buffer*, std::chrono::steady_clock::time_point> lastViewportRequestAt_;
+
+    // Sends the three requests request describes, or returns false having
+    // sent nothing because the buffer or its server has moved on -- see
+    // RequestViewportFeatures, its only caller.
+    bool SendViewportFeatures(text::Buffer& buffer, const ArmedViewportRequest& request);
 
     // error-visibility follow-up. A process-lifetime latch, keyed by
     // connection (ConnectionKey's result, not the plain language -- see this

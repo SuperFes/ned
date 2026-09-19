@@ -116,12 +116,24 @@ plus `Manager::CarryForward` -- `Buffer` records one op per content generation, 
 server result that holds byte offsets across edits replays those ops from the generation
 it was resolved against, with per-kind gravity, instead of diffing document snapshots).
 
-- [ ] The payoff this unlocks is not taken yet: with the last good set staying valid
-      under typing, ned can debounce against the server far more aggressively --
-      request on idle rather than per `Paint()`, and drop responses freely -- because a
-      late or missing response now costs nothing visible. `RequestInlayHints`,
-      `RequestSemanticTokens` and `RequestCodeLenses` are still called per frame, which
-      was the right call only while a stale set was wrong within one keystroke.
+The payoff is taken, slug for `git log --grep=`: `lsp-viewport-request-idle`
+(`Manager::RequestViewportFeatures` -- a per-buffer throttle behind which
+`RequestSemanticTokens`/`RequestInlayHints`/`RequestCodeLenses` now run, at most one
+round trip per `ned/set-lsp-request-idle` window, default 150ms). Leading edge on
+purpose: a trailing-only debounce was written first and rejected on its own test
+fallout -- it made every *discrete* viewport jump (PageDown, opening a file, a cursor
+move that scrolls a line) wait out the window for nothing, since one pair change with
+nothing before it has nothing to coalesce with. Only a pair that changes again inside
+the window is deferred, and the single fire at the window's end carries whatever pair
+is armed by then, so a held scroll is one request per window and the frames in between
+arm nothing at all.
+
+- [ ] The throttle is per buffer and per window, not per request kind: a viewport-scoped
+      `semanticTokens/range` and a whole-document `codeLens` share one window even though
+      only the first has any reason to move with the viewport. Harmless today (codeLens
+      dedups on generation, so a viewport-only change costs it nothing), and splitting it
+      would mean a timer per kind per buffer -- worth it only if a third viewport-scoped
+      request kind ever shows up.
 - [ ] `documentHighlight` is deliberately *not* carried forward (`BufferView.h`'s
       `DocumentHighlightState` says why): it describes the symbol under point rather
       than a span of text, so typing inside that symbol makes it a different symbol,

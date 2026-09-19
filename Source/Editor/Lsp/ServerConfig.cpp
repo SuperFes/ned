@@ -23,6 +23,9 @@ namespace {
     std::mutex g_syncDebounceMutex;
     int        g_syncDebounceMs = 150;
 
+    std::mutex g_requestIdleMutex;
+    int        g_requestIdleMs = 150;
+
     std::mutex g_signatureHelpAutoTriggerMutex;
     bool       g_signatureHelpAutoTriggerEnabled = true;
 
@@ -112,6 +115,16 @@ void SetLspSyncDebounceMs(int milliseconds) {
 int SyncDebounceMs() {
     const std::lock_guard<std::mutex> lock(g_syncDebounceMutex);
     return g_syncDebounceMs;
+}
+
+void SetLspRequestIdleMs(int milliseconds) {
+    const std::lock_guard<std::mutex> lock(g_requestIdleMutex);
+    g_requestIdleMs = (milliseconds > 0) ? milliseconds : 1;
+}
+
+int RequestIdleMs() {
+    const std::lock_guard<std::mutex> lock(g_requestIdleMutex);
+    return g_requestIdleMs;
 }
 
 void SetLspSignatureHelpAutoTriggerEnabled(bool enabled) {

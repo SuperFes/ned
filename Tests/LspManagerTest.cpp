@@ -4003,6 +4003,112 @@ TEST_CASE("RequestSemanticTokens prefers textDocument/semanticTokens/range when 
     REQUIRE(Json::parse(thirdRaw.substr(thirdRaw.find("\r\n\r\n") + 4))["method"] == "textDocument/semanticTokens/range");
 }
 
+// RequestViewportFeatures is what BufferView actually calls per frame; the
+// three requests above stay public and unthrottled for callers that want one
+// now. Its job is that a viewport moving every frame stops costing a round
+// trip every frame, without making a discrete jump wait out a window first.
+//
+// Nothing here has to race the real DeadlineTimer: its fire is Post()ed onto
+// eventLoop, so a deferred request doesn't leave the process until something
+// drains that post, and the fire reads whatever pair is armed at drain time.
+// That makes a burst of calls deterministic regardless of how the timer
+// thread interleaves -- the last pair is the only one it can send.
+struct RequestIdleGuard {
+    explicit RequestIdleGuard(int milliseconds) {
+        ned::editor::lsp::SetLspRequestIdleMs(milliseconds);
+    }
+    ~RequestIdleGuard() {
+        ned::editor::lsp::SetLspRequestIdleMs(150);
+    }
+};
+
+TEST_CASE("RequestViewportFeatures sends the first viewport at once and collapses the rest of a scroll into one",
+          "[Lsp]") {
+    const RequestIdleGuard      idle(200);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-viewport-features-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;\nint y = 2;\nint z = 3;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    // Leading edge: the first frame at a new pair is a discrete jump as far
+    // as this can tell, and goes straight out.
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
+    REQUIRE(first.size() == 3);
+    REQUIRE(first[0]["method"] == "textDocument/semanticTokens/range");
+    REQUIRE(first[0]["params"]["range"]["start"]["line"] == 0);
+    REQUIRE(first[1]["method"] == "textDocument/inlayHint");
+    REQUIRE(first[2]["method"] == "textDocument/codeLens");
+
+    // The rest of the scroll, inside that window: nothing is sent from the
+    // frames themselves, and the deferred fire carries the last pair only.
+    manager.RequestViewportFeatures(buffer, 11, 22, "test-lang");
+    manager.RequestViewportFeatures(buffer, 22, 33, "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::vector<Json> deferred = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 2));
+    REQUIRE(deferred.size() >= 2);
+    REQUIRE(deferred[0]["method"] == "textDocument/semanticTokens/range");
+    REQUIRE(deferred[0]["params"]["range"]["start"]["line"] == 2); // the last viewport, never the middle one
+    REQUIRE(deferred[1]["method"] == "textDocument/inlayHint");
+    REQUIRE(deferred[1]["params"]["range"]["start"]["line"] == 2);
+
+    // A further frame at the settled pair arms nothing and sends nothing.
+    manager.RequestViewportFeatures(buffer, 22, 33, "test-lang");
+    eventLoop.DrainPosted_();
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("RequestViewportFeatures drops an armed pair the buffer has moved off rather than asking about stale bytes",
+          "[Lsp]") {
+    const RequestIdleGuard      idle(1);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-viewport-features-stale-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    // Nothing has told the server about this generation yet (didChange is
+    // itself debounced, and only the next frame's SyncBuffer arms it), so
+    // asking now would resolve the response against a document the server
+    // doesn't have. Even on the leading edge, that is not sent.
+    buffer.InsertAtPoint("// ");
+    manager.RequestViewportFeatures(buffer, 0, 14, "test-lang");
+    eventLoop.DrainPosted_();
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    // The next frame: sync first, then the pair again. The dropped pair must
+    // not have latched anything that suppresses the re-arm.
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string didChange = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(didChange.substr(didChange.find("\r\n\r\n") + 4))["method"] == "textDocument/didChange");
+
+    manager.RequestViewportFeatures(buffer, 0, 14, "test-lang");
+    const std::vector<Json> frames = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 1));
+    REQUIRE(!frames.empty());
+    REQUIRE(frames[0]["method"] == "textDocument/semanticTokens/range");
+    REQUIRE(frames[0]["params"]["range"]["end"]["line"] == 1); // the post-edit viewport, converted against the post-edit text
+}
+
 TEST_CASE("RequestSemanticTokens falls back to full after a real error response to a range request, latching "
           "semanticTokensRangeUnsupported_ for the rest of the connection",
           "[Lsp]") {

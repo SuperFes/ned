@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-215 bindings.
+216 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -544,6 +544,10 @@ Enable or disable automatically formatting via the language server after typing 
 ## `ned/set-lsp-pull-diagnostics`
 
 Enable or disable requesting diagnostics via textDocument/diagnostic on every content sync (default false). Only useful for a server that never sends its own publishDiagnostics notifications -- a server that proves it doesn't support pull either is never asked again for that connection's lifetime.
+
+## `ned/set-lsp-request-idle`
+
+Set the shortest gap, in milliseconds, between two rounds of semantic-token, inlay-hint and code-lens requests for one buffer (default 150). A discrete move -- a PageDown, opening a file -- still asks immediately; only a visible range that keeps changing inside the window is held back, and then one request covers wherever it ended up, so a held scroll costs a round trip per window instead of one per frame. Raise it for a slow server, lower it for highlighting that keeps up mid-scroll. Non-positive values are clamped to 1.
 
 ## `ned/set-lsp-root-markers`
 
